@@ -21,7 +21,9 @@ describe('installSkill', () => {
     try {
       await fs.rm(TEST_SKILLS_DIR, { recursive: true, force: true });
       await fs.rm(TEST_MANIFEST_DIR, { recursive: true, force: true });
-    } catch {}
+    } catch {
+      // Directories may not exist, ignore cleanup errors
+    }
   });
 
   it('should parse GitHub URLs correctly', () => {
@@ -87,7 +89,9 @@ describe('uninstallSkill', () => {
     try {
       await fs.rm(TEST_SKILLS_DIR, { recursive: true, force: true });
       await fs.rm(TEST_MANIFEST_DIR, { recursive: true, force: true });
-    } catch {}
+    } catch {
+      // Directories may not exist, ignore cleanup errors
+    }
   });
 
   it('should detect modified skills', async () => {

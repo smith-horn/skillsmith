@@ -41,7 +41,6 @@ export class SkillRepository {
     this.prepareStatements();
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private stmts!: {
     insert: { run: (...args: unknown[]) => { changes: number }; get: (id: string) => SkillRow | undefined };
     selectById: { get: (id: string) => SkillRow | undefined };
