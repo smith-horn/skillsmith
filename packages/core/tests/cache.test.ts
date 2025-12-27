@@ -90,7 +90,9 @@ describe('L2Cache (SQLite)', () => {
     cache.close();
     try {
       fs.unlinkSync(dbPath);
-    } catch {}
+    } catch {
+      // File may not exist, ignore cleanup errors
+    }
   });
 
   it('should persist results to SQLite', () => {
@@ -119,7 +121,9 @@ describe('L2Cache (SQLite)', () => {
     shortCache.close();
     try {
       fs.unlinkSync(dbPath + '.short');
-    } catch {}
+    } catch {
+      // File may not exist, ignore cleanup errors
+    }
   });
 });
 
@@ -139,7 +143,9 @@ describe('TieredCache', () => {
     cache.close();
     try {
       fs.unlinkSync(dbPath);
-    } catch {}
+    } catch {
+      // File may not exist, ignore cleanup errors
+    }
   });
 
   it('should check L1 before L2', () => {

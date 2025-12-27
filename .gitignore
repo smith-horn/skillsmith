@@ -6,6 +6,17 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# TypeScript build artifacts in source dirs
+packages/**/*.js
+packages/**/*.js.map
+packages/**/*.d.ts
+packages/**/*.d.ts.map
+!packages/**/vitest.config.ts
+vitest.config.js
+vitest.config.js.map
+vitest.config.d.ts
+vitest.config.d.ts.map
+
 # Coverage
 coverage/
 

@@ -17,7 +17,6 @@ interface CacheRow {
  */
 export class CacheRepository {
   private db: DatabaseType;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private stmts!: {
     get: { get: (key: string) => CacheRow | undefined };
     set: { run: (...args: unknown[]) => { changes: number } };
