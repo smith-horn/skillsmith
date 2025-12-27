@@ -116,11 +116,32 @@ jobs:
         run: npm audit --audit-level=high
         continue-on-error: true
 
+  compliance:
+    name: Standards Compliance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run standards audit
+        run: npm run audit:standards
+
   build:
     name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lint, typecheck, test]
+    needs: [lint, typecheck, test, compliance]
 
     steps:
       - name: Checkout
