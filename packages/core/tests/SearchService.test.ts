@@ -195,7 +195,7 @@ describe('SearchService', () => {
   describe('findSimilar', () => {
     it('should find similar skills based on content', () => {
       // Get a skill with distinct tags to find similarity
-      const jsLinter = repo.findByRepoUrl(null);
+      const _jsLinter = repo.findByRepoUrl(null);
       const all = repo.findAll(10, 0).items;
       const jsSkill = all.find(s => s.name === 'JavaScript Linter');
 
