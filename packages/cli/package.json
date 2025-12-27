@@ -1,0 +1,23 @@
+{
+  "name": "@skillsmith/cli",
+  "version": "0.1.0",
+  "description": "CLI tools for Skillsmith skill discovery",
+  "type": "module",
+  "bin": {
+    "skillsmith": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "import": "node dist/import.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@skillsmith/core": "*",
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "vitest": "^1.0.0"
+  }
+}
