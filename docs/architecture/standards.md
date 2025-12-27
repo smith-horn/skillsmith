@@ -1,6 +1,6 @@
 # Engineering Standards - Skillsmith
 
-**Version**: 1.0
+**Version**: 1.2
 **Status**: Active
 **Owner**: Skillsmith Team
 
@@ -188,11 +188,29 @@ SMI-XXX
 
 ### 3.3 CI/CD Pipeline
 
-| Stage | Checks |
-|-------|--------|
-| PR | lint, typecheck, test, audit:standards |
-| Main | + build verification |
-| Release | + npm publish |
+The GitHub Actions CI pipeline runs on all PRs and pushes to main:
+
+```
+┌─────────┐  ┌───────────┐  ┌──────────────────┐  ┌────────────┐  ┌──────────┐
+│  Lint   │  │ Typecheck │  │ Test (Node 18/20)│  │ Compliance │  │ Security │
+└────┬────┘  └─────┬─────┘  └────────┬─────────┘  └─────┬──────┘  └────┬─────┘
+     │             │                 │                  │              │
+     └─────────────┴─────────────────┴──────────────────┘              │
+                                     │                                 │
+                               ┌─────▼─────┐                           │
+                               │   Build   │ (blocked if any fail)     │
+                               └───────────┘                           │
+```
+
+| Job | Checks | Blocks Build |
+|-----|--------|--------------|
+| Lint | ESLint, Prettier | Yes |
+| Typecheck | TypeScript strict | Yes |
+| Test | Unit + integration tests (Node 18 & 20) | Yes |
+| Compliance | `npm run audit:standards` | Yes |
+| Security | `npm audit --audit-level=high` | No (warning only) |
+
+**Build artifacts** are uploaded for 7 days after successful builds.
 
 ### 3.4 Definition of Done
 
@@ -293,6 +311,7 @@ All MCP tools return structured error responses:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2 | 2025-12-27 | Updated §3.3 CI/CD Pipeline with compliance gate and job diagram |
 | 1.1 | 2025-12-27 | Added §3.0 Docker-First Development requirement |
 | 1.0 | 2025-12-27 | Initial standards for Phase 0 completion |
 
