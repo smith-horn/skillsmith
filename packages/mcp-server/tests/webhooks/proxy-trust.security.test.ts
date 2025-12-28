@@ -10,7 +10,7 @@ import { IncomingMessage } from 'http'
 import { Socket } from 'net'
 
 // Import the getClientIp function directly from TypeScript source
-import { getClientIp, type WebhookServerConfig } from '../../src/webhooks/webhook-endpoint.ts'
+import { getClientIp, type WebhookServerConfig } from '../../src/webhooks/webhook-endpoint.js'
 
 describe('X-Forwarded-For Proxy Trust (SMI-682)', () => {
   function createMockRequest(

@@ -20,6 +20,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --build",
+    "typecheck:watch": "tsc --build --watch",
     "audit:standards": "node scripts/audit-standards.mjs",
     "pre-impl": "node scripts/pre-impl-check.mjs",
     "prepare": "husky",
