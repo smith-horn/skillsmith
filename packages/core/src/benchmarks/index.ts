@@ -1,11 +1,13 @@
 /**
  * SMI-632: Benchmark module exports
+ * SMI-689: Enhanced with MemoryProfiler integration
  *
  * Provides performance benchmarking infrastructure for:
  * - Search query latency
  * - Indexing throughput
  * - Statistical analysis
  * - CI integration
+ * - Memory profiling and leak detection
  */
 
 // Core benchmark runner
@@ -21,10 +23,23 @@ export {
   type EnvironmentInfo,
   type ComparisonResult,
   type MetricComparison,
+  type DetailedMemoryStats,
+  type MemoryRegressionInfo,
   formatReportAsJson,
   formatReportAsText,
   compareReports,
 } from './BenchmarkRunner.js'
+
+// SMI-689: Memory profiler
+export {
+  MemoryProfiler,
+  defaultMemoryProfiler,
+  type MemorySnapshot,
+  type MemoryStats as ProfilerMemoryStats,
+  type MemoryBaseline,
+  type LeakDetectionResult,
+  type MemoryRegressionResult,
+} from './MemoryProfiler.js'
 
 // Search benchmarks
 export {
@@ -68,18 +83,46 @@ export {
  *   npm run benchmark -- --compare baseline.json
  */
 export async function runAllBenchmarks(options: CLIOptions = {}): Promise<void> {
-  const { suite, compare, output = 'text', iterations } = options
+  const {
+    suite,
+    compare,
+    output = 'text',
+    iterations,
+    memory = false,
+    memoryThreshold = 10,
+    memoryBaseline,
+  } = options
 
   console.log('Starting Skillsmith Performance Benchmarks\n')
+
+  // SMI-689: Load memory baselines if provided
+  let memoryBaselines: Record<string, import('./MemoryProfiler.js').MemoryBaseline> = {}
+  if (memoryBaseline) {
+    try {
+      const fs = await import('fs')
+      const baselineData = fs.readFileSync(memoryBaseline, 'utf-8')
+      const parsed = JSON.parse(baselineData)
+      memoryBaselines = parsed.memoryBaselines ?? {}
+      console.log(`Loaded memory baselines from ${memoryBaseline}`)
+    } catch (err) {
+      console.warn(
+        `Warning: Could not load memory baselines: ${err instanceof Error ? err.message : err}`
+      )
+    }
+  }
 
   const results: BenchmarkReport[] = []
 
   // Run search benchmarks
   if (!suite || suite === 'search') {
     console.log('Running search benchmarks...')
+    // SMI-689: Enable memory profiling if requested
     const searchBenchmark = new SearchBenchmark({
       iterations: iterations ?? 1000,
       skillCount: 1000,
+      enableMemoryProfiler: memory,
+      memoryRegressionThreshold: memoryThreshold,
+      memoryBaselines: memoryBaselines,
     })
     const searchReport = await searchBenchmark.run()
     results.push(searchReport)
@@ -98,8 +141,12 @@ export async function runAllBenchmarks(options: CLIOptions = {}): Promise<void> 
   // Run index benchmarks
   if (!suite || suite === 'index') {
     console.log('Running index benchmarks...')
+    // SMI-689: Enable memory profiling if requested
     const indexBenchmark = new IndexBenchmark({
       iterations: iterations ?? 100,
+      enableMemoryProfiler: memory,
+      memoryRegressionThreshold: memoryThreshold,
+      memoryBaselines: memoryBaselines,
     })
     const indexReport = await indexBenchmark.run()
     results.push(indexReport)
@@ -151,6 +198,23 @@ export async function runAllBenchmarks(options: CLIOptions = {}): Promise<void> 
       }
     }
   }
+
+  // SMI-689: Check for memory regressions
+  if (memory) {
+    let hasMemoryRegression = false
+    for (const report of results) {
+      if (report.memoryRegression?.hasRegressions) {
+        hasMemoryRegression = true
+        console.error(`\nMemory regression detected in ${report.suite}:`)
+        for (const reg of report.memoryRegression.regressions) {
+          console.error(`  ${reg.label}: heap grew by ${reg.changePercent.toFixed(1)}%`)
+        }
+      }
+    }
+    if (hasMemoryRegression) {
+      process.exitCode = 1
+    }
+  }
 }
 
 /**
@@ -165,6 +229,12 @@ export interface CLIOptions {
   output?: 'text' | 'json'
   /** Number of iterations (overrides default) */
   iterations?: number
+  /** SMI-689: Enable memory profiling */
+  memory?: boolean
+  /** SMI-689: Memory regression threshold percentage */
+  memoryThreshold?: number
+  /** SMI-689: Path to memory baselines JSON file */
+  memoryBaseline?: string
 }
 
 // Re-export everything for convenience

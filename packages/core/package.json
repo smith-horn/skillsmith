@@ -20,6 +20,7 @@
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:security": "vitest run tests/security",
     "benchmark": "npx tsx src/benchmarks/cli.ts",
     "benchmark:search": "npx tsx src/benchmarks/cli.ts --suite search",
     "benchmark:index": "npx tsx src/benchmarks/cli.ts --suite index"

@@ -1,10 +1,12 @@
 /**
  * SMI-632: BenchmarkRunner - Performance benchmark infrastructure
+ * SMI-689: Enhanced with MemoryProfiler integration
  *
  * Features:
  * - Run benchmark suites
  * - Measure p50, p95, p99 latencies
- * - Memory usage tracking
+ * - Memory usage tracking with MemoryProfiler
+ * - Memory regression detection (fail if heap grows >10% vs baseline)
  * - Warm-up runs before measurement
  * - Statistical analysis (mean, stddev)
  */
@@ -12,6 +14,12 @@
 import * as os from 'os'
 import * as fs from 'fs'
 import { percentile, sampleStddev, mean } from './stats.js'
+import {
+  MemoryProfiler,
+  type MemoryStats as ProfilerMemoryStats,
+  type MemoryBaseline,
+  type MemoryRegressionResult,
+} from './MemoryProfiler.js'
 
 /**
  * Benchmark configuration options
@@ -25,6 +33,12 @@ export interface BenchmarkConfig {
   measureMemory?: boolean
   /** Suite name for grouping */
   suiteName?: string
+  /** Enable detailed memory profiling with MemoryProfiler (SMI-689) */
+  enableMemoryProfiler?: boolean
+  /** Memory regression threshold percentage (SMI-689, default: 10) */
+  memoryRegressionThreshold?: number
+  /** Memory baselines for regression comparison (SMI-689) */
+  memoryBaselines?: Record<string, MemoryBaseline>
 }
 
 /**
@@ -73,6 +87,38 @@ export interface BenchmarkStats {
 }
 
 /**
+ * Detailed memory profiling stats (SMI-689)
+ */
+export interface DetailedMemoryStats {
+  /** Start heap size in bytes */
+  startHeapSize: number
+  /** End heap size in bytes */
+  endHeapSize: number
+  /** Peak heap size in bytes */
+  peakHeapSize: number
+  /** Heap growth in bytes */
+  heapGrowth: number
+  /** Heap growth as percentage */
+  heapGrowthPercent: number
+  /** Duration of profiling in ms */
+  profilingDuration: number
+  /** Number of samples collected */
+  sampleCount: number
+}
+
+/**
+ * Memory regression info (SMI-689)
+ */
+export interface MemoryRegressionInfo {
+  /** Whether any regressions were detected */
+  hasRegressions: boolean
+  /** Threshold used for detection */
+  threshold: number
+  /** Details per benchmark */
+  regressions: MemoryRegressionResult[]
+}
+
+/**
  * Complete benchmark report
  */
 export interface BenchmarkReport {
@@ -85,6 +131,12 @@ export interface BenchmarkReport {
     totalIterations: number
     totalDuration_ms: number
   }
+  /** Detailed memory profiling data (SMI-689) */
+  memoryProfile?: Record<string, DetailedMemoryStats>
+  /** Memory regression info (SMI-689) */
+  memoryRegression?: MemoryRegressionInfo
+  /** Memory baselines for future comparison (SMI-689) */
+  memoryBaselines?: Record<string, MemoryBaseline>
 }
 
 /**
@@ -120,6 +172,9 @@ const DEFAULT_CONFIG: Required<BenchmarkConfig> = {
   iterations: 1000,
   measureMemory: true,
   suiteName: 'default',
+  enableMemoryProfiler: false,
+  memoryRegressionThreshold: 10,
+  memoryBaselines: {},
 }
 
 /**
@@ -129,9 +184,26 @@ export class BenchmarkRunner {
   private config: Required<BenchmarkConfig>
   private benchmarks: BenchmarkDefinition[] = []
   private results: BenchmarkResult[] = []
+  /** SMI-689: Memory profiler instance */
+  private memoryProfiler: MemoryProfiler | null = null
 
   constructor(config: BenchmarkConfig = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config }
+
+    // SMI-689: Initialize memory profiler if enabled
+    if (this.config.enableMemoryProfiler) {
+      this.memoryProfiler = new MemoryProfiler()
+      if (this.config.memoryBaselines && Object.keys(this.config.memoryBaselines).length > 0) {
+        this.memoryProfiler.loadBaselines(this.config.memoryBaselines)
+      }
+    }
+  }
+
+  /**
+   * Get the memory profiler instance (SMI-689)
+   */
+  getMemoryProfiler(): MemoryProfiler | null {
+    return this.memoryProfiler
   }
 
   /**
@@ -150,8 +222,22 @@ export class BenchmarkRunner {
     this.results = []
 
     for (const benchmark of this.benchmarks) {
+      // SMI-689: Start memory profiling if enabled
+      if (this.memoryProfiler) {
+        this.memoryProfiler.trackMemory(benchmark.name)
+      }
+
       const result = await this.runBenchmark(benchmark)
       this.results.push(result)
+
+      // SMI-689: Stop memory profiling and save baseline (only if no baseline was pre-loaded)
+      if (this.memoryProfiler) {
+        this.memoryProfiler.stopTracking(benchmark.name)
+        // Only save new baseline if one wasn't already loaded for this benchmark
+        if (!this.config.memoryBaselines[benchmark.name]) {
+          this.memoryProfiler.saveBaseline(benchmark.name)
+        }
+      }
     }
 
     const totalDuration = Date.now() - startTime
@@ -254,7 +340,7 @@ export class BenchmarkRunner {
       totalIterations += result.iterations
     }
 
-    return {
+    const report: BenchmarkReport = {
       suite: this.config.suiteName,
       timestamp: new Date().toISOString(),
       environment: this.getEnvironmentInfo(),
@@ -265,6 +351,49 @@ export class BenchmarkRunner {
         totalDuration_ms: totalDuration,
       },
     }
+
+    // SMI-689: Add memory profiling data if enabled
+    if (this.memoryProfiler) {
+      const completedStats = this.memoryProfiler.getCompletedStats()
+      const memoryProfile: Record<string, DetailedMemoryStats> = {}
+
+      for (const [label, stats] of completedStats) {
+        memoryProfile[label] = {
+          startHeapSize: stats.startSnapshot.usedHeapSize,
+          endHeapSize: stats.endSnapshot?.usedHeapSize ?? 0,
+          peakHeapSize: stats.peakHeapUsed,
+          heapGrowth: stats.heapGrowth,
+          heapGrowthPercent: stats.heapGrowthPercent,
+          profilingDuration: stats.duration,
+          sampleCount: stats.sampleCount,
+        }
+      }
+
+      report.memoryProfile = memoryProfile
+      report.memoryBaselines = this.memoryProfiler.exportBaselines()
+
+      // Check for regressions if baselines were provided
+      if (Object.keys(this.config.memoryBaselines).length > 0) {
+        const regressions: MemoryRegressionResult[] = []
+        for (const label of completedStats.keys()) {
+          const result = this.memoryProfiler.checkRegression(
+            label,
+            this.config.memoryRegressionThreshold
+          )
+          if (result.hasRegression) {
+            regressions.push(result)
+          }
+        }
+
+        report.memoryRegression = {
+          hasRegressions: regressions.length > 0,
+          threshold: this.config.memoryRegressionThreshold,
+          regressions,
+        }
+      }
+    }
+
+    return report
   }
 
   /**
@@ -380,6 +509,30 @@ export class BenchmarkRunner {
   clear(): void {
     this.benchmarks = []
     this.results = []
+    if (this.memoryProfiler) {
+      this.memoryProfiler.clear()
+    }
+  }
+
+  /**
+   * Enable memory profiler after construction (SMI-689)
+   */
+  enableMemoryProfiler(baselines?: Record<string, MemoryBaseline>): void {
+    this.memoryProfiler = new MemoryProfiler()
+    if (baselines) {
+      this.memoryProfiler.loadBaselines(baselines)
+      this.config.memoryBaselines = baselines
+    }
+  }
+
+  /**
+   * Get memory profiling report as string (SMI-689)
+   */
+  getMemoryReport(): string {
+    if (!this.memoryProfiler) {
+      return 'Memory profiling not enabled. Use enableMemoryProfiler: true in config.'
+    }
+    return this.memoryProfiler.formatMemoryReport()
   }
 }
 
@@ -413,6 +566,16 @@ export function formatReportAsText(report: BenchmarkReport): string {
     if (stats.memoryPeak_mb !== undefined) {
       lines.push(`    Memory Peak: ${stats.memoryPeak_mb}MB`)
     }
+    // SMI-689: Add detailed memory profile if available
+    if (report.memoryProfile?.[name]) {
+      const mp = report.memoryProfile[name]
+      lines.push(`    Memory Profile:`)
+      lines.push(
+        `      Heap Growth: ${formatBytes(mp.heapGrowth)} (${mp.heapGrowthPercent.toFixed(1)}%)`
+      )
+      lines.push(`      Peak Heap: ${formatBytes(mp.peakHeapSize)}`)
+      lines.push(`      Samples: ${mp.sampleCount}`)
+    }
     lines.push('')
   }
 
@@ -422,7 +585,37 @@ export function formatReportAsText(report: BenchmarkReport): string {
   lines.push(`  Total Iterations: ${report.summary.totalIterations}`)
   lines.push(`  Total Duration: ${report.summary.totalDuration_ms}ms`)
 
+  // SMI-689: Add memory regression summary
+  if (report.memoryRegression) {
+    lines.push('')
+    lines.push('Memory Regression Check:')
+    if (report.memoryRegression.hasRegressions) {
+      lines.push(
+        `  WARNING: ${report.memoryRegression.regressions.length} regression(s) detected (threshold: ${report.memoryRegression.threshold}%)`
+      )
+      for (const reg of report.memoryRegression.regressions) {
+        lines.push(`    - ${reg.label}: ${reg.changePercent.toFixed(1)}% increase`)
+      }
+    } else {
+      lines.push(
+        `  No memory regressions detected (threshold: ${report.memoryRegression.threshold}%)`
+      )
+    }
+  }
+
   return lines.join('\n')
+}
+
+/**
+ * Format bytes to human-readable string (internal helper)
+ */
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(k))
+  const value = bytes / Math.pow(k, i)
+  return `${value.toFixed(1)} ${sizes[i]}`
 }
 
 /**

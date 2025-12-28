@@ -31,6 +31,10 @@ const DEFAULT_CONFIG: Required<SearchBenchmarkConfig> = {
   suiteName: 'search',
   skillCount: 1000,
   coldCache: false,
+  // SMI-689: Memory profiling defaults
+  enableMemoryProfiler: false,
+  memoryRegressionThreshold: 10,
+  memoryBaselines: {},
 }
 
 /**

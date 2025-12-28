@@ -21,6 +21,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --build",
     "audit:standards": "node scripts/audit-standards.mjs",
+    "pre-impl": "node scripts/pre-impl-check.mjs",
     "prepare": "husky",
     "benchmark": "npm run benchmark --workspace=@skillsmith/core",
     "benchmark:search": "npm run benchmark:search --workspace=@skillsmith/core",

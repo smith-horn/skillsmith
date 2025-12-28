@@ -602,7 +602,6 @@ describe('BenchmarkRunner', () => {
 
       // Should have errors field
       expect(stats).toHaveProperty('errors')
-      // @ts-expect-error - errors field added in fix
       expect(stats.errors).toBe(3) // calls 3, 6, 9 fail
     })
 
@@ -624,7 +623,6 @@ describe('BenchmarkRunner', () => {
       const stats = report.results['all_fail']
 
       expect(stats).toHaveProperty('errorMessages')
-      // @ts-expect-error - errorMessages field added in fix
       expect(stats.errorMessages).toHaveLength(10) // capped at 10
     })
   })

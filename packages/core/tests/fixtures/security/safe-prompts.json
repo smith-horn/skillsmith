@@ -1,0 +1,56 @@
+{
+  "description": "Known safe content for false positive testing",
+  "version": "1.0.0",
+  "createdAt": "2025-01-01",
+  "categories": {
+    "normalSkillDescriptions": [
+      "This skill helps you write React components with best practices",
+      "A skill for generating TypeScript interfaces from JSON",
+      "Use this skill to create database migrations",
+      "This skill assists with code review and best practices",
+      "A helpful skill for debugging Node.js applications"
+    ],
+    "technicalContent": [
+      "The function returns a Promise that resolves when the operation completes",
+      "Use async/await for better readability",
+      "The API endpoint accepts POST requests with JSON body",
+      "Configure the environment variables in your .env.example file",
+      "Run npm install to install dependencies"
+    ],
+    "mentionsSimilarWords": [
+      "You can ignore the optional parameters for now",
+      "The previous version had a bug that we fixed",
+      "Instructions for setting up the development environment",
+      "Developers should read the documentation first",
+      "This mode enables extra logging for debugging"
+    ],
+    "containsUrls": [
+      "Check the documentation at https://github.com/example/repo",
+      "Install from https://npmjs.com/package/example",
+      "See https://docs.anthropic.com for more info",
+      "Reference: https://developer.mozilla.org/en-US/docs"
+    ],
+    "codeExamples": [
+      "const result = await fetch('https://api.example.com');",
+      "function processData(input: string): string { return input; }",
+      "import { useState } from 'react';",
+      "export default function Component() { return <div>Hello</div>; }"
+    ],
+    "markdownContent": [
+      "# Getting Started\n\n## Prerequisites\n\n- Node.js 18+\n- npm or yarn",
+      "## Usage\n\n```bash\nnpm install\nnpm start\n```",
+      "| Feature | Status |\n|---------|--------|\n| Auth | Done |"
+    ],
+    "longFormContent": [
+      "This skill provides comprehensive tooling for React developers. It includes components for forms, tables, and modals. The skill follows accessibility best practices and includes TypeScript support out of the box. You can customize the theme using CSS variables.",
+      "A database migration skill that helps you manage schema changes across environments. It supports PostgreSQL, MySQL, and SQLite. The skill tracks migration history and allows for rollbacks when needed."
+    ],
+    "educationalContent": [
+      "Learn how to build REST APIs with Express.js",
+      "This tutorial covers the basics of TypeScript generics",
+      "Understanding async/await in JavaScript",
+      "A guide to testing React components with Jest"
+    ]
+  },
+  "totalCount": 35
+}
