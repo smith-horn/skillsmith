@@ -1,7 +1,7 @@
 Implement SMI-630: Cache Invalidation Strategy
 
 ## Context
-Working in: /Users/williamsmith/Documents/GitHub/skillsmith-phase2b
+Working in: /Users/williamsmith/Documents/GitHub/Claude-Skill-Discovery/worktrees/phase-2b
 Branch: phase-2b
 
 Prerequisites COMPLETE:

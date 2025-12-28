@@ -1,7 +1,7 @@
 Implement SMI-627: Core Search Functionality
 
 ## Context
-Working in: /Users/williamsmith/Documents/GitHub/skillsmith-phase2b
+Working in: /Users/williamsmith/Documents/GitHub/Claude-Skill-Discovery/worktrees/phase-2b
 This is a git worktree of skillsmith-phase2-indexer on branch phase-2b.
 
 SMI-628 (GitHub Indexing) is COMPLETE. Use the existing:

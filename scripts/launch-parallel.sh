@@ -6,8 +6,8 @@
 set -e
 
 ISSUE_ID="${1:-smi643}"
-REPO_DIR="/Users/williamsmith/Documents/GitHub/skillsmith-phase2-indexer"
-WORKTREE_DIR="/Users/williamsmith/Documents/GitHub/skillsmith-phase2b-parallel"
+REPO_DIR="/Users/williamsmith/Documents/GitHub/Claude-Skill-Discovery/skillsmith"
+WORKTREE_DIR="/Users/williamsmith/Documents/GitHub/Claude-Skill-Discovery/worktrees/phase-2b-parallel"
 BRANCH_NAME="phase-2b-parallel"
 
 PROMPT_FILE="$REPO_DIR/scripts/prompts/${ISSUE_ID}-swarm-indexing.md"
