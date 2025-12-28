@@ -1,5 +1,6 @@
 /**
  * SMI-579: SearchService - FTS5 search with BM25 ranking
+ * SMI-630: Enhanced caching with TTL management
  *
  * Features:
  * - Full-text search using SQLite FTS5
@@ -7,84 +8,91 @@
  * - Phrase queries and boolean operators
  * - Result highlighting for matched terms
  * - Pagination support
- * - Search caching
+ * - Two-tier caching (L1/L2) with TTL management
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3';
+import type { Database as DatabaseType } from 'better-sqlite3'
 import type {
   Skill,
   SearchOptions,
   SearchResult,
   PaginatedResults,
-  TrustTier
-} from '../types/skill.js';
-import { CacheRepository } from '../repositories/CacheRepository.js';
+  TrustTier,
+} from '../types/skill.js'
+import { CacheRepository } from '../repositories/CacheRepository.js'
+import { CacheService, CacheType } from '../cache/index.js'
 
 interface FTSRow {
-  id: string;
-  name: string;
-  description: string | null;
-  author: string | null;
-  repo_url: string | null;
-  quality_score: number | null;
-  trust_tier: string;
-  tags: string;
-  created_at: string;
-  updated_at: string;
-  rank: number;
+  id: string
+  name: string
+  description: string | null
+  author: string | null
+  repo_url: string | null
+  quality_score: number | null
+  trust_tier: string
+  tags: string
+  created_at: string
+  updated_at: string
+  rank: number
+}
+
+export interface SearchServiceOptions {
+  /** TTL for search cache in seconds (used with legacy CacheRepository) */
+  cacheTtl?: number
+  /** Use enhanced CacheService with L1/L2 tiering and TTL management */
+  cacheService?: CacheService
 }
 
 /**
  * Full-text search service with BM25 ranking
  */
 export class SearchService {
-  private db: DatabaseType;
-  private cache: CacheRepository;
-  private cacheTtl: number;
+  private db: DatabaseType
+  private legacyCache: CacheRepository
+  private cacheService: CacheService | null
+  private cacheTtl: number
 
-  constructor(db: DatabaseType, options?: { cacheTtl?: number }) {
-    this.db = db;
-    this.cache = new CacheRepository(db);
-    this.cacheTtl = options?.cacheTtl ?? 300; // 5 minutes default
+  constructor(db: DatabaseType, options?: SearchServiceOptions) {
+    this.db = db
+    this.legacyCache = new CacheRepository(db)
+    this.cacheService = options?.cacheService ?? null
+    this.cacheTtl = options?.cacheTtl ?? 300 // 5 minutes default (legacy)
   }
 
   /**
    * Search skills using FTS5 with BM25 ranking
    */
   search(options: SearchOptions): PaginatedResults<SearchResult> {
-    const {
-      query,
-      limit = 20,
-      offset = 0,
-      trustTier,
-      minQualityScore
-    } = options;
+    const { query, limit = 20, offset = 0, trustTier, minQualityScore } = options
 
-    // Check cache first
-    const cacheKey = this.buildCacheKey(options);
-    const cached = this.cache.get<PaginatedResults<SearchResult>>(cacheKey);
+    // Check cache first (prefer CacheService if available)
+    const cacheKey = this.buildCacheKey(options)
+    const cached = this.getCached<PaginatedResults<SearchResult>>(
+      cacheKey,
+      CacheType.SEARCH_RESULTS
+    )
     if (cached) {
-      return cached;
+      return cached
     }
 
     // Build the FTS5 query
-    const ftsQuery = this.buildFtsQuery(query);
+    const ftsQuery = this.buildFtsQuery(query)
 
     // Build filter conditions
-    const filters: string[] = [];
-    const params: (string | number)[] = [ftsQuery];
+    const filters: string[] = []
+    const params: (string | number)[] = [ftsQuery]
 
     if (trustTier) {
-      filters.push('s.trust_tier = ?');
-      params.push(trustTier);
+      filters.push('s.trust_tier = ?')
+      params.push(trustTier)
     }
 
     if (minQualityScore !== undefined) {
-      filters.push('s.quality_score >= ?');
-      params.push(minQualityScore);
+      filters.push('s.quality_score >= ?')
+      params.push(minQualityScore)
     }
 
-    const whereClause = filters.length > 0 ? `AND ${filters.join(' AND ')}` : '';
+    const whereClause = filters.length > 0 ? `AND ${filters.join(' AND ')}` : ''
 
     // Count total results
     const countSql = `
@@ -93,9 +101,9 @@ export class SearchService {
       INNER JOIN skills_fts f ON s.rowid = f.rowid
       WHERE skills_fts MATCH ?
       ${whereClause}
-    `;
+    `
 
-    const { total } = this.db.prepare(countSql).get(...params) as { total: number };
+    const { total } = this.db.prepare(countSql).get(...params) as { total: number }
 
     // Get paginated results with BM25 ranking
     const searchSql = `
@@ -108,35 +116,38 @@ export class SearchService {
       ${whereClause}
       ORDER BY rank
       LIMIT ? OFFSET ?
-    `;
+    `
 
-    params.push(limit, offset);
-    const rows = this.db.prepare(searchSql).all(...params) as FTSRow[];
+    params.push(limit, offset)
+    const rows = this.db.prepare(searchSql).all(...params) as FTSRow[]
 
     // Build results with highlights
-    const items = rows.map(row => this.buildSearchResult(row, query));
+    const items = rows.map((row) => this.buildSearchResult(row, query))
 
     const result: PaginatedResults<SearchResult> = {
       items,
       total,
       limit,
       offset,
-      hasMore: offset + items.length < total
-    };
+      hasMore: offset + items.length < total,
+    }
 
-    // Cache the results
-    this.cache.set(cacheKey, result, this.cacheTtl);
+    // Cache the results (prefer CacheService if available)
+    this.setCached(cacheKey, result, CacheType.SEARCH_RESULTS)
 
-    return result;
+    return result
   }
 
   /**
    * Search with phrase query support
    */
-  searchPhrase(phrase: string, options?: Omit<SearchOptions, 'query'>): PaginatedResults<SearchResult> {
+  searchPhrase(
+    phrase: string,
+    options?: Omit<SearchOptions, 'query'>
+  ): PaginatedResults<SearchResult> {
     // Wrap in quotes for exact phrase matching
-    const query = `"${phrase.replace(/"/g, '""')}"`;
-    return this.search({ ...options, query });
+    const query = `"${phrase.replace(/"/g, '""')}"`
+    return this.search({ ...options, query })
   }
 
   /**
@@ -146,22 +157,22 @@ export class SearchService {
     terms: { must?: string[]; should?: string[]; not?: string[] },
     options?: Omit<SearchOptions, 'query'>
   ): PaginatedResults<SearchResult> {
-    const parts: string[] = [];
+    const parts: string[] = []
 
     if (terms.must?.length) {
-      parts.push(terms.must.map(t => this.escapeFtsToken(t)).join(' AND '));
+      parts.push(terms.must.map((t) => this.escapeFtsToken(t)).join(' AND '))
     }
 
     if (terms.should?.length) {
-      parts.push(`(${terms.should.map(t => this.escapeFtsToken(t)).join(' OR ')})`);
+      parts.push(`(${terms.should.map((t) => this.escapeFtsToken(t)).join(' OR ')})`)
     }
 
     if (terms.not?.length) {
-      parts.push(terms.not.map(t => `NOT ${this.escapeFtsToken(t)}`).join(' AND '));
+      parts.push(terms.not.map((t) => `NOT ${this.escapeFtsToken(t)}`).join(' AND '))
     }
 
-    const query = parts.join(' AND ');
-    return this.search({ ...options, query });
+    const query = parts.join(' AND ')
+    return this.search({ ...options, query })
   }
 
   /**
@@ -174,23 +185,25 @@ export class SearchService {
       WHERE name LIKE ? || '%'
       ORDER BY quality_score DESC NULLS LAST
       LIMIT ?
-    `;
+    `
 
-    const rows = this.db.prepare(sql).all(prefix, limit) as { name: string }[];
-    return rows.map(row => row.name);
+    const rows = this.db.prepare(sql).all(prefix, limit) as { name: string }[]
+    return rows.map((row) => row.name)
   }
 
   /**
    * Find similar skills based on a skill's content
    */
   findSimilar(skillId: string, limit: number = 5): SearchResult[] {
-    const skill = this.db.prepare('SELECT * FROM skills WHERE id = ?').get(skillId) as FTSRow | undefined;
-    if (!skill) return [];
+    const skill = this.db.prepare('SELECT * FROM skills WHERE id = ?').get(skillId) as
+      | FTSRow
+      | undefined
+    if (!skill) return []
 
     // Build a query from the skill's name and tags
-    const tags = JSON.parse(skill.tags || '[]') as string[];
-    const queryParts = [skill.name, ...tags].filter(Boolean);
-    const query = queryParts.map(p => this.escapeFtsToken(p)).join(' OR ');
+    const tags = JSON.parse(skill.tags || '[]') as string[]
+    const queryParts = [skill.name, ...tags].filter(Boolean)
+    const query = queryParts.map((p) => this.escapeFtsToken(p)).join(' OR ')
 
     const sql = `
       SELECT
@@ -202,10 +215,10 @@ export class SearchService {
         AND s.id != ?
       ORDER BY rank
       LIMIT ?
-    `;
+    `
 
-    const rows = this.db.prepare(sql).all(query, skillId, limit) as FTSRow[];
-    return rows.map(row => this.buildSearchResult(row, skill.name));
+    const rows = this.db.prepare(sql).all(query, skillId, limit) as FTSRow[]
+    return rows.map((row) => this.buildSearchResult(row, skill.name))
   }
 
   /**
@@ -215,27 +228,38 @@ export class SearchService {
     let sql = `
       SELECT * FROM skills
       WHERE quality_score IS NOT NULL
-    `;
+    `
 
-    const params: (string | number)[] = [];
+    const params: (string | number)[] = []
 
     if (trustTier) {
-      sql += ' AND trust_tier = ?';
-      params.push(trustTier);
+      sql += ' AND trust_tier = ?'
+      params.push(trustTier)
     }
 
-    sql += ' ORDER BY quality_score DESC LIMIT ?';
-    params.push(limit);
+    sql += ' ORDER BY quality_score DESC LIMIT ?'
+    params.push(limit)
 
-    const rows = this.db.prepare(sql).all(...params) as FTSRow[];
-    return rows.map(row => this.rowToSkill(row));
+    const rows = this.db.prepare(sql).all(...params) as FTSRow[]
+    return rows.map((row) => this.rowToSkill(row))
   }
 
   /**
    * Clear the search cache
    */
   clearCache(): number {
-    return this.cache.clear();
+    if (this.cacheService) {
+      this.cacheService.invalidateByType(CacheType.SEARCH_RESULTS)
+      return 0 // CacheService doesn't return count
+    }
+    return this.legacyCache.clear()
+  }
+
+  /**
+   * Get the CacheService instance (if configured)
+   */
+  getCacheService(): CacheService | null {
+    return this.cacheService
   }
 
   /**
@@ -243,13 +267,18 @@ export class SearchService {
    */
   private buildFtsQuery(query: string): string {
     // Handle special FTS5 syntax
-    if (query.includes('"') || query.includes('AND') || query.includes('OR') || query.includes('NOT')) {
-      return query;
+    if (
+      query.includes('"') ||
+      query.includes('AND') ||
+      query.includes('OR') ||
+      query.includes('NOT')
+    ) {
+      return query
     }
 
     // Split into tokens and escape each
-    const tokens = query.trim().split(/\s+/).filter(Boolean);
-    return tokens.map(t => this.escapeFtsToken(t) + '*').join(' ');
+    const tokens = query.trim().split(/\s+/).filter(Boolean)
+    return tokens.map((t) => this.escapeFtsToken(t) + '*').join(' ')
   }
 
   /**
@@ -257,71 +286,74 @@ export class SearchService {
    */
   private escapeFtsToken(token: string): string {
     // Escape special characters
-    return token.replace(/["-]/g, match => `"${match}"`);
+    return token.replace(/["-]/g, (match) => `"${match}"`)
   }
 
   /**
    * Build cache key from search options
    */
   private buildCacheKey(options: SearchOptions): string {
-    return `search:${JSON.stringify(options)}`;
+    return `search:${JSON.stringify(options)}`
   }
 
   /**
    * Build a search result with highlights
    */
   private buildSearchResult(row: FTSRow, query: string): SearchResult {
-    const skill = this.rowToSkill(row);
-    const highlights = this.buildHighlights(skill, query);
+    const skill = this.rowToSkill(row)
+    const highlights = this.buildHighlights(skill, query)
 
     return {
       skill,
       rank: Math.abs(row.rank), // BM25 returns negative values
-      highlights
-    };
+      highlights,
+    }
   }
 
   /**
    * Build highlighted snippets for matched terms
    */
   private buildHighlights(skill: Skill, query: string): SearchResult['highlights'] {
-    const highlights: SearchResult['highlights'] = {};
+    const highlights: SearchResult['highlights'] = {}
 
     // Extract query terms (ignoring operators)
     const terms = query
       .replace(/["()]/g, '')
       .split(/\s+/)
-      .filter(t => !['AND', 'OR', 'NOT'].includes(t.toUpperCase()))
-      .map(t => t.replace(/\*$/, '').toLowerCase());
+      .filter((t) => !['AND', 'OR', 'NOT'].includes(t.toUpperCase()))
+      .map((t) => t.replace(/\*$/, '').toLowerCase())
 
     // Build regex for matching
-    if (terms.length === 0) return highlights;
+    if (terms.length === 0) return highlights
 
-    const regex = new RegExp(`(${terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
+    const regex = new RegExp(
+      `(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
+      'gi'
+    )
 
     // Highlight in name
     if (skill.name && regex.test(skill.name)) {
-      highlights.name = skill.name.replace(regex, '<mark>$1</mark>');
+      highlights.name = skill.name.replace(regex, '<mark>$1</mark>')
     }
 
     // Highlight in description
     if (skill.description && regex.test(skill.description)) {
       // Find the first match and extract surrounding context
-      const match = skill.description.match(regex);
+      const match = skill.description.match(regex)
       if (match) {
-        const index = skill.description.toLowerCase().indexOf(match[0].toLowerCase());
-        const start = Math.max(0, index - 50);
-        const end = Math.min(skill.description.length, index + match[0].length + 50);
+        const index = skill.description.toLowerCase().indexOf(match[0].toLowerCase())
+        const start = Math.max(0, index - 50)
+        const end = Math.min(skill.description.length, index + match[0].length + 50)
 
-        let snippet = skill.description.slice(start, end);
-        if (start > 0) snippet = '...' + snippet;
-        if (end < skill.description.length) snippet = snippet + '...';
+        let snippet = skill.description.slice(start, end)
+        if (start > 0) snippet = '...' + snippet
+        if (end < skill.description.length) snippet = snippet + '...'
 
-        highlights.description = snippet.replace(regex, '<mark>$1</mark>');
+        highlights.description = snippet.replace(regex, '<mark>$1</mark>')
       }
     }
 
-    return highlights;
+    return highlights
   }
 
   /**
@@ -338,7 +370,28 @@ export class SearchService {
       trustTier: row.trust_tier as TrustTier,
       tags: JSON.parse(row.tags || '[]'),
       createdAt: row.created_at,
-      updatedAt: row.updated_at
-    };
+      updatedAt: row.updated_at,
+    }
+  }
+
+  /**
+   * Get from cache (prefers CacheService if available)
+   */
+  private getCached<T>(key: string, cacheType: CacheType): T | null {
+    if (this.cacheService) {
+      return this.cacheService.get<T>(key, cacheType) ?? null
+    }
+    return this.legacyCache.get<T>(key)
+  }
+
+  /**
+   * Set in cache (prefers CacheService if available)
+   */
+  private setCached<T>(key: string, value: T, cacheType: CacheType): void {
+    if (this.cacheService) {
+      this.cacheService.set(key, value, cacheType)
+    } else {
+      this.legacyCache.set(key, value, this.cacheTtl)
+    }
   }
 }
