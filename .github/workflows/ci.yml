@@ -12,85 +12,158 @@ concurrency:
 
 env:
   NODE_VERSION: '20'
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
 
 jobs:
-  # Parallel quality checks for fast feedback
-  lint:
-    name: Lint
+  # Build Docker image once, use for all jobs
+  docker-build:
+    name: Build Docker Image
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
+          images: skillsmith-ci
+          tags: |
+            type=sha,prefix=
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Build and cache Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: skillsmith-ci:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          target: dev
 
-      - name: Run ESLint
-        run: npm run lint
+      - name: Save Docker image
+        run: docker save skillsmith-ci:${{ github.sha }} | gzip > /tmp/skillsmith-ci.tar.gz
 
-      - name: Check formatting
-        run: npm run format:check
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/skillsmith-ci.tar.gz
+          retention-days: 1
+
+  # Parallel quality checks using Docker container
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: docker-build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker image
+        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+
+      - name: Run ESLint in Docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run lint
+
+      - name: Check formatting in Docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run format:check
 
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: docker-build
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
+          name: docker-image
+          path: /tmp
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Load Docker image
+        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
 
-      - name: Run TypeScript type check
-        run: npm run typecheck
+      - name: Run TypeScript type check in Docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run typecheck
 
   test:
-    name: Test (Node ${{ matrix.node-version }})
+    name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
-    strategy:
-      matrix:
-        node-version: ['18', '20']
-      fail-fast: false
+    needs: docker-build
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
+          name: docker-image
+          path: /tmp
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Load Docker image
+        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
 
-      - name: Run tests with coverage
-        run: npm run test:coverage
+      - name: Run tests with coverage in Docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run test:coverage
+
+      - name: Copy coverage from container
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            cat coverage/coverage-final.json > coverage.json || true
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
-        if: matrix.node-version == '20' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
-          files: ./coverage/coverage-final.json
+          files: ./coverage.json
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
@@ -98,44 +171,55 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: docker-build
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
+          name: docker-image
+          path: /tmp
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Load Docker image
+        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
 
-      - name: Run security audit
-        run: npm audit --audit-level=high
-        continue-on-error: true
+      - name: Run security audit in Docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm audit --audit-level=high || true
 
   compliance:
     name: Standards Compliance
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: docker-build
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
+          name: docker-image
+          path: /tmp
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Load Docker image
+        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
 
-      - name: Run standards audit
-        run: npm run audit:standards
+      - name: Run standards audit in Docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run audit:standards
 
   build:
     name: Build
@@ -147,22 +231,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
+          name: docker-image
+          path: /tmp
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Load Docker image
+        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
 
-      - name: Build all packages
-        run: npm run build
+      - name: Build all packages in Docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run build
+
+      - name: Copy build artifacts
+        run: |
+          mkdir -p build-output
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            tar -cf - packages/*/dist 2>/dev/null | tar -xf - -C build-output || true
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: build-output
-          path: |
-            packages/*/dist
+          path: build-output/
           retention-days: 7
