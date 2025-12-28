@@ -31,7 +31,7 @@ Create these files IN ORDER:
 ## CRITICAL: After EACH file
 
 ```bash
-npm run typecheck
+docker exec skillsmith-dev-1 npm run typecheck
 npx claude-flow@alpha hooks post-edit --file "<filename>" --memory-key "smi629/files"
 echo "$(date): Completed <filename>" >> /tmp/smi629-progress.log
 ```

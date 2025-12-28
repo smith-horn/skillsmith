@@ -1,8 +1,8 @@
 Implement SMI-630: Cache Invalidation Strategy
 
 ## Context
-Working in: /Users/williamsmith/Documents/GitHub/Claude-Skill-Discovery/worktrees/phase-2b
-Branch: phase-2b
+Working in: /Users/williamsmith/Documents/GitHub/Claude-Skill-Discovery/worktrees/phase-2b-parallel
+Branch: phase-2b-parallel
 
 Prerequisites COMPLETE:
 - SMI-628: GitHubIndexer
@@ -38,7 +38,7 @@ Create these files IN ORDER:
 ## CRITICAL: After EACH file
 
 ```bash
-npm run typecheck
+docker exec skillsmith-dev-1 npm run typecheck
 npx claude-flow@alpha hooks post-edit --file "<filename>" --memory-key "smi630/files"
 echo "$(date): Completed <filename>" >> /tmp/smi630-progress.log
 ```

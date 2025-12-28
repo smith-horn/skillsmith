@@ -34,7 +34,7 @@ Create these files IN ORDER, one at a time:
 
 1. Run typecheck immediately:
    ```bash
-   npm run typecheck
+   docker exec skillsmith-dev-1 npm run typecheck
    ```
 
 2. If errors, fix before proceeding to next file
