@@ -1,18 +1,38 @@
 /**
- * SMI-628: Indexer module exports
+ * Indexer module - GitHub and Swarm repository indexing
  *
- * Provides skill discovery and indexing capabilities:
- * - SkillParser: Parse SKILL.md files with YAML frontmatter
- * - GitHubIndexer: Discover and index skills from GitHub repositories
+ * SMI-628: GitHubIndexer - Single-threaded GitHub indexing
+ * SMI-643: SwarmIndexer - Parallel swarm coordination
  */
 
-export { SkillParser } from './SkillParser.js'
-export type {
-  SkillFrontmatter,
-  ParsedSkillMetadata,
-  ValidationResult,
-  SkillParserOptions,
-} from './SkillParser.js'
+// GitHubIndexer (SMI-628)
+export {
+  GitHubIndexer,
+  type GitHubRepository,
+  type GitHubIndexerOptions,
+  type IndexResult,
+} from './GitHubIndexer.js'
 
-export { GitHubIndexer } from './GitHubIndexer.js'
-export type { GitHubIndexerOptions, SkillMetadata, IndexResult } from './GitHubIndexer.js'
+// PartitionStrategy (SMI-643)
+export {
+  PartitionStrategy,
+  createDefaultStrategy,
+  createCustomStrategy,
+  DEFAULT_PARTITION_RANGES,
+  type Partition,
+  type PartitionOptions,
+  type PartitionStats,
+} from './PartitionStrategy.js'
+
+// SwarmIndexer (SMI-643)
+export {
+  SwarmIndexer,
+  createSwarmIndexer,
+  createClaudeFlowSwarmIndexer,
+  type SwarmIndexerOptions,
+  type SwarmIndexResult,
+  type SwarmProgress,
+  type WorkerState,
+  type WorkerStatus,
+  type RateLimitInfo,
+} from './SwarmIndexer.js'
