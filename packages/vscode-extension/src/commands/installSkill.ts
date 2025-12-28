@@ -2,10 +2,12 @@
  * Install skill command implementation
  */
 import * as vscode from 'vscode'
-import * as fs from 'fs'
+import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
-import { SkillSearchProvider, SearchResultItem } from '../providers/SkillSearchProvider.js'
+import { SkillSearchProvider } from '../providers/SkillSearchProvider.js'
+import { isValidSkillId } from '../utils/security.js'
+import { type SkillData } from '../data/mockSkills.js'
 
 export function registerInstallCommand(
   context: vscode.ExtensionContext,
@@ -13,10 +15,10 @@ export function registerInstallCommand(
 ): void {
   const installCommand = vscode.commands.registerCommand(
     'skillsmith.installSkill',
-    async (item?: SearchResultItem) => {
+    async (item?: SkillData) => {
       // If called from context menu, item is provided
       // If called from command palette, show quick pick
-      let skill: SearchResultItem | undefined = item
+      let skill: SkillData | undefined = item
 
       if (!skill) {
         const results = searchProvider.getResults()
@@ -50,6 +52,14 @@ export function registerInstallCommand(
         }
 
         skill = selected.skill
+      }
+
+      // Validate skill ID to prevent path traversal
+      if (!isValidSkillId(skill.id)) {
+        vscode.window.showErrorMessage(
+          `Invalid skill ID "${skill.id}". Skill IDs must contain only letters, numbers, hyphens, and underscores.`
+        )
+        return
       }
 
       // Confirm installation
@@ -116,20 +126,33 @@ function getSkillsDirectory(): string {
 }
 
 function getSkillPath(skillId: string): string {
-  return path.join(getSkillsDirectory(), skillId)
+  // Additional safety: use path.basename to strip any directory components
+  const safeId = path.basename(skillId)
+  const skillPath = path.join(getSkillsDirectory(), safeId)
+
+  // Verify the resolved path is still within the skills directory
+  const skillsDir = getSkillsDirectory()
+  const resolvedPath = path.resolve(skillPath)
+  const resolvedSkillsDir = path.resolve(skillsDir)
+
+  if (!resolvedPath.startsWith(resolvedSkillsDir + path.sep)) {
+    throw new Error('Invalid skill path: path traversal detected')
+  }
+
+  return skillPath
 }
 
-async function installSkill(skill: SearchResultItem): Promise<void> {
+async function installSkill(skill: SkillData): Promise<void> {
   const skillsDir = getSkillsDirectory()
   const skillPath = getSkillPath(skill.id)
 
   // Ensure skills directory exists
-  if (!fs.existsSync(skillsDir)) {
-    fs.mkdirSync(skillsDir, { recursive: true })
-  }
+  await fs.mkdir(skillsDir, { recursive: true })
 
   // Check if skill already exists
-  if (fs.existsSync(skillPath)) {
+  try {
+    await fs.access(skillPath)
+    // Skill exists, ask to overwrite
     const overwrite = await vscode.window.showWarningMessage(
       `Skill "${skill.name}" is already installed. Overwrite?`,
       { modal: true },
@@ -139,28 +162,37 @@ async function installSkill(skill: SearchResultItem): Promise<void> {
       throw new Error('Installation cancelled')
     }
     // Remove existing skill
-    fs.rmSync(skillPath, { recursive: true })
+    await fs.rm(skillPath, { recursive: true })
+  } catch (error) {
+    // Skill doesn't exist or user cancelled
+    const err = error as NodeJS.ErrnoException
+    if (err.code !== 'ENOENT' && err.message !== 'Installation cancelled') {
+      throw error
+    }
+    if (err.message === 'Installation cancelled') {
+      throw error
+    }
   }
 
   // Create skill directory
-  fs.mkdirSync(skillPath, { recursive: true })
+  await fs.mkdir(skillPath, { recursive: true })
 
   // Create SKILL.md with basic template
   const skillMd = generateSkillMd(skill)
-  fs.writeFileSync(path.join(skillPath, 'SKILL.md'), skillMd)
+  await fs.writeFile(path.join(skillPath, 'SKILL.md'), skillMd)
 
   // Create skills subdirectory structure
   const skillsSubdir = path.join(skillPath, 'skills', skill.id)
-  fs.mkdirSync(skillsSubdir, { recursive: true })
+  await fs.mkdir(skillsSubdir, { recursive: true })
 
   // Create a copy of SKILL.md in the nested structure
-  fs.writeFileSync(path.join(skillsSubdir, 'SKILL.md'), skillMd)
+  await fs.writeFile(path.join(skillsSubdir, 'SKILL.md'), skillMd)
 
   // Simulate download delay for MVP
-  await new Promise((resolve) => setTimeout(resolve, 1000))
+  await new Promise((resolve) => setTimeout(resolve, 500))
 }
 
-function generateSkillMd(skill: SearchResultItem): string {
+function generateSkillMd(skill: SkillData): string {
   const trustBadge = getTrustBadge(skill.trustTier)
 
   return `# ${skill.name}
@@ -208,15 +240,3 @@ function getTrustBadge(tier: string): string {
       return '![Unverified](https://img.shields.io/badge/Trust-Unverified-gray)'
   }
 }
-
-// TODO: Implement actual download from repository
-// async function downloadSkillFromRepo(skill: SearchResultItem): Promise<void> {
-//   if (!skill.repository) {
-//     throw new Error('No repository URL available');
-//   }
-//
-//   // Clone or download from repository
-//   const terminal = vscode.window.createTerminal('Skillsmith Install');
-//   terminal.sendText(`git clone ${skill.repository} ${getSkillPath(skill.id)}`);
-//   terminal.show();
-// }

@@ -2,28 +2,16 @@
  * Tree data provider for displaying search results
  */
 import * as vscode from 'vscode'
+import { type SkillData } from '../data/mockSkills.js'
 
-export interface SearchResultItem {
-  id: string
-  name: string
-  description: string
-  author: string
-  category: string
-  trustTier: string
-  score: number
-  repository?: string
-}
-
-export class SkillSearchProvider implements vscode.TreeDataProvider<SearchResultItem> {
-  private _onDidChangeTreeData = new vscode.EventEmitter<
-    SearchResultItem | undefined | null | void
-  >()
+export class SkillSearchProvider implements vscode.TreeDataProvider<SkillData> {
+  private _onDidChangeTreeData = new vscode.EventEmitter<SkillData | undefined | null | void>()
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event
 
-  private searchResults: SearchResultItem[] = []
+  private searchResults: SkillData[] = []
   private lastQuery: string = ''
 
-  setResults(results: SearchResultItem[], query: string): void {
+  setResults(results: SkillData[], query: string): void {
     this.searchResults = results
     this.lastQuery = query
     this._onDidChangeTreeData.fire()
@@ -35,7 +23,7 @@ export class SkillSearchProvider implements vscode.TreeDataProvider<SearchResult
     this._onDidChangeTreeData.fire()
   }
 
-  getResults(): SearchResultItem[] {
+  getResults(): SkillData[] {
     return this.searchResults
   }
 
@@ -43,7 +31,7 @@ export class SkillSearchProvider implements vscode.TreeDataProvider<SearchResult
     return this.lastQuery
   }
 
-  getTreeItem(element: SearchResultItem): vscode.TreeItem {
+  getTreeItem(element: SkillData): vscode.TreeItem {
     const treeItem = new vscode.TreeItem(element.name, vscode.TreeItemCollapsibleState.None)
 
     treeItem.id = element.id
@@ -60,14 +48,14 @@ export class SkillSearchProvider implements vscode.TreeDataProvider<SearchResult
     return treeItem
   }
 
-  getChildren(element?: SearchResultItem): SearchResultItem[] {
+  getChildren(element?: SkillData): SkillData[] {
     if (element) {
       return [] // No nested items
     }
     return this.searchResults
   }
 
-  private createTooltip(item: SearchResultItem): vscode.MarkdownString {
+  private createTooltip(item: SkillData): vscode.MarkdownString {
     const md = new vscode.MarkdownString()
     md.appendMarkdown(`## ${item.name}\n\n`)
     md.appendMarkdown(`${item.description}\n\n`)

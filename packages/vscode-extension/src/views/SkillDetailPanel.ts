@@ -2,13 +2,15 @@
  * Webview panel for displaying skill details
  */
 import * as vscode from 'vscode'
+import { escapeHtml } from '../utils/security.js'
+import { getSkillById } from '../data/mockSkills.js'
 
 export class SkillDetailPanel {
   public static currentPanel: SkillDetailPanel | undefined
   public static readonly viewType = 'skillsmith.skillDetail'
 
   private readonly _panel: vscode.WebviewPanel
-  private readonly _extensionUri: vscode.Uri // Reserved for resource loading
+  private readonly _extensionUri: vscode.Uri
   private _skillId: string
   private _disposables: vscode.Disposable[] = []
 
@@ -48,9 +50,6 @@ export class SkillDetailPanel {
     this._extensionUri = extensionUri
     this._skillId = skillId
 
-    // Acknowledge extensionUri for future resource loading
-    void this._extensionUri
-
     // Set the webview's initial html content
     this._update()
 
@@ -65,7 +64,7 @@ export class SkillDetailPanel {
             vscode.commands.executeCommand('skillsmith.installSkill')
             return
           case 'openRepository':
-            if (message.url) {
+            if (message.url && this._isValidUrl(message.url)) {
               vscode.env.openExternal(vscode.Uri.parse(message.url))
             }
             return
@@ -91,14 +90,57 @@ export class SkillDetailPanel {
   }
 
   private _update() {
-    const webview = this._panel.webview
     this._panel.title = `Skill: ${this._skillId}`
-    this._panel.webview.html = this._getHtmlForWebview(webview)
+    this._panel.webview.html = this._getHtmlForWebview()
   }
 
-  private _getHtmlForWebview(_webview: vscode.Webview): string {
-    // Get mock skill data (replace with actual API call)
-    const skill = this._getMockSkillData(this._skillId)
+  /**
+   * Validates that a URL is a safe HTTP/HTTPS URL
+   */
+  private _isValidUrl(url: string): boolean {
+    try {
+      const parsed = new URL(url)
+      return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Gets a nonce for Content Security Policy
+   */
+  private _getNonce(): string {
+    let text = ''
+    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+    for (let i = 0; i < 32; i++) {
+      text += possible.charAt(Math.floor(Math.random() * possible.length))
+    }
+    return text
+  }
+
+  /**
+   * Gets the resource URI for webview content
+   */
+  private _getResourceUri(resourcePath: string): vscode.Uri {
+    return this._panel.webview.asWebviewUri(
+      vscode.Uri.joinPath(this._extensionUri, 'resources', resourcePath)
+    )
+  }
+
+  private _getHtmlForWebview(): string {
+    const skill = getSkillById(this._skillId)
+    const nonce = this._getNonce()
+
+    // Ensure extensionUri is used (for future resource loading)
+    void this._getResourceUri
+
+    // Escape all user-controlled content to prevent XSS
+    const safeName = escapeHtml(skill.name)
+    const safeDescription = escapeHtml(skill.description)
+    const safeAuthor = escapeHtml(skill.author)
+    const safeCategory = escapeHtml(skill.category)
+    const safeTrustTier = escapeHtml(skill.trustTier)
+    const safeRepository = skill.repository ? escapeHtml(skill.repository) : ''
 
     const trustBadgeColor = this._getTrustBadgeColor(skill.trustTier)
     const trustBadgeText = this._getTrustBadgeText(skill.trustTier)
@@ -108,6 +150,7 @@ export class SkillDetailPanel {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
     <title>Skill Details</title>
     <style>
         body {
@@ -137,30 +180,16 @@ export class SkillDetailPanel {
             font-weight: 500;
             text-transform: uppercase;
         }
-        .badge-verified {
-            background-color: #28a745;
-            color: white;
-        }
-        .badge-community {
-            background-color: #ffc107;
-            color: black;
-        }
-        .badge-standard {
-            background-color: #007bff;
-            color: white;
-        }
-        .badge-unverified {
-            background-color: #6c757d;
-            color: white;
-        }
+        .badge-verified { background-color: #28a745; color: white; }
+        .badge-community { background-color: #ffc107; color: black; }
+        .badge-standard { background-color: #007bff; color: white; }
+        .badge-unverified { background-color: #6c757d; color: white; }
         .description {
             font-size: 16px;
             margin-bottom: 24px;
             color: var(--vscode-descriptionForeground);
         }
-        .section {
-            margin-bottom: 24px;
-        }
+        .section { margin-bottom: 24px; }
         .section h2 {
             font-size: 16px;
             margin-bottom: 12px;
@@ -182,10 +211,7 @@ export class SkillDetailPanel {
             text-transform: uppercase;
             margin-bottom: 4px;
         }
-        .meta-value {
-            font-size: 14px;
-            font-weight: 500;
-        }
+        .meta-value { font-size: 14px; font-weight: 500; }
         .score-bar {
             height: 8px;
             background-color: var(--vscode-progressBar-background);
@@ -198,11 +224,7 @@ export class SkillDetailPanel {
             background-color: var(--vscode-progressBar-foreground);
             border-radius: 4px;
         }
-        .actions {
-            display: flex;
-            gap: 12px;
-            margin-top: 24px;
-        }
+        .actions { display: flex; gap: 12px; margin-top: 24px; }
         button {
             padding: 10px 20px;
             border: none;
@@ -215,54 +237,49 @@ export class SkillDetailPanel {
             background-color: var(--vscode-button-background);
             color: var(--vscode-button-foreground);
         }
-        .btn-primary:hover {
-            background-color: var(--vscode-button-hoverBackground);
-        }
+        .btn-primary:hover { background-color: var(--vscode-button-hoverBackground); }
         .btn-secondary {
             background-color: var(--vscode-button-secondaryBackground);
             color: var(--vscode-button-secondaryForeground);
         }
-        .btn-secondary:hover {
-            background-color: var(--vscode-button-secondaryHoverBackground);
-        }
+        .btn-secondary:hover { background-color: var(--vscode-button-secondaryHoverBackground); }
         .repository-link {
             color: var(--vscode-textLink-foreground);
             text-decoration: none;
+            cursor: pointer;
         }
-        .repository-link:hover {
-            text-decoration: underline;
-        }
+        .repository-link:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>${skill.name}</h1>
+        <h1>${safeName}</h1>
         <span class="badge badge-${trustBadgeColor}">${trustBadgeText}</span>
     </div>
 
-    <p class="description">${skill.description}</p>
+    <p class="description">${safeDescription}</p>
 
     <div class="section">
         <h2>Details</h2>
         <div class="meta-grid">
             <div class="meta-item">
                 <div class="meta-label">Author</div>
-                <div class="meta-value">${skill.author}</div>
+                <div class="meta-value">${safeAuthor}</div>
             </div>
             <div class="meta-item">
                 <div class="meta-label">Category</div>
-                <div class="meta-value">${skill.category}</div>
+                <div class="meta-value">${safeCategory}</div>
             </div>
             <div class="meta-item">
                 <div class="meta-label">Score</div>
                 <div class="meta-value">${skill.score}/100</div>
                 <div class="score-bar">
-                    <div class="score-fill" style="width: ${skill.score}%"></div>
+                    <div class="score-fill" style="width: ${Math.min(100, Math.max(0, skill.score))}%"></div>
                 </div>
             </div>
             <div class="meta-item">
                 <div class="meta-label">Trust Tier</div>
-                <div class="meta-value">${skill.trustTier}</div>
+                <div class="meta-value">${safeTrustTier}</div>
             </div>
         </div>
     </div>
@@ -272,91 +289,45 @@ export class SkillDetailPanel {
         ? `
     <div class="section">
         <h2>Repository</h2>
-        <a href="#" class="repository-link" onclick="openRepository('${skill.repository}')">${skill.repository}</a>
+        <span class="repository-link" data-url="${safeRepository}">${safeRepository}</span>
     </div>
     `
         : ''
     }
 
     <div class="actions">
-        <button class="btn-primary" onclick="installSkill()">Install Skill</button>
-        ${skill.repository ? `<button class="btn-secondary" onclick="openRepository('${skill.repository}')">View Repository</button>` : ''}
+        <button class="btn-primary" id="installBtn">Install Skill</button>
+        ${skill.repository ? `<button class="btn-secondary" id="repoBtn" data-url="${safeRepository}">View Repository</button>` : ''}
     </div>
 
-    <script>
+    <script nonce="${nonce}">
         const vscode = acquireVsCodeApi();
 
-        function installSkill() {
+        document.getElementById('installBtn').addEventListener('click', function() {
             vscode.postMessage({ command: 'install' });
+        });
+
+        const repoBtn = document.getElementById('repoBtn');
+        if (repoBtn) {
+            repoBtn.addEventListener('click', function() {
+                const url = this.getAttribute('data-url');
+                if (url) {
+                    vscode.postMessage({ command: 'openRepository', url: url });
+                }
+            });
         }
 
-        function openRepository(url) {
-            vscode.postMessage({ command: 'openRepository', url });
-        }
+        document.querySelectorAll('.repository-link').forEach(function(link) {
+            link.addEventListener('click', function() {
+                const url = this.getAttribute('data-url');
+                if (url) {
+                    vscode.postMessage({ command: 'openRepository', url: url });
+                }
+            });
+        });
     </script>
 </body>
 </html>`
-  }
-
-  private _getMockSkillData(skillId: string): {
-    id: string
-    name: string
-    description: string
-    author: string
-    category: string
-    trustTier: string
-    score: number
-    repository?: string
-  } {
-    // Mock data - replace with actual API call
-    const skills: Record<
-      string,
-      {
-        id: string
-        name: string
-        description: string
-        author: string
-        category: string
-        trustTier: string
-        score: number
-        repository?: string
-      }
-    > = {
-      governance: {
-        id: 'governance',
-        name: 'Governance',
-        description:
-          'Enforces engineering standards from standards.md. Ensures code quality and best practices across your project.',
-        author: 'skillsmith',
-        category: 'development',
-        trustTier: 'verified',
-        score: 95,
-        repository: 'https://github.com/skillsmith/governance-skill',
-      },
-      'linear-integration': {
-        id: 'linear-integration',
-        name: 'Linear Integration',
-        description:
-          'Manages Linear issues, projects, and workflows. Sync tasks directly from VS Code.',
-        author: 'skillsmith',
-        category: 'productivity',
-        trustTier: 'verified',
-        score: 92,
-        repository: 'https://github.com/skillsmith/linear-skill',
-      },
-    }
-
-    return (
-      skills[skillId] || {
-        id: skillId,
-        name: skillId,
-        description: 'Skill details not available',
-        author: 'Unknown',
-        category: 'other',
-        trustTier: 'unverified',
-        score: 0,
-      }
-    )
   }
 
   private _getTrustBadgeColor(tier: string): string {
