@@ -185,6 +185,108 @@ if (existsSync('.husky/pre-commit')) {
   warn('Pre-commit hook not found', 'Run: npx husky add .husky/pre-commit');
 }
 
+// 8. Docker Configuration
+console.log(`\n${BOLD}8. Docker Configuration${RESET}`);
+
+// Check docker-compose.yml exists
+if (existsSync('docker-compose.yml')) {
+  pass('docker-compose.yml exists');
+
+  try {
+    const dockerCompose = readFileSync('docker-compose.yml', 'utf8');
+
+    // Check for dev profile
+    if (dockerCompose.includes('profiles:') && dockerCompose.includes('- dev')) {
+      pass('Docker dev profile configured');
+    } else {
+      fail('Docker dev profile not found', 'Add "profiles: [dev]" to docker-compose.yml');
+    }
+
+    // Check container name is correct (not phase1)
+    if (dockerCompose.includes('skillsmith-dev-1') && !dockerCompose.includes('phase1-dev')) {
+      pass('Container name is correct (skillsmith-dev-1)');
+    } else if (dockerCompose.includes('phase1-dev')) {
+      fail('Container name still references phase1', 'Update container_name to skillsmith-dev-1');
+    } else {
+      warn('Container name not explicitly set', 'Set container_name: skillsmith-dev-1');
+    }
+
+    // Check volume mounts
+    if (dockerCompose.includes('.:/app')) {
+      pass('Volume mount configured (.:/app)');
+    } else {
+      fail('Volume mount not configured', 'Add ".:/app" to volumes');
+    }
+  } catch (e) {
+    fail(`Error reading docker-compose.yml: ${e.message}`);
+  }
+} else {
+  fail('docker-compose.yml not found', 'Create docker-compose.yml for Docker-first development');
+}
+
+// Check Dockerfile exists
+if (existsSync('Dockerfile')) {
+  pass('Dockerfile exists');
+} else {
+  fail('Dockerfile not found', 'Create Dockerfile for development container');
+}
+
+// Check if Docker container is running
+try {
+  const result = execSync('docker ps --format "{{.Names}}" 2>/dev/null', { encoding: 'utf8' });
+  if (result.includes('skillsmith-dev-1')) {
+    pass('Docker container is running (skillsmith-dev-1)');
+  } else {
+    warn('Docker container not running', 'Run: docker compose --profile dev up -d');
+  }
+} catch (e) {
+  warn('Could not check Docker status', 'Ensure Docker is installed and running');
+}
+
+// 9. Script Docker Compliance
+console.log(`\n${BOLD}9. Script Docker Compliance${RESET}`);
+
+// Check if scripts use local npm commands (anti-pattern)
+const scriptsDir = 'scripts';
+if (existsSync(scriptsDir)) {
+  const scriptFiles = readdirSync(scriptsDir).filter(f => f.endsWith('.sh') || f.endsWith('.md'));
+  let localNpmCount = 0;
+  const violatingFiles = [];
+
+  for (const file of scriptFiles) {
+    const filePath = join(scriptsDir, file);
+    const stat = statSync(filePath);
+    if (!stat.isFile()) continue;
+
+    const content = readFileSync(filePath, 'utf8');
+    // Check for npm commands that should be in Docker
+    // Match: npm run/test/install but NOT docker exec ... npm
+    const lines = content.split('\n');
+    for (const line of lines) {
+      if (line.trim().startsWith('#')) continue;
+      if (line.match(/(?<!docker exec \S+ )npm (run|test|install)\b/) &&
+          !line.includes('docker exec')) {
+        localNpmCount++;
+        if (!violatingFiles.includes(file)) {
+          violatingFiles.push(file);
+        }
+      }
+    }
+  }
+
+  if (localNpmCount === 0) {
+    pass('All scripts use Docker for npm commands');
+  } else {
+    fail(`${violatingFiles.length} scripts use local npm commands`,
+         'Use: docker exec skillsmith-dev-1 npm ...');
+    violatingFiles.slice(0, 3).forEach(f => {
+      console.log(`    scripts/${f}`);
+    });
+  }
+} else {
+  warn('No scripts directory found');
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50));
 console.log(`\n${BOLD}📊 Summary${RESET}\n`);

@@ -57,14 +57,18 @@ Adds project updates to Phase 1 and Phase 2 projects.
 Audits codebase against Skillsmith engineering standards.
 
 ```bash
-npm run audit:standards
-# or directly:
-node scripts/audit-standards.mjs
+# Run inside Docker (required)
+docker exec skillsmith-dev-1 npm run audit:standards
+
+# Or directly:
+docker exec skillsmith-dev-1 node scripts/audit-standards.mjs
 ```
 
 **Checks:**
 - TypeScript strict mode configuration
 - File size limits (500 lines max)
+- Docker configuration (container name, volumes)
+- Script Docker compliance (no local npm commands)
 - Import conventions
 - Naming conventions
 - Test coverage requirements
