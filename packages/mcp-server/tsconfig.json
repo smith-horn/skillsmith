@@ -16,7 +16,7 @@
     "resolveJsonModule": true,
     "composite": true
   },
-  "include": ["src/**/*", "tests/**/*", "vitest.config.ts"],
+  "include": ["src/**/*", "tests/**/*", "tests/e2e/**/*", "vitest.config.ts", "vitest.config.integration.ts"],
   "exclude": ["node_modules", "dist"],
   "references": [
     { "path": "../core" }

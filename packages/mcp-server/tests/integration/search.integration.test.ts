@@ -234,15 +234,13 @@ describe('Search Tool Integration Tests', () => {
       expect(Array.isArray(results.items)).toBe(true);
     });
 
-    it('should handle queries with only whitespace', () => {
-      // This might return all results or empty depending on implementation
-      const results = dbContext.searchService.search({
+    it('should throw error for queries with only whitespace', () => {
+      // FTS5 cannot parse whitespace-only queries
+      expect(() => dbContext.searchService.search({
         query: '   ',
         limit: 10,
         offset: 0,
-      });
-
-      expect(Array.isArray(results.items)).toBe(true);
+      })).toThrow();
     });
   });
 
