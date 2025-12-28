@@ -3,9 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: skillsmith-phase1-dev-1
+    container_name: skillsmith-dev-1
     ports:
-      - "${DEV_PORT:-3002}:3002"
+      - '${DEV_PORT:-3001}:3001'
     volumes:
       - .:/app
       - node_modules:/app/node_modules
@@ -20,7 +20,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: skillsmith-phase1-test-1
+    container_name: skillsmith-test-1
     volumes:
       - .:/app
       - node_modules:/app/node_modules
