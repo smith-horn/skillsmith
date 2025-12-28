@@ -1,9 +1,11 @@
 /**
  * SMI-579: SearchService - FTS5 search with BM25 ranking
+ * SMI-629: Enhanced with multi-factor ranking algorithm
  *
  * Features:
  * - Full-text search using SQLite FTS5
  * - BM25 ranking for relevance scoring
+ * - Multi-factor ranking (popularity, recency, quality, trust)
  * - Phrase queries and boolean operators
  * - Result highlighting for matched terms
  * - Pagination support
@@ -19,6 +21,7 @@ import type {
   TrustTier,
 } from '../types/skill.js'
 import { CacheRepository } from '../repositories/CacheRepository.js'
+import { RankingService, type RankableSkill, type RankingOptions } from '../ranking/index.js'
 
 interface FTSRow {
   id: string
@@ -35,17 +38,30 @@ interface FTSRow {
 }
 
 /**
- * Full-text search service with BM25 ranking
+ * Search service options
+ */
+export interface SearchServiceOptions {
+  cacheTtl?: number
+  enableRanking?: boolean
+  rankingOptions?: RankingOptions
+}
+
+/**
+ * Full-text search service with BM25 and multi-factor ranking
  */
 export class SearchService {
   private db: DatabaseType
   private cache: CacheRepository
   private cacheTtl: number
+  private rankingService: RankingService | null
+  private enableRanking: boolean
 
-  constructor(db: DatabaseType, options?: { cacheTtl?: number }) {
+  constructor(db: DatabaseType, options?: SearchServiceOptions) {
     this.db = db
     this.cache = new CacheRepository(db)
     this.cacheTtl = options?.cacheTtl ?? 300 // 5 minutes default
+    this.enableRanking = options?.enableRanking ?? true
+    this.rankingService = this.enableRanking ? new RankingService(options?.rankingOptions) : null
   }
 
   /**
@@ -120,7 +136,18 @@ export class SearchService {
     const rows = this.db.prepare(searchSql).all(...params) as FTSRow[]
 
     // Build results with highlights
-    const items = rows.map((row) => this.buildSearchResult(row, query))
+    let items = rows.map((row) => this.buildSearchResult(row, query))
+
+    // Apply multi-factor ranking if enabled (SMI-629)
+    if (this.rankingService && items.length > 0) {
+      const ranked = this.rankingService.rank(items)
+      const boosted = this.rankingService.applyBoost(ranked, query)
+      items = boosted.map((r) => ({
+        skill: r.skill,
+        rank: r.score,
+        highlights: r.highlights,
+      }))
+    }
 
     const result: PaginatedResults<SearchResult> = {
       items,
@@ -134,6 +161,13 @@ export class SearchService {
     this.cache.set(cacheKey, result, this.cacheTtl)
 
     return result
+  }
+
+  /**
+   * Get the ranking service for advanced operations
+   */
+  getRankingService(): RankingService | null {
+    return this.rankingService
   }
 
   /**
