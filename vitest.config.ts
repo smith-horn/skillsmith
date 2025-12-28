@@ -10,7 +10,12 @@ export default defineConfig({
       'packages/*/tests/**/*.test.ts',
       'packages/*/tests/**/*.spec.ts',
     ],
-    exclude: ['**/node_modules/**', '**/dist/**'],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      // E2E tests are run separately with longer timeout
+      '**/tests/e2e/**',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
@@ -21,6 +26,7 @@ export default defineConfig({
         '**/*.spec.ts',
         '**/vitest.config.ts',
         '**/eslint.config.js',
+        '**/tests/e2e/**',
       ],
       thresholds: {
         lines: 80,
