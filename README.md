@@ -85,20 +85,112 @@ Detailed documentation is available in the `/docs` folder:
 
 ## Development
 
-**Docker-first development** - All commands run inside Docker for consistent native module support.
+Skillsmith uses **Docker-first development**. All commands run inside Docker to ensure consistent native module support across all platforms.
+
+### Prerequisites
+
+- **Docker Desktop** (v24+) or Docker Engine with Docker Compose
+- **Git** (for cloning the repository)
+- **Node.js** (optional, only for local tooling outside Docker)
+
+### Quick Start
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/your-org/skillsmith.git
+cd skillsmith
+
+# 2. Start the development container
+docker compose --profile dev up -d
+
+# 3. Install dependencies (first time only)
+docker exec skillsmith-dev-1 npm install
+
+# 4. Build and test
+docker exec skillsmith-dev-1 npm run build
+docker exec skillsmith-dev-1 npm test
+```
+
+### Running Commands in Docker
+
+All npm commands should be run inside the Docker container:
+
+| Command | Docker Command |
+|---------|----------------|
+| Build | `docker exec skillsmith-dev-1 npm run build` |
+| Test | `docker exec skillsmith-dev-1 npm test` |
+| Lint | `docker exec skillsmith-dev-1 npm run lint` |
+| Typecheck | `docker exec skillsmith-dev-1 npm run typecheck` |
+| Audit | `docker exec skillsmith-dev-1 npm run audit:standards` |
+
+### Container Management
 
 ```bash
 # Start development container
 docker compose --profile dev up -d
 
-# Run commands inside Docker
-docker exec skillsmith-dev-1 npm run build
-docker exec skillsmith-dev-1 npm test
-docker exec skillsmith-dev-1 npm run lint
-docker exec skillsmith-dev-1 npm run typecheck
+# Check container status
+docker ps | grep skillsmith
+
+# View container logs
+docker logs skillsmith-dev-1
+
+# Stop container
+docker compose --profile dev down
+
+# Restart after Dockerfile changes
+docker compose --profile dev down
+docker compose --profile dev build --no-cache
+docker compose --profile dev up -d
 ```
 
-See [CLAUDE.md](CLAUDE.md) for full development workflow.
+### After Pulling Changes
+
+When you pull changes that modify `package.json` or `package-lock.json`:
+
+```bash
+docker exec skillsmith-dev-1 npm install
+docker exec skillsmith-dev-1 npm run build
+```
+
+### Troubleshooting
+
+#### Container won't start
+
+```bash
+docker compose --profile dev down
+docker volume rm skillsmith_node_modules
+docker compose --profile dev up -d
+docker exec skillsmith-dev-1 npm install
+```
+
+#### Native module errors (`ERR_DLOPEN_FAILED`)
+
+Native modules like `better-sqlite3` and `onnxruntime-node` may need rebuilding:
+
+```bash
+docker exec skillsmith-dev-1 npm rebuild
+```
+
+#### Tests fail with shared library errors
+
+If you see errors about `ld-linux-aarch64.so.1` or similar, ensure you're running inside Docker (not locally):
+
+```bash
+# Wrong - don't run locally
+npm test
+
+# Correct - run in Docker
+docker exec skillsmith-dev-1 npm test
+```
+
+### Why Docker?
+
+Skillsmith uses native Node.js modules (`better-sqlite3`, `onnxruntime-node`) that require **glibc**. Docker provides a consistent Debian-based environment with glibc, avoiding compatibility issues on systems using musl libc (like Alpine Linux).
+
+For the full technical decision, see [ADR-002: Docker with glibc for Native Module Compatibility](/docs/adr/002-docker-glibc-requirement.md).
+
+See [CLAUDE.md](CLAUDE.md) for full development workflow and skill configuration.
 
 ## Tech Stack
 
