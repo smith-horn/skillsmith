@@ -154,9 +154,49 @@ docker compose --profile dev up -d
 docker exec skillsmith-dev-1 npm run build
 docker exec skillsmith-dev-1 npm test
 docker exec skillsmith-dev-1 npm run lint
+docker exec skillsmith-dev-1 npm run typecheck
 ```
 
 > **See**: [ADR-002](../adr/002-docker-glibc-requirement.md) for rationale
+
+#### Docker Configuration Requirements
+
+| Requirement | Check | Fix |
+|-------------|-------|-----|
+| docker-compose.yml exists | `ls docker-compose.yml` | Create from template |
+| Container name is `skillsmith-dev-1` | Check docker-compose.yml | Update `container_name` |
+| Dev profile configured | Look for `profiles: [dev]` | Add to service |
+| Volume mount `.:/app` | Check volumes section | Add volume mapping |
+| Container running | `docker ps \| grep skillsmith` | `docker compose --profile dev up -d` |
+
+#### Script Compliance
+
+All scripts (.sh, prompt .md files) that run npm commands **must** use Docker:
+
+```bash
+# ✅ CORRECT
+docker exec skillsmith-dev-1 npm run typecheck
+docker exec skillsmith-dev-1 npm test
+
+# ❌ WRONG - runs locally, may fail on native modules
+npm run typecheck
+npm test
+```
+
+The compliance check (`npm run audit:standards`) verifies this automatically.
+
+#### Verification Commands
+
+```bash
+# Check Docker is configured correctly
+docker compose config
+
+# Verify container is running
+docker ps | grep skillsmith-dev-1
+
+# Run compliance audit (includes Docker checks)
+docker exec skillsmith-dev-1 npm run audit:standards
+```
 
 ### 3.1 Branching Strategy
 
