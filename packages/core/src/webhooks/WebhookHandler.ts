@@ -81,6 +81,23 @@ export interface WebhookHandleResult {
 }
 
 /**
+ * Delivery statistics for monitoring
+ */
+export interface DeliveryStats {
+  trackedDeliveries: number
+}
+
+/**
+ * Maximum number of delivery IDs to track (for memory management)
+ */
+const MAX_TRACKED_DELIVERIES = 10000
+
+/**
+ * Number of old deliveries to purge when limit is reached
+ */
+const DELIVERY_PURGE_COUNT = 5000
+
+/**
  * Webhook handler for GitHub events
  */
 export class WebhookHandler {
@@ -89,11 +106,26 @@ export class WebhookHandler {
   private onSkillChange?: (change: SkillFileChange) => void
   private log: (level: 'info' | 'warn' | 'error', message: string, data?: unknown) => void
 
+  /**
+   * Track processed delivery IDs for idempotency
+   * Using a Set for O(1) lookups
+   */
+  private processedDeliveries = new Set<string>()
+
   constructor(options: WebhookHandlerOptions) {
     this.secret = options.secret
     this.queue = options.queue
     this.onSkillChange = options.onSkillChange
     this.log = options.onLog ?? (() => {})
+  }
+
+  /**
+   * Get delivery tracking statistics
+   */
+  getDeliveryStats(): DeliveryStats {
+    return {
+      trackedDeliveries: this.processedDeliveries.size,
+    }
   }
 
   /**
@@ -139,12 +171,44 @@ export class WebhookHandler {
 
   /**
    * Handle an incoming webhook event
+   * @param eventType - GitHub event type (push, repository, ping, etc.)
+   * @param payload - Raw JSON payload string
+   * @param signature - X-Hub-Signature-256 header value
+   * @param deliveryId - X-GitHub-Delivery header value (optional, for idempotency)
    */
   async handleWebhook(
     eventType: string,
     payload: string,
-    signature: string
+    signature: string,
+    deliveryId?: string
   ): Promise<WebhookHandleResult> {
+    // Idempotency check using delivery ID
+    if (deliveryId && deliveryId.length > 0) {
+      if (this.processedDeliveries.has(deliveryId)) {
+        this.log('info', 'Duplicate delivery detected, skipping', { deliveryId })
+        return {
+          success: true,
+          eventType,
+          changesDetected: 0,
+          itemsQueued: 0,
+          message: 'Duplicate delivery, already processed',
+        }
+      }
+
+      // Track this delivery ID
+      this.processedDeliveries.add(deliveryId)
+
+      // Cleanup old deliveries to prevent memory growth
+      if (this.processedDeliveries.size > MAX_TRACKED_DELIVERIES) {
+        const toDelete = [...this.processedDeliveries].slice(0, DELIVERY_PURGE_COUNT)
+        toDelete.forEach((id) => this.processedDeliveries.delete(id))
+        this.log('info', 'Purged old delivery IDs', {
+          purged: DELIVERY_PURGE_COUNT,
+          remaining: this.processedDeliveries.size,
+        })
+      }
+    }
+
     // Verify signature first
     const verification = this.verifySignature(payload, signature)
     if (!verification.valid) {

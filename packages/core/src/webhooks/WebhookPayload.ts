@@ -6,7 +6,11 @@
  * - Push event parsing utilities
  * - Repository event parsing utilities
  * - Signature verification types
+ *
+ * SMI-680: Added zod schema validation for security
  */
+
+import { z } from 'zod'
 
 /**
  * GitHub webhook event types we handle
@@ -330,17 +334,166 @@ export function extractSkillChanges(payload: PushEventPayload): SkillFileChange[
   return changes
 }
 
+// =============================================================================
+// SMI-680: Zod Schemas for secure payload validation
+// =============================================================================
+
+/**
+ * Git user schema (author/committer)
+ */
+const GitUserSchema = z
+  .object({
+    name: z.string(),
+    email: z.string(),
+    username: z.string().optional(),
+  })
+  .passthrough()
+
+/**
+ * Repository owner schema
+ */
+const RepositoryOwnerSchema = z
+  .object({
+    login: z.string(),
+    id: z.number(),
+    type: z.enum(['User', 'Organization']),
+    avatar_url: z.string().optional(),
+    html_url: z.string().optional(),
+  })
+  .passthrough()
+
+/**
+ * Webhook repository schema - minimum required fields
+ */
+const WebhookRepositorySchema = z
+  .object({
+    id: z.number().optional(),
+    name: z.string().optional(),
+    full_name: z.string(),
+    private: z.boolean().optional(),
+    owner: RepositoryOwnerSchema.optional(),
+    html_url: z.string().optional(),
+    default_branch: z.string(),
+  })
+  .passthrough()
+
+/**
+ * Push commit schema
+ */
+const PushCommitSchema = z
+  .object({
+    id: z.string(),
+    message: z.string(),
+    added: z.array(z.string()),
+    removed: z.array(z.string()),
+    modified: z.array(z.string()),
+  })
+  .passthrough()
+
+/**
+ * Push event payload schema
+ * @see https://docs.github.com/en/webhooks/webhook-events-and-payloads#push
+ */
+const PushEventSchema = z
+  .object({
+    ref: z.string(),
+    before: z.string(),
+    after: z.string(),
+    repository: WebhookRepositorySchema,
+    commits: z.array(PushCommitSchema).optional(),
+  })
+  .passthrough()
+
+/**
+ * Webhook sender schema
+ */
+const WebhookSenderSchema = z
+  .object({
+    login: z.string(),
+    id: z.number(),
+    type: z.enum(['User', 'Organization', 'Bot']),
+  })
+  .passthrough()
+
+/**
+ * Repository event payload schema
+ * @see https://docs.github.com/en/webhooks/webhook-events-and-payloads#repository
+ */
+const RepositoryEventSchema = z
+  .object({
+    action: z.string(),
+    repository: WebhookRepositorySchema,
+    sender: WebhookSenderSchema.optional(),
+  })
+  .passthrough()
+
+/**
+ * Webhook hook config schema
+ */
+const WebhookHookConfigSchema = z
+  .object({
+    content_type: z.string(),
+    insecure_ssl: z.string(),
+    url: z.string(),
+  })
+  .passthrough()
+
+/**
+ * Webhook hook schema
+ */
+const WebhookHookSchema = z
+  .object({
+    type: z.string(),
+    id: z.number(),
+    name: z.string(),
+    active: z.boolean(),
+    events: z.array(z.string()),
+    config: WebhookHookConfigSchema,
+  })
+  .passthrough()
+
+/**
+ * Ping event payload schema
+ * @see https://docs.github.com/en/webhooks/webhook-events-and-payloads#ping
+ */
+const PingEventSchema = z
+  .object({
+    zen: z.string(),
+    hook_id: z.number(),
+    hook: WebhookHookSchema,
+    repository: WebhookRepositorySchema.optional(),
+    sender: WebhookSenderSchema.optional(),
+  })
+  .passthrough()
+
 /**
  * Parse a raw webhook payload into a typed event
+ * SMI-680: Now uses zod schemas for secure validation
  */
 export function parseWebhookPayload(eventType: string, payload: unknown): ParsedWebhookEvent {
   switch (eventType) {
-    case 'push':
-      return { type: 'push', payload: payload as PushEventPayload }
-    case 'repository':
-      return { type: 'repository', payload: payload as RepositoryEventPayload }
-    case 'ping':
-      return { type: 'ping', payload: payload as PingEventPayload }
+    case 'push': {
+      const result = PushEventSchema.safeParse(payload)
+      if (!result.success) {
+        throw new Error(`Invalid push event payload: ${result.error.message}`)
+      }
+      // Cast through unknown to satisfy TypeScript since passthrough adds index signature
+      return { type: 'push', payload: result.data as unknown as PushEventPayload }
+    }
+    case 'repository': {
+      const result = RepositoryEventSchema.safeParse(payload)
+      if (!result.success) {
+        throw new Error(`Invalid repository event payload: ${result.error.message}`)
+      }
+      return { type: 'repository', payload: result.data as unknown as RepositoryEventPayload }
+    }
+    case 'ping': {
+      const result = PingEventSchema.safeParse(payload)
+      if (!result.success) {
+        throw new Error(`Invalid ping event payload: ${result.error.message}`)
+      }
+      return { type: 'ping', payload: result.data as unknown as PingEventPayload }
+    }
     default:
       return { type: 'unknown', payload }
   }

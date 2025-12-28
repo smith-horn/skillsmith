@@ -33,6 +33,7 @@ export {
   WebhookHandler,
   type WebhookHandlerOptions,
   type WebhookHandleResult,
+  type DeliveryStats,
 } from './WebhookHandler.js'
 
 // WebhookQueue - Event queue
