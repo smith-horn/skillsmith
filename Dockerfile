@@ -1,4 +1,5 @@
-FROM node:20-slim
+# CI/CD target stage
+FROM node:20-slim AS dev
 
 WORKDIR /app
 
