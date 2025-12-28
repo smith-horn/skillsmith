@@ -15,9 +15,15 @@ export {
   runMigrations,
 } from './db/schema.js'
 
-// Repositories (SMI-578)
+// Repositories (SMI-578, SMI-628)
 export { SkillRepository } from './repositories/SkillRepository.js'
 export { CacheRepository } from './repositories/CacheRepository.js'
+export { IndexerRepository } from './repositories/IndexerRepository.js'
+export type {
+  IndexedSkill,
+  UpsertResult,
+  BatchUpsertResult,
+} from './repositories/IndexerRepository.js'
 
 // Services (SMI-579)
 export { SearchService } from './services/SearchService.js'
@@ -80,26 +86,14 @@ export {
   type GetSkillResponse,
 } from './types.js'
 
-// Indexer (SMI-628, SMI-643)
-export {
-  GitHubIndexer,
-  PartitionStrategy,
-  SwarmIndexer,
-  createDefaultStrategy,
-  createCustomStrategy,
-  createSwarmIndexer,
-  createClaudeFlowSwarmIndexer,
-  DEFAULT_PARTITION_RANGES,
-  type GitHubRepository,
-  type GitHubIndexerOptions,
-  type IndexResult,
-  type Partition,
-  type PartitionOptions,
-  type PartitionStats,
-  type SwarmIndexerOptions,
-  type SwarmIndexResult,
-  type SwarmProgress,
-  type WorkerState,
-  type WorkerStatus,
-  type RateLimitInfo,
+// Indexer (SMI-628)
+export { SkillParser, GitHubIndexer } from './indexer/index.js'
+export type {
+  SkillFrontmatter,
+  ParsedSkillMetadata,
+  ValidationResult,
+  SkillParserOptions,
+  GitHubIndexerOptions,
+  SkillMetadata,
+  IndexResult,
 } from './indexer/index.js'
