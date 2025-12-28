@@ -1,13 +1,45 @@
 /**
- * SMI-585: Cache exports
- * Two-tier caching for search results
+ * SMI-585/SMI-644: Cache exports
+ * Two-tier caching with TTL management for search results
  */
 
+// SMI-585: Basic cache components
 export { L1Cache } from './lru.js';
 export type { SearchCacheEntry, SearchResult, CacheStats } from './lru.js';
 
 export { L2Cache } from './sqlite.js';
 export type { L2CacheOptions } from './sqlite.js';
+
+// SMI-644: Enhanced cache with TTL management
+export {
+  TTLTier,
+  POPULARITY_THRESHOLDS,
+  createCacheEntry,
+  recordHit,
+  calculateTTLTier,
+  isExpired,
+  shouldRefresh,
+  isValidCacheKey,
+  serializeCacheEntry,
+  deserializeCacheEntry,
+  getTTLTierName,
+} from './CacheEntry.js';
+export type { CacheEntry, SerializedCacheEntry } from './CacheEntry.js';
+
+export { EnhancedTieredCache } from './TieredCache.js';
+export type {
+  L1Config,
+  L2Config,
+  TieredCacheConfig,
+  TieredCacheStats,
+} from './TieredCache.js';
+
+export { CacheManager } from './CacheManager.js';
+export type {
+  SearchOptions,
+  RefreshCallback,
+  CacheManagerConfig,
+} from './CacheManager.js';
 
 import { L1Cache, type SearchResult, type CacheStats } from './lru.js';
 import { L2Cache, type L2CacheOptions } from './sqlite.js';
