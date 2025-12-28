@@ -12,6 +12,7 @@ ADRs document significant architectural decisions made during the project. They 
 |-----|-------|--------|------|
 | [ADR-001](001-monorepo-structure.md) | Monorepo Structure with npm Workspaces | Accepted | 2025-12-27 |
 | [ADR-002](002-docker-glibc-requirement.md) | Docker with glibc for Native Module Compatibility | Accepted | 2025-12-27 |
+| [ADR-003](003-claude-flow-integration.md) | Claude-flow Integration for Technical Risk Mitigation | Accepted | 2025-12-27 |
 
 ## Template
 

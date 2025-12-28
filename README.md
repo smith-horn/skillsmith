@@ -6,13 +6,15 @@ Skillsmith is a skill discovery, recommendation, and learning system for [Claude
 
 ## Status
 
-**Phase 1: Complete** - CI/CD pipeline, pre-commit hooks, and integration tests implemented.
+**Phase 2c: In Progress** - Tiered caching, GitHub webhooks, and performance optimization.
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| Phase 0 | Complete | Planning, architecture, monorepo setup |
-| Phase 1 | Complete | CI/CD, testing infrastructure, code quality |
-| Phase 2 | Planned | Core MCP tools, skill discovery |
+| Phase 0 | ✅ Complete | Planning, architecture, monorepo setup |
+| Phase 1 | ✅ Complete | CI/CD, testing infrastructure, code quality |
+| Phase 2a | ✅ Complete | GitHub indexing, skill parsing |
+| Phase 2b | ✅ Complete | TDD security fixes, vector embeddings |
+| Phase 2c | 🚧 In Progress | Tiered cache, webhooks, performance |
 
 ## Features (Planned)
 
@@ -75,18 +77,37 @@ Once installed, Skillsmith tools are available directly in Claude Code:
 
 Detailed documentation is available in the `/docs` folder:
 
-- [Implementation Plans](/docs/implementation/) - Epics, stories, and tasks
 - [Architecture](/docs/architecture/) - System design and technical decisions
-- [Research](/docs/research/) - Background research and analysis
+  - [Engineering Standards](/docs/architecture/standards.md) - Code quality policies
+  - [Phase 2 Implementation](/docs/architecture/phase-2-implementation.md) - Current work
+- [ADRs](/docs/adr/) - Architecture Decision Records
+- [Retrospectives](/docs/retros/) - Phase learnings and improvements
+
+## Development
+
+**Docker-first development** - All commands run inside Docker for consistent native module support.
+
+```bash
+# Start development container
+docker compose --profile dev up -d
+
+# Run commands inside Docker
+docker exec skillsmith-dev-1 npm run build
+docker exec skillsmith-dev-1 npm test
+docker exec skillsmith-dev-1 npm run lint
+docker exec skillsmith-dev-1 npm run typecheck
+```
+
+See [CLAUDE.md](CLAUDE.md) for full development workflow.
 
 ## Tech Stack
 
-- **Runtime**: Node.js 18+
+- **Runtime**: Node.js 18+ (Docker with glibc)
 - **Protocol**: MCP (Model Context Protocol)
 - **Database**: SQLite with FTS5
-- **Embeddings**: all-MiniLM-L6-v2 via @xenova/transformers
-- **Web**: Astro 4.x (skillsmith.app)
-- **Extension**: VS Code (Phase 2)
+- **Embeddings**: all-MiniLM-L6-v2 via onnxruntime-node
+- **Testing**: Vitest
+- **CI/CD**: GitHub Actions
 
 ## License
 

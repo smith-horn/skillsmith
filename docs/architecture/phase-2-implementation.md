@@ -36,8 +36,8 @@ Phase 2 implements core skill discovery functionality with technical risk mitiga
 |----------|-------|-------|--------------|--------|
 | P1 | SMI-642 | Vector embeddings for semantic search | SMI-627 | ✅ Done (security fixed) |
 | P1 | SMI-643 | Swarm coordination for parallel indexing | SMI-628 ✅ | Todo |
-| P1 | SMI-644 | Tiered cache layer with TTL | SMI-627 | Todo |
-| P2 | SMI-645 | GitHub webhook support | SMI-628 ✅ | Todo |
+| P1 | SMI-644 | Tiered cache layer with TTL | SMI-627 | ✅ Done |
+| P2 | SMI-645 | GitHub webhook support | SMI-628 ✅ | ✅ Done |
 | P2 | SMI-646 | Skill dependency graph | SMI-628 ✅ | Todo |
 
 ### Process Improvements (Added from Phase 2a Retro)

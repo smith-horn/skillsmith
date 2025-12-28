@@ -1,8 +1,9 @@
 # Folder Reorganization Plan
 
 **Issue**: SMI-647 (Epic)
-**Status**: Planning
+**Status**: ✅ Completed
 **Created**: December 28, 2025
+**Completed**: December 28, 2025
 **Risk Level**: Medium
 
 ---
@@ -11,43 +12,31 @@
 
 Consolidate all Skillsmith-related folders under `/Documents/GitHub/Claude-Skill-Discovery/` for better organization and maintainability.
 
-### Current State (9 scattered folders)
-```
-/Documents/GitHub/
-├── Claude-Skill-Discovery/      # 25M - Docs, coordination (NOT git)
-├── skillsmith/                   # 458M - Main repo
-├── skillsmith-phase1/            # 15M - BROKEN worktree ⚠️
-├── skillsmith-phase2-caching/    # 868K - Worktree (stale)
-├── skillsmith-phase2-core/       # 443M - Worktree
-├── skillsmith-phase2-indexer/    # 442M - Worktree (active)
-├── skillsmith-phase2-testing/    # 868K - Worktree (stale)
-├── skillsmith-phase2b/           # 442M - Worktree (recent)
-└── skillsmith-phase2b-parallel/  # 442M - Worktree (recent)
-```
-
-### Target State (consolidated)
+### Final State (Implemented)
 ```
 /Documents/GitHub/Claude-Skill-Discovery/
-├── .hive-mind/                   # Coordination state
-├── .swarm/                       # Swarm state
-├── coordination/                 # Coordination files
-├── memory/                       # Memory state
-├── docs/                         # Project documentation
-│   ├── prd-v3.md
-│   ├── architecture/
-│   ├── design/
-│   └── research/
-└── skillsmith/                   # Main git repo
-    ├── .git/
-    ├── packages/
-    ├── docs/                     # Code documentation
-    └── scripts/
-
-/Documents/GitHub/Claude-Skill-Discovery/worktrees/
-├── phase-2-indexer/              # Active worktree
-├── phase-2b/                     # Active worktree
-└── phase-2b-parallel/            # Active worktree
+├── skillsmith/                   # Main git repo (458M)
+│   ├── .git/
+│   ├── .claude/                  # Claude Code skills & config
+│   │   ├── skills/               # 28 project skills
+│   │   ├── commands/             # Slash commands
+│   │   └── agents/               # Agent configs
+│   ├── packages/
+│   │   ├── core/                 # @skillsmith/core
+│   │   ├── mcp-server/           # @skillsmith/mcp-server
+│   │   └── cli/                  # @skillsmith/cli
+│   └── docs/                     # Code documentation
+└── worktrees/                    # Git worktrees
+    ├── phase-2c-cache/           # SMI-644 Tiered Cache
+    ├── phase-2c-perf/            # Performance work
+    └── phase-2c-webhooks/        # GitHub webhooks
 ```
+
+### Changes Made (Option B)
+1. ✅ Removed orphan `skillsmith-phase2-indexer` folder
+2. ✅ Removed orphan `/GitHub/.claude` folder
+3. ✅ Moved `.claude` into git repo at `skillsmith/.claude`
+4. ✅ Kept wrapper folder name to preserve worktree absolute paths
 
 ---
 
