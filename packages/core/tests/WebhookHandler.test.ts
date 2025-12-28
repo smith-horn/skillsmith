@@ -624,7 +624,8 @@ describe('WebhookQueue', () => {
       await retryQueue.waitForProcessing()
 
       // Item should have been retried
-      expect(capturedItem?.retries).toBeGreaterThanOrEqual(0)
+      expect(capturedItem).not.toBeNull()
+      expect(capturedItem!.retries).toBeGreaterThanOrEqual(0)
     })
 
     it('should call onProcessed callback on failure', async () => {

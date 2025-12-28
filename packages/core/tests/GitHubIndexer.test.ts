@@ -299,100 +299,116 @@ describe('GitHubIndexer', () => {
 
   beforeEach(() => {
     indexer = new GitHubIndexer({
-      rateLimit: 10, // Fast for testing
-      maxRetries: 1,
+      requestDelay: 10, // Fast for testing
     })
   })
 
   describe('constructor', () => {
     it('should use default options', () => {
       const defaultIndexer = new GitHubIndexer()
-      expect(defaultIndexer.getRequestCount()).toBe(0)
+      expect(defaultIndexer).toBeDefined()
     })
 
     it('should accept custom options', () => {
       const customIndexer = new GitHubIndexer({
         token: 'test-token',
-        rateLimit: 200,
-        batchSize: 20,
+        requestDelay: 200,
+        perPage: 20,
       })
       expect(customIndexer).toBeDefined()
     })
   })
 
-  describe('toSkillCreateInputs', () => {
-    it('should convert metadata to create inputs', () => {
-      const metadata = [
-        {
-          name: 'test-skill',
-          description: 'Test description',
-          author: 'test-author',
-          version: '1.0.0',
-          tags: ['test'],
-          dependencies: [],
-          category: 'testing',
-          license: 'MIT',
-          repository: null,
-          rawContent: '---\nname: test\n---\nContent',
-          frontmatter: { name: 'test-skill' },
-          repoUrl: 'https://github.com/test/repo',
-          filePath: 'SKILL.md',
-          sha: 'abc123',
-          owner: 'test',
-          repo: 'repo',
-          discoveredAt: new Date().toISOString(),
-        },
-      ]
+  describe('repositoryToSkill', () => {
+    it('should convert repository to skill input', () => {
+      const repo = {
+        owner: 'test-author',
+        name: 'test-skill',
+        fullName: 'test-author/test-skill',
+        description: 'Test description',
+        url: 'https://github.com/test/repo',
+        stars: 100,
+        forks: 10,
+        topics: ['test', 'claude-code'],
+        updatedAt: new Date().toISOString(),
+        defaultBranch: 'main',
+      }
 
-      const inputs = indexer.toSkillCreateInputs(metadata)
+      const input = indexer.repositoryToSkill(repo)
 
-      expect(inputs).toHaveLength(1)
-      expect(inputs[0].name).toBe('test-skill')
-      expect(inputs[0].description).toBe('Test description')
-      expect(inputs[0].author).toBe('test-author')
-      expect(inputs[0].repoUrl).toBe('https://github.com/test/repo')
-      expect(inputs[0].tags).toEqual(['test'])
-      expect(inputs[0].id).toBeDefined()
+      expect(input.name).toBe('test-skill')
+      expect(input.description).toBe('Test description')
+      expect(input.author).toBe('test-author')
+      expect(input.repoUrl).toBe('https://github.com/test/repo')
+      expect(input.tags).toEqual(['test', 'claude-code'])
     })
 
-    it('should use owner as author fallback', () => {
-      const metadata = [
-        {
-          name: 'no-author-skill',
-          description: null,
-          author: null,
-          version: null,
-          tags: [],
-          dependencies: [],
-          category: null,
-          license: null,
-          repository: null,
-          rawContent: '---\nname: test\n---\n',
-          frontmatter: { name: 'no-author-skill' },
-          repoUrl: 'https://github.com/owner-name/repo',
-          filePath: 'SKILL.md',
-          sha: 'def456',
-          owner: 'owner-name',
-          repo: 'repo',
-          discoveredAt: new Date().toISOString(),
-        },
-      ]
+    it('should calculate quality score from stars and forks', () => {
+      const repo = {
+        owner: 'author',
+        name: 'popular-skill',
+        fullName: 'author/popular-skill',
+        description: 'Popular skill',
+        url: 'https://github.com/author/popular-skill',
+        stars: 500,
+        forks: 100,
+        topics: [],
+        updatedAt: new Date().toISOString(),
+        defaultBranch: 'main',
+      }
 
-      const inputs = indexer.toSkillCreateInputs(metadata)
+      const input = indexer.repositoryToSkill(repo)
 
-      expect(inputs[0].author).toBe('owner-name')
-    })
-  })
-
-  describe('rate limit tracking', () => {
-    it('should track request count', () => {
-      expect(indexer.getRequestCount()).toBe(0)
-      indexer.resetRequestCount()
-      expect(indexer.getRequestCount()).toBe(0)
+      // Quality score: min(500/10, 50) + min(100/5, 25) + 25 = 50 + 20 + 25 = 95
+      expect(input.qualityScore).toBe(95)
     })
 
-    it('should return null rate limit info initially', () => {
-      expect(indexer.getRateLimitInfo()).toBeNull()
+    it('should assign trust tier based on stars', () => {
+      const lowStars = {
+        owner: 'a',
+        name: 'low',
+        fullName: 'a/low',
+        description: null,
+        url: 'https://github.com/a/low',
+        stars: 2,
+        forks: 0,
+        topics: [],
+        updatedAt: new Date().toISOString(),
+        defaultBranch: 'main',
+      }
+
+      const mediumStars = {
+        ...lowStars,
+        name: 'medium',
+        stars: 10,
+      }
+
+      const highStars = {
+        ...lowStars,
+        name: 'high',
+        stars: 100,
+      }
+
+      expect(indexer.repositoryToSkill(lowStars).trustTier).toBe('unknown')
+      expect(indexer.repositoryToSkill(mediumStars).trustTier).toBe('experimental')
+      expect(indexer.repositoryToSkill(highStars).trustTier).toBe('community')
+    })
+
+    it('should assign verified tier for official topics', () => {
+      const official = {
+        owner: 'anthropic',
+        name: 'official-skill',
+        fullName: 'anthropic/official-skill',
+        description: 'Official skill',
+        url: 'https://github.com/anthropic/official-skill',
+        stars: 5,
+        forks: 0,
+        topics: ['claude-code-official'],
+        updatedAt: new Date().toISOString(),
+        defaultBranch: 'main',
+      }
+
+      expect(indexer.repositoryToSkill(official).trustTier).toBe('verified')
     })
   })
 })
@@ -607,19 +623,18 @@ describe('GitHubIndexer Integration', () => {
   const hasToken = !!process.env.GITHUB_TOKEN
 
   it.skipIf(!hasToken)(
-    'should discover skills from anthropics/claude-code',
+    'should search for claude-code skills on GitHub',
     async () => {
       const indexer = new GitHubIndexer({
         token: process.env.GITHUB_TOKEN,
-        rateLimit: 150,
+        requestDelay: 150,
       })
 
-      const result = await indexer.indexRepository('anthropics', 'claude-code')
+      const result = await indexer.searchRepositories('topic:claude-code-skill')
 
-      expect(result.repository).toBe('anthropics/claude-code')
-      expect(result.apiRequests).toBeGreaterThan(0)
-      expect(result.durationMs).toBeGreaterThan(0)
-      // Note: May or may not find skills depending on repo structure
+      expect(result.found).toBeGreaterThanOrEqual(0)
+      expect(result.errors).toHaveLength(0)
+      // Note: May or may not find repositories depending on GitHub state
     },
     30000
   )
