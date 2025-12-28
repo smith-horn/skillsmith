@@ -3,7 +3,7 @@
  */
 
 // Version
-export const VERSION = '0.1.0';
+export const VERSION = '0.1.0'
 
 // Database (SMI-577)
 export {
@@ -13,14 +13,20 @@ export {
   initializeSchema,
   getSchemaVersion,
   runMigrations,
-} from './db/schema.js';
+} from './db/schema.js'
 
-// Repositories (SMI-578)
-export { SkillRepository } from './repositories/SkillRepository.js';
-export { CacheRepository } from './repositories/CacheRepository.js';
+// Repositories (SMI-578, SMI-628)
+export { SkillRepository } from './repositories/SkillRepository.js'
+export { CacheRepository } from './repositories/CacheRepository.js'
+export { IndexerRepository } from './repositories/IndexerRepository.js'
+export type {
+  IndexedSkill,
+  UpsertResult,
+  BatchUpsertResult,
+} from './repositories/IndexerRepository.js'
 
 // Services (SMI-579)
-export { SearchService } from './services/SearchService.js';
+export { SearchService } from './services/SearchService.js'
 
 // Types (SMI-577)
 export type {
@@ -32,23 +38,28 @@ export type {
   SearchResult,
   TrustTier,
   CacheEntry,
-} from './types/skill.js';
+} from './types/skill.js'
 
 // Search
-export { HybridSearch } from './search/index.js';
-export type { HybridSearchOptions, SearchQuery, SearchResponse } from './search/index.js';
+export { HybridSearch } from './search/index.js'
+export type { HybridSearchOptions, SearchQuery, SearchResponse } from './search/index.js'
 
 // Embeddings
-export { EmbeddingService } from './embeddings/index.js';
-export type { EmbeddingResult, SimilarityResult } from './embeddings/index.js';
+export { EmbeddingService } from './embeddings/index.js'
+export type { EmbeddingResult, SimilarityResult } from './embeddings/index.js'
 
 // Cache
-export { L1Cache, L2Cache, TieredCache } from './cache/index.js';
-export type { SearchCacheEntry, SearchResult as CachedSearchResult, CacheStats, TieredCacheOptions } from './cache/index.js';
+export { L1Cache, L2Cache, TieredCache } from './cache/index.js'
+export type {
+  SearchCacheEntry,
+  SearchResult as CachedSearchResult,
+  CacheStats,
+  TieredCacheOptions,
+} from './cache/index.js'
 
 // Security
-export { SecurityScanner } from './security/index.js';
-export type { SecurityFinding, ScanReport, ScannerOptions } from './security/index.js';
+export { SecurityScanner } from './security/index.js'
+export type { SecurityFinding, ScanReport, ScannerOptions } from './security/index.js'
 
 // Error handling (SMI-583)
 export {
@@ -60,7 +71,7 @@ export {
   type ErrorCategory,
   type ErrorCode,
   type ErrorResponse,
-} from './errors.js';
+} from './errors.js'
 
 // MCP types (SMI-581, SMI-582)
 export {
@@ -73,4 +84,16 @@ export {
   type SearchFilters,
   type SearchResponse as MCPSearchResponse,
   type GetSkillResponse,
-} from './types.js';
+} from './types.js'
+
+// Indexer (SMI-628)
+export { SkillParser, GitHubIndexer } from './indexer/index.js'
+export type {
+  SkillFrontmatter,
+  ParsedSkillMetadata,
+  ValidationResult,
+  SkillParserOptions,
+  GitHubIndexerOptions,
+  SkillMetadata,
+  IndexResult,
+} from './indexer/index.js'

@@ -5,6 +5,7 @@
 
 import Database from 'better-sqlite3';
 import type { SearchResult, SearchCacheEntry, CacheStats } from './lru.js';
+import { isValidCacheKey } from './CacheEntry.js';
 
 export interface L2CacheOptions {
   dbPath: string;
@@ -17,10 +18,21 @@ export class L2Cache {
   private hits = 0;
   private misses = 0;
 
+  // Prepared statements (created once, reused for performance)
+  private stmts: {
+    get: Database.Statement<[string, number]>;
+    set: Database.Statement<[string, string, number, number, number]>;
+    has: Database.Statement<[string, number]>;
+    delete: Database.Statement<[string]>;
+    prune: Database.Statement<[number]>;
+    stats: Database.Statement<[number]>;
+  };
+
   constructor(options: L2CacheOptions) {
     this.db = new Database(options.dbPath);
     this.ttlSeconds = options.ttlSeconds ?? 3600; // 1 hour default
     this.initTable();
+    this.stmts = this.prepareStatements();
   }
 
   private initTable(): void {
@@ -33,31 +45,60 @@ export class L2Cache {
         expires_at INTEGER NOT NULL
       )
     `);
-    
+
     this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_cache_expires 
+      CREATE INDEX IF NOT EXISTS idx_cache_expires
       ON search_cache(expires_at)
     `);
+  }
+
+  private prepareStatements() {
+    return {
+      get: this.db.prepare(`
+        SELECT results_json, total_count, created_at
+        FROM search_cache
+        WHERE cache_key = ? AND expires_at > ?
+      `),
+      set: this.db.prepare(`
+        INSERT OR REPLACE INTO search_cache
+        (cache_key, results_json, total_count, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?)
+      `),
+      has: this.db.prepare(`
+        SELECT 1 FROM search_cache
+        WHERE cache_key = ? AND expires_at > ?
+      `),
+      delete: this.db.prepare(`
+        DELETE FROM search_cache WHERE cache_key = ?
+      `),
+      prune: this.db.prepare(`
+        DELETE FROM search_cache WHERE expires_at <= ?
+      `),
+      stats: this.db.prepare(`
+        SELECT
+          COUNT(*) as total,
+          SUM(CASE WHEN expires_at <= ? THEN 1 ELSE 0 END) as expired
+        FROM search_cache
+      `),
+    };
   }
 
   /**
    * Get cached search results
    */
   get(key: string): SearchCacheEntry | undefined {
+    if (!isValidCacheKey(key)) {
+      this.misses++;
+      return undefined;
+    }
+
     const now = Math.floor(Date.now() / 1000);
-    
-    const stmt = this.db.prepare(`
-      SELECT results_json, total_count, created_at
-      FROM search_cache
-      WHERE cache_key = ? AND expires_at > ?
-    `);
-    
-    const row = stmt.get(key, now) as {
+    const row = this.stmts.get.get(key, now) as {
       results_json: string;
       total_count: number;
       created_at: number;
     } | undefined;
-    
+
     if (row) {
       this.hits++;
       return {
@@ -66,7 +107,7 @@ export class L2Cache {
         timestamp: row.created_at * 1000,
       };
     }
-    
+
     this.misses++;
     return undefined;
   }
@@ -75,41 +116,29 @@ export class L2Cache {
    * Store search results in cache
    */
   set(key: string, results: SearchResult[], totalCount: number): void {
+    if (!isValidCacheKey(key)) {
+      throw new Error('Invalid cache key');
+    }
+
     const now = Math.floor(Date.now() / 1000);
     const expiresAt = now + this.ttlSeconds;
-    
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO search_cache 
-      (cache_key, results_json, total_count, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-    
-    stmt.run(key, JSON.stringify(results), totalCount, now, expiresAt);
+    this.stmts.set.run(key, JSON.stringify(results), totalCount, now, expiresAt);
   }
 
   /**
    * Check if key exists and is not expired
    */
   has(key: string): boolean {
+    if (!isValidCacheKey(key)) return false;
     const now = Math.floor(Date.now() / 1000);
-    
-    const stmt = this.db.prepare(`
-      SELECT 1 FROM search_cache
-      WHERE cache_key = ? AND expires_at > ?
-    `);
-    
-    return stmt.get(key, now) !== undefined;
+    return this.stmts.has.get(key, now) !== undefined;
   }
 
   /**
    * Delete specific cache entry
    */
   delete(key: string): boolean {
-    const stmt = this.db.prepare(`
-      DELETE FROM search_cache WHERE cache_key = ?
-    `);
-    
-    const result = stmt.run(key);
+    const result = this.stmts.delete.run(key);
     return result.changes > 0;
   }
 
@@ -134,12 +163,7 @@ export class L2Cache {
    */
   prune(): number {
     const now = Math.floor(Date.now() / 1000);
-    
-    const stmt = this.db.prepare(`
-      DELETE FROM search_cache WHERE expires_at <= ?
-    `);
-    
-    const result = stmt.run(now);
+    const result = this.stmts.prune.run(now);
     return result.changes;
   }
 
@@ -149,23 +173,15 @@ export class L2Cache {
   getStats(): CacheStats & { expiredCount: number } {
     const total = this.hits + this.misses;
     const now = Math.floor(Date.now() / 1000);
-    
-    const countStmt = this.db.prepare(`
-      SELECT 
-        COUNT(*) as total,
-        SUM(CASE WHEN expires_at <= ? THEN 1 ELSE 0 END) as expired
-      FROM search_cache
-    `);
-    
-    const counts = countStmt.get(now) as { total: number; expired: number };
-    
+    const counts = this.stmts.stats.get(now) as { total: number; expired: number };
+
     return {
       hits: this.hits,
       misses: this.misses,
       hitRate: total > 0 ? this.hits / total : 0,
-      size: counts.total - counts.expired,
-      maxSize: Infinity, // No limit for L2
-      expiredCount: counts.expired,
+      size: counts.total - (counts.expired ?? 0),
+      maxSize: -1, // -1 indicates no limit for L2
+      expiredCount: counts.expired ?? 0,
     };
   }
 
