@@ -91,7 +91,7 @@ async function getStates(teamKey = TEAM_KEY) {
   const teamId = await getTeamId(teamKey);
 
   const data = await graphql(`
-    query GetStates($teamId: String!) {
+    query GetStates($teamId: ID!) {
       workflowStates(filter: { team: { id: { eq: $teamId } } }) {
         nodes { id name type }
       }
@@ -308,7 +308,7 @@ async function getLabels(teamKey = TEAM_KEY) {
   const teamId = await getTeamId(teamKey);
 
   const data = await graphql(`
-    query GetLabels($teamId: String!) {
+    query GetLabels($teamId: ID!) {
       issueLabels(filter: { team: { id: { eq: $teamId } } }) {
         nodes { id name color }
       }
