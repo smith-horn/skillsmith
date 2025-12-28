@@ -31,6 +31,10 @@ const DEFAULT_CONFIG: Required<IndexBenchmarkConfig> = {
   suiteName: 'index',
   batchSize: 100,
   baseDatabaseSize: 1000,
+  // SMI-689: Memory profiling defaults
+  enableMemoryProfiler: false,
+  memoryRegressionThreshold: 10,
+  memoryBaselines: {},
 }
 
 /**
