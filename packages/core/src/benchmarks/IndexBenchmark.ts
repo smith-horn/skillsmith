@@ -12,6 +12,7 @@ import type { Database as DatabaseType } from 'better-sqlite3'
 import { createDatabase, closeDatabase } from '../db/schema.js'
 import { SkillRepository } from '../repositories/SkillRepository.js'
 import { BenchmarkRunner, type BenchmarkReport, type BenchmarkConfig } from './BenchmarkRunner.js'
+import { percentile, mean } from './stats.js'
 
 /**
  * Index benchmark configuration
@@ -266,13 +267,13 @@ export class IndexBenchmark {
       }
 
       const sortedTimes = insertTimes.sort((a, b) => a - b)
-      const avgInsert = sortedTimes.reduce((a, b) => a + b, 0) / sortedTimes.length
 
+      // SMI-677: Use shared stats utilities for consistent percentile calculations
       results[`size_${size}`] = {
         databaseSize: size,
-        avgInsert_ms: Math.round(avgInsert * 1000) / 1000,
-        p50Insert_ms: Math.round(sortedTimes[Math.floor(sortedTimes.length * 0.5)] * 1000) / 1000,
-        p95Insert_ms: Math.round(sortedTimes[Math.floor(sortedTimes.length * 0.95)] * 1000) / 1000,
+        avgInsert_ms: Math.round(mean(sortedTimes) * 1000) / 1000,
+        p50Insert_ms: percentile(sortedTimes, 50),
+        p95Insert_ms: percentile(sortedTimes, 95),
       }
 
       await this.teardown()
