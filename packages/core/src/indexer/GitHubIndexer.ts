@@ -1,663 +1,312 @@
 /**
- * SMI-628: GitHubIndexer - Discover and index skills from GitHub repositories
+ * SMI-628: GitHubIndexer - Fetches skill repositories from GitHub
  *
  * Provides:
- * - Repository skill discovery via GitHub API
- * - Rate-aware fetching with exponential backoff
- * - Incremental updates based on last_indexed_at
- * - Batch processing for efficient indexing
+ * - Search GitHub for claude code skill repositories
+ * - Rate limit handling
+ * - Repository metadata extraction
  */
 
-import { randomUUID } from 'crypto'
-import { SkillParser, type ParsedSkillMetadata } from './SkillParser.js'
-import type { SkillCreateInput, TrustTier } from '../types/skill.js'
+import type { SkillCreateInput } from '../types/skill.js'
 
 /**
- * Configuration options for GitHubIndexer
+ * GitHub repository metadata
+ */
+export interface GitHubRepository {
+  owner: string
+  name: string
+  fullName: string
+  description: string | null
+  url: string
+  stars: number
+  forks: number
+  topics: string[]
+  updatedAt: string
+  defaultBranch: string
+}
+
+/**
+ * Options for GitHub indexing
  */
 export interface GitHubIndexerOptions {
-  /**
-   * GitHub personal access token for API authentication
-   * If not provided, uses unauthenticated requests (60 req/hour limit)
-   */
+  /** GitHub API token (optional but recommended for higher rate limits) */
   token?: string
-
-  /**
-   * Minimum delay between API requests in milliseconds
-   * Default: 150ms to stay well under rate limits
-   */
-  rateLimit?: number
-
-  /**
-   * Number of files to process per batch
-   * Default: 10
-   */
-  batchSize?: number
-
-  /**
-   * Maximum retry attempts for failed requests
-   * Default: 3
-   */
-  maxRetries?: number
-
-  /**
-   * Base delay for exponential backoff in milliseconds
-   * Default: 1000ms
-   */
-  backoffBase?: number
-
-  /**
-   * Maximum backoff delay in milliseconds
-   * Default: 30000ms (30 seconds)
-   */
-  maxBackoff?: number
-
-  /**
-   * Custom skill file patterns to search for
-   * Default: ['SKILL.md', 'skill.md', '.skill.md']
-   */
-  skillFilePatterns?: string[]
+  /** Maximum repositories to fetch per request */
+  perPage?: number
+  /** Delay between API calls in ms (default: 150) */
+  requestDelay?: number
+  /** Topics to search for */
+  topics?: string[]
 }
 
 /**
- * Metadata for a discovered skill
- */
-export interface SkillMetadata extends ParsedSkillMetadata {
-  /**
-   * Full GitHub repository URL
-   */
-  repoUrl: string
-
-  /**
-   * Path to the SKILL.md file within the repository
-   */
-  filePath: string
-
-  /**
-   * SHA of the file for change detection
-   */
-  sha: string
-
-  /**
-   * Repository owner
-   */
-  owner: string
-
-  /**
-   * Repository name
-   */
-  repo: string
-
-  /**
-   * Discovery timestamp
-   */
-  discoveredAt: string
-}
-
-/**
- * Result of indexing a single repository
+ * Result of an indexing operation
  */
 export interface IndexResult {
-  /**
-   * Repository identifier (owner/repo)
-   */
-  repository: string
-
-  /**
-   * Number of skills discovered
-   */
-  skillsFound: number
-
-  /**
-   * Number of skills successfully indexed
-   */
-  skillsIndexed: number
-
-  /**
-   * Skills that were discovered
-   */
-  skills: SkillMetadata[]
-
-  /**
-   * Any errors that occurred
-   */
+  /** Number of repositories found */
+  found: number
+  /** Number successfully indexed */
+  indexed: number
+  /** Number of failures */
+  failed: number
+  /** Error messages for failures */
   errors: string[]
-
-  /**
-   * Indexing duration in milliseconds
-   */
-  durationMs: number
-
-  /**
-   * Number of API requests made
-   */
-  apiRequests: number
+  /** Indexed repositories */
+  repositories: GitHubRepository[]
 }
 
 /**
- * GitHub API response for file search
+ * GitHub API response for repository search
  */
-interface GitHubSearchItem {
+interface GitHubSearchResponse {
+  total_count: number
+  incomplete_results: boolean
+  items: GitHubApiRepository[]
+}
+
+/**
+ * GitHub API repository object
+ */
+interface GitHubApiRepository {
+  id: number
+  full_name: string
   name: string
-  path: string
-  sha: string
-  url: string
-  html_url: string
-  repository: {
-    full_name: string
-    owner: {
-      login: string
-    }
-    name: string
-    html_url: string
+  owner: {
+    login: string
   }
-}
-
-/**
- * GitHub API response for file content
- */
-interface GitHubContentResponse {
-  name: string
-  path: string
-  sha: string
-  content: string
-  encoding: string
+  description: string | null
   html_url: string
+  stargazers_count: number
+  forks_count: number
+  topics: string[]
+  updated_at: string
+  default_branch: string
 }
 
-/**
- * Rate limit information from GitHub API headers
- */
-interface RateLimitInfo {
-  limit: number
-  remaining: number
-  reset: number
-  used: number
-}
+const DEFAULT_TOPICS = ['claude-code-skill', 'claude-code', 'anthropic-claude', 'claude-skill']
 
 /**
- * GitHubIndexer - Discovers and indexes skills from GitHub repositories
+ * Indexes skill repositories from GitHub
  */
 export class GitHubIndexer {
-  private options: Required<GitHubIndexerOptions>
-  private parser: SkillParser
-  private rateLimitInfo: RateLimitInfo | null = null
-  private lastRequestTime = 0
-  private requestCount = 0
+  private token?: string
+  private perPage: number
+  private requestDelay: number
+  private topics: string[]
 
   constructor(options: GitHubIndexerOptions = {}) {
-    this.options = {
-      token: options.token ?? process.env.GITHUB_TOKEN ?? '',
-      rateLimit: options.rateLimit ?? 150,
-      batchSize: options.batchSize ?? 10,
-      maxRetries: options.maxRetries ?? 3,
-      backoffBase: options.backoffBase ?? 1000,
-      maxBackoff: options.maxBackoff ?? 30000,
-      skillFilePatterns: options.skillFilePatterns ?? ['SKILL.md', 'skill.md', '.skill.md'],
-    }
-
-    this.parser = new SkillParser()
+    this.token = options.token
+    this.perPage = options.perPage ?? 30
+    this.requestDelay = options.requestDelay ?? 150
+    this.topics = options.topics ?? DEFAULT_TOPICS
   }
 
   /**
-   * Discover skills in a repository by searching for SKILL.md files
+   * Delay between API calls to avoid rate limiting
    */
-  async discoverSkills(owner: string, repo: string): Promise<SkillMetadata[]> {
-    const skills: SkillMetadata[] = []
-
-    // Search for skill files in the repository
-    for (const pattern of this.options.skillFilePatterns) {
-      try {
-        const files = await this.searchFiles(owner, repo, pattern)
-
-        for (const file of files) {
-          try {
-            const content = await this.fetchFileContent(owner, repo, file.path)
-            const parsed = this.parser.parse(content)
-
-            if (parsed) {
-              skills.push({
-                ...parsed,
-                repoUrl: `https://github.com/${owner}/${repo}`,
-                filePath: file.path,
-                sha: file.sha,
-                owner,
-                repo,
-                discoveredAt: new Date().toISOString(),
-              })
-            }
-          } catch (error) {
-            // Log but continue with other files
-            console.error(`Failed to parse skill file ${file.path}:`, error)
-          }
-        }
-      } catch (error) {
-        // Log but continue with other patterns
-        console.error(`Failed to search for ${pattern} in ${owner}/${repo}:`, error)
-      }
-    }
-
-    return skills
+  private async delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms))
   }
 
   /**
-   * Index a single repository and return results
+   * Build GitHub API headers
    */
-  async indexRepository(owner: string, repo: string): Promise<IndexResult> {
-    const startTime = Date.now()
-    const initialRequestCount = this.requestCount
-    const errors: string[] = []
-
-    let skills: SkillMetadata[] = []
-
-    try {
-      skills = await this.discoverSkills(owner, repo)
-    } catch (error) {
-      errors.push(error instanceof Error ? error.message : String(error))
-    }
-
-    return {
-      repository: `${owner}/${repo}`,
-      skillsFound: skills.length,
-      skillsIndexed: skills.length, // All discovered skills are "indexed" in this context
-      skills,
-      errors,
-      durationMs: Date.now() - startTime,
-      apiRequests: this.requestCount - initialRequestCount,
-    }
-  }
-
-  /**
-   * Index multiple repositories
-   */
-  async indexAll(repositories: string[]): Promise<IndexResult[]> {
-    const results: IndexResult[] = []
-
-    for (const repoSpec of repositories) {
-      const [owner, repo] = repoSpec.split('/')
-      if (!owner || !repo) {
-        results.push({
-          repository: repoSpec,
-          skillsFound: 0,
-          skillsIndexed: 0,
-          skills: [],
-          errors: [`Invalid repository format: ${repoSpec}. Expected 'owner/repo'`],
-          durationMs: 0,
-          apiRequests: 0,
-        })
-        continue
-      }
-
-      const result = await this.indexRepository(owner, repo)
-      results.push(result)
-    }
-
-    return results
-  }
-
-  /**
-   * Search for skills across GitHub using code search
-   * Note: Requires authentication for code search API
-   */
-  async searchGitHub(query: string, maxResults = 100): Promise<SkillMetadata[]> {
-    const skills: SkillMetadata[] = []
-    const perPage = Math.min(maxResults, 100)
-    let page = 1
-
-    while (skills.length < maxResults) {
-      const searchQuery = `${query} filename:SKILL.md`
-      const response = await this.request<{
-        total_count: number
-        items: GitHubSearchItem[]
-      }>(
-        `https://api.github.com/search/code?q=${encodeURIComponent(searchQuery)}&per_page=${perPage}&page=${page}`
-      )
-
-      if (!response.items || response.items.length === 0) {
-        break
-      }
-
-      for (const item of response.items) {
-        if (skills.length >= maxResults) break
-
-        try {
-          const content = await this.fetchFileContent(
-            item.repository.owner.login,
-            item.repository.name,
-            item.path
-          )
-
-          const parsed = this.parser.parse(content)
-          if (parsed) {
-            skills.push({
-              ...parsed,
-              repoUrl: item.repository.html_url,
-              filePath: item.path,
-              sha: item.sha,
-              owner: item.repository.owner.login,
-              repo: item.repository.name,
-              discoveredAt: new Date().toISOString(),
-            })
-          }
-        } catch {
-          // Skip files that can't be parsed
-        }
-      }
-
-      if (response.items.length < perPage) {
-        break
-      }
-
-      page++
-    }
-
-    return skills
-  }
-
-  /**
-   * Convert discovered skills to database-ready format
-   */
-  toSkillCreateInputs(skills: SkillMetadata[]): SkillCreateInput[] {
-    return skills.map((skill) => ({
-      id: randomUUID(),
-      name: skill.name,
-      description: skill.description,
-      author: skill.author ?? skill.owner,
-      repoUrl: skill.repoUrl,
-      qualityScore: this.calculateQualityScore(skill),
-      trustTier: this.parser.inferTrustTier(skill),
-      tags: skill.tags,
-    }))
-  }
-
-  /**
-   * Get current rate limit information
-   */
-  getRateLimitInfo(): RateLimitInfo | null {
-    return this.rateLimitInfo
-  }
-
-  /**
-   * Get total request count
-   */
-  getRequestCount(): number {
-    return this.requestCount
-  }
-
-  /**
-   * Reset request counter
-   */
-  resetRequestCount(): void {
-    this.requestCount = 0
-  }
-
-  // Private methods
-
-  /**
-   * Search for files in a repository
-   */
-  private async searchFiles(
-    owner: string,
-    repo: string,
-    filename: string
-  ): Promise<Array<{ path: string; sha: string }>> {
-    // Use the repository tree API to find files
-    const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`
-
-    try {
-      const response = await this.request<{
-        tree: Array<{
-          path: string
-          sha: string
-          type: string
-        }>
-      }>(treeUrl)
-
-      return response.tree
-        .filter((item) => item.type === 'blob' && item.path.endsWith(filename))
-        .map((item) => ({
-          path: item.path,
-          sha: item.sha,
-        }))
-    } catch (error) {
-      // Fallback: try to get the file directly from common locations
-      const commonPaths = [
-        filename,
-        `.claude/${filename}`,
-        `.claude/skills/${filename}`,
-        `skills/${filename}`,
-      ]
-
-      const results: Array<{ path: string; sha: string }> = []
-
-      for (const path of commonPaths) {
-        try {
-          const content = await this.request<GitHubContentResponse>(
-            `https://api.github.com/repos/${owner}/${repo}/contents/${path}`
-          )
-          results.push({ path: content.path, sha: content.sha })
-        } catch {
-          // File doesn't exist at this path
-        }
-      }
-
-      return results
-    }
-  }
-
-  /**
-   * Fetch file content from a repository
-   */
-  private async fetchFileContent(owner: string, repo: string, path: string): Promise<string> {
-    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`
-    const response = await this.request<GitHubContentResponse>(url)
-
-    if (response.encoding === 'base64') {
-      return Buffer.from(response.content, 'base64').toString('utf-8')
-    }
-
-    return response.content
-  }
-
-  /**
-   * Make a rate-limited API request with retry logic
-   */
-  private async request<T>(url: string): Promise<T> {
-    await this.waitForRateLimit()
-
-    let lastError: Error | null = null
-
-    for (let attempt = 0; attempt <= this.options.maxRetries; attempt++) {
-      try {
-        const response = await fetch(url, {
-          headers: this.getHeaders(),
-        })
-
-        // Update rate limit info from headers
-        this.updateRateLimitInfo(response.headers)
-        this.requestCount++
-
-        if (response.status === 403 || response.status === 429) {
-          // Rate limited - wait and retry
-          const retryAfter = this.getRetryDelay(response.headers, attempt)
-          await this.delay(retryAfter)
-          continue
-        }
-
-        if (!response.ok) {
-          throw new Error(`GitHub API error: ${response.status} ${response.statusText}`)
-        }
-
-        return (await response.json()) as T
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-
-        if (attempt < this.options.maxRetries) {
-          const backoff = this.calculateBackoff(attempt)
-          await this.delay(backoff)
-        }
-      }
-    }
-
-    throw lastError ?? new Error('Request failed after retries')
-  }
-
-  /**
-   * Wait for rate limit if necessary
-   */
-  private async waitForRateLimit(): Promise<void> {
-    const now = Date.now()
-    const timeSinceLastRequest = now - this.lastRequestTime
-
-    if (timeSinceLastRequest < this.options.rateLimit) {
-      await this.delay(this.options.rateLimit - timeSinceLastRequest)
-    }
-
-    // Check if we're near the rate limit
-    if (this.rateLimitInfo && this.rateLimitInfo.remaining < 10) {
-      const resetTime = this.rateLimitInfo.reset * 1000
-      const waitTime = resetTime - Date.now()
-
-      if (waitTime > 0) {
-        console.log(
-          `Rate limit nearly exhausted. Waiting ${Math.ceil(waitTime / 1000)}s for reset...`
-        )
-        await this.delay(waitTime)
-      }
-    }
-
-    this.lastRequestTime = Date.now()
-  }
-
-  /**
-   * Calculate exponential backoff delay
-   */
-  private calculateBackoff(attempt: number): number {
-    const delay = this.options.backoffBase * Math.pow(2, attempt)
-    return Math.min(delay, this.options.maxBackoff)
-  }
-
-  /**
-   * Get retry delay from response headers or calculate
-   */
-  private getRetryDelay(headers: Headers, attempt: number): number {
-    const retryAfter = headers.get('retry-after')
-
-    if (retryAfter) {
-      // Could be seconds or a date
-      const seconds = parseInt(retryAfter, 10)
-      if (!isNaN(seconds)) {
-        return seconds * 1000
-      }
-    }
-
-    // Fall back to exponential backoff
-    return this.calculateBackoff(attempt)
-  }
-
-  /**
-   * Update rate limit info from response headers
-   */
-  private updateRateLimitInfo(headers: Headers): void {
-    const limit = headers.get('x-ratelimit-limit')
-    const remaining = headers.get('x-ratelimit-remaining')
-    const reset = headers.get('x-ratelimit-reset')
-    const used = headers.get('x-ratelimit-used')
-
-    if (limit && remaining && reset) {
-      this.rateLimitInfo = {
-        limit: parseInt(limit, 10),
-        remaining: parseInt(remaining, 10),
-        reset: parseInt(reset, 10),
-        used: used ? parseInt(used, 10) : 0,
-      }
-    }
-  }
-
-  /**
-   * Get request headers
-   */
-  private getHeaders(): Record<string, string> {
+  private buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
       Accept: 'application/vnd.github.v3+json',
       'User-Agent': 'skillsmith-indexer/1.0',
     }
-
-    if (this.options.token) {
-      headers['Authorization'] = `Bearer ${this.options.token}`
+    if (this.token) {
+      headers.Authorization = `Bearer ${this.token}`
     }
-
     return headers
   }
 
   /**
-   * Calculate quality score for a skill
+   * Search GitHub for repositories by topic or query
    */
-  private calculateQualityScore(skill: SkillMetadata): number {
-    let score = 0
-    const maxScore = 100
+  async searchRepositories(query: string, page: number = 1): Promise<IndexResult> {
+    const result: IndexResult = {
+      found: 0,
+      indexed: 0,
+      failed: 0,
+      errors: [],
+      repositories: [],
+    }
 
-    // Has description (20 points)
-    if (skill.description && skill.description.length > 0) {
-      score += 10
-      if (skill.description.length > 100) {
-        score += 10
+    try {
+      const searchQuery = encodeURIComponent(query)
+      const url = `https://api.github.com/search/repositories?q=${searchQuery}&per_page=${this.perPage}&page=${page}`
+
+      const response = await fetch(url, {
+        headers: this.buildHeaders(),
+      })
+
+      if (!response.ok) {
+        if (response.status === 403) {
+          result.errors.push('GitHub API rate limit exceeded')
+        } else {
+          result.errors.push(`GitHub API error: ${response.status}`)
+        }
+        result.failed = 1
+        return result
       }
-    }
 
-    // Has tags (15 points)
-    if (skill.tags.length > 0) {
-      score += 5
-      if (skill.tags.length >= 3) {
-        score += 5
+      const data = (await response.json()) as GitHubSearchResponse
+      result.found = data.total_count
+
+      for (const item of data.items) {
+        try {
+          const repo: GitHubRepository = {
+            owner: item.owner.login,
+            name: item.name,
+            fullName: item.full_name,
+            description: item.description,
+            url: item.html_url,
+            stars: item.stargazers_count,
+            forks: item.forks_count,
+            topics: item.topics || [],
+            updatedAt: item.updated_at,
+            defaultBranch: item.default_branch,
+          }
+          result.repositories.push(repo)
+          result.indexed++
+        } catch (error) {
+          result.failed++
+          result.errors.push(
+            `Failed to parse repository ${item.full_name}: ${error instanceof Error ? error.message : 'Unknown error'}`
+          )
+        }
       }
-      if (skill.tags.length >= 5) {
-        score += 5
-      }
+
+      await this.delay(this.requestDelay)
+    } catch (error) {
+      result.errors.push(
+        `Network error: ${error instanceof Error ? error.message : 'Unknown error'}`
+      )
+      result.failed = 1
     }
 
-    // Has version (10 points)
-    if (skill.version) {
-      score += 10
-    }
-
-    // Has author (10 points)
-    if (skill.author) {
-      score += 10
-    }
-
-    // Has license (10 points)
-    if (skill.license) {
-      score += 10
-    }
-
-    // Has dependencies documented (10 points)
-    if (skill.dependencies.length > 0) {
-      score += 10
-    }
-
-    // Has category (10 points)
-    if (skill.category) {
-      score += 10
-    }
-
-    // Has substantial documentation (15 points)
-    if (skill.rawContent.length > 500) {
-      score += 10
-      if (skill.rawContent.length > 1000) {
-        score += 5
-      }
-    }
-
-    return Math.min(score, maxScore) / 100 // Normalize to 0-1
+    return result
   }
 
   /**
-   * Helper to delay execution
+   * Index all configured topics
    */
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms))
+  async indexAllTopics(maxPagesPerTopic: number = 3): Promise<IndexResult> {
+    const result: IndexResult = {
+      found: 0,
+      indexed: 0,
+      failed: 0,
+      errors: [],
+      repositories: [],
+    }
+
+    const seenUrls = new Set<string>()
+
+    for (const topic of this.topics) {
+      for (let page = 1; page <= maxPagesPerTopic; page++) {
+        const query = `topic:${topic}`
+        const pageResult = await this.searchRepositories(query, page)
+
+        result.found += pageResult.found
+        result.errors.push(...pageResult.errors)
+
+        for (const repo of pageResult.repositories) {
+          if (!seenUrls.has(repo.url)) {
+            seenUrls.add(repo.url)
+            result.repositories.push(repo)
+            result.indexed++
+          }
+        }
+
+        result.failed += pageResult.failed
+
+        // Break if we've fetched all results for this topic
+        if (pageResult.repositories.length < this.perPage) {
+          break
+        }
+      }
+    }
+
+    return result
+  }
+
+  /**
+   * Index repositories by first letter filter (A-F, G-L, etc.)
+   */
+  async indexByLetterRange(
+    startLetter: string,
+    endLetter: string,
+    maxPages: number = 3
+  ): Promise<IndexResult> {
+    const result: IndexResult = {
+      found: 0,
+      indexed: 0,
+      failed: 0,
+      errors: [],
+      repositories: [],
+    }
+
+    const seenUrls = new Set<string>()
+
+    for (const topic of this.topics) {
+      for (let page = 1; page <= maxPages; page++) {
+        const query = `topic:${topic}`
+        const pageResult = await this.searchRepositories(query, page)
+
+        result.found += pageResult.found
+        result.errors.push(...pageResult.errors)
+
+        for (const repo of pageResult.repositories) {
+          const firstLetter = repo.name.charAt(0).toUpperCase()
+          if (firstLetter >= startLetter.toUpperCase() && firstLetter <= endLetter.toUpperCase()) {
+            if (!seenUrls.has(repo.url)) {
+              seenUrls.add(repo.url)
+              result.repositories.push(repo)
+              result.indexed++
+            }
+          }
+        }
+
+        result.failed += pageResult.failed
+
+        if (pageResult.repositories.length < this.perPage) {
+          break
+        }
+      }
+    }
+
+    return result
+  }
+
+  /**
+   * Convert GitHub repository to SkillCreateInput
+   */
+  repositoryToSkill(repo: GitHubRepository): SkillCreateInput {
+    // Calculate quality score based on stars and activity
+    const starScore = Math.min(repo.stars / 10, 50) // Max 50 from stars
+    const forkScore = Math.min(repo.forks / 5, 25) // Max 25 from forks
+    const qualityScore = Math.round(starScore + forkScore + 25) // Base 25 points
+
+    // Determine trust tier based on indicators
+    let trustTier: 'verified' | 'community' | 'experimental' | 'unknown' = 'unknown'
+    if (repo.topics.includes('claude-code-official')) {
+      trustTier = 'verified'
+    } else if (repo.stars >= 50) {
+      trustTier = 'community'
+    } else if (repo.stars >= 5) {
+      trustTier = 'experimental'
+    }
+
+    return {
+      name: repo.name,
+      description: repo.description,
+      author: repo.owner,
+      repoUrl: repo.url,
+      qualityScore,
+      trustTier,
+      tags: repo.topics,
+    }
   }
 }
-
-export default GitHubIndexer

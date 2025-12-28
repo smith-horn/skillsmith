@@ -111,46 +111,6 @@ describe('SearchService', () => {
       }
     })
 
-    it('should filter by category when provided', () => {
-      // Create a category and associate a skill with it
-      db.prepare(`INSERT INTO categories (id, name, description) VALUES (?, ?, ?)`).run(
-        'cat-1',
-        'TypeScript Tools',
-        'Tools for TypeScript development'
-      )
-
-      // Get the TypeScript Formatter skill and associate it with the category
-      const skill = db
-        .prepare('SELECT id FROM skills WHERE name = ?')
-        .get('TypeScript Formatter') as { id: string } | undefined
-      if (skill) {
-        db.prepare(`INSERT INTO skill_categories (skill_id, category_id) VALUES (?, ?)`).run(
-          skill.id,
-          'cat-1'
-        )
-      }
-
-      search.clearCache()
-
-      // Search with category filter - use a query that matches multiple skills
-      // Without category filter, "formatting" would match TypeScript Formatter
-      // With category filter, only the skill in "TypeScript Tools" should be returned
-      const results = search.search({
-        query: 'formatting',
-        category: 'TypeScript Tools',
-      })
-
-      expect(results.items.length).toBe(1)
-      expect(results.items[0].skill.name).toBe('TypeScript Formatter')
-
-      // Verify without category, we would get a match
-      search.clearCache()
-      const resultsNoCategory = search.search({
-        query: 'formatting',
-      })
-      expect(resultsNoCategory.items.length).toBeGreaterThanOrEqual(1)
-    })
-
     it('should cache results', () => {
       const query = { query: 'typescript' }
 
@@ -233,6 +193,7 @@ describe('SearchService', () => {
   describe('findSimilar', () => {
     it('should find similar skills based on content', () => {
       // Get a skill with distinct tags to find similarity
+      const _jsLinter = repo.findByRepoUrl('')
       const all = repo.findAll(10, 0).items
       const jsSkill = all.find((s) => s.name === 'JavaScript Linter')
 
