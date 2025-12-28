@@ -38,9 +38,16 @@ export type {
 export { HybridSearch } from './search/index.js'
 export type { HybridSearchOptions, SearchQuery, SearchResponse } from './search/index.js'
 
-// Embeddings
-export { EmbeddingService } from './embeddings/index.js'
-export type { EmbeddingResult, SimilarityResult } from './embeddings/index.js'
+// Embeddings (SMI-584, SMI-642)
+export { EmbeddingService, VectorStore } from './embeddings/index.js'
+export type {
+  EmbeddingResult,
+  SimilarityResult,
+  VectorEntry,
+  SimilarityMatch,
+  VectorStoreOptions,
+  VectorStoreStats,
+} from './embeddings/index.js'
 
 // Cache
 export { L1Cache, L2Cache, TieredCache } from './cache/index.js'

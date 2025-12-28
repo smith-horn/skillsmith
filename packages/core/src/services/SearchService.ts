@@ -1,6 +1,7 @@
 /**
  * SMI-579: SearchService - FTS5 search with BM25 ranking
  * SMI-630: Enhanced caching with TTL management
+ * SMI-642: Hybrid search with semantic embeddings
  *
  * Features:
  * - Full-text search using SQLite FTS5
@@ -9,6 +10,8 @@
  * - Result highlighting for matched terms
  * - Pagination support
  * - Two-tier caching (L1/L2) with TTL management
+ * - Optional semantic search with vector embeddings
+ * - Hybrid search combining FTS5 + vector similarity using RRF
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3'
@@ -21,6 +24,7 @@ import type {
 } from '../types/skill.js'
 import { CacheRepository } from '../repositories/CacheRepository.js'
 import { CacheService, CacheType } from '../cache/index.js'
+import type { EmbeddingService } from '../embeddings/index.js'
 
 interface FTSRow {
   id: string
@@ -41,22 +45,43 @@ export interface SearchServiceOptions {
   cacheTtl?: number
   /** Use enhanced CacheService with L1/L2 tiering and TTL management */
   cacheService?: CacheService
+  /** EmbeddingService for semantic search (SMI-642) */
+  embeddingService?: EmbeddingService
+  /** Weight for FTS5 results in hybrid search (0-1, default 0.5) */
+  ftsWeight?: number
+  /** Weight for semantic results in hybrid search (0-1, default 0.5) */
+  semanticWeight?: number
+  /** RRF parameter k (default 60) */
+  rrfK?: number
+}
+
+export interface HybridSearchOptions extends SearchOptions {
+  /** Use hybrid search combining FTS5 and semantic similarity */
+  useHybrid?: boolean
 }
 
 /**
- * Full-text search service with BM25 ranking
+ * Full-text search service with BM25 ranking and optional semantic search
  */
 export class SearchService {
   private db: DatabaseType
   private legacyCache: CacheRepository
   private cacheService: CacheService | null
   private cacheTtl: number
+  private embeddingService: EmbeddingService | null
+  private ftsWeight: number
+  private semanticWeight: number
+  private rrfK: number
 
   constructor(db: DatabaseType, options?: SearchServiceOptions) {
     this.db = db
     this.legacyCache = new CacheRepository(db)
     this.cacheService = options?.cacheService ?? null
     this.cacheTtl = options?.cacheTtl ?? 300 // 5 minutes default (legacy)
+    this.embeddingService = options?.embeddingService ?? null
+    this.ftsWeight = options?.ftsWeight ?? 0.5
+    this.semanticWeight = options?.semanticWeight ?? 0.5
+    this.rrfK = options?.rrfK ?? 60
   }
 
   /**
@@ -260,6 +285,239 @@ export class SearchService {
    */
   getCacheService(): CacheService | null {
     return this.cacheService
+  }
+
+  /**
+   * Get the EmbeddingService instance (if configured)
+   */
+  getEmbeddingService(): EmbeddingService | null {
+    return this.embeddingService
+  }
+
+  /**
+   * Check if hybrid search is available (embeddings configured)
+   */
+  isHybridSearchAvailable(): boolean {
+    return this.embeddingService !== null
+  }
+
+  /**
+   * Hybrid search combining FTS5 keyword matching and semantic similarity
+   * Uses Reciprocal Rank Fusion (RRF) for score combination
+   */
+  async hybridSearch(options: HybridSearchOptions): Promise<PaginatedResults<SearchResult>> {
+    const { query, limit = 20, offset = 0, useHybrid = true } = options
+
+    // Fall back to FTS-only search if embeddings not configured
+    if (!useHybrid || !this.embeddingService) {
+      return this.search(options)
+    }
+
+    // Check cache first (add hybrid prefix to differentiate from FTS-only cache)
+    const cacheKey = `hybrid:${this.buildCacheKey(options)}`
+    const cached = this.getCached<PaginatedResults<SearchResult>>(
+      cacheKey,
+      CacheType.SEARCH_RESULTS
+    )
+    if (cached) {
+      return cached
+    }
+
+    // Get FTS5 results
+    const ftsResults = this.getFtsScores(query, limit * 3)
+
+    // Get semantic results
+    const semanticResults = await this.getSemanticScores(query, limit * 3)
+
+    // Combine using RRF
+    const fusedScores = this.reciprocalRankFusion(
+      [ftsResults, semanticResults],
+      [this.ftsWeight, this.semanticWeight]
+    )
+
+    // Sort by fused score and get top results
+    const sortedIds = Array.from(fusedScores.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(offset, offset + limit)
+      .map(([id]) => id)
+
+    // Fetch full skill data for results
+    const results = this.fetchSkillResults(sortedIds, fusedScores, query)
+
+    const result: PaginatedResults<SearchResult> = {
+      items: results,
+      total: fusedScores.size,
+      limit,
+      offset,
+      hasMore: offset + results.length < fusedScores.size,
+    }
+
+    // Cache results
+    this.setCached(cacheKey, result, CacheType.SEARCH_RESULTS)
+
+    return result
+  }
+
+  /**
+   * Semantic-only search using embeddings
+   */
+  async semanticSearch(
+    query: string,
+    limit: number = 20,
+    minScore: number = 0
+  ): Promise<SearchResult[]> {
+    if (!this.embeddingService) {
+      throw new Error('EmbeddingService not configured for semantic search')
+    }
+
+    // Generate query embedding
+    const queryEmbedding = await this.embeddingService.embed(query)
+
+    // Find similar
+    const similar = this.embeddingService.findSimilar(queryEmbedding, limit)
+
+    // Filter by minScore and fetch full data
+    const filteredIds = similar.filter((s) => s.score >= minScore).map((s) => s.skillId)
+
+    const scores = new Map(similar.map((s) => [s.skillId, s.score]))
+    return this.fetchSkillResults(filteredIds, scores, query)
+  }
+
+  /**
+   * Index a skill's embeddings for semantic search
+   */
+  async indexSkillEmbedding(skill: {
+    id: string
+    name: string
+    description: string | null
+  }): Promise<void> {
+    if (!this.embeddingService) return
+
+    const text = `${skill.name} ${skill.description || ''}`
+    const embedding = await this.embeddingService.embed(text)
+    this.embeddingService.storeEmbedding(skill.id, embedding, text)
+  }
+
+  /**
+   * Batch index skill embeddings
+   */
+  async indexSkillEmbeddings(
+    skills: Array<{ id: string; name: string; description: string | null }>
+  ): Promise<number> {
+    if (!this.embeddingService) return 0
+    return this.embeddingService.precomputeEmbeddings(
+      skills.map((s) => ({ id: s.id, name: s.name, description: s.description || '' }))
+    )
+  }
+
+  /**
+   * Get FTS5 BM25 scores for a query
+   */
+  private getFtsScores(query: string, limit: number): Map<string, number> {
+    const results = new Map<string, number>()
+    const ftsQuery = this.buildFtsQuery(query)
+
+    try {
+      const sql = `
+        SELECT s.id, bm25(skills_fts, 10.0, 5.0, 1.0, 2.0) as rank
+        FROM skills s
+        INNER JOIN skills_fts f ON s.rowid = f.rowid
+        WHERE skills_fts MATCH ?
+        ORDER BY rank
+        LIMIT ?
+      `
+
+      const rows = this.db.prepare(sql).all(ftsQuery, limit) as Array<{ id: string; rank: number }>
+
+      for (const row of rows) {
+        // BM25 returns negative scores, convert to positive
+        results.set(row.id, Math.abs(row.rank))
+      }
+    } catch {
+      // FTS query might fail on invalid input
+    }
+
+    return results
+  }
+
+  /**
+   * Get semantic similarity scores for a query
+   */
+  private async getSemanticScores(query: string, limit: number): Promise<Map<string, number>> {
+    const results = new Map<string, number>()
+
+    if (!this.embeddingService) return results
+
+    try {
+      const queryEmbedding = await this.embeddingService.embed(query)
+      const similar = this.embeddingService.findSimilar(queryEmbedding, limit)
+
+      for (const { skillId, score } of similar) {
+        results.set(skillId, score)
+      }
+    } catch {
+      // Embedding might fail
+    }
+
+    return results
+  }
+
+  /**
+   * Reciprocal Rank Fusion for combining multiple rankings
+   */
+  private reciprocalRankFusion(
+    rankings: Array<Map<string, number>>,
+    weights: number[]
+  ): Map<string, number> {
+    const fusedScores = new Map<string, number>()
+
+    for (let i = 0; i < rankings.length; i++) {
+      const ranking = rankings[i]
+      const weight = weights[i] ?? 1
+
+      // Convert to sorted array by score descending
+      const sorted = Array.from(ranking.entries()).sort((a, b) => b[1] - a[1])
+
+      // Apply RRF formula: score = weight * (1 / (k + rank + 1))
+      sorted.forEach(([id], rank) => {
+        const rrfScore = weight * (1 / (this.rrfK + rank + 1))
+        const currentScore = fusedScores.get(id) ?? 0
+        fusedScores.set(id, currentScore + rrfScore)
+      })
+    }
+
+    return fusedScores
+  }
+
+  /**
+   * Fetch full skill data for result IDs
+   */
+  private fetchSkillResults(
+    ids: string[],
+    scores: Map<string, number>,
+    query: string
+  ): SearchResult[] {
+    if (ids.length === 0) return []
+
+    const placeholders = ids.map(() => '?').join(',')
+    const sql = `SELECT * FROM skills WHERE id IN (${placeholders})`
+    const rows = this.db.prepare(sql).all(...ids) as FTSRow[]
+
+    // Create a map for quick lookup
+    const rowMap = new Map(rows.map((r) => [r.id, r]))
+
+    // Return results in the order of ids (preserving ranking)
+    return ids
+      .filter((id) => rowMap.has(id))
+      .map((id) => {
+        const row = rowMap.get(id)!
+        const skill = this.rowToSkill(row)
+        return {
+          skill,
+          rank: scores.get(id) ?? 0,
+          highlights: this.buildHighlights(skill, query),
+        }
+      })
   }
 
   /**
