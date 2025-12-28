@@ -7,27 +7,22 @@
  * - Statistics and monitoring
  */
 
-import type { SearchResult } from './lru.js';
-import {
-  TTLTier,
-  POPULARITY_THRESHOLDS,
-  calculateTTLTier,
-  getTTLTierName,
-} from './CacheEntry.js';
+import type { SearchResult } from './lru.js'
+import { TTLTier, POPULARITY_THRESHOLDS, calculateTTLTier, getTTLTierName } from './CacheEntry.js'
 import {
   EnhancedTieredCache,
   type TieredCacheConfig,
   type TieredCacheStats,
-} from './TieredCache.js';
+} from './TieredCache.js'
 
 /**
  * Search options for cache key generation
  */
 export interface SearchOptions {
-  query: string;
-  filters?: Record<string, unknown>;
-  limit?: number;
-  offset?: number;
+  query: string
+  filters?: Record<string, unknown>
+  limit?: number
+  offset?: number
 }
 
 /**
@@ -35,38 +30,38 @@ export interface SearchOptions {
  */
 export type RefreshCallback = (
   options: SearchOptions
-) => Promise<{ results: SearchResult[]; totalCount: number }>;
+) => Promise<{ results: SearchResult[]; totalCount: number }>
 
 /**
  * Cache manager configuration
  */
 export interface CacheManagerConfig extends TieredCacheConfig {
   /** Enable background refresh for hot entries (default: true) */
-  enableBackgroundRefresh?: boolean;
+  enableBackgroundRefresh?: boolean
   /** Background refresh interval in ms (default: 30 seconds) */
-  refreshIntervalMs?: number;
+  refreshIntervalMs?: number
   /** Maximum concurrent refreshes (default: 3) */
-  maxConcurrentRefreshes?: number;
+  maxConcurrentRefreshes?: number
   /** Callback to refresh cache entries */
-  refreshCallback?: RefreshCallback;
+  refreshCallback?: RefreshCallback
 }
 
 /**
  * Query frequency tracker for popularity detection
  */
 interface QueryFrequency {
-  hits: number;
-  firstSeen: number;
-  lastSeen: number;
+  hits: number
+  firstSeen: number
+  lastSeen: number
 }
 
 /**
  * Resolved manager configuration
  */
 interface ResolvedManagerConfig {
-  enableBackgroundRefresh: boolean;
-  refreshIntervalMs: number;
-  maxConcurrentRefreshes: number;
+  enableBackgroundRefresh: boolean
+  refreshIntervalMs: number
+  maxConcurrentRefreshes: number
 }
 
 /**
@@ -74,31 +69,32 @@ interface ResolvedManagerConfig {
  * Coordinates L1/L2 caching with intelligent TTL management
  */
 export class CacheManager {
-  private cache: EnhancedTieredCache;
-  private readonly config: ResolvedManagerConfig;
-  private queryFrequencies: Map<string, QueryFrequency> = new Map();
-  private refreshTimer: ReturnType<typeof setInterval> | null = null;
-  private activeRefreshes = new Set<string>();
-  private refreshCallback: RefreshCallback | null = null;
+  private cache: EnhancedTieredCache
+  private readonly config: ResolvedManagerConfig
+  private queryFrequencies: Map<string, QueryFrequency> = new Map()
+  private refreshTimer: ReturnType<typeof setInterval> | null = null
+  /** SMI-683: Use Map<key, Promise> for proper deduplication of concurrent refreshes */
+  private activeRefreshes = new Map<string, Promise<void>>()
+  private refreshCallback: RefreshCallback | null = null
 
   // Track invalidation for coordination
-  private lastInvalidation = 0;
-  private invalidationCallbacks: Array<() => void> = [];
+  private lastInvalidation = 0
+  private invalidationCallbacks: Array<() => void> = []
 
   constructor(config: CacheManagerConfig = {}) {
-    this.cache = new EnhancedTieredCache(config);
+    this.cache = new EnhancedTieredCache(config)
 
     this.config = {
       enableBackgroundRefresh: config.enableBackgroundRefresh ?? true,
       refreshIntervalMs: config.refreshIntervalMs ?? 30 * 1000,
       maxConcurrentRefreshes: config.maxConcurrentRefreshes ?? 3,
-    };
+    }
 
-    this.refreshCallback = config.refreshCallback ?? null;
+    this.refreshCallback = config.refreshCallback ?? null
 
     // Start background refresh if enabled
     if (this.config.enableBackgroundRefresh && this.refreshCallback) {
-      this.startBackgroundRefresh();
+      this.startBackgroundRefresh()
     }
   }
 
@@ -107,7 +103,7 @@ export class CacheManager {
    */
   static generateKey(options: SearchOptions): string {
     // Normalize query: lowercase, trim, collapse whitespace
-    const normalizedQuery = options.query.toLowerCase().trim().replace(/\s+/g, ' ');
+    const normalizedQuery = options.query.toLowerCase().trim().replace(/\s+/g, ' ')
 
     // Sort and stringify filters for consistent keys
     const sortedFilters = options.filters
@@ -116,34 +112,36 @@ export class CacheManager {
             .sort()
             .reduce(
               (acc, key) => {
-                acc[key] = options.filters![key];
-                return acc;
+                acc[key] = options.filters![key]
+                return acc
               },
               {} as Record<string, unknown>
             )
         )
-      : '';
+      : ''
 
     // Include pagination in key
-    const pagination = `${options.limit ?? 20}:${options.offset ?? 0}`;
+    const pagination = `${options.limit ?? 20}:${options.offset ?? 0}`
 
-    return `search:${normalizedQuery}:${sortedFilters}:${pagination}`;
+    return `search:${normalizedQuery}:${sortedFilters}:${pagination}`
   }
 
   /**
    * Parse search options from cache key
+   * SMI-683: Fixed regex to handle empty filters (was: .+? requires at least 1 char)
    */
   static parseKey(key: string): SearchOptions | null {
-    const match = key.match(/^search:(.+?):(.+?):(\d+):(\d+)$/);
-    if (!match) return null;
+    // Allow empty filters section with (.*?) instead of (.+?)
+    const match = key.match(/^search:(.+?):(.*?):(\d+):(\d+)$/)
+    if (!match) return null
 
-    const [, query, filtersJson, limit, offset] = match;
+    const [, query, filtersJson, limit, offset] = match
 
-    let filters: Record<string, unknown> | undefined;
+    let filters: Record<string, unknown> | undefined
     try {
-      filters = filtersJson ? JSON.parse(filtersJson) : undefined;
+      filters = filtersJson ? JSON.parse(filtersJson) : undefined
     } catch {
-      filters = undefined;
+      filters = undefined
     }
 
     return {
@@ -151,22 +149,22 @@ export class CacheManager {
       filters,
       limit: parseInt(limit, 10),
       offset: parseInt(offset, 10),
-    };
+    }
   }
 
   /**
    * Get cached results for search options
    */
   get(options: SearchOptions): { results: SearchResult[]; totalCount: number } | undefined {
-    const key = CacheManager.generateKey(options);
-    const result = this.cache.get(key);
+    const key = CacheManager.generateKey(options)
+    const result = this.cache.get(key)
 
     if (result) {
       // Track query frequency for popularity detection
-      this.recordQueryHit(key);
+      this.recordQueryHit(key)
     }
 
-    return result;
+    return result
   }
 
   /**
@@ -178,43 +176,43 @@ export class CacheManager {
     options: SearchOptions,
     compute: () => Promise<{ results: SearchResult[]; totalCount: number }>
   ): Promise<{ results: SearchResult[]; totalCount: number }> {
-    const cached = this.get(options);
+    const cached = this.get(options)
     if (cached) {
-      return cached;
+      return cached
     }
 
-    const result = await compute();
-    this.set(options, result.results, result.totalCount);
-    return result;
+    const result = await compute()
+    this.set(options, result.results, result.totalCount)
+    return result
   }
 
   /**
    * Store results in cache with automatic TTL detection
    */
   set(options: SearchOptions, results: SearchResult[], totalCount: number): void {
-    const key = CacheManager.generateKey(options);
+    const key = CacheManager.generateKey(options)
 
     // Determine TTL tier based on query frequency
-    const ttlTier = this.determineTTLTier(key);
+    const ttlTier = this.determineTTLTier(key)
 
-    this.cache.set(key, results, totalCount, ttlTier);
+    this.cache.set(key, results, totalCount, ttlTier)
   }
 
   /**
    * Check if results are cached
    */
   has(options: SearchOptions): boolean {
-    const key = CacheManager.generateKey(options);
-    return this.cache.has(key);
+    const key = CacheManager.generateKey(options)
+    return this.cache.has(key)
   }
 
   /**
    * Delete specific cached result
    */
   delete(options: SearchOptions): boolean {
-    const key = CacheManager.generateKey(options);
-    this.queryFrequencies.delete(key);
-    return this.cache.delete(key);
+    const key = CacheManager.generateKey(options)
+    this.queryFrequencies.delete(key)
+    return this.cache.delete(key)
   }
 
   /**
@@ -222,14 +220,14 @@ export class CacheManager {
    * Should be called when the skill index is updated
    */
   invalidateAll(): void {
-    this.cache.invalidateAll();
-    this.queryFrequencies.clear();
-    this.lastInvalidation = Date.now();
+    this.cache.invalidateAll()
+    this.queryFrequencies.clear()
+    this.lastInvalidation = Date.now()
 
     // Notify listeners
     for (const callback of this.invalidationCallbacks) {
       try {
-        callback();
+        callback()
       } catch {
         // Ignore callback errors
       }
@@ -240,89 +238,85 @@ export class CacheManager {
    * Register callback for invalidation events
    */
   onInvalidate(callback: () => void): () => void {
-    this.invalidationCallbacks.push(callback);
+    this.invalidationCallbacks.push(callback)
     return () => {
-      const index = this.invalidationCallbacks.indexOf(callback);
+      const index = this.invalidationCallbacks.indexOf(callback)
       if (index >= 0) {
-        this.invalidationCallbacks.splice(index, 1);
+        this.invalidationCallbacks.splice(index, 1)
       }
-    };
+    }
   }
 
   /**
    * Get time since last invalidation
    */
   getTimeSinceInvalidation(): number {
-    return this.lastInvalidation > 0 ? Date.now() - this.lastInvalidation : -1;
+    return this.lastInvalidation > 0 ? Date.now() - this.lastInvalidation : -1
   }
 
   /**
    * Prune expired entries
    */
   prune(): number {
-    this.pruneQueryFrequencies();
-    return this.cache.prune();
+    this.pruneQueryFrequencies()
+    return this.cache.prune()
   }
 
   /**
    * Get comprehensive cache statistics
    */
   getStats(): TieredCacheStats & {
-    queryFrequencies: { popular: number; standard: number; rare: number };
-    backgroundRefresh: { active: number; lastRun: number };
+    queryFrequencies: { popular: number; standard: number; rare: number }
+    backgroundRefresh: { active: number; lastRun: number }
   } {
-    const cacheStats = this.cache.getStats();
+    const cacheStats = this.cache.getStats()
 
     // Count queries by frequency tier
-    const now = Date.now();
-    let popular = 0;
-    let standard = 0;
-    let rare = 0;
+    const now = Date.now()
+    let popular = 0
+    let standard = 0
+    let rare = 0
 
     for (const [, freq] of this.queryFrequencies) {
-      const tier = calculateTTLTier(freq.firstSeen, freq.hits, now);
-      if (tier === TTLTier.POPULAR) popular++;
-      else if (tier === TTLTier.RARE) rare++;
-      else standard++;
+      const tier = calculateTTLTier(freq.firstSeen, freq.hits, now)
+      if (tier === TTLTier.POPULAR) popular++
+      else if (tier === TTLTier.RARE) rare++
+      else standard++
     }
 
     return {
       ...cacheStats,
       queryFrequencies: { popular, standard, rare },
       backgroundRefresh: {
-        active: this.activeRefreshes.size,
+        active: this.activeRefreshes.size, // Map.size works the same as Set.size
         lastRun: this.refreshTimer ? Date.now() : 0,
       },
-    };
+    }
   }
 
   /**
    * Get detailed hit rate by TTL tier
    */
   getHitRateByTier(): Record<string, number> {
-    const stats = this.cache.getStats();
-    const total = stats.totalHits + stats.totalMisses;
+    const stats = this.cache.getStats()
+    const total = stats.totalHits + stats.totalMisses
 
     return {
       overall: total > 0 ? stats.totalHits / total : 0,
-      l1: stats.l1Hits + stats.l1Misses > 0
-        ? stats.l1Hits / (stats.l1Hits + stats.l1Misses)
-        : 0,
-      l2: stats.l2Hits + stats.l2Misses > 0
-        ? stats.l2Hits / (stats.l2Hits + stats.l2Misses)
-        : 0,
-    };
+      l1: stats.l1Hits + stats.l1Misses > 0 ? stats.l1Hits / (stats.l1Hits + stats.l1Misses) : 0,
+      l2: stats.l2Hits + stats.l2Misses > 0 ? stats.l2Hits / (stats.l2Hits + stats.l2Misses) : 0,
+    }
   }
 
   /**
    * Set the refresh callback for background refresh
    */
   setRefreshCallback(callback: RefreshCallback): void {
-    this.refreshCallback = callback;
+    this.refreshCallback = callback
 
     // Start background refresh if not already running
     if (this.config.enableBackgroundRefresh && !this.refreshTimer) {
-      this.startBackgroundRefresh();
+      this.startBackgroundRefresh()
     }
   }
 
@@ -331,12 +325,12 @@ export class CacheManager {
    */
   close(): void {
     if (this.refreshTimer) {
-      clearInterval(this.refreshTimer);
-      this.refreshTimer = null;
+      clearInterval(this.refreshTimer)
+      this.refreshTimer = null
     }
-    this.cache.close();
-    this.queryFrequencies.clear();
-    this.invalidationCallbacks = [];
+    this.cache.close()
+    this.queryFrequencies.clear()
+    this.invalidationCallbacks = []
   }
 
   // Private methods
@@ -345,18 +339,18 @@ export class CacheManager {
    * Record a hit for query frequency tracking
    */
   private recordQueryHit(key: string): void {
-    const now = Date.now();
-    const existing = this.queryFrequencies.get(key);
+    const now = Date.now()
+    const existing = this.queryFrequencies.get(key)
 
     if (existing) {
-      existing.hits++;
-      existing.lastSeen = now;
+      existing.hits++
+      existing.lastSeen = now
     } else {
       this.queryFrequencies.set(key, {
         hits: 1,
         firstSeen: now,
         lastSeen: now,
-      });
+      })
     }
   }
 
@@ -364,24 +358,24 @@ export class CacheManager {
    * Determine TTL tier based on query frequency
    */
   private determineTTLTier(key: string): TTLTier {
-    const freq = this.queryFrequencies.get(key);
+    const freq = this.queryFrequencies.get(key)
     if (!freq) {
-      return TTLTier.STANDARD;
+      return TTLTier.STANDARD
     }
 
-    return calculateTTLTier(freq.firstSeen, freq.hits);
+    return calculateTTLTier(freq.firstSeen, freq.hits)
   }
 
   /**
    * Prune old query frequency entries
    */
   private pruneQueryFrequencies(): void {
-    const now = Date.now();
-    const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+    const now = Date.now()
+    const maxAge = 24 * 60 * 60 * 1000 // 24 hours
 
     for (const [key, freq] of this.queryFrequencies) {
       if (now - freq.lastSeen > maxAge) {
-        this.queryFrequencies.delete(key);
+        this.queryFrequencies.delete(key)
       }
     }
   }
@@ -390,61 +384,72 @@ export class CacheManager {
    * Start background refresh loop
    */
   private startBackgroundRefresh(): void {
-    if (this.refreshTimer) return;
+    if (this.refreshTimer) return
 
     this.refreshTimer = setInterval(() => {
       this.performBackgroundRefresh().catch(() => {
         // Ignore refresh errors - background task should not crash
-      });
-    }, this.config.refreshIntervalMs);
+      })
+    }, this.config.refreshIntervalMs)
     // Unref timer to not block process exit
-    this.refreshTimer.unref();
+    this.refreshTimer.unref()
   }
 
   /**
    * Perform background refresh for entries approaching expiration
    */
   private async performBackgroundRefresh(): Promise<void> {
-    if (!this.refreshCallback) return;
+    if (!this.refreshCallback) return
 
-    const keysToRefresh = this.cache.getEntriesNeedingRefresh();
+    const keysToRefresh = this.cache.getEntriesNeedingRefresh()
 
     // Limit concurrent refreshes
-    const available = this.config.maxConcurrentRefreshes - this.activeRefreshes.size;
-    if (available <= 0) return;
+    const available = this.config.maxConcurrentRefreshes - this.activeRefreshes.size
+    if (available <= 0) return
 
     const toProcess = keysToRefresh
       .filter((key) => !this.activeRefreshes.has(key))
-      .slice(0, available);
+      .slice(0, available)
 
     for (const key of toProcess) {
       this.refreshEntry(key).catch(() => {
         // Ignore individual refresh errors
-      });
+      })
     }
   }
 
   /**
-   * Refresh a single cache entry (TOCTOU-safe via atomic check-and-add)
+   * Refresh a single cache entry
+   * SMI-683: Fixed race condition by using Map<string, Promise<void>> for proper deduplication.
+   * Concurrent calls for the same key now return the same promise instance.
    */
-  private async refreshEntry(key: string): Promise<void> {
-    if (!this.refreshCallback) return;
+  private refreshEntry(key: string): Promise<void> {
+    if (!this.refreshCallback) return Promise.resolve()
 
-    // Atomic: add returns Set, check size to detect if already present
-    const sizeBefore = this.activeRefreshes.size;
-    this.activeRefreshes.add(key);
-    if (this.activeRefreshes.size === sizeBefore) return; // Already refreshing
-
-    try {
-      const options = CacheManager.parseKey(key);
-      if (!options) return;
-      const result = await this.refreshCallback(options);
-      this.set(options, result.results, result.totalCount);
-    } finally {
-      this.activeRefreshes.delete(key);
+    // SMI-683: Check if already refreshing - return existing promise
+    const existing = this.activeRefreshes.get(key)
+    if (existing) {
+      return existing
     }
+
+    // Create new refresh promise
+    const refreshPromise = (async () => {
+      try {
+        const options = CacheManager.parseKey(key)
+        if (!options) return
+        const result = await this.refreshCallback!(options)
+        this.set(options, result.results, result.totalCount)
+      } finally {
+        // SMI-683: Always cleanup on completion or error
+        this.activeRefreshes.delete(key)
+      }
+    })()
+
+    // Store promise for deduplication
+    this.activeRefreshes.set(key, refreshPromise)
+    return refreshPromise
   }
 }
 
 // Re-export types and utilities
-export { TTLTier, getTTLTierName, POPULARITY_THRESHOLDS };
+export { TTLTier, getTTLTierName, POPULARITY_THRESHOLDS }
