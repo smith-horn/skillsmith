@@ -94,8 +94,8 @@ export type {
   ValidationResult,
   SkillParserOptions,
   GitHubIndexerOptions,
-  SkillMetadata,
   IndexResult,
+  SkillMetadata,
 } from './indexer/index.js'
 
 // Session Management (SMI-641)
@@ -155,3 +155,36 @@ export {
   type IndexValidationResult,
   type CLIOptions,
 } from './benchmarks/index.js'
+
+// Webhooks (SMI-645)
+export {
+  WebhookHandler,
+  WebhookQueue,
+  isSkillFile,
+  extractSkillChanges,
+  parseWebhookPayload,
+} from './webhooks/index.js'
+export type {
+  WebhookEventType,
+  RepositoryAction,
+  GitUser,
+  PushCommit,
+  RepositoryOwner,
+  WebhookRepository,
+  WebhookSender,
+  PushEventPayload,
+  RepositoryEventPayload,
+  PingEventPayload,
+  WebhookPayload,
+  ParsedWebhookEvent,
+  SignatureVerificationResult,
+  SkillFileChange,
+  WebhookHandlerOptions,
+  WebhookHandleResult,
+  QueueItemType,
+  QueuePriority,
+  WebhookQueueItem,
+  QueueProcessResult,
+  QueueStats,
+  WebhookQueueOptions,
+} from './webhooks/index.js'
