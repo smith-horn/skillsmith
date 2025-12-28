@@ -6,8 +6,8 @@
 set -e
 
 ISSUE_ID="${1:-}"
-REPO_DIR="/Users/williamsmith/Documents/GitHub/skillsmith-phase2-indexer"
-WORKTREE_DIR="/Users/williamsmith/Documents/GitHub/skillsmith-phase2b"
+REPO_DIR="/Users/williamsmith/Documents/GitHub/Claude-Skill-Discovery/skillsmith"
+WORKTREE_DIR="/Users/williamsmith/Documents/GitHub/Claude-Skill-Discovery/worktrees/phase-2b"
 BRANCH_NAME="phase-2b"
 
 if [ -z "$ISSUE_ID" ]; then

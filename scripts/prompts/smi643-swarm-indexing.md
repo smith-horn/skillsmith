@@ -1,7 +1,7 @@
 Implement SMI-643: Swarm Coordination for Parallel Repository Indexing
 
 ## Context
-Working in: /Users/williamsmith/Documents/GitHub/skillsmith-phase2b-parallel
+Working in: /Users/williamsmith/Documents/GitHub/Claude-Skill-Discovery/worktrees/phase-2b-parallel
 This is a git worktree of skillsmith-phase2-indexer on branch phase-2b-parallel.
 
 SMI-628 (GitHub Indexing) is COMPLETE. Use the existing:
