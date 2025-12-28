@@ -10,6 +10,27 @@
 import type { SkillCreateInput } from '../types/skill.js'
 
 /**
+ * Skill metadata extracted from repository indexing
+ * Used by IndexerRepository for database operations
+ */
+export interface SkillMetadata {
+  name: string
+  description: string | null
+  author: string | null
+  version: string | null
+  tags: string[]
+  dependencies: string[]
+  category: string | null
+  license: string | null
+  rawContent: string
+  repoUrl: string
+  filePath: string
+  sha: string
+  owner: string
+  repo: string
+}
+
+/**
  * GitHub repository metadata
  */
 export interface GitHubRepository {
