@@ -1,1 +1,5 @@
+# Run typecheck first (catches type errors before commit)
+npm run typecheck
+
+# Then run lint-staged for formatting/linting
 npx lint-staged
