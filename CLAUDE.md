@@ -127,24 +127,62 @@ docker exec skillsmith-dev-1 npm run audit:standards
 
 > **Location**: [.claude/skills/governance/SKILL.md](.claude/skills/governance/SKILL.md)
 
-Enforces engineering standards and code quality policies during development.
+Enforces engineering standards from [standards.md](docs/architecture/standards.md).
 
-**Trigger Phrases**: "code review", "review this", "commit", "standards", "compliance", "code quality", "best practices", "before I merge"
+**Trigger Phrases**: "code review", "commit", "standards", "compliance", "best practices"
 
-**Key Commands** (run in Docker):
+**Quick Audit** (run in Docker):
 
 ```bash
 docker exec skillsmith-dev-1 npm run audit:standards
-docker exec skillsmith-dev-1 node .claude/skills/governance/scripts/governance-check.mjs
 ```
 
-**When Active**:
+### Worktree Manager Skill
 
-- During code review discussions
-- Before commits (reminds about pre-commit checklist)
-- When discussing code quality or standards
+> **Location**: [.claude/skills/worktree-manager/SKILL.md](.claude/skills/worktree-manager/SKILL.md)
 
-**Two-Document Model**:
+Manages git worktrees for parallel development with conflict prevention.
+
+**Trigger Phrases**: "create worktree", "parallel development", "feature branch", "merge worktree"
+
+**Key Features**:
+- Staggered exports strategy (prevents index.ts conflicts)
+- Rebase-first workflow
+- Multi-session coordination
+
+**Quick Start**:
+
+```bash
+# Create worktree from main repository
+cd /Users/williamsmith/Documents/GitHub/Claude-Skill-Discovery/skillsmith
+git worktree add ../worktrees/feature-name -b feature/feature-name
+```
+
+### Linear Skill (User-Level)
+
+> **Location**: `~/.claude/skills/linear/skills/linear/SKILL.md`
+
+Manages Linear issues, projects, and workflows. Available globally across all sessions.
+
+**Skillsmith Project Context**:
+- **Project**: Skillsmith
+- **Issue Prefix**: SMI-xxx
+- **Team**: Check with `npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts whoami`
+
+**Common Operations**:
+
+```bash
+# Update issue status
+node ~/.claude/skills/linear/skills/linear/scripts/linear-helpers.mjs update-status Done SMI-644
+
+# Create issue for Skillsmith
+npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts create-issue "Skillsmith" "Issue title" "Description"
+
+# Query project issues
+npx tsx ~/.claude/skills/linear/skills/linear/scripts/query.ts 'query { issues(filter: {project: {name: {eq: "Skillsmith"}}}) { nodes { identifier title state { name } } } }'
+```
+
+### Two-Document Model
 
 | Document | Purpose | Location |
 |----------|---------|----------|
@@ -163,6 +201,9 @@ Project: Skillsmith (SMI-xxx issues)
 
 | Issue | Description | Status |
 |-------|-------------|--------|
+| SMI-644 | Tiered Cache Layer with TTL | Done |
+| SMI-683 | Cache race condition fixes | Done |
+| SMI-684 | Prototype pollution prevention | Done |
 | SMI-611 | Workspace dependency installation | Done |
 | SMI-612 | MCP SDK type declarations | Done |
 | SMI-613 | Implicit any type annotations | Done |
