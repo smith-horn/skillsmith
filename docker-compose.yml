@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: dev
     container_name: skillsmith-dev-1
     ports:
       - '${DEV_PORT:-3001}:3001'
@@ -26,6 +27,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: dev
     container_name: skillsmith-test-1
     volumes:
       - .:/app

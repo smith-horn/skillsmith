@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:20-slim AS base
 
 WORKDIR /app
 
@@ -25,5 +25,10 @@ COPY packages/ ./packages/
 # Build all packages
 RUN npm run build || echo "Build completed with warnings"
 
-# Default command - keep container running for development
+# Development stage - used by CI and local development
+FROM base AS dev
 CMD ["tail", "-f", "/dev/null"]
+
+# Production stage (future use)
+FROM base AS prod
+CMD ["node", "packages/mcp-server/dist/index.js"]
