@@ -25,7 +25,11 @@
     "prepare": "husky",
     "benchmark": "npm run benchmark --workspace=@skillsmith/core",
     "benchmark:search": "npm run benchmark:search --workspace=@skillsmith/core",
-    "benchmark:index": "npm run benchmark:index --workspace=@skillsmith/core"
+    "benchmark:index": "npm run benchmark:index --workspace=@skillsmith/core",
+    "linear:done": "node scripts/linear-sync.mjs done",
+    "linear:wip": "node scripts/linear-sync.mjs in-progress",
+    "linear:check": "node scripts/linear-sync.mjs check",
+    "linear:sync": "node scripts/linear-sync.mjs from-commit"
   },
   "engines": {
     "node": ">=20.0.0"
