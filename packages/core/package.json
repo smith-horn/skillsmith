@@ -19,7 +19,10 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "benchmark": "npx tsx src/benchmarks/cli.ts",
+    "benchmark:search": "npx tsx src/benchmarks/cli.ts --suite search",
+    "benchmark:index": "npx tsx src/benchmarks/cli.ts --suite index"
   },
   "dependencies": {
     "@xenova/transformers": "2.17.2",

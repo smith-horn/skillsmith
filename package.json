@@ -21,7 +21,10 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --build",
     "audit:standards": "node scripts/audit-standards.mjs",
-    "prepare": "husky"
+    "prepare": "husky",
+    "benchmark": "npm run benchmark --workspace=@skillsmith/core",
+    "benchmark:search": "npm run benchmark:search --workspace=@skillsmith/core",
+    "benchmark:index": "npm run benchmark:index --workspace=@skillsmith/core"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -40,6 +43,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^15.2.11",
     "prettier": "^3.4.2",
+    "tsx": "^4.7.0",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.0",
     "vitest": "^2.1.8"
