@@ -1,0 +1,140 @@
+{
+  "name": "@skillsmith/vscode-extension",
+  "displayName": "Skillsmith",
+  "description": "Discover and install Claude Code skills directly in VS Code",
+  "version": "0.1.0",
+  "publisher": "skillsmith",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "skills",
+    "ai",
+    "mcp"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "skillsmith.searchSkills",
+        "title": "Search Skills",
+        "category": "Skillsmith",
+        "icon": "$(search)"
+      },
+      {
+        "command": "skillsmith.installSkill",
+        "title": "Install Skill",
+        "category": "Skillsmith",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "skillsmith.refreshSkills",
+        "title": "Refresh Skills",
+        "category": "Skillsmith",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "skillsmith.viewSkillDetails",
+        "title": "View Skill Details",
+        "category": "Skillsmith"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "skillsmith",
+          "title": "Skillsmith",
+          "icon": "resources/skillsmith.svg"
+        }
+      ]
+    },
+    "views": {
+      "skillsmith": [
+        {
+          "id": "skillsmith.skillsView",
+          "name": "Skills",
+          "type": "tree"
+        },
+        {
+          "id": "skillsmith.searchView",
+          "name": "Search Results",
+          "type": "tree",
+          "visibility": "collapsed"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "skillsmith.skillsView",
+        "contents": "No skills found.\n[Search Skills](command:skillsmith.searchSkills)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "skillsmith.searchSkills",
+          "when": "view == skillsmith.skillsView",
+          "group": "navigation"
+        },
+        {
+          "command": "skillsmith.refreshSkills",
+          "when": "view == skillsmith.skillsView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "skillsmith.installSkill",
+          "when": "view == skillsmith.searchView && viewItem == skill",
+          "group": "inline"
+        },
+        {
+          "command": "skillsmith.viewSkillDetails",
+          "when": "viewItem == skill"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Skillsmith",
+      "properties": {
+        "skillsmith.skillsDirectory": {
+          "type": "string",
+          "default": "~/.claude/skills",
+          "description": "Directory where skills are installed"
+        },
+        "skillsmith.apiEndpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Custom API endpoint for skill search (leave empty for default)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "npm run build -- --watch",
+    "lint": "eslint src --ext ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.22.0",
+    "esbuild": "^0.19.11",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  },
+  "dependencies": {}
+}
