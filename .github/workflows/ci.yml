@@ -85,19 +85,17 @@ jobs:
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
-            -v /app/node_modules \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npm run lint
+            sh -c "npm ci --ignore-scripts && npm run lint"
 
       - name: Check formatting in Docker
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
-            -v /app/node_modules \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npm run format:check
+            sh -c "npm ci --ignore-scripts && npm run format:check"
 
   typecheck:
     name: Type Check
@@ -122,10 +120,9 @@ jobs:
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
-            -v /app/node_modules \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npm run typecheck
+            sh -c "npm ci --ignore-scripts && npm run typecheck"
 
   test:
     name: Test
@@ -150,10 +147,9 @@ jobs:
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
-            -v /app/node_modules \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npm run test:coverage
+            sh -c "npm ci && npm run test:coverage"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -186,10 +182,9 @@ jobs:
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
-            -v /app/node_modules \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npm audit --audit-level=high || true
+            sh -c "npm ci --ignore-scripts && npm audit --audit-level=high || true"
 
   compliance:
     name: Standards Compliance
@@ -214,10 +209,9 @@ jobs:
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
-            -v /app/node_modules \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npm run audit:standards
+            sh -c "npm ci --ignore-scripts && npm run audit:standards"
 
   build:
     name: Build
@@ -242,10 +236,9 @@ jobs:
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
-            -v /app/node_modules \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npm run build
+            sh -c "npm ci && npm run build"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
