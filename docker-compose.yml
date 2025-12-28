@@ -13,6 +13,12 @@ services:
       - NODE_ENV=development
       - GITHUB_TOKEN=${GITHUB_TOKEN}
     command: tail -f /dev/null
+    healthcheck:
+      test: ['CMD', 'node', '-e', "console.log('healthy')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     profiles:
       - dev
 
@@ -27,6 +33,12 @@ services:
     environment:
       - NODE_ENV=test
     command: npm test
+    healthcheck:
+      test: ['CMD', 'node', '-e', "console.log('healthy')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     profiles:
       - test
 
