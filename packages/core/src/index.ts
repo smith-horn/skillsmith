@@ -97,3 +97,29 @@ export type {
   SkillMetadata,
   IndexResult,
 } from './indexer/index.js'
+
+// Session Management (SMI-641)
+export {
+  SessionManager,
+  DefaultCommandExecutor,
+  SessionRecovery,
+  createSessionRecovery,
+  ActiveSessionContext,
+  NullSessionContext,
+  createSessionContext,
+  isActiveContext,
+  getSessionDuration,
+  formatSessionDuration,
+  getLatestCheckpoint,
+} from './session/index.js'
+export type {
+  SessionOptions,
+  MemoryResult,
+  CommandExecutor,
+  Checkpoint,
+  SessionData,
+  SessionContext,
+  RecoveryStatus,
+  RecoveryResult,
+  RecoveryOptions,
+} from './session/index.js'
