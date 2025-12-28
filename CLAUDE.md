@@ -169,12 +169,25 @@ Manages Linear issues, projects, and workflows. Available globally across all se
 - **Issue Prefix**: SMI-xxx
 - **Team**: Check with `npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts whoami`
 
-**Common Operations**:
+**Quick Commands** (preferred):
 
 ```bash
-# Update issue status
-node ~/.claude/skills/linear/skills/linear/scripts/linear-helpers.mjs update-status Done SMI-644
+# Mark issue as done
+npm run linear:done SMI-644
 
+# Mark issue as in progress
+npm run linear:wip SMI-640
+
+# Check issues in recent commits
+npm run linear:check
+
+# Auto-sync from last commit message
+npm run linear:sync
+```
+
+**Advanced Operations**:
+
+```bash
 # Create issue for Skillsmith
 npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts create-issue "Skillsmith" "Issue title" "Description"
 
