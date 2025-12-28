@@ -97,7 +97,7 @@ Skillsmith uses **Docker-first development**. All commands run inside Docker to 
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-org/skillsmith.git
+git clone https://github.com/wrsmith108/skillsmith.git
 cd skillsmith
 
 # 2. Start the development container
@@ -135,6 +135,9 @@ docker ps | grep skillsmith
 # View container logs
 docker logs skillsmith-dev-1
 
+# Follow logs in real-time
+docker logs -f skillsmith-dev-1
+
 # Stop container
 docker compose --profile dev down
 
@@ -159,10 +162,16 @@ docker exec skillsmith-dev-1 npm run build
 
 ```bash
 docker compose --profile dev down
-docker volume rm skillsmith_node_modules
+
+# Find and remove the node_modules volume
+docker volume ls | grep node_modules
+docker volume rm skillsmith_node_modules  # adjust name if different
+
 docker compose --profile dev up -d
 docker exec skillsmith-dev-1 npm install
 ```
+
+> **Note**: The volume name depends on your Docker Compose project name. Use `docker volume ls` to find the correct name.
 
 #### Native module errors (`ERR_DLOPEN_FAILED`)
 
