@@ -1,0 +1,18 @@
+{
+  "name": "varlock-claude-skill",
+  "version": "1.0.0",
+  "description": "Secure environment variable management skill for Claude Code",
+  "keywords": [
+    "varlock",
+    "security",
+    "secrets",
+    "environment-variables",
+    "claude-skill"
+  ],
+  "author": "William Smith",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wrsmith108/varlock-claude-skill"
+  }
+}
