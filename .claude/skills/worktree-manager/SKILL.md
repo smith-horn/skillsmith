@@ -301,76 +301,109 @@ git cherry-pick <commit1> <commit2>
 
 ## Scripts
 
+The skill includes helper scripts in `scripts/`:
+
+| Script | Purpose |
+|--------|---------|
+| `worktree-create.sh` | Create a new worktree with branch |
+| `worktree-status.sh` | Show status of all worktrees |
+| `worktree-sync.sh` | Sync all worktrees with main |
+| `worktree-cleanup.sh` | Clean up merged worktrees |
+| `generate-launch-script.sh` | Generate Claude Code launch script |
+
+### Generating Launch Scripts for Parallel Claude Sessions
+
+Use `generate-launch-script.sh` to create terminal scripts that:
+1. Navigate to the worktree
+2. Sync with origin/main
+3. Check Docker container health
+4. Display the task prompt
+5. Launch Claude Code
+
+```bash
+# With prompt file
+./scripts/generate-launch-script.sh ../worktrees/smi-619 SMI-619 "CI/CD Docker" prompt.md
+
+# With inline prompt
+echo "Configure CI/CD pipeline with Docker" | \
+  ./scripts/generate-launch-script.sh ../worktrees/smi-619 SMI-619 "CI/CD Docker"
+```
+
+### Key Learning: Claude Code Invocation
+
+**WRONG** (causes "requires valid session ID" error):
+```bash
+claude --resume "Execute task..."  # --resume expects a UUID, not a prompt!
+```
+
+**CORRECT** (display prompt, then launch interactive claude):
+```bash
+cat << 'PROMPT'
+================================================================================
+SMI-XXX: Task Title
+================================================================================
+
+## IMPORTANT: Use Docker Skill
+Run /docker before executing any npm commands.
+
+[Task details...]
+
+## When Done
+1. Commit with conventional commit message
+2. Push to remote
+3. Create PR
+================================================================================
+PROMPT
+
+claude
+```
+
+### Docker Container Health Check
+
+Include this in launch scripts when the project uses Docker:
+
+```bash
+# Check if Docker container is running
+if ! docker ps --filter name=skillsmith-dev-1 --format "{{.Status}}" | grep -q "Up"; then
+  echo "Starting Docker container..."
+  docker compose --profile dev up -d
+  sleep 3
+fi
+```
+
 ### scripts/worktree-create.sh
 
 ```bash
-#!/bin/bash
-# Usage: ./scripts/worktree-create.sh <feature-name> <issue-id>
+./scripts/worktree-create.sh <feature-name> [issue-id] [base-branch]
 
-FEATURE=$1
-ISSUE=$2
-WORKTREE_DIR="../worktrees/phase-$(date +%Y%m%d)-$FEATURE"
-
-if [ -z "$FEATURE" ] || [ -z "$ISSUE" ]; then
-    echo "Usage: $0 <feature-name> <issue-id>"
-    exit 1
-fi
-
-# Ensure on main
-git checkout main && git pull origin main
-
-# Create worktree
-git worktree add "$WORKTREE_DIR" -b "feature/$FEATURE"
-
-echo "Created worktree at: $WORKTREE_DIR"
-echo "Branch: feature/$FEATURE"
-echo "Issue: $ISSUE"
-echo ""
-echo "Next steps:"
-echo "  cd $WORKTREE_DIR"
-echo "  # Start your work"
+# Examples:
+./scripts/worktree-create.sh session SMI-641
+./scripts/worktree-create.sh webhooks SMI-645 main
+./scripts/worktree-create.sh hotfix-auth
 ```
 
 ### scripts/worktree-sync.sh
 
+Syncs all worktrees with origin/main via rebase:
+
 ```bash
-#!/bin/bash
-# Sync all worktrees with main
-
-echo "Syncing all worktrees with origin/main..."
-
-git fetch origin main
-
-for worktree in $(git worktree list --porcelain | grep worktree | cut -d' ' -f2); do
-    if [ "$worktree" != "$(git rev-parse --show-toplevel)" ]; then
-        echo "Syncing: $worktree"
-        (cd "$worktree" && git rebase origin/main) || echo "CONFLICT in $worktree - resolve manually"
-    fi
-done
-
-echo "Sync complete."
+./scripts/worktree-sync.sh [--dry-run]
 ```
 
 ### scripts/worktree-status.sh
 
+Shows status of all worktrees with behind/ahead counts:
+
 ```bash
-#!/bin/bash
-# Show status of all worktrees
+./scripts/worktree-status.sh [--verbose]
+```
 
-echo "=== Worktree Status ==="
-echo ""
+### scripts/worktree-cleanup.sh
 
-git worktree list
+Removes worktrees that have been merged:
 
-echo ""
-echo "=== Behind/Ahead of main ==="
-
-for worktree in $(git worktree list --porcelain | grep worktree | cut -d' ' -f2); do
-    branch=$(cd "$worktree" && git branch --show-current)
-    behind=$(cd "$worktree" && git rev-list --count HEAD..origin/main 2>/dev/null || echo "?")
-    ahead=$(cd "$worktree" && git rev-list --count origin/main..HEAD 2>/dev/null || echo "?")
-    echo "$worktree ($branch): $behind behind, $ahead ahead"
-done
+```bash
+./scripts/worktree-cleanup.sh [--all] [--force] [worktree-name]
 ```
 
 ---
