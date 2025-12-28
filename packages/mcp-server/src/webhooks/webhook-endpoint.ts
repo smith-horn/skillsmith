@@ -27,14 +27,31 @@ import {
 } from '@skillsmith/core'
 
 /**
- * Webhook server options
+ * Webhook server configuration (SMI-682: Added trust proxy options)
  */
-export interface WebhookServerOptions {
+export interface WebhookServerConfig {
   /**
    * GitHub webhook secret for signature verification
    */
   secret: string
 
+  /**
+   * Whether to trust X-Forwarded-For headers (default: false)
+   * SMI-682: Must be explicitly enabled for security
+   */
+  trustProxy?: boolean
+
+  /**
+   * List of trusted proxy IPs (optional, for enhanced security)
+   * SMI-682: When set, X-Forwarded-For is only trusted from these IPs
+   */
+  trustedProxies?: string[]
+}
+
+/**
+ * Webhook server options
+ */
+export interface WebhookServerOptions extends WebhookServerConfig {
   /**
    * Maximum request body size in bytes (default: 1MB)
    */
@@ -86,29 +103,65 @@ export interface ServerStartOptions {
 }
 
 /**
- * Rate limiter state
+ * Rate limiter state (SMI-681: Added cleanup timer for memory leak prevention)
  */
-interface RateLimiterState {
+export interface RateLimiterState {
   requests: Map<string, number[]>
   limit: number
   window: number
+  cleanupTimer?: ReturnType<typeof setInterval>
 }
 
 /**
- * Create rate limiter
+ * Create rate limiter with automatic cleanup (SMI-681)
+ * @param limit - Maximum requests per window
+ * @param windowMs - Window duration in milliseconds
  */
-function createRateLimiter(limit: number, windowMs: number): RateLimiterState {
-  return {
+export function createRateLimiter(limit: number, windowMs: number): RateLimiterState {
+  const state: RateLimiterState = {
     requests: new Map(),
     limit,
     window: windowMs,
   }
+
+  // SMI-681: Periodic cleanup to prevent memory leak
+  state.cleanupTimer = setInterval(() => {
+    const now = Date.now()
+    const windowStart = now - windowMs
+
+    for (const [ip, timestamps] of state.requests.entries()) {
+      const valid = timestamps.filter((t) => t > windowStart)
+      if (valid.length === 0) {
+        state.requests.delete(ip)
+      } else {
+        state.requests.set(ip, valid)
+      }
+    }
+  }, windowMs)
+
+  // Don't block process exit
+  if (state.cleanupTimer.unref) {
+    state.cleanupTimer.unref()
+  }
+
+  return state
+}
+
+/**
+ * Destroy rate limiter and clean up resources (SMI-681)
+ */
+export function destroyRateLimiter(state: RateLimiterState): void {
+  if (state.cleanupTimer) {
+    clearInterval(state.cleanupTimer)
+    state.cleanupTimer = undefined
+  }
+  state.requests.clear()
 }
 
 /**
  * Check if request is rate limited
  */
-function isRateLimited(limiter: RateLimiterState, ip: string): boolean {
+export function isRateLimited(limiter: RateLimiterState, ip: string): boolean {
   const now = Date.now()
   const windowStart = now - limiter.window
 
@@ -131,16 +184,41 @@ function isRateLimited(limiter: RateLimiterState, ip: string): boolean {
 }
 
 /**
- * Get client IP from request
+ * Get client IP from request (SMI-682: Added trusted proxy validation)
+ * @param req - Incoming HTTP request
+ * @param config - Server configuration with trust proxy settings
  */
-function getClientIp(req: IncomingMessage): string {
-  // Check for forwarded IP (behind proxy)
-  const forwarded = req.headers['x-forwarded-for']
-  if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim()
-  }
-  if (Array.isArray(forwarded) && forwarded.length > 0) {
-    return forwarded[0].split(',')[0].trim()
+export function getClientIp(req: IncomingMessage, config: WebhookServerConfig): string {
+  // SMI-682: Only trust X-Forwarded-For if explicitly configured
+  if (config.trustProxy) {
+    const forwarded = req.headers['x-forwarded-for']
+    if (typeof forwarded === 'string') {
+      const clientIp = forwarded.split(',')[0].trim()
+
+      // If trustedProxies specified, verify the request came from one
+      if (config.trustedProxies?.length) {
+        const remoteIp = req.socket.remoteAddress
+        if (!config.trustedProxies.includes(remoteIp || '')) {
+          // Don't trust forwarded header from untrusted source
+          return remoteIp || 'unknown'
+        }
+      }
+
+      return clientIp
+    }
+    if (Array.isArray(forwarded) && forwarded.length > 0) {
+      const clientIp = forwarded[0].split(',')[0].trim()
+
+      // If trustedProxies specified, verify the request came from one
+      if (config.trustedProxies?.length) {
+        const remoteIp = req.socket.remoteAddress
+        if (!config.trustedProxies.includes(remoteIp || '')) {
+          return remoteIp || 'unknown'
+        }
+      }
+
+      return clientIp
+    }
   }
 
   // Fall back to socket address
@@ -210,10 +288,19 @@ export function createWebhookServer(options: WebhookServerOptions): WebhookServe
     maxBodySize = 1024 * 1024, // 1MB
     rateLimit = 100,
     rateLimitWindow = 60000, // 1 minute
+    trustProxy = false, // SMI-682: Default to not trusting proxy
+    trustedProxies,
     onIndexUpdate,
     onLog = () => {},
     queueOptions = {},
   } = options
+
+  // SMI-682: Config for getClientIp
+  const serverConfig: WebhookServerConfig = {
+    secret,
+    trustProxy,
+    trustedProxies,
+  }
 
   // Create rate limiter
   const rateLimiter = createRateLimiter(rateLimit, rateLimitWindow)
@@ -250,7 +337,8 @@ export function createWebhookServer(options: WebhookServerOptions): WebhookServe
 
     // Webhook endpoint
     if (url === '/webhooks/github' && method === 'POST') {
-      const clientIp = getClientIp(req)
+      // SMI-682: Use config for trusted proxy validation
+      const clientIp = getClientIp(req, serverConfig)
 
       // Rate limiting
       if (isRateLimited(rateLimiter, clientIp)) {
@@ -276,6 +364,9 @@ export function createWebhookServer(options: WebhookServerOptions): WebhookServe
         return
       }
 
+      // Get delivery ID for idempotency
+      const deliveryId = req.headers['x-github-delivery'] as string | undefined
+
       // Read body
       let body: string
       try {
@@ -285,10 +376,10 @@ export function createWebhookServer(options: WebhookServerOptions): WebhookServe
         return
       }
 
-      // Process webhook
+      // Process webhook (pass delivery ID for idempotency)
       let result: WebhookHandleResult
       try {
-        result = await handler.handleWebhook(eventType, body, signature)
+        result = await handler.handleWebhook(eventType, body, signature, deliveryId)
       } catch (error) {
         onLog('error', 'Webhook processing error', {
           error: error instanceof Error ? error.message : String(error),
