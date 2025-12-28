@@ -46,6 +46,15 @@ export {
   validateIndexResults,
 } from './IndexBenchmark.js'
 
+// SMI-677: Shared statistical utilities
+export {
+  percentile,
+  mean,
+  sampleStddev,
+  calculateLatencyStats,
+  type LatencyStats,
+} from './stats.js'
+
 /**
  * CLI-friendly benchmark runner
  *

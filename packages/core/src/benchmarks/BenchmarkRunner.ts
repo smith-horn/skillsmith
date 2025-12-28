@@ -11,6 +11,7 @@
 
 import * as os from 'os'
 import * as fs from 'fs'
+import { percentile, sampleStddev, mean } from './stats.js'
 
 /**
  * Benchmark configuration options
@@ -34,6 +35,10 @@ export interface BenchmarkResult {
   iterations: number
   latencies: number[]
   memoryUsage?: MemoryStats
+  /** Number of errors encountered during benchmark execution */
+  errors: number
+  /** Error messages (capped at 10 to prevent memory issues) */
+  errorMessages: string[]
 }
 
 /**
@@ -61,6 +66,10 @@ export interface BenchmarkStats {
   min_ms: number
   max_ms: number
   memoryPeak_mb?: number
+  /** Number of errors encountered during benchmark execution */
+  errors?: number
+  /** Error messages (capped at 10) */
+  errorMessages?: string[]
 }
 
 /**
@@ -151,20 +160,27 @@ export class BenchmarkRunner {
   }
 
   /**
-   * Run a single benchmark
+   * Run a single benchmark with error handling (SMI-678)
    */
   private async runBenchmark(definition: BenchmarkDefinition): Promise<BenchmarkResult> {
     const { warmupIterations, iterations, measureMemory } = this.config
     const latencies: number[] = []
+    let errors = 0
+    const errorMessages: string[] = []
+    const MAX_ERROR_MESSAGES = 10
 
     // Setup phase
     if (definition.setup) {
       await definition.setup()
     }
 
-    // Warm-up phase
+    // Warm-up phase with error handling
     for (let i = 0; i < warmupIterations; i++) {
-      await definition.fn()
+      try {
+        await definition.fn()
+      } catch (err) {
+        // Ignore warmup errors, just continue
+      }
     }
 
     // Force garbage collection if available
@@ -174,18 +190,25 @@ export class BenchmarkRunner {
     const memBefore = measureMemory ? process.memoryUsage() : null
     let memPeak = memBefore?.heapUsed ?? 0
 
-    // Measurement phase
+    // Measurement phase with error handling (SMI-678)
     for (let i = 0; i < iterations; i++) {
-      const start = performance.now()
-      await definition.fn()
-      const end = performance.now()
-      latencies.push(end - start)
+      try {
+        const start = performance.now()
+        await definition.fn()
+        const end = performance.now()
+        latencies.push(end - start)
 
-      // Track peak memory periodically
-      if (measureMemory && i % 100 === 0) {
-        const current = process.memoryUsage().heapUsed
-        if (current > memPeak) {
-          memPeak = current
+        // Track peak memory periodically
+        if (measureMemory && i % 100 === 0) {
+          const current = process.memoryUsage().heapUsed
+          if (current > memPeak) {
+            memPeak = current
+          }
+        }
+      } catch (err) {
+        errors++
+        if (errorMessages.length < MAX_ERROR_MESSAGES) {
+          errorMessages.push(err instanceof Error ? err.message : String(err))
         }
       }
     }
@@ -200,8 +223,10 @@ export class BenchmarkRunner {
 
     const result: BenchmarkResult = {
       name: definition.name,
-      iterations,
+      iterations: latencies.length, // Only count successful iterations
       latencies,
+      errors,
+      errorMessages,
     }
 
     if (measureMemory && memBefore && memAfter) {
@@ -244,25 +269,44 @@ export class BenchmarkRunner {
 
   /**
    * Calculate statistical metrics from latencies
+   * Uses shared stats module for consistent calculations (SMI-677)
+   * Includes empty array guard (SMI-679) and sample variance (Bessel correction)
    */
   private calculateStats(result: BenchmarkResult): BenchmarkStats {
+    // SMI-679: Empty array guard
+    if (result.latencies.length === 0) {
+      return {
+        name: result.name,
+        iterations: 0,
+        p50_ms: 0,
+        p95_ms: 0,
+        p99_ms: 0,
+        mean_ms: 0,
+        stddev_ms: 0,
+        min_ms: 0,
+        max_ms: 0,
+        errors: result.errors,
+        errorMessages: result.errorMessages,
+      }
+    }
+
     const sorted = [...result.latencies].sort((a, b) => a - b)
     const n = sorted.length
 
-    const mean = sorted.reduce((a, b) => a + b, 0) / n
-    const variance = sorted.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / n
-    const stddev = Math.sqrt(variance)
-
+    // SMI-677: Use shared percentile function with linear interpolation
+    // Use sample stddev (n-1 denominator) for Bessel correction
     const stats: BenchmarkStats = {
       name: result.name,
       iterations: result.iterations,
-      p50_ms: this.percentile(sorted, 50),
-      p95_ms: this.percentile(sorted, 95),
-      p99_ms: this.percentile(sorted, 99),
-      mean_ms: Math.round(mean * 1000) / 1000,
-      stddev_ms: Math.round(stddev * 1000) / 1000,
+      p50_ms: percentile(sorted, 50),
+      p95_ms: percentile(sorted, 95),
+      p99_ms: percentile(sorted, 99),
+      mean_ms: Math.round(mean(sorted) * 1000) / 1000,
+      stddev_ms: Math.round(sampleStddev(sorted) * 1000) / 1000,
       min_ms: sorted[0],
       max_ms: sorted[n - 1],
+      errors: result.errors,
+      errorMessages: result.errorMessages,
     }
 
     if (result.memoryUsage) {
@@ -273,9 +317,10 @@ export class BenchmarkRunner {
   }
 
   /**
+   * @deprecated Use shared percentile from stats.ts instead (SMI-677)
    * Calculate percentile value from sorted array
    */
-  private percentile(sorted: number[], p: number): number {
+  private _legacyPercentile(sorted: number[], p: number): number {
     const index = Math.ceil((p / 100) * sorted.length) - 1
     const value = sorted[Math.max(0, index)]
     return Math.round(value * 1000) / 1000
