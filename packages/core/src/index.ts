@@ -218,3 +218,7 @@ export type {
   ISkillRepository,
   SourceIndexerOptions,
 } from './sources/index.js'
+
+// Quality Scoring (SMI-592)
+export { QualityScorer, quickScore, scoreFromRepository } from './scoring/index.js'
+export type { QualityScoringInput, QualityScoreBreakdown, ScoringWeights } from './scoring/index.js'
