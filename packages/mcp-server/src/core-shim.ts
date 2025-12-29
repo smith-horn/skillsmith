@@ -13,7 +13,7 @@ export {
   type ErrorCategory,
   type ErrorCode,
   type ErrorResponse,
-} from '../../core/src/errors.js';
+} from '../../core/src/errors.js'
 
 // MCP types
 export {
@@ -26,4 +26,4 @@ export {
   type SearchFilters,
   type SearchResponse as MCPSearchResponse,
   type GetSkillResponse,
-} from '../../core/src/types.js';
+} from '../../core/src/types.js'

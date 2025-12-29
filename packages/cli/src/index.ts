@@ -3,15 +3,12 @@
  * Skillsmith CLI - Claude Skill Discovery Tools
  */
 
-import { Command } from 'commander';
-import { importSkills } from './import.js';
+import { Command } from 'commander'
+import { importSkills } from './import.js'
 
-const program = new Command();
+const program = new Command()
 
-program
-  .name('skillsmith')
-  .description('Claude Skill Discovery and Management CLI')
-  .version('0.1.0');
+program.name('skillsmith').description('Claude Skill Discovery and Management CLI').version('0.1.0')
 
 program
   .command('import')
@@ -20,18 +17,18 @@ program
   .option('-m, --max <number>', 'Maximum skills to import', '1000')
   .option('-d, --db <path>', 'Database file path', 'skillsmith.db')
   .option('-v, --verbose', 'Verbose output')
-  .action(async (options) => {
+  .action(async (options: { topic: string; max: string; db: string; verbose?: boolean }) => {
     try {
       await importSkills({
         topic: options.topic,
         maxSkills: parseInt(options.max),
         dbPath: options.db,
-        verbose: options.verbose
-      });
+        ...(options.verbose !== undefined && { verbose: options.verbose }),
+      })
     } catch (error) {
-      console.error('Import failed:', error);
-      process.exit(1);
+      console.error('Import failed:', error)
+      process.exit(1)
     }
-  });
+  })
 
-program.parse();
+program.parse()

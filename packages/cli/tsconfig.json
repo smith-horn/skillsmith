@@ -6,9 +6,7 @@
     "rootDir": ".",
     "tsBuildInfoFile": "./dist/.tsbuildinfo"
   },
-  "references": [
-    { "path": "../core" }
-  ],
+  "references": [{ "path": "../core" }],
   "include": ["src/**/*", "tests/**/*", "vitest.config.ts"],
   "exclude": ["node_modules", "dist"]
 }

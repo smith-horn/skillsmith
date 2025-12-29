@@ -14,6 +14,7 @@ export default tseslint.config(
       '**/*.js',
       '**/*.mjs',
       '!eslint.config.js',
+      '**/vitest.config.integration.ts',
     ],
   },
   eslint.configs.recommended,

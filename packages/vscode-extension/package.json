@@ -45,6 +45,12 @@
         "command": "skillsmith.viewSkillDetails",
         "title": "View Skill Details",
         "category": "Skillsmith"
+      },
+      {
+        "command": "skillsmith.mcpReconnect",
+        "title": "Connect/Reconnect to MCP Server",
+        "category": "Skillsmith",
+        "icon": "$(plug)"
       }
     ],
     "viewsContainers": {
@@ -114,6 +120,36 @@
           "type": "string",
           "default": "",
           "description": "Custom API endpoint for skill search (leave empty for default)"
+        },
+        "skillsmith.mcp.serverCommand": {
+          "type": "string",
+          "default": "npx",
+          "description": "Command to run the MCP server"
+        },
+        "skillsmith.mcp.serverArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "@skillsmith/mcp-server"
+          ],
+          "description": "Arguments for the MCP server command"
+        },
+        "skillsmith.mcp.autoConnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically connect to MCP server on extension activation"
+        },
+        "skillsmith.mcp.autoReconnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically reconnect when connection is lost"
+        },
+        "skillsmith.mcp.connectionTimeout": {
+          "type": "number",
+          "default": 30000,
+          "description": "Connection timeout in milliseconds"
         }
       }
     }

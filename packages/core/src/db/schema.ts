@@ -9,10 +9,10 @@
  * - Indexes for common query patterns
  */
 
-import Database from 'better-sqlite3';
-import type { Database as DatabaseType } from 'better-sqlite3';
+import Database from 'better-sqlite3'
+import type { Database as DatabaseType } from 'better-sqlite3'
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 1
 
 /**
  * SQL statements for creating the database schema
@@ -119,34 +119,34 @@ CREATE INDEX IF NOT EXISTS idx_sources_type ON sources(type);
 CREATE INDEX IF NOT EXISTS idx_sources_is_active ON sources(is_active);
 CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);
 CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires_at);
-`;
+`
 
 /**
  * Migration definitions for schema upgrades
  */
 export interface Migration {
-  version: number;
-  description: string;
-  sql: string;
+  version: number
+  description: string
+  sql: string
 }
 
 export const MIGRATIONS: Migration[] = [
   {
     version: 1,
     description: 'Initial schema creation',
-    sql: SCHEMA_SQL
-  }
-];
+    sql: SCHEMA_SQL,
+  },
+]
 
 /**
  * Initialize the database with the complete schema
  */
 export function initializeSchema(db: DatabaseType): void {
-  db.exec(SCHEMA_SQL);
+  db.exec(SCHEMA_SQL)
 
   // Record the schema version
-  const stmt = db.prepare('INSERT OR REPLACE INTO schema_version (version) VALUES (?)');
-  stmt.run(SCHEMA_VERSION);
+  const stmt = db.prepare('INSERT OR REPLACE INTO schema_version (version) VALUES (?)')
+  stmt.run(SCHEMA_VERSION)
 }
 
 /**
@@ -154,10 +154,12 @@ export function initializeSchema(db: DatabaseType): void {
  */
 export function getSchemaVersion(db: DatabaseType): number {
   try {
-    const result = db.prepare('SELECT MAX(version) as version FROM schema_version').get() as { version: number } | undefined;
-    return result?.version ?? 0;
+    const result = db.prepare('SELECT MAX(version) as version FROM schema_version').get() as
+      | { version: number }
+      | undefined
+    return result?.version ?? 0
   } catch {
-    return 0;
+    return 0
   }
 }
 
@@ -165,38 +167,38 @@ export function getSchemaVersion(db: DatabaseType): number {
  * Run pending migrations to upgrade the schema
  */
 export function runMigrations(db: DatabaseType): number {
-  const currentVersion = getSchemaVersion(db);
-  let migrationsRun = 0;
+  const currentVersion = getSchemaVersion(db)
+  let migrationsRun = 0
 
   for (const migration of MIGRATIONS) {
     if (migration.version > currentVersion) {
-      db.exec(migration.sql);
-      db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(migration.version);
-      migrationsRun++;
+      db.exec(migration.sql)
+      db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(migration.version)
+      migrationsRun++
     }
   }
 
-  return migrationsRun;
+  return migrationsRun
 }
 
 /**
  * Create a new database connection with proper configuration
  */
 export function createDatabase(path: string = ':memory:'): DatabaseType {
-  const db = new Database(path);
+  const db = new Database(path)
 
   // Enable foreign keys
-  db.pragma('foreign_keys = ON');
+  db.pragma('foreign_keys = ON')
 
   // Initialize schema
-  initializeSchema(db);
+  initializeSchema(db)
 
-  return db;
+  return db
 }
 
 /**
  * Close the database connection safely
  */
 export function closeDatabase(db: DatabaseType): void {
-  db.close();
+  db.close()
 }

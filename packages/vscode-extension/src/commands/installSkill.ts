@@ -8,6 +8,7 @@ import * as os from 'os'
 import { SkillSearchProvider } from '../providers/SkillSearchProvider.js'
 import { isValidSkillId } from '../utils/security.js'
 import { type SkillData } from '../data/mockSkills.js'
+import { getMcpClient } from '../mcp/McpClient.js'
 
 export function registerInstallCommand(
   context: vscode.ExtensionContext,
@@ -54,18 +55,24 @@ export function registerInstallCommand(
         skill = selected.skill
       }
 
+      // At this point skill must be defined (either passed in or selected)
+      const skillToInstall = skill as SkillData
+
       // Validate skill ID to prevent path traversal
-      if (!isValidSkillId(skill.id)) {
+      if (!isValidSkillId(skillToInstall.id)) {
         vscode.window.showErrorMessage(
-          `Invalid skill ID "${skill.id}". Skill IDs must contain only letters, numbers, hyphens, and underscores.`
+          `Invalid skill ID "${skillToInstall.id}". Skill IDs must contain only letters, numbers, hyphens, and underscores.`
         )
         return
       }
 
       // Confirm installation
       const confirm = await vscode.window.showInformationMessage(
-        `Install "${skill.name}" skill?`,
-        { modal: true, detail: `This will install the skill to ~/.claude/skills/${skill.id}` },
+        `Install "${skillToInstall.name}" skill?`,
+        {
+          modal: true,
+          detail: `This will install the skill to ~/.claude/skills/${skillToInstall.id}`,
+        },
         'Install'
       )
 
@@ -77,31 +84,42 @@ export function registerInstallCommand(
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
-          title: `Installing ${skill.name}...`,
+          title: `Installing ${skillToInstall.name}...`,
           cancellable: false,
         },
-        async (progress) => {
+        async (progress: vscode.Progress<{ message?: string; increment?: number }>) => {
           progress.report({ increment: 0 })
 
           try {
-            await installSkill(skill)
+            // Try MCP installation first
+            const installResult = await performInstall(skillToInstall)
+
             progress.report({ increment: 100 })
 
-            const action = await vscode.window.showInformationMessage(
-              `Successfully installed "${skill.name}"!`,
-              'View Skill',
-              'Open Folder'
-            )
+            // Show result message
+            if (installResult.success) {
+              const tips = installResult.tips?.join('\n') || ''
+              const action = await vscode.window.showInformationMessage(
+                `Successfully installed "${skillToInstall.name}"!${tips ? '\n\n' + tips : ''}`,
+                'View Skill',
+                'Open Folder'
+              )
 
-            if (action === 'View Skill') {
-              await vscode.commands.executeCommand('skillsmith.viewSkillDetails', skill.id)
-            } else if (action === 'Open Folder') {
-              const skillPath = getSkillPath(skill.id)
-              await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(skillPath))
+              if (action === 'View Skill') {
+                await vscode.commands.executeCommand(
+                  'skillsmith.viewSkillDetails',
+                  skillToInstall.id
+                )
+              } else if (action === 'Open Folder') {
+                const skillPath = installResult.installPath || getSkillPath(skillToInstall.id)
+                await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(skillPath))
+              }
+
+              // Refresh the installed skills view
+              await vscode.commands.executeCommand('skillsmith.refreshSkills')
+            } else {
+              throw new Error(installResult.error || 'Installation failed')
             }
-
-            // Refresh the installed skills view
-            await vscode.commands.executeCommand('skillsmith.refreshSkills')
           } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error'
             vscode.window.showErrorMessage(`Installation failed: ${message}`)
@@ -112,6 +130,76 @@ export function registerInstallCommand(
   )
 
   context.subscriptions.push(installCommand)
+}
+
+/**
+ * Install result from either MCP or local installation
+ */
+interface InstallResult {
+  success: boolean
+  installPath: string
+  tips: string[] | undefined
+  error: string | undefined
+}
+
+/**
+ * Perform skill installation using MCP with fallback to local
+ */
+async function performInstall(skill: SkillData): Promise<InstallResult> {
+  const client = getMcpClient()
+
+  // Try MCP client first if connected
+  if (client.isConnected()) {
+    try {
+      const result = await client.installSkill(skill.id)
+
+      if (result.success) {
+        return {
+          success: true,
+          installPath: result.installPath,
+          tips: result.tips,
+          error: undefined,
+        }
+      } else {
+        // MCP reported failure, return it
+        return {
+          success: false,
+          installPath: result.installPath || '',
+          tips: undefined,
+          error: result.error,
+        }
+      }
+    } catch (error) {
+      console.warn('[Skillsmith] MCP install failed, falling back to local:', error)
+      // Fall through to local installation
+    }
+  }
+
+  // Fallback to local installation
+  console.log('[Skillsmith] Using local installation for skill:', skill.id)
+
+  try {
+    await installSkillLocally(skill)
+    const installPath = getSkillPath(skill.id)
+    return {
+      success: true,
+      installPath,
+      tips: [
+        `Skill "${skill.name}" installed successfully!`,
+        `To use this skill, mention it in Claude Code.`,
+        `View installed skills: ls ~/.claude/skills/`,
+      ],
+      error: undefined,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    return {
+      success: false,
+      installPath: '',
+      tips: undefined,
+      error: message,
+    }
+  }
 }
 
 function getSkillsDirectory(): string {
@@ -142,7 +230,10 @@ function getSkillPath(skillId: string): string {
   return skillPath
 }
 
-async function installSkill(skill: SkillData): Promise<void> {
+/**
+ * Install skill locally (fallback when MCP is not available)
+ */
+async function installSkillLocally(skill: SkillData): Promise<void> {
   const skillsDir = getSkillsDirectory()
   const skillPath = getSkillPath(skill.id)
 

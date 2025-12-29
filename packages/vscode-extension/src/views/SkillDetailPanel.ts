@@ -4,6 +4,37 @@
 import * as vscode from 'vscode'
 import { escapeHtml } from '../utils/security.js'
 import { getSkillById } from '../data/mockSkills.js'
+import { getMcpClient } from '../mcp/McpClient.js'
+import { type McpSkillDetails } from '../mcp/types.js'
+
+/**
+ * Score breakdown type
+ */
+interface ScoreBreakdown {
+  quality: number
+  popularity: number
+  maintenance: number
+  security: number
+  documentation: number
+}
+
+/**
+ * Extended skill data with optional fields from MCP
+ */
+interface ExtendedSkillData {
+  id: string
+  name: string
+  description: string
+  author: string
+  category: string
+  trustTier: string
+  score: number
+  repository: string | undefined
+  version: string | undefined
+  tags: string[] | undefined
+  installCommand: string | undefined
+  scoreBreakdown: ScoreBreakdown | undefined
+}
 
 export class SkillDetailPanel {
   public static currentPanel: SkillDetailPanel | undefined
@@ -12,6 +43,7 @@ export class SkillDetailPanel {
   private readonly _panel: vscode.WebviewPanel
   private readonly _extensionUri: vscode.Uri
   private _skillId: string
+  private _skillData: ExtendedSkillData | null = null
   private _disposables: vscode.Disposable[] = []
 
   public static createOrShow(extensionUri: vscode.Uri, skillId: string) {
@@ -23,7 +55,8 @@ export class SkillDetailPanel {
     if (SkillDetailPanel.currentPanel) {
       SkillDetailPanel.currentPanel._panel.reveal(column)
       SkillDetailPanel.currentPanel._skillId = skillId
-      SkillDetailPanel.currentPanel._update()
+      SkillDetailPanel.currentPanel._skillData = null
+      void SkillDetailPanel.currentPanel._loadAndUpdate()
       return
     }
 
@@ -50,15 +83,15 @@ export class SkillDetailPanel {
     this._extensionUri = extensionUri
     this._skillId = skillId
 
-    // Set the webview's initial html content
-    this._update()
+    // Load skill data and set the webview's initial html content
+    void this._loadAndUpdate()
 
     // Listen for when the panel is disposed
     this._panel.onDidDispose(() => this.dispose(), null, this._disposables)
 
     // Handle messages from the webview
     this._panel.webview.onDidReceiveMessage(
-      (message) => {
+      (message: { command: string; url?: string }) => {
         switch (message.command) {
           case 'install':
             vscode.commands.executeCommand('skillsmith.installSkill')
@@ -89,8 +122,125 @@ export class SkillDetailPanel {
     }
   }
 
+  /**
+   * Load skill data from MCP and update the panel
+   */
+  private async _loadAndUpdate(): Promise<void> {
+    // Show loading state first
+    this._panel.title = `Loading: ${this._skillId}`
+    this._panel.webview.html = this._getLoadingHtml()
+
+    // Try to fetch from MCP
+    const client = getMcpClient()
+    if (client.isConnected()) {
+      try {
+        const response = await client.getSkill(this._skillId)
+        this._skillData = this._convertMcpSkill(response.skill, response.installCommand)
+      } catch (error) {
+        console.warn('[Skillsmith] MCP get_skill failed, falling back to mock data:', error)
+        this._skillData = this._getMockSkillData()
+      }
+    } else {
+      // Fall back to mock data
+      this._skillData = this._getMockSkillData()
+    }
+
+    this._update()
+  }
+
+  /**
+   * Get skill data from mock source
+   */
+  private _getMockSkillData(): ExtendedSkillData {
+    const mockData = getSkillById(this._skillId)
+    return {
+      id: mockData.id,
+      name: mockData.name,
+      description: mockData.description,
+      author: mockData.author,
+      category: mockData.category,
+      trustTier: mockData.trustTier,
+      score: mockData.score,
+      repository: mockData.repository,
+      version: undefined,
+      tags: undefined,
+      installCommand: undefined,
+      scoreBreakdown: undefined,
+    }
+  }
+
+  /**
+   * Convert MCP skill details to ExtendedSkillData
+   */
+  private _convertMcpSkill(skill: McpSkillDetails, installCommand: string): ExtendedSkillData {
+    return {
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      author: skill.author,
+      category: skill.category,
+      trustTier: skill.trustTier,
+      score: skill.score,
+      repository: skill.repository,
+      version: skill.version,
+      tags: skill.tags,
+      installCommand: installCommand,
+      scoreBreakdown: skill.scoreBreakdown as ScoreBreakdown | undefined,
+    }
+  }
+
+  /**
+   * Get loading HTML
+   */
+  private _getLoadingHtml(): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading...</title>
+    <style>
+        body {
+            font-family: var(--vscode-font-family);
+            color: var(--vscode-foreground);
+            background-color: var(--vscode-editor-background);
+            padding: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 200px;
+        }
+        .loading {
+            text-align: center;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--vscode-progressBar-background);
+            border-top-color: var(--vscode-progressBar-foreground);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="loading">
+        <div class="spinner"></div>
+        <p>Loading skill details...</p>
+    </div>
+</body>
+</html>`
+  }
+
   private _update() {
-    this._panel.title = `Skill: ${this._skillId}`
+    if (!this._skillData) {
+      return
+    }
+    this._panel.title = `Skill: ${this._skillData.name}`
     this._panel.webview.html = this._getHtmlForWebview()
   }
 
@@ -128,7 +278,7 @@ export class SkillDetailPanel {
   }
 
   private _getHtmlForWebview(): string {
-    const skill = getSkillById(this._skillId)
+    const skill = this._skillData || getSkillById(this._skillId)
     const nonce = this._getNonce()
 
     // Ensure extensionUri is used (for future resource loading)
@@ -141,6 +291,14 @@ export class SkillDetailPanel {
     const safeCategory = escapeHtml(skill.category)
     const safeTrustTier = escapeHtml(skill.trustTier)
     const safeRepository = skill.repository ? escapeHtml(skill.repository) : ''
+
+    // Handle extended skill data properties
+    const extendedSkill = skill as ExtendedSkillData
+    const safeVersion = extendedSkill.version ? escapeHtml(extendedSkill.version) : null
+    const safeTags = extendedSkill.tags
+      ? extendedSkill.tags.map((t: string) => escapeHtml(t))
+      : null
+    const scoreBreakdown = extendedSkill.scoreBreakdown || null
 
     const trustBadgeColor = this._getTrustBadgeColor(skill.trustTier)
     const trustBadgeText = this._getTrustBadgeText(skill.trustTier)
@@ -249,6 +407,39 @@ export class SkillDetailPanel {
             cursor: pointer;
         }
         .repository-link:hover { text-decoration: underline; }
+        .score-breakdown {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .score-row {
+            display: grid;
+            grid-template-columns: 120px 1fr 50px;
+            align-items: center;
+            gap: 12px;
+        }
+        .score-label {
+            font-size: 13px;
+            color: var(--vscode-descriptionForeground);
+        }
+        .score-value {
+            font-size: 13px;
+            font-weight: 500;
+            text-align: right;
+        }
+        .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .tag {
+            display: inline-block;
+            padding: 4px 10px;
+            background-color: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            border-radius: 12px;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
@@ -270,6 +461,16 @@ export class SkillDetailPanel {
                 <div class="meta-label">Category</div>
                 <div class="meta-value">${safeCategory}</div>
             </div>
+            ${
+              safeVersion
+                ? `
+            <div class="meta-item">
+                <div class="meta-label">Version</div>
+                <div class="meta-value">${safeVersion}</div>
+            </div>
+            `
+                : ''
+            }
             <div class="meta-item">
                 <div class="meta-label">Score</div>
                 <div class="meta-value">${skill.score}/100</div>
@@ -283,6 +484,56 @@ export class SkillDetailPanel {
             </div>
         </div>
     </div>
+
+    ${
+      scoreBreakdown
+        ? `
+    <div class="section">
+        <h2>Score Breakdown</h2>
+        <div class="score-breakdown">
+            <div class="score-row">
+                <span class="score-label">Quality</span>
+                <div class="score-bar"><div class="score-fill" style="width: ${scoreBreakdown.quality}%"></div></div>
+                <span class="score-value">${scoreBreakdown.quality}</span>
+            </div>
+            <div class="score-row">
+                <span class="score-label">Popularity</span>
+                <div class="score-bar"><div class="score-fill" style="width: ${scoreBreakdown.popularity}%"></div></div>
+                <span class="score-value">${scoreBreakdown.popularity}</span>
+            </div>
+            <div class="score-row">
+                <span class="score-label">Maintenance</span>
+                <div class="score-bar"><div class="score-fill" style="width: ${scoreBreakdown.maintenance}%"></div></div>
+                <span class="score-value">${scoreBreakdown.maintenance}</span>
+            </div>
+            <div class="score-row">
+                <span class="score-label">Security</span>
+                <div class="score-bar"><div class="score-fill" style="width: ${scoreBreakdown.security}%"></div></div>
+                <span class="score-value">${scoreBreakdown.security}</span>
+            </div>
+            <div class="score-row">
+                <span class="score-label">Documentation</span>
+                <div class="score-bar"><div class="score-fill" style="width: ${scoreBreakdown.documentation}%"></div></div>
+                <span class="score-value">${scoreBreakdown.documentation}</span>
+            </div>
+        </div>
+    </div>
+    `
+        : ''
+    }
+
+    ${
+      safeTags && safeTags.length > 0
+        ? `
+    <div class="section">
+        <h2>Tags</h2>
+        <div class="tags">
+            ${safeTags.map((tag) => `<span class="tag">${tag}</span>`).join('')}
+        </div>
+    </div>
+    `
+        : ''
+    }
 
     ${
       skill.repository
