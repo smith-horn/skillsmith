@@ -228,8 +228,9 @@ npx tsx ~/.claude/skills/linear/skills/linear/scripts/query.ts 'query { issues(f
 Project: Skillsmith (SMI-xxx issues)
 
 - Phase 0: Validation - COMPLETED ([Retro](docs/retros/phase-0-validation.md))
-- Phase 1: Foundation - IN PROGRESS
-- Phase 2: Recommendations - Planned
+- Phase 1: Foundation - COMPLETED
+- Phase 2: Recommendations - IN PROGRESS
+- Phase 2c: Performance & Polish - COMPLETED
 
 ### Key Issues
 
@@ -242,10 +243,17 @@ Project: Skillsmith (SMI-xxx issues)
 | SMI-612 | MCP SDK type declarations | Done |
 | SMI-613 | Implicit any type annotations | Done |
 | SMI-617 | Docker native module compilation | Done |
-| SMI-614 | Pre-commit hooks | Todo |
-| SMI-615 | CI/CD pipeline | Todo |
-| SMI-616 | Integration tests | Todo |
+| SMI-614 | Pre-commit hooks | Done |
+| SMI-615 | CI/CD pipeline | Done |
+| SMI-616 | Integration tests | Done |
+| SMI-708 | CI/CD Docker layer caching optimization | Done |
+| SMI-709 | VS Code MCP client integration | Done |
 | SMI-710 | Post-commit hook for automatic Linear sync | Done |
+| SMI-712 | CI workflow fixes | Done |
+| SMI-716 | Prettier formatting | Done |
+| SMI-717 | File splitting analysis | Done |
+| SMI-718 | Coverage threshold fixes | Done |
+| SMI-719 | Docker guard hook | Done |
 
 ## Troubleshooting
 
