@@ -534,7 +534,11 @@ async function main() {
   }
 }
 
-main()
+// Only run main() when executed directly, not when imported
+import { fileURLToPath } from 'node:url'
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main()
+}
 
 // Export for use as module
 export {

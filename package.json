@@ -32,7 +32,8 @@
     "linear:check": "node scripts/linear-sync.mjs check",
     "linear:sync": "node scripts/linear-sync.mjs from-commit",
     "linear:hook": "node scripts/linear-hook.mjs post-commit",
-    "linear:hook:debug": "DEBUG_LINEAR_HOOK=true node scripts/linear-hook.mjs post-commit"
+    "linear:hook:debug": "DEBUG_LINEAR_HOOK=true node scripts/linear-hook.mjs post-commit",
+    "retro:generate": "node scripts/generate-retro.mjs"
   },
   "engines": {
     "node": ">=20.0.0"
