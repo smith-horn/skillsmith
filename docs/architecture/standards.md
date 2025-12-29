@@ -1,6 +1,6 @@
 # Engineering Standards - Skillsmith
 
-**Version**: 1.4
+**Version**: 1.5
 **Status**: Active
 **Owner**: Skillsmith Team
 
@@ -98,11 +98,14 @@ packages/
 | Category | Criteria |
 |----------|----------|
 | Correctness | Does it work? Edge cases handled? |
-| Security | No secrets, injection vulnerabilities |
+| Security | No secrets, injection vulnerabilities ([security checklist](../security/checklists/code-review.md)) |
 | Performance | No N+1 queries, efficient algorithms |
 | Style | Matches project conventions |
 | Testing | Tests exist for new functionality |
+| Schema | Database changes follow [schema.ts](../../packages/core/src/db/schema.ts) patterns |
 | Scope | No unrelated changes |
+
+> **Security Reviews**: For security-sensitive code (input handling, external data, file access), use the [Security Code Review Checklist](../security/checklists/code-review.md).
 
 ---
 
@@ -530,6 +533,14 @@ All MCP tools return structured error responses:
 
 ## Appendix: Quick Reference
 
+### Security Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [Security Standards Index](../security/index.md) | Authoritative security source of truth |
+| [Security Code Review Checklist](../security/checklists/code-review.md) | PR review security checklist |
+| [Database Schema](../../packages/core/src/db/schema.ts) | Data model reference |
+
 ### Pre-Commit Checklist
 
 ```
@@ -540,6 +551,7 @@ All MCP tools return structured error responses:
 [ ] No console.log statements
 [ ] No hardcoded secrets
 [ ] Meaningful commit message
+[ ] Security checklist reviewed (if applicable)
 ```
 
 ### PR Description Template
@@ -566,6 +578,7 @@ All MCP tools return structured error responses:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.5 | 2025-12-29 | Added §1.5 Schema review criteria, Security Documentation appendix, cross-links to security checklist |
 | 1.4 | 2025-12-27 | Added §4.3-4.8 Security Standards (input validation, prototype pollution, subprocess security, temp files, concurrency, crypto) from Phase 2b TDD |
 | 1.3 | 2025-12-28 | Added §3.5-3.7 Session Management, Incremental Verification, Linear Integration (from Phase 2a retro) |
 | 1.2 | 2025-12-27 | Updated §3.3 CI/CD Pipeline with compliance gate and job diagram |
