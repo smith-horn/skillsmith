@@ -61,6 +61,24 @@ export {
   validateIndexResults,
 } from './IndexBenchmark.js'
 
+// SMI-738: Cache benchmarks
+export {
+  CacheBenchmark,
+  type CacheBenchmarkConfig,
+  type CacheValidationResult,
+  CACHE_TARGETS,
+  validateCacheResults,
+} from './cacheBenchmark.js'
+
+// SMI-738: Embedding benchmarks
+export {
+  EmbeddingBenchmark,
+  type EmbeddingBenchmarkConfig,
+  type EmbeddingValidationResult,
+  EMBEDDING_TARGETS,
+  validateEmbeddingResults,
+} from './embeddingBenchmark.js'
+
 // SMI-677: Shared statistical utilities
 export {
   percentile,
@@ -162,6 +180,53 @@ export async function runAllBenchmarks(options: CLIOptions = {}): Promise<void> 
     }
   }
 
+  // SMI-738: Run cache benchmarks
+  if (suite === 'cache') {
+    console.log('Running cache benchmarks...')
+    const cacheBenchmark = new CacheBenchmark({
+      iterations: iterations ?? 1000,
+      enableMemoryProfiler: memory,
+      memoryRegressionThreshold: memoryThreshold,
+      memoryBaselines: memoryBaselines,
+    })
+    const cacheReport = await cacheBenchmark.run()
+    results.push(cacheReport)
+
+    const cacheValidation = validateCacheResults(cacheReport)
+    if (!cacheValidation.passed) {
+      console.error('Cache benchmark failures:')
+      cacheValidation.failures.forEach((f) => console.error(`  - ${f}`))
+    }
+    if (cacheValidation.warnings.length > 0) {
+      console.warn('Cache benchmark warnings:')
+      cacheValidation.warnings.forEach((w) => console.warn(`  - ${w}`))
+    }
+  }
+
+  // SMI-738: Run embedding benchmarks
+  if (suite === 'embedding') {
+    console.log('Running embedding benchmarks...')
+    const embeddingBenchmark = new EmbeddingBenchmark({
+      iterations: iterations ?? 50,
+      skipModelLoad: true, // Skip slow model load by default
+      enableMemoryProfiler: memory,
+      memoryRegressionThreshold: memoryThreshold,
+      memoryBaselines: memoryBaselines,
+    })
+    const embeddingReport = await embeddingBenchmark.run()
+    results.push(embeddingReport)
+
+    const embeddingValidation = validateEmbeddingResults(embeddingReport)
+    if (!embeddingValidation.passed) {
+      console.error('Embedding benchmark failures:')
+      embeddingValidation.failures.forEach((f) => console.error(`  - ${f}`))
+    }
+    if (embeddingValidation.warnings.length > 0) {
+      console.warn('Embedding benchmark warnings:')
+      embeddingValidation.warnings.forEach((w) => console.warn(`  - ${w}`))
+    }
+  }
+
   // Output results
   for (const report of results) {
     if (output === 'json') {
@@ -221,8 +286,8 @@ export async function runAllBenchmarks(options: CLIOptions = {}): Promise<void> 
  * CLI options for benchmark runner
  */
 export interface CLIOptions {
-  /** Run specific suite (search, index) */
-  suite?: 'search' | 'index'
+  /** Run specific suite (search, index, cache, embedding) */
+  suite?: 'search' | 'index' | 'cache' | 'embedding'
   /** Path to baseline JSON for comparison */
   compare?: string
   /** Output format (text, json) */
@@ -240,6 +305,8 @@ export interface CLIOptions {
 // Re-export everything for convenience
 import { SearchBenchmark, validateSearchResults } from './SearchBenchmark.js'
 import { IndexBenchmark, validateIndexResults } from './IndexBenchmark.js'
+import { CacheBenchmark, validateCacheResults } from './cacheBenchmark.js'
+import { EmbeddingBenchmark, validateEmbeddingResults } from './embeddingBenchmark.js'
 import {
   type BenchmarkReport,
   formatReportAsJson,

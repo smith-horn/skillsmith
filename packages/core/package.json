@@ -23,9 +23,18 @@
     "test:security": "vitest run tests/security",
     "benchmark": "npx tsx src/benchmarks/cli.ts",
     "benchmark:search": "npx tsx src/benchmarks/cli.ts --suite search",
-    "benchmark:index": "npx tsx src/benchmarks/cli.ts --suite index"
+    "benchmark:index": "npx tsx src/benchmarks/cli.ts --suite index",
+    "benchmark:cache": "npx tsx src/benchmarks/cli.ts --suite cache",
+    "benchmark:embedding": "npx tsx src/benchmarks/cli.ts --suite embedding"
   },
   "dependencies": {
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/auto-instrumentations-node": "0.52.1",
+    "@opentelemetry/exporter-trace-otlp-http": "0.56.0",
+    "@opentelemetry/resources": "1.30.1",
+    "@opentelemetry/sdk-node": "0.56.0",
+    "@opentelemetry/sdk-trace-base": "1.30.1",
+    "@opentelemetry/semantic-conventions": "1.38.0",
     "@xenova/transformers": "2.17.2",
     "better-sqlite3": "11.10.0",
     "lru-cache": "^10.1.0",

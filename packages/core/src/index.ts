@@ -154,6 +154,17 @@ export {
   type SizeImpactResult,
   type IndexValidationResult,
   type CLIOptions,
+  // SMI-738: Cache and embedding benchmarks
+  CacheBenchmark,
+  EmbeddingBenchmark,
+  CACHE_TARGETS,
+  EMBEDDING_TARGETS,
+  validateCacheResults,
+  validateEmbeddingResults,
+  type CacheBenchmarkConfig,
+  type CacheValidationResult,
+  type EmbeddingBenchmarkConfig,
+  type EmbeddingValidationResult,
 } from './benchmarks/index.js'
 
 // Webhooks (SMI-645)
@@ -233,3 +244,29 @@ export type {
   SourceResult,
   PipelineResult,
 } from './pipeline/index.js'
+
+// Telemetry (SMI-739)
+export {
+  SkillsmithTracer,
+  getTracer,
+  initializeTracing,
+  shutdownTracing,
+  traced,
+  MetricsRegistry,
+  getMetrics,
+  initializeMetrics,
+  timeAsync,
+  timeSync,
+  initializeTelemetry,
+  shutdownTelemetry,
+  LATENCY_BUCKETS,
+  type TracerConfig,
+  type SpanAttributes,
+  type SpanWrapper,
+  type MetricsConfig,
+  type MetricLabels,
+  type Counter,
+  type Histogram,
+  type Gauge,
+  type MetricsSnapshot,
+} from './telemetry/index.js'
