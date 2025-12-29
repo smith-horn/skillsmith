@@ -188,3 +188,33 @@ export type {
   QueueStats,
   WebhookQueueOptions,
 } from './webhooks/index.js'
+
+// Source Adapters (SMI-589)
+export {
+  BaseSourceAdapter,
+  SourceAdapterRegistry,
+  SourceIndexer,
+  defaultRegistry,
+  isSourceAdapter,
+} from './sources/index.js'
+export type {
+  ISourceAdapter,
+  SourceType,
+  SourceConfig,
+  RateLimitConfig,
+  SourceAuthConfig,
+  SourceLocation,
+  SourceRepository,
+  SkillContent,
+  SourceSearchOptions,
+  SourceSearchResult,
+  SkillIndexResult,
+  BatchIndexResult,
+  SourceHealth,
+  SourceAdapterFactory,
+  RegistryStats,
+  ParsedSkillMetadata as SourceParsedSkillMetadata,
+  ISkillParser,
+  ISkillRepository,
+  SourceIndexerOptions,
+} from './sources/index.js'
