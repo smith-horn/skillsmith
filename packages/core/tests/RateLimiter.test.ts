@@ -12,6 +12,7 @@ import {
   createRateLimiterFromPreset,
   type RateLimitConfig,
   type RateLimitStorage,
+  type RateLimitMetrics,
 } from '../src/security/RateLimiter.js'
 
 describe('RateLimiter - Token Bucket Algorithm', () => {
@@ -264,7 +265,7 @@ describe('RateLimiter - Token Bucket Algorithm', () => {
   })
 
   describe('Error Handling', () => {
-    it('should gracefully handle storage errors', async () => {
+    it('should gracefully handle storage errors with fail-open (default)', async () => {
       // Mock storage that throws errors
       const errorStorage: RateLimitStorage = {
         get: vi.fn().mockRejectedValue(new Error('Storage error')),
@@ -282,6 +283,90 @@ describe('RateLimiter - Token Bucket Algorithm', () => {
       )
 
       // Should allow request despite error (graceful degradation)
+      const result = await limiter.checkLimit('test-key')
+      expect(result.allowed).toBe(true)
+      expect(result.remaining).toBe(10)
+      expect(result.limit).toBe(10)
+    })
+
+    it('should deny requests with fail-closed mode on storage errors', async () => {
+      // Mock storage that throws errors
+      const errorStorage: RateLimitStorage = {
+        get: vi.fn().mockRejectedValue(new Error('Storage error')),
+        set: vi.fn().mockRejectedValue(new Error('Storage error')),
+        delete: vi.fn().mockRejectedValue(new Error('Storage error')),
+      }
+
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+          failMode: 'closed',
+        },
+        errorStorage
+      )
+
+      // Should deny request due to fail-closed mode
+      const result = await limiter.checkLimit('test-key')
+      expect(result.allowed).toBe(false)
+      expect(result.remaining).toBe(0)
+      expect(result.limit).toBe(10)
+      expect(result.retryAfterMs).toBe(60000)
+      expect(result.resetAt).toBeDefined()
+    })
+
+    it('should explicitly allow requests with fail-open mode on storage errors', async () => {
+      // Mock storage that throws errors
+      const errorStorage: RateLimitStorage = {
+        get: vi.fn().mockRejectedValue(new Error('Storage error')),
+        set: vi.fn().mockRejectedValue(new Error('Storage error')),
+        delete: vi.fn().mockRejectedValue(new Error('Storage error')),
+      }
+
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+          failMode: 'open',
+        },
+        errorStorage
+      )
+
+      // Should allow request due to fail-open mode
+      const result = await limiter.checkLimit('test-key')
+      expect(result.allowed).toBe(true)
+      expect(result.remaining).toBe(10)
+      expect(result.limit).toBe(10)
+    })
+
+    it('should use fail-closed for STRICT preset', async () => {
+      // Mock storage that throws errors
+      const errorStorage: RateLimitStorage = {
+        get: vi.fn().mockRejectedValue(new Error('Storage error')),
+        set: vi.fn().mockRejectedValue(new Error('Storage error')),
+        delete: vi.fn().mockRejectedValue(new Error('Storage error')),
+      }
+
+      limiter = new RateLimiter(RATE_LIMIT_PRESETS.STRICT, errorStorage)
+
+      // STRICT preset uses fail-closed, so should deny on error
+      const result = await limiter.checkLimit('test-key')
+      expect(result.allowed).toBe(false)
+    })
+
+    it('should use fail-open for STANDARD preset', async () => {
+      // Mock storage that throws errors
+      const errorStorage: RateLimitStorage = {
+        get: vi.fn().mockRejectedValue(new Error('Storage error')),
+        set: vi.fn().mockRejectedValue(new Error('Storage error')),
+        delete: vi.fn().mockRejectedValue(new Error('Storage error')),
+      }
+
+      limiter = new RateLimiter(RATE_LIMIT_PRESETS.STANDARD, errorStorage)
+
+      // STANDARD preset uses fail-open, so should allow on error
       const result = await limiter.checkLimit('test-key')
       expect(result.allowed).toBe(true)
     })
@@ -344,6 +429,261 @@ describe('RateLimiter - Token Bucket Algorithm', () => {
       // 11th request should fail
       const result = await limiter.checkLimit('test-key')
       expect(result.allowed).toBe(false)
+    })
+  })
+
+  describe('Metrics Tracking - SMI-752', () => {
+    it('should accumulate metrics for allowed requests', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+        },
+        storage
+      )
+
+      // Make 5 allowed requests
+      for (let i = 0; i < 5; i++) {
+        await limiter.checkLimit('test-key')
+      }
+
+      const metrics = limiter.getMetrics('test-key') as RateLimitMetrics
+      expect(metrics).toBeDefined()
+      expect(metrics.allowed).toBe(5)
+      expect(metrics.blocked).toBe(0)
+      expect(metrics.errors).toBe(0)
+      expect(metrics.lastReset).toBeInstanceOf(Date)
+    })
+
+    it('should accumulate metrics for blocked requests', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 3,
+          refillRate: 0.1,
+          windowMs: 60000,
+        },
+        storage
+      )
+
+      // Make 3 allowed requests
+      for (let i = 0; i < 3; i++) {
+        await limiter.checkLimit('test-key')
+      }
+
+      // Make 2 blocked requests
+      await limiter.checkLimit('test-key')
+      await limiter.checkLimit('test-key')
+
+      const metrics = limiter.getMetrics('test-key') as RateLimitMetrics
+      expect(metrics.allowed).toBe(3)
+      expect(metrics.blocked).toBe(2)
+      expect(metrics.errors).toBe(0)
+    })
+
+    it('should include metrics in result', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 5,
+          refillRate: 1,
+          windowMs: 60000,
+        },
+        storage
+      )
+
+      const result = await limiter.checkLimit('test-key')
+      expect(result.metrics).toBeDefined()
+      expect(result.metrics?.allowed).toBe(1)
+    })
+
+    it('should track errors in metrics', async () => {
+      const errorStorage: RateLimitStorage = {
+        get: vi.fn().mockRejectedValue(new Error('Storage error')),
+        set: vi.fn().mockRejectedValue(new Error('Storage error')),
+        delete: vi.fn().mockRejectedValue(new Error('Storage error')),
+      }
+
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+          failMode: 'open',
+        },
+        errorStorage
+      )
+
+      // Make 3 requests that will error
+      for (let i = 0; i < 3; i++) {
+        await limiter.checkLimit('test-key')
+      }
+
+      const metrics = limiter.getMetrics('test-key') as RateLimitMetrics
+      expect(metrics.errors).toBe(3)
+      // Fail-open counts as allowed
+      expect(metrics.allowed).toBe(3)
+    })
+
+    it('should getMetrics() return all metrics when no key specified', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+        },
+        storage
+      )
+
+      // Make requests for multiple keys
+      await limiter.checkLimit('key1')
+      await limiter.checkLimit('key1')
+      await limiter.checkLimit('key2')
+      await limiter.checkLimit('key3')
+
+      const allMetrics = limiter.getMetrics() as Map<string, RateLimitMetrics>
+      expect(allMetrics).toBeInstanceOf(Map)
+      expect(allMetrics.size).toBe(3)
+      expect(allMetrics.get('key1')?.allowed).toBe(2)
+      expect(allMetrics.get('key2')?.allowed).toBe(1)
+      expect(allMetrics.get('key3')?.allowed).toBe(1)
+    })
+
+    it('should resetMetrics() clear data for specific key', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+        },
+        storage
+      )
+
+      // Make requests
+      await limiter.checkLimit('key1')
+      await limiter.checkLimit('key2')
+
+      // Reset only key1
+      limiter.resetMetrics('key1')
+
+      expect(limiter.getMetrics('key1')).toBeUndefined()
+      expect(limiter.getMetrics('key2')).toBeDefined()
+    })
+
+    it('should resetMetrics() clear all data when no key specified', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+        },
+        storage
+      )
+
+      // Make requests for multiple keys
+      await limiter.checkLimit('key1')
+      await limiter.checkLimit('key2')
+      await limiter.checkLimit('key3')
+
+      // Reset all
+      limiter.resetMetrics()
+
+      const allMetrics = limiter.getMetrics() as Map<string, RateLimitMetrics>
+      expect(allMetrics.size).toBe(0)
+    })
+
+    it('should call onLimitExceeded callback when limit is exceeded', async () => {
+      const onLimitExceeded = vi.fn()
+
+      limiter = new RateLimiter(
+        {
+          maxTokens: 3,
+          refillRate: 0.1,
+          windowMs: 60000,
+          onLimitExceeded,
+        },
+        storage
+      )
+
+      // Use up all tokens
+      for (let i = 0; i < 3; i++) {
+        await limiter.checkLimit('test-key')
+      }
+
+      // This should trigger the callback
+      await limiter.checkLimit('test-key')
+
+      expect(onLimitExceeded).toHaveBeenCalledTimes(1)
+      expect(onLimitExceeded).toHaveBeenCalledWith('test-key', expect.objectContaining({
+        allowed: 3,
+        blocked: 1,
+        errors: 0,
+      }))
+    })
+
+    it('should call onLimitExceeded callback on each exceeded request', async () => {
+      const onLimitExceeded = vi.fn()
+
+      limiter = new RateLimiter(
+        {
+          maxTokens: 2,
+          refillRate: 0.01,
+          windowMs: 60000,
+          onLimitExceeded,
+        },
+        storage
+      )
+
+      // Use up all tokens
+      await limiter.checkLimit('test-key')
+      await limiter.checkLimit('test-key')
+
+      // These should trigger callbacks
+      await limiter.checkLimit('test-key')
+      await limiter.checkLimit('test-key')
+      await limiter.checkLimit('test-key')
+
+      expect(onLimitExceeded).toHaveBeenCalledTimes(3)
+    })
+
+    it('should not call onLimitExceeded for allowed requests', async () => {
+      const onLimitExceeded = vi.fn()
+
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+          onLimitExceeded,
+        },
+        storage
+      )
+
+      // Make allowed requests
+      for (let i = 0; i < 5; i++) {
+        await limiter.checkLimit('test-key')
+      }
+
+      expect(onLimitExceeded).not.toHaveBeenCalled()
+    })
+
+    it('should clear metrics on dispose', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+        },
+        storage
+      )
+
+      // Make requests
+      await limiter.checkLimit('test-key')
+
+      // Dispose should clear metrics
+      limiter.dispose()
+
+      const allMetrics = limiter.getMetrics() as Map<string, RateLimitMetrics>
+      expect(allMetrics.size).toBe(0)
     })
   })
 })
