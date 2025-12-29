@@ -55,6 +55,9 @@ export { type ISourceAdapter, isSourceAdapter } from './ISourceAdapter.js'
 // Base class
 export { BaseSourceAdapter } from './BaseSourceAdapter.js'
 
+// GitHub Adapter (SMI-590)
+export { GitHubSourceAdapter, createGitHubAdapter } from './GitHubSourceAdapter.js'
+
 // Registry
 export {
   SourceAdapterRegistry,
