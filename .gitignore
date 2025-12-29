@@ -46,3 +46,7 @@ Thumbs.db
 # Misc
 *.bak
 *.tmp
+
+# Coordination artifacts
+.claude-flow/
+.swarm/

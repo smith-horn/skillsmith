@@ -162,8 +162,8 @@ export class GitHubSourceAdapter extends BaseSourceAdapter {
     const response = await this.fetchWithRateLimit(url)
 
     if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('GitHub API rate limit exceeded')
+      if (response.status === 403 || response.status === 429) {
+        throw new Error('API rate limit exceeded')
       }
       throw new Error(`GitHub API error: ${response.status}`)
     }
@@ -305,8 +305,8 @@ export class GitHubSourceAdapter extends BaseSourceAdapter {
     const response = await this.fetchWithRateLimit(url)
 
     if (!response.ok) {
-      if (response.status === 403) {
-        throw new Error('GitHub API rate limit exceeded')
+      if (response.status === 403 || response.status === 429) {
+        throw new Error('API rate limit exceeded')
       }
       throw new Error(`GitHub API error: ${response.status}`)
     }
