@@ -25,6 +25,8 @@
     "vitest": "^2.1.8",
     "zod": "^3.25.0"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "license": "Apache-2.0"
 }

@@ -1,0 +1,23 @@
+# Post-commit hook: Automatically sync Linear issues from commit messages
+# Issue: SMI-710
+#
+# This hook extracts SMI-xxx issue references from commit messages and updates
+# their status in Linear. It runs in the background to avoid blocking git.
+#
+# Configuration:
+#   LINEAR_API_KEY       - Required for Linear API access (silent fail if unset)
+#   DEBUG_LINEAR_HOOK    - Set to 'true' for verbose output
+#
+# Behavior:
+#   - Extracts SMI-xxx patterns from commit message
+#   - Marks issues as "in_progress" by default
+#   - Marks as "done" if commit contains: fix, close, complete, done, finish
+#   - Fails silently on any error (never blocks commits)
+#   - Times out after 2 seconds
+
+# Run the Linear hook in background to not block git operations
+# The script handles its own timeouts and error handling
+node "$(dirname "$0")/../scripts/linear-hook.mjs" post-commit &
+
+# Don't wait for background process
+exit 0

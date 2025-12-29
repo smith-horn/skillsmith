@@ -3,36 +3,36 @@
  * Persistent cache layer with configurable TTL
  */
 
-import Database from 'better-sqlite3';
-import type { SearchResult, SearchCacheEntry, CacheStats } from './lru.js';
-import { isValidCacheKey } from './CacheEntry.js';
+import Database from 'better-sqlite3'
+import type { SearchResult, SearchCacheEntry, CacheStats } from './lru.js'
+import { isValidCacheKey } from './CacheEntry.js'
 
 export interface L2CacheOptions {
-  dbPath: string;
-  ttlSeconds?: number; // Default: 1 hour
+  dbPath: string
+  ttlSeconds?: number // Default: 1 hour
 }
 
 export class L2Cache {
-  private db: Database.Database;
-  private readonly ttlSeconds: number;
-  private hits = 0;
-  private misses = 0;
+  private db: Database.Database
+  private readonly ttlSeconds: number
+  private hits = 0
+  private misses = 0
 
   // Prepared statements (created once, reused for performance)
   private stmts: {
-    get: Database.Statement<[string, number]>;
-    set: Database.Statement<[string, string, number, number, number]>;
-    has: Database.Statement<[string, number]>;
-    delete: Database.Statement<[string]>;
-    prune: Database.Statement<[number]>;
-    stats: Database.Statement<[number]>;
-  };
+    get: Database.Statement<[string, number]>
+    set: Database.Statement<[string, string, number, number, number]>
+    has: Database.Statement<[string, number]>
+    delete: Database.Statement<[string]>
+    prune: Database.Statement<[number]>
+    stats: Database.Statement<[number]>
+  }
 
   constructor(options: L2CacheOptions) {
-    this.db = new Database(options.dbPath);
-    this.ttlSeconds = options.ttlSeconds ?? 3600; // 1 hour default
-    this.initTable();
-    this.stmts = this.prepareStatements();
+    this.db = new Database(options.dbPath)
+    this.ttlSeconds = options.ttlSeconds ?? 3600 // 1 hour default
+    this.initTable()
+    this.stmts = this.prepareStatements()
   }
 
   private initTable(): void {
@@ -44,12 +44,12 @@ export class L2Cache {
         created_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL
       )
-    `);
+    `)
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_cache_expires
       ON search_cache(expires_at)
-    `);
+    `)
   }
 
   private prepareStatements() {
@@ -80,7 +80,7 @@ export class L2Cache {
           SUM(CASE WHEN expires_at <= ? THEN 1 ELSE 0 END) as expired
         FROM search_cache
       `),
-    };
+    }
   }
 
   /**
@@ -88,28 +88,30 @@ export class L2Cache {
    */
   get(key: string): SearchCacheEntry | undefined {
     if (!isValidCacheKey(key)) {
-      this.misses++;
-      return undefined;
+      this.misses++
+      return undefined
     }
 
-    const now = Math.floor(Date.now() / 1000);
-    const row = this.stmts.get.get(key, now) as {
-      results_json: string;
-      total_count: number;
-      created_at: number;
-    } | undefined;
+    const now = Math.floor(Date.now() / 1000)
+    const row = this.stmts.get.get(key, now) as
+      | {
+          results_json: string
+          total_count: number
+          created_at: number
+        }
+      | undefined
 
     if (row) {
-      this.hits++;
+      this.hits++
       return {
         results: JSON.parse(row.results_json) as SearchResult[],
         totalCount: row.total_count,
         timestamp: row.created_at * 1000,
-      };
+      }
     }
 
-    this.misses++;
-    return undefined;
+    this.misses++
+    return undefined
   }
 
   /**
@@ -117,63 +119,63 @@ export class L2Cache {
    */
   set(key: string, results: SearchResult[], totalCount: number): void {
     if (!isValidCacheKey(key)) {
-      throw new Error('Invalid cache key');
+      throw new Error('Invalid cache key')
     }
 
-    const now = Math.floor(Date.now() / 1000);
-    const expiresAt = now + this.ttlSeconds;
-    this.stmts.set.run(key, JSON.stringify(results), totalCount, now, expiresAt);
+    const now = Math.floor(Date.now() / 1000)
+    const expiresAt = now + this.ttlSeconds
+    this.stmts.set.run(key, JSON.stringify(results), totalCount, now, expiresAt)
   }
 
   /**
    * Check if key exists and is not expired
    */
   has(key: string): boolean {
-    if (!isValidCacheKey(key)) return false;
-    const now = Math.floor(Date.now() / 1000);
-    return this.stmts.has.get(key, now) !== undefined;
+    if (!isValidCacheKey(key)) return false
+    const now = Math.floor(Date.now() / 1000)
+    return this.stmts.has.get(key, now) !== undefined
   }
 
   /**
    * Delete specific cache entry
    */
   delete(key: string): boolean {
-    const result = this.stmts.delete.run(key);
-    return result.changes > 0;
+    const result = this.stmts.delete.run(key)
+    return result.changes > 0
   }
 
   /**
    * Clear all cache entries
    */
   clear(): void {
-    this.db.exec('DELETE FROM search_cache');
-    this.hits = 0;
-    this.misses = 0;
+    this.db.exec('DELETE FROM search_cache')
+    this.hits = 0
+    this.misses = 0
   }
 
   /**
    * Invalidate all entries (called when index updates)
    */
   invalidateAll(): void {
-    this.clear();
+    this.clear()
   }
 
   /**
    * Remove expired entries
    */
   prune(): number {
-    const now = Math.floor(Date.now() / 1000);
-    const result = this.stmts.prune.run(now);
-    return result.changes;
+    const now = Math.floor(Date.now() / 1000)
+    const result = this.stmts.prune.run(now)
+    return result.changes
   }
 
   /**
    * Get cache statistics
    */
   getStats(): CacheStats & { expiredCount: number } {
-    const total = this.hits + this.misses;
-    const now = Math.floor(Date.now() / 1000);
-    const counts = this.stmts.stats.get(now) as { total: number; expired: number };
+    const total = this.hits + this.misses
+    const now = Math.floor(Date.now() / 1000)
+    const counts = this.stmts.stats.get(now) as { total: number; expired: number }
 
     return {
       hits: this.hits,
@@ -182,15 +184,15 @@ export class L2Cache {
       size: counts.total - (counts.expired ?? 0),
       maxSize: -1, // -1 indicates no limit for L2
       expiredCount: counts.expired ?? 0,
-    };
+    }
   }
 
   /**
    * Close database connection
    */
   close(): void {
-    this.db.close();
+    this.db.close()
   }
 }
 
-export default L2Cache;
+export default L2Cache

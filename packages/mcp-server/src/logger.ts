@@ -3,18 +3,18 @@
  * Logs errors to ~/.skillsmith/logs/
  */
 
-import { existsSync, mkdirSync, appendFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, appendFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
-const LOG_DIR = join(homedir(), '.skillsmith', 'logs');
+const LOG_DIR = join(homedir(), '.skillsmith', 'logs')
 
 /**
  * Ensure log directory exists
  */
 function ensureLogDir(): void {
   if (!existsSync(LOG_DIR)) {
-    mkdirSync(LOG_DIR, { recursive: true });
+    mkdirSync(LOG_DIR, { recursive: true })
   }
 }
 
@@ -22,27 +22,27 @@ function ensureLogDir(): void {
  * Format date for log filename
  */
 function getLogFilename(): string {
-  const date = new Date();
-  const dateStr = date.toISOString().split('T')[0];
-  return join(LOG_DIR, 'mcp-server-' + dateStr + '.log');
+  const date = new Date()
+  const dateStr = date.toISOString().split('T')[0]
+  return join(LOG_DIR, 'mcp-server-' + dateStr + '.log')
 }
 
 /**
  * Format log entry
  */
 function formatLogEntry(level: string, message: string, details?: unknown): string {
-  const timestamp = new Date().toISOString();
-  let entry = '[' + timestamp + '] [' + level + '] ' + message;
+  const timestamp = new Date().toISOString()
+  let entry = '[' + timestamp + '] [' + level + '] ' + message
 
   if (details !== undefined) {
     try {
-      entry += '\n  Details: ' + JSON.stringify(details, null, 2).replace(/\n/g, '\n  ');
+      entry += '\n  Details: ' + JSON.stringify(details, null, 2).replace(/\n/g, '\n  ')
     } catch {
-      entry += '\n  Details: [Unable to serialize]';
+      entry += '\n  Details: [Unable to serialize]'
     }
   }
 
-  return entry + '\n';
+  return entry + '\n'
 }
 
 /**
@@ -50,9 +50,9 @@ function formatLogEntry(level: string, message: string, details?: unknown): stri
  */
 function writeLog(level: string, message: string, details?: unknown): void {
   try {
-    ensureLogDir();
-    const entry = formatLogEntry(level, message, details);
-    appendFileSync(getLogFilename(), entry);
+    ensureLogDir()
+    const entry = formatLogEntry(level, message, details)
+    appendFileSync(getLogFilename(), entry)
   } catch {
     // Silently fail if unable to write logs
     // Don't want logging failures to break the application
@@ -64,22 +64,22 @@ function writeLog(level: string, message: string, details?: unknown): void {
  */
 export const logger = {
   info(message: string, details?: unknown): void {
-    writeLog('INFO', message, details);
+    writeLog('INFO', message, details)
   },
 
   warn(message: string, details?: unknown): void {
-    writeLog('WARN', message, details);
+    writeLog('WARN', message, details)
   },
 
   error(message: string, details?: unknown): void {
-    writeLog('ERROR', message, details);
+    writeLog('ERROR', message, details)
   },
 
   debug(message: string, details?: unknown): void {
     if (process.env.DEBUG) {
-      writeLog('DEBUG', message, details);
+      writeLog('DEBUG', message, details)
     }
   },
-};
+}
 
-export default logger;
+export default logger
