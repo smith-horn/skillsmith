@@ -64,6 +64,11 @@ export class SearchService {
     // Build the FTS5 query
     const ftsQuery = this.buildFtsQuery(query)
 
+    // Handle empty/whitespace-only queries - return empty results
+    if (!ftsQuery) {
+      return { items: [], total: 0, limit, offset, hasMore: false }
+    }
+
     // Build filter conditions
     const filters: string[] = []
     const params: (string | number)[] = [ftsQuery]
