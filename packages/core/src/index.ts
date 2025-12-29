@@ -222,3 +222,14 @@ export type {
 // Quality Scoring (SMI-592)
 export { QualityScorer, quickScore, scoreFromRepository } from './scoring/index.js'
 export type { QualityScoringInput, QualityScoreBreakdown, ScoringWeights } from './scoring/index.js'
+
+// Pipeline (SMI-593)
+export { DailyIndexPipeline, createScheduledPipeline, runDailyIndex } from './pipeline/index.js'
+export type {
+  PipelineStatus,
+  PipelineSourceConfig,
+  PipelineConfig,
+  PipelineProgress,
+  SourceResult,
+  PipelineResult,
+} from './pipeline/index.js'
