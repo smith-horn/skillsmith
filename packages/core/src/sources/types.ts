@@ -6,7 +6,7 @@
 /**
  * Supported source types
  */
-export type SourceType = 'github' | 'gitlab' | 'local' | 'registry' | 'custom'
+export type SourceType = 'github' | 'gitlab' | 'local' | 'raw-url' | 'registry' | 'custom'
 
 /**
  * Source adapter configuration
@@ -58,8 +58,8 @@ export interface SourceAuthConfig {
 export interface SourceLocation {
   /** Repository owner/namespace */
   owner?: string
-  /** Repository name */
-  repo: string
+  /** Repository name (optional for local/raw-url sources) */
+  repo?: string
   /** Branch or ref (default: main/master) */
   branch?: string
   /** Path to skill file (default: SKILL.md) */
@@ -112,6 +112,8 @@ export interface SkillContent {
   filePath: string
   /** Content encoding */
   encoding: 'utf-8' | 'base64'
+  /** Last modification timestamp (for local sources) */
+  lastModified?: string
 }
 
 /**
