@@ -1,17 +1,29 @@
 /**
  * SMI-732: Input Sanitization Tests
+ * SMI-750: Added maxLength parameter tests
  *
  * Comprehensive test suite for input sanitization functions
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   sanitizeHtml,
   sanitizeFileName,
   sanitizePath,
   sanitizeUrl,
   sanitizeText,
+  DEFAULT_MAX_LENGTH,
 } from '../src/security/sanitization.js'
+
+// Mock logger to verify warnings
+vi.mock('../src/utils/logger.js', () => ({
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  }),
+}))
 
 describe('sanitization', () => {
   describe('sanitizeHtml', () => {
@@ -327,6 +339,168 @@ describe('sanitization', () => {
     it('should handle emoji and special characters', () => {
       const text = 'Hello 👋 World 🌍'
       expect(sanitizeText(text)).toBe(text)
+    })
+  })
+
+  /**
+   * SMI-750: maxLength parameter tests for ReDoS prevention
+   */
+  describe('maxLength parameter (SMI-750)', () => {
+    describe('DEFAULT_MAX_LENGTH', () => {
+      it('should be 100000', () => {
+        expect(DEFAULT_MAX_LENGTH).toBe(100000)
+      })
+    })
+
+    describe('sanitizeHtml maxLength', () => {
+      it('should return empty string when input exceeds maxLength', () => {
+        const longInput = 'a'.repeat(150)
+        expect(sanitizeHtml(longInput, 100)).toBe('')
+      })
+
+      it('should process input within maxLength', () => {
+        const input = '<p>Hello</p>'
+        expect(sanitizeHtml(input, 100)).toBe('<p>Hello</p>')
+      })
+
+      it('should use default maxLength of 100000', () => {
+        const input = 'a'.repeat(99999)
+        expect(sanitizeHtml(input)).toBe(input)
+      })
+
+      it('should reject input exceeding default maxLength', () => {
+        const input = 'a'.repeat(100001)
+        expect(sanitizeHtml(input)).toBe('')
+      })
+
+      it('should handle custom maxLength values', () => {
+        expect(sanitizeHtml('short', 10)).toBe('short')
+        expect(sanitizeHtml('this is too long', 10)).toBe('')
+      })
+    })
+
+    describe('sanitizeFileName maxLength', () => {
+      it('should return empty string when input exceeds maxLength', () => {
+        const longInput = 'a'.repeat(150)
+        expect(sanitizeFileName(longInput, 100)).toBe('')
+      })
+
+      it('should process input within maxLength', () => {
+        expect(sanitizeFileName('file.txt', 100)).toBe('file.txt')
+      })
+
+      it('should use default maxLength of 100000', () => {
+        // Input under default maxLength (100000) passes the maxLength check
+        // Then the 255 char file name limit is a separate check
+        const input = 'a'.repeat(200)
+        expect(sanitizeFileName(input)).toBe(input) // 200 < 255, so it's valid
+      })
+
+      it('should reject input exceeding default maxLength', () => {
+        const input = 'a'.repeat(100001)
+        expect(sanitizeFileName(input)).toBe('')
+      })
+
+      it('should handle custom maxLength values', () => {
+        expect(sanitizeFileName('file.txt', 20)).toBe('file.txt')
+        expect(sanitizeFileName('this-is-a-very-long-filename.txt', 10)).toBe('')
+      })
+    })
+
+    describe('sanitizePath maxLength', () => {
+      it('should return empty string when input exceeds maxLength', () => {
+        const longInput = 'a/'.repeat(100)
+        expect(sanitizePath(longInput, undefined, 50)).toBe('')
+      })
+
+      it('should process input within maxLength', () => {
+        expect(sanitizePath('user/files/doc.txt', undefined, 100)).toBe('user/files/doc.txt')
+      })
+
+      it('should use default maxLength of 100000', () => {
+        const input = 'segment/'.repeat(1000)
+        expect(sanitizePath(input)).not.toBe('') // Should process, not reject
+      })
+
+      it('should handle custom maxLength values', () => {
+        expect(sanitizePath('short/path', undefined, 50)).toBe('short/path')
+        expect(sanitizePath('this/is/a/very/long/path', undefined, 10)).toBe('')
+      })
+
+      it('should work with rootDir and maxLength together', () => {
+        expect(sanitizePath('sub/dir', '/root', 100)).toBe('sub/dir')
+        expect(sanitizePath('a'.repeat(200), '/root', 100)).toBe('')
+      })
+    })
+
+    describe('sanitizeUrl maxLength', () => {
+      it('should return empty string when input exceeds maxLength', () => {
+        const longUrl = 'https://example.com/' + 'a'.repeat(150)
+        expect(sanitizeUrl(longUrl, 100)).toBe('')
+      })
+
+      it('should process input within maxLength', () => {
+        expect(sanitizeUrl('https://example.com', 100)).toBe('https://example.com/')
+      })
+
+      it('should use default maxLength of 100000', () => {
+        const url = 'https://example.com/' + 'a'.repeat(1000)
+        expect(sanitizeUrl(url)).toBeTruthy()
+      })
+
+      it('should handle custom maxLength values', () => {
+        expect(sanitizeUrl('https://x.co', 50)).toBe('https://x.co/')
+        expect(sanitizeUrl('https://example.com/very/long/path', 20)).toBe('')
+      })
+    })
+
+    describe('sanitizeText maxLength', () => {
+      it('should return empty string when input exceeds maxLength', () => {
+        const longInput = 'a'.repeat(150)
+        expect(sanitizeText(longInput, 100)).toBe('')
+      })
+
+      it('should process input within maxLength', () => {
+        expect(sanitizeText('Hello World', 100)).toBe('Hello World')
+      })
+
+      it('should use default maxLength of 100000', () => {
+        const input = 'a'.repeat(99999)
+        expect(sanitizeText(input)).toBe(input)
+      })
+
+      it('should reject input exceeding default maxLength', () => {
+        const input = 'a'.repeat(100001)
+        expect(sanitizeText(input)).toBe('')
+      })
+
+      it('should handle custom maxLength values', () => {
+        expect(sanitizeText('short', 10)).toBe('short')
+        expect(sanitizeText('this is too long', 10)).toBe('')
+      })
+    })
+
+    describe('edge cases', () => {
+      it('should handle exact maxLength boundary', () => {
+        const exactLength = 'a'.repeat(100)
+        expect(sanitizeHtml(exactLength, 100)).toBe(exactLength)
+        expect(sanitizeHtml(exactLength + 'b', 100)).toBe('')
+      })
+
+      it('should handle maxLength of 0', () => {
+        expect(sanitizeHtml('any', 0)).toBe('')
+        expect(sanitizeFileName('any', 0)).toBe('')
+        expect(sanitizePath('any', undefined, 0)).toBe('')
+        expect(sanitizeUrl('https://x.co', 0)).toBe('')
+        expect(sanitizeText('any', 0)).toBe('')
+      })
+
+      it('should handle maxLength of 1', () => {
+        expect(sanitizeHtml('a', 1)).toBe('a')
+        expect(sanitizeHtml('ab', 1)).toBe('')
+        expect(sanitizeText('x', 1)).toBe('x')
+        expect(sanitizeText('xy', 1)).toBe('')
+      })
     })
   })
 })

@@ -17,6 +17,20 @@ import { createLogger } from '../utils/logger.js'
 const log = createLogger('RateLimiter')
 
 /**
+ * Rate limit metrics for monitoring and alerting
+ */
+export interface RateLimitMetrics {
+  /** Number of allowed requests */
+  allowed: number
+  /** Number of blocked requests */
+  blocked: number
+  /** Number of errors (storage failures, etc.) */
+  errors: number
+  /** Last time metrics were reset */
+  lastReset: Date
+}
+
+/**
  * Rate limit configuration
  */
 export interface RateLimitConfig {
@@ -30,6 +44,10 @@ export interface RateLimitConfig {
   keyPrefix?: string
   /** Enable debug logging */
   debug?: boolean
+  /** Callback when rate limit is exceeded */
+  onLimitExceeded?: (key: string, metrics: RateLimitMetrics) => void
+  /** Fail mode on storage errors: 'open' allows requests, 'closed' denies them (default: 'open') */
+  failMode?: 'open' | 'closed'
 }
 
 /**
@@ -58,6 +76,8 @@ export interface RateLimitResult {
   retryAfterMs?: number
   /** When the limit resets (ISO timestamp) */
   resetAt?: string
+  /** Current metrics for this key (optional) */
+  metrics?: RateLimitMetrics
 }
 
 /**
@@ -181,8 +201,12 @@ export class InMemoryRateLimitStorage implements RateLimitStorage {
  * ```
  */
 export class RateLimiter {
-  private readonly config: Required<RateLimitConfig>
+  private readonly config: Required<Omit<RateLimitConfig, 'onLimitExceeded' | 'failMode'>> & {
+    onLimitExceeded?: (key: string, metrics: RateLimitMetrics) => void
+    failMode: 'open' | 'closed'
+  }
   private readonly storage: RateLimitStorage
+  private readonly metrics: Map<string, RateLimitMetrics> = new Map()
 
   constructor(
     config: RateLimitConfig,
@@ -191,6 +215,7 @@ export class RateLimiter {
     this.config = {
       keyPrefix: 'ratelimit',
       debug: false,
+      failMode: 'open',
       ...config,
     }
     this.storage = storage
@@ -200,8 +225,31 @@ export class RateLimiter {
         maxTokens: this.config.maxTokens,
         refillRate: this.config.refillRate,
         windowMs: this.config.windowMs,
+        failMode: this.config.failMode,
       })
     }
+  }
+
+  /**
+   * Update metrics for a key
+   */
+  private updateMetrics(key: string, allowed: boolean, error = false): void {
+    const existing = this.metrics.get(key) || {
+      allowed: 0,
+      blocked: 0,
+      errors: 0,
+      lastReset: new Date(),
+    }
+
+    if (error) {
+      existing.errors++
+    } else if (allowed) {
+      existing.allowed++
+    } else {
+      existing.blocked++
+    }
+
+    this.metrics.set(key, existing)
   }
 
   /**
@@ -256,10 +304,14 @@ export class RateLimiter {
           })
         }
 
+        // Track metrics for allowed request
+        this.updateMetrics(key, true)
+
         return {
           allowed: true,
           remaining: Math.floor(bucket.tokens),
           limit: this.config.maxTokens,
+          metrics: this.metrics.get(key),
         }
       } else {
         // Not enough tokens - calculate retry time
@@ -277,22 +329,50 @@ export class RateLimiter {
           })
         }
 
+        // Track metrics for blocked request
+        this.updateMetrics(key, false)
+
+        // Call onLimitExceeded callback if configured
+        const currentMetrics = this.metrics.get(key)
+        if (this.config.onLimitExceeded && currentMetrics) {
+          this.config.onLimitExceeded(key, currentMetrics)
+        }
+
         return {
           allowed: false,
           remaining: Math.floor(bucket.tokens),
           limit: this.config.maxTokens,
           retryAfterMs,
           resetAt,
+          metrics: currentMetrics,
         }
       }
     } catch (error) {
-      // Graceful degradation: allow request on storage errors
-      log.error(`Rate limiter error for ${key}: ${error instanceof Error ? error.message : String(error)}`)
+      // Track error in metrics
+      this.updateMetrics(key, this.config.failMode === 'open', true)
+
+      if (this.config.failMode === 'closed') {
+        // Fail-closed: deny requests on storage errors (for high-security endpoints)
+        log.error(`Rate limiter error (fail-closed) for ${key}: ${error instanceof Error ? error.message : String(error)}`)
+
+        return {
+          allowed: false,
+          remaining: 0,
+          limit: this.config.maxTokens,
+          retryAfterMs: this.config.windowMs,
+          resetAt: new Date(Date.now() + this.config.windowMs).toISOString(),
+          metrics: this.metrics.get(key),
+        }
+      }
+
+      // Fail-open: allow request on storage errors (graceful degradation)
+      log.error(`Rate limiter error (fail-open) for ${key}: ${error instanceof Error ? error.message : String(error)}`)
 
       return {
         allowed: true,
         remaining: this.config.maxTokens,
         limit: this.config.maxTokens,
+        metrics: this.metrics.get(key),
       }
     }
   }
@@ -318,12 +398,43 @@ export class RateLimiter {
   }
 
   /**
+   * Get metrics for a specific key or all keys
+   *
+   * @param key - Optional key to get metrics for
+   * @returns Metrics for the key, or all metrics if no key specified
+   */
+  getMetrics(key?: string): Map<string, RateLimitMetrics> | RateLimitMetrics | undefined {
+    if (key) {
+      return this.metrics.get(key)
+    }
+    return new Map(this.metrics)
+  }
+
+  /**
+   * Reset metrics for a specific key or all keys
+   *
+   * @param key - Optional key to reset metrics for
+   */
+  resetMetrics(key?: string): void {
+    if (key) {
+      this.metrics.delete(key)
+    } else {
+      this.metrics.clear()
+    }
+
+    if (this.config.debug) {
+      log.debug(`Metrics reset${key ? ` for key: ${key}` : ' (all)'}`)
+    }
+  }
+
+  /**
    * Dispose of resources
    */
   dispose(): void {
     if (this.storage instanceof InMemoryRateLimitStorage) {
       this.storage.dispose()
     }
+    this.metrics.clear()
   }
 }
 
@@ -331,35 +442,40 @@ export class RateLimiter {
  * Preset rate limit configurations
  */
 export const RATE_LIMIT_PRESETS = {
-  /** Very strict: 10 requests per minute */
+  /** Very strict: 10 requests per minute, fail-closed for high security */
   STRICT: {
     maxTokens: 10,
     refillRate: 10 / 60, // 0.167 tokens/sec
     windowMs: 60000,
+    failMode: 'closed' as const,
   },
   /** Standard: 30 requests per minute (default for adapters) */
   STANDARD: {
     maxTokens: 30,
     refillRate: 30 / 60, // 0.5 tokens/sec
     windowMs: 60000,
+    failMode: 'open' as const,
   },
   /** Relaxed: 60 requests per minute */
   RELAXED: {
     maxTokens: 60,
     refillRate: 60 / 60, // 1 token/sec
     windowMs: 60000,
+    failMode: 'open' as const,
   },
   /** Generous: 120 requests per minute */
   GENEROUS: {
     maxTokens: 120,
     refillRate: 120 / 60, // 2 tokens/sec
     windowMs: 60000,
+    failMode: 'open' as const,
   },
   /** High throughput: 300 requests per minute */
   HIGH_THROUGHPUT: {
     maxTokens: 300,
     refillRate: 300 / 60, // 5 tokens/sec
     windowMs: 60000,
+    failMode: 'open' as const,
   },
 } as const
 

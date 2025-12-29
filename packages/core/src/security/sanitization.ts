@@ -1,5 +1,6 @@
 /**
  * SMI-732: Input Sanitization Library
+ * SMI-750: Added input length limits to prevent ReDoS attacks
  *
  * Provides comprehensive input sanitization functions for:
  * - HTML content (XSS prevention)
@@ -8,11 +9,15 @@
  * - URLs (injection prevention)
  *
  * All functions are defensive and return safe defaults on invalid input.
+ * All functions accept maxLength parameter to prevent ReDoS attacks.
  */
 
 import { createLogger } from '../utils/logger.js'
 
 const logger = createLogger('Sanitization')
+
+/** Default maximum input length for sanitization functions to prevent ReDoS */
+export const DEFAULT_MAX_LENGTH = 100000
 
 /**
  * Sanitize HTML content to prevent XSS attacks
@@ -21,6 +26,7 @@ const logger = createLogger('Sanitization')
  * Uses a whitelist approach for maximum security.
  *
  * @param input - Raw HTML string
+ * @param maxLength - Maximum allowed input length (default: 100000)
  * @returns Sanitized HTML safe for rendering
  *
  * @example
@@ -29,8 +35,17 @@ const logger = createLogger('Sanitization')
  * // Returns: '<p>Hello</p>'
  * ```
  */
-export function sanitizeHtml(input: string): string {
+export function sanitizeHtml(input: string, maxLength = DEFAULT_MAX_LENGTH): string {
   if (!input || typeof input !== 'string') {
+    return ''
+  }
+
+  if (input.length > maxLength) {
+    logger.warn('Input exceeds max length for sanitization', {
+      length: input.length,
+      maxLength,
+      function: 'sanitizeHtml',
+    })
     return ''
   }
 
@@ -81,6 +96,7 @@ export function sanitizeHtml(input: string): string {
  * - Control characters
  *
  * @param name - Raw file name
+ * @param maxLength - Maximum allowed input length (default: 100000)
  * @returns Safe file name or empty string if invalid
  *
  * @example
@@ -92,8 +108,17 @@ export function sanitizeHtml(input: string): string {
  * // Returns: 'my-file.txt'
  * ```
  */
-export function sanitizeFileName(name: string): string {
+export function sanitizeFileName(name: string, maxLength = DEFAULT_MAX_LENGTH): string {
   if (!name || typeof name !== 'string') {
+    return ''
+  }
+
+  if (name.length > maxLength) {
+    logger.warn('Input exceeds max length for sanitization', {
+      length: name.length,
+      maxLength,
+      function: 'sanitizeFileName',
+    })
     return ''
   }
 
@@ -180,6 +205,7 @@ export function sanitizeFileName(name: string): string {
  *
  * @param path - Raw file path
  * @param rootDir - Root directory to constrain path to (optional)
+ * @param maxLength - Maximum allowed input length (default: 100000)
  * @returns Safe path or empty string if invalid
  *
  * @example
@@ -191,8 +217,21 @@ export function sanitizeFileName(name: string): string {
  * // Returns: 'user/files/doc.txt'
  * ```
  */
-export function sanitizePath(path: string, rootDir?: string): string {
+export function sanitizePath(
+  path: string,
+  rootDir?: string,
+  maxLength = DEFAULT_MAX_LENGTH
+): string {
   if (!path || typeof path !== 'string') {
+    return ''
+  }
+
+  if (path.length > maxLength) {
+    logger.warn('Input exceeds max length for sanitization', {
+      length: path.length,
+      maxLength,
+      function: 'sanitizePath',
+    })
     return ''
   }
 
@@ -269,6 +308,7 @@ export function sanitizePath(path: string, rootDir?: string): string {
  * - Valid URL structure
  *
  * @param url - Raw URL string
+ * @param maxLength - Maximum allowed input length (default: 100000)
  * @returns Sanitized URL or empty string if invalid
  *
  * @example
@@ -280,8 +320,17 @@ export function sanitizePath(path: string, rootDir?: string): string {
  * // Returns: 'https://example.com/page'
  * ```
  */
-export function sanitizeUrl(url: string): string {
+export function sanitizeUrl(url: string, maxLength = DEFAULT_MAX_LENGTH): string {
   if (!url || typeof url !== 'string') {
+    return ''
+  }
+
+  if (url.length > maxLength) {
+    logger.warn('Input exceeds max length for sanitization', {
+      length: url.length,
+      maxLength,
+      function: 'sanitizeUrl',
+    })
     return ''
   }
 
@@ -330,6 +379,7 @@ export function sanitizeUrl(url: string): string {
  * - Invalid Unicode
  *
  * @param input - Raw text input
+ * @param maxLength - Maximum allowed input length (default: 100000)
  * @returns Sanitized text
  *
  * @example
@@ -338,8 +388,17 @@ export function sanitizeUrl(url: string): string {
  * // Returns: 'HelloWorld'
  * ```
  */
-export function sanitizeText(input: string): string {
+export function sanitizeText(input: string, maxLength = DEFAULT_MAX_LENGTH): string {
   if (!input || typeof input !== 'string') {
+    return ''
+  }
+
+  if (input.length > maxLength) {
+    logger.warn('Input exceeds max length for sanitization', {
+      length: input.length,
+      maxLength,
+      function: 'sanitizeText',
+    })
     return ''
   }
 
