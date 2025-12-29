@@ -1,8 +1,9 @@
 #!/bin/bash
-# SMI-727: Pre-push Security Checks
+# SMI-753: Pre-push Security Checks (Optimized)
 # Comprehensive security validation before pushing code
+# Optimization: Single test run captures both output and exit code
 
-set -e  # Exit on first error
+# Don't use set -e - we handle errors manually for better control
 
 # Colors for output
 RED='\033[0;31m'
@@ -18,34 +19,43 @@ echo ""
 CHECKS_FAILED=0
 
 # =============================================================================
-# CHECK 1: Security Test Suite
+# CHECK 1: Security Test Suite (Optimized - single run)
 # =============================================================================
 echo "📋 Running security test suite..."
-if npm test -- packages/core/tests/security/ 2>&1 | grep -E "(PASS|FAIL|✓|✗)" || true; then
-  if npm test -- packages/core/tests/security/ --reporter=verbose 2>&1 | grep -q "FAIL"; then
-    echo -e "${RED}✗ Security tests failed${NC}"
-    CHECKS_FAILED=1
-  else
-    echo -e "${GREEN}✓ Security tests passed${NC}"
-  fi
+
+# Run tests once, capture both output and exit code
+TEST_OUTPUT=$(docker exec skillsmith-dev-1 npm test -- packages/core/tests/security/ 2>&1) || TEST_STATUS=$?
+TEST_STATUS=${TEST_STATUS:-0}
+
+# Display relevant output (filter for test results)
+echo "$TEST_OUTPUT" | grep -E "(PASS|FAIL|✓|✗|Error|test)" || true
+
+# Check status based on exit code (more reliable than parsing output)
+if [ $TEST_STATUS -ne 0 ]; then
+  echo -e "${RED}✗ Security tests failed${NC}"
+  CHECKS_FAILED=1
 else
   echo -e "${GREEN}✓ Security tests passed${NC}"
 fi
 echo ""
 
 # =============================================================================
-# CHECK 2: npm audit
+# CHECK 2: npm audit (Optimized - single run with Docker)
 # =============================================================================
 echo "🔍 Running npm audit (high severity and above)..."
-if npm audit --audit-level=high 2>&1; then
-  echo -e "${GREEN}✓ No high-severity vulnerabilities found${NC}"
+
+# Run audit once, capture both output and exit code
+AUDIT_OUTPUT=$(docker exec skillsmith-dev-1 npm audit --audit-level=high 2>&1) || AUDIT_STATUS=$?
+AUDIT_STATUS=${AUDIT_STATUS:-0}
+
+if [ $AUDIT_STATUS -ne 0 ]; then
+  # Show audit output only on failure
+  echo "$AUDIT_OUTPUT"
+  echo -e "${RED}✗ High-severity vulnerabilities detected${NC}"
+  echo -e "${YELLOW}Run 'docker exec skillsmith-dev-1 npm audit fix' to resolve issues${NC}"
+  CHECKS_FAILED=1
 else
-  AUDIT_EXIT=$?
-  if [ $AUDIT_EXIT -ne 0 ]; then
-    echo -e "${RED}✗ High-severity vulnerabilities detected${NC}"
-    echo -e "${YELLOW}Run 'npm audit fix' to resolve issues${NC}"
-    CHECKS_FAILED=1
-  fi
+  echo -e "${GREEN}✓ No high-severity vulnerabilities found${NC}"
 fi
 echo ""
 
