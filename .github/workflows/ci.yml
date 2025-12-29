@@ -149,7 +149,7 @@ jobs:
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            sh -c "npm ci && npm run test:coverage"
+            sh -c "npm ci && npm run build && npm run test:coverage"
 
       - name: Copy coverage from container
         run: |
