@@ -319,6 +319,263 @@ describe('RawUrlSourceAdapter SSRF Prevention (SMI-721)', () => {
     })
   })
 
+  describe('IPv6 SSRF Prevention (SMI-729)', () => {
+    describe('Link-Local Addresses (fe80::/10)', () => {
+      it('should block fe80:: link-local address', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[fe80::1]/admin',
+          })
+        ).rejects.toThrow('Access to IPv6 link-local address blocked')
+      })
+
+      it('should block fe80::/10 range variations', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[fe80::dead:beef]/api',
+          })
+        ).rejects.toThrow('Access to IPv6 link-local address blocked')
+      })
+
+      it('should block expanded fe80 address', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[fe80:0000:0000:0000:0000:0000:0000:0001]/test',
+          })
+        ).rejects.toThrow('Access to IPv6 link-local address blocked')
+      })
+
+      it('should block fe9x range', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[fe9f::1]/test',
+          })
+        ).rejects.toThrow('Access to IPv6 link-local address blocked')
+      })
+
+      it('should block feax range', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[feaf::1]/test',
+          })
+        ).rejects.toThrow('Access to IPv6 link-local address blocked')
+      })
+
+      it('should block febx range', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[febf::1]/test',
+          })
+        ).rejects.toThrow('Access to IPv6 link-local address blocked')
+      })
+    })
+
+    describe('Unique Local Addresses (fc00::/7)', () => {
+      it('should block fc00:: ULA address', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[fc00::1]/internal',
+          })
+        ).rejects.toThrow('Access to IPv6 unique local address blocked')
+      })
+
+      it('should block fd00:: ULA address', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[fd00::1]/internal',
+          })
+        ).rejects.toThrow('Access to IPv6 unique local address blocked')
+      })
+
+      it('should block fd prefix variations', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]/api',
+          })
+        ).rejects.toThrow('Access to IPv6 unique local address blocked')
+      })
+    })
+
+    describe('Multicast Addresses (ff00::/8)', () => {
+      it('should block ff00:: multicast address', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[ff00::1]/multicast',
+          })
+        ).rejects.toThrow('Access to IPv6 multicast address blocked')
+      })
+
+      it('should block ff02::1 (all nodes multicast)', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[ff02::1]/nodes',
+          })
+        ).rejects.toThrow('Access to IPv6 multicast address blocked')
+      })
+
+      it('should block ffff:: range', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[ffff::1]/broadcast',
+          })
+        ).rejects.toThrow('Access to IPv6 multicast address blocked')
+      })
+    })
+
+    describe('IPv4-Mapped IPv6 Addresses (::ffff:0:0/96)', () => {
+      it('should block ::ffff:127.0.0.1 (localhost)', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[::ffff:127.0.0.1]/admin',
+          })
+        ).rejects.toThrow('Access to IPv4-mapped IPv6 private address blocked')
+      })
+
+      it('should block ::ffff:10.0.0.1 (private network)', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[::ffff:10.0.0.1]/internal',
+          })
+        ).rejects.toThrow('Access to IPv4-mapped IPv6 private address blocked')
+      })
+
+      it('should block ::ffff:192.168.1.1 (private network)', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[::ffff:192.168.1.1]/router',
+          })
+        ).rejects.toThrow('Access to IPv4-mapped IPv6 private address blocked')
+      })
+
+      it('should block ::ffff:172.16.0.1 (private network)', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[::ffff:172.16.0.1]/api',
+          })
+        ).rejects.toThrow('Access to IPv4-mapped IPv6 private address blocked')
+      })
+
+      it('should block ::ffff:169.254.169.254 (metadata endpoint)', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[::ffff:169.254.169.254]/metadata',
+          })
+        ).rejects.toThrow('Access to IPv4-mapped IPv6 private address blocked')
+      })
+
+      it('should block ::ffff: with hex notation', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[::ffff:c0a8:0001]/test',
+          })
+        ).rejects.toThrow('Access to IPv4-mapped IPv6 address blocked')
+      })
+    })
+
+    describe('Valid Public IPv6 Addresses', () => {
+      // These tests verify that valid public IPv6 addresses are not blocked
+      // They will still fail due to network issues but should not throw SSRF errors
+
+      it('should allow 2001:4860:4860::8888 (Google DNS)', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[2001:4860:4860::8888]/test',
+          })
+        ).rejects.not.toThrow('Access to IPv6')
+      })
+
+      it('should allow 2606:2800:220:1:248:1893:25c8:1946 (example.com)', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[2606:2800:220:1:248:1893:25c8:1946]/test',
+          })
+        ).rejects.not.toThrow('Access to IPv6')
+      })
+    })
+
+    describe('IPv6 Edge Cases', () => {
+      it('should block IPv6 with port', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[fe80::1]:8080/admin',
+          })
+        ).rejects.toThrow('Access to IPv6 link-local address blocked')
+      })
+
+      it('should block IPv6 with path', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[fc00::1]/very/long/path/to/resource',
+          })
+        ).rejects.toThrow('Access to IPv6 unique local address blocked')
+      })
+
+      it('should block IPv6 with query string', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[fd00::1]/api?secret=token',
+          })
+        ).rejects.toThrow('Access to IPv6 unique local address blocked')
+      })
+
+      it('should handle mixed case IPv6 addresses', async () => {
+        await expect(
+          adapter.fetchSkillContent({
+            owner: 'test',
+            repo: 'test-skill',
+            path: 'http://[FE80::DEAD:BEEF]/test',
+          })
+        ).rejects.toThrow('Access to IPv6 link-local address blocked')
+      })
+    })
+  })
+
   describe('Edge Cases', () => {
     it('should block internal IPs with ports', async () => {
       await expect(

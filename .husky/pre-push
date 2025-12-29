@@ -1,0 +1,20 @@
+# Pre-push hook: Security checks before pushing
+# Issue: SMI-727
+#
+# This hook runs comprehensive security checks before allowing a push to remote.
+# It helps prevent security vulnerabilities from reaching production.
+#
+# Configuration:
+#   NO_VERIFY  - Set to skip hook (use with caution): git push --no-verify
+#
+# Checks performed:
+#   1. Security test suite (packages/core/tests/security/)
+#   2. npm audit (high severity or above)
+#   3. Hardcoded secrets pattern detection
+#
+# Exit codes:
+#   0 - All security checks passed
+#   1 - Security issues detected (push blocked)
+
+# Run security checks
+bash "$(dirname "$0")/../scripts/pre-push-check.sh"

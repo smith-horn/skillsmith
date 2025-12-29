@@ -214,7 +214,7 @@ jobs:
   security:
     name: Security Audit
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     needs: docker-build
 
     steps:
@@ -239,13 +239,49 @@ jobs:
       - name: Extract node_modules
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
 
-      - name: Run security audit in Docker
+      - name: Run dependency audit in Docker
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
             npm audit --audit-level=high || true
+
+      - name: Build project for security tests
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run build
+
+      - name: Run security test suite
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm test -- packages/core/tests/security/
+
+      - name: Run security tests with coverage
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run test:coverage -- packages/core/tests/security/
+
+      - name: Copy security coverage from container
+        run: |
+          cp coverage/coverage-final.json security-coverage.json 2>/dev/null || true
+
+      - name: Upload security coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-coverage
+          path: security-coverage.json
+          retention-days: 7
 
   compliance:
     name: Standards Compliance

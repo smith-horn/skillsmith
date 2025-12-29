@@ -17,6 +17,7 @@ import type {
 } from './types.js'
 import { createHash } from 'crypto'
 import { createLogger } from '../utils/logger.js'
+import { validateUrl } from '../validation/index.js'
 
 const log = createLogger('RawUrlAdapter')
 
@@ -90,50 +91,6 @@ export class RawUrlSourceAdapter extends BaseSourceAdapter {
     this.timeout = config.timeout ?? 30000
   }
 
-  /**
-   * Validate URL to prevent SSRF attacks (SMI-721)
-   *
-   * Blocks:
-   * - Private IP ranges (10.x, 172.16-31.x, 192.168.x)
-   * - Localhost variants (127.x, localhost, ::1, 0.0.0.0)
-   * - Link-local addresses (169.254.x)
-   * - Non-http(s) protocols
-   *
-   * @throws Error if URL is not allowed
-   */
-  private validateUrl(url: string): void {
-    const parsed = new URL(url)
-
-    // Only allow http/https protocols
-    if (!['http:', 'https:'].includes(parsed.protocol)) {
-      throw new Error(`Invalid protocol: ${parsed.protocol}. Only http and https are allowed.`)
-    }
-
-    const hostname = parsed.hostname.toLowerCase()
-
-    // Block localhost variants
-    if (hostname === 'localhost' || hostname === '::1' || hostname === '0.0.0.0') {
-      throw new Error(`Access to localhost is blocked: ${hostname}`)
-    }
-
-    // Check for IP addresses
-    const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
-    if (ipv4Match) {
-      const [, a, b, c, d] = ipv4Match.map(Number)
-
-      // Block private ranges
-      if (
-        a === 10 || // 10.0.0.0/8
-        (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12
-        (a === 192 && b === 168) || // 192.168.0.0/16
-        a === 127 || // 127.0.0.0/8
-        (a === 169 && b === 254) || // 169.254.0.0/16 (link-local)
-        a === 0 // 0.0.0.0/8
-      ) {
-        throw new Error(`Access to private/internal network blocked: ${hostname}`)
-      }
-    }
-  }
 
   /**
    * Initialize adapter - load registry if configured
@@ -151,7 +108,7 @@ export class RawUrlSourceAdapter extends BaseSourceAdapter {
    */
   private async loadRegistry(registryUrl: string): Promise<void> {
     try {
-      this.validateUrl(registryUrl)
+      validateUrl(registryUrl)
       const response = await this.fetchWithTimeout(registryUrl)
 
       if (!response.ok) {
@@ -177,7 +134,7 @@ export class RawUrlSourceAdapter extends BaseSourceAdapter {
   protected async doHealthCheck(): Promise<Partial<SourceHealth>> {
     // Try to reach the base URL
     try {
-      this.validateUrl(this.config.baseUrl)
+      validateUrl(this.config.baseUrl)
       const response = await this.fetchWithTimeout(this.config.baseUrl, { method: 'HEAD' })
       return {
         healthy: response.ok || response.status === 405, // 405 = Method Not Allowed is ok for HEAD
@@ -283,8 +240,8 @@ export class RawUrlSourceAdapter extends BaseSourceAdapter {
       }
     }
 
-    // Validate URL to prevent SSRF attacks (SMI-721)
-    this.validateUrl(url)
+    // Validate URL to prevent SSRF attacks (SMI-721, SMI-726, SMI-729)
+    validateUrl(url)
 
     // Note: Rate limiting is handled by fetchWithTimeout -> fetchWithRateLimit
     const response = await this.fetchWithTimeout(url)

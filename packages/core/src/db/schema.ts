@@ -120,19 +120,25 @@ CREATE INDEX IF NOT EXISTS idx_sources_is_active ON sources(is_active);
 CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);
 CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires_at);
 
--- TODO (SMI-733): Add audit_logs table for security monitoring
+-- SMI-733: Audit logs table for security monitoring
 -- See: docs/security/index.md §3 Audit Logging
--- CREATE TABLE IF NOT EXISTS audit_logs (
---   id TEXT PRIMARY KEY,
---   event_type TEXT NOT NULL,
---   timestamp TEXT NOT NULL DEFAULT (datetime('now')),
---   actor TEXT,
---   resource TEXT,
---   action TEXT,
---   result TEXT,
---   metadata TEXT,
---   created_at TEXT NOT NULL DEFAULT (datetime('now'))
--- );
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+  actor TEXT,
+  resource TEXT,
+  action TEXT,
+  result TEXT,
+  metadata TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_event_type ON audit_logs(event_type);
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_logs(timestamp);
+CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_logs(resource);
+CREATE INDEX IF NOT EXISTS idx_audit_result ON audit_logs(result);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_logs(actor);
 `
 
 /**

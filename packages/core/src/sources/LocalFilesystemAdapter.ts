@@ -19,6 +19,7 @@ import { createHash } from 'crypto'
 import { promises as fs } from 'fs'
 import { join, basename, dirname, relative, resolve } from 'path'
 import { createLogger } from '../utils/logger.js'
+import { validatePath, safePatternMatch } from '../validation/index.js'
 
 const log = createLogger('LocalFilesystemAdapter')
 
@@ -309,31 +310,16 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
   }
 
   /**
-   * Check if a path/name should be excluded
+   * Check if a path/name should be excluded (SMI-722, SMI-726)
+   * Uses centralized safe pattern matching to prevent RegExp injection
    */
   private isExcluded(name: string): boolean {
-    return this.excludePatterns.some((pattern) => {
-      // Exact match
-      if (name === pattern) {
-        return true
-      }
-      // Prefix match
-      if (name.startsWith(pattern)) {
-        return true
-      }
-      // Regex match with error handling
-      try {
-        return new RegExp(pattern).test(name)
-      } catch {
-        // Invalid regex pattern, fall back to includes check
-        return name.includes(pattern)
-      }
-    })
+    return this.excludePatterns.some((pattern) => safePatternMatch(name, pattern))
   }
 
   /**
    * Resolve a skill location to a full filesystem path
-   * Validates that the resolved path remains within rootDir to prevent path traversal attacks (SMI-720)
+   * Validates that the resolved path remains within rootDir to prevent path traversal attacks (SMI-720, SMI-726)
    */
   private resolveSkillPath(location: SourceLocation): string {
     let resolvedPath: string
@@ -350,15 +336,10 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
       throw new Error('Invalid location: must specify path or repo')
     }
 
-    // Normalize and validate containment to prevent path traversal attacks
-    const normalizedPath = resolve(resolvedPath)
-    const normalizedRoot = resolve(this.rootDir)
+    // Use centralized path validation to prevent path traversal attacks
+    validatePath(resolvedPath, this.rootDir)
 
-    if (!normalizedPath.startsWith(normalizedRoot + '/') && normalizedPath !== normalizedRoot) {
-      throw new Error(`Path traversal detected: ${location.path ?? 'unknown'}`)
-    }
-
-    return normalizedPath
+    return resolve(resolvedPath)
   }
 
   /**

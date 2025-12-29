@@ -3,6 +3,7 @@
  */
 import * as vscode from 'vscode'
 import { escapeHtml } from '../utils/security.js'
+import { generateCspNonce, getSkillDetailCsp } from '../utils/csp.js'
 import { getSkillById } from '../data/mockSkills.js'
 import { getMcpClient } from '../mcp/McpClient.js'
 import { type McpSkillDetails } from '../mcp/types.js'
@@ -260,12 +261,7 @@ export class SkillDetailPanel {
    * Gets a nonce for Content Security Policy
    */
   private _getNonce(): string {
-    let text = ''
-    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-    for (let i = 0; i < 32; i++) {
-      text += possible.charAt(Math.floor(Math.random() * possible.length))
-    }
-    return text
+    return generateCspNonce()
   }
 
   /**
@@ -280,6 +276,7 @@ export class SkillDetailPanel {
   private _getHtmlForWebview(): string {
     const skill = this._skillData || getSkillById(this._skillId)
     const nonce = this._getNonce()
+    const csp = getSkillDetailCsp(nonce)
 
     // Ensure extensionUri is used (for future resource loading)
     void this._getResourceUri
@@ -308,7 +305,7 @@ export class SkillDetailPanel {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+    <meta http-equiv="Content-Security-Policy" content="${csp}">
     <title>Skill Details</title>
     <style>
         body {
