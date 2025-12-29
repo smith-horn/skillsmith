@@ -11,9 +11,20 @@ import { searchToolSchema, executeSearch, type SearchInput } from './tools/searc
 import { getSkillToolSchema, executeGetSkill, type GetSkillInput } from './tools/get-skill.js'
 import { installTool, installSkill, installInputSchema } from './tools/install.js'
 import { uninstallTool, uninstallSkill, uninstallInputSchema } from './tools/uninstall.js'
+import { recommendToolSchema, recommendInputSchema, executeRecommend } from './tools/recommend.js'
+import { validateToolSchema, validateInputSchema, executeValidate } from './tools/validate.js'
+import { compareToolSchema, compareInputSchema, executeCompare } from './tools/compare.js'
 
 // Tool definitions for MCP
-const toolDefinitions = [searchToolSchema, getSkillToolSchema, installTool, uninstallTool]
+const toolDefinitions = [
+  searchToolSchema,
+  getSkillToolSchema,
+  installTool,
+  uninstallTool,
+  recommendToolSchema,
+  validateToolSchema,
+  compareToolSchema,
+]
 
 // Create server
 const server = new Server(
@@ -87,6 +98,45 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'uninstall_skill': {
         const input = uninstallInputSchema.parse(args)
         const result = await uninstallSkill(input)
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        }
+      }
+
+      case 'skill_recommend': {
+        const input = recommendInputSchema.parse(args)
+        const result = await executeRecommend(input)
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        }
+      }
+
+      case 'skill_validate': {
+        const input = validateInputSchema.parse(args)
+        const result = await executeValidate(input)
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        }
+      }
+
+      case 'skill_compare': {
+        const input = compareInputSchema.parse(args)
+        const result = await executeCompare(input)
         return {
           content: [
             {
