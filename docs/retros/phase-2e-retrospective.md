@@ -97,7 +97,7 @@ Phase 2e delivered 12 features across 4 workstreams in a single day using parall
 ### 2. Missing Dependencies
 - OpenTelemetry packages weren't in package.json
 - Caught during typecheck, required manual intervention
-- **Action**: Add dependency check to agent pre-flight
+- **Action**: [SMI-760](https://linear.app/smith-horn-group/issue/SMI-760) - Add dependency validation to swarm pre-flight
 
 ### 3. Incomplete Telemetry Tests
 - Telemetry module has no tests
@@ -108,7 +108,7 @@ Phase 2e delivered 12 features across 4 workstreams in a single day using parall
 - Original swarm session became unresponsive
 - Had to continue work in new session
 - Agents were lost, but memory persisted work context
-- **Action**: Investigate session stability
+- **Action**: [SMI-761](https://linear.app/smith-horn-group/issue/SMI-761) - Implement session health monitoring
 
 ## Lessons Learned
 
@@ -130,10 +130,12 @@ Phase 2e delivered 12 features across 4 workstreams in a single day using parall
 | SMI-759 | Refactor CLI search to iterative loop | Low |
 
 ### Process Improvements
-- [ ] Add dependency validation to swarm pre-flight
-- [ ] Implement session health monitoring
-- [ ] Create "mock vs production" code review checklist
-- [ ] Document swarm recovery procedures
+| Issue | Title | Priority |
+|-------|-------|----------|
+| [SMI-760](https://linear.app/smith-horn-group/issue/SMI-760) | Add dependency validation to swarm pre-flight | Medium |
+| [SMI-761](https://linear.app/smith-horn-group/issue/SMI-761) | Implement swarm session health monitoring | Medium |
+| [SMI-762](https://linear.app/smith-horn-group/issue/SMI-762) | Document swarm recovery procedures | Low |
+| [SMI-763](https://linear.app/smith-horn-group/issue/SMI-763) | Create mock vs production code review checklist | Low |
 
 ## Team Recognition
 
