@@ -30,7 +30,9 @@
     "linear:done": "node scripts/linear-sync.mjs done",
     "linear:wip": "node scripts/linear-sync.mjs in-progress",
     "linear:check": "node scripts/linear-sync.mjs check",
-    "linear:sync": "node scripts/linear-sync.mjs from-commit"
+    "linear:sync": "node scripts/linear-sync.mjs from-commit",
+    "linear:hook": "node scripts/linear-hook.mjs post-commit",
+    "linear:hook:debug": "DEBUG_LINEAR_HOOK=true node scripts/linear-hook.mjs post-commit"
   },
   "engines": {
     "node": ">=20.0.0"

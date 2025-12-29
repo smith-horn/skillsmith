@@ -1,0 +1,23 @@
+{
+  "name": "docker-guard",
+  "description": "Prevents docker commands from hanging when daemon is unresponsive",
+  "hooks": {
+    "pre-command": {
+      "pattern": "docker\\s+(exec|compose|build|run|ps)",
+      "command": "./scripts/docker-timeout-check.sh check",
+      "timeout": 10000,
+      "on_failure": "block",
+      "message": "Docker daemon is unresponsive. Skipping docker command to prevent hanging."
+    },
+    "post-session": {
+      "command": "./scripts/docker-timeout-check.sh cleanup 10",
+      "timeout": 30000,
+      "on_failure": "warn",
+      "message": "Cleaned up stuck docker processes from session"
+    }
+  },
+  "settings": {
+    "DOCKER_TIMEOUT": 5,
+    "MAX_DOCKER_STUCK": 10
+  }
+}

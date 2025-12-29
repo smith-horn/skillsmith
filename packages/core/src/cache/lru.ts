@@ -3,34 +3,34 @@
  * Fast in-memory cache for frequently accessed search results
  */
 
-import { LRUCache } from 'lru-cache';
+import { LRUCache } from 'lru-cache'
 
 export interface SearchCacheEntry {
-  results: SearchResult[];
-  totalCount: number;
-  timestamp: number;
+  results: SearchResult[]
+  totalCount: number
+  timestamp: number
 }
 
 export interface SearchResult {
-  id: string;
-  name: string;
-  description: string;
-  score: number;
-  source: string;
+  id: string
+  name: string
+  description: string
+  score: number
+  source: string
 }
 
 export interface CacheStats {
-  hits: number;
-  misses: number;
-  hitRate: number;
-  size: number;
-  maxSize: number;
+  hits: number
+  misses: number
+  hitRate: number
+  size: number
+  maxSize: number
 }
 
 export class L1Cache {
-  private cache: LRUCache<string, SearchCacheEntry>;
-  private hits = 0;
-  private misses = 0;
+  private cache: LRUCache<string, SearchCacheEntry>
+  private hits = 0
+  private misses = 0
 
   constructor(maxSize: number = 100) {
     this.cache = new LRUCache<string, SearchCacheEntry>({
@@ -38,7 +38,7 @@ export class L1Cache {
       // Items expire after 5 minutes in L1
       ttl: 5 * 60 * 1000,
       updateAgeOnGet: true,
-    });
+    })
   }
 
   /**
@@ -46,32 +46,39 @@ export class L1Cache {
    */
   static generateKey(query: string, filters?: Record<string, unknown>): string {
     // Normalize query: lowercase, trim, collapse whitespace
-    const normalizedQuery = query.toLowerCase().trim().replace(/\s+/g, ' ');
-    
+    const normalizedQuery = query.toLowerCase().trim().replace(/\s+/g, ' ')
+
     // Sort and stringify filters for consistent keys
     const sortedFilters = filters
-      ? JSON.stringify(Object.keys(filters).sort().reduce((acc, key) => {
-          acc[key] = filters[key];
-          return acc;
-        }, {} as Record<string, unknown>))
-      : '';
-    
-    return `search:${normalizedQuery}:${sortedFilters}`;
+      ? JSON.stringify(
+          Object.keys(filters)
+            .sort()
+            .reduce(
+              (acc, key) => {
+                acc[key] = filters[key]
+                return acc
+              },
+              {} as Record<string, unknown>
+            )
+        )
+      : ''
+
+    return `search:${normalizedQuery}:${sortedFilters}`
   }
 
   /**
    * Get cached search results
    */
   get(key: string): SearchCacheEntry | undefined {
-    const entry = this.cache.get(key);
-    
+    const entry = this.cache.get(key)
+
     if (entry) {
-      this.hits++;
-      return entry;
+      this.hits++
+      return entry
     }
-    
-    this.misses++;
-    return undefined;
+
+    this.misses++
+    return undefined
   }
 
   /**
@@ -82,30 +89,30 @@ export class L1Cache {
       results,
       totalCount,
       timestamp: Date.now(),
-    });
+    })
   }
 
   /**
    * Check if key exists in cache
    */
   has(key: string): boolean {
-    return this.cache.has(key);
+    return this.cache.has(key)
   }
 
   /**
    * Delete specific cache entry
    */
   delete(key: string): boolean {
-    return this.cache.delete(key);
+    return this.cache.delete(key)
   }
 
   /**
    * Clear all cache entries
    */
   clear(): void {
-    this.cache.clear();
-    this.hits = 0;
-    this.misses = 0;
+    this.cache.clear()
+    this.hits = 0
+    this.misses = 0
   }
 
   /**
@@ -113,29 +120,29 @@ export class L1Cache {
    * Called when the skill index is updated
    */
   invalidateAll(): void {
-    this.clear();
+    this.clear()
   }
 
   /**
    * Get cache statistics
    */
   getStats(): CacheStats {
-    const total = this.hits + this.misses;
+    const total = this.hits + this.misses
     return {
       hits: this.hits,
       misses: this.misses,
       hitRate: total > 0 ? this.hits / total : 0,
       size: this.cache.size,
       maxSize: this.cache.max,
-    };
+    }
   }
 
   /**
    * Prune expired entries
    */
   prune(): void {
-    this.cache.purgeStale();
+    this.cache.purgeStale()
   }
 }
 
-export default L1Cache;
+export default L1Cache

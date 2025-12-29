@@ -183,7 +183,28 @@ npm run linear:check
 
 # Auto-sync from last commit message
 npm run linear:sync
+
+# Test the post-commit hook manually
+npm run linear:hook
+
+# Test with debug output
+npm run linear:hook:debug
 ```
+
+**Automatic Post-Commit Hook** (SMI-710):
+
+The project includes an automatic post-commit hook that syncs Linear issues:
+
+- Extracts `SMI-xxx` issue references from commit messages
+- Marks issues as `in_progress` by default
+- Marks as `done` if commit message contains: fix, close, complete, done, finish, resolve
+- Runs in background (does not block git operations)
+- Fails silently if `LINEAR_API_KEY` is not set
+- Times out after 2 seconds
+
+**Configuration**:
+- `LINEAR_API_KEY` - Required for Linear API access (silent fail if unset)
+- `DEBUG_LINEAR_HOOK=true` - Enable verbose output for debugging
 
 **Advanced Operations**:
 
@@ -224,6 +245,7 @@ Project: Skillsmith (SMI-xxx issues)
 | SMI-614 | Pre-commit hooks | Todo |
 | SMI-615 | CI/CD pipeline | Todo |
 | SMI-616 | Integration tests | Todo |
+| SMI-710 | Post-commit hook for automatic Linear sync | Done |
 
 ## Troubleshooting
 

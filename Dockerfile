@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY package*.json ./
 COPY packages/core/package*.json ./packages/core/
 COPY packages/mcp-server/package*.json ./packages/mcp-server/
+COPY packages/cli/package*.json ./packages/cli/
+COPY packages/vscode-extension/package*.json ./packages/vscode-extension/
 
 # Install all dependencies
 RUN npm install --include=dev

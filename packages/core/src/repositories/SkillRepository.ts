@@ -8,49 +8,47 @@
  * - Type-safe queries
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3';
-import { randomUUID } from 'crypto';
-import type {
-  Skill,
-  SkillCreateInput,
-  SkillUpdateInput,
-  PaginatedResults
-} from '../types/skill.js';
+import type { Database as DatabaseType } from 'better-sqlite3'
+import { randomUUID } from 'crypto'
+import type { Skill, SkillCreateInput, SkillUpdateInput, PaginatedResults } from '../types/skill.js'
 
 interface SkillRow {
-  id: string;
-  name: string;
-  description: string | null;
-  author: string | null;
-  repo_url: string | null;
-  quality_score: number | null;
-  trust_tier: string;
-  tags: string;
-  created_at: string;
-  updated_at: string;
+  id: string
+  name: string
+  description: string | null
+  author: string | null
+  repo_url: string | null
+  quality_score: number | null
+  trust_tier: string
+  tags: string
+  created_at: string
+  updated_at: string
 }
 
 /**
  * Repository for skill CRUD operations
  */
 export class SkillRepository {
-  private db: DatabaseType;
+  private db: DatabaseType
 
   constructor(db: DatabaseType) {
-    this.db = db;
-    this.prepareStatements();
+    this.db = db
+    this.prepareStatements()
   }
 
   private stmts!: {
-    insert: { run: (...args: unknown[]) => { changes: number }; get: (id: string) => SkillRow | undefined };
-    selectById: { get: (id: string) => SkillRow | undefined };
-    selectByRepoUrl: { get: (url: string) => SkillRow | undefined };
-    selectAll: { all: (limit: number, offset: number) => SkillRow[] };
-    selectCount: { get: () => { count: number } };
-    update: { run: (...args: unknown[]) => { changes: number } };
-    delete: { run: (id: string) => { changes: number } };
-    deleteAll: { run: () => { changes: number } };
-  };
+    insert: {
+      run: (...args: unknown[]) => { changes: number }
+      get: (id: string) => SkillRow | undefined
+    }
+    selectById: { get: (id: string) => SkillRow | undefined }
+    selectByRepoUrl: { get: (url: string) => SkillRow | undefined }
+    selectAll: { all: (limit: number, offset: number) => SkillRow[] }
+    selectCount: { get: () => { count: number } }
+    update: { run: (...args: unknown[]) => { changes: number } }
+    delete: { run: (id: string) => { changes: number } }
+    deleteAll: { run: () => { changes: number } }
+  }
 
   private prepareStatements(): void {
     // Cast to our custom types for better-sqlite3 compatibility
@@ -95,8 +93,8 @@ export class SkillRepository {
 
       deleteAll: this.db.prepare(`
         DELETE FROM skills
-      `) as unknown as typeof this.stmts.deleteAll
-    };
+      `) as unknown as typeof this.stmts.deleteAll,
+    }
   }
 
   /**
@@ -113,16 +111,16 @@ export class SkillRepository {
       trustTier: row.trust_tier as Skill['trustTier'],
       tags: JSON.parse(row.tags || '[]'),
       createdAt: row.created_at,
-      updatedAt: row.updated_at
-    };
+      updatedAt: row.updated_at,
+    }
   }
 
   /**
    * Create a new skill
    */
   create(input: SkillCreateInput): Skill {
-    const id = input.id || randomUUID();
-    const tags = JSON.stringify(input.tags || []);
+    const id = input.id || randomUUID()
+    const tags = JSON.stringify(input.tags || [])
 
     this.stmts.insert.run(
       id,
@@ -133,10 +131,10 @@ export class SkillRepository {
       input.qualityScore ?? null,
       input.trustTier ?? 'unknown',
       tags
-    );
+    )
 
-    const row = this.stmts.selectById.get(id) as SkillRow;
-    return this.rowToSkill(row);
+    const row = this.stmts.selectById.get(id) as SkillRow
+    return this.rowToSkill(row)
   }
 
   /**
@@ -144,11 +142,11 @@ export class SkillRepository {
    */
   createBatch(inputs: SkillCreateInput[]): Skill[] {
     const insertMany = this.db.transaction((skills: SkillCreateInput[]) => {
-      const created: Skill[] = [];
+      const created: Skill[] = []
 
       for (const input of skills) {
-        const id = input.id || randomUUID();
-        const tags = JSON.stringify(input.tags || []);
+        const id = input.id || randomUUID()
+        const tags = JSON.stringify(input.tags || [])
 
         try {
           this.stmts.insert.run(
@@ -160,61 +158,61 @@ export class SkillRepository {
             input.qualityScore ?? null,
             input.trustTier ?? 'unknown',
             tags
-          );
+          )
 
-          const row = this.stmts.selectById.get(id) as SkillRow;
-          created.push(this.rowToSkill(row));
+          const row = this.stmts.selectById.get(id) as SkillRow
+          created.push(this.rowToSkill(row))
         } catch (error) {
           // Skip duplicates (repo_url unique constraint)
           if (!(error instanceof Error && error.message.includes('UNIQUE'))) {
-            throw error;
+            throw error
           }
         }
       }
 
-      return created;
-    });
+      return created
+    })
 
-    return insertMany(inputs);
+    return insertMany(inputs)
   }
 
   /**
    * Find a skill by ID
    */
   findById(id: string): Skill | null {
-    const row = this.stmts.selectById.get(id) as SkillRow | undefined;
-    return row ? this.rowToSkill(row) : null;
+    const row = this.stmts.selectById.get(id) as SkillRow | undefined
+    return row ? this.rowToSkill(row) : null
   }
 
   /**
    * Find a skill by repository URL
    */
   findByRepoUrl(repoUrl: string): Skill | null {
-    const row = this.stmts.selectByRepoUrl.get(repoUrl) as SkillRow | undefined;
-    return row ? this.rowToSkill(row) : null;
+    const row = this.stmts.selectByRepoUrl.get(repoUrl) as SkillRow | undefined
+    return row ? this.rowToSkill(row) : null
   }
 
   /**
    * Find all skills with pagination
    */
   findAll(limit: number = 20, offset: number = 0): PaginatedResults<Skill> {
-    const rows = this.stmts.selectAll.all(limit, offset) as SkillRow[];
-    const { count } = this.stmts.selectCount.get() as { count: number };
+    const rows = this.stmts.selectAll.all(limit, offset) as SkillRow[]
+    const { count } = this.stmts.selectCount.get() as { count: number }
 
     return {
-      items: rows.map(row => this.rowToSkill(row)),
+      items: rows.map((row) => this.rowToSkill(row)),
       total: count,
       limit,
       offset,
-      hasMore: offset + rows.length < count
-    };
+      hasMore: offset + rows.length < count,
+    }
   }
 
   /**
    * Update a skill by ID
    */
   update(id: string, input: SkillUpdateInput): Skill | null {
-    const tags = input.tags ? JSON.stringify(input.tags) : null;
+    const tags = input.tags ? JSON.stringify(input.tags) : null
 
     const result = this.stmts.update.run(
       input.name ?? null,
@@ -225,52 +223,52 @@ export class SkillRepository {
       input.trustTier ?? null,
       tags,
       id
-    );
+    )
 
     if (result.changes === 0) {
-      return null;
+      return null
     }
 
-    return this.findById(id);
+    return this.findById(id)
   }
 
   /**
    * Delete a skill by ID
    */
   delete(id: string): boolean {
-    const result = this.stmts.delete.run(id);
-    return result.changes > 0;
+    const result = this.stmts.delete.run(id)
+    return result.changes > 0
   }
 
   /**
    * Delete all skills
    */
   deleteAll(): number {
-    const result = this.stmts.deleteAll.run();
-    return result.changes;
+    const result = this.stmts.deleteAll.run()
+    return result.changes
   }
 
   /**
    * Count all skills
    */
   count(): number {
-    const { count } = this.stmts.selectCount.get() as { count: number };
-    return count;
+    const { count } = this.stmts.selectCount.get() as { count: number }
+    return count
   }
 
   /**
    * Execute a function within a transaction
    */
   transaction<T>(fn: () => T): T {
-    return this.db.transaction(fn)();
+    return this.db.transaction(fn)()
   }
 
   /**
    * Check if a skill exists by ID
    */
   exists(id: string): boolean {
-    const row = this.stmts.selectById.get(id);
-    return !!row;
+    const row = this.stmts.selectById.get(id)
+    return !!row
   }
 
   /**
@@ -278,11 +276,11 @@ export class SkillRepository {
    */
   upsert(input: SkillCreateInput): Skill {
     if (input.repoUrl) {
-      const existing = this.findByRepoUrl(input.repoUrl);
+      const existing = this.findByRepoUrl(input.repoUrl)
       if (existing) {
-        return this.update(existing.id, input) ?? existing;
+        return this.update(existing.id, input) ?? existing
       }
     }
-    return this.create(input);
+    return this.create(input)
   }
 }

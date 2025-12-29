@@ -3,25 +3,17 @@
  * Provides skill discovery, installation, and management tools
  */
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js'
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 
-import { searchToolSchema, executeSearch, type SearchInput } from './tools/search.js';
-import { getSkillToolSchema, executeGetSkill, type GetSkillInput } from './tools/get-skill.js';
-import { installTool, installSkill, installInputSchema } from './tools/install.js';
-import { uninstallTool, uninstallSkill, uninstallInputSchema } from './tools/uninstall.js';
+import { searchToolSchema, executeSearch, type SearchInput } from './tools/search.js'
+import { getSkillToolSchema, executeGetSkill, type GetSkillInput } from './tools/get-skill.js'
+import { installTool, installSkill, installInputSchema } from './tools/install.js'
+import { uninstallTool, uninstallSkill, uninstallInputSchema } from './tools/uninstall.js'
 
 // Tool definitions for MCP
-const toolDefinitions = [
-  searchToolSchema,
-  getSkillToolSchema,
-  installTool,
-  uninstallTool,
-];
+const toolDefinitions = [searchToolSchema, getSkillToolSchema, installTool, uninstallTool]
 
 // Create server
 const server = new Server(
@@ -34,28 +26,28 @@ const server = new Server(
       tools: {},
     },
   }
-);
+)
 
 // Handle list tools request
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
-    tools: toolDefinitions.map(tool => ({
+    tools: toolDefinitions.map((tool) => ({
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
     })),
-  };
-});
+  }
+})
 
 // Handle tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+  const { name, arguments: args } = request.params
 
   try {
     switch (name) {
       case 'search': {
-        const input = (args ?? {}) as unknown as SearchInput;
-        const result = await executeSearch(input);
+        const input = (args ?? {}) as unknown as SearchInput
+        const result = await executeSearch(input)
         return {
           content: [
             {
@@ -63,12 +55,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               text: JSON.stringify(result, null, 2),
             },
           ],
-        };
+        }
       }
 
       case 'get_skill': {
-        const input = (args ?? {}) as unknown as GetSkillInput;
-        const result = await executeGetSkill(input);
+        const input = (args ?? {}) as unknown as GetSkillInput
+        const result = await executeGetSkill(input)
         return {
           content: [
             {
@@ -76,12 +68,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               text: JSON.stringify(result, null, 2),
             },
           ],
-        };
+        }
       }
 
       case 'install_skill': {
-        const input = installInputSchema.parse(args);
-        const result = await installSkill(input);
+        const input = installInputSchema.parse(args)
+        const result = await installSkill(input)
         return {
           content: [
             {
@@ -89,12 +81,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               text: JSON.stringify(result, null, 2),
             },
           ],
-        };
+        }
       }
 
       case 'uninstall_skill': {
-        const input = uninstallInputSchema.parse(args);
-        const result = await uninstallSkill(input);
+        const input = uninstallInputSchema.parse(args)
+        const result = await uninstallSkill(input)
         return {
           content: [
             {
@@ -102,11 +94,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               text: JSON.stringify(result, null, 2),
             },
           ],
-        };
+        }
       }
 
       default:
-        throw new Error('Unknown tool: ' + name);
+        throw new Error('Unknown tool: ' + name)
     }
   } catch (error) {
     return {
@@ -117,15 +109,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         },
       ],
       isError: true,
-    };
+    }
   }
-});
+})
 
 // Start server
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error('Skillsmith MCP server running');
+  const transport = new StdioServerTransport()
+  await server.connect(transport)
+  console.error('Skillsmith MCP server running')
 }
 
-main().catch(console.error);
+main().catch(console.error)

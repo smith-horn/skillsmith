@@ -3,9 +3,9 @@
  * L1 (memory) + L2 (SQLite) with automatic promotion/demotion
  */
 
-import { LRUCache } from 'lru-cache';
-import Database from 'better-sqlite3';
-import type { SearchResult } from './lru.js';
+import { LRUCache } from 'lru-cache'
+import Database from 'better-sqlite3'
+import type { SearchResult } from './lru.js'
 import {
   type CacheEntry,
   type SerializedCacheEntry,
@@ -17,36 +17,44 @@ import {
   serializeCacheEntry,
   deserializeCacheEntry,
   isValidCacheKey,
-} from './CacheEntry.js';
+} from './CacheEntry.js'
 
 /** L1 cache configuration */
 export interface L1Config {
-  maxEntries?: number;      // Maximum entries (default: 1000)
-  maxMemoryBytes?: number;  // Maximum memory in bytes (default: 100MB)
+  maxEntries?: number // Maximum entries (default: 1000)
+  maxMemoryBytes?: number // Maximum memory in bytes (default: 100MB)
 }
 
 /** L2 cache configuration */
 export interface L2Config {
-  dbPath: string;           // Path to SQLite database
-  pruneIntervalMs?: number; // Prune interval in ms (default: 5 minutes)
+  dbPath: string // Path to SQLite database
+  pruneIntervalMs?: number // Prune interval in ms (default: 5 minutes)
 }
 
 /** Combined tiered cache configuration */
 export interface TieredCacheConfig {
-  l1?: L1Config;
-  l2?: L2Config;
-  enablePromotion?: boolean; // Enable automatic tier promotion (default: true)
-  enableDemotion?: boolean;  // Enable automatic tier demotion (default: true)
+  l1?: L1Config
+  l2?: L2Config
+  enablePromotion?: boolean // Enable automatic tier promotion (default: true)
+  enableDemotion?: boolean // Enable automatic tier demotion (default: true)
 }
 
 /** Cache statistics */
 export interface TieredCacheStats {
-  l1Hits: number;       l1Misses: number;
-  l2Hits: number;       l2Misses: number;
-  totalHits: number;    totalMisses: number;
-  hitRate: number;      l1Size: number;       l2Size: number;
-  promotions: number;   demotions: number;    evictions: number;
-  popularEntries: number; rareEntries: number;
+  l1Hits: number
+  l1Misses: number
+  l2Hits: number
+  l2Misses: number
+  totalHits: number
+  totalMisses: number
+  hitRate: number
+  l1Size: number
+  l2Size: number
+  promotions: number
+  demotions: number
+  evictions: number
+  popularEntries: number
+  rareEntries: number
 }
 
 /**
@@ -54,30 +62,30 @@ export interface TieredCacheStats {
  */
 function estimateEntrySize(entry: CacheEntry): number {
   // Rough estimation: key + JSON data + overhead
-  const keySize = entry.key.length * 2; // UTF-16
-  const dataSize = JSON.stringify(entry.data).length * 2;
-  const overhead = 200; // Object overhead + metadata
-  return keySize + dataSize + overhead;
+  const keySize = entry.key.length * 2 // UTF-16
+  const dataSize = JSON.stringify(entry.data).length * 2
+  const overhead = 200 // Object overhead + metadata
+  return keySize + dataSize + overhead
 }
 
 /**
  * Resolved cache configuration
  */
 interface ResolvedCacheConfig {
-  l1: Required<L1Config>;
-  l2?: L2Config;
-  enablePromotion: boolean;
-  enableDemotion: boolean;
+  l1: Required<L1Config>
+  l2?: L2Config
+  enablePromotion: boolean
+  enableDemotion: boolean
 }
 
 /**
  * Enhanced two-tier cache with TTL management
  */
 export class EnhancedTieredCache {
-  private l1: LRUCache<string, CacheEntry>;
-  private db: Database.Database | null = null;
-  private readonly config: ResolvedCacheConfig;
-  private pruneTimer: ReturnType<typeof setInterval> | null = null;
+  private l1: LRUCache<string, CacheEntry>
+  private db: Database.Database | null = null
+  private readonly config: ResolvedCacheConfig
+  private pruneTimer: ReturnType<typeof setInterval> | null = null
 
   // Statistics
   private stats = {
@@ -88,23 +96,23 @@ export class EnhancedTieredCache {
     promotions: 0,
     demotions: 0,
     evictions: 0,
-  };
+  }
 
   // Prepared statements for L2
   private stmts: {
-    get: Database.Statement<[string, number]>;
-    set: Database.Statement<unknown[]>;
-    has: Database.Statement<[string, number]>;
-    delete: Database.Statement<[string]>;
-    prune: Database.Statement<[number]>;
-    count: Database.Statement<[number]>;
-    updateHit: Database.Statement<[number, number, number, string]>;
-    countByTier: Database.Statement<[number, number]>;
-  } | null = null;
+    get: Database.Statement<[string, number]>
+    set: Database.Statement<unknown[]>
+    has: Database.Statement<[string, number]>
+    delete: Database.Statement<[string]>
+    prune: Database.Statement<[number]>
+    count: Database.Statement<[number]>
+    updateHit: Database.Statement<[number, number, number, string]>
+    countByTier: Database.Statement<[number, number]>
+  } | null = null
 
   constructor(config: TieredCacheConfig = {}) {
-    const l1MaxEntries = config.l1?.maxEntries ?? 1000;
-    const l1MaxMemoryBytes = config.l1?.maxMemoryBytes ?? 100 * 1024 * 1024; // 100MB
+    const l1MaxEntries = config.l1?.maxEntries ?? 1000
+    const l1MaxMemoryBytes = config.l1?.maxMemoryBytes ?? 100 * 1024 * 1024 // 100MB
 
     this.config = {
       l1: {
@@ -114,7 +122,7 @@ export class EnhancedTieredCache {
       l2: config.l2 ?? undefined,
       enablePromotion: config.enablePromotion ?? true,
       enableDemotion: config.enableDemotion ?? true,
-    };
+    }
 
     // Initialize L1 with memory-bounded LRU
     this.l1 = new LRUCache<string, CacheEntry>({
@@ -124,27 +132,27 @@ export class EnhancedTieredCache {
       dispose: (entry, key) => {
         // On L1 eviction, demote to L2 if popular enough
         if (this.config.enableDemotion && this.db && !isExpired(entry)) {
-          this.demoteToL2(key, entry);
+          this.demoteToL2(key, entry)
         }
-        this.stats.evictions++;
+        this.stats.evictions++
       },
-    });
+    })
 
     // Initialize L2 if configured
     if (config.l2?.dbPath) {
-      this.initL2(config.l2.dbPath);
+      this.initL2(config.l2.dbPath)
 
       // Set up periodic pruning (unref to not block process exit)
-      const pruneInterval = config.l2.pruneIntervalMs ?? 5 * 60 * 1000;
-      this.pruneTimer = setInterval(() => this.prune(), pruneInterval);
-      this.pruneTimer.unref();
+      const pruneInterval = config.l2.pruneIntervalMs ?? 5 * 60 * 1000
+      this.pruneTimer = setInterval(() => this.prune(), pruneInterval)
+      this.pruneTimer.unref()
     }
   }
 
   private initL2(dbPath: string): void {
-    this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('cache_size = -16000'); // 16MB cache
+    this.db = new Database(dbPath)
+    this.db.pragma('journal_mode = WAL')
+    this.db.pragma('cache_size = -16000') // 16MB cache
 
     // Create table with enhanced schema for TTL management
     this.db.exec(`
@@ -158,19 +166,19 @@ export class EnhancedTieredCache {
         last_accessed_at INTEGER NOT NULL,
         ttl_tier INTEGER NOT NULL
       )
-    `);
+    `)
 
     // Index for expiration pruning
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_cache_expires
       ON cache_entries(expires_at)
-    `);
+    `)
 
     // Index for TTL tier queries
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_cache_tier
       ON cache_entries(ttl_tier)
-    `);
+    `)
 
     // Prepare statements
     this.stmts = {
@@ -209,7 +217,7 @@ export class EnhancedTieredCache {
         SELECT COUNT(*) as count FROM cache_entries
         WHERE ttl_tier = ? AND expires_at > ?
       `),
-    };
+    }
   }
 
   /**
@@ -217,62 +225,57 @@ export class EnhancedTieredCache {
    */
   get(key: string): { results: SearchResult[]; totalCount: number } | undefined {
     if (!isValidCacheKey(key)) {
-      return undefined;
+      return undefined
     }
 
-    const now = Date.now();
+    const now = Date.now()
 
     // Check L1 first
-    const l1Entry = this.l1.get(key);
+    const l1Entry = this.l1.get(key)
     if (l1Entry) {
       if (isExpired(l1Entry, now)) {
-        this.l1.delete(key);
-        this.stats.l1Misses++;
+        this.l1.delete(key)
+        this.stats.l1Misses++
       } else {
-        this.stats.l1Hits++;
+        this.stats.l1Hits++
         // Update hit count
-        const updated = recordHit(l1Entry);
-        this.l1.set(key, updated);
-        return { results: updated.data as SearchResult[], totalCount: updated.totalCount };
+        const updated = recordHit(l1Entry)
+        this.l1.set(key, updated)
+        return { results: updated.data as SearchResult[], totalCount: updated.totalCount }
       }
     } else {
-      this.stats.l1Misses++;
+      this.stats.l1Misses++
     }
 
     // Check L2 if available
     if (this.db && this.stmts) {
-      const row = this.stmts.get.get(key, now) as SerializedCacheEntry | undefined;
+      const row = this.stmts.get.get(key, now) as SerializedCacheEntry | undefined
       if (row) {
-        this.stats.l2Hits++;
+        this.stats.l2Hits++
         try {
-          const entry = deserializeCacheEntry<SearchResult[]>(row);
-          const updated = recordHit(entry);
+          const entry = deserializeCacheEntry<SearchResult[]>(row)
+          const updated = recordHit(entry)
 
           // Update L2 hit stats
-          this.stmts.updateHit.run(
-            updated.hitCount,
-            updated.lastAccessedAt,
-            updated.ttlTier,
-            key
-          );
+          this.stmts.updateHit.run(updated.hitCount, updated.lastAccessedAt, updated.ttlTier, key)
 
           // Promote to L1
           if (this.config.enablePromotion) {
-            this.l1.set(key, updated);
-            this.stats.promotions++;
+            this.l1.set(key, updated)
+            this.stats.promotions++
           }
 
-          return { results: updated.data, totalCount: updated.totalCount };
+          return { results: updated.data, totalCount: updated.totalCount }
         } catch {
           // Corrupted entry, remove it
-          this.stmts.delete.run(key);
+          this.stmts.delete.run(key)
         }
       } else {
-        this.stats.l2Misses++;
+        this.stats.l2Misses++
       }
     }
 
-    return undefined;
+    return undefined
   }
 
   /**
@@ -285,17 +288,17 @@ export class EnhancedTieredCache {
     ttlTier: TTLTier = TTLTier.STANDARD
   ): void {
     if (!isValidCacheKey(key)) {
-      throw new Error('Invalid cache key');
+      throw new Error('Invalid cache key')
     }
 
-    const entry = createCacheEntry(key, results, totalCount, ttlTier);
+    const entry = createCacheEntry(key, results, totalCount, ttlTier)
 
     // Store in L1
-    this.l1.set(key, entry);
+    this.l1.set(key, entry)
 
     // Store in L2 if available
     if (this.db && this.stmts) {
-      const serialized = serializeCacheEntry(entry);
+      const serialized = serializeCacheEntry(entry)
       this.stmts.set.run(
         serialized.key,
         serialized.data_json,
@@ -305,7 +308,7 @@ export class EnhancedTieredCache {
         serialized.hit_count,
         serialized.last_accessed_at,
         serialized.ttl_tier
-      );
+      )
     }
   }
 
@@ -314,53 +317,53 @@ export class EnhancedTieredCache {
    */
   has(key: string): boolean {
     if (!isValidCacheKey(key)) {
-      return false;
+      return false
     }
 
-    const now = Date.now();
+    const now = Date.now()
 
     // Check L1
-    const l1Entry = this.l1.get(key);
+    const l1Entry = this.l1.get(key)
     if (l1Entry && !isExpired(l1Entry, now)) {
-      return true;
+      return true
     }
 
     // Check L2
     if (this.db && this.stmts) {
-      return this.stmts.has.get(key, now) !== undefined;
+      return this.stmts.has.get(key, now) !== undefined
     }
 
-    return false;
+    return false
   }
 
   /**
    * Delete specific entry
    */
   delete(key: string): boolean {
-    let deleted = false;
+    let deleted = false
 
     if (this.l1.has(key)) {
-      this.l1.delete(key);
-      deleted = true;
+      this.l1.delete(key)
+      deleted = true
     }
 
     if (this.db && this.stmts) {
-      const result = this.stmts.delete.run(key);
+      const result = this.stmts.delete.run(key)
       if (result.changes > 0) {
-        deleted = true;
+        deleted = true
       }
     }
 
-    return deleted;
+    return deleted
   }
 
   /**
    * Invalidate all entries (called on index update)
    */
   invalidateAll(): void {
-    this.l1.clear();
+    this.l1.clear()
     if (this.db) {
-      this.db.exec('DELETE FROM cache_entries');
+      this.db.exec('DELETE FROM cache_entries')
     }
   }
 
@@ -368,62 +371,66 @@ export class EnhancedTieredCache {
    * Prune expired entries
    */
   prune(): number {
-    const now = Date.now();
-    let pruned = 0;
+    const now = Date.now()
+    let pruned = 0
 
     // L1 handles its own expiration via TTL
     // Just trigger a check
-    this.l1.purgeStale();
+    this.l1.purgeStale()
 
     // Prune L2
     if (this.db && this.stmts) {
-      const result = this.stmts.prune.run(now);
-      pruned = result.changes;
+      const result = this.stmts.prune.run(now)
+      pruned = result.changes
     }
 
-    return pruned;
+    return pruned
   }
 
   /**
    * Get entries that need background refresh
    */
   getEntriesNeedingRefresh(): string[] {
-    const now = Date.now();
-    const keys: string[] = [];
+    const now = Date.now()
+    const keys: string[] = []
 
     // Check L1 entries
     for (const [key, entry] of this.l1.entries()) {
       if (shouldRefresh(entry, now)) {
-        keys.push(key);
+        keys.push(key)
       }
     }
 
-    return keys;
+    return keys
   }
 
   /**
    * Get cache statistics
    */
   getStats(): TieredCacheStats {
-    const totalHits = this.stats.l1Hits + this.stats.l2Hits;
-    const totalMisses = this.stats.l1Misses + this.stats.l2Misses;
-    const total = totalHits + totalMisses;
+    const totalHits = this.stats.l1Hits + this.stats.l2Hits
+    const totalMisses = this.stats.l1Misses + this.stats.l2Misses
+    const total = totalHits + totalMisses
 
-    let l2Size = 0;
-    let popularEntries = 0;
-    let rareEntries = 0;
+    let l2Size = 0
+    let popularEntries = 0
+    let rareEntries = 0
 
     if (this.db && this.stmts) {
       try {
-        const now = Date.now();
-        const countResult = this.stmts.count.get(now) as { count: number } | undefined;
-        l2Size = countResult?.count ?? 0;
+        const now = Date.now()
+        const countResult = this.stmts.count.get(now) as { count: number } | undefined
+        l2Size = countResult?.count ?? 0
 
-        const popularResult = this.stmts.countByTier.get(TTLTier.POPULAR, now) as { count: number } | undefined;
-        popularEntries = popularResult?.count ?? 0;
+        const popularResult = this.stmts.countByTier.get(TTLTier.POPULAR, now) as
+          | { count: number }
+          | undefined
+        popularEntries = popularResult?.count ?? 0
 
-        const rareResult = this.stmts.countByTier.get(TTLTier.RARE, now) as { count: number } | undefined;
-        rareEntries = rareResult?.count ?? 0;
+        const rareResult = this.stmts.countByTier.get(TTLTier.RARE, now) as
+          | { count: number }
+          | undefined
+        rareEntries = rareResult?.count ?? 0
       } catch {
         // Database may be corrupted or closed, return zeros for L2 stats
       }
@@ -444,18 +451,18 @@ export class EnhancedTieredCache {
       evictions: this.stats.evictions,
       popularEntries,
       rareEntries,
-    };
+    }
   }
 
   /**
    * Demote entry from L1 to L2
    */
   private demoteToL2(key: string, entry: CacheEntry): void {
-    if (!this.db || !this.stmts) return;
+    if (!this.db || !this.stmts) return
 
     // Only demote if entry is still valuable (not rare)
     if (entry.ttlTier !== TTLTier.RARE) {
-      const serialized = serializeCacheEntry(entry);
+      const serialized = serializeCacheEntry(entry)
       this.stmts.set.run(
         serialized.key,
         serialized.data_json,
@@ -465,8 +472,8 @@ export class EnhancedTieredCache {
         serialized.hit_count,
         serialized.last_accessed_at,
         serialized.ttl_tier
-      );
-      this.stats.demotions++;
+      )
+      this.stats.demotions++
     }
   }
 
@@ -475,13 +482,13 @@ export class EnhancedTieredCache {
    */
   close(): void {
     if (this.pruneTimer) {
-      clearInterval(this.pruneTimer);
-      this.pruneTimer = null;
+      clearInterval(this.pruneTimer)
+      this.pruneTimer = null
     }
     if (this.db) {
-      this.db.close();
-      this.db = null;
-      this.stmts = null;
+      this.db.close()
+      this.db = null
+      this.stmts = null
     }
   }
 }
