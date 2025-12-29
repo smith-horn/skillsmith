@@ -15,6 +15,9 @@ import type {
   SkillContent,
   SourceHealth,
 } from './types.js'
+import { createLogger } from '../utils/logger.js'
+
+const log = createLogger('GitLabAdapter')
 
 /**
  * GitLab API project response
@@ -95,6 +98,17 @@ export class GitLabSourceAdapter extends BaseSourceAdapter {
   }
 
   /**
+   * Validate API access on initialization
+   */
+  protected override async doInitialize(): Promise<void> {
+    // Validate API access on initialization
+    const health = await this.doHealthCheck()
+    if (!health.healthy) {
+      log.warn(`API health check warning: ${health.error ?? 'unknown issue'}`)
+    }
+  }
+
+  /**
    * Check GitLab API health
    */
   protected async doHealthCheck(): Promise<Partial<SourceHealth>> {
@@ -146,8 +160,8 @@ export class GitLabSourceAdapter extends BaseSourceAdapter {
     const response = await this.fetchWithRateLimit(url)
 
     if (!response.ok) {
-      if (response.status === 429) {
-        throw new Error('GitLab API rate limit exceeded')
+      if (response.status === 403 || response.status === 429) {
+        throw new Error('API rate limit exceeded')
       }
       throw new Error(`GitLab API error: ${response.status}`)
     }
@@ -306,8 +320,8 @@ export class GitLabSourceAdapter extends BaseSourceAdapter {
     const response = await this.fetchWithRateLimit(url)
 
     if (!response.ok) {
-      if (response.status === 429) {
-        throw new Error('GitLab API rate limit exceeded')
+      if (response.status === 403 || response.status === 429) {
+        throw new Error('API rate limit exceeded')
       }
       throw new Error(`GitLab API error: ${response.status}`)
     }

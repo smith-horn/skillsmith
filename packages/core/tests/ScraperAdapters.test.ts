@@ -137,6 +137,67 @@ describe('RawUrlSourceAdapter (SMI-591)', () => {
     })
   })
 
+  describe('Registry Loading (SMI-724)', () => {
+    it('should handle registry loading failure gracefully', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        headers: new Headers(),
+      })
+
+      const adapterWithRegistry = new RawUrlSourceAdapter({
+        id: 'test-registry-fail',
+        name: 'Test Registry Fail',
+        type: 'raw-url',
+        baseUrl: 'https://example.com',
+        enabled: true,
+        registryUrl: 'https://example.com/registry.json',
+        rateLimit: { maxRequests: 100, windowMs: 60000, minDelayMs: 0 },
+      })
+
+      // Should not throw - registry load is optional
+      await expect(adapterWithRegistry.initialize()).resolves.not.toThrow()
+      // No skills from registry
+      expect(adapterWithRegistry.getSkillUrls()).toHaveLength(0)
+    })
+
+    it('should merge registry skills with predefined skills', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers(),
+        json: async () => ({
+          skills: [
+            {
+              id: 'registry-1',
+              name: 'Registry Skill',
+              url: 'https://example.com/registry-skill.md',
+            },
+          ],
+        }),
+      })
+
+      const adapterWithBoth = new RawUrlSourceAdapter({
+        id: 'test-merge',
+        name: 'Test Merge',
+        type: 'raw-url',
+        baseUrl: 'https://example.com',
+        enabled: true,
+        registryUrl: 'https://example.com/registry.json',
+        skillUrls: [
+          {
+            id: 'predefined-1',
+            name: 'Predefined Skill',
+            url: 'https://example.com/predefined.md',
+          },
+        ],
+        rateLimit: { maxRequests: 100, windowMs: 60000, minDelayMs: 0 },
+      })
+
+      await adapterWithBoth.initialize()
+      expect(adapterWithBoth.getSkillUrls()).toHaveLength(2)
+    })
+  })
+
   describe('Skill URL Management', () => {
     it('should add skill URL', () => {
       adapter.addSkillUrl({
@@ -317,6 +378,254 @@ describe('LocalFilesystemAdapter (SMI-591)', () => {
       expect(count).toBe(3)
     })
   })
+
+  describe('Path Traversal Prevention (SMI-720)', () => {
+    it('should reject relative path traversal with ../', async () => {
+      await expect(
+        adapter.fetchSkillContent({
+          path: '../../../etc/passwd',
+        })
+      ).rejects.toThrow('Path traversal detected')
+    })
+
+    it('should reject deeply nested path traversal', async () => {
+      await expect(
+        adapter.fetchSkillContent({
+          path: 'skill-one/../../../../../../etc/shadow',
+        })
+      ).rejects.toThrow('Path traversal detected')
+    })
+
+    it('should reject absolute paths outside rootDir', async () => {
+      await expect(
+        adapter.fetchSkillContent({
+          path: '/etc/passwd',
+        })
+      ).rejects.toThrow('Path traversal detected')
+    })
+
+    it('should reject path traversal via owner/repo', async () => {
+      await expect(
+        adapter.getRepository({
+          owner: '..',
+          repo: '../../../etc',
+        })
+      ).rejects.toThrow('Path traversal detected')
+    })
+
+    it('should reject path traversal via repo only', async () => {
+      await expect(
+        adapter.skillExists({
+          repo: '../../../etc/passwd',
+        })
+      ).rejects.toThrow('Path traversal detected')
+    })
+
+    it('should allow valid paths within rootDir', async () => {
+      const exists = await adapter.skillExists({
+        path: join(testDir, 'skill-one', 'SKILL.md'),
+      })
+      expect(exists).toBe(true)
+    })
+
+    it('should allow valid relative paths that stay within rootDir', async () => {
+      const content = await adapter.fetchSkillContent({
+        path: 'skill-one/SKILL.md',
+      })
+      expect(content.rawContent).toContain('# Skill One')
+    })
+  })
+
+  describe('Symlink Handling (SMI-724)', () => {
+    it('should skip symlinks by default', async () => {
+      // Create a symlink to external directory
+      const externalDir = join(tmpdir(), `external-${Date.now()}`)
+      await fs.mkdir(externalDir, { recursive: true })
+      await fs.writeFile(join(externalDir, 'SKILL.md'), '# External Skill')
+
+      try {
+        await fs.symlink(externalDir, join(testDir, 'symlink-skill'))
+      } catch {
+        // Skip test on platforms that don't support symlinks
+        return
+      }
+
+      // Create new adapter (symlinks disabled by default)
+      const newAdapter = new LocalFilesystemAdapter({
+        id: 'test-symlink',
+        name: 'Test Symlink',
+        type: 'local',
+        baseUrl: 'file://',
+        enabled: true,
+        rootDir: testDir,
+        followSymlinks: false,
+        rateLimit: { maxRequests: 100, windowMs: 60000, minDelayMs: 0 },
+      })
+
+      await newAdapter.initialize()
+      // Should not include symlinked skill
+      expect(newAdapter.skillCount).toBe(2)
+
+      // Cleanup
+      await fs.rm(externalDir, { recursive: true, force: true })
+    })
+
+    it('should follow symlinks when enabled', async () => {
+      // Create a symlink to skill directory
+      const externalDir = join(tmpdir(), `external-follow-${Date.now()}`)
+      await fs.mkdir(externalDir, { recursive: true })
+      await fs.writeFile(join(externalDir, 'SKILL.md'), '# Symlinked Skill')
+
+      try {
+        await fs.symlink(externalDir, join(testDir, 'symlink-follow'))
+      } catch {
+        // Skip test on platforms that don't support symlinks
+        return
+      }
+
+      const followAdapter = new LocalFilesystemAdapter({
+        id: 'test-follow-symlink',
+        name: 'Test Follow Symlink',
+        type: 'local',
+        baseUrl: 'file://',
+        enabled: true,
+        rootDir: testDir,
+        followSymlinks: true,
+        rateLimit: { maxRequests: 100, windowMs: 60000, minDelayMs: 0 },
+      })
+
+      await followAdapter.initialize()
+      // Should include symlinked skill
+      expect(followAdapter.skillCount).toBe(3)
+
+      // Cleanup
+      await fs.rm(externalDir, { recursive: true, force: true })
+    })
+  })
+
+  describe('Deep Directory Structures (SMI-724)', () => {
+    it('should respect maxDepth limit', async () => {
+      // Create deeply nested skill
+      const deepPath = join(testDir, 'level1', 'level2', 'level3', 'level4', 'level5', 'level6')
+      await fs.mkdir(deepPath, { recursive: true })
+      await fs.writeFile(join(deepPath, 'SKILL.md'), '# Deep Skill')
+
+      const shallowAdapter = new LocalFilesystemAdapter({
+        id: 'test-shallow',
+        name: 'Test Shallow',
+        type: 'local',
+        baseUrl: 'file://',
+        enabled: true,
+        rootDir: testDir,
+        maxDepth: 3, // Only go 3 levels deep
+        rateLimit: { maxRequests: 100, windowMs: 60000, minDelayMs: 0 },
+      })
+
+      await shallowAdapter.initialize()
+      // Should not find the deep skill (at level 6)
+      expect(shallowAdapter.skillCount).toBe(2)
+    })
+
+    it('should find skills within maxDepth', async () => {
+      // Create skill at level 3
+      const level3Path = join(testDir, 'a', 'b', 'c')
+      await fs.mkdir(level3Path, { recursive: true })
+      await fs.writeFile(join(level3Path, 'SKILL.md'), '# Level 3 Skill')
+
+      const deepAdapter = new LocalFilesystemAdapter({
+        id: 'test-deep',
+        name: 'Test Deep',
+        type: 'local',
+        baseUrl: 'file://',
+        enabled: true,
+        rootDir: testDir,
+        maxDepth: 5,
+        rateLimit: { maxRequests: 100, windowMs: 60000, minDelayMs: 0 },
+      })
+
+      await deepAdapter.initialize()
+      // Should find the level 3 skill
+      expect(deepAdapter.skillCount).toBe(3)
+    })
+  })
+
+  describe('Invalid Regex Patterns (SMI-722)', () => {
+    it('should not crash with invalid regex patterns like unclosed parenthesis', async () => {
+      // Create adapter with invalid regex pattern that would crash without fix
+      const adapterWithInvalidPattern = new LocalFilesystemAdapter({
+        id: 'test-invalid-regex',
+        name: 'Test Invalid Regex',
+        type: 'local',
+        baseUrl: 'file://',
+        enabled: true,
+        rootDir: testDir,
+        excludePatterns: ['(', 'node_modules'], // '(' is invalid regex
+        rateLimit: { maxRequests: 100, windowMs: 60000, minDelayMs: 0 },
+      })
+
+      // Should not throw during initialization
+      await expect(adapterWithInvalidPattern.initialize()).resolves.not.toThrow()
+      expect(adapterWithInvalidPattern.skillCount).toBe(2)
+    })
+
+    it('should fall back to includes check for invalid regex patterns', async () => {
+      // Create a directory that contains the invalid pattern as substring
+      await fs.mkdir(join(testDir, 'test(dir'), { recursive: true })
+      await fs.writeFile(join(testDir, 'test(dir', 'SKILL.md'), '# Test Paren Dir')
+
+      const adapterWithInvalidPattern = new LocalFilesystemAdapter({
+        id: 'test-includes-fallback',
+        name: 'Test Includes Fallback',
+        type: 'local',
+        baseUrl: 'file://',
+        enabled: true,
+        rootDir: testDir,
+        excludePatterns: ['(', 'node_modules'], // '(' should match via includes
+        rateLimit: { maxRequests: 100, windowMs: 60000, minDelayMs: 0 },
+      })
+
+      await adapterWithInvalidPattern.initialize()
+      // test(dir should be excluded because it includes '('
+      expect(adapterWithInvalidPattern.skillCount).toBe(2)
+    })
+
+    it('should handle multiple invalid regex patterns', async () => {
+      const adapterWithMultipleInvalid = new LocalFilesystemAdapter({
+        id: 'test-multiple-invalid',
+        name: 'Test Multiple Invalid',
+        type: 'local',
+        baseUrl: 'file://',
+        enabled: true,
+        rootDir: testDir,
+        excludePatterns: ['[invalid', '(unclosed', '*bad', 'node_modules'],
+        rateLimit: { maxRequests: 100, windowMs: 60000, minDelayMs: 0 },
+      })
+
+      await expect(adapterWithMultipleInvalid.initialize()).resolves.not.toThrow()
+      expect(adapterWithMultipleInvalid.skillCount).toBe(2)
+    })
+
+    it('should still work with valid regex patterns', async () => {
+      // Create a directory matching a valid regex pattern
+      await fs.mkdir(join(testDir, 'test-temp-123'), { recursive: true })
+      await fs.writeFile(join(testDir, 'test-temp-123', 'SKILL.md'), '# Temp Skill')
+
+      const adapterWithValidRegex = new LocalFilesystemAdapter({
+        id: 'test-valid-regex',
+        name: 'Test Valid Regex',
+        type: 'local',
+        baseUrl: 'file://',
+        enabled: true,
+        rootDir: testDir,
+        excludePatterns: ['test-temp-\\d+', 'node_modules'], // Valid regex
+        rateLimit: { maxRequests: 100, windowMs: 60000, minDelayMs: 0 },
+      })
+
+      await adapterWithValidRegex.initialize()
+      // test-temp-123 should be excluded by valid regex
+      expect(adapterWithValidRegex.skillCount).toBe(2)
+    })
+  })
 })
 
 describe('GitLabSourceAdapter (SMI-591)', () => {
@@ -344,10 +653,10 @@ describe('GitLabSourceAdapter (SMI-591)', () => {
     it('should return healthy when API is reachable', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        headers: new Map([
-          ['ratelimit-remaining', '100'],
-          ['ratelimit-reset', String(Math.floor(Date.now() / 1000) + 3600)],
-        ]),
+        headers: new Headers({
+          'ratelimit-remaining': '100',
+          'ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3600),
+        }),
         json: async () => ({ version: '15.0.0' }),
       })
 
@@ -359,7 +668,7 @@ describe('GitLabSourceAdapter (SMI-591)', () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 500,
-        headers: new Map(),
+        headers: new Headers(),
       })
 
       const health = await adapter.checkHealth()
@@ -371,10 +680,10 @@ describe('GitLabSourceAdapter (SMI-591)', () => {
     it('should search for projects with topics', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        headers: new Map([
-          ['x-total', '2'],
-          ['x-total-pages', '1'],
-        ]),
+        headers: new Headers({
+          'x-total': '2',
+          'x-total-pages': '1',
+        }),
         json: async () => [
           {
             id: 1,
@@ -404,10 +713,76 @@ describe('GitLabSourceAdapter (SMI-591)', () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 429,
-        headers: new Map(),
+        headers: new Headers(),
       })
 
       await expect(adapter.search({})).rejects.toThrow('rate limit')
+    })
+  })
+
+  describe('Paginated Search (SMI-724)', () => {
+    it('should handle searchWithCursor pagination', async () => {
+      // First page
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({
+          'x-total': '50',
+          'x-total-pages': '2',
+        }),
+        json: async () => [
+          {
+            id: 1,
+            name: 'Skill 1',
+            path_with_namespace: 'user/skill-1',
+            namespace: { path: 'user', name: 'User' },
+            description: 'First skill',
+            web_url: 'https://gitlab.com/user/skill-1',
+            star_count: 10,
+            forks_count: 5,
+            topics: ['claude-skill'],
+            last_activity_at: '2024-01-01T00:00:00Z',
+            created_at: '2023-01-01T00:00:00Z',
+            default_branch: 'main',
+          },
+        ],
+      })
+
+      const result = await adapter.searchWithCursor({ limit: 30 }, 1)
+
+      expect(result.repositories).toHaveLength(1)
+      expect(result.hasMore).toBe(true)
+      expect(result.nextCursor).toBe('2')
+    })
+
+    it('should indicate no more pages on last page', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({
+          'x-total': '25',
+          'x-total-pages': '1',
+        }),
+        json: async () => [
+          {
+            id: 1,
+            name: 'Skill 1',
+            path_with_namespace: 'user/skill-1',
+            namespace: { path: 'user', name: 'User' },
+            description: 'Only skill',
+            web_url: 'https://gitlab.com/user/skill-1',
+            star_count: 5,
+            forks_count: 2,
+            topics: ['claude-skill'],
+            last_activity_at: '2024-01-01T00:00:00Z',
+            created_at: '2023-01-01T00:00:00Z',
+            default_branch: 'main',
+          },
+        ],
+      })
+
+      const result = await adapter.searchWithCursor({}, 1)
+
+      expect(result.hasMore).toBe(false)
+      expect(result.nextCursor).toBeUndefined()
     })
   })
 
@@ -415,7 +790,7 @@ describe('GitLabSourceAdapter (SMI-591)', () => {
     it('should get repository by location', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        headers: new Map(),
+        headers: new Headers(),
         json: async () => ({
           id: 1,
           name: 'skill-repo',
@@ -442,7 +817,7 @@ describe('GitLabSourceAdapter (SMI-591)', () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 404,
-        headers: new Map(),
+        headers: new Headers(),
       })
 
       await expect(adapter.getRepository({ owner: 'user', repo: 'nonexistent' })).rejects.toThrow(
@@ -458,7 +833,7 @@ describe('GitLabSourceAdapter (SMI-591)', () => {
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        headers: new Map(),
+        headers: new Headers(),
         json: async () => ({
           file_name: 'SKILL.md',
           file_path: 'SKILL.md',
@@ -483,14 +858,14 @@ describe('GitLabSourceAdapter (SMI-591)', () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 404,
-        headers: new Map(),
+        headers: new Headers(),
       })
 
       // Second path succeeds
       const content = '# Skill'
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        headers: new Map(),
+        headers: new Headers(),
         json: async () => ({
           file_name: 'skill.md',
           file_path: 'skill.md',

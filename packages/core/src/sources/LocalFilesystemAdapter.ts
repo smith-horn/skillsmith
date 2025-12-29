@@ -17,7 +17,10 @@ import type {
 } from './types.js'
 import { createHash } from 'crypto'
 import { promises as fs } from 'fs'
-import { join, basename, dirname, relative } from 'path'
+import { join, basename, dirname, relative, resolve } from 'path'
+import { createLogger } from '../utils/logger.js'
+
+const log = createLogger('LocalFilesystemAdapter')
 
 /**
  * Default skill file names to search for
@@ -300,7 +303,7 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
     } catch (error) {
       // Ignore permission errors and continue scanning
       if ((error as NodeJS.ErrnoException).code !== 'EACCES') {
-        console.warn(`Error scanning directory ${dirPath}:`, error)
+        log.warn(`Error scanning directory ${dirPath}: ${error}`)
       }
     }
   }
@@ -309,37 +312,53 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
    * Check if a path/name should be excluded
    */
   private isExcluded(name: string): boolean {
-    return this.excludePatterns.some(
-      (pattern) => name === pattern || name.startsWith(pattern) || new RegExp(pattern).test(name)
-    )
+    return this.excludePatterns.some((pattern) => {
+      // Exact match
+      if (name === pattern) {
+        return true
+      }
+      // Prefix match
+      if (name.startsWith(pattern)) {
+        return true
+      }
+      // Regex match with error handling
+      try {
+        return new RegExp(pattern).test(name)
+      } catch {
+        // Invalid regex pattern, fall back to includes check
+        return name.includes(pattern)
+      }
+    })
   }
 
   /**
    * Resolve a skill location to a full filesystem path
+   * Validates that the resolved path remains within rootDir to prevent path traversal attacks (SMI-720)
    */
   private resolveSkillPath(location: SourceLocation): string {
-    // If path is already absolute
+    let resolvedPath: string
+
     if (location.path?.startsWith('/')) {
-      return location.path
+      resolvedPath = location.path
+    } else if (location.path) {
+      resolvedPath = join(this.rootDir, location.path)
+    } else if (location.owner && location.repo) {
+      resolvedPath = join(this.rootDir, location.owner, location.repo, 'SKILL.md')
+    } else if (location.repo) {
+      resolvedPath = join(this.rootDir, location.repo, 'SKILL.md')
+    } else {
+      throw new Error('Invalid location: must specify path or repo')
     }
 
-    // If path is a relative path or skill name
-    if (location.path) {
-      return join(this.rootDir, location.path)
+    // Normalize and validate containment to prevent path traversal attacks
+    const normalizedPath = resolve(resolvedPath)
+    const normalizedRoot = resolve(this.rootDir)
+
+    if (!normalizedPath.startsWith(normalizedRoot + '/') && normalizedPath !== normalizedRoot) {
+      throw new Error(`Path traversal detected: ${location.path ?? 'unknown'}`)
     }
 
-    // Build path from owner/repo
-    if (location.owner && location.repo) {
-      // Try with SKILL.md
-      return join(this.rootDir, location.owner, location.repo, 'SKILL.md')
-    }
-
-    // Just repo name
-    if (location.repo) {
-      return join(this.rootDir, location.repo, 'SKILL.md')
-    }
-
-    throw new Error('Invalid location: must specify path or repo')
+    return normalizedPath
   }
 
   /**
