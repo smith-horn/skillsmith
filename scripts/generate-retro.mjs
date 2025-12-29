@@ -13,10 +13,7 @@
  *   LINEAR_API_KEY - Required API key for authentication
  */
 
-import {
-  graphql,
-  getTeamId,
-} from './linear-api.mjs'
+import { graphql, getTeamId } from './linear-api.mjs'
 
 const TEAM_KEY = 'SMI'
 
@@ -64,48 +61,47 @@ async function queryCompletedIssues(startDate, endDate) {
 
   const data = await graphql(
     `
-    query CompletedIssues($teamId: ID!) {
-      issues(
-        filter: {
-          team: { id: { eq: $teamId } }
-          state: { type: { eq: "completed" } }
-        }
-        first: 100
-        orderBy: updatedAt
-      ) {
-        nodes {
-          id
-          identifier
-          title
-          description
-          priority
-          createdAt
-          completedAt
-          startedAt
-          labels {
-            nodes {
-              name
-            }
-          }
-          state {
-            name
-            type
-          }
-          parent {
+      query CompletedIssues($teamId: ID!) {
+        issues(
+          filter: { team: { id: { eq: $teamId } }, state: { type: { eq: "completed" } } }
+          first: 100
+          orderBy: updatedAt
+        ) {
+          nodes {
+            id
             identifier
             title
-          }
-          children {
-            nodes {
+            description
+            priority
+            createdAt
+            completedAt
+            startedAt
+            labels {
+              nodes {
+                name
+              }
+            }
+            state {
+              name
+              type
+            }
+            parent {
               identifier
               title
-              state { name }
+            }
+            children {
+              nodes {
+                identifier
+                title
+                state {
+                  name
+                }
+              }
             }
           }
         }
       }
-    }
-  `,
+    `,
     { teamId }
   )
 
@@ -408,7 +404,9 @@ async function main() {
     console.log('\n--- Summary ---')
     console.log(`Total issues: ${metrics.totalIssues}`)
     console.log(`Categories: ${Object.keys(byCategory).join(', ')}`)
-    console.log(`Avg resolution: ${metrics.totalIssues > 0 ? Math.round((metrics.totalResolutionHours / metrics.totalIssues) * 10) / 10 : 0}h`)
+    console.log(
+      `Avg resolution: ${metrics.totalIssues > 0 ? Math.round((metrics.totalResolutionHours / metrics.totalIssues) * 10) / 10 : 0}h`
+    )
 
     // Category breakdown
     console.log('\nBy Category:')
