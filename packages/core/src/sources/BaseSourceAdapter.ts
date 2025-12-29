@@ -90,6 +90,7 @@ export abstract class BaseSourceAdapter implements ISourceAdapter {
         lastCheck: new Date().toISOString(),
         rateLimitRemaining: result.rateLimitRemaining,
         rateLimitReset: result.rateLimitReset,
+        error: result.error,
       }
     } catch (error) {
       return {
