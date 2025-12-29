@@ -532,10 +532,38 @@ if (!result.allowed) {
 }
 ```
 
-### Known Limitations
+### Fail Mode Configuration
 
-- **Fail-open behavior**: On storage errors, requests are allowed through
-- Recommendation: Consider fail-closed for high-security endpoints
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `open` (default) | Allow requests on storage errors | General API endpoints |
+| `closed` | Deny requests on storage errors | High-security endpoints |
+
+```typescript
+// High-security endpoint with fail-closed
+const strictLimiter = createRateLimiter({
+  ...RATE_LIMIT_PRESETS.strict,  // Already includes failMode: 'closed'
+})
+```
+
+### Metrics Monitoring
+
+```typescript
+// Get metrics for monitoring
+const metrics = limiter.getMetrics('user-123')
+console.log(`Allowed: ${metrics.allowed}, Blocked: ${metrics.blocked}`)
+
+// Reset metrics
+limiter.resetMetrics('user-123')
+
+// Callback on limit exceeded
+const limiter = createRateLimiter({
+  ...RATE_LIMIT_PRESETS.standard,
+  onLimitExceeded: (key, metrics) => {
+    alerting.notify(`Rate limit exceeded for ${key}`)
+  }
+})
+```
 
 ---
 
