@@ -56,10 +56,11 @@ class MockSourceAdapter extends BaseSourceAdapter {
 
   async getRepository(location: SourceLocation): Promise<SourceRepository> {
     await this.waitForRateLimit()
+    const repo = location.repo ?? 'unknown'
     return {
-      id: location.repo,
-      name: location.repo,
-      url: `https://github.com/${location.owner}/${location.repo}`,
+      id: repo,
+      name: repo,
+      url: `https://github.com/${location.owner ?? 'unknown'}/${repo}`,
       description: 'Test repository',
       owner: location.owner ?? 'unknown',
       defaultBranch: 'main',

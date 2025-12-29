@@ -58,6 +58,26 @@ export { BaseSourceAdapter } from './BaseSourceAdapter.js'
 // GitHub Adapter (SMI-590)
 export { GitHubSourceAdapter, createGitHubAdapter } from './GitHubSourceAdapter.js'
 
+// Scraper Adapters (SMI-591)
+export {
+  RawUrlSourceAdapter,
+  createRawUrlAdapter,
+  type SkillUrlEntry,
+  type RawUrlSourceConfig,
+} from './RawUrlSourceAdapter.js'
+
+export {
+  LocalFilesystemAdapter,
+  createLocalFilesystemAdapter,
+  type LocalFilesystemConfig,
+} from './LocalFilesystemAdapter.js'
+
+export {
+  GitLabSourceAdapter,
+  createGitLabAdapter,
+  type GitLabAdapterConfig,
+} from './GitLabSourceAdapter.js'
+
 // Registry
 export {
   SourceAdapterRegistry,
