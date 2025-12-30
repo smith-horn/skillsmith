@@ -3,7 +3,19 @@
 
 echo "=== Adding Phase 2 Documentation Update ==="
 
-PHASE2_PROJECT="fe22ca22-b538-4454-bcb0-6d770efbddd0"
+# Validate required environment variables
+if [ -z "$LINEAR_API_KEY" ]; then
+  echo "Error: LINEAR_API_KEY environment variable is required"
+  exit 1
+fi
+
+if [ -z "$LINEAR_PROJECT_PHASE2" ]; then
+  echo "Error: LINEAR_PROJECT_PHASE2 environment variable is required"
+  echo "Set it in .env or export it: export LINEAR_PROJECT_PHASE2=your-uuid"
+  exit 1
+fi
+
+PHASE2_PROJECT="$LINEAR_PROJECT_PHASE2"
 
 UPDATE_BODY='## Phase 2 Documentation Complete
 

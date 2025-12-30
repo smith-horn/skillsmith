@@ -5,6 +5,18 @@ set -e
 
 echo "=== Linear Phase 2 Setup ==="
 
+# Validate required environment variables
+if [ -z "$LINEAR_API_KEY" ]; then
+  echo "Error: LINEAR_API_KEY environment variable is required"
+  exit 1
+fi
+
+if [ -z "$LINEAR_PROJECT_PHASE1" ]; then
+  echo "Error: LINEAR_PROJECT_PHASE1 environment variable is required"
+  echo "Set it in .env or export it: export LINEAR_PROJECT_PHASE1=your-uuid"
+  exit 1
+fi
+
 # Get team ID
 echo "Fetching team..."
 TEAM_ID=$(curl -s -X POST https://api.linear.app/graphql \
@@ -25,8 +37,8 @@ STATES=$(curl -s -X POST https://api.linear.app/graphql \
 TODO_STATE=$(echo "$STATES" | jq -r '.data.workflowStates.nodes[] | select(.name == "Todo") | .id' | head -1)
 echo "Todo State ID: $TODO_STATE"
 
-# Get Phase 1 project ID (existing)
-PHASE1_PROJECT="b6135515-89c9-4ad7-b32c-613933508067"
+# Get Phase 1 project ID from environment
+PHASE1_PROJECT="$LINEAR_PROJECT_PHASE1"
 echo "Phase 1 Project ID: $PHASE1_PROJECT"
 
 # Create Phase 2 project

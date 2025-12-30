@@ -1,0 +1,101 @@
+# Gitleaks configuration for Skillsmith
+# https://github.com/gitleaks/gitleaks
+
+title = "Skillsmith Secret Detection"
+
+[extend]
+# Use the default gitleaks config as a base
+useDefault = true
+
+# Custom rules for project-specific secrets
+[[rules]]
+id = "linear-api-key"
+description = "Linear API Key"
+regex = '''lin_api_[a-zA-Z0-9]{32,}'''
+tags = ["api", "linear"]
+
+[[rules]]
+id = "linear-project-id"
+description = "Linear Project UUID (potential workspace exposure)"
+regex = '''["\']?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}["\']?'''
+tags = ["uuid", "linear"]
+# Only flag if it looks like it's being used as a project ID in code
+keywords = ["project", "projectId", "PROJECT"]
+
+[[rules]]
+id = "anthropic-api-key"
+description = "Anthropic API Key"
+regex = '''sk-ant-[a-zA-Z0-9-_]{32,}'''
+tags = ["api", "anthropic"]
+
+[[rules]]
+id = "github-token"
+description = "GitHub Personal Access Token"
+regex = '''ghp_[a-zA-Z0-9]{36,}'''
+tags = ["api", "github"]
+
+[[rules]]
+id = "github-oauth"
+description = "GitHub OAuth Token"
+regex = '''gho_[a-zA-Z0-9]{36,}'''
+tags = ["api", "github"]
+
+[[rules]]
+id = "github-app-token"
+description = "GitHub App Token"
+regex = '''ghs_[a-zA-Z0-9]{36,}'''
+tags = ["api", "github"]
+
+[[rules]]
+id = "vercel-token"
+description = "Vercel Token"
+regex = '''["\']?[a-zA-Z0-9]{24}["\']?'''
+tags = ["api", "vercel"]
+keywords = ["VERCEL_TOKEN", "vercel"]
+
+[[rules]]
+id = "clerk-secret"
+description = "Clerk Secret Key"
+regex = '''sk_live_[a-zA-Z0-9]{32,}'''
+tags = ["api", "clerk"]
+
+[[rules]]
+id = "clerk-test-secret"
+description = "Clerk Test Secret Key"
+regex = '''sk_test_[a-zA-Z0-9]{32,}'''
+tags = ["api", "clerk"]
+
+# Allowlist for false positives
+[allowlist]
+description = "Global allowlist"
+
+# Allow example/placeholder values
+regexes = [
+  '''lin_api_your_key_here''',
+  '''your-.*-uuid''',
+  '''example\.com''',
+  '''placeholder''',
+  '''xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx''',
+  # Placeholder patterns in documentation
+  '''sk_live_xxx''',
+  '''sk_test_xxx''',
+  '''msk_live_xxx''',
+  '''ghp_xxx''',
+  '''lin_api_xxx''',
+]
+
+# Allow specific files that contain examples or tests
+paths = [
+  '''\.env$''',
+  '''\.env\.example$''',
+  '''\.env\.schema$''',
+  '''.*\.test\.(ts|js)$''',
+  '''.*\.spec\.(ts|js)$''',
+  '''.*fixtures.*''',
+  '''.*__mocks__.*''',
+  '''docs/.*\.md$''',
+  '''\.claude/skills/.*/SKILL\.md$''',
+]
+
+# Allow commits that are known to be safe
+commits = []

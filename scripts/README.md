@@ -7,9 +7,19 @@ Utility scripts for Skillsmith development and project management.
 Scripts require the following environment variables:
 
 ```bash
+# Required for all Linear scripts
 export LINEAR_API_KEY="lin_api_..."  # Linear API key
+
+# Required for Linear project scripts
+export LINEAR_PROJECT_PHASE1="..."   # Phase 1 project UUID
+export LINEAR_PROJECT_PHASE2="..."   # Phase 2 project UUID
+export LINEAR_PROJECT_TEAM="..."     # Team project UUID
+
+# Optional
 export GITHUB_TOKEN="ghp_..."        # GitHub token (for CI)
 ```
+
+**Important:** Copy `.env.example` to `.env` and fill in your values. Never commit `.env` to version control.
 
 ## Linear Integration Scripts
 
@@ -75,15 +85,24 @@ docker exec skillsmith-dev-1 node scripts/audit-standards.mjs
 
 ## Linear Project IDs
 
-| Project | ID |
-|---------|-----|
-| Phase 1 | `b6135515-89c9-4ad7-b32c-613933508067` |
-| Phase 2 | `fe22ca22-b538-4454-bcb0-6d770efbddd0` |
-| Team | `6795e794-99cc-4cf3-974f-6630c55f037d` |
+Project IDs are stored in environment variables for security. See `.env.example` for the required variables:
+
+| Variable | Description |
+|----------|-------------|
+| `LINEAR_PROJECT_PHASE1` | Phase 1 project UUID |
+| `LINEAR_PROJECT_PHASE2` | Phase 2 project UUID |
+| `LINEAR_PROJECT_TEAM` | Team project UUID |
+
+To find your project IDs:
+1. Open Linear
+2. Navigate to the project
+3. Go to Settings
+4. Copy the project ID
 
 ## Adding New Scripts
 
 1. Place scripts in `/scripts` directory
 2. Make executable: `chmod +x scripts/your-script.sh`
 3. Document in this README
-4. Test locally before committing
+4. Use environment variables for sensitive data (never hardcode)
+5. Test locally before committing
