@@ -31,6 +31,20 @@ docker exec skillsmith-dev-1 npm run audit:standards
 | Lint | `npm run lint` | `docker exec skillsmith-dev-1 npm run lint` |
 | Typecheck | `npm run typecheck` | `docker exec skillsmith-dev-1 npm run typecheck` |
 | Audit | `npm run audit:standards` | `docker exec skillsmith-dev-1 npm run audit:standards` |
+| Preflight | `npm run preflight` | `docker exec skillsmith-dev-1 npm run preflight` |
+
+### Pre-flight Dependency Check (SMI-760)
+
+Validates that all imported packages are listed in package.json dependencies. Run before deployment to catch missing dependencies early:
+
+```bash
+docker exec skillsmith-dev-1 npm run preflight
+```
+
+The script scans all TypeScript source files for imports and verifies each external package is declared. It automatically skips:
+- Node.js built-in modules (fs, path, crypto, etc.)
+- Workspace packages (@skillsmith/*)
+- Runtime-provided modules (vscode for VS Code extensions)
 
 ## Package Structure
 

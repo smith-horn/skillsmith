@@ -1,5 +1,6 @@
 /**
  * SMI-739: OpenTelemetry Tracer Setup
+ * SMI-755: Graceful fallback when OpenTelemetry unavailable
  *
  * Provides distributed tracing for Skillsmith operations:
  * - MCP tool calls
@@ -10,16 +11,114 @@
  * Configuration:
  * - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP endpoint for trace export
  * - OTEL_SERVICE_NAME: Service name (default: skillsmith)
+ * - SKILLSMITH_TELEMETRY_ENABLED: Master switch for all telemetry (default: auto)
  * - SKILLSMITH_TRACING_ENABLED: Enable/disable tracing (default: true if endpoint set)
+ *
+ * Graceful Fallback:
+ * - If OpenTelemetry packages are not installed, uses NoOp implementations
+ * - Logs warning on fallback (unless SKILLSMITH_TELEMETRY_ENABLED=false)
+ * - All tracing APIs remain functional (just don't record)
  */
 
-import type { Span, Tracer, SpanStatusCode, SpanOptions, Context } from '@opentelemetry/api'
+/**
+ * Local type definitions matching OpenTelemetry interfaces
+ * SMI-755: Allows compilation without @opentelemetry/api installed
+ */
+interface OTelSpan {
+  setAttributes(attributes: Record<string, unknown>): void
+  setStatus(status: { code: number; message?: string }): void
+  recordException(error: Error): void
+  addEvent(name: string, attributes?: Record<string, unknown>): void
+  end(): void
+}
+
+interface OTelTracer {
+  startSpan(name: string, options?: unknown): OTelSpan
+}
+
+interface OTelSpanOptions {
+  attributes?: Record<string, unknown>
+  links?: unknown[]
+  startTime?: number
+  root?: boolean
+  kind?: number
+}
+
+// Type aliases for API compatibility
+type Span = OTelSpan
+type Tracer = OTelTracer
+type SpanOptions = OTelSpanOptions
+type SpanStatusCode = number
 
 // Lazy import to avoid loading OTEL if not needed
-let api: typeof import('@opentelemetry/api') | null = null
-let sdk: typeof import('@opentelemetry/sdk-node') | null = null
-let resources: typeof import('@opentelemetry/resources') | null = null
-let semanticConventions: typeof import('@opentelemetry/semantic-conventions') | null = null
+// SMI-755: Use 'unknown' types to avoid compile-time dependency on OTEL packages
+let api: unknown = null
+let sdk: unknown = null
+let resources: unknown = null
+let semanticConventions: unknown = null
+
+/**
+ * Type-safe accessors for OTEL modules (SMI-755)
+ * These provide typed access while avoiding compile-time dependency
+ */
+interface OTelApi {
+  trace: {
+    getTracer(name: string, version?: string): OTelTracer
+    getActiveSpan(): OTelSpan | undefined
+  }
+}
+
+interface OTelNodeSDK {
+  new (config: unknown): { start(): Promise<void>; shutdown(): Promise<void> }
+}
+
+interface OTelResource {
+  new (attributes: Record<string, string>): unknown
+}
+
+function getApi(): OTelApi | null {
+  return api as OTelApi | null
+}
+
+function getSdk(): { NodeSDK: OTelNodeSDK } | null {
+  return sdk as { NodeSDK: OTelNodeSDK } | null
+}
+
+function getResources(): { Resource: OTelResource } | null {
+  return resources as { Resource: OTelResource } | null
+}
+
+function getSemanticConventions(): Record<string, string> | null {
+  return semanticConventions as Record<string, string> | null
+}
+
+/** Whether OpenTelemetry packages are available */
+let otelAvailable: boolean | null = null
+
+/**
+ * Dynamic import helper that bypasses TypeScript type checking (SMI-755)
+ * This allows the code to compile even when @opentelemetry packages aren't installed
+ */
+async function dynamicImport(moduleName: string): Promise<unknown> {
+  try {
+    // Use Function constructor to bypass TypeScript's static analysis
+    const importFn = new Function('m', 'return import(m)') as (m: string) => Promise<unknown>
+    return await importFn(moduleName)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Check if OpenTelemetry is available (SMI-755)
+ */
+async function checkOTelAvailability(): Promise<boolean> {
+  if (otelAvailable !== null) return otelAvailable
+
+  const result = await dynamicImport('@opentelemetry/api')
+  otelAvailable = result !== null
+  return otelAvailable
+}
 
 /**
  * Tracer configuration
@@ -80,10 +179,7 @@ class NoOpSpanWrapper implements SpanWrapper {
  * Active span wrapper with real OTEL span
  */
 class ActiveSpanWrapper implements SpanWrapper {
-  constructor(
-    private span: Span,
-    private otelApi: typeof import('@opentelemetry/api')
-  ) {}
+  constructor(private span: Span) {}
 
   setAttributes(attributes: SpanAttributes): void {
     // Filter out undefined values
@@ -135,7 +231,7 @@ export class SkillsmithTracer {
   private initialized = false
   private enabled = false
   private config: Required<TracerConfig>
-  private sdkInstance: InstanceType<typeof import('@opentelemetry/sdk-node').NodeSDK> | null = null
+  private sdkInstance: { start(): Promise<void>; shutdown(): Promise<void> } | null = null
 
   constructor(config: TracerConfig = {}) {
     this.config = {
@@ -144,6 +240,13 @@ export class SkillsmithTracer {
       autoInstrument: config.autoInstrument ?? true,
       consoleExport: config.consoleExport ?? false,
       sampleRate: config.sampleRate ?? 1.0,
+    }
+
+    // SMI-755: Check master telemetry switch first
+    const telemetryDisabled = process.env.SKILLSMITH_TELEMETRY_ENABLED === 'false'
+    if (telemetryDisabled) {
+      this.enabled = false
+      return
     }
 
     // Check if tracing should be enabled
@@ -168,67 +271,90 @@ export class SkillsmithTracer {
       return
     }
 
+    // SMI-755: Check if OpenTelemetry is available before attempting to load
+    const isAvailable = await checkOTelAvailability()
+    if (!isAvailable) {
+      console.warn(
+        '[Skillsmith Telemetry] OpenTelemetry packages not installed. ' +
+          'Tracing disabled. Install @opentelemetry/api and related packages to enable.'
+      )
+      this.enabled = false
+      this.initialized = true
+      return
+    }
+
     try {
-      // Lazy load OTEL modules
-      api = await import('@opentelemetry/api')
-      sdk = await import('@opentelemetry/sdk-node')
-      resources = await import('@opentelemetry/resources')
-      semanticConventions = await import('@opentelemetry/semantic-conventions')
+      // SMI-755: Lazy load OTEL modules with error handling
+      // Use dynamicImport to bypass TypeScript type checking
+      api = await dynamicImport('@opentelemetry/api')
+      sdk = await dynamicImport('@opentelemetry/sdk-node')
+      resources = await dynamicImport('@opentelemetry/resources')
+      semanticConventions = await dynamicImport('@opentelemetry/semantic-conventions')
 
-      // Build exporters array
-      const exporters: unknown[] = []
-
-      // Add OTLP exporter if endpoint is configured
-      if (this.config.endpoint) {
-        const { OTLPTraceExporter } = await import('@opentelemetry/exporter-trace-otlp-http')
-        exporters.push(
-          new OTLPTraceExporter({
-            url: this.config.endpoint,
-          })
+      // If any core module failed to load, disable tracing
+      if (!api || !sdk || !resources || !semanticConventions) {
+        console.warn(
+          '[Skillsmith Telemetry] Some OpenTelemetry packages missing. Tracing disabled.'
         )
+        this.enabled = false
+        this.initialized = true
+        return
       }
 
-      // Add console exporter for debugging
-      if (this.config.consoleExport) {
-        const { ConsoleSpanExporter } = await import('@opentelemetry/sdk-trace-base')
-        exporters.push(new ConsoleSpanExporter())
+      // Get typed accessors
+      const otelApi = getApi()
+      const otelSdk = getSdk()
+      const otelResources = getResources()
+      const otelSemConv = getSemanticConventions()
+
+      if (!otelApi || !otelSdk || !otelResources || !otelSemConv) {
+        this.enabled = false
+        this.initialized = true
+        return
       }
+
+      // Build SDK configuration
+      const sdkConfig: Record<string, unknown> = {}
 
       // Create resource with service info
-      const resource = new resources.Resource({
-        [semanticConventions.ATTR_SERVICE_NAME]: this.config.serviceName,
-        [semanticConventions.ATTR_SERVICE_VERSION]: '0.1.0',
+      const Resource = otelResources.Resource
+      sdkConfig.resource = new Resource({
+        [otelSemConv['ATTR_SERVICE_NAME'] ?? 'service.name']: this.config.serviceName,
+        [otelSemConv['ATTR_SERVICE_VERSION'] ?? 'service.version']: '0.1.0',
       })
-
-      // Create SDK configuration
-      const sdkConfig: ConstructorParameters<typeof sdk.NodeSDK>[0] = {
-        resource,
-      }
 
       // Add auto-instrumentation if enabled
       if (this.config.autoInstrument) {
-        const { getNodeAutoInstrumentations } =
-          await import('@opentelemetry/auto-instrumentations-node')
-        sdkConfig.instrumentations = [
-          getNodeAutoInstrumentations({
-            // Customize instrumentations
-            '@opentelemetry/instrumentation-fs': { enabled: false },
-            '@opentelemetry/instrumentation-dns': { enabled: false },
-            '@opentelemetry/instrumentation-net': { enabled: false },
-          }),
-        ]
+        try {
+          const autoInst = (await dynamicImport('@opentelemetry/auto-instrumentations-node')) as {
+            getNodeAutoInstrumentations?: (config: unknown) => unknown[]
+          } | null
+          if (autoInst?.getNodeAutoInstrumentations) {
+            sdkConfig.instrumentations = [
+              autoInst.getNodeAutoInstrumentations({
+                // Customize instrumentations
+                '@opentelemetry/instrumentation-fs': { enabled: false },
+                '@opentelemetry/instrumentation-dns': { enabled: false },
+                '@opentelemetry/instrumentation-net': { enabled: false },
+              }),
+            ]
+          }
+        } catch {
+          // Auto-instrumentation optional, continue without it
+        }
       }
 
       // Initialize SDK
-      this.sdkInstance = new sdk.NodeSDK(sdkConfig)
+      const NodeSDK = otelSdk.NodeSDK
+      this.sdkInstance = new NodeSDK(sdkConfig)
       await this.sdkInstance.start()
 
       // Get tracer
-      this.tracer = api.trace.getTracer(this.config.serviceName, '0.1.0')
+      this.tracer = otelApi.trace.getTracer(this.config.serviceName, '0.1.0')
       this.initialized = true
     } catch (error) {
-      // Graceful fallback - disable tracing on error
-      console.warn('Failed to initialize OpenTelemetry tracing:', error)
+      // SMI-755: Graceful fallback - disable tracing on error
+      console.warn('[Skillsmith Telemetry] Failed to initialize OpenTelemetry tracing:', error)
       this.enabled = false
       this.initialized = true
     }
@@ -249,12 +375,12 @@ export class SkillsmithTracer {
    * @returns SpanWrapper for manipulating the span
    */
   startSpan(name: string, options?: SpanOptions): SpanWrapper {
-    if (!this.isEnabled() || !this.tracer || !api) {
+    if (!this.isEnabled() || !this.tracer) {
       return new NoOpSpanWrapper()
     }
 
     const span = this.tracer.startSpan(name, options)
-    return new ActiveSpanWrapper(span, api)
+    return new ActiveSpanWrapper(span)
   }
 
   /**
@@ -312,14 +438,15 @@ export class SkillsmithTracer {
    * Get the current active span (if any)
    */
   getCurrentSpan(): SpanWrapper {
-    if (!api) {
+    const otelApi = getApi()
+    if (!otelApi) {
       return new NoOpSpanWrapper()
     }
-    const span = api.trace.getActiveSpan()
+    const span = otelApi.trace.getActiveSpan()
     if (!span) {
       return new NoOpSpanWrapper()
     }
-    return new ActiveSpanWrapper(span, api)
+    return new ActiveSpanWrapper(span)
   }
 
   /**

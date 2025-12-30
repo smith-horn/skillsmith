@@ -22,6 +22,7 @@
     "typecheck": "tsc --build",
     "typecheck:watch": "tsc --build --watch",
     "audit:standards": "node scripts/audit-standards.mjs",
+    "preflight": "npx tsx scripts/preflight-check.ts",
     "pre-impl": "node scripts/pre-impl-check.mjs",
     "prepare": "husky",
     "benchmark": "npm run benchmark --workspace=@skillsmith/core",
