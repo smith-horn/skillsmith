@@ -462,9 +462,51 @@ See [Phase 2b Retrospective](../retros/phase-2b-tdd-security.md) for full detail
 
 ---
 
+## Phase 2f: Recommendations (Upcoming)
+
+### Critical Path
+
+Based on dependency analysis (December 30, 2025), the following batch execution order was determined:
+
+| Batch | Issues | Expertise | Rationale |
+|-------|--------|-----------|-----------|
+| 1 | SMI-754 | Service Integration | Unblocks all other work |
+| 2 | SMI-600 | Code Analysis | Enables recommendation context |
+| 3 | SMI-602, SMI-604 | ML/Embeddings | Parallel execution, shared expertise |
+| 4 | SMI-756 | Testing | Validates all features |
+
+### Key Decisions Made
+
+Three architectural decisions were made to simplify initial implementation:
+
+| Decision | Chosen | Deferred (Parking Lot) |
+|----------|--------|----------------------|
+| Embedding Strategy | Option B: Fallback mode | SMI-775: Full ONNX |
+| Codebase Analysis | Option B: TS/JS only | SMI-776: Tree-sitter multi-language |
+| Test Database | Option B: In-memory SQLite | SMI-777: Production PostgreSQL |
+
+See ADRs 009-011 for detailed rationale.
+
+### Dependency Graph
+
+```
+SMI-754 (Replace Mock Data) ─────┬──► SMI-602 (Recommend Skills)
+                                 │
+                                 └──► SMI-756 (Integration Tests)
+
+SMI-600 (Analyze Codebase) ──────────► SMI-602 (Recommend Skills)
+
+SMI-604 (Overlap Detection) ─────────► (Parallel with SMI-602)
+```
+
+---
+
 ## References
 
 - [ADR-003: Claude-flow Integration](../adr/003-claude-flow-integration.md)
+- [ADR-009: Embedding Service Fallback Strategy](../adr/009-embedding-service-fallback.md)
+- [ADR-010: Codebase Analysis Scope](../adr/010-codebase-analysis-scope.md)
+- [ADR-011: Integration Test Database Strategy](../adr/011-integration-test-database.md)
 - [Engineering Standards](./standards.md)
 - [Phase 1 Retrospective](../retros/phase-1-ci-testing.md)
 - [Phase 2a Retrospective](../retros/phase-2a-github-indexing.md)

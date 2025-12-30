@@ -17,6 +17,9 @@ ADRs document significant architectural decisions made during the project. They 
 | [ADR-005](005-vscode-mcp-client.md) | VS Code Extension MCP Client Architecture | Accepted | 2025-12-28 |
 | [ADR-006](006-coverage-threshold-strategy.md) | Test Coverage Threshold Strategy | Accepted | 2025-12-28 |
 | [ADR-008](008-security-hardening-phase.md) | Security Hardening Phase (Phase 2d) | Accepted | 2025-12-29 |
+| [ADR-009](009-embedding-service-fallback.md) | Embedding Service Fallback Strategy | Accepted | 2025-12-30 |
+| [ADR-010](010-codebase-analysis-scope.md) | Codebase Analysis Scope (TS/JS Only) | Accepted | 2025-12-30 |
+| [ADR-011](011-integration-test-database.md) | Integration Test Database Strategy | Accepted | 2025-12-30 |
 
 ## Template
 
