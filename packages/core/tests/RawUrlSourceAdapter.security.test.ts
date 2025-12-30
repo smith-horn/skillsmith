@@ -498,13 +498,14 @@ describe('RawUrlSourceAdapter SSRF Prevention (SMI-721)', () => {
       })
 
       it('should block ::ffff: with hex notation', async () => {
+        // c0a8:0001 = 192.168.0.1 (private address)
         await expect(
           adapter.fetchSkillContent({
             owner: 'test',
             repo: 'test-skill',
             path: 'http://[::ffff:c0a8:0001]/test',
           })
-        ).rejects.toThrow('Access to IPv4-mapped IPv6 address blocked')
+        ).rejects.toThrow('Access to IPv4-mapped IPv6 private address blocked')
       })
     })
 

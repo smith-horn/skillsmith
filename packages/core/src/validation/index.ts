@@ -206,8 +206,31 @@ function validateIPv6(hostname: string, url: string): void {
           )
         }
       } else {
-        // IPv4 in hex notation (e.g., ::ffff:c0a8:0001)
-        // Block all ::ffff: to be safe
+        // IPv4 in hex notation (e.g., ::ffff:7f00:1 for 127.0.0.1)
+        // Parse hex format: high:low where high = (a<<8)|b, low = (c<<8)|d
+        const hexMatch = ipv4Part.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i)
+        if (hexMatch) {
+          const high = parseInt(hexMatch[1]!, 16)
+          const low = parseInt(hexMatch[2]!, 16)
+          const a = (high >> 8) & 0xff
+          const b = high & 0xff
+          // Apply same private IP checks as IPv4
+          if (
+            a === 10 ||
+            (a === 172 && b >= 16 && b <= 31) ||
+            (a === 192 && b === 168) ||
+            a === 127 ||
+            (a === 169 && b === 254) ||
+            a === 0
+          ) {
+            throw new ValidationError(
+              `Access to IPv4-mapped IPv6 private address blocked: ${hostname}`,
+              'IPV4_MAPPED_IPV6_BLOCKED',
+              { hostname, url, ipRange: getIpRangeName(a, b) }
+            )
+          }
+        }
+        // If we can't parse it, block it to be safe
         throw new ValidationError(
           `Access to IPv4-mapped IPv6 address blocked: ${hostname}`,
           'IPV4_MAPPED_IPV6_BLOCKED',

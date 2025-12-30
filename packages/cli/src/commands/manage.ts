@@ -19,6 +19,7 @@ import {
   type Skill,
   type TrustTier,
 } from '@skillsmith/core'
+import { DEFAULT_DB_PATH } from '../config.js'
 
 const TRUST_TIER_COLORS: Record<TrustTier, (text: string) => string> = {
   verified: chalk.green,
@@ -325,7 +326,7 @@ export function createUpdateCommand(): Command {
   return new Command('update')
     .description('Update installed skills')
     .argument('[skill]', 'Skill name to update (omit for all)')
-    .option('-d, --db <path>', 'Database file path', 'skillsmith.db')
+    .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .option('-a, --all', 'Update all installed skills')
     .action(
       async (skillName: string | undefined, opts: Record<string, string | boolean | undefined>) => {

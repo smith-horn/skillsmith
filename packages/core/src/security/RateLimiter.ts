@@ -208,10 +208,7 @@ export class RateLimiter {
   private readonly storage: RateLimitStorage
   private readonly metrics: Map<string, RateLimitMetrics> = new Map()
 
-  constructor(
-    config: RateLimitConfig,
-    storage: RateLimitStorage = new InMemoryRateLimitStorage()
-  ) {
+  constructor(config: RateLimitConfig, storage: RateLimitStorage = new InMemoryRateLimitStorage()) {
     this.config = {
       keyPrefix: 'ratelimit',
       debug: false,
@@ -243,6 +240,12 @@ export class RateLimiter {
 
     if (error) {
       existing.errors++
+      // Also track allowed/blocked for error cases (fail-open vs fail-closed)
+      if (allowed) {
+        existing.allowed++
+      } else {
+        existing.blocked++
+      }
     } else if (allowed) {
       existing.allowed++
     } else {
@@ -353,7 +356,9 @@ export class RateLimiter {
 
       if (this.config.failMode === 'closed') {
         // Fail-closed: deny requests on storage errors (for high-security endpoints)
-        log.error(`Rate limiter error (fail-closed) for ${key}: ${error instanceof Error ? error.message : String(error)}`)
+        log.error(
+          `Rate limiter error (fail-closed) for ${key}: ${error instanceof Error ? error.message : String(error)}`
+        )
 
         return {
           allowed: false,
@@ -366,7 +371,9 @@ export class RateLimiter {
       }
 
       // Fail-open: allow request on storage errors (graceful degradation)
-      log.error(`Rate limiter error (fail-open) for ${key}: ${error instanceof Error ? error.message : String(error)}`)
+      log.error(
+        `Rate limiter error (fail-open) for ${key}: ${error instanceof Error ? error.message : String(error)}`
+      )
 
       return {
         allowed: true,

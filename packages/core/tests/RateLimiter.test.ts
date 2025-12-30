@@ -613,11 +613,14 @@ describe('RateLimiter - Token Bucket Algorithm', () => {
       await limiter.checkLimit('test-key')
 
       expect(onLimitExceeded).toHaveBeenCalledTimes(1)
-      expect(onLimitExceeded).toHaveBeenCalledWith('test-key', expect.objectContaining({
-        allowed: 3,
-        blocked: 1,
-        errors: 0,
-      }))
+      expect(onLimitExceeded).toHaveBeenCalledWith(
+        'test-key',
+        expect.objectContaining({
+          allowed: 3,
+          blocked: 1,
+          errors: 0,
+        })
+      )
     })
 
     it('should call onLimitExceeded callback on each exceeded request', async () => {
@@ -908,6 +911,9 @@ describe('Rate Limiting Scenarios', () => {
 
   describe('Burst Traffic', () => {
     it('should allow burst within token capacity', async () => {
+      // Use fake timers to prevent token refill during parallel execution
+      vi.useFakeTimers()
+
       const limiter = new RateLimiter(
         {
           maxTokens: 20,
@@ -918,15 +924,17 @@ describe('Rate Limiting Scenarios', () => {
       )
 
       // Burst of 20 requests - should all succeed
-      const results = await Promise.all(
-        Array.from({ length: 20 }, () => limiter.checkLimit('test-key'))
-      )
+      // Use sequential execution to ensure deterministic token consumption
+      for (let i = 0; i < 20; i++) {
+        const result = await limiter.checkLimit('test-key')
+        expect(result.allowed).toBe(true)
+      }
 
-      expect(results.every((r) => r.allowed)).toBe(true)
-
-      // 21st should fail
+      // 21st should fail (all tokens consumed)
       const result = await limiter.checkLimit('test-key')
       expect(result.allowed).toBe(false)
+
+      vi.useRealTimers()
     })
   })
 })

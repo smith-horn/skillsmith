@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
+import { DEFAULT_DB_PATH } from '../src/config.js'
 
 // Mock dependencies before importing the module
 vi.mock('@inquirer/prompts', () => ({
@@ -61,7 +62,7 @@ describe('SMI-744: Search Command', () => {
 
       const dbOpt = cmd.options.find((o) => o.short === '-d')
       expect(dbOpt).toBeDefined()
-      expect(dbOpt?.defaultValue).toBe('skillsmith.db')
+      expect(dbOpt?.defaultValue).toBe(DEFAULT_DB_PATH)
     })
 
     it('has limit option', async () => {
