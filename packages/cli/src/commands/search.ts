@@ -123,7 +123,13 @@ function displaySkillDetails(result: SearchResult): void {
 }
 
 /**
- * Run interactive search loop
+ * State machine phases for interactive search
+ */
+type SearchPhase = 'collect_query' | 'searching' | 'exit'
+
+/**
+ * Run interactive search loop using state machine pattern (SMI-759)
+ * Uses iterative while loop instead of recursion for new searches.
  */
 async function runInteractiveSearch(dbPath: string): Promise<void> {
   const db = createDatabase(dbPath)
@@ -132,141 +138,155 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
   console.log(chalk.bold.blue('\n=== Skillsmith Interactive Search ===\n'))
 
   try {
-    // Step 1: Enter search query
-    const query = await input({
-      message: 'Enter search query:',
-      default: '',
-      validate: (value: string) => value.trim().length > 0 || 'Please enter a search query',
-    })
+    // State machine: phase controls the loop behavior
+    let phase: SearchPhase = 'collect_query'
+    let state: InteractiveSearchState | null = null
 
-    // Step 2: Filter by trust tier
-    const trustTiers = await checkbox<TrustTier>({
-      message: 'Filter by trust tier (select with space, enter to continue):',
-      choices: [
-        { name: chalk.green('Verified'), value: 'verified' },
-        { name: chalk.yellow('Community'), value: 'community' },
-        { name: chalk.red('Experimental'), value: 'experimental' },
-        { name: chalk.gray('Unknown'), value: 'unknown' },
-      ],
-    })
-
-    // Step 3: Minimum quality score
-    const minQualityScore = await number({
-      message: 'Minimum quality score (0-100, leave empty for no filter):',
-      default: 0,
-      min: 0,
-      max: 100,
-    })
-
-    const state: InteractiveSearchState = {
-      query,
-      trustTiers,
-      minQualityScore: (minQualityScore || 0) / 100,
-      offset: 0,
-    }
-
-    // Search loop with pagination
-    let continueSearching = true
-
-    while (continueSearching) {
-      // Build search options - only add optional properties when they have values
-      const searchOptions: SearchOptions = {
-        query: state.query,
-        limit: PAGE_SIZE,
-        offset: state.offset,
-      }
-
-      // Add optional filters only when they have values (exactOptionalPropertyTypes)
-      if (state.minQualityScore > 0) {
-        searchOptions.minQualityScore = state.minQualityScore
-      }
-
-      // Filter by first selected trust tier (API only supports one)
-      if (state.trustTiers.length === 1 && state.trustTiers[0] !== undefined) {
-        searchOptions.trustTier = state.trustTiers[0]
-      }
-
-      // Execute search
-      const results = searchService.search(searchOptions)
-
-      // If filtering by multiple trust tiers, filter client-side
-      let filteredItems = results.items
-      if (state.trustTiers.length > 1) {
-        filteredItems = results.items.filter((r) => state.trustTiers.includes(r.skill.trustTier))
-      }
-
-      displayResults(filteredItems, results.total, state.offset, PAGE_SIZE)
-
-      if (results.items.length === 0) {
-        continueSearching = false
-        break
-      }
-
-      // Build action choices
-      const choices: Array<{ name: string; value: string }> = []
-
-      // Add skill selection options
-      for (let i = 0; i < filteredItems.length; i++) {
-        const skill = filteredItems[i]!.skill
-        const colorFn = TRUST_TIER_COLORS[skill.trustTier]
-        choices.push({
-          name: `${i + 1}. ${colorFn(skill.name)} - View details`,
-          value: `view_${i}`,
+    // Main state machine loop - replaces recursive calls
+    while (phase !== 'exit') {
+      // Phase: Collect search query and filters
+      if (phase === 'collect_query') {
+        // Step 1: Enter search query
+        const query = await input({
+          message: 'Enter search query:',
+          default: '',
+          validate: (value: string) => value.trim().length > 0 || 'Please enter a search query',
         })
-      }
 
-      // Add navigation options
-      choices.push({ name: chalk.dim('---'), value: 'separator' })
+        // Step 2: Filter by trust tier
+        const trustTiers = await checkbox<TrustTier>({
+          message: 'Filter by trust tier (select with space, enter to continue):',
+          choices: [
+            { name: chalk.green('Verified'), value: 'verified' },
+            { name: chalk.yellow('Community'), value: 'community' },
+            { name: chalk.red('Experimental'), value: 'experimental' },
+            { name: chalk.gray('Unknown'), value: 'unknown' },
+          ],
+        })
 
-      if (state.offset > 0) {
-        choices.push({ name: chalk.cyan('<< Previous page'), value: 'prev' })
-      }
+        // Step 3: Minimum quality score
+        const minQualityScore = await number({
+          message: 'Minimum quality score (0-100, leave empty for no filter):',
+          default: 0,
+          min: 0,
+          max: 100,
+        })
 
-      if (results.hasMore) {
-        choices.push({ name: chalk.cyan('Next page >>'), value: 'next' })
-      }
+        state = {
+          query,
+          trustTiers,
+          minQualityScore: (minQualityScore || 0) / 100,
+          offset: 0,
+        }
 
-      choices.push({ name: chalk.magenta('New search'), value: 'new' })
-      choices.push({ name: chalk.red('Exit'), value: 'exit' })
-
-      const action = await select({
-        message: 'Select a skill to view or navigate:',
-        choices,
-      })
-
-      if (action === 'separator') {
+        phase = 'searching'
         continue
-      } else if (action === 'exit') {
-        continueSearching = false
-      } else if (action === 'new') {
-        // Recursive call for new search
-        await runInteractiveSearch(dbPath)
-        continueSearching = false
-      } else if (action === 'prev') {
-        state.offset = Math.max(0, state.offset - PAGE_SIZE)
-      } else if (action === 'next') {
-        state.offset += PAGE_SIZE
-      } else if (action.startsWith('view_')) {
-        const index = parseInt(action.replace('view_', ''), 10)
-        const selectedResult = filteredItems[index]
-        if (selectedResult) {
-          displaySkillDetails(selectedResult)
+      }
 
-          // Ask what to do next
-          const nextAction = await select({
-            message: 'What would you like to do?',
-            choices: [
-              { name: 'Back to results', value: 'back' },
-              { name: 'Install this skill', value: 'install' },
-              { name: 'Exit', value: 'exit' },
-            ],
+      // Phase: Search and display results
+      if (phase === 'searching' && state !== null) {
+        // Build search options - only add optional properties when they have values
+        const searchOptions: SearchOptions = {
+          query: state.query,
+          limit: PAGE_SIZE,
+          offset: state.offset,
+        }
+
+        // Add optional filters only when they have values (exactOptionalPropertyTypes)
+        if (state.minQualityScore > 0) {
+          searchOptions.minQualityScore = state.minQualityScore
+        }
+
+        // Filter by first selected trust tier (API only supports one)
+        if (state.trustTiers.length === 1 && state.trustTiers[0] !== undefined) {
+          searchOptions.trustTier = state.trustTiers[0]
+        }
+
+        // Execute search
+        const results = searchService.search(searchOptions)
+
+        // If filtering by multiple trust tiers, filter client-side
+        let filteredItems = results.items
+        const trustTiersForFilter = state.trustTiers
+        if (trustTiersForFilter.length > 1) {
+          filteredItems = results.items.filter((r) =>
+            trustTiersForFilter.includes(r.skill.trustTier)
+          )
+        }
+
+        displayResults(filteredItems, results.total, state.offset, PAGE_SIZE)
+
+        if (results.items.length === 0) {
+          phase = 'exit'
+          continue
+        }
+
+        // Build action choices
+        const choices: Array<{ name: string; value: string }> = []
+
+        // Add skill selection options
+        for (let i = 0; i < filteredItems.length; i++) {
+          const skill = filteredItems[i]!.skill
+          const colorFn = TRUST_TIER_COLORS[skill.trustTier]
+          choices.push({
+            name: `${i + 1}. ${colorFn(skill.name)} - View details`,
+            value: `view_${i}`,
           })
+        }
 
-          if (nextAction === 'install') {
-            console.log(chalk.green(`\nTo install this skill, run:`))
-            console.log(chalk.cyan(`  skillsmith install ${selectedResult.skill.id}\n`))
-          } else if (nextAction === 'exit') {
-            continueSearching = false
+        // Add navigation options
+        choices.push({ name: chalk.dim('---'), value: 'separator' })
+
+        if (state.offset > 0) {
+          choices.push({ name: chalk.cyan('<< Previous page'), value: 'prev' })
+        }
+
+        if (results.hasMore) {
+          choices.push({ name: chalk.cyan('Next page >>'), value: 'next' })
+        }
+
+        choices.push({ name: chalk.magenta('New search'), value: 'new' })
+        choices.push({ name: chalk.red('Exit'), value: 'exit' })
+
+        const action = await select({
+          message: 'Select a skill to view or navigate:',
+          choices,
+        })
+
+        if (action === 'separator') {
+          continue
+        } else if (action === 'exit') {
+          phase = 'exit'
+        } else if (action === 'new') {
+          // SMI-759: Reset to collect_query phase instead of recursive call
+          phase = 'collect_query'
+          console.log(chalk.bold.blue('\n=== New Search ===\n'))
+        } else if (action === 'prev') {
+          state.offset = Math.max(0, state.offset - PAGE_SIZE)
+        } else if (action === 'next') {
+          state.offset += PAGE_SIZE
+        } else if (action.startsWith('view_')) {
+          const index = parseInt(action.replace('view_', ''), 10)
+          const selectedResult = filteredItems[index]
+          if (selectedResult) {
+            displaySkillDetails(selectedResult)
+
+            // Ask what to do next
+            const nextAction = await select({
+              message: 'What would you like to do?',
+              choices: [
+                { name: 'Back to results', value: 'back' },
+                { name: 'Install this skill', value: 'install' },
+                { name: 'Exit', value: 'exit' },
+              ],
+            })
+
+            if (nextAction === 'install') {
+              console.log(chalk.green(`\nTo install this skill, run:`))
+              console.log(chalk.cyan(`  skillsmith install ${selectedResult.skill.id}\n`))
+            } else if (nextAction === 'exit') {
+              phase = 'exit'
+            }
           }
         }
       }

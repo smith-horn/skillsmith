@@ -500,9 +500,111 @@ const hash = createHash('sha256').update(content).digest('hex');
 
 ---
 
-## 5. Error Handling
+## 5. Mock vs Production Separation (SMI-763)
 
-### 5.1 Error Types
+### 5.1 Mock Data Guidelines
+
+Mock data enables development and testing without external dependencies. However, mock data must be clearly separated from production code.
+
+**Rules:**
+
+| Rule | Implementation |
+|------|----------------|
+| Mock data in fixtures only | Store in `tests/fixtures/` or `__mocks__/` |
+| Environment flag control | Use `SKILLSMITH_USE_MOCK=true` for testing |
+| No hardcoded mock in production | Production code paths must use real services |
+| Document mock limitations | Note differences from real behavior |
+
+### 5.2 Mock Data Patterns
+
+**Correct: Isolate mock data with environment control**
+
+```typescript
+// services/SkillService.ts
+export class SkillService {
+  private useMock = process.env.SKILLSMITH_USE_MOCK === 'true';
+
+  async getSkills(): Promise<Skill[]> {
+    if (this.useMock) {
+      return import('../tests/fixtures/skills.json');
+    }
+    return this.repository.findAll();
+  }
+}
+```
+
+**Correct: Mock data in test fixtures**
+
+```typescript
+// tests/fixtures/skills.ts
+export const mockSkills: Skill[] = [
+  { id: 'test-skill-1', name: 'Test Skill', ... },
+];
+
+// tests/SkillService.test.ts
+import { mockSkills } from './fixtures/skills';
+
+describe('SkillService', () => {
+  beforeEach(() => {
+    process.env.SKILLSMITH_USE_MOCK = 'true';
+  });
+
+  it('returns skills', async () => {
+    const skills = await service.getSkills();
+    expect(skills).toEqual(mockSkills);
+  });
+});
+```
+
+**Incorrect: Hardcoded mock data in production code**
+
+```typescript
+// ❌ DON'T DO THIS
+const mockSkillDatabase = [
+  { id: 'anthropic/commit', name: 'commit', ... },
+];
+
+export async function getSkills(): Promise<Skill[]> {
+  return mockSkillDatabase; // Always returns mock!
+}
+```
+
+### 5.3 Integration Test Patterns
+
+For integration tests that need real database connections:
+
+```typescript
+// tests/integration/setup.ts
+import { createTestDatabase } from '../fixtures/database';
+
+export function setupIntegrationTest() {
+  const db = createTestDatabase();
+
+  beforeAll(async () => {
+    await db.seed('./fixtures/test-data.sql');
+  });
+
+  afterAll(async () => {
+    await db.close();
+  });
+
+  return db;
+}
+```
+
+### 5.4 Mock/Production Verification
+
+Add to PR review checklist:
+- [ ] Mock data is isolated in test fixtures
+- [ ] `SKILLSMITH_USE_MOCK` flag controls mock behavior
+- [ ] Production code paths don't return hardcoded mock data
+- [ ] Integration tests use real (test) database
+
+---
+
+## 6. Error Handling
+
+### 6.1 Error Types
 
 Use `SkillsmithError` from `@skillsmith/core`:
 
@@ -514,7 +616,7 @@ throw new SkillsmithError(
 );
 ```
 
-### 5.2 MCP Error Responses
+### 6.2 MCP Error Responses
 
 All MCP tools return structured error responses:
 
@@ -578,6 +680,7 @@ All MCP tools return structured error responses:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.6 | 2025-12-29 | Added §5 Mock vs Production Separation (SMI-763) |
 | 1.5 | 2025-12-29 | Added §1.5 Schema review criteria, Security Documentation appendix, cross-links to security checklist |
 | 1.4 | 2025-12-27 | Added §4.3-4.8 Security Standards (input validation, prototype pollution, subprocess security, temp files, concurrency, crypto) from Phase 2b TDD |
 | 1.3 | 2025-12-28 | Added §3.5-3.7 Session Management, Incremental Verification, Linear Integration (from Phase 2a retro) |

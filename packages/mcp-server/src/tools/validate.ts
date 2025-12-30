@@ -44,11 +44,6 @@ export const validateInputSchema = z.object({
 export type ValidateInput = z.input<typeof validateInputSchema>
 
 /**
- * Output type (after parsing, with defaults applied)
- */
-type ValidateParsed = z.output<typeof validateInputSchema>
-
-/**
  * Validation error with severity
  */
 export interface ValidationError {
