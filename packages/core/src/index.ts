@@ -282,3 +282,16 @@ export {
   type DependencyInfo,
   type AnalyzeOptions,
 } from './analysis/index.js'
+
+// Skill Matching (SMI-602, SMI-604)
+export {
+  SkillMatcher,
+  OverlapDetector,
+  type MatchableSkill,
+  type SkillMatchResult,
+  type SkillMatcherOptions,
+  type TriggerPhraseSkill,
+  type OverlapResult,
+  type FilteredSkillsResult,
+  type OverlapDetectorOptions,
+} from './matching/index.js'

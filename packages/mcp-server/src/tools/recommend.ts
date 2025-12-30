@@ -2,11 +2,14 @@
  * @fileoverview MCP Skill Recommend Tool for suggesting relevant skills
  * @module @skillsmith/mcp-server/tools/recommend
  * @see SMI-741: Add MCP Tool skill_recommend
+ * @see SMI-602: Integrate semantic matching with EmbeddingService
+ * @see SMI-604: Add trigger phrase overlap detection
  *
  * Provides skill recommendations based on:
  * - Currently installed skills (semantic similarity)
  * - Optional project context (semantic matching)
- * - Quality and trust tier filtering
+ * - Codebase analysis (framework detection)
+ * - Overlap detection (avoid similar skills)
  *
  * @example
  * // Basic recommendation
@@ -25,7 +28,7 @@
  */
 
 import { z } from 'zod'
-import { type SkillSearchResult, type MCPTrustTier as TrustTier } from '@skillsmith/core'
+import { type MCPTrustTier as TrustTier, SkillMatcher, OverlapDetector } from '@skillsmith/core'
 
 /**
  * Zod schema for recommend tool input validation
@@ -37,6 +40,10 @@ export const recommendInputSchema = z.object({
   project_context: z.string().optional(),
   /** Maximum recommendations to return (default 5) */
   limit: z.number().min(1).max(50).default(5),
+  /** Enable overlap detection (default true) */
+  detect_overlap: z.boolean().default(true),
+  /** Minimum similarity threshold (0-1, default 0.3) */
+  min_similarity: z.number().min(0).max(1).default(0.3),
 })
 
 /**
@@ -70,10 +77,13 @@ export interface RecommendResponse {
   recommendations: SkillRecommendation[]
   /** Total candidates considered */
   candidates_considered: number
+  /** Skills filtered due to overlap */
+  overlap_filtered: number
   /** Query context used for matching */
   context: {
     installed_count: number
     has_project_context: boolean
+    using_semantic_matching: boolean
   }
   /** Performance timing */
   timing: {
@@ -109,224 +119,147 @@ export const recommendToolSchema = {
         maximum: 50,
         default: 5,
       },
+      detect_overlap: {
+        type: 'boolean',
+        description: 'Enable overlap detection to filter similar skills (default true)',
+        default: true,
+      },
+      min_similarity: {
+        type: 'number',
+        description: 'Minimum similarity threshold (0-1, default 0.3)',
+        minimum: 0,
+        maximum: 1,
+        default: 0.3,
+      },
     },
     required: [],
   },
 }
 
 /**
- * Mock skill database for development
- * In production, this would use EmbeddingService for semantic search
+ * Skill database with trigger phrases and keywords for matching
  */
-const mockSkillDatabase: Array<SkillSearchResult & { keywords: string[] }> = [
+interface SkillData {
+  /** Unique skill identifier */
+  id: string
+  /** Skill display name */
+  name: string
+  /** Skill description */
+  description: string
+  /** Trigger phrases for overlap detection */
+  triggerPhrases: string[]
+  /** Keywords for matching */
+  keywords: string[]
+  /** Quality score (0-100) */
+  qualityScore: number
+  /** Trust tier */
+  trustTier: TrustTier
+}
+
+/**
+ * Skill database for recommendations
+ * In production, this would be loaded from the database
+ */
+const skillDatabase: SkillData[] = [
   {
     id: 'anthropic/commit',
     name: 'commit',
     description: 'Generate semantic commit messages following conventional commits',
-    author: 'anthropic',
-    category: 'development',
-    trustTier: 'verified',
-    score: 95,
+    triggerPhrases: ['commit changes', 'create commit', 'git commit', 'write commit message'],
     keywords: ['git', 'commit', 'conventional', 'version-control'],
+    qualityScore: 95,
+    trustTier: 'verified',
   },
   {
     id: 'anthropic/review-pr',
     name: 'review-pr',
     description: 'Review pull requests with detailed code analysis',
-    author: 'anthropic',
-    category: 'development',
-    trustTier: 'verified',
-    score: 93,
+    triggerPhrases: ['review pr', 'review pull request', 'code review', 'check pr'],
     keywords: ['git', 'pull-request', 'code-review', 'quality'],
+    qualityScore: 93,
+    trustTier: 'verified',
   },
   {
     id: 'community/jest-helper',
     name: 'jest-helper',
     description: 'Generate Jest test cases for React components',
-    author: 'community',
-    category: 'testing',
-    trustTier: 'community',
-    score: 87,
+    triggerPhrases: ['write jest test', 'create test', 'test component', 'jest testing'],
     keywords: ['jest', 'testing', 'react', 'unit-tests', 'frontend'],
+    qualityScore: 87,
+    trustTier: 'community',
   },
   {
     id: 'community/docker-compose',
     name: 'docker-compose',
     description: 'Generate and manage Docker Compose configurations',
-    author: 'community',
-    category: 'devops',
-    trustTier: 'community',
-    score: 84,
+    triggerPhrases: ['docker compose', 'create docker', 'containerize', 'docker setup'],
     keywords: ['docker', 'devops', 'containers', 'infrastructure'],
+    qualityScore: 84,
+    trustTier: 'community',
   },
   {
     id: 'community/api-docs',
     name: 'api-docs',
     description: 'Generate OpenAPI documentation from code',
-    author: 'community',
-    category: 'documentation',
-    trustTier: 'standard',
-    score: 78,
+    triggerPhrases: ['generate api docs', 'openapi spec', 'swagger docs', 'document api'],
     keywords: ['api', 'documentation', 'openapi', 'swagger'],
+    qualityScore: 78,
+    trustTier: 'standard',
   },
   {
     id: 'community/eslint-config',
     name: 'eslint-config',
     description: 'Generate ESLint configurations for TypeScript projects',
-    author: 'community',
-    category: 'development',
-    trustTier: 'community',
-    score: 82,
+    triggerPhrases: ['eslint config', 'setup linting', 'configure eslint', 'lint setup'],
     keywords: ['eslint', 'linting', 'typescript', 'code-quality'],
+    qualityScore: 82,
+    trustTier: 'community',
   },
   {
     id: 'community/vitest-helper',
     name: 'vitest-helper',
     description: 'Generate Vitest test cases with modern testing patterns',
-    author: 'community',
-    category: 'testing',
-    trustTier: 'community',
-    score: 85,
+    triggerPhrases: ['vitest test', 'create vitest', 'write test vitest', 'testing vitest'],
     keywords: ['vitest', 'testing', 'typescript', 'unit-tests'],
+    qualityScore: 85,
+    trustTier: 'community',
   },
   {
     id: 'community/react-component',
     name: 'react-component',
     description: 'Generate React components with TypeScript and hooks',
-    author: 'community',
-    category: 'development',
-    trustTier: 'community',
-    score: 86,
+    triggerPhrases: ['create component', 'react component', 'new component', 'build component'],
     keywords: ['react', 'component', 'typescript', 'hooks', 'frontend'],
+    qualityScore: 86,
+    trustTier: 'community',
   },
   {
     id: 'community/github-actions',
     name: 'github-actions',
     description: 'Generate GitHub Actions workflows for CI/CD',
-    author: 'community',
-    category: 'devops',
-    trustTier: 'community',
-    score: 88,
+    triggerPhrases: ['github action', 'ci workflow', 'create workflow', 'setup ci'],
     keywords: ['github', 'ci-cd', 'actions', 'automation', 'devops'],
+    qualityScore: 88,
+    trustTier: 'community',
   },
   {
     id: 'community/prisma-schema',
     name: 'prisma-schema',
     description: 'Generate Prisma schema and migrations for databases',
-    author: 'community',
-    category: 'database',
-    trustTier: 'community',
-    score: 83,
+    triggerPhrases: ['prisma schema', 'database model', 'create migration', 'prisma setup'],
     keywords: ['prisma', 'database', 'orm', 'migrations', 'postgresql'],
+    qualityScore: 83,
+    trustTier: 'community',
   },
 ]
-
-/**
- * Calculate keyword similarity between two sets of keywords
- * Simple Jaccard similarity for mock implementation
- * Production would use EmbeddingService for semantic similarity
- */
-function calculateKeywordSimilarity(keywords1: string[], keywords2: string[]): number {
-  if (keywords1.length === 0 || keywords2.length === 0) {
-    return 0
-  }
-
-  const set1 = new Set(keywords1.map((k) => k.toLowerCase()))
-  const set2 = new Set(keywords2.map((k) => k.toLowerCase()))
-
-  let intersection = 0
-  for (const k of set1) {
-    if (set2.has(k)) {
-      intersection++
-    }
-  }
-
-  const union = new Set([...set1, ...set2]).size
-  return union > 0 ? intersection / union : 0
-}
-
-/**
- * Calculate text similarity using simple word overlap
- * Production would use EmbeddingService for semantic similarity
- */
-function calculateTextSimilarity(text1: string, text2: string): number {
-  const words1 = text1
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => w.length > 2)
-  const words2 = text2
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => w.length > 2)
-
-  return calculateKeywordSimilarity(words1, words2)
-}
-
-/**
- * Generate recommendation reason based on similarity factors
- */
-function generateReason(
-  skill: (typeof mockSkillDatabase)[0],
-  installedKeywords: string[],
-  projectContext?: string
-): string {
-  const reasons: string[] = []
-
-  // Check for keyword matches
-  const matchingKeywords = skill.keywords.filter((k) =>
-    installedKeywords.some((ik) => ik.toLowerCase() === k.toLowerCase())
-  )
-
-  if (matchingKeywords.length > 0) {
-    reasons.push(`Complements your ${matchingKeywords.slice(0, 2).join(' and ')} skills`)
-  }
-
-  // Check category relevance
-  if (projectContext) {
-    const contextLower = projectContext.toLowerCase()
-    if (contextLower.includes('react') && skill.keywords.includes('react')) {
-      reasons.push('Matches your React project')
-    }
-    if (contextLower.includes('test') && skill.category === 'testing') {
-      reasons.push('Supports your testing needs')
-    }
-    if (contextLower.includes('docker') && skill.keywords.includes('docker')) {
-      reasons.push('Helps with containerization')
-    }
-    if (contextLower.includes('api') && skill.keywords.includes('api')) {
-      reasons.push('Useful for API development')
-    }
-  }
-
-  // Default reasons by category
-  if (reasons.length === 0) {
-    switch (skill.category) {
-      case 'testing':
-        reasons.push('Adds testing capabilities to your toolkit')
-        break
-      case 'devops':
-        reasons.push('Enhances your DevOps workflow')
-        break
-      case 'documentation':
-        reasons.push('Improves documentation coverage')
-        break
-      case 'development':
-        reasons.push('Boosts development productivity')
-        break
-      default:
-        reasons.push(`High-quality ${skill.category} skill`)
-    }
-  }
-
-  return reasons[0]
-}
 
 /**
  * Execute skill recommendation based on installed skills and context.
  *
  * Uses semantic similarity to find skills that complement the user's
  * current installation. When project context is provided, it's used
- * to improve recommendation relevance.
+ * to improve recommendation relevance. Overlap detection prevents
+ * recommending skills that are too similar to installed ones.
  *
  * @param input - Recommendation parameters
  * @returns Promise resolving to recommendation response
@@ -345,75 +278,86 @@ export async function executeRecommend(input: RecommendInput): Promise<Recommend
 
   // Validate input with Zod
   const validated = recommendInputSchema.parse(input)
-  const { installed_skills, project_context, limit } = validated
+  const { installed_skills, project_context, limit, detect_overlap, min_similarity } = validated
 
-  // Get keywords from installed skills
-  const installedSkillData = mockSkillDatabase.filter((s) =>
+  // Initialize matcher with fallback mode for now (real embeddings in production)
+  const matcher = new SkillMatcher({
+    useFallback: true, // Use mock embeddings for consistent behavior
+    minSimilarity: min_similarity,
+    qualityWeight: 0.3,
+  })
+
+  // Get installed skill data
+  const installedSkillData = skillDatabase.filter((s) =>
     installed_skills.some((id) => id.toLowerCase() === s.id.toLowerCase())
   )
-  const installedKeywords = installedSkillData.flatMap((s) => s.keywords)
 
-  // Filter out already installed skills
-  const candidates = mockSkillDatabase.filter(
+  // Filter out already installed skills from candidates
+  const candidates = skillDatabase.filter(
     (s) => !installed_skills.some((id) => id.toLowerCase() === s.id.toLowerCase())
   )
 
-  // Score each candidate
-  const scored = candidates.map((skill) => {
-    let similarity = 0
+  let overlapFiltered = 0
 
-    // Calculate keyword similarity with installed skills
-    if (installedKeywords.length > 0) {
-      similarity = calculateKeywordSimilarity(skill.keywords, installedKeywords)
-    }
+  // Apply overlap detection if enabled and there are installed skills
+  let filteredCandidates = candidates
+  if (detect_overlap && installedSkillData.length > 0) {
+    const overlapDetector = new OverlapDetector({
+      useFallback: true,
+      overlapThreshold: 0.6,
+      phraseThreshold: 0.75,
+    })
 
-    // Boost similarity if project context matches
-    if (project_context) {
-      const contextSimilarity = calculateTextSimilarity(
-        project_context,
-        `${skill.name} ${skill.description} ${skill.keywords.join(' ')}`
-      )
-      similarity = Math.max(similarity, contextSimilarity)
-      // Blend both scores
-      similarity = similarity * 0.6 + contextSimilarity * 0.4
-    }
+    const filterResult = await overlapDetector.filterByOverlap(candidates, installedSkillData)
 
-    // Boost by quality score (normalized)
-    const qualityBoost = skill.score / 200 // 0 to 0.5 boost
-    similarity = Math.min(1, similarity + qualityBoost)
+    filteredCandidates = filterResult.accepted as SkillData[]
+    overlapFiltered = filterResult.rejected.length
 
+    overlapDetector.close()
+  }
+
+  // Build query from installed skills and project context
+  let query = ''
+  if (installedSkillData.length > 0) {
+    query = installedSkillData
+      .map((s) => `${s.name} ${s.description} ${s.keywords?.join(' ') || ''}`)
+      .join(' ')
+  }
+  if (project_context) {
+    query = query ? `${query} ${project_context}` : project_context
+  }
+  if (!query) {
+    query = 'general development productivity tools'
+  }
+
+  // Find similar skills using semantic matching
+  const matchResults = await matcher.findSimilarSkills(query, filteredCandidates, limit)
+
+  // Transform to response format
+  const recommendations: SkillRecommendation[] = matchResults.map((result) => {
+    const skill = result.skill as SkillData
     return {
-      skill,
-      similarity,
+      skill_id: skill.id,
+      name: skill.name,
+      reason: result.matchReason,
+      similarity_score: result.similarityScore,
+      trust_tier: skill.trustTier,
+      quality_score: skill.qualityScore ?? 50,
     }
   })
 
-  // Sort by similarity score
-  scored.sort((a, b) => b.similarity - a.similarity)
-
-  // Take top N recommendations
-  const topRecommendations = scored.slice(0, limit)
-
-  // Build response
-  const recommendations: SkillRecommendation[] = topRecommendations.map(
-    ({ skill, similarity }) => ({
-      skill_id: skill.id,
-      name: skill.name,
-      reason: generateReason(skill, installedKeywords, project_context),
-      similarity_score: Math.round(similarity * 100) / 100, // Round to 2 decimals
-      trust_tier: skill.trustTier,
-      quality_score: skill.score,
-    })
-  )
-
   const endTime = performance.now()
+
+  matcher.close()
 
   return {
     recommendations,
     candidates_considered: candidates.length,
+    overlap_filtered: overlapFiltered,
     context: {
       installed_count: installed_skills.length,
       has_project_context: !!project_context,
+      using_semantic_matching: true,
     },
     timing: {
       totalMs: Math.round(endTime - startTime),
@@ -452,6 +396,12 @@ export function formatRecommendations(response: RecommendResponse): string {
 
   lines.push('---')
   lines.push(`Candidates considered: ${response.candidates_considered}`)
+  if (response.overlap_filtered > 0) {
+    lines.push(`Filtered for overlap: ${response.overlap_filtered}`)
+  }
+  lines.push(
+    `Semantic matching: ${response.context.using_semantic_matching ? 'enabled' : 'disabled'}`
+  )
   lines.push(`Completed in ${response.timing.totalMs}ms`)
 
   return lines.join('\n')

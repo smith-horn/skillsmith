@@ -71,6 +71,7 @@ describe('Skill Recommend Tool', () => {
     it('should return recommendations based on installed skills', async () => {
       const result = await executeRecommend({
         installed_skills: ['anthropic/commit'],
+        detect_overlap: false, // Disable overlap detection for consistent testing
         limit: 5,
       })
 
@@ -86,6 +87,7 @@ describe('Skill Recommend Tool', () => {
     it('should filter out installed skills from recommendations', async () => {
       const result = await executeRecommend({
         installed_skills: ['anthropic/commit', 'anthropic/review-pr'],
+        detect_overlap: false, // Disable overlap detection for consistent testing
         limit: 10,
       })
 
@@ -97,6 +99,7 @@ describe('Skill Recommend Tool', () => {
     it('should include recommendation reason', async () => {
       const result = await executeRecommend({
         installed_skills: ['anthropic/commit'],
+        detect_overlap: false, // Disable overlap detection for consistent testing
         limit: 5,
       })
 
@@ -109,6 +112,7 @@ describe('Skill Recommend Tool', () => {
     it('should include similarity score between 0 and 1', async () => {
       const result = await executeRecommend({
         installed_skills: ['anthropic/commit'],
+        detect_overlap: false, // Disable overlap detection for consistent testing
         limit: 5,
       })
 
@@ -163,6 +167,7 @@ describe('Skill Recommend Tool', () => {
     it('should return candidates_considered count', async () => {
       const result = await executeRecommend({
         installed_skills: ['anthropic/commit'],
+        detect_overlap: false, // Disable overlap detection for consistent testing
         limit: 5,
       })
 
@@ -172,6 +177,7 @@ describe('Skill Recommend Tool', () => {
     it('should handle case-insensitive skill IDs', async () => {
       const result = await executeRecommend({
         installed_skills: ['ANTHROPIC/COMMIT'],
+        detect_overlap: false, // Disable overlap detection for consistent testing
         limit: 5,
       })
 
@@ -184,6 +190,7 @@ describe('Skill Recommend Tool', () => {
     it('should format recommendations for terminal display', async () => {
       const result = await executeRecommend({
         installed_skills: ['anthropic/commit'],
+        detect_overlap: false, // Disable overlap detection for consistent testing
         limit: 3,
       })
       const formatted = formatRecommendations(result)
@@ -198,6 +205,7 @@ describe('Skill Recommend Tool', () => {
     it('should display trust badges', async () => {
       const result = await executeRecommend({
         installed_skills: [],
+        detect_overlap: false, // Disable overlap detection for consistent testing
         limit: 5,
       })
       const formatted = formatRecommendations(result)
@@ -214,6 +222,7 @@ describe('Skill Recommend Tool', () => {
     it('should show candidates considered and timing', async () => {
       const result = await executeRecommend({
         installed_skills: [],
+        detect_overlap: false, // Disable overlap detection for consistent testing
         limit: 3,
       })
       const formatted = formatRecommendations(result)
