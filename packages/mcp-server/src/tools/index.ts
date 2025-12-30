@@ -49,3 +49,17 @@ export {
   formatComparisonResults,
 } from './compare.js'
 export type { CompareInput, SkillSummary, SkillDifference, CompareResponse } from './compare.js'
+
+// Analyze codebase tool (SMI-600)
+export {
+  analyzeToolSchema,
+  analyzeInputSchema,
+  executeAnalyze,
+  formatAnalysisResults,
+} from './analyze.js'
+export type {
+  AnalyzeInput,
+  AnalyzeFramework,
+  AnalyzeDependency,
+  AnalyzeResponse,
+} from './analyze.js'

@@ -270,3 +270,15 @@ export {
   type Gauge,
   type MetricsSnapshot,
 } from './telemetry/index.js'
+
+// Codebase Analysis (SMI-600)
+export {
+  CodebaseAnalyzer,
+  type CodebaseContext,
+  type ImportInfo,
+  type ExportInfo,
+  type FunctionInfo,
+  type FrameworkInfo,
+  type DependencyInfo,
+  type AnalyzeOptions,
+} from './analysis/index.js'
