@@ -312,6 +312,59 @@ describe('SessionHealthMonitor', () => {
     })
   })
 
+  describe('typed EventEmitter methods (SMI-772, SMI-773)', () => {
+    it('supports addListener with type inference', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+
+      const handler = vi.fn()
+      monitor.addListener('heartbeat', handler)
+
+      monitor.heartbeat('test-session-1')
+
+      expect(handler).toHaveBeenCalledWith('test-session-1')
+    })
+
+    it('supports removeListener to unsubscribe', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+
+      const handler = vi.fn()
+      monitor.addListener('heartbeat', handler)
+      monitor.removeListener('heartbeat', handler)
+
+      monitor.heartbeat('test-session-1')
+
+      expect(handler).not.toHaveBeenCalled()
+    })
+
+    it('supports prependListener to add listener at beginning', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+
+      const order: number[] = []
+      monitor.on('heartbeat', () => order.push(1))
+      monitor.prependListener('heartbeat', () => order.push(0))
+
+      monitor.heartbeat('test-session-1')
+
+      expect(order).toEqual([0, 1]) // Prepended listener runs first
+    })
+
+    it('supports prependOnceListener for one-time prepended listener', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+
+      const handler = vi.fn()
+      monitor.prependOnceListener('heartbeat', handler)
+
+      monitor.heartbeat('test-session-1')
+      monitor.heartbeat('test-session-1')
+
+      expect(handler).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('autoRecover (SMI-767)', () => {
     beforeEach(() => {
       vi.useFakeTimers()
