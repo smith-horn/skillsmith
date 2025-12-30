@@ -24,6 +24,7 @@ import {
   createValidateCommand,
   createPublishCommand,
 } from './commands/index.js'
+import { DEFAULT_DB_PATH } from './config.js'
 
 const program = new Command()
 
@@ -35,7 +36,7 @@ program
   .description('Import skills from GitHub')
   .option('-t, --topic <topic>', 'GitHub topic to search', 'claude-skill')
   .option('-m, --max <number>', 'Maximum skills to import', '1000')
-  .option('-d, --db <path>', 'Database file path', 'skillsmith.db')
+  .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
   .option('-v, --verbose', 'Verbose output')
   .action(async (options: { topic: string; max: string; db: string; verbose?: boolean }) => {
     try {

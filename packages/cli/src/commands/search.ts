@@ -15,6 +15,7 @@ import {
   type SearchResult,
   type TrustTier,
 } from '@skillsmith/core'
+import { DEFAULT_DB_PATH } from '../config.js'
 
 const TRUST_TIER_COLORS: Record<TrustTier, (text: string) => string> = {
   verified: chalk.green,
@@ -338,7 +339,7 @@ export function createSearchCommand(): Command {
     .description('Search for skills')
     .argument('[query]', 'Search query')
     .option('-i, --interactive', 'Launch interactive search mode')
-    .option('-d, --db <path>', 'Database file path', 'skillsmith.db')
+    .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .option('-l, --limit <number>', 'Maximum results to show', '20')
     .option(
       '-t, --tier <tier>',

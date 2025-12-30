@@ -10,6 +10,7 @@
  */
 
 import { createDatabase, SkillRepository, type SkillCreateInput } from '@skillsmith/core'
+import { DEFAULT_DB_PATH } from './config.js'
 
 interface GitHubSearchResult {
   total_count: number
@@ -235,7 +236,7 @@ export async function importSkills(options: ImportOptions = {}): Promise<ImportR
     token = process.env['GITHUB_TOKEN'],
     topic = DEFAULT_TOPIC,
     maxSkills = 1000,
-    dbPath = 'skillsmith.db',
+    dbPath = DEFAULT_DB_PATH,
     verbose = false,
   } = options
 
@@ -326,7 +327,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2)
   const verbose = args.includes('--verbose') || args.includes('-v')
   const maxSkills = parseInt(args.find((a) => a.startsWith('--max='))?.split('=')[1] || '1000')
-  const dbPath = args.find((a) => a.startsWith('--db='))?.split('=')[1] || 'skillsmith.db'
+  const dbPath = args.find((a) => a.startsWith('--db='))?.split('=')[1] || DEFAULT_DB_PATH
 
   importSkills({ verbose, maxSkills, dbPath })
     .then((result) => {
