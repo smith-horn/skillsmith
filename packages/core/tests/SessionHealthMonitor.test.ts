@@ -1,0 +1,314 @@
+/**
+ * SMI-761: Session Health Monitor Tests
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import {
+  SessionHealthMonitor,
+  getHealthMonitor,
+  initializeHealthMonitor,
+  shutdownHealthMonitor,
+  type SessionHealth,
+} from '../src/session/SessionHealthMonitor.js'
+import type { SessionData } from '../src/session/SessionContext.js'
+
+describe('SessionHealthMonitor', () => {
+  let monitor: SessionHealthMonitor
+
+  const createMockSession = (id: string): SessionData => ({
+    sessionId: id,
+    startedAt: new Date().toISOString(),
+    checkpoints: [],
+    filesModified: [],
+    lastActivity: new Date().toISOString(),
+  })
+
+  beforeEach(() => {
+    monitor = new SessionHealthMonitor({
+      heartbeatIntervalMs: 100, // Fast for testing
+      warningThreshold: 2,
+      unhealthyThreshold: 4,
+      deadThreshold: 6,
+    })
+  })
+
+  afterEach(() => {
+    monitor.stop()
+    shutdownHealthMonitor()
+  })
+
+  describe('constructor', () => {
+    it('creates monitor with default config', () => {
+      const defaultMonitor = new SessionHealthMonitor()
+      expect(defaultMonitor).toBeInstanceOf(SessionHealthMonitor)
+      expect(defaultMonitor.isRunning()).toBe(false)
+    })
+
+    it('accepts custom config', () => {
+      const customMonitor = new SessionHealthMonitor({
+        heartbeatIntervalMs: 60000,
+        warningThreshold: 3,
+      })
+      expect(customMonitor).toBeInstanceOf(SessionHealthMonitor)
+    })
+  })
+
+  describe('registerSession', () => {
+    it('registers a session for monitoring', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+
+      expect(monitor.getSessionCount()).toBe(1)
+    })
+
+    it('tracks session health as healthy initially', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+
+      const health = monitor.getSessionHealth('test-session-1')
+      expect(health).not.toBeNull()
+      expect(health!.status).toBe('healthy')
+      expect(health!.missedHeartbeats).toBe(0)
+    })
+
+    it('registers multiple sessions', () => {
+      monitor.registerSession(createMockSession('session-1'))
+      monitor.registerSession(createMockSession('session-2'))
+      monitor.registerSession(createMockSession('session-3'))
+
+      expect(monitor.getSessionCount()).toBe(3)
+    })
+  })
+
+  describe('heartbeat', () => {
+    it('records heartbeat for registered session', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+
+      monitor.heartbeat('test-session-1')
+
+      const health = monitor.getSessionHealth('test-session-1')
+      expect(health!.status).toBe('healthy')
+    })
+
+    it('emits heartbeat event', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+
+      const heartbeatHandler = vi.fn()
+      monitor.on('heartbeat', heartbeatHandler)
+
+      monitor.heartbeat('test-session-1')
+
+      expect(heartbeatHandler).toHaveBeenCalledWith('test-session-1')
+    })
+
+    it('ignores heartbeat for unknown session', () => {
+      // Should not throw
+      monitor.heartbeat('unknown-session')
+      expect(monitor.getSessionHealth('unknown-session')).toBeNull()
+    })
+
+    it('resets missed heartbeats counter', async () => {
+      vi.useFakeTimers()
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+      monitor.start()
+
+      // Simulate some missed heartbeats
+      vi.advanceTimersByTime(300) // 3 intervals
+
+      // Now send heartbeat
+      monitor.heartbeat('test-session-1')
+
+      const health = monitor.getSessionHealth('test-session-1')
+      expect(health!.missedHeartbeats).toBe(0)
+      expect(health!.status).toBe('healthy')
+      vi.useRealTimers()
+    })
+  })
+
+  describe('unregisterSession', () => {
+    it('removes session from monitoring', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+      expect(monitor.getSessionCount()).toBe(1)
+
+      monitor.unregisterSession('test-session-1')
+      expect(monitor.getSessionCount()).toBe(0)
+    })
+
+    it('returns null health for unregistered session', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+      monitor.unregisterSession('test-session-1')
+
+      expect(monitor.getSessionHealth('test-session-1')).toBeNull()
+    })
+  })
+
+  describe('getSessionHealth', () => {
+    it('returns null for unknown session', () => {
+      expect(monitor.getSessionHealth('unknown')).toBeNull()
+    })
+
+    it('calculates uptime correctly', async () => {
+      vi.useFakeTimers()
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+
+      vi.advanceTimersByTime(5000) // 5 seconds
+
+      const health = monitor.getSessionHealth('test-session-1')
+      expect(health!.uptimeSeconds).toBeGreaterThanOrEqual(5)
+      vi.useRealTimers()
+    })
+
+    it('indicates recoverability', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+
+      const health = monitor.getSessionHealth('test-session-1')
+      expect(health!.recoverable).toBe(true)
+    })
+  })
+
+  describe('getAllSessionHealth', () => {
+    it('returns empty array when no sessions', () => {
+      const health = monitor.getAllSessionHealth()
+      expect(health).toEqual([])
+    })
+
+    it('returns health for all sessions', () => {
+      monitor.registerSession(createMockSession('session-1'))
+      monitor.registerSession(createMockSession('session-2'))
+
+      const health = monitor.getAllSessionHealth()
+      expect(health).toHaveLength(2)
+      expect(health.map((h) => h.sessionId)).toContain('session-1')
+      expect(health.map((h) => h.sessionId)).toContain('session-2')
+    })
+  })
+
+  describe('health status transitions', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('transitions to warning after threshold', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+      monitor.start()
+
+      const warningHandler = vi.fn()
+      monitor.on('warning', warningHandler)
+
+      // Advance past warning threshold (2 missed heartbeats = 2 * 100ms = 200ms)
+      vi.advanceTimersByTime(200)
+
+      expect(warningHandler).toHaveBeenCalled()
+      const health = warningHandler.mock.calls[0][0] as SessionHealth
+      expect(health.status).toBe('warning')
+    })
+
+    it('transitions to unhealthy after threshold', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+      monitor.start()
+
+      const unhealthyHandler = vi.fn()
+      monitor.on('unhealthy', unhealthyHandler)
+
+      // Advance past unhealthy threshold (4 * 100ms = 400ms)
+      vi.advanceTimersByTime(400)
+
+      expect(unhealthyHandler).toHaveBeenCalled()
+    })
+
+    it('transitions to dead after threshold', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+      monitor.start()
+
+      const deadHandler = vi.fn()
+      monitor.on('dead', deadHandler)
+
+      // Advance past dead threshold (6 * 100ms = 600ms)
+      vi.advanceTimersByTime(600)
+
+      expect(deadHandler).toHaveBeenCalled()
+      const health = deadHandler.mock.calls[0][0] as SessionHealth
+      expect(health.status).toBe('dead')
+      expect(health.recoverable).toBe(false)
+    })
+
+    it('emits recovered when healthy again', () => {
+      const session = createMockSession('test-session-1')
+      monitor.registerSession(session)
+      monitor.start()
+
+      const recoveredHandler = vi.fn()
+      monitor.on('recovered', recoveredHandler)
+
+      // Let it become unhealthy
+      vi.advanceTimersByTime(400)
+
+      // Send heartbeat to recover
+      monitor.heartbeat('test-session-1')
+
+      expect(recoveredHandler).toHaveBeenCalledWith('test-session-1')
+    })
+  })
+
+  describe('start/stop', () => {
+    it('starts monitoring', () => {
+      monitor.start()
+      expect(monitor.isRunning()).toBe(true)
+    })
+
+    it('stops monitoring', () => {
+      monitor.start()
+      monitor.stop()
+      expect(monitor.isRunning()).toBe(false)
+    })
+
+    it('is idempotent for start', () => {
+      monitor.start()
+      monitor.start()
+      expect(monitor.isRunning()).toBe(true)
+    })
+
+    it('is idempotent for stop', () => {
+      monitor.start()
+      monitor.stop()
+      monitor.stop()
+      expect(monitor.isRunning()).toBe(false)
+    })
+  })
+
+  describe('global functions', () => {
+    it('getHealthMonitor returns singleton', () => {
+      const monitor1 = getHealthMonitor()
+      const monitor2 = getHealthMonitor()
+      expect(monitor1).toBe(monitor2)
+    })
+
+    it('initializeHealthMonitor creates and starts monitor', () => {
+      const monitor = initializeHealthMonitor({ heartbeatIntervalMs: 50000 })
+      expect(monitor).toBeInstanceOf(SessionHealthMonitor)
+      expect(monitor.isRunning()).toBe(true)
+    })
+
+    it('shutdownHealthMonitor stops and clears monitor', () => {
+      initializeHealthMonitor()
+      shutdownHealthMonitor()
+      // Getting a new monitor should create a fresh instance
+      const newMonitor = getHealthMonitor()
+      expect(newMonitor.isRunning()).toBe(false)
+    })
+  })
+})

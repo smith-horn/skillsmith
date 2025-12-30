@@ -65,3 +65,14 @@ export {
   type RecoveryResult,
   type RecoveryOptions,
 } from './SessionRecovery.js'
+
+// SessionHealthMonitor - SMI-761: Session health monitoring
+export {
+  SessionHealthMonitor,
+  getHealthMonitor,
+  initializeHealthMonitor,
+  shutdownHealthMonitor,
+  type SessionHealth,
+  type SessionHealthStatus,
+  type HealthMonitorConfig,
+} from './SessionHealthMonitor.js'
