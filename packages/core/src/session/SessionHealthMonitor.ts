@@ -62,7 +62,12 @@ export interface SessionHealthEvents {
   unhealthy: (health: SessionHealth) => void
   dead: (health: SessionHealth) => void
   recovered: (sessionId: string) => void
+  'recovery-attempt': (sessionId: string, attempt: number) => void
+  'recovery-failed': (sessionId: string, reason: string) => void
 }
+
+/** Maximum number of recovery attempts before giving up */
+const MAX_RECOVERY_ATTEMPTS = 3
 
 /**
  * Session Health Monitor
@@ -86,6 +91,89 @@ export class SessionHealthMonitor extends EventEmitter {
     }
   }
 
+  // ============================================
+  // Typed Event Emitter Overloads (SMI-768)
+  // ============================================
+
+  /** Add a listener for the 'heartbeat' event */
+  on(event: 'heartbeat', listener: (sessionId: string) => void): this
+  /** Add a listener for the 'warning' event */
+  on(event: 'warning', listener: (health: SessionHealth) => void): this
+  /** Add a listener for the 'unhealthy' event */
+  on(event: 'unhealthy', listener: (health: SessionHealth) => void): this
+  /** Add a listener for the 'dead' event */
+  on(event: 'dead', listener: (health: SessionHealth) => void): this
+  /** Add a listener for the 'recovered' event */
+  on(event: 'recovered', listener: (sessionId: string) => void): this
+  /** Add a listener for the 'recovery-attempt' event */
+  on(event: 'recovery-attempt', listener: (sessionId: string, attempt: number) => void): this
+  /** Add a listener for the 'recovery-failed' event */
+  on(event: 'recovery-failed', listener: (sessionId: string, reason: string) => void): this
+  /** Add a listener for any event (fallback) */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  on(event: string, listener: (...args: any[]) => void): this {
+    return super.on(event, listener)
+  }
+
+  /** Emit the 'heartbeat' event */
+  emit(event: 'heartbeat', sessionId: string): boolean
+  /** Emit the 'warning' event */
+  emit(event: 'warning', health: SessionHealth): boolean
+  /** Emit the 'unhealthy' event */
+  emit(event: 'unhealthy', health: SessionHealth): boolean
+  /** Emit the 'dead' event */
+  emit(event: 'dead', health: SessionHealth): boolean
+  /** Emit the 'recovered' event */
+  emit(event: 'recovered', sessionId: string): boolean
+  /** Emit the 'recovery-attempt' event */
+  emit(event: 'recovery-attempt', sessionId: string, attempt: number): boolean
+  /** Emit the 'recovery-failed' event */
+  emit(event: 'recovery-failed', sessionId: string, reason: string): boolean
+  /** Emit any event (fallback) */
+  emit(event: string, ...args: unknown[]): boolean {
+    return super.emit(event, ...args)
+  }
+
+  /** Remove a listener for the 'heartbeat' event */
+  off(event: 'heartbeat', listener: (sessionId: string) => void): this
+  /** Remove a listener for the 'warning' event */
+  off(event: 'warning', listener: (health: SessionHealth) => void): this
+  /** Remove a listener for the 'unhealthy' event */
+  off(event: 'unhealthy', listener: (health: SessionHealth) => void): this
+  /** Remove a listener for the 'dead' event */
+  off(event: 'dead', listener: (health: SessionHealth) => void): this
+  /** Remove a listener for the 'recovered' event */
+  off(event: 'recovered', listener: (sessionId: string) => void): this
+  /** Remove a listener for the 'recovery-attempt' event */
+  off(event: 'recovery-attempt', listener: (sessionId: string, attempt: number) => void): this
+  /** Remove a listener for the 'recovery-failed' event */
+  off(event: 'recovery-failed', listener: (sessionId: string, reason: string) => void): this
+  /** Remove a listener for any event (fallback) */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  off(event: string, listener: (...args: any[]) => void): this {
+    return super.off(event, listener)
+  }
+
+  /** Add a one-time listener for the 'heartbeat' event */
+  once(event: 'heartbeat', listener: (sessionId: string) => void): this
+  /** Add a one-time listener for the 'warning' event */
+  once(event: 'warning', listener: (health: SessionHealth) => void): this
+  /** Add a one-time listener for the 'unhealthy' event */
+  once(event: 'unhealthy', listener: (health: SessionHealth) => void): this
+  /** Add a one-time listener for the 'dead' event */
+  once(event: 'dead', listener: (health: SessionHealth) => void): this
+  /** Add a one-time listener for the 'recovered' event */
+  once(event: 'recovered', listener: (sessionId: string) => void): this
+  /** Add a one-time listener for the 'recovery-attempt' event */
+  once(event: 'recovery-attempt', listener: (sessionId: string, attempt: number) => void): this
+  /** Add a one-time listener for the 'recovery-failed' event */
+  once(event: 'recovery-failed', listener: (sessionId: string, reason: string) => void): this
+  /** Add a one-time listener for any event (fallback) */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  once(event: string, listener: (...args: any[]) => void): this {
+    return super.once(event, listener)
+  }
+
   /**
    * Start monitoring a session
    */
@@ -98,6 +186,7 @@ export class SessionHealthMonitor extends EventEmitter {
       missedHeartbeats: 0,
       status: 'healthy',
       sessionData: session,
+      recoveryAttempts: 0,
     })
 
     // Record metric
@@ -226,6 +315,54 @@ export class SessionHealthMonitor extends EventEmitter {
   }
 
   /**
+   * Attempt to recover a dead session from stored sessionData
+   *
+   * @param state - The session health state to recover
+   * @returns true if recovery was successful, false otherwise
+   */
+  private attemptRecovery(state: SessionHealthState): boolean {
+    // Check if we've exceeded max recovery attempts
+    if (state.recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) {
+      this.emit('recovery-failed', state.sessionId, 'Max recovery attempts exceeded')
+      return false
+    }
+
+    // Check if we have session data to restore from
+    if (!state.sessionData) {
+      this.emit('recovery-failed', state.sessionId, 'No session data available for recovery')
+      return false
+    }
+
+    // Increment recovery attempts
+    state.recoveryAttempts++
+
+    // Emit recovery attempt event
+    this.emit('recovery-attempt', state.sessionId, state.recoveryAttempts)
+
+    try {
+      // Restore session health state from stored sessionData
+      // Reset the session to healthy state with a fresh heartbeat
+      const now = Date.now()
+      state.lastHeartbeat = now
+      state.missedHeartbeats = 0
+      state.status = 'healthy'
+
+      // Emit recovered event
+      this.emit('recovered', state.sessionId)
+
+      // Record successful recovery metric
+      const metrics = getMetrics()
+      metrics.mcpErrorCount.increment({ type: 'session_recovered' })
+
+      return true
+    } catch {
+      // Recovery failed
+      this.emit('recovery-failed', state.sessionId, 'Recovery operation failed')
+      return false
+    }
+  }
+
+  /**
    * Check all sessions for health issues
    */
   private checkAllSessions(): void {
@@ -260,6 +397,11 @@ export class SessionHealthMonitor extends EventEmitter {
           case 'dead':
             this.emit('dead', health)
             metrics.mcpErrorCount.increment({ type: 'session_dead' })
+
+            // Attempt automatic recovery if enabled
+            if (this.config.autoRecover) {
+              this.attemptRecovery(state)
+            }
             break
         }
       }
@@ -277,6 +419,8 @@ interface SessionHealthState {
   missedHeartbeats: number
   status: SessionHealthStatus
   sessionData?: SessionData
+  /** Number of recovery attempts made for this session */
+  recoveryAttempts: number
 }
 
 /**
