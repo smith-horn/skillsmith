@@ -349,7 +349,9 @@ const csp = getSkillDetailCsp(nonce)
 | Skill Install | timestamp, skill_id, source, trust_tier |
 | Security Scan | timestamp, skill_id, findings, risk_score |
 
-### 3.2 Schema (Planned)
+### 3.2 Schema
+
+**Implemented in**: `packages/core/src/db/schema.ts` (SMI-733)
 
 ```sql
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -367,6 +369,8 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_event_type ON audit_logs(event_type);
 CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_logs(resource);
+CREATE INDEX IF NOT EXISTS idx_audit_result ON audit_logs(result);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_logs(actor);
 ```
 
 ---
