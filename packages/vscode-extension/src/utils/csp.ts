@@ -82,9 +82,7 @@ export function buildWebviewCsp(nonce: string, config: WebviewCspConfig = {}): s
   directives.push(`img-src ${imgSources.join(' ')}`)
 
   // Font-src: Self and optional VS Code resources
-  const fontSources = allowVscodeResources
-    ? ['vscode-resource:', ...fontSrc]
-    : [...fontSrc]
+  const fontSources = allowVscodeResources ? ['vscode-resource:', ...fontSrc] : [...fontSrc]
   if (fontSources.length > 0) {
     directives.push(`font-src ${fontSources.join(' ')}`)
   }
@@ -184,18 +182,18 @@ export function validateCsp(csp: string): { valid: boolean; warnings: string[] }
   }
 
   // Check for wildcard sources
-  if (csp.includes("* ") || csp.includes(" *;") || csp.endsWith(" *")) {
-    warnings.push("CSP contains wildcard (*) source which is too permissive")
+  if (csp.includes('* ') || csp.includes(' *;') || csp.endsWith(' *')) {
+    warnings.push('CSP contains wildcard (*) source which is too permissive')
   }
 
   // Should have script-src
   if (!csp.includes('script-src')) {
-    warnings.push("CSP missing script-src directive")
+    warnings.push('CSP missing script-src directive')
   }
 
   // Should have default-src
   if (!csp.includes('default-src')) {
-    warnings.push("CSP missing default-src directive")
+    warnings.push('CSP missing default-src directive')
   }
 
   return {

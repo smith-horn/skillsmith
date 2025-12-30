@@ -226,16 +226,7 @@ export class AuditLogger {
    * @returns Array of matching audit log entries
    */
   query(filter: AuditQueryFilter = {}): AuditLogEntry[] {
-    const {
-      event_type,
-      actor,
-      resource,
-      result,
-      since,
-      until,
-      limit = 100,
-      offset = 0,
-    } = filter
+    const { event_type, actor, resource, result, since, until, limit = 100, offset = 0 } = filter
 
     const resourcePattern = resource ? `%${resource}%` : null
     const sinceIso = since?.toISOString() || null
@@ -277,15 +268,13 @@ export class AuditLogger {
   getStats(): AuditStats {
     try {
       // Total events
-      const totalResult = this.db
-        .prepare('SELECT COUNT(*) as count FROM audit_logs')
-        .get() as { count: number }
+      const totalResult = this.db.prepare('SELECT COUNT(*) as count FROM audit_logs').get() as {
+        count: number
+      }
 
       // Events by type
       const typeResults = this.db
-        .prepare(
-          `SELECT event_type, COUNT(*) as count FROM audit_logs GROUP BY event_type`
-        )
+        .prepare(`SELECT event_type, COUNT(*) as count FROM audit_logs GROUP BY event_type`)
         .all() as Array<{ event_type: AuditEventType; count: number }>
 
       const events_by_type = typeResults.reduce(
@@ -321,9 +310,7 @@ export class AuditLogger {
 
       // Oldest and newest events
       const rangeResult = this.db
-        .prepare(
-          `SELECT MIN(timestamp) as oldest, MAX(timestamp) as newest FROM audit_logs`
-        )
+        .prepare(`SELECT MIN(timestamp) as oldest, MAX(timestamp) as newest FROM audit_logs`)
         .get() as { oldest: string | null; newest: string | null }
 
       return {
@@ -351,9 +338,7 @@ export class AuditLogger {
     const olderThanIso = olderThan.toISOString()
 
     try {
-      const result = this.db
-        .prepare(`DELETE FROM audit_logs WHERE timestamp < ?`)
-        .run(olderThanIso)
+      const result = this.db.prepare(`DELETE FROM audit_logs WHERE timestamp < ?`).run(olderThanIso)
 
       logger.info('Audit logs cleaned up', {
         deleted: result.changes,
@@ -362,7 +347,9 @@ export class AuditLogger {
 
       return result.changes
     } catch (err) {
-      logger.error('Failed to cleanup audit logs', err as Error, { olderThan: olderThan.toISOString() })
+      logger.error('Failed to cleanup audit logs', err as Error, {
+        olderThan: olderThan.toISOString(),
+      })
       throw err
     }
   }

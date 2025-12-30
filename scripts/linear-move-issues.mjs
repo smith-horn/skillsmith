@@ -7,16 +7,22 @@ import { graphql } from './linear-api.mjs'
 
 async function moveIssueToProject(issueIdentifier, projectId) {
   // Get issue ID from identifier
-  const issueData = await graphql(`
-    query GetIssue($identifier: String!) {
-      issue(id: $identifier) {
-        id
-        identifier
-        title
-        project { id name }
+  const issueData = await graphql(
+    `
+      query GetIssue($identifier: String!) {
+        issue(id: $identifier) {
+          id
+          identifier
+          title
+          project {
+            id
+            name
+          }
+        }
       }
-    }
-  `, { identifier: issueIdentifier })
+    `,
+    { identifier: issueIdentifier }
+  )
 
   if (!issueData.issue) {
     throw new Error(`Issue "${issueIdentifier}" not found`)
@@ -27,18 +33,24 @@ async function moveIssueToProject(issueIdentifier, projectId) {
   console.log(`  Current project: ${issue.project?.name || 'None'}`)
 
   // Move to new project
-  const updateData = await graphql(`
-    mutation UpdateIssueProject($id: String!, $projectId: String!) {
-      issueUpdate(id: $id, input: { projectId: $projectId }) {
-        success
-        issue {
-          id
-          identifier
-          project { id name }
+  const updateData = await graphql(
+    `
+      mutation UpdateIssueProject($id: String!, $projectId: String!) {
+        issueUpdate(id: $id, input: { projectId: $projectId }) {
+          success
+          issue {
+            id
+            identifier
+            project {
+              id
+              name
+            }
+          }
         }
       }
-    }
-  `, { id: issue.id, projectId })
+    `,
+    { id: issue.id, projectId }
+  )
 
   if (!updateData.issueUpdate.success) {
     throw new Error('Failed to move issue')
@@ -49,16 +61,22 @@ async function moveIssueToProject(issueIdentifier, projectId) {
 }
 
 async function removeIssueFromProject(issueIdentifier) {
-  const issueData = await graphql(`
-    query GetIssue($identifier: String!) {
-      issue(id: $identifier) {
-        id
-        identifier
-        title
-        project { id name }
+  const issueData = await graphql(
+    `
+      query GetIssue($identifier: String!) {
+        issue(id: $identifier) {
+          id
+          identifier
+          title
+          project {
+            id
+            name
+          }
+        }
       }
-    }
-  `, { identifier: issueIdentifier })
+    `,
+    { identifier: issueIdentifier }
+  )
 
   if (!issueData.issue) {
     throw new Error(`Issue "${issueIdentifier}" not found`)
@@ -69,18 +87,24 @@ async function removeIssueFromProject(issueIdentifier) {
   console.log(`  Current project: ${issue.project?.name || 'None'}`)
 
   // Remove from project (set projectId to null)
-  const updateData = await graphql(`
-    mutation RemoveIssueFromProject($id: String!) {
-      issueUpdate(id: $id, input: { projectId: null }) {
-        success
-        issue {
-          id
-          identifier
-          project { id name }
+  const updateData = await graphql(
+    `
+      mutation RemoveIssueFromProject($id: String!) {
+        issueUpdate(id: $id, input: { projectId: null }) {
+          success
+          issue {
+            id
+            identifier
+            project {
+              id
+              name
+            }
+          }
         }
       }
-    }
-  `, { id: issue.id })
+    `,
+    { id: issue.id }
+  )
 
   if (!updateData.issueUpdate.success) {
     throw new Error('Failed to remove issue from project')
@@ -92,31 +116,41 @@ async function removeIssueFromProject(issueIdentifier) {
 
 async function createProject(name, teamKey = 'SMI') {
   // Get team ID first
-  const teamData = await graphql(`
-    query GetTeam($key: String!) {
-      teams(filter: { key: { eq: $key } }) {
-        nodes { id key name }
+  const teamData = await graphql(
+    `
+      query GetTeam($key: String!) {
+        teams(filter: { key: { eq: $key } }) {
+          nodes {
+            id
+            key
+            name
+          }
+        }
       }
-    }
-  `, { key: teamKey })
+    `,
+    { key: teamKey }
+  )
 
   const team = teamData.teams.nodes[0]
   if (!team) {
     throw new Error(`Team "${teamKey}" not found`)
   }
 
-  const createData = await graphql(`
-    mutation CreateProject($name: String!, $teamIds: [String!]!) {
-      projectCreate(input: { name: $name, teamIds: $teamIds }) {
-        success
-        project {
-          id
-          name
-          state
+  const createData = await graphql(
+    `
+      mutation CreateProject($name: String!, $teamIds: [String!]!) {
+        projectCreate(input: { name: $name, teamIds: $teamIds }) {
+          success
+          project {
+            id
+            name
+            state
+          }
         }
       }
-    }
-  `, { name, teamIds: [team.id] })
+    `,
+    { name, teamIds: [team.id] }
+  )
 
   if (!createData.projectCreate.success) {
     throw new Error('Failed to create project')
@@ -168,7 +202,7 @@ function parseArgs(args) {
 }
 
 const commands = {
-  async 'move'(args) {
+  async move(args) {
     const { issue, project } = args
 
     if (!issue || !project) {
@@ -179,7 +213,7 @@ const commands = {
     await moveIssueToProject(issue, project)
   },
 
-  async 'remove'(args) {
+  async remove(args) {
     const { issue } = args
 
     if (!issue) {
@@ -213,7 +247,7 @@ const commands = {
       process.exit(1)
     }
 
-    const issueList = issues.split(',').map(i => i.trim())
+    const issueList = issues.split(',').map((i) => i.trim())
     for (const issue of issueList) {
       try {
         await moveIssueToProject(issue, project)
@@ -250,7 +284,7 @@ Commands:
 Environment:
   LINEAR_API_KEY    API key for authentication
 `)
-  }
+  },
 }
 
 async function main() {

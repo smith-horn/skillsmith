@@ -40,8 +40,4 @@ export {
   RATE_LIMIT_PRESETS,
   createRateLimiterFromPreset,
 } from './RateLimiter.js'
-export type {
-  RateLimitConfig,
-  RateLimitResult,
-  RateLimitStorage,
-} from './RateLimiter.js'
+export type { RateLimitConfig, RateLimitResult, RateLimitStorage } from './RateLimiter.js'

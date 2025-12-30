@@ -91,7 +91,6 @@ export class RawUrlSourceAdapter extends BaseSourceAdapter {
     this.timeout = config.timeout ?? 30000
   }
 
-
   /**
    * Initialize adapter - load registry if configured
    */
