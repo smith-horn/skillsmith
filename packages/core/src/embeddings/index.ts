@@ -1,6 +1,11 @@
 /**
  * SMI-584: Semantic Embeddings Service
- * Uses all-MiniLM-L6-v2 model for fast, accurate skill embeddings
+ * SMI-754: Added fallback mode for deterministic mock embeddings
+ *
+ * Uses all-MiniLM-L6-v2 model for fast, accurate skill embeddings.
+ * Supports fallback mode for tests and when model unavailable.
+ *
+ * @see ADR-009: Embedding Service Fallback Strategy
  */
 
 import { pipeline } from '@xenova/transformers'
@@ -20,18 +25,123 @@ export interface SimilarityResult {
   score: number
 }
 
+/**
+ * Options for EmbeddingService initialization
+ */
+export interface EmbeddingServiceOptions {
+  /** Path to SQLite database for caching embeddings */
+  dbPath?: string
+  /**
+   * Force fallback mode (deterministic mock embeddings).
+   * If not specified, checks SKILLSMITH_USE_MOCK_EMBEDDINGS env var,
+   * then falls back to real embeddings.
+   */
+  useFallback?: boolean
+}
+
+/**
+ * Check if fallback mode should be used based on environment
+ */
+function shouldUseFallback(explicit?: boolean): boolean {
+  if (explicit !== undefined) {
+    return explicit
+  }
+  // Check environment variable
+  const envValue = process.env.SKILLSMITH_USE_MOCK_EMBEDDINGS
+  if (envValue !== undefined) {
+    return envValue === 'true' || envValue === '1'
+  }
+  // Default to real embeddings
+  return false
+}
+
+/**
+ * Generate a deterministic hash from text for mock embeddings.
+ * Uses a simple but effective string hashing algorithm.
+ */
+function hashText(text: string): number {
+  let hash = 0
+  for (let i = 0; i < text.length; i++) {
+    const char = text.charCodeAt(i)
+    hash = (hash << 5) - hash + char
+    hash = hash & hash // Convert to 32-bit integer
+  }
+  return hash
+}
+
+/**
+ * Generate deterministic mock embedding based on text content.
+ * Produces consistent vectors for the same input text.
+ */
+function generateMockEmbedding(text: string, dimension: number): Float32Array {
+  const embedding = new Float32Array(dimension)
+  const baseHash = hashText(text)
+
+  for (let i = 0; i < dimension; i++) {
+    // Use sine wave with hash-based offset for pseudo-random but deterministic values
+    const value = Math.sin(baseHash + i * 0.1) * 0.5 + 0.5
+    embedding[i] = value
+  }
+
+  // Normalize the vector
+  let norm = 0
+  for (let i = 0; i < dimension; i++) {
+    norm += embedding[i] * embedding[i]
+  }
+  norm = Math.sqrt(norm)
+  if (norm > 0) {
+    for (let i = 0; i < dimension; i++) {
+      embedding[i] /= norm
+    }
+  }
+
+  return embedding
+}
+
 export class EmbeddingService {
   private model: FeatureExtractionPipeline | null = null
   private modelPromise: Promise<FeatureExtractionPipeline> | null = null
+  private modelLoadFailed = false
   private db: Database.Database | null = null
   private readonly modelName = 'Xenova/all-MiniLM-L6-v2'
   private readonly embeddingDim = 384
+  private readonly useFallback: boolean
 
-  constructor(dbPath?: string) {
-    if (dbPath) {
-      this.db = new Database(dbPath)
+  /**
+   * Create an EmbeddingService instance.
+   *
+   * @param optionsOrDbPath - Options object or legacy dbPath string
+   *
+   * @example
+   * // Real embeddings (default)
+   * const service = new EmbeddingService({ dbPath: './cache.db' });
+   *
+   * @example
+   * // Forced fallback mode for tests
+   * const service = new EmbeddingService({ useFallback: true });
+   *
+   * @example
+   * // Environment-controlled (set SKILLSMITH_USE_MOCK_EMBEDDINGS=true)
+   * const service = new EmbeddingService();
+   */
+  constructor(optionsOrDbPath?: string | EmbeddingServiceOptions) {
+    // Support legacy string argument for backward compatibility
+    const options: EmbeddingServiceOptions =
+      typeof optionsOrDbPath === 'string' ? { dbPath: optionsOrDbPath } : (optionsOrDbPath ?? {})
+
+    this.useFallback = shouldUseFallback(options.useFallback)
+
+    if (options.dbPath) {
+      this.db = new Database(options.dbPath)
       this.initEmbeddingTable()
     }
+  }
+
+  /**
+   * Check if service is running in fallback (mock) mode
+   */
+  isUsingFallback(): boolean {
+    return this.useFallback || this.modelLoadFailed
   }
 
   private initEmbeddingTable(): void {
@@ -53,10 +163,22 @@ export class EmbeddingService {
   }
 
   /**
-   * Lazily load the embedding model
+   * Lazily load the embedding model.
+   * Returns null if in fallback mode or if model loading fails.
    */
-  async loadModel(): Promise<FeatureExtractionPipeline> {
+  async loadModel(): Promise<FeatureExtractionPipeline | null> {
+    // Skip loading if in fallback mode
+    if (this.useFallback) {
+      return null
+    }
+
+    // Return cached model if available
     if (this.model) return this.model
+
+    // Return null if we already tried and failed
+    if (this.modelLoadFailed) {
+      return null
+    }
 
     if (!this.modelPromise) {
       this.modelPromise = pipeline('feature-extraction', this.modelName, {
@@ -64,18 +186,40 @@ export class EmbeddingService {
       }) as Promise<FeatureExtractionPipeline>
     }
 
-    this.model = await this.modelPromise
-    return this.model
+    try {
+      this.model = await this.modelPromise
+      return this.model
+    } catch (error) {
+      // Model loading failed - switch to fallback mode
+      this.modelLoadFailed = true
+      console.warn(
+        `[EmbeddingService] Failed to load model "${this.modelName}", using fallback mode:`,
+        error instanceof Error ? error.message : error
+      )
+      return null
+    }
   }
 
   /**
-   * Generate embedding for a single text
+   * Generate embedding for a single text.
+   * Uses real ONNX model when available, falls back to deterministic mock otherwise.
    */
   async embed(text: string): Promise<Float32Array> {
-    const model = await this.loadModel()
-
     // Truncate text if too long (model max is 256 tokens)
     const truncated = text.slice(0, 1000)
+
+    // Use fallback if configured or model unavailable
+    if (this.useFallback || this.modelLoadFailed) {
+      return generateMockEmbedding(truncated, this.embeddingDim)
+    }
+
+    // Try to load and use real model
+    const model = await this.loadModel()
+
+    if (!model) {
+      // Model loading failed, use fallback
+      return generateMockEmbedding(truncated, this.embeddingDim)
+    }
 
     const output = await model(truncated, {
       pooling: 'mean',
@@ -92,11 +236,24 @@ export class EmbeddingService {
   }
 
   /**
-   * Batch embed multiple texts efficiently
+   * Batch embed multiple texts efficiently.
+   * In fallback mode, processes synchronously for speed.
    */
   async embedBatch(texts: Array<{ id: string; text: string }>): Promise<EmbeddingResult[]> {
-    await this.loadModel()
     const results: EmbeddingResult[] = []
+
+    // In fallback mode, process synchronously (much faster)
+    if (this.useFallback || this.modelLoadFailed) {
+      for (const { id, text } of texts) {
+        const truncated = text.slice(0, 1000)
+        const embedding = generateMockEmbedding(truncated, this.embeddingDim)
+        results.push({ skillId: id, embedding, text })
+      }
+      return results
+    }
+
+    // Try to load model for real embeddings
+    await this.loadModel()
 
     // Process in batches of 32 for efficiency
     const batchSize = 32
@@ -253,6 +410,14 @@ export class EmbeddingService {
       this.db = null
     }
   }
+}
+
+// Export testing utilities for use in test files
+export const testUtils = {
+  /** Generate a deterministic mock embedding (for testing) */
+  generateMockEmbedding,
+  /** Generate a hash from text (for testing) */
+  hashText,
 }
 
 export default EmbeddingService
