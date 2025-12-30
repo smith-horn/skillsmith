@@ -257,7 +257,8 @@ export function validatePath(path: string, rootDir: string): void {
   }
 
   // Normalize both paths to resolve '..' and '.'
-  const normalizedPath = resolve(path)
+  // Resolve path relative to rootDir so relative paths work correctly
+  const normalizedPath = resolve(rootDir, path)
   const normalizedRoot = resolve(rootDir)
 
   // Check that normalized path is within root directory

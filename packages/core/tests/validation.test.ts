@@ -244,8 +244,9 @@ describe('validatePath', () => {
     })
 
     it('should allow ../ that stays within root', () => {
-      const subPath = join(rootDir, 'skills/my-skill')
-      expect(() => validatePath('../other-skill', subPath)).not.toThrow()
+      // Path 'skills/my-skill/../other-skill' resolves to 'skills/other-skill'
+      // which is still within rootDir
+      expect(() => validatePath('skills/my-skill/../other-skill', rootDir)).not.toThrow()
     })
   })
 
