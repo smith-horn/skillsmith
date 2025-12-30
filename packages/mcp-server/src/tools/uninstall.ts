@@ -28,6 +28,7 @@ import { z } from 'zod'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
+import type { ToolContext } from '../context.js'
 
 // Input schema
 export const uninstallInputSchema = z.object({
@@ -164,7 +165,10 @@ async function removeDirectory(dirPath: string): Promise<void> {
  *   await uninstallSkill({ skillName: 'my-skill' });
  * }
  */
-export async function uninstallSkill(input: UninstallInput): Promise<UninstallResult> {
+export async function uninstallSkill(
+  input: UninstallInput,
+  _context?: ToolContext
+): Promise<UninstallResult> {
   const { skillName, force } = input
 
   try {

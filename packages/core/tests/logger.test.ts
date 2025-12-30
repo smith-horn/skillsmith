@@ -11,7 +11,6 @@ import {
   type LogAggregator,
   type AuditEvent,
   type SecurityEvent,
-  type LogEntry,
 } from '../src/utils/logger.js'
 
 describe('Logger', () => {
@@ -20,6 +19,7 @@ describe('Logger', () => {
   let consoleInfoSpy: ReturnType<typeof vi.spyOn>
   let consoleDebugSpy: ReturnType<typeof vi.spyOn>
   let consoleLogSpy: ReturnType<typeof vi.spyOn>
+  let originalAggregator: LogAggregator
 
   beforeEach(() => {
     consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -28,21 +28,28 @@ describe('Logger', () => {
     consoleDebugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {})
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 
-    // Clear environment variables
+    // Ensure NODE_ENV is set to 'test' for proper log suppression
+    process.env.NODE_ENV = 'test'
+
+    // Clear other environment variables
     delete process.env.DEBUG
     delete process.env.LOG_FORMAT
     delete process.env.LOG_LEVEL
     delete process.env.AUDIT_LOG
 
+    // Save original aggregator before any test modifies it
+    originalAggregator = getLogAggregator()
+
     // Clear aggregator
-    const aggregator = getLogAggregator()
-    if ('clear' in aggregator) {
-      ;(aggregator as any).clear()
+    if ('clear' in originalAggregator) {
+      ;(originalAggregator as any).clear()
     }
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
+    // Restore original aggregator in case a test replaced it
+    setLogAggregator(originalAggregator)
   })
 
   describe('Basic Logging', () => {
@@ -109,9 +116,7 @@ describe('Logger', () => {
       process.env.NODE_ENV = 'development'
       const devLogger = createLogger('test')
       devLogger.warn('Warning with context', { code: 'RATE_LIMIT' })
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('{"code":"RATE_LIMIT"}')
-      )
+      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('{"code":"RATE_LIMIT"}'))
     })
   })
 
@@ -203,13 +208,7 @@ describe('Logger', () => {
     })
 
     it('should not call audit or security methods', () => {
-      const auditEvent = createAuditEvent(
-        'skill.install',
-        'user',
-        'skill-id',
-        'install',
-        'success'
-      )
+      const auditEvent = createAuditEvent('skill.install', 'user', 'skill-id', 'install', 'success')
       const securityEvent = createSecurityEvent(
         'ssrf.blocked',
         'high',
@@ -260,9 +259,7 @@ describe('Logger', () => {
 
       auditLogger.auditLog(auditEvent)
 
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[AUDIT] adapter.request')
-      )
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('[AUDIT] adapter.request'))
       expect(consoleLogSpy).toHaveBeenCalledWith(
         expect.stringContaining('GitLabAdapter -> fetch on https://gitlab.com/api = success')
       )
@@ -273,13 +270,7 @@ describe('Logger', () => {
       process.env.AUDIT_LOG = 'true'
       const jsonLogger = createLogger('test')
 
-      const auditEvent = createAuditEvent(
-        'skill.fetch',
-        'system',
-        'skill-456',
-        'fetch',
-        'success'
-      )
+      const auditEvent = createAuditEvent('skill.fetch', 'system', 'skill-456', 'fetch', 'success')
 
       jsonLogger.auditLog(auditEvent)
 
@@ -514,14 +505,9 @@ describe('Logger', () => {
 
   describe('Helper Functions', () => {
     it('createAuditEvent should create valid audit event with timestamp', () => {
-      const event = createAuditEvent(
-        'skill.install',
-        'user',
-        'skill-123',
-        'install',
-        'success',
-        { version: '1.0.0' }
-      )
+      const event = createAuditEvent('skill.install', 'user', 'skill-123', 'install', 'success', {
+        version: '1.0.0',
+      })
 
       expect(event).toMatchObject({
         eventType: 'skill.install',
@@ -556,13 +542,7 @@ describe('Logger', () => {
     })
 
     it('should create events without metadata', () => {
-      const auditEvent = createAuditEvent(
-        'cache.hit',
-        'system',
-        'cache-key',
-        'read',
-        'success'
-      )
+      const auditEvent = createAuditEvent('cache.hit', 'system', 'cache-key', 'read', 'success')
       expect(auditEvent.metadata).toBeUndefined()
 
       const securityEvent = createSecurityEvent(
@@ -581,7 +561,9 @@ describe('Logger', () => {
       logger.error('Error without context')
       const aggregator = getLogAggregator()
       const logs = aggregator.getLogs()
+      expect(logs.length).toBeGreaterThan(0)
       const lastLog = logs[logs.length - 1]
+      expect(lastLog).toBeDefined()
       expect(lastLog.context).toBeUndefined()
     })
 
@@ -589,7 +571,9 @@ describe('Logger', () => {
       logger.error('Error without error object')
       const aggregator = getLogAggregator()
       const logs = aggregator.getLogs()
+      expect(logs.length).toBeGreaterThan(0)
       const lastLog = logs[logs.length - 1]
+      expect(lastLog).toBeDefined()
       expect(lastLog.error).toBeUndefined()
     })
 
@@ -614,6 +598,8 @@ describe('Logger', () => {
 
       const aggregator = getLogAggregator()
       const auditEvents = aggregator.getAuditEvents()
+      expect(auditEvents.length).toBeGreaterThan(0)
+      expect(auditEvents[0]).toBeDefined()
       expect(auditEvents[0].metadata).toMatchObject({
         nested: { deep: { value: 'test' } },
         array: [1, 2, 3],

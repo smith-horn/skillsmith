@@ -29,6 +29,7 @@
 
 import { z } from 'zod'
 import { type MCPTrustTier as TrustTier, SkillMatcher, OverlapDetector } from '@skillsmith/core'
+import type { ToolContext } from '../context.js'
 
 /**
  * Zod schema for recommend tool input validation
@@ -273,7 +274,10 @@ const skillDatabase: SkillData[] = [
  * });
  * console.log(response.recommendations[0].reason);
  */
-export async function executeRecommend(input: RecommendInput): Promise<RecommendResponse> {
+export async function executeRecommend(
+  input: RecommendInput,
+  _context?: ToolContext
+): Promise<RecommendResponse> {
   const startTime = performance.now()
 
   // Validate input with Zod

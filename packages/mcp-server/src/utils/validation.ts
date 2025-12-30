@@ -1,0 +1,166 @@
+/**
+ * @fileoverview Shared validation utilities for MCP tools
+ * @module @skillsmith/mcp-server/utils/validation
+ * @see SMI-810: Create shared validation utility
+ *
+ * Provides common validation functions used across MCP tools:
+ * - Skill ID format validation
+ * - Skill ID parsing
+ * - Trust tier mapping between MCP and database types
+ */
+
+import type { TrustTier as DBTrustTier, MCPTrustTier, SkillCategory } from '@skillsmith/core'
+
+/**
+ * Valid skill categories for mapping
+ */
+const VALID_CATEGORIES: readonly SkillCategory[] = [
+  'development',
+  'testing',
+  'documentation',
+  'devops',
+  'database',
+  'security',
+  'productivity',
+  'integration',
+  'ai-ml',
+  'other',
+] as const
+
+/**
+ * Validate skill ID format.
+ *
+ * Accepts two formats:
+ * - Author/name format: `anthropic/commit`, `community/jest-helper`
+ * - UUID format: `550e8400-e29b-41d4-a716-446655440000`
+ *
+ * @param id - Skill ID to validate
+ * @returns True if ID matches valid format
+ *
+ * @example
+ * isValidSkillId('anthropic/commit') // true
+ * isValidSkillId('invalid-format') // false
+ */
+export function isValidSkillId(id: string): boolean {
+  // Format: author/skill-name or UUID
+  const authorSlashName = /^[a-z0-9-]+\/[a-z0-9-]+$/i
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+  return authorSlashName.test(id) || uuid.test(id)
+}
+
+/**
+ * Parse a skill ID into author and name components.
+ *
+ * @param id - Skill ID in author/name format
+ * @returns Object with author and name, or null if invalid format
+ *
+ * @example
+ * parseSkillId('anthropic/commit') // { author: 'anthropic', name: 'commit' }
+ * parseSkillId('invalid') // null
+ */
+export function parseSkillId(id: string): { author: string; name: string } | null {
+  const parts = id.split('/')
+  if (parts.length !== 2) {
+    return null
+  }
+  return { author: parts[0], name: parts[1] }
+}
+
+/**
+ * Map MCP trust tier to database trust tier.
+ *
+ * MCP types: verified, community, standard, unverified
+ * DB types: verified, community, experimental, unknown
+ *
+ * @param mcpTier - MCP trust tier
+ * @returns Database trust tier
+ */
+export function mapTrustTierToDb(mcpTier: MCPTrustTier): DBTrustTier {
+  switch (mcpTier) {
+    case 'verified':
+      return 'verified'
+    case 'community':
+      return 'community'
+    case 'standard':
+      return 'experimental'
+    case 'unverified':
+      return 'unknown'
+  }
+}
+
+/**
+ * Map database trust tier to MCP trust tier.
+ *
+ * DB types: verified, community, experimental, unknown
+ * MCP types: verified, community, standard, unverified
+ *
+ * @param dbTier - Database trust tier
+ * @returns MCP trust tier
+ */
+export function mapTrustTierFromDb(dbTier: DBTrustTier): MCPTrustTier {
+  switch (dbTier) {
+    case 'verified':
+      return 'verified'
+    case 'community':
+      return 'community'
+    case 'experimental':
+      return 'standard'
+    case 'unknown':
+      return 'unverified'
+  }
+}
+
+/**
+ * Extract skill category from tags array.
+ *
+ * Searches through tags to find the first valid category match.
+ * Handles case-insensitive matching and common aliases.
+ *
+ * @param tags - Array of skill tags
+ * @returns Valid SkillCategory, defaults to 'other' if no match
+ *
+ * @example
+ * extractCategoryFromTags(['git', 'testing', 'jest']) // 'testing'
+ * extractCategoryFromTags(['react', 'frontend']) // 'development'
+ * extractCategoryFromTags(['random', 'tags']) // 'other'
+ */
+export function extractCategoryFromTags(tags: string[] | undefined | null): SkillCategory {
+  if (!tags || tags.length === 0) {
+    return 'other'
+  }
+
+  // Normalize tags to lowercase for matching
+  const normalizedTags = tags.map((tag) => tag.toLowerCase())
+
+  // First pass: direct category match
+  for (const tag of normalizedTags) {
+    if (VALID_CATEGORIES.includes(tag as SkillCategory)) {
+      return tag as SkillCategory
+    }
+  }
+
+  // Second pass: keyword-based category inference
+  const categoryKeywords: Record<SkillCategory, string[]> = {
+    development: ['dev', 'code', 'coding', 'programming', 'frontend', 'backend', 'fullstack'],
+    testing: ['test', 'tests', 'jest', 'vitest', 'mocha', 'cypress', 'playwright', 'e2e', 'unit'],
+    documentation: ['docs', 'doc', 'readme', 'markdown', 'jsdoc', 'typedoc'],
+    devops: ['ci', 'cd', 'cicd', 'docker', 'kubernetes', 'k8s', 'deploy', 'deployment', 'infra'],
+    database: ['db', 'sql', 'postgres', 'mysql', 'mongodb', 'redis', 'sqlite'],
+    security: ['auth', 'authentication', 'authorization', 'oauth', 'jwt', 'encryption'],
+    productivity: ['workflow', 'automation', 'tools', 'utility', 'helper'],
+    integration: ['api', 'rest', 'graphql', 'webhook', 'sync'],
+    'ai-ml': ['ai', 'ml', 'machine-learning', 'llm', 'gpt', 'claude', 'openai', 'neural'],
+    other: [],
+  }
+
+  for (const tag of normalizedTags) {
+    for (const [category, keywords] of Object.entries(categoryKeywords)) {
+      if (keywords.includes(tag)) {
+        return category as SkillCategory
+      }
+    }
+  }
+
+  return 'other'
+}

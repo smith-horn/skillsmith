@@ -36,6 +36,7 @@ import { SecurityScanner, type ScanReport } from '@skillsmith/core'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
+import type { ToolContext } from '../context.js'
 
 // Input schema
 export const installInputSchema = z.object({
@@ -221,7 +222,10 @@ function generateTips(skillName: string): string[] {
  *   );
  * }
  */
-export async function installSkill(input: InstallInput): Promise<InstallResult> {
+export async function installSkill(
+  input: InstallInput,
+  _context?: ToolContext
+): Promise<InstallResult> {
   const scanner = new SecurityScanner()
 
   try {

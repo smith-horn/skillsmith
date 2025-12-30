@@ -27,6 +27,7 @@ import { z } from 'zod'
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import { SkillsmithError, ErrorCodes } from '@skillsmith/core'
+import type { ToolContext } from '../context.js'
 
 /**
  * Zod schema for validate tool input
@@ -436,7 +437,10 @@ function validateMetadata(metadata: Record<string, unknown>, strict: boolean): V
  *   console.log('Errors:', response.errors);
  * }
  */
-export async function executeValidate(input: ValidateInput): Promise<ValidateResponse> {
+export async function executeValidate(
+  input: ValidateInput,
+  _context?: ToolContext
+): Promise<ValidateResponse> {
   const startTime = performance.now()
 
   // Validate input with Zod

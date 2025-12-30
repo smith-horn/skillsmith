@@ -1,12 +1,15 @@
 /**
  * Skillsmith MCP Server
  * Provides skill discovery, installation, and management tools
+ *
+ * @see SMI-792: Database initialization with tool context
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 
+import { getToolContext, type ToolContext } from './context.js'
 import { searchToolSchema, executeSearch, type SearchInput } from './tools/search.js'
 import { getSkillToolSchema, executeGetSkill, type GetSkillInput } from './tools/get-skill.js'
 import { installTool, installSkill, installInputSchema } from './tools/install.js'
@@ -14,6 +17,9 @@ import { uninstallTool, uninstallSkill, uninstallInputSchema } from './tools/uni
 import { recommendToolSchema, recommendInputSchema, executeRecommend } from './tools/recommend.js'
 import { validateToolSchema, validateInputSchema, executeValidate } from './tools/validate.js'
 import { compareToolSchema, compareInputSchema, executeCompare } from './tools/compare.js'
+
+// Initialize tool context with database connection
+let toolContext: ToolContext
 
 // Tool definitions for MCP
 const toolDefinitions = [
@@ -58,7 +64,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     switch (name) {
       case 'search': {
         const input = (args ?? {}) as unknown as SearchInput
-        const result = await executeSearch(input)
+        const result = await executeSearch(input, toolContext)
         return {
           content: [
             {
@@ -71,7 +77,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'get_skill': {
         const input = (args ?? {}) as unknown as GetSkillInput
-        const result = await executeGetSkill(input)
+        const result = await executeGetSkill(input, toolContext)
         return {
           content: [
             {
@@ -84,7 +90,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'install_skill': {
         const input = installInputSchema.parse(args)
-        const result = await installSkill(input)
+        const result = await installSkill(input, toolContext)
         return {
           content: [
             {
@@ -97,7 +103,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'uninstall_skill': {
         const input = uninstallInputSchema.parse(args)
-        const result = await uninstallSkill(input)
+        const result = await uninstallSkill(input, toolContext)
         return {
           content: [
             {
@@ -110,7 +116,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'skill_recommend': {
         const input = recommendInputSchema.parse(args)
-        const result = await executeRecommend(input)
+        const result = await executeRecommend(input, toolContext)
         return {
           content: [
             {
@@ -123,7 +129,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'skill_validate': {
         const input = validateInputSchema.parse(args)
-        const result = await executeValidate(input)
+        const result = await executeValidate(input, toolContext)
         return {
           content: [
             {
@@ -136,7 +142,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'skill_compare': {
         const input = compareInputSchema.parse(args)
-        const result = await executeCompare(input)
+        const result = await executeCompare(input, toolContext)
         return {
           content: [
             {
@@ -165,6 +171,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Start server
 async function main() {
+  // Initialize database and services
+  toolContext = getToolContext()
+  console.error(
+    'Database initialized at:',
+    process.env.SKILLSMITH_DB_PATH || '~/.skillsmith/skills.db'
+  )
+
   const transport = new StdioServerTransport()
   await server.connect(transport)
   console.error('Skillsmith MCP server running')

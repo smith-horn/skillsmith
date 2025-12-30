@@ -34,7 +34,9 @@
     "linear:sync": "node scripts/linear-sync.mjs from-commit",
     "linear:hook": "node scripts/linear-hook.mjs post-commit",
     "linear:hook:debug": "DEBUG_LINEAR_HOOK=true node scripts/linear-hook.mjs post-commit",
-    "retro:generate": "node scripts/generate-retro.mjs"
+    "retro:generate": "node scripts/generate-retro.mjs",
+    "seed": "npx tsx scripts/seed-skills.ts",
+    "seed:clear": "npx tsx scripts/seed-skills.ts --clear --verbose"
   },
   "engines": {
     "node": ">=20.0.0"

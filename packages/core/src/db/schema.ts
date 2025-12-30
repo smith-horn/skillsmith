@@ -10,7 +10,9 @@
  */
 
 import Database from 'better-sqlite3'
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as BetterSqliteDatabase } from 'better-sqlite3'
+
+export type DatabaseType = BetterSqliteDatabase
 
 export const SCHEMA_VERSION = 1
 

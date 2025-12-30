@@ -2,6 +2,7 @@
  * @fileoverview MCP Skill Compare Tool for comparing two skills
  * @module @skillsmith/mcp-server/tools/compare
  * @see SMI-743: Add MCP Tool skill_compare
+ * @see SMI-791: Wire compare tool to SkillRepository
  *
  * Compares two skills across multiple dimensions:
  * - Quality scores
@@ -11,11 +12,11 @@
  * - Size and complexity
  *
  * @example
- * // Compare two skills
+ * // Compare two skills with context
  * const result = await executeCompare({
  *   skill_a: 'community/jest-helper',
  *   skill_b: 'community/vitest-helper'
- * });
+ * }, context);
  * console.log(result.recommendation);
  */
 
@@ -27,6 +28,8 @@ import {
   SkillsmithError,
   ErrorCodes,
 } from '@skillsmith/core'
+import type { ToolContext } from '../context.js'
+import { isValidSkillId, mapTrustTierFromDb, extractCategoryFromTags } from '../utils/validation.js'
 
 /**
  * Zod schema for compare tool input validation
@@ -130,139 +133,11 @@ export const compareToolSchema = {
 }
 
 /**
- * Mock skill database with extended metadata for comparison
+ * Extended skill type with comparison metadata
  */
-const mockSkillDatabase: Record<string, Skill & { dependencies: string[]; features: string[] }> = {
-  'anthropic/commit': {
-    id: 'anthropic/commit',
-    name: 'commit',
-    description: 'Generate semantic commit messages following conventional commits specification',
-    author: 'anthropic',
-    repository: 'https://github.com/anthropics/claude-code-skills',
-    version: '1.2.0',
-    category: 'development',
-    trustTier: 'verified',
-    score: 95,
-    scoreBreakdown: {
-      quality: 98,
-      popularity: 95,
-      maintenance: 92,
-      security: 96,
-      documentation: 94,
-    },
-    tags: ['git', 'commit', 'conventional-commits', 'automation'],
-    installCommand: 'claude skill add anthropic/commit',
-    createdAt: '2024-01-15T00:00:00Z',
-    updatedAt: '2024-12-01T00:00:00Z',
-    dependencies: [],
-    features: ['conventional-commits', 'staged-changes-analysis', 'semantic-versioning'],
-  },
-  'anthropic/review-pr': {
-    id: 'anthropic/review-pr',
-    name: 'review-pr',
-    description: 'Review pull requests with detailed code analysis and security checks',
-    author: 'anthropic',
-    repository: 'https://github.com/anthropics/claude-code-skills',
-    version: '1.1.0',
-    category: 'development',
-    trustTier: 'verified',
-    score: 93,
-    scoreBreakdown: {
-      quality: 95,
-      popularity: 92,
-      maintenance: 90,
-      security: 95,
-      documentation: 93,
-    },
-    tags: ['git', 'pull-request', 'code-review', 'quality'],
-    installCommand: 'claude skill add anthropic/review-pr',
-    createdAt: '2024-02-01T00:00:00Z',
-    updatedAt: '2024-11-15T00:00:00Z',
-    dependencies: [],
-    features: ['code-analysis', 'security-scanning', 'style-checking', 'suggestions'],
-  },
-  'community/jest-helper': {
-    id: 'community/jest-helper',
-    name: 'jest-helper',
-    description: 'Generate Jest test cases for React components with hooks support',
-    author: 'community',
-    repository: 'https://github.com/skillsmith-community/jest-helper',
-    version: '2.0.1',
-    category: 'testing',
-    trustTier: 'community',
-    score: 87,
-    scoreBreakdown: {
-      quality: 88,
-      popularity: 90,
-      maintenance: 85,
-      security: 84,
-      documentation: 88,
-    },
-    tags: ['jest', 'testing', 'react', 'unit-tests'],
-    installCommand: 'claude skill add community/jest-helper',
-    createdAt: '2024-03-10T00:00:00Z',
-    updatedAt: '2024-10-20T00:00:00Z',
-    dependencies: ['jest', 'react-testing-library'],
-    features: ['component-testing', 'hooks-testing', 'snapshot-testing', 'coverage-reports'],
-  },
-  'community/vitest-helper': {
-    id: 'community/vitest-helper',
-    name: 'vitest-helper',
-    description: 'Generate Vitest test cases with modern testing patterns and TypeScript support',
-    author: 'community',
-    repository: 'https://github.com/skillsmith-community/vitest-helper',
-    version: '1.5.0',
-    category: 'testing',
-    trustTier: 'community',
-    score: 85,
-    scoreBreakdown: {
-      quality: 86,
-      popularity: 82,
-      maintenance: 88,
-      security: 85,
-      documentation: 84,
-    },
-    tags: ['vitest', 'testing', 'typescript', 'unit-tests'],
-    installCommand: 'claude skill add community/vitest-helper',
-    createdAt: '2024-04-01T00:00:00Z',
-    updatedAt: '2024-11-01T00:00:00Z',
-    dependencies: ['vitest'],
-    features: ['typescript-support', 'esm-native', 'fast-execution', 'watch-mode'],
-  },
-  'community/docker-compose': {
-    id: 'community/docker-compose',
-    name: 'docker-compose',
-    description: 'Generate and manage Docker Compose configurations',
-    author: 'community',
-    repository: 'https://github.com/skillsmith-community/docker-compose',
-    version: '1.3.0',
-    category: 'devops',
-    trustTier: 'community',
-    score: 84,
-    scoreBreakdown: {
-      quality: 85,
-      popularity: 88,
-      maintenance: 80,
-      security: 82,
-      documentation: 85,
-    },
-    tags: ['docker', 'devops', 'containers', 'infrastructure'],
-    installCommand: 'claude skill add community/docker-compose',
-    createdAt: '2024-02-20T00:00:00Z',
-    updatedAt: '2024-09-15T00:00:00Z',
-    dependencies: ['docker'],
-    features: ['multi-service', 'networking', 'volumes', 'environment-variables'],
-  },
-}
+type ExtendedSkill = Skill & { dependencies: string[]; features: string[] }
 
-/**
- * Validate skill ID format
- */
-function isValidSkillId(id: string): boolean {
-  const authorSlashName = /^[a-z0-9-]+\/[a-z0-9-]+$/i
-  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  return authorSlashName.test(id) || uuid.test(id)
-}
+// isValidSkillId imported from ../utils/validation.js
 
 /**
  * Trust tier ranking for comparison
@@ -277,9 +152,7 @@ const TRUST_TIER_RANK: Record<TrustTier, number> = {
 /**
  * Convert skill to summary
  */
-function toSummary(
-  skill: (typeof mockSkillDatabase)[keyof typeof mockSkillDatabase]
-): SkillSummary {
+function toSummary(skill: ExtendedSkill): SkillSummary {
   return {
     id: skill.id,
     name: skill.name,
@@ -298,10 +171,7 @@ function toSummary(
 /**
  * Generate comparison differences
  */
-function generateDifferences(
-  skillA: (typeof mockSkillDatabase)[keyof typeof mockSkillDatabase],
-  skillB: (typeof mockSkillDatabase)[keyof typeof mockSkillDatabase]
-): SkillDifference[] {
+function generateDifferences(skillA: ExtendedSkill, skillB: ExtendedSkill): SkillDifference[] {
   const differences: SkillDifference[] = []
 
   // Quality score comparison
@@ -404,8 +274,8 @@ function generateDifferences(
  * Generate recommendation based on comparison
  */
 function generateRecommendation(
-  skillA: (typeof mockSkillDatabase)[keyof typeof mockSkillDatabase],
-  skillB: (typeof mockSkillDatabase)[keyof typeof mockSkillDatabase],
+  skillA: ExtendedSkill,
+  skillB: ExtendedSkill,
   differences: SkillDifference[]
 ): { recommendation: string; winner: 'a' | 'b' | 'tie' } {
   // Count wins
@@ -494,13 +364,69 @@ function generateRecommendation(
 }
 
 /**
+ * Convert database skill to extended skill format
+ *
+ * Note: Dependencies are not currently stored in the database schema.
+ * Features are inferred from tags for now.
+ */
+function dbSkillToExtended(dbSkill: {
+  id: string
+  name: string
+  description: string | null
+  author: string | null
+  repoUrl: string | null
+  qualityScore: number | null
+  trustTier: string
+  tags: string[]
+  createdAt: string
+  updatedAt: string
+}): ExtendedSkill {
+  const tags = dbSkill.tags || []
+  return {
+    id: dbSkill.id,
+    name: dbSkill.name,
+    description: dbSkill.description || '',
+    author: dbSkill.author || 'unknown',
+    repository: dbSkill.repoUrl || undefined,
+    version: undefined,
+    category: extractCategoryFromTags(tags),
+    trustTier: mapTrustTierFromDb(dbSkill.trustTier as import('@skillsmith/core').TrustTier),
+    score: Math.round((dbSkill.qualityScore ?? 0) * 100),
+    scoreBreakdown: undefined,
+    tags,
+    installCommand: 'claude skill add ' + dbSkill.id,
+    createdAt: dbSkill.createdAt,
+    updatedAt: dbSkill.updatedAt,
+    // Note: Dependencies not yet stored in database - field reserved for future use
+    dependencies: [],
+    // Use non-category tags as feature indicators
+    features: tags.filter(
+      (t) =>
+        ![
+          'development',
+          'testing',
+          'documentation',
+          'devops',
+          'database',
+          'security',
+          'productivity',
+          'integration',
+          'ai-ml',
+          'other',
+        ].includes(t.toLowerCase())
+    ),
+  }
+}
+
+/**
  * Execute skill comparison.
  *
- * Compares two skills across multiple dimensions including quality scores,
- * trust tiers, features, and dependencies. Provides a recommendation on
- * which skill is better suited for different use cases.
+ * Uses SkillRepository to fetch skills from the database and compares them
+ * across multiple dimensions including quality scores, trust tiers, features,
+ * and dependencies.
  *
  * @param input - Comparison parameters with two skill IDs
+ * @param context - Tool context with database and services
  * @returns Promise resolving to comparison response
  * @throws {SkillsmithError} When skill IDs are invalid or not found
  *
@@ -508,10 +434,13 @@ function generateRecommendation(
  * const response = await executeCompare({
  *   skill_a: 'community/jest-helper',
  *   skill_b: 'community/vitest-helper'
- * });
+ * }, context);
  * console.log(response.recommendation);
  */
-export async function executeCompare(input: CompareInput): Promise<CompareResponse> {
+export async function executeCompare(
+  input: CompareInput,
+  context: ToolContext
+): Promise<CompareResponse> {
   const startTime = performance.now()
 
   // Validate input with Zod
@@ -550,23 +479,27 @@ export async function executeCompare(input: CompareInput): Promise<CompareRespon
     )
   }
 
-  // Look up skills
-  const skillA = mockSkillDatabase[skill_a.toLowerCase()]
-  const skillB = mockSkillDatabase[skill_b.toLowerCase()]
+  // Look up skills from database
+  const dbSkillA = context.skillRepository.findById(skill_a)
+  const dbSkillB = context.skillRepository.findById(skill_b)
 
-  if (!skillA) {
+  if (!dbSkillA) {
     throw new SkillsmithError(ErrorCodes.SKILL_NOT_FOUND, `Skill "${skill_a}" not found`, {
       details: { id: skill_a },
       suggestion: 'Try searching for similar skills with the search tool',
     })
   }
 
-  if (!skillB) {
+  if (!dbSkillB) {
     throw new SkillsmithError(ErrorCodes.SKILL_NOT_FOUND, `Skill "${skill_b}" not found`, {
       details: { id: skill_b },
       suggestion: 'Try searching for similar skills with the search tool',
     })
   }
+
+  // Convert to extended format
+  const skillA = dbSkillToExtended(dbSkillA)
+  const skillB = dbSkillToExtended(dbSkillB)
 
   // Generate differences
   const differences = generateDifferences(skillA, skillB)

@@ -261,9 +261,12 @@ function createLoggerInstance(namespace?: string): Logger {
   const minLevel = process.env.LOG_LEVEL ? parseInt(process.env.LOG_LEVEL, 10) : LogLevel.WARN
 
   const shouldLog = (level: LogLevel): boolean => {
-    if (process.env.NODE_ENV === 'test' && level < LogLevel.ERROR) {
+    // In test mode, suppress WARN to keep test output clean
+    // (but don't suppress INFO/DEBUG if DEBUG is enabled, or ERROR which is always shown)
+    if (process.env.NODE_ENV === 'test' && level === LogLevel.WARN) {
       return false
     }
+    // DEBUG flag enables info and debug output
     if (level === LogLevel.DEBUG || level === LogLevel.INFO) {
       return !!process.env.DEBUG
     }

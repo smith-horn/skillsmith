@@ -185,7 +185,7 @@ describe('Get Skill Tool Integration Tests', () => {
       const count = dbContext.skillRepository.count()
 
       expect(count).toBeGreaterThan(0)
-      expect(count).toBe(6) // We seeded 6 test skills
+      expect(count).toBe(7) // We seeded 7 test skills
     })
   })
 

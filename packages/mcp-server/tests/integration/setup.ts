@@ -96,6 +96,16 @@ function seedTestSkills(repo: SkillRepository): void {
       tags: ['openapi', 'documentation', 'api', 'swagger'],
     },
     {
+      id: 'community/vitest-helper',
+      name: 'vitest-helper',
+      description: 'Generate Vitest test cases with modern testing patterns',
+      author: 'community',
+      repoUrl: 'https://github.com/skillsmith-community/vitest-helper',
+      qualityScore: 0.85,
+      trustTier: 'community' as const,
+      tags: ['vitest', 'testing', 'typescript', 'unit-tests'],
+    },
+    {
       id: 'test/typescript-helper',
       name: 'typescript-helper',
       description: 'TypeScript development utilities for type generation and refactoring',
@@ -193,7 +203,7 @@ export async function createMockInstalledSkill(
 export function createMockGitHubFetch(
   mockResponses: Record<string, { status: number; body?: string }>
 ): typeof globalThis.fetch {
-  return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+  return async (input: string | URL | Request, _init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input : input.toString()
 
     for (const [pattern, response] of Object.entries(mockResponses)) {

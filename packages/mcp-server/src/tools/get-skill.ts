@@ -2,6 +2,7 @@
  * @fileoverview MCP Get Skill Tool for retrieving detailed skill information
  * @module @skillsmith/mcp-server/tools/get-skill
  * @see {@link https://github.com/wrsmith108/skillsmith|Skillsmith Repository}
+ * @see SMI-790: Wire get-skill tool to SkillRepository
  *
  * Retrieves comprehensive details for a specific skill including:
  * - Basic metadata (name, author, version, category)
@@ -11,16 +12,17 @@
  * - Installation command
  *
  * @example
- * // Get skill by ID
- * const response = await executeGetSkill({ id: 'anthropic/commit' });
+ * // Get skill by ID with context
+ * const response = await executeGetSkill({ id: 'anthropic/commit' }, context);
  * console.log(response.skill.description);
  *
  * @example
  * // Format for terminal display
- * const response = await executeGetSkill({ id: 'community/jest-helper' });
+ * const response = await executeGetSkill({ id: 'community/jest-helper' }, context);
  * console.log(formatSkillDetails(response));
  */
 
+import { z } from 'zod'
 import {
   type MCPSkill as Skill,
   type GetSkillResponse,
@@ -29,6 +31,15 @@ import {
   SkillsmithError,
   ErrorCodes,
 } from '@skillsmith/core'
+import type { ToolContext } from '../context.js'
+import { isValidSkillId, mapTrustTierFromDb, extractCategoryFromTags } from '../utils/validation.js'
+
+/**
+ * Zod schema for get-skill input validation
+ */
+export const getSkillInputSchema = z.object({
+  id: z.string().min(1, 'Skill ID is required'),
+})
 
 /**
  * Get skill tool schema for MCP
@@ -49,82 +60,6 @@ export const getSkillToolSchema = {
 }
 
 /**
- * Mock skill database for development
- * In production, this would query the SQLite database
- */
-const mockSkillDatabase: Record<string, Skill> = {
-  'anthropic/commit': {
-    id: 'anthropic/commit',
-    name: 'commit',
-    description:
-      'Generate semantic commit messages following conventional commits specification. Analyzes staged changes and produces clear, descriptive commit messages.',
-    author: 'anthropic',
-    repository: 'https://github.com/anthropics/claude-code-skills',
-    version: '1.2.0',
-    category: 'development',
-    trustTier: 'verified',
-    score: 95,
-    scoreBreakdown: {
-      quality: 98,
-      popularity: 95,
-      maintenance: 92,
-      security: 96,
-      documentation: 94,
-    },
-    tags: ['git', 'commit', 'conventional-commits', 'automation'],
-    installCommand: 'claude skill add anthropic/commit',
-    createdAt: '2024-01-15T00:00:00Z',
-    updatedAt: '2024-12-01T00:00:00Z',
-  },
-  'anthropic/review-pr': {
-    id: 'anthropic/review-pr',
-    name: 'review-pr',
-    description:
-      'Comprehensive pull request review with code analysis, security checks, and improvement suggestions. Provides actionable feedback for better code quality.',
-    author: 'anthropic',
-    repository: 'https://github.com/anthropics/claude-code-skills',
-    version: '1.1.0',
-    category: 'development',
-    trustTier: 'verified',
-    score: 93,
-    scoreBreakdown: {
-      quality: 95,
-      popularity: 92,
-      maintenance: 90,
-      security: 95,
-      documentation: 93,
-    },
-    tags: ['git', 'pull-request', 'code-review', 'quality'],
-    installCommand: 'claude skill add anthropic/review-pr',
-    createdAt: '2024-02-01T00:00:00Z',
-    updatedAt: '2024-11-15T00:00:00Z',
-  },
-  'community/jest-helper': {
-    id: 'community/jest-helper',
-    name: 'jest-helper',
-    description:
-      'Generate Jest test cases for React components with comprehensive coverage. Supports testing hooks, async operations, and component interactions.',
-    author: 'community',
-    repository: 'https://github.com/skillsmith-community/jest-helper',
-    version: '2.0.1',
-    category: 'testing',
-    trustTier: 'community',
-    score: 87,
-    scoreBreakdown: {
-      quality: 88,
-      popularity: 90,
-      maintenance: 85,
-      security: 84,
-      documentation: 88,
-    },
-    tags: ['jest', 'testing', 'react', 'unit-tests'],
-    installCommand: 'claude skill add community/jest-helper',
-    createdAt: '2024-03-10T00:00:00Z',
-    updatedAt: '2024-10-20T00:00:00Z',
-  },
-}
-
-/**
  * Input parameters for the get skill operation
  * @interface GetSkillInput
  */
@@ -133,32 +68,15 @@ export interface GetSkillInput {
   id: string
 }
 
-/**
- * Validate skill ID format.
- *
- * Accepts two formats:
- * - Author/name format: `anthropic/commit`, `community/jest-helper`
- * - UUID format: `550e8400-e29b-41d4-a716-446655440000`
- *
- * @param id - Skill ID to validate
- * @returns True if ID matches valid format
- * @internal
- */
-function isValidSkillId(id: string): boolean {
-  // Format: author/skill-name or UUID
-  const authorSlashName = /^[a-z0-9-]+\/[a-z0-9-]+$/i
-  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-  return authorSlashName.test(id) || uuid.test(id)
-}
+// isValidSkillId imported from ../utils/validation.js
 
 /**
  * Retrieve full details for a specific skill by ID.
  *
- * Fetches comprehensive skill information including metadata, quality scores,
- * trust tier, repository link, and installation command.
+ * Uses SkillRepository to fetch skill from the SQLite database.
  *
  * @param input - Input containing the skill ID to retrieve
+ * @param context - Tool context with database and services
  * @returns Promise resolving to skill details and install command
  * @throws {SkillsmithError} VALIDATION_REQUIRED_FIELD - When ID is empty
  * @throws {SkillsmithError} SKILL_INVALID_ID - When ID format is invalid
@@ -166,21 +84,24 @@ function isValidSkillId(id: string): boolean {
  *
  * @example
  * // Get a verified skill
- * const response = await executeGetSkill({ id: 'anthropic/commit' });
+ * const response = await executeGetSkill({ id: 'anthropic/commit' }, context);
  * console.log(response.skill.score); // 95
  * console.log(response.installCommand); // 'claude skill add anthropic/commit'
  *
  * @example
  * // Handle not found
  * try {
- *   await executeGetSkill({ id: 'unknown/skill' });
+ *   await executeGetSkill({ id: 'unknown/skill' }, context);
  * } catch (error) {
  *   if (error.code === 'SKILL_NOT_FOUND') {
  *     console.log(error.suggestion); // 'Try searching for similar skills...'
  *   }
  * }
  */
-export async function executeGetSkill(input: GetSkillInput): Promise<GetSkillResponse> {
+export async function executeGetSkill(
+  input: GetSkillInput,
+  context: ToolContext
+): Promise<GetSkillResponse> {
   const startTime = performance.now()
 
   // Validate input
@@ -190,7 +111,7 @@ export async function executeGetSkill(input: GetSkillInput): Promise<GetSkillRes
     })
   }
 
-  const skillId = input.id.trim().toLowerCase()
+  const skillId = input.id.trim()
 
   // Validate ID format
   if (!isValidSkillId(skillId)) {
@@ -205,14 +126,32 @@ export async function executeGetSkill(input: GetSkillInput): Promise<GetSkillRes
     )
   }
 
-  // Look up skill
-  const skill = mockSkillDatabase[skillId]
+  // Look up skill from database using SkillRepository
+  const dbSkill = context.skillRepository.findById(skillId)
 
-  if (!skill) {
+  if (!dbSkill) {
     throw new SkillsmithError(ErrorCodes.SKILL_NOT_FOUND, 'Skill "' + input.id + '" not found', {
       details: { id: input.id },
       suggestion: 'Try searching for similar skills with the search tool',
     })
+  }
+
+  // Convert database skill to MCP skill format
+  const skill: Skill = {
+    id: dbSkill.id,
+    name: dbSkill.name,
+    description: dbSkill.description || '',
+    author: dbSkill.author || 'unknown',
+    repository: dbSkill.repoUrl || undefined,
+    version: undefined, // Version not stored in current schema
+    category: extractCategoryFromTags(dbSkill.tags),
+    trustTier: mapTrustTierFromDb(dbSkill.trustTier as import('@skillsmith/core').TrustTier),
+    score: Math.round((dbSkill.qualityScore ?? 0) * 100),
+    scoreBreakdown: undefined, // Breakdown not stored in current schema
+    tags: dbSkill.tags || [],
+    installCommand: 'claude skill add ' + dbSkill.id,
+    createdAt: dbSkill.createdAt,
+    updatedAt: dbSkill.updatedAt,
   }
 
   const endTime = performance.now()

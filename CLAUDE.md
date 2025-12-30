@@ -4,6 +4,40 @@
 
 Skillsmith is an MCP server for Claude Code skill discovery, installation, and management. It helps users find, evaluate, and install skills for their Claude Code environment.
 
+## Quick Start for Users
+
+### Configure Skillsmith MCP Server
+
+Add to `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"]
+    }
+  }
+}
+```
+
+### Using Skillsmith in Claude Code
+
+Once configured, you can ask Claude:
+
+```
+"Search for testing skills"
+"Find verified skills for git workflows"
+"Show details for community/jest-helper"
+"Compare jest-helper and vitest-helper"
+"Install the commit skill"
+"Recommend skills for my React project"
+```
+
+---
+
+## Developer Guide
+
 ## IMPORTANT: Docker-First Development
 
 **All code execution MUST happen in Docker.** This ensures consistent environments and avoids native module issues.
@@ -97,12 +131,39 @@ docker exec skillsmith-dev-1 npm rebuild
 
 ## MCP Tools Provided
 
-| Tool | Description |
+| Tool | Description | Example |
+|------|-------------|---------|
+| `search` | Search for skills with filters | `"Find testing skills"` |
+| `get_skill` | Get detailed skill information | `"Get details for community/jest-helper"` |
+| `install_skill` | Install a skill to ~/.claude/skills | `"Install jest-helper"` |
+| `uninstall_skill` | Remove an installed skill | `"Uninstall jest-helper"` |
+| `recommend` | Get contextual skill recommendations | `"Recommend skills for React"` |
+| `validate` | Validate a skill's structure | `"Validate the commit skill"` |
+| `compare` | Compare skills side-by-side | `"Compare jest-helper and vitest-helper"` |
+
+### Tool Parameters
+
+**search**
+- `query` (required): Search term (min 2 characters)
+- `category`: Filter by category (development, testing, devops, etc.)
+- `trust_tier`: Filter by trust level (verified, community, experimental)
+- `min_score`: Minimum quality score (0-100)
+- `limit`: Max results (default 10)
+
+**get_skill**
+- `id` (required): Skill ID in format `author/name`
+
+**compare**
+- `skill_ids` (required): Array of skill IDs to compare (2-5 skills)
+
+### Trust Tiers
+
+| Tier | Description |
 |------|-------------|
-| `search` | Search for skills with filters |
-| `get_skill` | Get detailed skill information |
-| `install_skill` | Install a skill to ~/.claude/skills |
-| `uninstall_skill` | Remove an installed skill |
+| `verified` | Official Anthropic skills |
+| `community` | Community-reviewed skills |
+| `experimental` | New/beta skills |
+| `unknown` | Unverified skills |
 
 ## Code Style
 
@@ -167,8 +228,7 @@ Manages git worktrees for parallel development with conflict prevention.
 **Quick Start**:
 
 ```bash
-# Create worktree from main repository
-cd /Users/williamsmith/Documents/GitHub/Claude-Skill-Discovery/skillsmith
+# Create worktree from main repository (run from project root)
 git worktree add ../worktrees/feature-name -b feature/feature-name
 ```
 
@@ -243,8 +303,15 @@ Project: Skillsmith (SMI-xxx issues)
 
 - Phase 0: Validation - COMPLETED ([Retro](docs/retros/phase-0-validation.md))
 - Phase 1: Foundation - COMPLETED
-- Phase 2: Recommendations - IN PROGRESS
+- Phase 2a: GitHub Indexing - COMPLETED
+- Phase 2b: TDD Security - COMPLETED
 - Phase 2c: Performance & Polish - COMPLETED
+- Phase 2d: Security Hardening - COMPLETED
+- Phase 2e: Code Review Fixes - COMPLETED
+- Phase 2f: Batched Execution - COMPLETED
+- Phase 3a: MCP Tool Wiring - COMPLETED
+- Phase 3b: Data Import & Testing - COMPLETED
+- Phase 3c: Documentation - COMPLETED
 
 ### Key Issues
 

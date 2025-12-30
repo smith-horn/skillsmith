@@ -6,7 +6,7 @@ Skillsmith is a skill discovery, recommendation, and learning system for [Claude
 
 ## Status
 
-**Phase 2c: In Progress** - Tiered caching, GitHub webhooks, and performance optimization.
+**Phase 3: Live Data** - GitHub integration, E2E testing, and performance validation.
 
 | Phase | Status | Description |
 |-------|--------|-------------|
@@ -14,74 +14,119 @@ Skillsmith is a skill discovery, recommendation, and learning system for [Claude
 | Phase 1 | ✅ Complete | CI/CD, testing infrastructure, code quality |
 | Phase 2a | ✅ Complete | GitHub indexing, skill parsing |
 | Phase 2b | ✅ Complete | TDD security fixes, vector embeddings |
-| Phase 2c | 🚧 In Progress | Tiered cache, webhooks, performance |
+| Phase 2c | ✅ Complete | Tiered cache, webhooks, performance |
+| Phase 2d | ✅ Complete | Security hardening, rate limiting |
+| Phase 2e | ✅ Complete | Code review fixes, logging patterns |
+| Phase 2f | ✅ Complete | Batched execution, swarm coordination |
+| Phase 3a | ✅ Complete | MCP tool wiring, core infrastructure |
+| Phase 3b | ✅ Complete | Seed data, E2E tests, performance validation |
+| Phase 3c | ✅ Complete | Documentation updates |
 
-## Features (Planned)
+## Features
 
-- **Discover** - Search 50,000+ skills from GitHub, SkillsMP, and other sources
-- **Recommend** - Get personalized skill suggestions based on your codebase
-- **Install** - One-command installation with security scanning
-- **Learn** - Guided learning paths for new skills
-- **Trust** - Quality scores and trust tiers to find reliable skills
+- **Discover** - Search skills from GitHub with semantic search
+- **Recommend** - Get personalized skill suggestions based on context
+- **Install** - One-command installation to `~/.claude/skills/`
+- **Validate** - Quality scores and structure validation
+- **Trust** - Verified, community, and experimental trust tiers
+- **Compare** - Side-by-side skill comparison
+
+### MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `search` | Search skills with filters (query, category, trust tier, min score) |
+| `get_skill` | Get detailed skill information including install command |
+| `install_skill` | Install a skill to your Claude Code environment |
+| `uninstall_skill` | Remove an installed skill |
+| `recommend` | Get contextual skill recommendations |
+| `validate` | Validate a skill's structure and quality |
+| `compare` | Compare multiple skills side-by-side |
 
 ## Architecture
 
-Skillsmith is built as a set of MCP (Model Context Protocol) servers that integrate directly with Claude Code:
+Skillsmith uses the Model Context Protocol (MCP) to integrate with Claude Code:
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Claude Code                                         │
 │  ┌─────────────────────────────────────────────────┐│
-│  │  Skillsmith MCP Servers                         ││
-│  │  ├── discovery-core (search, install, audit)   ││
-│  │  ├── learning (paths, exercises, progress)     ││
-│  │  └── sync (index refresh, health)              ││
+│  │  Skillsmith MCP Server                          ││
+│  │  └── @skillsmith/mcp-server                     ││
+│  │      ├── search, get_skill, compare             ││
+│  │      ├── install_skill, uninstall_skill         ││
+│  │      └── recommend, validate                    ││
 │  └─────────────────────────────────────────────────┘│
 │                          │                           │
 │                          ▼                           │
 │  ┌─────────────────────────────────────────────────┐│
-│  │  ~/.skillsmith/                                 ││
-│  │  ├── index/skills.db (SQLite + FTS5)           ││
-│  │  ├── user/profile.json                         ││
-│  │  └── config/settings.json                      ││
+│  │  ~/.skillsmith/skills.db (SQLite + FTS5)        ││
+│  │  ~/.claude/skills/ (installed skills)           ││
 │  └─────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────┘
 ```
 
-## Installation (Coming Soon)
+## Installation
+
+### Configure with Claude Code
+
+Add to your Claude Code MCP settings (`~/.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"]
+    }
+  }
+}
+```
+
+### CLI Installation (Development)
+
+The CLI is available for local development:
 
 ```bash
-npm install -g skillsmith
-skillsmith register
+# From the repository root
+npm run build
+node packages/cli/dist/index.js search "testing"
 ```
 
-## Usage (Coming Soon)
+## Usage
 
-Once installed, Skillsmith tools are available directly in Claude Code:
+Once configured, Claude Code can use Skillsmith tools:
 
 ```
-# Search for skills
-"Find skills for React testing"
+"Search for testing skills"
+→ Uses search tool to find testing-related skills
 
-# Get recommendations for your project
-"What skills would help with this codebase?"
+"Show me details for community/jest-helper"
+→ Uses get_skill tool to retrieve full skill information
 
-# Install a skill
 "Install the jest-helper skill"
+→ Uses install_skill tool to add it to ~/.claude/skills
 
-# Audit activation issues
-"Why isn't my commit skill working?"
+"Compare jest-helper and vitest-helper"
+→ Uses compare tool to show side-by-side comparison
+```
+
+### CLI Usage (Development)
+
+```bash
+# From the repository, after building
+node packages/cli/dist/index.js search "testing" --tier verified --min-score 80
+node packages/cli/dist/index.js get community/jest-helper
+node packages/cli/dist/index.js install community/jest-helper
 ```
 
 ## Documentation
 
-Detailed documentation is available in the `/docs` folder:
-
-- [Architecture](/docs/architecture/) - System design and technical decisions
-  - [Engineering Standards](/docs/architecture/standards.md) - Code quality policies
-  - [Phase 2 Implementation](/docs/architecture/phase-2-implementation.md) - Current work
-- [ADRs](/docs/adr/) - Architecture Decision Records
-- [Retrospectives](/docs/retros/) - Phase learnings and improvements
+- [Getting Started](docs/GETTING_STARTED.md) - Complete setup and usage guide
+- [Engineering Standards](docs/architecture/standards.md) - Code quality policies
+- [ADR Index](docs/adr/index.md) - Architecture Decision Records
+- [Security Checklist](docs/security/checklists/code-review.md) - Security review guidelines
+- [Phase Retrospectives](docs/retros/) - Phase learnings and improvements
 
 ## Development
 
@@ -97,7 +142,7 @@ Skillsmith uses **Docker-first development**. All commands run inside Docker to 
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-org/skillsmith.git
+git clone https://github.com/Smith-Horn-Group/skillsmith.git
 cd skillsmith
 
 # 2. Start the development container
@@ -194,7 +239,7 @@ See [CLAUDE.md](CLAUDE.md) for full development workflow and skill configuration
 
 ## Tech Stack
 
-- **Runtime**: Node.js 18+ (Docker with glibc)
+- **Runtime**: Node.js 20+ (Docker with glibc)
 - **Protocol**: MCP (Model Context Protocol)
 - **Database**: SQLite with FTS5
 - **Embeddings**: all-MiniLM-L6-v2 via onnxruntime-node

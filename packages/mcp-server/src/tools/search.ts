@@ -2,6 +2,7 @@
  * @fileoverview MCP Search Tool for Claude Code skill discovery
  * @module @skillsmith/mcp-server/tools/search
  * @see {@link https://github.com/wrsmith108/skillsmith|Skillsmith Repository}
+ * @see SMI-789: Wire search tool to SearchService
  *
  * Provides skill search functionality with support for:
  * - Full-text search across skill names, descriptions, and authors
@@ -10,8 +11,8 @@
  * - Minimum quality score filtering
  *
  * @example
- * // Basic search
- * const results = await executeSearch({ query: 'commit' });
+ * // Basic search with context
+ * const results = await executeSearch({ query: 'commit' }, context);
  *
  * @example
  * // Search with filters
@@ -20,7 +21,7 @@
  *   category: 'testing',
  *   trust_tier: 'verified',
  *   min_score: 80
- * });
+ * }, context);
  */
 
 import {
@@ -29,9 +30,46 @@ import {
   type MCPSearchResponse as SearchResponse,
   type SkillCategory,
   type MCPTrustTier as TrustTier,
+  type TrustTier as DBTrustTier,
   SkillsmithError,
   ErrorCodes,
 } from '@skillsmith/core'
+import type { ToolContext } from '../context.js'
+import { extractCategoryFromTags } from '../utils/validation.js'
+
+/**
+ * Map MCP trust tier to database trust tier
+ * MCP: verified, community, standard, unverified
+ * DB:  verified, community, experimental, unknown
+ */
+function mapTrustTierToDb(mcpTier: TrustTier): DBTrustTier {
+  switch (mcpTier) {
+    case 'verified':
+      return 'verified'
+    case 'community':
+      return 'community'
+    case 'standard':
+      return 'experimental'
+    case 'unverified':
+      return 'unknown'
+  }
+}
+
+/**
+ * Map database trust tier to MCP trust tier
+ */
+function mapTrustTierFromDb(dbTier: DBTrustTier): TrustTier {
+  switch (dbTier) {
+    case 'verified':
+      return 'verified'
+    case 'community':
+      return 'community'
+    case 'experimental':
+      return 'standard'
+    case 'unknown':
+      return 'unverified'
+  }
+}
 
 /**
  * Search tool schema for MCP
@@ -79,58 +117,6 @@ export const searchToolSchema = {
 }
 
 /**
- * Mock skill data for development
- * In production, this would query the SQLite database
- */
-const mockSkills: SkillSearchResult[] = [
-  {
-    id: 'anthropic/commit',
-    name: 'commit',
-    description: 'Generate semantic commit messages following conventional commits',
-    author: 'anthropic',
-    category: 'development',
-    trustTier: 'verified',
-    score: 95,
-  },
-  {
-    id: 'anthropic/review-pr',
-    name: 'review-pr',
-    description: 'Review pull requests with detailed code analysis',
-    author: 'anthropic',
-    category: 'development',
-    trustTier: 'verified',
-    score: 93,
-  },
-  {
-    id: 'community/jest-helper',
-    name: 'jest-helper',
-    description: 'Generate Jest test cases for React components',
-    author: 'community',
-    category: 'testing',
-    trustTier: 'community',
-    score: 87,
-  },
-  {
-    id: 'community/docker-compose',
-    name: 'docker-compose',
-    description: 'Generate and manage Docker Compose configurations',
-    author: 'community',
-    category: 'devops',
-    trustTier: 'community',
-    score: 84,
-  },
-  {
-    id: 'community/api-docs',
-    name: 'api-docs',
-    description: 'Generate OpenAPI documentation from code',
-    author: 'community',
-    category: 'documentation',
-    trustTier: 'standard',
-    score: 78,
-  },
-]
-
-/**
  * Input parameters for the search operation
  * @interface SearchInput
  */
@@ -148,17 +134,18 @@ export interface SearchInput {
 /**
  * Execute a search for Claude Code skills with optional filters.
  *
- * Searches across skill names, descriptions, and authors. Results are
- * sorted by quality score (descending) and limited to top 10.
+ * Uses SearchService with FTS5/BM25 ranking for relevance-based results.
+ * Results are sorted by BM25 rank and limited to specified count.
  *
  * @param input - Search parameters including query and optional filters
+ * @param context - Tool context with database and services
  * @returns Promise resolving to search response with results and timing
  * @throws {SkillsmithError} When query is empty or less than 2 characters
  * @throws {SkillsmithError} When min_score is outside 0-100 range
  *
  * @example
  * // Search for commit-related skills
- * const response = await executeSearch({ query: 'commit' });
+ * const response = await executeSearch({ query: 'commit' }, context);
  * console.log(`Found ${response.total} skills in ${response.timing.totalMs}ms`);
  *
  * @example
@@ -167,9 +154,12 @@ export interface SearchInput {
  *   query: 'react',
  *   category: 'testing',
  *   min_score: 85
- * });
+ * }, context);
  */
-export async function executeSearch(input: SearchInput): Promise<SearchResponse> {
+export async function executeSearch(
+  input: SearchInput,
+  context: ToolContext
+): Promise<SearchResponse> {
   const startTime = performance.now()
 
   // Validate query
@@ -180,7 +170,6 @@ export async function executeSearch(input: SearchInput): Promise<SearchResponse>
     )
   }
 
-  const query = input.query.toLowerCase().trim()
   const filters: SearchFilters = {}
 
   // Apply category filter
@@ -193,7 +182,7 @@ export async function executeSearch(input: SearchInput): Promise<SearchResponse>
     filters.trustTier = input.trust_tier as TrustTier
   }
 
-  // Apply minimum score filter
+  // Apply minimum score filter (convert 0-100 to 0-1 for database)
   if (input.min_score !== undefined) {
     if (input.min_score < 0 || input.min_score > 100) {
       throw new SkillsmithError(
@@ -202,51 +191,42 @@ export async function executeSearch(input: SearchInput): Promise<SearchResponse>
         { details: { min_score: input.min_score } }
       )
     }
-    filters.minScore = input.min_score
+    filters.minScore = input.min_score / 100 // Convert to 0-1 scale for DB
   }
 
   const searchStart = performance.now()
 
-  // Filter and score results
-  let results = mockSkills.filter((skill) => {
-    // Text match
-    const matchesQuery =
-      skill.name.toLowerCase().includes(query) ||
-      skill.description.toLowerCase().includes(query) ||
-      skill.author.toLowerCase().includes(query)
+  // Map MCP trust tier to DB trust tier if provided
+  const dbTrustTier = filters.trustTier ? mapTrustTierToDb(filters.trustTier) : undefined
 
-    if (!matchesQuery) return false
-
-    // Category filter
-    if (filters.category && skill.category !== filters.category) {
-      return false
-    }
-
-    // Trust tier filter
-    if (filters.trustTier && skill.trustTier !== filters.trustTier) {
-      return false
-    }
-
-    // Minimum score filter
-    if (filters.minScore !== undefined && skill.score < filters.minScore) {
-      return false
-    }
-
-    return true
+  // Use SearchService for FTS5 search with BM25 ranking
+  const searchResults = context.searchService.search({
+    query: input.query.trim(),
+    limit: 10,
+    offset: 0,
+    trustTier: dbTrustTier,
+    minQualityScore: filters.minScore,
+    category: filters.category,
   })
 
-  // Sort by score (descending)
-  results = results.sort((a, b) => b.score - a.score)
-
-  // Limit to top 10
-  results = results.slice(0, 10)
-
   const searchEnd = performance.now()
+
+  // Convert SearchResult to SkillSearchResult format
+  const results: SkillSearchResult[] = searchResults.items.map((item) => ({
+    id: item.skill.id,
+    name: item.skill.name,
+    description: item.skill.description || '',
+    author: item.skill.author || 'unknown',
+    category: extractCategoryFromTags(item.skill.tags),
+    trustTier: mapTrustTierFromDb(item.skill.trustTier),
+    score: Math.round((item.skill.qualityScore ?? 0) * 100), // Convert 0-1 to 0-100
+  }))
+
   const endTime = performance.now()
 
   return {
     results,
-    total: results.length,
+    total: searchResults.total,
     query: input.query,
     filters,
     timing: {

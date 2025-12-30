@@ -14,6 +14,7 @@ export {
   getSchemaVersion,
   runMigrations,
 } from './db/schema.js'
+export type { DatabaseType } from './db/schema.js'
 
 // Repositories (SMI-578, SMI-628)
 export { SkillRepository } from './repositories/SkillRepository.js'

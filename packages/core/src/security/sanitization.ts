@@ -127,20 +127,19 @@ export function sanitizeFileName(name: string, maxLength = DEFAULT_MAX_LENGTH): 
   // Remove path separators
   sanitized = sanitized.replace(/[/\\]/g, '')
 
-  // Remove parent directory references
-  sanitized = sanitized.replace(/\.\./g, '')
-
   // Remove leading dots (hidden files)
   sanitized = sanitized.replace(/^\.+/, '')
 
   // Remove control characters (0x00-0x1f, 0x7f)
+  // eslint-disable-next-line no-control-regex -- Intentional security check
   sanitized = sanitized.replace(/[\x00-\x1f\x7f]/g, '')
 
   // Remove special characters that are invalid in file names
   // Keep: alphanumeric, hyphen, underscore, dot, space
   sanitized = sanitized.replace(/[^a-zA-Z0-9._\-\s]/g, '')
 
-  // Remove multiple consecutive dots (can be used for obfuscation)
+  // Collapse multiple consecutive dots to single dot (BEFORE parent dir check)
+  // This handles cases like 'file....txt' -> 'file.txt'
   sanitized = sanitized.replace(/\.{2,}/g, '.')
 
   // Remove multiple consecutive spaces
@@ -244,29 +243,52 @@ export function sanitizePath(
   const isAbsolute = sanitized.startsWith('/')
   sanitized = sanitized.replace(/^\/+/, '')
 
-  // Split into segments and filter dangerous ones
-  const segments = sanitized
-    .split('/')
-    .filter((segment) => {
-      // Remove empty segments
-      if (!segment || segment === '.') return false
+  // Check for leading parent directory references - reject these paths entirely
+  // This catches '../../../etc/passwd' and './../file' type attacks
+  if (/^\.?\/?\.\./.test(sanitized)) {
+    logger.warn('Path traversal attempt detected', { path })
+    return ''
+  }
 
-      // Block parent directory references
-      if (segment === '..') {
+  // Split into segments and process them
+  // Track depth and traversal count to detect escape attempts
+  // '..' segments are filtered out (security measure), but if there are more
+  // '..' than valid segments, we stop processing (escape attempt)
+  const rawSegments = sanitized.split('/')
+  const segments: string[] = []
+  let depth = 0
+  let traversalCount = 0
+
+  for (const segment of rawSegments) {
+    // Remove empty segments and '.'
+    if (!segment || segment === '.') continue
+
+    // Handle parent directory references
+    if (segment === '..') {
+      traversalCount++
+      if (traversalCount > depth) {
+        // Would escape - stop processing and return what we have
         logger.warn('Path traversal attempt detected', { path, segment })
-        return false
+        break
       }
+      // Just filter out '..' (don't resolve it, just remove it for security)
+      continue
+    }
 
-      // Block segments with control characters
-      if (/[\x00-\x1f\x7f]/.test(segment)) {
-        logger.warn('Control characters in path segment', { path, segment })
-        return false
-      }
+    // Block segments with control characters
+    // eslint-disable-next-line no-control-regex -- Intentional security check
+    if (/[\x00-\x1f\x7f]/.test(segment)) {
+      logger.warn('Control characters in path segment', { path, segment })
+      continue
+    }
 
-      return true
-    })
-    .map((segment) => sanitizeFileName(segment))
-    .filter((segment) => segment.length > 0)
+    // Sanitize and add segment
+    const sanitizedSegment = sanitizeFileName(segment)
+    if (sanitizedSegment.length > 0) {
+      segments.push(sanitizedSegment)
+      depth++
+    }
+  }
 
   // Rebuild path
   sanitized = segments.join('/')
@@ -335,6 +357,7 @@ export function sanitizeUrl(url: string, maxLength = DEFAULT_MAX_LENGTH): string
   }
 
   // Trim whitespace and control characters
+  // eslint-disable-next-line no-control-regex -- Intentional security check
   const trimmed = url.trim().replace(/[\x00-\x1f\x7f]/g, '')
 
   if (trimmed.length === 0) {
@@ -405,6 +428,7 @@ export function sanitizeText(input: string, maxLength = DEFAULT_MAX_LENGTH): str
   let sanitized = input
 
   // Remove control characters except newline and tab
+  // eslint-disable-next-line no-control-regex -- Intentional security check
   sanitized = sanitized.replace(/[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]/g, '')
 
   // Remove zero-width characters

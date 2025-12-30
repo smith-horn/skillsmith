@@ -1,0 +1,156 @@
+{
+  "description": "Seed skills for testing the Skillsmith MCP server",
+  "version": "1.0.0",
+  "skills": [
+    {
+      "id": "anthropic/commit",
+      "name": "commit",
+      "description": "Generate semantic commit messages following conventional commits. Analyzes staged changes and creates meaningful commit messages with proper type prefixes.",
+      "author": "anthropic",
+      "repoUrl": "https://github.com/anthropics/claude-code/tree/main/skills/commit",
+      "qualityScore": 0.95,
+      "trustTier": "verified",
+      "tags": ["development", "git", "commit", "conventional-commits", "version-control"]
+    },
+    {
+      "id": "anthropic/review-pr",
+      "name": "review-pr",
+      "description": "Review pull requests with detailed code analysis. Provides comprehensive feedback on code quality, security, and best practices.",
+      "author": "anthropic",
+      "repoUrl": "https://github.com/anthropics/claude-code/tree/main/skills/review-pr",
+      "qualityScore": 0.93,
+      "trustTier": "verified",
+      "tags": ["development", "git", "code-review", "pull-request", "quality"]
+    },
+    {
+      "id": "anthropic/create-pr",
+      "name": "create-pr",
+      "description": "Create well-documented pull requests with summaries. Automatically generates PR descriptions from commit history.",
+      "author": "anthropic",
+      "repoUrl": "https://github.com/anthropics/claude-code/tree/main/skills/create-pr",
+      "qualityScore": 0.92,
+      "trustTier": "verified",
+      "tags": ["development", "git", "pull-request", "documentation"]
+    },
+    {
+      "id": "community/jest-helper",
+      "name": "jest-helper",
+      "description": "Generate Jest test cases for React components and TypeScript functions. Supports mocking, snapshot testing, and coverage analysis.",
+      "author": "community",
+      "repoUrl": "https://github.com/skillsmith-community/jest-helper",
+      "qualityScore": 0.87,
+      "trustTier": "community",
+      "tags": ["testing", "jest", "react", "typescript", "unit-tests"]
+    },
+    {
+      "id": "community/vitest-helper",
+      "name": "vitest-helper",
+      "description": "Generate Vitest test cases with modern ESM support. Includes component testing, mocking utilities, and coverage configuration.",
+      "author": "community",
+      "repoUrl": "https://github.com/skillsmith-community/vitest-helper",
+      "qualityScore": 0.85,
+      "trustTier": "community",
+      "tags": ["testing", "vitest", "esm", "typescript", "unit-tests"]
+    },
+    {
+      "id": "community/docker-compose",
+      "name": "docker-compose",
+      "description": "Generate and manage Docker Compose configurations. Supports multi-service setups, networking, and volume management.",
+      "author": "community",
+      "repoUrl": "https://github.com/skillsmith-community/docker-compose",
+      "qualityScore": 0.84,
+      "trustTier": "community",
+      "tags": ["devops", "docker", "containers", "infrastructure", "deployment"]
+    },
+    {
+      "id": "community/prisma-generator",
+      "name": "prisma-generator",
+      "description": "Generate Prisma schemas and migrations from existing databases or requirements. Includes type-safe client generation.",
+      "author": "community",
+      "repoUrl": "https://github.com/skillsmith-community/prisma-generator",
+      "qualityScore": 0.82,
+      "trustTier": "community",
+      "tags": ["database", "prisma", "orm", "typescript", "migrations"]
+    },
+    {
+      "id": "community/api-docs",
+      "name": "api-docs",
+      "description": "Generate OpenAPI/Swagger documentation from code comments and TypeScript types. Supports REST and GraphQL APIs.",
+      "author": "community",
+      "repoUrl": "https://github.com/skillsmith-community/api-docs",
+      "qualityScore": 0.8,
+      "trustTier": "community",
+      "tags": ["documentation", "openapi", "swagger", "api", "rest"]
+    },
+    {
+      "id": "community/security-scan",
+      "name": "security-scan",
+      "description": "Scan code for security vulnerabilities and provide remediation suggestions. Detects OWASP Top 10 issues.",
+      "author": "community",
+      "repoUrl": "https://github.com/skillsmith-community/security-scan",
+      "qualityScore": 0.88,
+      "trustTier": "community",
+      "tags": ["security", "vulnerability", "owasp", "audit", "scanning"]
+    },
+    {
+      "id": "community/workflow-builder",
+      "name": "workflow-builder",
+      "description": "Create GitHub Actions workflows with best practices. Supports CI/CD, testing, and deployment pipelines.",
+      "author": "community",
+      "repoUrl": "https://github.com/skillsmith-community/workflow-builder",
+      "qualityScore": 0.81,
+      "trustTier": "community",
+      "tags": ["devops", "github-actions", "ci-cd", "automation", "workflow"]
+    },
+    {
+      "id": "experimental/llm-prompt-tester",
+      "name": "llm-prompt-tester",
+      "description": "Test and iterate on LLM prompts with automated evaluation. Supports A/B testing and prompt versioning.",
+      "author": "experimental",
+      "repoUrl": "https://github.com/skillsmith-labs/llm-prompt-tester",
+      "qualityScore": 0.7,
+      "trustTier": "experimental",
+      "tags": ["ai-ml", "llm", "prompt-engineering", "testing", "evaluation"]
+    },
+    {
+      "id": "experimental/code-refactor",
+      "name": "code-refactor",
+      "description": "Suggest and apply code refactoring patterns. Detects code smells and proposes improvements.",
+      "author": "experimental",
+      "repoUrl": "https://github.com/skillsmith-labs/code-refactor",
+      "qualityScore": 0.68,
+      "trustTier": "experimental",
+      "tags": ["development", "refactoring", "code-quality", "patterns"]
+    },
+    {
+      "id": "community/react-component",
+      "name": "react-component",
+      "description": "Generate React components with TypeScript, styling, and tests. Supports functional components and hooks.",
+      "author": "community",
+      "repoUrl": "https://github.com/skillsmith-community/react-component",
+      "qualityScore": 0.86,
+      "trustTier": "community",
+      "tags": ["development", "react", "typescript", "frontend", "components"]
+    },
+    {
+      "id": "community/express-api",
+      "name": "express-api",
+      "description": "Generate Express.js API endpoints with validation, error handling, and documentation.",
+      "author": "community",
+      "repoUrl": "https://github.com/skillsmith-community/express-api",
+      "qualityScore": 0.79,
+      "trustTier": "community",
+      "tags": ["development", "express", "nodejs", "api", "backend"]
+    },
+    {
+      "id": "community/graphql-schema",
+      "name": "graphql-schema",
+      "description": "Generate GraphQL schemas and resolvers from TypeScript types. Includes subscription support.",
+      "author": "community",
+      "repoUrl": "https://github.com/skillsmith-community/graphql-schema",
+      "qualityScore": 0.78,
+      "trustTier": "community",
+      "tags": ["integration", "graphql", "api", "typescript", "backend"]
+    }
+  ]
+}
