@@ -18,9 +18,6 @@
  * - Metrics APIs remain functional for local statistics
  */
 
-// Lazy import to avoid loading OTEL if not needed
-let metricsApi: unknown = null
-
 /** Whether OpenTelemetry packages are available */
 let otelAvailable: boolean | null = null
 
@@ -107,22 +104,7 @@ export interface Gauge {
 }
 
 /**
- * No-op counter implementation
- */
-class NoOpCounter implements Counter {
-  add(_value: number, _labels?: MetricLabels): void {}
-  increment(_labels?: MetricLabels): void {}
-}
-
-/**
- * No-op histogram implementation
- */
-class NoOpHistogram implements Histogram {
-  record(_value: number, _labels?: MetricLabels): void {}
-}
-
-/**
- * No-op gauge implementation
+ * No-op gauge implementation (used for gauges that track values locally)
  */
 class NoOpGauge implements Gauge {
   private values = new Map<string, number>()
@@ -336,10 +318,9 @@ export class MetricsRegistry {
 
     try {
       // SMI-755: Lazy load OTEL metrics API with error handling
-      metricsApi = await dynamicImport('@opentelemetry/api')
-
       // Note: Full OTEL metrics setup would require additional SDK initialization
       // For now, we use in-memory metrics that can be exported via the stats endpoint
+      await dynamicImport('@opentelemetry/api')
       this.initialized = true
     } catch (error) {
       console.warn('[Skillsmith Metrics] Failed to initialize OpenTelemetry:', error)
@@ -358,7 +339,7 @@ export class MetricsRegistry {
   /**
    * Create a counter metric
    */
-  createCounter(name: string, options?: { description?: string; unit?: string }): Counter {
+  createCounter(name: string, _options?: { description?: string; unit?: string }): Counter {
     if (this.counters.has(name)) {
       return this.counters.get(name)!
     }
@@ -374,7 +355,7 @@ export class MetricsRegistry {
    */
   createHistogram(
     name: string,
-    options?: { description?: string; unit?: string; buckets?: number[] }
+    _options?: { description?: string; unit?: string; buckets?: number[] }
   ): Histogram {
     if (this.histograms.has(name)) {
       return this.histograms.get(name)!
@@ -389,7 +370,7 @@ export class MetricsRegistry {
   /**
    * Create a gauge metric
    */
-  createGauge(name: string, options?: { description?: string; unit?: string }): Gauge {
+  createGauge(name: string, _options?: { description?: string; unit?: string }): Gauge {
     if (this.gauges.has(name)) {
       return this.gauges.get(name)!
     }
