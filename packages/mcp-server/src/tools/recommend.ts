@@ -25,12 +25,7 @@
  */
 
 import { z } from 'zod'
-import {
-  type SkillSearchResult,
-  type MCPTrustTier as TrustTier,
-  SkillsmithError,
-  ErrorCodes,
-} from '@skillsmith/core'
+import { type SkillSearchResult, type MCPTrustTier as TrustTier } from '@skillsmith/core'
 
 /**
  * Zod schema for recommend tool input validation
@@ -48,11 +43,6 @@ export const recommendInputSchema = z.object({
  * Input type (before parsing, allows optional fields)
  */
 export type RecommendInput = z.input<typeof recommendInputSchema>
-
-/**
- * Output type (after parsing, with defaults applied)
- */
-type RecommendParsed = z.output<typeof recommendInputSchema>
 
 /**
  * Individual skill recommendation with reasoning
