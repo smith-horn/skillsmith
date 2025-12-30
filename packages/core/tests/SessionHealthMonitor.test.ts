@@ -373,7 +373,7 @@ describe('SessionHealthMonitor', () => {
       noRecoverMonitor.stop()
     })
 
-    it('emits recovery-failed after max attempts (3)', () => {
+    it('emits recovery-failed when no session data available', () => {
       const autoRecoverMonitor = new SessionHealthMonitor({
         heartbeatIntervalMs: 100,
         warningThreshold: 2,
@@ -381,35 +381,29 @@ describe('SessionHealthMonitor', () => {
         deadThreshold: 6,
         autoRecover: true,
       })
+
+      // Register session without sessionData by manipulating internal state
+      // This simulates a corrupted/cleared session
       const session = createMockSession('test-session-1')
       autoRecoverMonitor.registerSession(session)
+
+      // Access internal state to clear sessionData (simulating corruption)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sessions = (autoRecoverMonitor as any).sessions as Map<string, any>
+      const state = sessions.get('test-session-1')
+      state.sessionData = undefined
+
       autoRecoverMonitor.start()
 
-      const recoveryAttemptHandler = vi.fn()
       const recoveryFailedHandler = vi.fn()
-      const recoveredHandler = vi.fn()
-      autoRecoverMonitor.on('recovery-attempt', recoveryAttemptHandler)
       autoRecoverMonitor.on('recovery-failed', recoveryFailedHandler)
-      autoRecoverMonitor.on('recovered', recoveredHandler)
 
-      // First dead threshold - recovery attempt 1 (succeeds, session goes healthy)
+      // Advance past dead threshold
       vi.advanceTimersByTime(600)
-      expect(recoveryAttemptHandler).toHaveBeenCalledWith('test-session-1', 1)
-      expect(recoveredHandler).toHaveBeenCalledWith('test-session-1')
 
-      // Second dead threshold - recovery attempt 2
-      vi.advanceTimersByTime(600)
-      expect(recoveryAttemptHandler).toHaveBeenCalledWith('test-session-1', 2)
-
-      // Third dead threshold - recovery attempt 3
-      vi.advanceTimersByTime(600)
-      expect(recoveryAttemptHandler).toHaveBeenCalledWith('test-session-1', 3)
-
-      // Fourth dead threshold - max attempts exceeded, should fail
-      vi.advanceTimersByTime(600)
       expect(recoveryFailedHandler).toHaveBeenCalledWith(
         'test-session-1',
-        'Max recovery attempts exceeded'
+        'No session data available for recovery'
       )
 
       autoRecoverMonitor.stop()
@@ -478,19 +472,54 @@ describe('SessionHealthMonitor', () => {
       const recoveryAttemptHandler = vi.fn()
       autoRecoverMonitor.on('recovery-attempt', recoveryAttemptHandler)
 
-      // First recovery
+      // First recovery - attempt 1
       vi.advanceTimersByTime(600)
       expect(recoveryAttemptHandler).toHaveBeenLastCalledWith('test-session-1', 1)
 
-      // Second recovery
+      // Second recovery - attempt 1 again (reset after success)
       vi.advanceTimersByTime(600)
-      expect(recoveryAttemptHandler).toHaveBeenLastCalledWith('test-session-1', 2)
+      expect(recoveryAttemptHandler).toHaveBeenLastCalledWith('test-session-1', 1)
 
-      // Third recovery
+      // Third recovery - attempt 1 again (reset after success)
       vi.advanceTimersByTime(600)
-      expect(recoveryAttemptHandler).toHaveBeenLastCalledWith('test-session-1', 3)
+      expect(recoveryAttemptHandler).toHaveBeenLastCalledWith('test-session-1', 1)
 
+      // Can recover infinitely because attempts reset on success
       expect(recoveryAttemptHandler).toHaveBeenCalledTimes(3)
+
+      autoRecoverMonitor.stop()
+    })
+
+    it('resets recovery attempts after successful recovery (SMI-769)', () => {
+      const autoRecoverMonitor = new SessionHealthMonitor({
+        heartbeatIntervalMs: 100,
+        warningThreshold: 2,
+        unhealthyThreshold: 4,
+        deadThreshold: 6,
+        autoRecover: true,
+      })
+      const session = createMockSession('test-session-1')
+      autoRecoverMonitor.registerSession(session)
+      autoRecoverMonitor.start()
+
+      const recoveryAttemptHandler = vi.fn()
+      const recoveryFailedHandler = vi.fn()
+      autoRecoverMonitor.on('recovery-attempt', recoveryAttemptHandler)
+      autoRecoverMonitor.on('recovery-failed', recoveryFailedHandler)
+
+      // Trigger 10 recovery cycles - all should succeed with attempt=1
+      for (let i = 0; i < 10; i++) {
+        vi.advanceTimersByTime(600)
+      }
+
+      // All 10 recoveries should have been attempt #1 (because counter resets)
+      expect(recoveryAttemptHandler).toHaveBeenCalledTimes(10)
+      recoveryAttemptHandler.mock.calls.forEach((call) => {
+        expect(call[1]).toBe(1) // All should be attempt 1
+      })
+
+      // Should never fail because attempts reset after each success
+      expect(recoveryFailedHandler).not.toHaveBeenCalled()
 
       autoRecoverMonitor.stop()
     })

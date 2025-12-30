@@ -339,27 +339,22 @@ export class SessionHealthMonitor extends EventEmitter {
     // Emit recovery attempt event
     this.emit('recovery-attempt', state.sessionId, state.recoveryAttempts)
 
-    try {
-      // Restore session health state from stored sessionData
-      // Reset the session to healthy state with a fresh heartbeat
-      const now = Date.now()
-      state.lastHeartbeat = now
-      state.missedHeartbeats = 0
-      state.status = 'healthy'
+    // Restore session health state from stored sessionData
+    // Reset the session to healthy state with a fresh heartbeat
+    const now = Date.now()
+    state.lastHeartbeat = now
+    state.missedHeartbeats = 0
+    state.status = 'healthy'
+    state.recoveryAttempts = 0 // Reset recovery attempts on success (SMI-769)
 
-      // Emit recovered event
-      this.emit('recovered', state.sessionId)
+    // Emit recovered event
+    this.emit('recovered', state.sessionId)
 
-      // Record successful recovery metric
-      const metrics = getMetrics()
-      metrics.mcpErrorCount.increment({ type: 'session_recovered' })
+    // Record successful recovery metric
+    const metrics = getMetrics()
+    metrics.mcpRequestCount.increment({ type: 'session_recovered' }) // SMI-770: Use request counter, not error counter
 
-      return true
-    } catch {
-      // Recovery failed
-      this.emit('recovery-failed', state.sessionId, 'Recovery operation failed')
-      return false
-    }
+    return true
   }
 
   /**
