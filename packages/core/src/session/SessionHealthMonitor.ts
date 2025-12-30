@@ -174,6 +174,55 @@ export class SessionHealthMonitor extends EventEmitter {
     return super.once(event, listener)
   }
 
+  /** Add a listener for the 'heartbeat' event (alias for on) */
+  addListener(event: 'heartbeat', listener: (sessionId: string) => void): this
+  /** Add a listener for the 'warning' event (alias for on) */
+  addListener(event: 'warning', listener: (health: SessionHealth) => void): this
+  /** Add a listener for the 'unhealthy' event (alias for on) */
+  addListener(event: 'unhealthy', listener: (health: SessionHealth) => void): this
+  /** Add a listener for the 'dead' event (alias for on) */
+  addListener(event: 'dead', listener: (health: SessionHealth) => void): this
+  /** Add a listener for the 'recovered' event (alias for on) */
+  addListener(event: 'recovered', listener: (sessionId: string) => void): this
+  /** Add a listener for the 'recovery-attempt' event (alias for on) */
+  addListener(
+    event: 'recovery-attempt',
+    listener: (sessionId: string, attempt: number) => void
+  ): this
+  /** Add a listener for the 'recovery-failed' event (alias for on) */
+  addListener(event: 'recovery-failed', listener: (sessionId: string, reason: string) => void): this
+  /** Add a listener for any event (fallback) */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  addListener(event: string, listener: (...args: any[]) => void): this {
+    return super.addListener(event, listener)
+  }
+
+  /** Remove a listener for the 'heartbeat' event (alias for off) */
+  removeListener(event: 'heartbeat', listener: (sessionId: string) => void): this
+  /** Remove a listener for the 'warning' event (alias for off) */
+  removeListener(event: 'warning', listener: (health: SessionHealth) => void): this
+  /** Remove a listener for the 'unhealthy' event (alias for off) */
+  removeListener(event: 'unhealthy', listener: (health: SessionHealth) => void): this
+  /** Remove a listener for the 'dead' event (alias for off) */
+  removeListener(event: 'dead', listener: (health: SessionHealth) => void): this
+  /** Remove a listener for the 'recovered' event (alias for off) */
+  removeListener(event: 'recovered', listener: (sessionId: string) => void): this
+  /** Remove a listener for the 'recovery-attempt' event (alias for off) */
+  removeListener(
+    event: 'recovery-attempt',
+    listener: (sessionId: string, attempt: number) => void
+  ): this
+  /** Remove a listener for the 'recovery-failed' event (alias for off) */
+  removeListener(
+    event: 'recovery-failed',
+    listener: (sessionId: string, reason: string) => void
+  ): this
+  /** Remove a listener for any event (fallback) */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  removeListener(event: string, listener: (...args: any[]) => void): this {
+    return super.removeListener(event, listener)
+  }
+
   /**
    * Start monitoring a session
    */
