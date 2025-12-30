@@ -54,11 +54,7 @@ export function validateUrl(url: string): void {
   try {
     parsed = new URL(url)
   } catch (error) {
-    throw new ValidationError(
-      `Invalid URL format: ${url}`,
-      'INVALID_URL_FORMAT',
-      error
-    )
+    throw new ValidationError(`Invalid URL format: ${url}`, 'INVALID_URL_FORMAT', error)
   }
 
   // Only allow http/https protocols
@@ -70,15 +66,20 @@ export function validateUrl(url: string): void {
     )
   }
 
-  const hostname = parsed.hostname.toLowerCase()
+  let hostname = parsed.hostname.toLowerCase()
+
+  // Strip brackets from IPv6 addresses for easier comparison
+  // Node.js URL keeps brackets in hostname for IPv6 (e.g., "[::1]")
+  if (hostname.startsWith('[') && hostname.endsWith(']')) {
+    hostname = hostname.slice(1, -1)
+  }
 
   // Block localhost variants
   if (hostname === 'localhost' || hostname === '::1' || hostname === '0.0.0.0') {
-    throw new ValidationError(
-      `Access to localhost is blocked: ${hostname}`,
-      'LOCALHOST_BLOCKED',
-      { hostname, url }
-    )
+    throw new ValidationError(`Access to localhost is blocked: ${hostname}`, 'LOCALHOST_BLOCKED', {
+      hostname,
+      url,
+    })
   }
 
   // Check for IPv4 addresses
@@ -88,11 +89,10 @@ export function validateUrl(url: string): void {
 
     // Validate IPv4 octets are in valid range
     if (a > 255 || b > 255 || c > 255 || d > 255) {
-      throw new ValidationError(
-        `Invalid IPv4 address: ${hostname}`,
-        'INVALID_IPV4',
-        { hostname, url }
-      )
+      throw new ValidationError(`Invalid IPv4 address: ${hostname}`, 'INVALID_IPV4', {
+        hostname,
+        url,
+      })
     }
 
     // Block private/internal IP ranges
@@ -136,6 +136,15 @@ export function validateUrl(url: string): void {
 function validateIPv6(hostname: string, url: string): void {
   // Normalize IPv6 address
   const normalized = hostname.toLowerCase()
+
+  // Block IPv6 loopback (::1 and its full form)
+  // This is defense-in-depth since line 76 should also catch ::1
+  if (normalized === '::1' || normalized === '0:0:0:0:0:0:0:1') {
+    throw new ValidationError(`Access to localhost is blocked: ${hostname}`, 'LOCALHOST_BLOCKED', {
+      hostname,
+      url,
+    })
+  }
 
   // Block link-local addresses (fe80::/10)
   // fe80 to febf range
@@ -240,17 +249,11 @@ function getIpRangeName(a: number, b: number): string {
  */
 export function validatePath(path: string, rootDir: string): void {
   if (!path) {
-    throw new ValidationError(
-      'Path cannot be empty',
-      'EMPTY_PATH'
-    )
+    throw new ValidationError('Path cannot be empty', 'EMPTY_PATH')
   }
 
   if (!rootDir) {
-    throw new ValidationError(
-      'Root directory cannot be empty',
-      'EMPTY_ROOT_DIR'
-    )
+    throw new ValidationError('Root directory cannot be empty', 'EMPTY_ROOT_DIR')
   }
 
   // Normalize both paths to resolve '..' and '.'
@@ -263,16 +266,12 @@ export function validatePath(path: string, rootDir: string): void {
     normalizedPath.startsWith(normalizedRoot + '/') || normalizedPath === normalizedRoot
 
   if (!isWithinRoot) {
-    throw new ValidationError(
-      `Path traversal detected: ${path}`,
-      'PATH_TRAVERSAL',
-      {
-        originalPath: path,
-        normalizedPath,
-        rootDir,
-        normalizedRoot,
-      }
-    )
+    throw new ValidationError(`Path traversal detected: ${path}`, 'PATH_TRAVERSAL', {
+      originalPath: path,
+      normalizedPath,
+      rootDir,
+      normalizedRoot,
+    })
   }
 }
 
@@ -302,11 +301,7 @@ export function sanitizeInput(
     removeNullBytes?: boolean
   } = {}
 ): string {
-  const {
-    removePathTraversal = true,
-    escapeHtml = true,
-    removeNullBytes = true,
-  } = options
+  const { removePathTraversal = true, escapeHtml = true, removeNullBytes = true } = options
 
   let sanitized = input
 
@@ -360,12 +355,16 @@ export function safePatternMatch(value: string, pattern: string): boolean {
     return true
   }
 
-  // Prefix match
-  if (value.startsWith(pattern)) {
-    return true
+  // Check if pattern looks like a regex (contains special chars)
+  // If it's a simple alphanumeric pattern, only do prefix matching
+  const isLikelyRegex = /[\\^$.*+?()[\]{}|]/.test(pattern)
+
+  if (!isLikelyRegex) {
+    // Simple pattern - only match as prefix
+    return value.startsWith(pattern)
   }
 
-  // Try regex match with error handling
+  // Try regex match with error handling for patterns that look like regex
   try {
     const regex = new RegExp(pattern)
     return regex.test(value)
@@ -400,7 +399,9 @@ export function validatePatterns(patterns: string[]): string[] {
 
     // Check for extremely long patterns
     if (pattern.length > 1000) {
-      warnings.push(`Pattern is suspiciously long (${pattern.length} chars): ${pattern.slice(0, 50)}...`)
+      warnings.push(
+        `Pattern is suspiciously long (${pattern.length} chars): ${pattern.slice(0, 50)}...`
+      )
     }
 
     // Try to compile as regex to check validity
