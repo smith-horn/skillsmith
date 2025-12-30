@@ -223,6 +223,58 @@ export class SessionHealthMonitor extends EventEmitter {
     return super.removeListener(event, listener)
   }
 
+  /** Prepend a listener for the 'heartbeat' event */
+  prependListener(event: 'heartbeat', listener: (sessionId: string) => void): this
+  /** Prepend a listener for the 'warning' event */
+  prependListener(event: 'warning', listener: (health: SessionHealth) => void): this
+  /** Prepend a listener for the 'unhealthy' event */
+  prependListener(event: 'unhealthy', listener: (health: SessionHealth) => void): this
+  /** Prepend a listener for the 'dead' event */
+  prependListener(event: 'dead', listener: (health: SessionHealth) => void): this
+  /** Prepend a listener for the 'recovered' event */
+  prependListener(event: 'recovered', listener: (sessionId: string) => void): this
+  /** Prepend a listener for the 'recovery-attempt' event */
+  prependListener(
+    event: 'recovery-attempt',
+    listener: (sessionId: string, attempt: number) => void
+  ): this
+  /** Prepend a listener for the 'recovery-failed' event */
+  prependListener(
+    event: 'recovery-failed',
+    listener: (sessionId: string, reason: string) => void
+  ): this
+  /** Prepend a listener for any event (fallback) */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  prependListener(event: string, listener: (...args: any[]) => void): this {
+    return super.prependListener(event, listener)
+  }
+
+  /** Prepend a one-time listener for the 'heartbeat' event */
+  prependOnceListener(event: 'heartbeat', listener: (sessionId: string) => void): this
+  /** Prepend a one-time listener for the 'warning' event */
+  prependOnceListener(event: 'warning', listener: (health: SessionHealth) => void): this
+  /** Prepend a one-time listener for the 'unhealthy' event */
+  prependOnceListener(event: 'unhealthy', listener: (health: SessionHealth) => void): this
+  /** Prepend a one-time listener for the 'dead' event */
+  prependOnceListener(event: 'dead', listener: (health: SessionHealth) => void): this
+  /** Prepend a one-time listener for the 'recovered' event */
+  prependOnceListener(event: 'recovered', listener: (sessionId: string) => void): this
+  /** Prepend a one-time listener for the 'recovery-attempt' event */
+  prependOnceListener(
+    event: 'recovery-attempt',
+    listener: (sessionId: string, attempt: number) => void
+  ): this
+  /** Prepend a one-time listener for the 'recovery-failed' event */
+  prependOnceListener(
+    event: 'recovery-failed',
+    listener: (sessionId: string, reason: string) => void
+  ): this
+  /** Prepend a one-time listener for any event (fallback) */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  prependOnceListener(event: string, listener: (...args: any[]) => void): this {
+    return super.prependOnceListener(event, listener)
+  }
+
   /**
    * Start monitoring a session
    */
