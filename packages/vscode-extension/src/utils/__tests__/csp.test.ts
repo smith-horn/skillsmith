@@ -163,7 +163,8 @@ describe('VS Code CSP Utilities', () => {
   })
 
   describe('createCspMetaTag', () => {
-    const nonce = 'test-nonce-1234567890123456'
+    // Nonce must be alphanumeric (no hyphens) to pass isValidNonce
+    const nonce = 'testNonce1234567890123456'
 
     it('should create a meta tag', () => {
       const tag = createCspMetaTag(nonce)
@@ -252,53 +253,41 @@ describe('VS Code CSP Utilities', () => {
       const csp = "script-src 'self' 'unsafe-eval'"
       const result = validateCsp(csp)
       expect(result.valid).toBe(false)
-      expect(result.warnings).toContain(
-        expect.stringContaining('unsafe-eval')
-      )
+      expect(result.warnings.some((w) => w.includes('unsafe-eval'))).toBe(true)
     })
 
     it('should warn about unsafe-inline without nonce', () => {
       const csp = "script-src 'self' 'unsafe-inline'"
       const result = validateCsp(csp)
       expect(result.valid).toBe(false)
-      expect(result.warnings).toContain(
-        expect.stringContaining('unsafe-inline')
-      )
+      expect(result.warnings.some((w) => w.includes('unsafe-inline'))).toBe(true)
     })
 
     it('should not warn about unsafe-inline with nonce', () => {
       const csp = "script-src 'self' 'unsafe-inline' 'nonce-abc123'"
       const result = validateCsp(csp)
-      expect(result.warnings).not.toContain(
-        expect.stringContaining('unsafe-inline')
-      )
+      expect(result.warnings).not.toContain(expect.stringContaining('unsafe-inline'))
     })
 
     it('should warn about wildcard sources', () => {
-      const csp = "script-src *"
+      const csp = 'script-src *'
       const result = validateCsp(csp)
       expect(result.valid).toBe(false)
-      expect(result.warnings).toContain(
-        expect.stringContaining('wildcard')
-      )
+      expect(result.warnings.some((w) => w.includes('wildcard'))).toBe(true)
     })
 
     it('should warn about missing script-src', () => {
       const csp = "default-src 'self'"
       const result = validateCsp(csp)
       expect(result.valid).toBe(false)
-      expect(result.warnings).toContain(
-        expect.stringContaining('script-src')
-      )
+      expect(result.warnings.some((w) => w.includes('script-src'))).toBe(true)
     })
 
     it('should warn about missing default-src', () => {
       const csp = "script-src 'self'"
       const result = validateCsp(csp)
       expect(result.valid).toBe(false)
-      expect(result.warnings).toContain(
-        expect.stringContaining('default-src')
-      )
+      expect(result.warnings.some((w) => w.includes('default-src'))).toBe(true)
     })
 
     it('should handle multiple warnings', () => {
@@ -319,7 +308,8 @@ describe('VS Code CSP Utilities', () => {
 
     it('should only allow nonce-based scripts', () => {
       const csp = buildWebviewCsp(nonce, { allowInlineStyles: false })
-      expect(csp).toMatch(/script-src 'nonce-[^']+$/)
+      // CSP has multiple directives, so check script-src contains only nonce (no $ anchor)
+      expect(csp).toMatch(/script-src 'nonce-[^']+';/)
       expect(csp).not.toContain("'unsafe-eval'")
     })
 
@@ -348,17 +338,11 @@ describe('VS Code CSP Utilities', () => {
       const validation = validateCsp(csp)
 
       // Should have script-src and default-src
-      expect(validation.warnings).not.toContain(
-        expect.stringContaining('missing script-src')
-      )
-      expect(validation.warnings).not.toContain(
-        expect.stringContaining('missing default-src')
-      )
+      expect(validation.warnings).not.toContain(expect.stringContaining('missing script-src'))
+      expect(validation.warnings).not.toContain(expect.stringContaining('missing default-src'))
 
       // Should not have wildcard
-      expect(validation.warnings).not.toContain(
-        expect.stringContaining('wildcard')
-      )
+      expect(validation.warnings).not.toContain(expect.stringContaining('wildcard'))
     })
   })
 })
