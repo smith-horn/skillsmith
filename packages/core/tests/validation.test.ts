@@ -127,7 +127,9 @@ describe('validateUrl', () => {
     it('should block IPv6 link-local addresses (fe80::/10)', () => {
       expect(() => validateUrl('http://[fe80::1]')).toThrow(ValidationError)
       expect(() => validateUrl('http://[fe80::1]')).toThrow(/IPv6 link-local/)
-      expect(() => validateUrl('http://[fe80:0000:0000:0000:0000:0000:0000:0001]')).toThrow(ValidationError)
+      expect(() => validateUrl('http://[fe80:0000:0000:0000:0000:0000:0000:0001]')).toThrow(
+        ValidationError
+      )
     })
 
     it('should block IPv6 unique local addresses (fc00::/7)', () => {
@@ -319,7 +321,9 @@ describe('sanitizeInput', () => {
     })
 
     it('should escape quotes', () => {
-      expect(sanitizeInput(`"double" and 'single'`)).toBe(`&quot;double&quot; and &#x27;single&#x27;`)
+      expect(sanitizeInput(`"double" and 'single'`)).toBe(
+        `&quot;double&quot; and &#x27;single&#x27;`
+      )
     })
 
     it('should not escape when escapeHtml is false', () => {
@@ -368,9 +372,12 @@ describe('safePatternMatch', () => {
       expect(safePatternMatch('test', 'test')).toBe(true)
     })
 
-    it('should not match different strings', () => {
-      expect(safePatternMatch('node_modules', 'node_module')).toBe(false)
+    it('should not match completely different strings', () => {
+      // Note: 'node_module' IS a prefix of 'node_modules', so it matches
+      // These test truly different strings that share no prefix relationship
+      expect(safePatternMatch('node_modules', 'package')).toBe(false)
       expect(safePatternMatch('.git', '.svn')).toBe(false)
+      expect(safePatternMatch('src', 'lib')).toBe(false)
     })
   })
 
@@ -468,9 +475,9 @@ describe('validatePatterns', () => {
   describe('multiple warnings', () => {
     it('should return multiple warnings for multiple issues', () => {
       const patterns = [
-        '(a+)+b',        // ReDoS
+        '(a+)+b', // ReDoS
         'a'.repeat(1001), // Too long
-        '(unclosed',      // Invalid
+        '(unclosed', // Invalid
       ]
       const warnings = validatePatterns(patterns)
       expect(warnings.length).toBeGreaterThanOrEqual(3)

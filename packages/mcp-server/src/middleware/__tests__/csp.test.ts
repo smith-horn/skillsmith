@@ -32,9 +32,10 @@ describe('CSP Utilities', () => {
       expect(nonce1).not.toBe(nonce2)
     })
 
-    it('should generate alphanumeric nonces', () => {
+    it('should generate valid base64 nonces', () => {
       const nonce = generateNonce()
-      expect(nonce).toMatch(/^[A-Za-z0-9+/]+$/)
+      // Base64 can include A-Z, a-z, 0-9, +, /, and = for padding
+      expect(nonce).toMatch(/^[A-Za-z0-9+/]+=*$/)
     })
   })
 
@@ -129,9 +130,7 @@ describe('CSP Utilities', () => {
       const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const header = "script-src 'self' 'unsafe-eval'"
       validateCspHeader(header)
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('unsafe-eval')
-      )
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('unsafe-eval'))
       consoleSpy.mockRestore()
     })
 
@@ -139,9 +138,7 @@ describe('CSP Utilities', () => {
       const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const header = "script-src 'self' 'unsafe-inline'"
       validateCspHeader(header)
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('unsafe-inline')
-      )
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('unsafe-inline'))
       consoleSpy.mockRestore()
     })
 
@@ -177,10 +174,7 @@ describe('CSP Utilities', () => {
       const middleware = cspMiddleware()
       middleware(mockReq, mockRes, mockNext)
 
-      expect(mockRes.setHeader).toHaveBeenCalledWith(
-        'Content-Security-Policy',
-        expect.any(String)
-      )
+      expect(mockRes.setHeader).toHaveBeenCalledWith('Content-Security-Policy', expect.any(String))
     })
 
     it('should add nonce to response locals', () => {
