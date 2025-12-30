@@ -334,6 +334,64 @@ const csp = getSkillDetailCsp(nonce)
 | HTTPS upgrade                     | ✅     | `upgrade-insecure-requests` enabled  |
 | No mixed content                  | ✅     | `block-all-mixed-content` enabled    |
 
+### 2.5 Known Parsing Quirks
+
+**Added**: Phase 2f (SMI-780, SMI-782)
+
+These edge cases were discovered during security testing and should be considered when implementing URL or path validation.
+
+#### IPv6 URL Hostname Brackets
+
+Node.js `URL` class returns IPv6 hostnames **with brackets**:
+
+```typescript
+const url = new URL('http://[::1]:3000/path')
+console.log(url.hostname)  // "[::1]" - NOT "::1"
+```
+
+**Fix**: Strip brackets before comparison:
+
+```typescript
+let hostname = parsed.hostname.toLowerCase()
+if (hostname.startsWith('[') && hostname.endsWith(']')) {
+  hostname = hostname.slice(1, -1)  // "[::1]" → "::1"
+}
+```
+
+**Why it matters**: Without stripping, `hostname === '::1'` returns `false`, bypassing localhost SSRF checks.
+
+#### Path Resolution Working Directory
+
+`path.resolve()` without a base resolves relative to **current working directory**, not the intended root:
+
+```typescript
+// ❌ WRONG: Resolves relative to CWD
+const normalizedPath = resolve(userPath)  // If CWD is /home/user, "../etc" → /home/etc
+
+// ✅ CORRECT: Resolves relative to intended root
+const normalizedPath = resolve(rootDir, userPath)  // rootDir + userPath
+```
+
+**Why it matters**: Attackers can escape the intended root directory if `resolve()` uses CWD instead of the security boundary.
+
+#### Pattern Matching Fallback
+
+Simple string patterns should not be treated as regex:
+
+```typescript
+// ❌ WRONG: Treats all patterns as regex
+return new RegExp(pattern).test(value)  // "node_modules" matches "anode_modules"
+
+// ✅ CORRECT: Only use regex for patterns with special chars
+const isLikelyRegex = /[\\^$.*+?()[\]{}|]/.test(pattern)
+if (!isLikelyRegex) {
+  return value.startsWith(pattern)  // Prefix match only
+}
+return new RegExp(pattern).test(value)
+```
+
+**Why it matters**: Regex `.` matches any character, so `node_modules` would match `node-modules` or `nodeXmodules`.
+
 ---
 
 ## 3. Audit Logging
