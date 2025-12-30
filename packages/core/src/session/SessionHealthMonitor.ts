@@ -72,7 +72,6 @@ export interface SessionHealthEvents {
 export class SessionHealthMonitor extends EventEmitter {
   private config: Required<HealthMonitorConfig>
   private sessions = new Map<string, SessionHealthState>()
-  private heartbeatInterval: NodeJS.Timeout | null = null
   private checkInterval: NodeJS.Timeout | null = null
   private started = false
 
@@ -186,11 +185,6 @@ export class SessionHealthMonitor extends EventEmitter {
     }
 
     this.started = false
-
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval)
-      this.heartbeatInterval = null
-    }
 
     if (this.checkInterval) {
       clearInterval(this.checkInterval)
