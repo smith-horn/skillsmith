@@ -126,7 +126,7 @@ describe('Logger', () => {
       const jsonLogger = createLogger('test')
       jsonLogger.error('JSON error', new Error('test'))
 
-      const callArg = consoleErrorSpy.mock.calls[0][0]
+      const callArg = consoleErrorSpy.mock.calls[0][0] as string
       expect(() => JSON.parse(callArg)).not.toThrow()
 
       const parsed = JSON.parse(callArg)
@@ -145,7 +145,7 @@ describe('Logger', () => {
       const jsonLogger = createLogger('test')
       jsonLogger.error('Test')
 
-      const parsed = JSON.parse(consoleErrorSpy.mock.calls[0][0])
+      const parsed = JSON.parse(consoleErrorSpy.mock.calls[0][0] as string)
       expect(parsed.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/)
     })
   })
@@ -274,7 +274,7 @@ describe('Logger', () => {
 
       jsonLogger.auditLog(auditEvent)
 
-      const callArg = consoleLogSpy.mock.calls[0][0]
+      const callArg = consoleLogSpy.mock.calls[0][0] as string
       const parsed = JSON.parse(callArg)
       expect(parsed).toMatchObject({
         eventType: 'skill.fetch',
@@ -383,7 +383,7 @@ describe('Logger', () => {
 
       jsonLogger.securityLog(securityEvent)
 
-      const callArg = consoleWarnSpy.mock.calls[0][0]
+      const callArg = consoleWarnSpy.mock.calls[0][0] as string
       const parsed = JSON.parse(callArg)
       expect(parsed).toMatchObject({
         eventType: 'validation.failed',
