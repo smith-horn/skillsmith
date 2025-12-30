@@ -1,5 +1,6 @@
 /**
  * SMI-739: Custom Metrics Registration
+ * SMI-755: Graceful fallback when OpenTelemetry unavailable
  *
  * Provides metrics collection for Skillsmith operations:
  * - Request latency histograms
@@ -9,11 +10,42 @@
  *
  * Configuration:
  * - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP endpoint for metrics export
+ * - SKILLSMITH_TELEMETRY_ENABLED: Master switch for all telemetry (default: auto)
  * - SKILLSMITH_METRICS_ENABLED: Enable/disable metrics (default: true if endpoint set)
+ *
+ * Graceful Fallback:
+ * - If OpenTelemetry packages are not installed, uses in-memory implementations
+ * - Metrics APIs remain functional for local statistics
  */
 
 // Lazy import to avoid loading OTEL if not needed
-let metricsApi: typeof import('@opentelemetry/api') | null = null
+let metricsApi: unknown = null
+
+/** Whether OpenTelemetry packages are available */
+let otelAvailable: boolean | null = null
+
+/**
+ * Dynamic import helper that bypasses TypeScript type checking (SMI-755)
+ */
+async function dynamicImport(moduleName: string): Promise<unknown> {
+  try {
+    const importFn = new Function('m', 'return import(m)') as (m: string) => Promise<unknown>
+    return await importFn(moduleName)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Check if OpenTelemetry is available (SMI-755)
+ */
+async function checkOTelAvailability(): Promise<boolean> {
+  if (otelAvailable !== null) return otelAvailable
+
+  const result = await dynamicImport('@opentelemetry/api')
+  otelAvailable = result !== null
+  return otelAvailable
+}
 
 /**
  * Metric types
@@ -203,14 +235,22 @@ export class MetricsRegistry {
       consoleExport: config.consoleExport ?? false,
     }
 
-    // Check if metrics should be enabled
-    const explicitlyEnabled = process.env.SKILLSMITH_METRICS_ENABLED === 'true'
-    const explicitlyDisabled = process.env.SKILLSMITH_METRICS_ENABLED === 'false'
-
-    if (explicitlyDisabled) {
+    // SMI-755: Check master telemetry switch first
+    const telemetryDisabled = process.env.SKILLSMITH_TELEMETRY_ENABLED === 'false'
+    if (telemetryDisabled) {
       this.enabled = false
-    } else if (explicitlyEnabled || this.config.endpoint || this.config.consoleExport) {
-      this.enabled = true
+      // Still create in-memory metrics for local use, just skip OTEL export
+      // Skip further enable checks - master switch overrides all
+    } else {
+      // Check if metrics should be enabled
+      const explicitlyEnabled = process.env.SKILLSMITH_METRICS_ENABLED === 'true'
+      const explicitlyDisabled = process.env.SKILLSMITH_METRICS_ENABLED === 'false'
+
+      if (explicitlyDisabled) {
+        this.enabled = false
+      } else if (explicitlyEnabled || this.config.endpoint || this.config.consoleExport) {
+        this.enabled = true
+      }
     }
 
     // Create predefined metrics
@@ -282,15 +322,27 @@ export class MetricsRegistry {
       return
     }
 
+    // SMI-755: Check if OpenTelemetry is available before attempting to load
+    const isAvailable = await checkOTelAvailability()
+    if (!isAvailable) {
+      // Metrics still work via in-memory implementations, just log info
+      console.info(
+        '[Skillsmith Metrics] OpenTelemetry not installed. ' +
+          'Using in-memory metrics (available via getSnapshot()).'
+      )
+      this.initialized = true
+      return
+    }
+
     try {
-      // Lazy load OTEL metrics API
-      metricsApi = await import('@opentelemetry/api')
+      // SMI-755: Lazy load OTEL metrics API with error handling
+      metricsApi = await dynamicImport('@opentelemetry/api')
 
       // Note: Full OTEL metrics setup would require additional SDK initialization
       // For now, we use in-memory metrics that can be exported via the stats endpoint
       this.initialized = true
     } catch (error) {
-      console.warn('Failed to initialize OpenTelemetry metrics:', error)
+      console.warn('[Skillsmith Metrics] Failed to initialize OpenTelemetry:', error)
       this.enabled = false
       this.initialized = true
     }
