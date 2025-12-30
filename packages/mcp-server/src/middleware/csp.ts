@@ -94,7 +94,7 @@ export function buildCspHeader(directives: CspDirectives, nonce?: string): strin
         parts.push(directive)
       }
     } else if (Array.isArray(value)) {
-      let sources = [...value]
+      const sources = [...value]
 
       // Add nonce to script-src and style-src if provided
       if (nonce && (directive === 'script-src' || directive === 'style-src')) {
