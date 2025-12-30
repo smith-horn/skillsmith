@@ -93,7 +93,7 @@ SECRET_PATTERNS=(
 SECRETS_FOUND=0
 
 # Files to exclude from secret scanning
-EXCLUDE_PATTERNS=(
+EXCLUDE_FILES=(
   "*.test.ts"
   "*.test.js"
   "*.spec.ts"
@@ -101,16 +101,25 @@ EXCLUDE_PATTERNS=(
   ".env.example"
   ".env.schema"
   "package-lock.json"
-  "node_modules/*"
-  ".git/*"
-  "docs/*"
   "*.md"
+)
+
+# Directories to exclude from secret scanning
+EXCLUDE_DIRS=(
+  "node_modules"
+  ".git"
+  ".swarm"
+  "docs"
+  "dist"
 )
 
 # Build exclude arguments for grep
 GREP_EXCLUDE=""
-for pattern in "${EXCLUDE_PATTERNS[@]}"; do
+for pattern in "${EXCLUDE_FILES[@]}"; do
   GREP_EXCLUDE="$GREP_EXCLUDE --exclude=$pattern"
+done
+for dir in "${EXCLUDE_DIRS[@]}"; do
+  GREP_EXCLUDE="$GREP_EXCLUDE --exclude-dir=$dir"
 done
 
 # Scan for each pattern
