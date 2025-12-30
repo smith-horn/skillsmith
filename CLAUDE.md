@@ -269,6 +269,44 @@ Project: Skillsmith (SMI-xxx issues)
 | SMI-718 | Coverage threshold fixes | Done |
 | SMI-719 | Docker guard hook | Done |
 
+## Embedding Service Configuration (SMI-754)
+
+The EmbeddingService supports both real ONNX embeddings and deterministic mock embeddings.
+
+### Modes
+
+| Mode | Use Case | Performance |
+|------|----------|-------------|
+| **Real** (default) | Production, semantic search | ~50ms/embedding |
+| **Fallback** | Tests, CI, development | <1ms/embedding |
+
+### Configuration
+
+```typescript
+// Real embeddings (default)
+const service = new EmbeddingService({ dbPath: './cache.db' });
+
+// Forced fallback mode for tests
+const service = new EmbeddingService({ useFallback: true });
+
+// Check current mode
+console.log(service.isUsingFallback()); // true/false
+```
+
+### Environment Variable
+
+Set `SKILLSMITH_USE_MOCK_EMBEDDINGS=true` to force fallback mode globally:
+
+```bash
+# In .env or shell
+export SKILLSMITH_USE_MOCK_EMBEDDINGS=true
+docker exec skillsmith-dev-1 npm test
+```
+
+### ADR Reference
+
+See [ADR-009: Embedding Service Fallback Strategy](docs/adr/009-embedding-service-fallback.md)
+
 ## Troubleshooting
 
 ### Container won't start
