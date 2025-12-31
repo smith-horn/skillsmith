@@ -167,10 +167,9 @@
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^2.22.0",
-    "esbuild": "^0.19.11",
+    "esbuild": "0.27.2",
     "eslint": "^8.56.0",
     "typescript": "^5.3.3",
-    "vitest": "^1.2.0"
-  },
-  "dependencies": {}
+    "vitest": "4.0.16"
+  }
 }
