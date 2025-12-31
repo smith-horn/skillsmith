@@ -18,11 +18,12 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
-    "@skillsmith/core": "*"
+    "@skillsmith/core": "*",
+    "esbuild": "0.27.2"
   },
   "devDependencies": {
     "tsx": "^4.6.0",
-    "vitest": "^2.1.8",
+    "vitest": "4.0.16",
     "zod": "^3.25.0"
   },
   "files": [
