@@ -75,7 +75,8 @@ describe('Skill Recommend Tool', () => {
   })
 
   describe('executeRecommend', () => {
-    it('should return recommendations for empty installed_skills', async () => {
+    it('should return recommendations with auto-detected skills when installed_skills is empty', async () => {
+      // SMI-906: Empty installed_skills now triggers auto-detection from ~/.claude/skills/
       const result = await executeRecommend(
         {
           installed_skills: [],
@@ -86,7 +87,8 @@ describe('Skill Recommend Tool', () => {
       expect(result.recommendations).toBeDefined()
       expect(result.recommendations.length).toBeGreaterThan(0)
       expect(result.recommendations.length).toBeLessThanOrEqual(5)
-      expect(result.context.installed_count).toBe(0)
+      // installed_count may be > 0 due to auto-detection from ~/.claude/skills/
+      expect(result.context.installed_count).toBeGreaterThanOrEqual(0)
       expect(result.context.has_project_context).toBe(false)
       expect(result.timing.totalMs).toBeGreaterThanOrEqual(0)
     })
