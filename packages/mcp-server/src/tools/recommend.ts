@@ -30,6 +30,7 @@
 import { z } from 'zod'
 import { type MCPTrustTier as TrustTier, SkillMatcher, OverlapDetector } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
+import { getInstalledSkills } from '../utils/installed-skills.js'
 
 /**
  * Zod schema for recommend tool input validation
@@ -85,6 +86,8 @@ export interface RecommendResponse {
     installed_count: number
     has_project_context: boolean
     using_semantic_matching: boolean
+    /** SMI-906: Whether installed skills were auto-detected from ~/.claude/skills/ */
+    auto_detected: boolean
   }
   /** Performance timing */
   timing: {
@@ -98,7 +101,7 @@ export interface RecommendResponse {
 export const recommendToolSchema = {
   name: 'skill_recommend',
   description:
-    'Recommend skills based on currently installed skills and optional project context. Uses semantic similarity to find relevant skills.',
+    'Recommend skills based on currently installed skills and optional project context. Uses semantic similarity to find relevant skills. Auto-detects installed skills from ~/.claude/skills/ if not provided.',
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -106,7 +109,7 @@ export const recommendToolSchema = {
         type: 'array',
         items: { type: 'string' },
         description:
-          'Currently installed skill IDs (e.g., ["anthropic/commit", "community/jest-helper"])',
+          'Currently installed skill IDs (e.g., ["anthropic/commit", "community/jest-helper"]). If empty, auto-detects from ~/.claude/skills/',
       },
       project_context: {
         type: 'string',
@@ -245,7 +248,14 @@ export async function executeRecommend(
 
   // Validate input with Zod
   const validated = recommendInputSchema.parse(input)
-  const { installed_skills, project_context, limit, detect_overlap, min_similarity } = validated
+  let { installed_skills } = validated
+  const { project_context, limit, detect_overlap, min_similarity } = validated
+
+  // SMI-906: Auto-detect installed skills from ~/.claude/skills/ if not provided
+  const autoDetected = installed_skills.length === 0
+  if (autoDetected) {
+    installed_skills = await getInstalledSkills()
+  }
 
   // Load skills from database (limit to reasonable number for performance)
   // Use 500 as default to balance coverage vs performance
@@ -263,10 +273,48 @@ export async function executeRecommend(
     installed_skills.some((id) => id.toLowerCase() === s.id.toLowerCase())
   )
 
-  // Filter out already installed skills from candidates
-  const candidates = skillDatabase.filter(
-    (s) => !installed_skills.some((id) => id.toLowerCase() === s.id.toLowerCase())
-  )
+  // SMI-907: Extract installed skill names for name-based overlap detection
+  // This filters skills with semantically similar names (e.g., "docker" filters "docker-compose")
+  const installedNames = installed_skills.map((id) => {
+    // Extract the skill name from the ID (e.g., "community/docker" -> "docker")
+    const idName = id.split('/').pop()?.toLowerCase() || ''
+    // Also check if any installed skill data has a matching name
+    const skillData = installedSkillData.find((s) => s.id.toLowerCase() === id.toLowerCase())
+    return {
+      idName,
+      skillName: skillData?.name.toLowerCase() || idName,
+    }
+  })
+
+  // Filter out already installed skills AND semantically similar names from candidates
+  const candidates = skillDatabase.filter((s) => {
+    const skillName = s.name.toLowerCase()
+    const skillIdName = s.id.split('/').pop()?.toLowerCase() || ''
+
+    // Exclude if exact ID match (case-insensitive)
+    if (installed_skills.some((id) => id.toLowerCase() === s.id.toLowerCase())) {
+      return false
+    }
+
+    // SMI-907: Exclude if name is contained in or contains installed skill name
+    // This prevents recommending "docker-compose" when "docker" is installed
+    for (const installed of installedNames) {
+      const { idName, skillName: installedSkillName } = installed
+      if (!idName && !installedSkillName) continue
+
+      // Check name containment both ways
+      if (
+        (installedSkillName && skillName.includes(installedSkillName)) ||
+        (installedSkillName && installedSkillName.includes(skillName)) ||
+        (idName && skillIdName.includes(idName)) ||
+        (idName && idName.includes(skillIdName))
+      ) {
+        return false
+      }
+    }
+
+    return true
+  })
 
   let overlapFiltered = 0
 
@@ -329,6 +377,7 @@ export async function executeRecommend(
       installed_count: installed_skills.length,
       has_project_context: !!project_context,
       using_semantic_matching: true,
+      auto_detected: autoDetected,
     },
     timing: {
       totalMs: Math.round(endTime - startTime),
@@ -369,6 +418,13 @@ export function formatRecommendations(response: RecommendResponse): string {
   lines.push(`Candidates considered: ${response.candidates_considered}`)
   if (response.overlap_filtered > 0) {
     lines.push(`Filtered for overlap: ${response.overlap_filtered}`)
+  }
+  if (response.context.auto_detected) {
+    lines.push(
+      `Installed skills: ${response.context.installed_count} (auto-detected from ~/.claude/skills/)`
+    )
+  } else {
+    lines.push(`Installed skills: ${response.context.installed_count}`)
   }
   lines.push(
     `Semantic matching: ${response.context.using_semantic_matching ? 'enabled' : 'disabled'}`

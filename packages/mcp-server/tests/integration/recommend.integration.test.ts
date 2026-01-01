@@ -26,7 +26,8 @@ describe('Recommend Tool Integration', () => {
   })
 
   describe('executeRecommend', () => {
-    it('should return recommendations for empty installed skills', async () => {
+    it('should return recommendations with auto-detected skills when installed skills is empty', async () => {
+      // SMI-906: Empty installed_skills now triggers auto-detection from ~/.claude/skills/
       const result = await executeRecommend(
         {
           installed_skills: [],
@@ -38,7 +39,8 @@ describe('Recommend Tool Integration', () => {
       expect(result.recommendations).toBeDefined()
       expect(result.recommendations.length).toBeGreaterThan(0)
       expect(result.recommendations.length).toBeLessThanOrEqual(5)
-      expect(result.context.installed_count).toBe(0)
+      // installed_count may be > 0 due to auto-detection from ~/.claude/skills/
+      expect(result.context.installed_count).toBeGreaterThanOrEqual(0)
       expect(result.context.using_semantic_matching).toBe(true)
     })
 
@@ -173,6 +175,100 @@ describe('Recommend Tool Integration', () => {
     })
   })
 
+  // SMI-907: Tests for improved overlap detection with semantically similar names
+  describe('SMI-907: Name-based overlap detection', () => {
+    it('should NOT recommend docker-compose when docker is installed', async () => {
+      const result = await executeRecommend(
+        {
+          installed_skills: ['community/docker'],
+          detect_overlap: false, // Disable semantic overlap to test name-based filtering
+          limit: 50,
+        },
+        toolContext
+      )
+
+      const recommendedIds = result.recommendations.map((r) => r.skill_id)
+
+      // docker-compose should be filtered because "docker-compose" contains "docker"
+      expect(recommendedIds).not.toContain('community/docker-compose')
+
+      // Also verify the installed skill itself is not recommended
+      expect(recommendedIds).not.toContain('community/docker')
+    })
+
+    it('should still recommend vitest-helper when jest-helper is installed', async () => {
+      const result = await executeRecommend(
+        {
+          installed_skills: ['community/jest-helper'],
+          detect_overlap: false, // Disable semantic overlap to test name-based filtering
+          limit: 50,
+        },
+        toolContext
+      )
+
+      const recommendedIds = result.recommendations.map((r) => r.skill_id)
+
+      // vitest-helper should still be recommended - different testing framework
+      // "jest-helper" and "vitest-helper" don't share name containment
+      expect(recommendedIds).toContain('community/vitest-helper')
+
+      // jest-helper itself should not be recommended (installed)
+      expect(recommendedIds).not.toContain('community/jest-helper')
+    })
+
+    it('should NOT recommend git-commit-helper when commit is installed', async () => {
+      const result = await executeRecommend(
+        {
+          installed_skills: ['anthropic/commit'],
+          detect_overlap: false, // Disable semantic overlap to test name-based filtering
+          limit: 50,
+        },
+        toolContext
+      )
+
+      const recommendedIds = result.recommendations.map((r) => r.skill_id)
+
+      // git-commit-helper should be filtered because "git-commit-helper" contains "commit"
+      expect(recommendedIds).not.toContain('community/git-commit-helper')
+
+      // The installed skill itself should not be recommended
+      expect(recommendedIds).not.toContain('anthropic/commit')
+    })
+
+    it('should filter skills when only skill name (not full ID) is provided', async () => {
+      // Test with just "docker" as installed (simulating user-provided short name)
+      const result = await executeRecommend(
+        {
+          installed_skills: ['docker'],
+          detect_overlap: false,
+          limit: 50,
+        },
+        toolContext
+      )
+
+      const recommendedIds = result.recommendations.map((r) => r.skill_id)
+
+      // Should filter docker-compose because "docker-compose" contains "docker"
+      expect(recommendedIds).not.toContain('community/docker-compose')
+    })
+
+    it('should handle case-insensitive name matching', async () => {
+      const result = await executeRecommend(
+        {
+          installed_skills: ['COMMUNITY/DOCKER'],
+          detect_overlap: false,
+          limit: 50,
+        },
+        toolContext
+      )
+
+      const recommendedIds = result.recommendations.map((r) => r.skill_id)
+
+      // Should still filter docker-compose with case-insensitive matching
+      expect(recommendedIds).not.toContain('community/docker-compose')
+    })
+  })
+
   describe('formatRecommendations', () => {
     it('should format recommendations for terminal display', async () => {
       const result = await executeRecommend(
@@ -201,6 +297,7 @@ describe('Recommend Tool Integration', () => {
           installed_count: 0,
           has_project_context: false,
           using_semantic_matching: true,
+          auto_detected: false,
         },
         timing: { totalMs: 1 },
       }

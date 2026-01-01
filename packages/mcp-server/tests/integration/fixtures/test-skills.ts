@@ -21,9 +21,9 @@ interface TestSkillData {
 
 /**
  * Comprehensive test skills covering all categories and trust tiers
- * Total: 56 skills
+ * Total: 58 skills (updated for SMI-907)
  * - Categories: development, testing, documentation, devops, database, security, productivity, integration, ai-ml, other
- * - Trust tiers: verified (8), community (24), experimental (16), unknown (8)
+ * - Trust tiers: verified (8), community (26), experimental (16), unknown (8)
  */
 export const TEST_SKILLS: TestSkillData[] = [
   // ============ VERIFIED SKILLS (8) ============
@@ -519,6 +519,28 @@ export const TEST_SKILLS: TestSkillData[] = [
     qualityScore: 0.7,
     trustTier: 'experimental',
     tags: ['serverless', 'lambda', 'vercel', 'functions', 'devops'],
+  },
+
+  // ============ SMI-907: Additional skills for overlap detection testing ============
+  {
+    id: 'community/docker',
+    name: 'docker',
+    description: 'Docker container management and Dockerfile generation',
+    author: 'community',
+    repoUrl: 'https://github.com/skillsmith-community/docker',
+    qualityScore: 0.85,
+    trustTier: 'community',
+    tags: ['docker', 'containers', 'devops', 'devops'],
+  },
+  {
+    id: 'community/git-commit-helper',
+    name: 'git-commit-helper',
+    description: 'Git commit message generation with conventional commits support',
+    author: 'community',
+    repoUrl: 'https://github.com/skillsmith-community/git-commit-helper',
+    qualityScore: 0.82,
+    trustTier: 'community',
+    tags: ['git', 'commit', 'conventional-commits', 'development'],
   },
 
   // ============ UNKNOWN TRUST SKILLS (8) ============
