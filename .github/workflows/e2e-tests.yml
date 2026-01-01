@@ -1,0 +1,248 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [e2e-testing, main]
+  pull_request:
+    branches: [e2e-testing, main]
+  workflow_dispatch:
+    inputs:
+      test_scope:
+        description: 'Test scope to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - cli
+          - mcp
+
+env:
+  NODE_VERSION: '20'
+  SKILLSMITH_E2E: 'true'
+
+jobs:
+  # Phase A: CLI E2E Tests
+  cli-e2e-tests:
+    name: CLI E2E Tests
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test_scope != 'mcp'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: skillsmith/package-lock.json
+
+      - name: Install dependencies
+        working-directory: skillsmith
+        run: npm ci
+
+      - name: Build packages
+        working-directory: skillsmith
+        run: npm run build
+
+      - name: Clone test repository
+        run: |
+          git clone https://github.com/wrsmith108/021-school-platform.git /tmp/test-repo
+        continue-on-error: true
+
+      - name: Run CLI E2E tests
+        working-directory: skillsmith
+        run: npm run test:e2e:cli
+        env:
+          SKILLSMITH_TEST_REPO: /tmp/test-repo
+
+      - name: Upload CLI test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-e2e-results
+          path: |
+            skillsmith/test-results/cli-*.xml
+            skillsmith/test-results/cli-*.json
+          retention-days: 30
+
+  # Phase B: MCP E2E Tests (only runs after CLI passes)
+  mcp-e2e-tests:
+    name: MCP E2E Tests
+    runs-on: ubuntu-latest
+    needs: cli-e2e-tests
+    if: |
+      always() &&
+      (needs.cli-e2e-tests.result == 'success' || github.event.inputs.test_scope == 'mcp')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: skillsmith/package-lock.json
+
+      - name: Install dependencies
+        working-directory: skillsmith
+        run: npm ci
+
+      - name: Build packages
+        working-directory: skillsmith
+        run: npm run build
+
+      - name: Clone test repository
+        run: |
+          git clone https://github.com/wrsmith108/021-school-platform.git /tmp/test-repo
+        continue-on-error: true
+
+      - name: Run MCP E2E tests
+        working-directory: skillsmith
+        run: npm run test:e2e:mcp
+        env:
+          SKILLSMITH_TEST_REPO: /tmp/test-repo
+
+      - name: Upload MCP test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-e2e-results
+          path: |
+            skillsmith/test-results/mcp-*.xml
+            skillsmith/test-results/mcp-*.json
+          retention-days: 30
+
+  # Generate reports and create Linear issues for failures
+  report-results:
+    name: Generate Reports
+    runs-on: ubuntu-latest
+    needs: [cli-e2e-tests, mcp-e2e-tests]
+    if: always()
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: skillsmith/package-lock.json
+
+      - name: Download CLI results
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-e2e-results
+          path: skillsmith/test-results/cli
+        continue-on-error: true
+
+      - name: Download MCP results
+        uses: actions/download-artifact@v4
+        with:
+          name: mcp-e2e-results
+          path: skillsmith/test-results/mcp
+        continue-on-error: true
+
+      - name: Install dependencies
+        working-directory: skillsmith
+        run: npm ci
+
+      - name: Generate combined report
+        working-directory: skillsmith
+        run: npm run test:e2e:report
+        continue-on-error: true
+
+      - name: Create Linear issues for failures
+        if: failure()
+        working-directory: skillsmith
+        run: npm run test:e2e:create-issues
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        continue-on-error: true
+
+      - name: Upload combined reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-combined-reports
+          path: |
+            skillsmith/test-results/combined-*.json
+            skillsmith/docs/testing/results/*.md
+          retention-days: 90
+
+      - name: Post summary to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'skillsmith/docs/testing/results/latest-summary.md';
+
+            let summary = '## E2E Test Results\n\n';
+
+            if (fs.existsSync(path)) {
+              summary += fs.readFileSync(path, 'utf-8');
+            } else {
+              const cliStatus = '${{ needs.cli-e2e-tests.result }}';
+              const mcpStatus = '${{ needs.mcp-e2e-tests.result }}';
+
+              summary += `| Phase | Status |\n|-------|--------|\n`;
+              summary += `| CLI E2E | ${cliStatus === 'success' ? '✅' : '❌'} ${cliStatus} |\n`;
+              summary += `| MCP E2E | ${mcpStatus === 'success' ? '✅' : '❌'} ${mcpStatus} |\n`;
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+  # Baseline collection job (only on main branch)
+  collect-baselines:
+    name: Collect Performance Baselines
+    runs-on: ubuntu-latest
+    needs: [cli-e2e-tests, mcp-e2e-tests]
+    if: github.ref == 'refs/heads/main' && needs.cli-e2e-tests.result == 'success' && needs.mcp-e2e-tests.result == 'success'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          path: skillsmith/test-results/all
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        working-directory: skillsmith
+        run: npm ci
+
+      - name: Generate baseline report
+        working-directory: skillsmith
+        run: npm run test:e2e:baseline
+
+      - name: Upload baseline report
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-baselines
+          path: skillsmith/test-results/baselines.json
+          retention-days: 365
+
+      - name: Create Linear issue for baselines
+        working-directory: skillsmith
+        run: |
+          echo "Performance baselines collected. See artifact for details."
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
