@@ -290,6 +290,7 @@ The project includes an automatic post-commit hook that syncs Linear issues:
 
 **Configuration**:
 - `LINEAR_API_KEY` - Required for Linear API access (silent fail if unset)
+- `LINEAR_TEAM_ID` - Required for E2E test issue creation (UUID format)
 - `DEBUG_LINEAR_HOOK=true` - Enable verbose output for debugging
 
 **Advanced Operations**:
