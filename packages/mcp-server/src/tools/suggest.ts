@@ -22,7 +22,7 @@
  *   current_file: 'src/App.test.tsx',
  *   recent_commands: ['npm test'],
  *   installed_skills: ['anthropic/commit']
- * });
+ * }, toolContext);
  */
 
 import { z } from 'zod'
@@ -150,102 +150,88 @@ export const suggestToolSchema = {
 }
 
 /**
- * Skill database for suggestions
- * In production, this would be loaded from the database
+ * Skill data format for matching operations
+ * Transformed from database Skill records
  */
 interface SkillData {
+  /** Unique skill identifier */
   id: string
+  /** Skill display name */
   name: string
+  /** Skill description */
   description: string
+  /** Trigger phrases for matching (derived from tags) */
   triggerPhrases: string[]
+  /** Keywords for matching (from tags) */
   keywords: string[]
+  /** Quality score (0-100) */
   qualityScore: number
+  /** Trust tier */
   trustTier: TrustTier
+  /** Categories for filtering (from tags) */
   categories: string[]
 }
 
-const skillDatabase: SkillData[] = [
-  {
-    id: 'anthropic/commit',
-    name: 'commit',
-    description: 'Generate semantic commit messages following conventional commits',
-    triggerPhrases: ['commit changes', 'create commit', 'git commit'],
-    keywords: ['git', 'commit', 'conventional'],
-    qualityScore: 95,
-    trustTier: 'verified',
-    categories: ['git', 'commit', 'version-control'],
-  },
-  {
-    id: 'community/jest-helper',
-    name: 'jest-helper',
-    description: 'Generate Jest test cases for React components',
-    triggerPhrases: ['write jest test', 'create test', 'test component'],
-    keywords: ['jest', 'testing', 'react', 'unit-tests'],
-    qualityScore: 87,
-    trustTier: 'community',
-    categories: ['testing', 'jest', 'react'],
-  },
-  {
-    id: 'community/vitest-helper',
-    name: 'vitest-helper',
-    description: 'Generate Vitest test cases with modern testing patterns',
-    triggerPhrases: ['vitest test', 'create vitest', 'write test'],
-    keywords: ['vitest', 'testing', 'typescript'],
-    qualityScore: 85,
-    trustTier: 'community',
-    categories: ['testing', 'vitest'],
-  },
-  {
-    id: 'community/docker-compose',
-    name: 'docker-compose',
-    description: 'Generate and manage Docker Compose configurations',
-    triggerPhrases: ['docker compose', 'create docker', 'containerize'],
-    keywords: ['docker', 'devops', 'containers'],
-    qualityScore: 84,
-    trustTier: 'community',
-    categories: ['docker', 'devops', 'containers'],
-  },
-  {
-    id: 'community/eslint-config',
-    name: 'eslint-config',
-    description: 'Generate ESLint configurations for TypeScript projects',
-    triggerPhrases: ['eslint config', 'setup linting', 'configure eslint'],
-    keywords: ['eslint', 'linting', 'typescript'],
-    qualityScore: 82,
-    trustTier: 'community',
-    categories: ['eslint', 'linting', 'code-quality'],
-  },
-  {
-    id: 'community/react-component',
-    name: 'react-component',
-    description: 'Generate React components with TypeScript and hooks',
-    triggerPhrases: ['create component', 'react component', 'new component'],
-    keywords: ['react', 'component', 'typescript', 'hooks'],
-    qualityScore: 86,
-    trustTier: 'community',
-    categories: ['react', 'frontend', 'components'],
-  },
-  {
-    id: 'community/github-actions',
-    name: 'github-actions',
-    description: 'Generate GitHub Actions workflows for CI/CD',
-    triggerPhrases: ['github action', 'ci workflow', 'create workflow'],
-    keywords: ['github', 'ci-cd', 'actions', 'automation'],
-    qualityScore: 88,
-    trustTier: 'community',
-    categories: ['github-actions', 'ci-cd', 'automation'],
-  },
-  {
-    id: 'community/prisma-schema',
-    name: 'prisma-schema',
-    description: 'Generate Prisma schema and migrations for databases',
-    triggerPhrases: ['prisma schema', 'database model', 'create migration'],
-    keywords: ['prisma', 'database', 'orm', 'migrations'],
-    qualityScore: 83,
-    trustTier: 'community',
-    categories: ['prisma', 'database', 'orm'],
-  },
-]
+/**
+ * Map database trust tier to MCP trust tier
+ */
+function mapTrustTierFromDb(dbTier: string): TrustTier {
+  switch (dbTier) {
+    case 'verified':
+      return 'verified'
+    case 'community':
+      return 'community'
+    case 'experimental':
+      return 'standard'
+    case 'unknown':
+    default:
+      return 'unverified'
+  }
+}
+
+/**
+ * Transform a database skill to SkillData format for matching
+ */
+function transformSkillToMatchData(skill: {
+  id: string
+  name: string
+  description: string | null
+  tags: string[]
+  qualityScore: number | null
+  trustTier: string
+}): SkillData {
+  // Generate trigger phrases from name and first few tags
+  const triggerPhrases = [
+    skill.name,
+    `use ${skill.name}`,
+    `${skill.name} help`,
+    ...skill.tags.slice(0, 3).map((tag) => `${tag} ${skill.name}`),
+  ]
+
+  return {
+    id: skill.id,
+    name: skill.name,
+    description: skill.description || '',
+    triggerPhrases,
+    keywords: skill.tags,
+    qualityScore: Math.round((skill.qualityScore ?? 0.5) * 100),
+    trustTier: mapTrustTierFromDb(skill.trustTier),
+    // Use tags as categories for filtering
+    categories: skill.tags,
+  }
+}
+
+/**
+ * Load skills from database via ToolContext
+ * Returns skills transformed to SkillData format for matching
+ */
+async function loadSkillsFromDatabase(
+  context: ToolContext,
+  limit: number = 500
+): Promise<SkillData[]> {
+  const result = context.skillRepository.findAll(limit, 0)
+  return result.items.map(transformSkillToMatchData)
+}
 
 // Rate limiter instance (singleton)
 let rateLimiter: RateLimiter | null = null
@@ -272,7 +258,7 @@ function getRateLimiter(): RateLimiter {
  * Execute skill suggestion based on context.
  *
  * @param input - Suggestion parameters
- * @param _context - Tool context (unused for now)
+ * @param context - Tool context with database access
  * @returns Promise resolving to suggestion response
  *
  * @example
@@ -282,11 +268,11 @@ function getRateLimiter(): RateLimiter {
  *   recent_commands: ['npm test'],
  *   installed_skills: ['anthropic/commit'],
  *   limit: 3
- * });
+ * }, toolContext);
  */
 export async function executeSuggest(
   input: SuggestInput,
-  _context?: ToolContext
+  context: ToolContext
 ): Promise<SuggestResponse> {
   const startTime = performance.now()
 
@@ -364,6 +350,9 @@ export async function executeSuggest(
   }
 
   const matchingStart = performance.now()
+
+  // Load skills from database
+  const skillDatabase = await loadSkillsFromDatabase(context, 500)
 
   // Filter skills by detected categories
   const relevantCategories = new Set(contextScore.recommendedCategories)

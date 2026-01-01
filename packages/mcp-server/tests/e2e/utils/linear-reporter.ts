@@ -172,12 +172,21 @@ export function createIssueTitle(failure: TestFailure): string {
  */
 export async function createLinearIssue(failure: TestFailure): Promise<LinearIssueResult> {
   const apiKey = process.env['LINEAR_API_KEY']
+  const teamId = process.env['LINEAR_TEAM_ID']
 
   if (!apiKey) {
     console.warn('LINEAR_API_KEY not set, skipping issue creation')
     return {
       success: false,
       error: 'LINEAR_API_KEY environment variable not set',
+    }
+  }
+
+  if (!teamId) {
+    console.warn('LINEAR_TEAM_ID not set, skipping issue creation')
+    return {
+      success: false,
+      error: 'LINEAR_TEAM_ID environment variable not set (required for issue creation)',
     }
   }
 
@@ -202,6 +211,7 @@ export async function createLinearIssue(failure: TestFailure): Promise<LinearIss
     input: {
       title,
       description,
+      teamId,
       // Labels: bug, e2e, hardcoded (if applicable)
       labelIds: failure.hardcodedIssues?.length ? ['bug', 'e2e', 'hardcoded'] : ['bug', 'e2e'],
       priority: failure.hardcodedIssues?.some((i) => i.severity === 'error') ? 1 : 2,
