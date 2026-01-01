@@ -17,6 +17,7 @@ import { uninstallTool, uninstallSkill, uninstallInputSchema } from './tools/uni
 import { recommendToolSchema, recommendInputSchema, executeRecommend } from './tools/recommend.js'
 import { validateToolSchema, validateInputSchema, executeValidate } from './tools/validate.js'
 import { compareToolSchema, compareInputSchema, executeCompare } from './tools/compare.js'
+import { suggestToolSchema, suggestInputSchema, executeSuggest } from './tools/suggest.js'
 
 // Initialize tool context with database connection
 let toolContext: ToolContext
@@ -30,6 +31,7 @@ const toolDefinitions = [
   recommendToolSchema,
   validateToolSchema,
   compareToolSchema,
+  suggestToolSchema,
 ]
 
 // Create server
@@ -143,6 +145,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'skill_compare': {
         const input = compareInputSchema.parse(args)
         const result = await executeCompare(input, toolContext)
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        }
+      }
+
+      case 'skill_suggest': {
+        const input = suggestInputSchema.parse(args)
+        const result = await executeSuggest(input, toolContext)
         return {
           content: [
             {

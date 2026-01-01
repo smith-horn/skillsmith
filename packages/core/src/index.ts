@@ -213,7 +213,7 @@ export type {
   ISourceAdapter,
   SourceType,
   SourceConfig,
-  RateLimitConfig,
+  RateLimitConfig as SourceRateLimitConfig,
   SourceAuthConfig,
   SourceLocation,
   SourceRepository,
@@ -296,3 +296,78 @@ export {
   type FilteredSkillsResult,
   type OverlapDetectorOptions,
 } from './matching/index.js'
+
+// Security (SMI-730)
+export {
+  RateLimiter,
+  InMemoryRateLimitStorage,
+  createRateLimiterFromPreset,
+  RATE_LIMIT_PRESETS,
+  type RateLimitConfig,
+  type RateLimitResult,
+  type RateLimitStorage,
+  type RateLimitMetrics,
+} from './security/RateLimiter.js'
+
+// Trigger System (Phase 4)
+export {
+  TriggerDetector,
+  ContextScorer,
+  DEFAULT_FILE_TRIGGERS,
+  DEFAULT_COMMAND_TRIGGERS,
+  DEFAULT_ERROR_TRIGGERS,
+  DEFAULT_PROJECT_TRIGGERS,
+  type TriggerType,
+  type FilePatternTrigger,
+  type CommandTrigger,
+  type ErrorTrigger,
+  type ProjectTrigger,
+  type DetectedTrigger,
+  type TriggerDetectionOptions,
+  type ContextScore,
+  type ContextScoringWeights,
+  type ContextScorerOptions,
+} from './triggers/index.js'
+
+// Skill Activation (Phase 4)
+export {
+  ActivationManager,
+  ZeroConfigActivator,
+  type ActivationOptions,
+  type ActivationResult,
+  type SkillConfigSchema,
+  type ConfigField,
+  type ConfigStatus,
+  type ZeroConfigOptions,
+} from './activation/index.js'
+
+// Analytics (Phase 4: Epic 3 & Epic 4)
+export {
+  initializeAnalyticsSchema,
+  AnalyticsRepository,
+  UsageAnalyticsService,
+  ExperimentService,
+  ROIDashboardService,
+} from './analytics/index.js'
+export type {
+  UsageEvent,
+  UsageEventInput,
+  UsageEventType,
+  Experiment,
+  ExperimentInput,
+  ExperimentStatus,
+  ExperimentVariant,
+  ExperimentAssignment,
+  ExperimentOutcome,
+  OutcomeInput,
+  ExperimentAnalysis,
+  ROIMetrics,
+  ROIMetricType,
+  ValueAttribution,
+  AttributionType,
+  ValueDimension,
+  UsageAnalyticsSummary,
+  ROIDashboard,
+  ExportFormat,
+  ExportOptions,
+} from './analytics/index.js'
