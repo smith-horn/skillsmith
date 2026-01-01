@@ -36,7 +36,8 @@
     "linear:hook:debug": "DEBUG_LINEAR_HOOK=true node scripts/linear-hook.mjs post-commit",
     "retro:generate": "node scripts/generate-retro.mjs",
     "seed": "npx tsx scripts/seed-skills.ts",
-    "seed:clear": "npx tsx scripts/seed-skills.ts --clear --verbose"
+    "seed:clear": "npx tsx scripts/seed-skills.ts --clear --verbose",
+    "recommend": "npx tsx scripts/test-recommend.ts"
   },
   "engines": {
     "node": ">=22.0.0"

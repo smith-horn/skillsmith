@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { createTestDatabase, type TestDatabaseContext } from './setup.js'
+import { createTestDatabase, TEST_SKILLS_STATS, type TestDatabaseContext } from './setup.js'
 
 describe('Get Skill Tool Integration Tests', () => {
   let dbContext: TestDatabaseContext
@@ -102,13 +102,15 @@ describe('Get Skill Tool Integration Tests', () => {
     })
 
     it('should have valid trust tier for experimental skills', () => {
-      const skill = dbContext.skillRepository.findById('community/api-docs')
+      // SMI-903: Updated to use experimental skill from expanded fixtures
+      const skill = dbContext.skillRepository.findById('experimental/ai-code-review')
 
       expect(skill?.trustTier).toBe('experimental')
     })
 
     it('should have valid trust tier for unknown skills', () => {
-      const skill = dbContext.skillRepository.findById('test/typescript-helper')
+      // SMI-903: Updated to use unknown tier skill from expanded fixtures
+      const skill = dbContext.skillRepository.findById('user123/custom-linter')
 
       expect(skill?.trustTier).toBe('unknown')
     })
@@ -185,7 +187,7 @@ describe('Get Skill Tool Integration Tests', () => {
       const count = dbContext.skillRepository.count()
 
       expect(count).toBeGreaterThan(0)
-      expect(count).toBe(7) // We seeded 7 test skills
+      expect(count).toBe(TEST_SKILLS_STATS.total) // SMI-903: Now 56 test skills
     })
   })
 
