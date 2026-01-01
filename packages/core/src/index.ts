@@ -380,4 +380,10 @@ export type {
   SkillUsageOutcome,
   SkillMetrics,
   UsageTrackerOptions,
+  // SMI-915: Metrics aggregation and export types
+  MetricsAggregator,
+  MetricsExporter,
+  AggregationPeriod,
+  GlobalMetrics,
+  MetricsExport,
 } from './analytics/index.js'

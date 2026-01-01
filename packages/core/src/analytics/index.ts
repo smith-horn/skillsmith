@@ -19,3 +19,9 @@ export * from './ROIDashboardService.js'
 export * from './anonymizer.js'
 export { AnalyticsStorage } from './storage.js'
 export { UsageTracker, type UsageTrackerOptions } from './usage-tracker.js'
+
+// SMI-915: Metrics aggregation and export
+export { MetricsAggregator } from './metrics-aggregator.js'
+export type { AggregationPeriod, GlobalMetrics } from './metrics-aggregator.js'
+export { MetricsExporter } from './metrics-exporter.js'
+export type { MetricsExport, ExportOptions } from './metrics-exporter.js'
