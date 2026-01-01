@@ -10,7 +10,7 @@
  * User Journey: Proactive skill suggestions based on context
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import { existsSync, rmSync, mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir, homedir } from 'os'
@@ -211,8 +211,24 @@ describe('E2E: skill_suggest tool', () => {
   })
 
   describe('Rate Limiting', () => {
+    // Use fake timers to prevent CI flakiness from timing variations
+    // The rate limiter uses Date.now() internally, so we control time explicitly
+    const FIXED_TIME = new Date('2025-01-01T12:00:00.000Z').getTime()
+    let testCounter = 0
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(FIXED_TIME)
+      testCounter++
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
     it('should rate limit rapid requests', async () => {
-      const sessionId = `test-session-${Date.now()}`
+      // Use counter for unique session ID since Date.now() is frozen
+      const sessionId = `test-session-rate-limit-${testCounter}`
 
       // First request should succeed
       const result1 = await executeSuggest(
@@ -221,6 +237,10 @@ describe('E2E: skill_suggest tool', () => {
       )
 
       expect(result1.rate_limited).toBe(false)
+
+      // Advance time by a tiny amount (1ms) to ensure we're still within rate limit window
+      // The rate limiter has a 5-minute window with 1 token that refills at 1/300 per second
+      vi.advanceTimersByTime(1)
 
       // Immediate second request should be rate limited
       const result2 = await executeSuggest(
@@ -233,18 +253,23 @@ describe('E2E: skill_suggest tool', () => {
     })
 
     it('should allow requests from different sessions', async () => {
+      // Use unique session IDs that won't collide with other tests
+      const sessionA = `session-multi-a-${testCounter}`
+      const sessionB = `session-multi-b-${testCounter}`
+
       const result1 = await executeSuggest(
-        { project_path: TEST_PROJECT_DIR, session_id: 'session-a', limit: 3 },
+        { project_path: TEST_PROJECT_DIR, session_id: sessionA, limit: 3 },
         context
       )
 
       const result2 = await executeSuggest(
-        { project_path: TEST_PROJECT_DIR, session_id: 'session-b', limit: 3 },
+        { project_path: TEST_PROJECT_DIR, session_id: sessionB, limit: 3 },
         context
       )
 
       // Different sessions should not be rate limited against each other
-      // (unless first was just run, this tests fresh sessions)
+      expect(result1.rate_limited).toBe(false)
+      expect(result2.rate_limited).toBe(false)
       expect(result1.timing.totalMs).toBeGreaterThanOrEqual(0)
       expect(result2.timing.totalMs).toBeGreaterThanOrEqual(0)
     })
