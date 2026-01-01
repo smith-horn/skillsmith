@@ -44,5 +44,30 @@ services:
     profiles:
       - test
 
+  # Hive Mind Orchestrator - run with: docker compose --profile orchestrator up
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    container_name: skillsmith-orchestrator-1
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+    environment:
+      - NODE_ENV=development
+      - LINEAR_API_KEY=${LINEAR_API_KEY}
+      - SKILLSMITH_PATH=/app
+    working_dir: /app
+    command: npx tsx scripts/phase4-orchestrator/orchestrator.ts
+    healthcheck:
+      test: ['CMD', 'npx', 'claude-flow', '--version']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    profiles:
+      - orchestrator
+
 volumes:
   node_modules:
