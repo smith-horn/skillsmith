@@ -37,7 +37,13 @@
     "retro:generate": "node scripts/generate-retro.mjs",
     "seed": "npx tsx scripts/seed-skills.ts",
     "seed:clear": "npx tsx scripts/seed-skills.ts --clear --verbose",
-    "recommend": "npx tsx scripts/test-recommend.ts"
+    "recommend": "npx tsx scripts/test-recommend.ts",
+    "test:e2e": "npm run test:e2e:cli && npm run test:e2e:mcp",
+    "test:e2e:cli": "npx tsx scripts/e2e/run-cli-tests.ts",
+    "test:e2e:mcp": "npx tsx scripts/e2e/run-mcp-tests.ts",
+    "test:e2e:report": "npx tsx scripts/e2e/generate-report.ts",
+    "test:e2e:create-issues": "npx tsx scripts/e2e/create-linear-issues.ts",
+    "test:e2e:baseline": "npx tsx scripts/e2e/generate-report.ts --baseline"
   },
   "engines": {
     "node": ">=22.0.0"

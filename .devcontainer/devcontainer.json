@@ -1,0 +1,31 @@
+{
+  "name": "Skillsmith E2E Testing",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:20",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "postCreateCommand": "npm ci && npm run build && npm link",
+  "postStartCommand": "git clone https://github.com/wrsmith108/021-school-platform.git /tmp/test-repo 2>/dev/null || true",
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "esbenp.prettier-vscode"],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  },
+  "forwardPorts": [3001],
+  "remoteEnv": {
+    "NODE_ENV": "test",
+    "SKILLSMITH_E2E": "true",
+    "SKILLSMITH_TEST_REPO": "/tmp/test-repo"
+  },
+  "containerEnv": {
+    "TERM": "xterm-256color"
+  },
+  "mounts": [
+    "source=${localWorkspaceFolder}/test-results,target=/workspaces/skillsmith/test-results,type=bind"
+  ],
+  "runArgs": ["--init"]
+}
