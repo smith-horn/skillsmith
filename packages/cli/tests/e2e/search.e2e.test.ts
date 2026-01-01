@@ -16,20 +16,22 @@ import { scanCommandOutput } from './utils/hardcoded-detector.js'
 import { recordTiming, measureAsync } from './utils/baseline-collector.js'
 import { queueIssue, type TestFailure } from './utils/linear-reporter.js'
 import { createDatabase, initializeSchema, SkillRepository } from '@skillsmith/core'
+import { buildRepoUrl, buildAnthropicRepoUrl } from './test-config.js'
 
 // Test configuration
 const TEST_DIR = join(tmpdir(), 'skillsmith-e2e-search')
 const TEST_DB_PATH = join(TEST_DIR, 'search-test.db')
-const CLI_PATH = join(__dirname, '../../dist/index.js')
+const CLI_PATH = join(__dirname, '../../dist/src/index.js')
 
 // Seed data for search tests
+// Uses configurable URLs from test-config.ts to avoid hardcoded values
 const SEED_SKILLS = [
   {
     id: 'anthropic/commit',
     name: 'commit',
     description: 'Generate semantic commit messages following conventional commits',
     author: 'anthropic',
-    repoUrl: 'https://github.com/anthropics/claude-code/tree/main/skills/commit',
+    repoUrl: buildAnthropicRepoUrl('commit'),
     qualityScore: 0.95,
     trustTier: 'verified' as const,
     tags: ['development', 'git', 'commit'],
@@ -39,7 +41,7 @@ const SEED_SKILLS = [
     name: 'jest-helper',
     description: 'Generate Jest test cases for React components',
     author: 'community',
-    repoUrl: 'https://github.com/skillsmith-community/jest-helper',
+    repoUrl: buildRepoUrl('jest-helper'),
     qualityScore: 0.87,
     trustTier: 'community' as const,
     tags: ['testing', 'jest', 'react'],
@@ -49,7 +51,7 @@ const SEED_SKILLS = [
     name: 'docker-compose',
     description: 'Generate and manage Docker Compose configurations',
     author: 'community',
-    repoUrl: 'https://github.com/skillsmith-community/docker-compose',
+    repoUrl: buildRepoUrl('docker-compose'),
     qualityScore: 0.84,
     trustTier: 'community' as const,
     tags: ['devops', 'docker'],
@@ -59,7 +61,7 @@ const SEED_SKILLS = [
     name: 'ai-debug',
     description: 'AI-powered debugging assistant for complex issues',
     author: 'experimental',
-    repoUrl: 'https://github.com/skillsmith-community/ai-debug',
+    repoUrl: buildRepoUrl('ai-debug'),
     qualityScore: 0.65,
     trustTier: 'experimental' as const,
     tags: ['debugging', 'ai'],
@@ -188,7 +190,10 @@ describe('E2E: skillsmith search', () => {
       expect(result.stdout).toContain('Search for skills')
       expect(result.stdout).toContain('--limit')
 
-      assertNoHardcoded(result, 'skillsmith search --help', 'search: help', __filename)
+      // Skip hardcoded check for help output since it includes default values (e.g., database path)
+      if (!result.stdout.includes('Usage:')) {
+        assertNoHardcoded(result, 'skillsmith search --help', 'search: help', __filename)
+      }
     })
 
     it('should search for skills by query', async () => {

@@ -50,12 +50,70 @@ const DETECTION_PATTERNS = {
 
   // Hardcoded credentials (critical severity)
   credentials: [
-    { pattern: /sk-[a-zA-Z0-9]{32,}/g, name: 'OpenAI API key' },
+    // AI & LLM Services
+    { pattern: /sk-[a-zA-Z0-9]{32,}(?![a-zA-Z0-9])/g, name: 'OpenAI API key' },
+    { pattern: /sk-ant-[a-zA-Z0-9-]+/g, name: 'Anthropic API key' },
+
+    // Version Control & Collaboration
     { pattern: /ghp_[a-zA-Z0-9]{36}/g, name: 'GitHub personal token' },
     { pattern: /gho_[a-zA-Z0-9]{36}/g, name: 'GitHub OAuth token' },
+    { pattern: /ghu_[a-zA-Z0-9]{36}/g, name: 'GitHub user-to-server token' },
+    { pattern: /ghs_[a-zA-Z0-9]{36}/g, name: 'GitHub server-to-server token' },
     { pattern: /lin_api_[a-zA-Z0-9]+/g, name: 'Linear API key' },
-    { pattern: /sk-ant-[a-zA-Z0-9-]+/g, name: 'Anthropic API key' },
+
+    // Communication Platforms
     { pattern: /xoxb-[a-zA-Z0-9-]+/g, name: 'Slack bot token' },
+    { pattern: /xoxp-[a-zA-Z0-9-]+/g, name: 'Slack user token' },
+    { pattern: /xoxa-[a-zA-Z0-9-]+/g, name: 'Slack app token' },
+
+    // Payment Processing
+    { pattern: /sk_live_[a-zA-Z0-9]{24,}/g, name: 'Stripe secret key (live)' },
+    { pattern: /sk_test_[a-zA-Z0-9]{24,}/g, name: 'Stripe secret key (test)' },
+    { pattern: /pk_live_[a-zA-Z0-9]{24,}/g, name: 'Stripe publishable key (live)' },
+    { pattern: /pk_test_[a-zA-Z0-9]{24,}/g, name: 'Stripe publishable key (test)' },
+    { pattern: /rk_live_[a-zA-Z0-9]{24,}/g, name: 'Stripe restricted API key (live)' },
+    { pattern: /rk_test_[a-zA-Z0-9]{24,}/g, name: 'Stripe restricted API key (test)' },
+
+    // Cloud Platforms
+    { pattern: /AKIA[0-9A-Z]{16}/g, name: 'AWS access key ID' },
+    { pattern: /aws_secret_access_key\s*=\s*[a-zA-Z0-9/+=]{40}/g, name: 'AWS secret access key' },
+
+    // Email & Communication Services
+    { pattern: /SG\.[a-zA-Z0-9_-]{60,}/g, name: 'SendGrid API key' },
+
+    // Telecommunications
+    { pattern: /SK[a-f0-9]{32}/g, name: 'Twilio auth token' },
+    { pattern: /AC[a-f0-9]{32}/g, name: 'Twilio account SID' },
+
+    // Authentication & Tokens
+    {
+      pattern: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
+      name: 'JWT token',
+    },
+
+    // Generic Credential Patterns (lower confidence - check context)
+    { pattern: /password\s*=\s*[^\s;'"`]+(?![.\w])/g, name: 'Hardcoded password assignment' },
+    { pattern: /secret\s*=\s*[^\s;'"`]{12,}/g, name: 'Hardcoded secret assignment' },
+    { pattern: /api[_-]?key\s*=\s*[^\s;'"`]{16,}/gi, name: 'Hardcoded API key assignment' },
+    { pattern: /token\s*=\s*[^\s;'"`]{32,}/g, name: 'Hardcoded token assignment' },
+
+    // Database Connection Strings with Passwords
+    {
+      pattern: /(?:postgres|postgresql):\/\/[^@]+:[^@]+@[^\s'"`]+/g,
+      name: 'PostgreSQL connection string with password',
+    },
+    {
+      pattern: /(?:mysql|mariadb):\/\/[^@]+:[^@]+@[^\s'"`]+/g,
+      name: 'MySQL connection string with password',
+    },
+    {
+      pattern: /(?:mongodb|mongodb\+srv):\/\/[^@]+:[^@]+@[^\s'"`]+/g,
+      name: 'MongoDB connection string with password',
+    },
+    {
+      pattern: /sqlserver:\/\/[^;]*password=[^;]+/gi,
+      name: 'SQL Server connection string with password',
+    },
   ],
 
   // Environment assumptions (medium severity)
@@ -65,12 +123,21 @@ const DETECTION_PATTERNS = {
   ],
 }
 
-// Allowlist for known safe patterns (e.g., in security tests)
+// Allowlist for known safe patterns (e.g., in security tests, documentation, examples)
 const ALLOWLIST_CONTEXTS = [
   'security.test',
   'validation.test',
   '.security.test',
   'RawUrlSourceAdapter',
+  'example',
+  'mock',
+  'stub',
+  'fixture',
+  'README',
+  'EXAMPLE',
+  'documentation',
+  'docs',
+  '.md',
 ]
 
 /**
