@@ -122,12 +122,24 @@ docker exec skillsmith-dev-1 npm run build
 
 ### Native Module Issues
 
-If you see `ERR_DLOPEN_FAILED`:
+If you see `ERR_DLOPEN_FAILED` or `NODE_MODULE_VERSION` mismatch:
 
 ```bash
 # Rebuild native modules inside container
 docker exec skillsmith-dev-1 npm rebuild
+
+# Or rebuild locally after Node.js version change
+npm rebuild better-sqlite3
 ```
+
+> **See also**: [ADR-012: Native Module Version Management](docs/adr/012-native-module-version-management.md)
+
+### Hive Mind Orchestrator
+
+Run in Docker: `docker compose --profile orchestrator up`
+
+See [Hive Mind Execution Skill](.claude/skills/hive-mind-execution/SKILL.md) for workflow and options.
+See [ADR-012](docs/adr/012-native-module-version-management.md) for native module management.
 
 ## MCP Tools Provided
 

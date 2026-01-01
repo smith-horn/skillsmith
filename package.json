@@ -39,7 +39,7 @@
     "seed:clear": "npx tsx scripts/seed-skills.ts --clear --verbose"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "author": "Smith Horn Group Ltd",
   "license": "Apache-2.0",
@@ -49,6 +49,7 @@
     "@typescript-eslint/eslint-plugin": "^8.18.0",
     "@typescript-eslint/parser": "^8.18.0",
     "@vitest/coverage-v8": "4.0.16",
+    "claude-flow": "2.7.47",
     "eslint": "^9.17.0",
     "eslint-config-prettier": "^9.1.0",
     "globals": "^15.14.0",
