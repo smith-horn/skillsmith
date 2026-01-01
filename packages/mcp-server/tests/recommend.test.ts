@@ -1,13 +1,33 @@
 /**
  * Tests for SMI-741: MCP Skill Recommend Tool
+ * Updated for SMI-902: Use real database instead of hardcoded skills
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import {
   executeRecommend,
   formatRecommendations,
   recommendInputSchema,
 } from '../src/tools/recommend.js'
+import { createTestDatabase, type TestDatabaseContext } from './integration/setup.js'
+import type { ToolContext } from '../src/context.js'
+
+// Test context with database
+let testDbContext: TestDatabaseContext
+let toolContext: ToolContext
+
+beforeAll(async () => {
+  testDbContext = await createTestDatabase()
+  toolContext = {
+    db: testDbContext.db,
+    searchService: testDbContext.searchService,
+    skillRepository: testDbContext.skillRepository,
+  }
+})
+
+afterAll(async () => {
+  await testDbContext.cleanup()
+})
 
 describe('Skill Recommend Tool', () => {
   describe('recommendInputSchema', () => {
@@ -56,9 +76,12 @@ describe('Skill Recommend Tool', () => {
 
   describe('executeRecommend', () => {
     it('should return recommendations for empty installed_skills', async () => {
-      const result = await executeRecommend({
-        installed_skills: [],
-      })
+      const result = await executeRecommend(
+        {
+          installed_skills: [],
+        },
+        toolContext
+      )
 
       expect(result.recommendations).toBeDefined()
       expect(result.recommendations.length).toBeGreaterThan(0)
@@ -69,11 +92,14 @@ describe('Skill Recommend Tool', () => {
     })
 
     it('should return recommendations based on installed skills', async () => {
-      const result = await executeRecommend({
-        installed_skills: ['anthropic/commit'],
-        detect_overlap: false, // Disable overlap detection for consistent testing
-        limit: 5,
-      })
+      const result = await executeRecommend(
+        {
+          installed_skills: ['anthropic/commit'],
+          detect_overlap: false, // Disable overlap detection for consistent testing
+          limit: 5,
+        },
+        toolContext
+      )
 
       expect(result.recommendations).toBeDefined()
       expect(result.recommendations.length).toBeGreaterThan(0)
@@ -85,11 +111,14 @@ describe('Skill Recommend Tool', () => {
     })
 
     it('should filter out installed skills from recommendations', async () => {
-      const result = await executeRecommend({
-        installed_skills: ['anthropic/commit', 'anthropic/review-pr'],
-        detect_overlap: false, // Disable overlap detection for consistent testing
-        limit: 10,
-      })
+      const result = await executeRecommend(
+        {
+          installed_skills: ['anthropic/commit', 'anthropic/review-pr'],
+          detect_overlap: false, // Disable overlap detection for consistent testing
+          limit: 10,
+        },
+        toolContext
+      )
 
       const recommendedIds = result.recommendations.map((r) => r.skill_id)
       expect(recommendedIds).not.toContain('anthropic/commit')
@@ -97,11 +126,14 @@ describe('Skill Recommend Tool', () => {
     })
 
     it('should include recommendation reason', async () => {
-      const result = await executeRecommend({
-        installed_skills: ['anthropic/commit'],
-        detect_overlap: false, // Disable overlap detection for consistent testing
-        limit: 5,
-      })
+      const result = await executeRecommend(
+        {
+          installed_skills: ['anthropic/commit'],
+          detect_overlap: false, // Disable overlap detection for consistent testing
+          limit: 5,
+        },
+        toolContext
+      )
 
       for (const rec of result.recommendations) {
         expect(rec.reason).toBeDefined()
@@ -110,11 +142,14 @@ describe('Skill Recommend Tool', () => {
     })
 
     it('should include similarity score between 0 and 1', async () => {
-      const result = await executeRecommend({
-        installed_skills: ['anthropic/commit'],
-        detect_overlap: false, // Disable overlap detection for consistent testing
-        limit: 5,
-      })
+      const result = await executeRecommend(
+        {
+          installed_skills: ['anthropic/commit'],
+          detect_overlap: false, // Disable overlap detection for consistent testing
+          limit: 5,
+        },
+        toolContext
+      )
 
       for (const rec of result.recommendations) {
         expect(rec.similarity_score).toBeGreaterThanOrEqual(0)
@@ -123,10 +158,13 @@ describe('Skill Recommend Tool', () => {
     })
 
     it('should include trust tier and quality score', async () => {
-      const result = await executeRecommend({
-        installed_skills: [],
-        limit: 5,
-      })
+      const result = await executeRecommend(
+        {
+          installed_skills: [],
+          limit: 5,
+        },
+        toolContext
+      )
 
       for (const rec of result.recommendations) {
         expect(rec.trust_tier).toBeDefined()
@@ -137,20 +175,26 @@ describe('Skill Recommend Tool', () => {
     })
 
     it('should respect limit parameter', async () => {
-      const result = await executeRecommend({
-        installed_skills: [],
-        limit: 3,
-      })
+      const result = await executeRecommend(
+        {
+          installed_skills: [],
+          limit: 3,
+        },
+        toolContext
+      )
 
       expect(result.recommendations.length).toBeLessThanOrEqual(3)
     })
 
     it('should use project_context for better recommendations', async () => {
-      const result = await executeRecommend({
-        installed_skills: [],
-        project_context: 'React frontend with Jest testing',
-        limit: 10,
-      })
+      const result = await executeRecommend(
+        {
+          installed_skills: [],
+          project_context: 'React frontend with Jest testing',
+          limit: 10,
+        },
+        toolContext
+      )
 
       expect(result.context.has_project_context).toBe(true)
       // Should have React or testing related skills ranked higher
@@ -165,21 +209,27 @@ describe('Skill Recommend Tool', () => {
     })
 
     it('should return candidates_considered count', async () => {
-      const result = await executeRecommend({
-        installed_skills: ['anthropic/commit'],
-        detect_overlap: false, // Disable overlap detection for consistent testing
-        limit: 5,
-      })
+      const result = await executeRecommend(
+        {
+          installed_skills: ['anthropic/commit'],
+          detect_overlap: false, // Disable overlap detection for consistent testing
+          limit: 5,
+        },
+        toolContext
+      )
 
       expect(result.candidates_considered).toBeGreaterThan(0)
     })
 
     it('should handle case-insensitive skill IDs', async () => {
-      const result = await executeRecommend({
-        installed_skills: ['ANTHROPIC/COMMIT'],
-        detect_overlap: false, // Disable overlap detection for consistent testing
-        limit: 5,
-      })
+      const result = await executeRecommend(
+        {
+          installed_skills: ['ANTHROPIC/COMMIT'],
+          detect_overlap: false, // Disable overlap detection for consistent testing
+          limit: 5,
+        },
+        toolContext
+      )
 
       const recommendedIds = result.recommendations.map((r) => r.skill_id.toLowerCase())
       expect(recommendedIds).not.toContain('anthropic/commit')
@@ -188,11 +238,14 @@ describe('Skill Recommend Tool', () => {
 
   describe('formatRecommendations', () => {
     it('should format recommendations for terminal display', async () => {
-      const result = await executeRecommend({
-        installed_skills: ['anthropic/commit'],
-        detect_overlap: false, // Disable overlap detection for consistent testing
-        limit: 3,
-      })
+      const result = await executeRecommend(
+        {
+          installed_skills: ['anthropic/commit'],
+          detect_overlap: false, // Disable overlap detection for consistent testing
+          limit: 3,
+        },
+        toolContext
+      )
       const formatted = formatRecommendations(result)
 
       expect(formatted).toContain('Skill Recommendations')
@@ -203,11 +256,14 @@ describe('Skill Recommend Tool', () => {
     })
 
     it('should display trust badges', async () => {
-      const result = await executeRecommend({
-        installed_skills: [],
-        detect_overlap: false, // Disable overlap detection for consistent testing
-        limit: 5,
-      })
+      const result = await executeRecommend(
+        {
+          installed_skills: [],
+          detect_overlap: false, // Disable overlap detection for consistent testing
+          limit: 5,
+        },
+        toolContext
+      )
       const formatted = formatRecommendations(result)
 
       // Should contain at least one trust badge
@@ -220,11 +276,14 @@ describe('Skill Recommend Tool', () => {
     })
 
     it('should show candidates considered and timing', async () => {
-      const result = await executeRecommend({
-        installed_skills: [],
-        detect_overlap: false, // Disable overlap detection for consistent testing
-        limit: 3,
-      })
+      const result = await executeRecommend(
+        {
+          installed_skills: [],
+          detect_overlap: false, // Disable overlap detection for consistent testing
+          limit: 3,
+        },
+        toolContext
+      )
       const formatted = formatRecommendations(result)
 
       expect(formatted).toContain('Candidates considered:')

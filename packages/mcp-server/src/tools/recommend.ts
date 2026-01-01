@@ -16,7 +16,7 @@
  * const results = await executeRecommend({
  *   installed_skills: ['anthropic/commit'],
  *   limit: 5
- * });
+ * }, toolContext);
  *
  * @example
  * // Recommendation with project context
@@ -24,7 +24,7 @@
  *   installed_skills: ['anthropic/commit'],
  *   project_context: 'React frontend with Jest testing',
  *   limit: 10
- * });
+ * }, toolContext);
  */
 
 import { z } from 'zod'
@@ -138,7 +138,8 @@ export const recommendToolSchema = {
 }
 
 /**
- * Skill database with trigger phrases and keywords for matching
+ * Skill data format for matching operations
+ * Transformed from database Skill records
  */
 interface SkillData {
   /** Unique skill identifier */
@@ -147,9 +148,9 @@ interface SkillData {
   name: string
   /** Skill description */
   description: string
-  /** Trigger phrases for overlap detection */
+  /** Trigger phrases for overlap detection (derived from tags) */
   triggerPhrases: string[]
-  /** Keywords for matching */
+  /** Keywords for matching (from tags) */
   keywords: string[]
   /** Quality score (0-100) */
   qualityScore: number
@@ -158,101 +159,63 @@ interface SkillData {
 }
 
 /**
- * Skill database for recommendations
- * In production, this would be loaded from the database
+ * Map database trust tier to MCP trust tier
  */
-const skillDatabase: SkillData[] = [
-  {
-    id: 'anthropic/commit',
-    name: 'commit',
-    description: 'Generate semantic commit messages following conventional commits',
-    triggerPhrases: ['commit changes', 'create commit', 'git commit', 'write commit message'],
-    keywords: ['git', 'commit', 'conventional', 'version-control'],
-    qualityScore: 95,
-    trustTier: 'verified',
-  },
-  {
-    id: 'anthropic/review-pr',
-    name: 'review-pr',
-    description: 'Review pull requests with detailed code analysis',
-    triggerPhrases: ['review pr', 'review pull request', 'code review', 'check pr'],
-    keywords: ['git', 'pull-request', 'code-review', 'quality'],
-    qualityScore: 93,
-    trustTier: 'verified',
-  },
-  {
-    id: 'community/jest-helper',
-    name: 'jest-helper',
-    description: 'Generate Jest test cases for React components',
-    triggerPhrases: ['write jest test', 'create test', 'test component', 'jest testing'],
-    keywords: ['jest', 'testing', 'react', 'unit-tests', 'frontend'],
-    qualityScore: 87,
-    trustTier: 'community',
-  },
-  {
-    id: 'community/docker-compose',
-    name: 'docker-compose',
-    description: 'Generate and manage Docker Compose configurations',
-    triggerPhrases: ['docker compose', 'create docker', 'containerize', 'docker setup'],
-    keywords: ['docker', 'devops', 'containers', 'infrastructure'],
-    qualityScore: 84,
-    trustTier: 'community',
-  },
-  {
-    id: 'community/api-docs',
-    name: 'api-docs',
-    description: 'Generate OpenAPI documentation from code',
-    triggerPhrases: ['generate api docs', 'openapi spec', 'swagger docs', 'document api'],
-    keywords: ['api', 'documentation', 'openapi', 'swagger'],
-    qualityScore: 78,
-    trustTier: 'standard',
-  },
-  {
-    id: 'community/eslint-config',
-    name: 'eslint-config',
-    description: 'Generate ESLint configurations for TypeScript projects',
-    triggerPhrases: ['eslint config', 'setup linting', 'configure eslint', 'lint setup'],
-    keywords: ['eslint', 'linting', 'typescript', 'code-quality'],
-    qualityScore: 82,
-    trustTier: 'community',
-  },
-  {
-    id: 'community/vitest-helper',
-    name: 'vitest-helper',
-    description: 'Generate Vitest test cases with modern testing patterns',
-    triggerPhrases: ['vitest test', 'create vitest', 'write test vitest', 'testing vitest'],
-    keywords: ['vitest', 'testing', 'typescript', 'unit-tests'],
-    qualityScore: 85,
-    trustTier: 'community',
-  },
-  {
-    id: 'community/react-component',
-    name: 'react-component',
-    description: 'Generate React components with TypeScript and hooks',
-    triggerPhrases: ['create component', 'react component', 'new component', 'build component'],
-    keywords: ['react', 'component', 'typescript', 'hooks', 'frontend'],
-    qualityScore: 86,
-    trustTier: 'community',
-  },
-  {
-    id: 'community/github-actions',
-    name: 'github-actions',
-    description: 'Generate GitHub Actions workflows for CI/CD',
-    triggerPhrases: ['github action', 'ci workflow', 'create workflow', 'setup ci'],
-    keywords: ['github', 'ci-cd', 'actions', 'automation', 'devops'],
-    qualityScore: 88,
-    trustTier: 'community',
-  },
-  {
-    id: 'community/prisma-schema',
-    name: 'prisma-schema',
-    description: 'Generate Prisma schema and migrations for databases',
-    triggerPhrases: ['prisma schema', 'database model', 'create migration', 'prisma setup'],
-    keywords: ['prisma', 'database', 'orm', 'migrations', 'postgresql'],
-    qualityScore: 83,
-    trustTier: 'community',
-  },
-]
+function mapTrustTierFromDb(dbTier: string): TrustTier {
+  switch (dbTier) {
+    case 'verified':
+      return 'verified'
+    case 'community':
+      return 'community'
+    case 'experimental':
+      return 'standard'
+    case 'unknown':
+    default:
+      return 'unverified'
+  }
+}
+
+/**
+ * Transform a database skill to SkillData format for matching
+ */
+function transformSkillToMatchData(skill: {
+  id: string
+  name: string
+  description: string | null
+  tags: string[]
+  qualityScore: number | null
+  trustTier: string
+}): SkillData {
+  // Generate trigger phrases from name and first few tags
+  const triggerPhrases = [
+    skill.name,
+    `use ${skill.name}`,
+    `${skill.name} help`,
+    ...skill.tags.slice(0, 3).map((tag) => `${tag} ${skill.name}`),
+  ]
+
+  return {
+    id: skill.id,
+    name: skill.name,
+    description: skill.description || '',
+    triggerPhrases,
+    keywords: skill.tags,
+    qualityScore: Math.round((skill.qualityScore ?? 0.5) * 100),
+    trustTier: mapTrustTierFromDb(skill.trustTier),
+  }
+}
+
+/**
+ * Load skills from database via ToolContext
+ * Returns skills transformed to SkillData format for matching
+ */
+async function loadSkillsFromDatabase(
+  context: ToolContext,
+  limit: number = 500
+): Promise<SkillData[]> {
+  const result = context.skillRepository.findAll(limit, 0)
+  return result.items.map(transformSkillToMatchData)
+}
 
 /**
  * Execute skill recommendation based on installed skills and context.
@@ -271,18 +234,22 @@ const skillDatabase: SkillData[] = [
  *   installed_skills: ['anthropic/commit'],
  *   project_context: 'React TypeScript frontend',
  *   limit: 5
- * });
+ * }, toolContext);
  * console.log(response.recommendations[0].reason);
  */
 export async function executeRecommend(
   input: RecommendInput,
-  _context?: ToolContext
+  context: ToolContext
 ): Promise<RecommendResponse> {
   const startTime = performance.now()
 
   // Validate input with Zod
   const validated = recommendInputSchema.parse(input)
   const { installed_skills, project_context, limit, detect_overlap, min_similarity } = validated
+
+  // Load skills from database (limit to reasonable number for performance)
+  // Use 500 as default to balance coverage vs performance
+  const skillDatabase = await loadSkillsFromDatabase(context, 500)
 
   // Initialize matcher with fallback mode for now (real embeddings in production)
   const matcher = new SkillMatcher({
