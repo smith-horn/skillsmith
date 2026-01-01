@@ -10,7 +10,7 @@ mcp__claude-flow__swarm_init({ topology: "hierarchical", maxAgents: 6 })
 mcp__claude-flow__swarm_destroy({ swarmId: "swarm_xxx" })
 
 # Mark Linear issue done
-npm run linear:done SMI-XXX
+npm run linear:done ENG-XXX
 ```
 
 ## TodoWrite Pattern
@@ -68,7 +68,7 @@ mutation {
 
 **Status**: Accepted
 **Date**: YYYY-MM-DD
-**Related Issues**: SMI-XXX
+**Related Issues**: ENG-XXX
 
 ## Context
 [Problem]
@@ -93,6 +93,24 @@ mutation {
 | star | Central coordinator |
 | ring | Sequential pipeline |
 
+## Retrospective Next Steps
+
+After writing retrospective, **ALWAYS** ask user:
+
+```javascript
+AskUserQuestion({
+  questions: [{
+    question: "How would you like to handle the next steps?",
+    header: "Next Steps",
+    options: [
+      { label: "Add all to Linear", description: "Create issues for all next steps" },
+      { label: "Select which to add", description: "Choose which items to create" },
+      { label: "Skip for now", description: "Document only, no issues" }
+    ]
+  }]
+})
+```
+
 ## CLAUDE.md Policy
 
 Keep CLAUDE.md **HIGH-LEVEL**:
@@ -108,6 +126,8 @@ Keep CLAUDE.md **HIGH-LEVEL**:
 - [ ] Parallel execution used
 - [ ] Code review completed
 - [ ] Review fixes applied
+- [ ] **Retrospective written**
+- [ ] **User prompted for next steps**
 - [ ] ADR created (if needed)
 - [ ] Linear updated
 - [ ] CLAUDE.md updated (high-level only!)

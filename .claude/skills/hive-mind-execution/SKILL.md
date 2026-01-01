@@ -26,8 +26,9 @@ Orchestrates complex task execution using claude-flow hive mind with automatic c
 │  3. EXECUTE       │  Parallel implementation                    │
 │  4. REVIEW        │  Code review with Task agent                │
 │  5. FIX           │  Address review findings                    │
-│  6. DOCUMENT      │  ADR, Linear update, CLAUDE.md              │
-│  7. CLEANUP       │  swarm_destroy, mark issues done            │
+│  6. RETRO         │  Retrospective with next steps              │
+│  7. DOCUMENT      │  ADR, Linear update, CLAUDE.md              │
+│  8. CLEANUP       │  swarm_destroy, mark issues done            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -122,9 +123,108 @@ Edit("file.ts", old_string, new_string)
 Bash("npm run typecheck && npm run lint")
 ```
 
-## Phase 6: Documentation Updates
+## Phase 6: Retrospective
 
-### 6.1 Create/Update ADR (if architectural decision)
+After code review and fixes, conduct a retrospective to capture lessons learned and identify next steps.
+
+### 6.1 Write Retrospective
+
+Write to `docs/retros/<phase-or-feature>.md`:
+
+```markdown
+# [Phase/Feature] Retrospective
+
+**Date**: YYYY-MM-DD
+**Duration**: [time spent]
+
+## Summary
+[Brief description of what was accomplished]
+
+## Metrics
+| Metric | Value |
+|--------|-------|
+| Files Changed | X |
+| Lines Added | X |
+| Issues Completed | X |
+
+## What Went Well
+1. [Success 1]
+2. [Success 2]
+
+## What Could Be Improved
+1. [Issue 1]
+2. [Issue 2]
+
+## Lessons Learned
+1. [Lesson 1]
+2. [Lesson 2]
+
+## Next Steps
+| Item | Priority | Description |
+|------|----------|-------------|
+| [Item 1] | High/Medium/Low | [Description] |
+| [Item 2] | High/Medium/Low | [Description] |
+```
+
+### 6.2 Handle Next Steps
+
+**REQUIRED**: After identifying next steps, prompt the user:
+
+```javascript
+AskUserQuestion({
+  questions: [{
+    question: "How would you like to handle the next steps from the retrospective?",
+    header: "Next Steps",
+    multiSelect: false,
+    options: [
+      { label: "Add all to Linear", description: "Create Linear issues for all next steps identified" },
+      { label: "Select which to add", description: "Review each item and choose which to create as issues" },
+      { label: "Skip for now", description: "Don't create any issues - document only" }
+    ]
+  }]
+})
+```
+
+**If "Add all to Linear"**:
+
+```javascript
+// Create issues for all next steps
+for (const item of nextSteps) {
+  // Use Linear GraphQL or linear-ops.ts
+  Bash(`varlock run -- npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts create-issue \
+    --title "${item.title}" \
+    --priority ${item.priority}`)
+}
+```
+
+**If "Select which to add"**:
+
+```javascript
+AskUserQuestion({
+  questions: [{
+    question: "Which next steps should be added to Linear?",
+    header: "Select Items",
+    multiSelect: true,
+    options: nextSteps.map(item => ({
+      label: item.title,
+      description: `${item.priority} priority - ${item.description}`
+    }))
+  }]
+})
+```
+
+### 6.3 Link to Retrospective
+
+After creating issues, add a comment linking to the retrospective:
+
+```javascript
+// Add reference to retro in newly created issues
+"See [Retrospective](docs/retros/<name>.md) for context"
+```
+
+## Phase 7: Documentation Updates
+
+### 7.1 Create/Update ADR (if architectural decision)
 
 ```markdown
 # ADR-0XX: [Title]
@@ -148,7 +248,7 @@ Bash("npm run typecheck && npm run lint")
 [Pattern for future reference]
 ```
 
-### 6.2 Update ADR Index
+### 7.2 Update ADR Index
 
 ```javascript
 Edit("docs/adr/index.md",
@@ -157,7 +257,7 @@ Edit("docs/adr/index.md",
 )
 ```
 
-### 6.3 Create Linear Project Update
+### 7.3 Create Linear Project Update
 
 ```javascript
 // GraphQL mutation for project update
@@ -172,7 +272,7 @@ mutation {
 }
 ```
 
-### 6.4 Update CLAUDE.md (High-Level Only)
+### 7.4 Update CLAUDE.md (High-Level Only)
 
 **Policy**: CLAUDE.md should remain high-level. Push details to skills/ADRs.
 
@@ -197,14 +297,14 @@ Brief description. See [Skill Name](path/to/SKILL.md) for details.
 
 **Security**: Never document env var values in markdown. Reference `.env.schema` instead.
 
-## Phase 7: Cleanup
+## Phase 8: Cleanup
 
 ```javascript
 // Destroy swarm
 mcp__claude-flow__swarm_destroy({ swarmId: "swarm_xxx" })
 
 // Mark Linear issue done
-Bash("npm run linear:done SMI-XXX")
+Bash("npm run linear:done ENG-XXX")
 ```
 
 ## Quick Start Template
@@ -212,34 +312,40 @@ Bash("npm run linear:done SMI-XXX")
 For executing a Linear issue with hive mind:
 
 ```
-1. Read the Linear issue: SMI-XXX
+1. Read the Linear issue: ENG-XXX
 2. Initialize hive mind: swarm_init({ topology: "hierarchical" })
 3. Create todos: TodoWrite with all tasks from issue
 4. Execute in parallel where possible
 5. Run code review with Task agent
 6. Fix any "Must Fix" items
-7. Create ADR if architectural decision
-8. Create Linear project update
-9. Update CLAUDE.md if new patterns
-10. Cleanup: swarm_destroy, linear:done
+7. Write retrospective with lessons learned and next steps
+8. Prompt user: Add all / Select / Skip next steps for Linear
+9. Create ADR if architectural decision
+10. Create Linear project update
+11. Update CLAUDE.md if new patterns
+12. Cleanup: swarm_destroy, linear:done
 ```
 
-## Example: Execute SMI-851
+## Example: Execute ENG-123
 
 ```
-User: execute SMI-851 with hive mind
+User: execute ENG-123 with hive mind
 
 Claude:
-1. [Read SMI-851 to understand tasks]
+1. [Read ENG-123 to understand tasks]
 2. [swarm_init with hierarchical topology]
 3. [TodoWrite with 8 tasks from issue]
-4. [Parallel edits to run.sh, config.ts, docker-compose.yml, etc.]
+4. [Parallel edits to relevant files]
 5. [Task agent for code review]
-6. [Fix NODE_ENV mismatch, add parseIntSafe]
-7. [Create ADR-012: Native Module Version Management]
-8. [Create Linear project update]
-9. [Update CLAUDE.md with orchestrator docs]
-10. [swarm_destroy, linear:done SMI-851]
+6. [Fix any review findings]
+7. [Write retrospective to docs/retros/]
+8. [Ask user: "How would you like to handle the 3 next steps?"]
+   User selects: "Add all to Linear"
+9. [Create 3 Linear issues for next steps]
+10. [Create ADR if needed]
+11. [Create Linear project update]
+12. [Update CLAUDE.md if new patterns]
+13. [swarm_destroy, linear:done ENG-123]
 ```
 
 ## Best Practices
