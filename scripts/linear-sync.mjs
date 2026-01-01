@@ -115,6 +115,7 @@ async function updateLinearStatus(issueId, status) {
 
 /**
  * Parse status string to Linear status
+ * SMI-905: Fixed - Linear API expects 'in progress' (with space), not 'in_progress'
  */
 function normalizeStatus(status) {
   const statusMap = {
@@ -122,11 +123,11 @@ function normalizeStatus(status) {
     complete: 'done',
     completed: 'done',
     finished: 'done',
-    'in-progress': 'in_progress',
-    in_progress: 'in_progress',
-    inprogress: 'in_progress',
-    started: 'in_progress',
-    wip: 'in_progress',
+    'in-progress': 'in progress',
+    in_progress: 'in progress',
+    inprogress: 'in progress',
+    started: 'in progress',
+    wip: 'in progress',
     todo: 'todo',
     backlog: 'backlog',
   }

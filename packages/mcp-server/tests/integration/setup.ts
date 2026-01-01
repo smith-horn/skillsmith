@@ -1,5 +1,6 @@
 /**
  * SMI-616: Integration Test Setup
+ * SMI-903: Expanded to 56 test skills across all categories and trust tiers
  * Provides test utilities for integration testing with real database and filesystem
  */
 
@@ -8,6 +9,10 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { createDatabase, closeDatabase, SkillRepository, SearchService } from '@skillsmith/core'
+import { seedTestSkills, TEST_SKILLS, TEST_SKILLS_STATS } from './fixtures/test-skills.js'
+
+// Re-export for test access
+export { TEST_SKILLS, TEST_SKILLS_STATS } from './fixtures/test-skills.js'
 
 /**
  * Test database context
@@ -21,13 +26,14 @@ export interface TestDatabaseContext {
 
 /**
  * Create an in-memory test database with sample data
+ * Seeds 56 skills across all categories and trust tiers for realistic testing
  */
 export async function createTestDatabase(): Promise<TestDatabaseContext> {
   const db = createDatabase(':memory:')
   const skillRepository = new SkillRepository(db)
   const searchService = new SearchService(db)
 
-  // Seed with test data
+  // Seed with comprehensive test data (56 skills)
   seedTestSkills(skillRepository)
 
   return {
@@ -38,86 +44,6 @@ export async function createTestDatabase(): Promise<TestDatabaseContext> {
       closeDatabase(db)
     },
   }
-}
-
-/**
- * Seed test skills into the database
- */
-function seedTestSkills(repo: SkillRepository): void {
-  const testSkills = [
-    {
-      id: 'anthropic/commit',
-      name: 'commit',
-      description: 'Generate semantic commit messages following conventional commits specification',
-      author: 'anthropic',
-      repoUrl: 'https://github.com/anthropics/claude-code-skills/commit',
-      qualityScore: 0.95,
-      trustTier: 'verified' as const,
-      tags: ['git', 'commit', 'conventional-commits', 'automation'],
-    },
-    {
-      id: 'anthropic/review-pr',
-      name: 'review-pr',
-      description: 'Review pull requests with detailed code analysis and security checks',
-      author: 'anthropic',
-      repoUrl: 'https://github.com/anthropics/claude-code-skills/review-pr',
-      qualityScore: 0.93,
-      trustTier: 'verified' as const,
-      tags: ['git', 'pull-request', 'code-review', 'quality'],
-    },
-    {
-      id: 'community/jest-helper',
-      name: 'jest-helper',
-      description: 'Generate Jest test cases for React components with comprehensive coverage',
-      author: 'community',
-      repoUrl: 'https://github.com/skillsmith-community/jest-helper',
-      qualityScore: 0.87,
-      trustTier: 'community' as const,
-      tags: ['jest', 'testing', 'react', 'unit-tests'],
-    },
-    {
-      id: 'community/docker-compose',
-      name: 'docker-compose',
-      description: 'Generate and manage Docker Compose configurations for development',
-      author: 'community',
-      repoUrl: 'https://github.com/skillsmith-community/docker-compose',
-      qualityScore: 0.84,
-      trustTier: 'community' as const,
-      tags: ['docker', 'devops', 'containers', 'compose'],
-    },
-    {
-      id: 'community/api-docs',
-      name: 'api-docs',
-      description: 'Generate OpenAPI documentation from code with automatic schema detection',
-      author: 'community',
-      repoUrl: 'https://github.com/skillsmith-community/api-docs',
-      qualityScore: 0.78,
-      trustTier: 'experimental' as const,
-      tags: ['openapi', 'documentation', 'api', 'swagger'],
-    },
-    {
-      id: 'community/vitest-helper',
-      name: 'vitest-helper',
-      description: 'Generate Vitest test cases with modern testing patterns',
-      author: 'community',
-      repoUrl: 'https://github.com/skillsmith-community/vitest-helper',
-      qualityScore: 0.85,
-      trustTier: 'community' as const,
-      tags: ['vitest', 'testing', 'typescript', 'unit-tests'],
-    },
-    {
-      id: 'test/typescript-helper',
-      name: 'typescript-helper',
-      description: 'TypeScript development utilities for type generation and refactoring',
-      author: 'test',
-      repoUrl: 'https://github.com/test/typescript-helper',
-      qualityScore: 0.65,
-      trustTier: 'unknown' as const,
-      tags: ['typescript', 'development', 'types'],
-    },
-  ]
-
-  repo.createBatch(testSkills)
 }
 
 /**
