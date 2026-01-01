@@ -348,6 +348,11 @@ export {
   UsageAnalyticsService,
   ExperimentService,
   ROIDashboardService,
+  // SMI-914: Skill usage event tracking
+  anonymizeUserId,
+  hashProjectContext,
+  AnalyticsStorage,
+  UsageTracker,
 } from './analytics/index.js'
 export type {
   UsageEvent,
@@ -370,4 +375,9 @@ export type {
   ROIDashboard,
   ExportFormat,
   ExportOptions,
+  // SMI-914: Skill usage event tracking types
+  SkillUsageEvent,
+  SkillUsageOutcome,
+  SkillMetrics,
+  UsageTrackerOptions,
 } from './analytics/index.js'

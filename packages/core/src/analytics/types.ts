@@ -239,3 +239,43 @@ export interface ExportOptions {
   endDate?: string
   includeCharts?: boolean // for PDF exports
 }
+
+/**
+ * SMI-914: Skill Usage Event tracking types
+ *
+ * These types support per-skill usage analytics with:
+ * - Anonymized user tracking (no PII)
+ * - Task duration measurement
+ * - Success/error/abandoned outcomes
+ * - 30-day rolling window storage
+ */
+
+/**
+ * Outcome of a skill invocation
+ */
+export type SkillUsageOutcome = 'success' | 'error' | 'abandoned'
+
+/**
+ * Individual skill usage event (anonymized)
+ */
+export interface SkillUsageEvent {
+  id?: number
+  skillId: string // e.g., 'anthropic/commit'
+  userId: string // anonymized hash (no PII)
+  timestamp: number // Unix timestamp ms
+  taskDuration: number // milliseconds
+  outcome: SkillUsageOutcome
+  contextHash: string // project type hash (no PII)
+}
+
+/**
+ * Aggregated metrics for a skill
+ */
+export interface SkillMetrics {
+  skillId: string
+  totalInvocations: number
+  successRate: number // 0-1
+  avgTaskDuration: number // milliseconds
+  uniqueUsers: number
+  lastUsed: number // Unix timestamp ms
+}
