@@ -107,6 +107,41 @@ packages/
 
 > **Security Reviews**: For security-sensitive code (input handling, external data, file access), use the [Security Code Review Checklist](../security/checklists/code-review.md).
 
+### 1.6 ESLint Configuration
+
+ESLint rules apply uniformly across all TypeScript in the repository.
+
+**Scope:** All `.ts` and `.tsx` files, including:
+- `packages/*/src/**/*.ts`
+- `scripts/**/*.ts`
+- Test files (`*.test.ts`)
+
+**Unused Variables Policy:**
+
+```javascript
+// eslint.config.js or .eslintrc.js
+{
+  rules: {
+    "@typescript-eslint/no-unused-vars": ["error", {
+      argsIgnorePattern: "^_",      // Allow _paramName for intentionally unused
+      varsIgnorePattern: "^_",      // Allow _varName for destructuring
+      caughtErrorsIgnorePattern: "^_" // Allow catch (_error) or catch (_)
+    }]
+  }
+}
+```
+
+**Patterns:**
+- Prefix unused parameters with `_` (e.g., `_epicId`, `_index`)
+- Empty catch blocks: use `catch` or `catch (_error)`
+- Destructuring unused: `const { used, _unused } = obj`
+
+**Scripts Directory:**
+
+The `scripts/` directory follows the same ESLint rules as `packages/`. No separate configuration or manual `eslint-disable` comments should be required for standard patterns.
+
+> **Reference:** See [ADR-012](../adr/012-native-module-version-management.md) for context on scripts directory standardization.
+
 ---
 
 ## 2. Testing Standards
