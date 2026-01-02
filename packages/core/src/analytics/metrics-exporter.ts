@@ -10,8 +10,30 @@
  */
 
 import { writeFileSync, mkdirSync, existsSync } from 'fs'
-import { join } from 'path'
+import { join, resolve, isAbsolute } from 'path'
 import { homedir } from 'os'
+
+/**
+ * Validates that a path does not escape the allowed base directory.
+ * Prevents path traversal attacks using sequences like '../'.
+ *
+ * @param inputPath - The path to validate (can be relative or absolute)
+ * @param baseDir - The allowed base directory
+ * @returns The resolved, sanitized absolute path
+ * @throws Error if the path attempts to escape the base directory
+ */
+export function validatePath(inputPath: string, baseDir: string): string {
+  const resolvedBase = resolve(baseDir)
+  const resolvedPath = isAbsolute(inputPath) ? resolve(inputPath) : resolve(baseDir, inputPath)
+
+  // Ensure the resolved path starts with the base directory
+  // Add path separator to prevent partial matches (e.g., /base vs /base-other)
+  if (!resolvedPath.startsWith(resolvedBase + '/') && resolvedPath !== resolvedBase) {
+    throw new Error(`Path traversal attempt detected: ${inputPath}`)
+  }
+
+  return resolvedPath
+}
 import type { MetricsAggregator, GlobalMetrics, AggregationPeriod } from './metrics-aggregator.js'
 import type { SkillMetrics } from './types.js'
 
@@ -197,18 +219,24 @@ export class MetricsExporter {
    *
    * @param data - Metrics export data
    * @param options - Export options
+   * @param allowedBaseDir - Optional base directory to restrict path access (defaults to DEFAULT_EXPORT_DIR)
    * @returns Path to the saved file
+   * @throws Error if outputDir attempts to escape the allowedBaseDir
    */
-  saveToFile(data: MetricsExport, options: ExportOptions = {}): string {
+  saveToFile(data: MetricsExport, options: ExportOptions = {}, allowedBaseDir?: string): string {
     const outputDir = options.outputDir || DEFAULT_EXPORT_DIR
     const format = options.format || 'json'
 
-    if (!existsSync(outputDir)) {
-      mkdirSync(outputDir, { recursive: true })
+    // Validate output directory to prevent path traversal attacks
+    const baseDir = allowedBaseDir ?? DEFAULT_EXPORT_DIR
+    const validatedOutputDir = validatePath(outputDir, baseDir)
+
+    if (!existsSync(validatedOutputDir)) {
+      mkdirSync(validatedOutputDir, { recursive: true })
     }
 
     const filename = `metrics-${data.period.label}.${format}`
-    const filepath = join(outputDir, filename)
+    const filepath = join(validatedOutputDir, filename)
 
     if (format === 'json') {
       writeFileSync(filepath, JSON.stringify(data, null, 2))

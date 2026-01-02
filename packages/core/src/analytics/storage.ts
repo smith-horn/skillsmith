@@ -12,6 +12,7 @@ import { join } from 'path'
 import { homedir } from 'os'
 import { existsSync, mkdirSync } from 'fs'
 import type { SkillUsageEvent, SkillMetrics } from './types.js'
+import { RETENTION_DAYS, MS_PER_DAY } from './constants.js'
 
 /**
  * Default directory for analytics data
@@ -22,11 +23,6 @@ const ANALYTICS_DIR = join(homedir(), '.skillsmith')
  * Default database file path
  */
 const ANALYTICS_DB = join(ANALYTICS_DIR, 'analytics.db')
-
-/**
- * Retention period in days
- */
-const RETENTION_DAYS = 30
 
 /**
  * SQLite storage for skill usage analytics
@@ -140,7 +136,7 @@ export class AnalyticsStorage {
    * @returns Number of deleted events
    */
   cleanup(): number {
-    const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000
+    const cutoff = Date.now() - RETENTION_DAYS * MS_PER_DAY
     const result = this.db.prepare('DELETE FROM usage_events WHERE timestamp < ?').run(cutoff)
     return result.changes
   }

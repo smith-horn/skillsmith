@@ -20,7 +20,29 @@
  */
 
 import { existsSync, readFileSync } from 'fs'
-import { join } from 'path'
+import { join, resolve, isAbsolute } from 'path'
+
+/**
+ * Validates that a path does not escape the allowed base directory.
+ * Prevents path traversal attacks using sequences like '../'.
+ *
+ * @param inputPath - The path to validate (can be relative or absolute)
+ * @param baseDir - The allowed base directory
+ * @returns The resolved, sanitized absolute path
+ * @throws Error if the path attempts to escape the base directory
+ */
+export function validatePath(inputPath: string, baseDir: string): string {
+  const resolvedBase = resolve(baseDir)
+  const resolvedPath = isAbsolute(inputPath) ? resolve(inputPath) : resolve(baseDir, inputPath)
+
+  // Ensure the resolved path starts with the base directory
+  // Add path separator to prevent partial matches (e.g., /base vs /base-other)
+  if (!resolvedPath.startsWith(resolvedBase + '/') && resolvedPath !== resolvedBase) {
+    throw new Error(`Path traversal attempt detected: ${inputPath}`)
+  }
+
+  return resolvedPath
+}
 
 /**
  * Detected project context for skill recommendations
@@ -46,21 +68,30 @@ export interface ProjectContext {
  * Detect complete project context from filesystem analysis
  *
  * @param projectPath - Path to the project directory (defaults to cwd)
+ * @param allowedBaseDir - Optional base directory to restrict path access (defaults to projectPath itself)
  * @returns Detected project context
+ * @throws Error if projectPath attempts to escape the allowedBaseDir
  *
  * @example
  * const context = detectProjectContext('/path/to/project');
  * console.log(context.hasDocker); // true/false
  */
-export function detectProjectContext(projectPath: string = process.cwd()): ProjectContext {
+export function detectProjectContext(
+  projectPath: string = process.cwd(),
+  allowedBaseDir?: string
+): ProjectContext {
+  // Validate path to prevent traversal attacks
+  const baseDir = allowedBaseDir ?? projectPath
+  const validatedPath = validatePath(projectPath, baseDir)
+
   return {
-    hasDocker: detectDocker(projectPath),
-    hasLinear: detectLinear(projectPath),
-    hasGitHub: detectGitHub(projectPath),
-    testFramework: detectTestFramework(projectPath),
-    apiFramework: detectApiFramework(projectPath),
-    hasNativeModules: detectNativeModules(projectPath),
-    language: detectLanguage(projectPath),
+    hasDocker: detectDocker(validatedPath),
+    hasLinear: detectLinear(validatedPath),
+    hasGitHub: detectGitHub(validatedPath),
+    testFramework: detectTestFramework(validatedPath),
+    apiFramework: detectApiFramework(validatedPath),
+    hasNativeModules: detectNativeModules(validatedPath),
+    language: detectLanguage(validatedPath),
   }
 }
 
@@ -98,7 +129,12 @@ export function detectLinear(path: string): boolean {
   try {
     const content = readFileSync(gitConfig, 'utf-8')
     return content.includes('linear.app')
-  } catch {
+  } catch (error) {
+    console.warn(
+      '[project-detector] Failed to read git config for Linear detection:',
+      gitConfig,
+      error instanceof Error ? error.message : String(error)
+    )
     return false
   }
 }
@@ -118,7 +154,12 @@ export function detectGitHub(path: string): boolean {
   try {
     const content = readFileSync(gitConfig, 'utf-8')
     return content.includes('github.com')
-  } catch {
+  } catch (error) {
+    console.warn(
+      '[project-detector] Failed to read git config for GitHub detection:',
+      gitConfig,
+      error instanceof Error ? error.message : String(error)
+    )
     return false
   }
 }
@@ -143,8 +184,12 @@ export function detectTestFramework(path: string): 'jest' | 'vitest' | 'mocha' |
     if (deps['vitest']) return 'vitest'
     if (deps['jest']) return 'jest'
     if (deps['mocha']) return 'mocha'
-  } catch {
-    // JSON parse error or file read error
+  } catch (error) {
+    console.warn(
+      '[project-detector] Failed to parse package.json for test framework detection:',
+      pkgPath,
+      error instanceof Error ? error.message : String(error)
+    )
     return null
   }
 
@@ -170,8 +215,12 @@ export function detectApiFramework(path: string): 'express' | 'fastapi' | 'nextj
       // Check in priority order (Next.js is a more specific framework)
       if (deps['next']) return 'nextjs'
       if (deps['express']) return 'express'
-    } catch {
-      // JSON parse error
+    } catch (error) {
+      console.warn(
+        '[project-detector] Failed to parse package.json for API framework detection:',
+        pkgPath,
+        error instanceof Error ? error.message : String(error)
+      )
     }
   }
 
@@ -181,8 +230,12 @@ export function detectApiFramework(path: string): 'express' | 'fastapi' | 'nextj
     try {
       const content = readFileSync(requirementsPath, 'utf-8')
       if (content.toLowerCase().includes('fastapi')) return 'fastapi'
-    } catch {
-      // File read error
+    } catch (error) {
+      console.warn(
+        '[project-detector] Failed to read requirements.txt:',
+        requirementsPath,
+        error instanceof Error ? error.message : String(error)
+      )
     }
   }
 
@@ -192,8 +245,12 @@ export function detectApiFramework(path: string): 'express' | 'fastapi' | 'nextj
     try {
       const content = readFileSync(pyprojectPath, 'utf-8')
       if (content.toLowerCase().includes('fastapi')) return 'fastapi'
-    } catch {
-      // File read error
+    } catch (error) {
+      console.warn(
+        '[project-detector] Failed to read pyproject.toml:',
+        pyprojectPath,
+        error instanceof Error ? error.message : String(error)
+      )
     }
   }
 
@@ -235,7 +292,12 @@ export function detectNativeModules(path: string): boolean {
     const deps = { ...pkg.dependencies, ...pkg.devDependencies }
 
     return NATIVE_MODULES.some((mod) => mod in deps)
-  } catch {
+  } catch (error) {
+    console.warn(
+      '[project-detector] Failed to parse package.json for native module detection:',
+      pkgPath,
+      error instanceof Error ? error.message : String(error)
+    )
     return false
   }
 }

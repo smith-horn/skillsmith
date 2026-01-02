@@ -25,6 +25,7 @@ import {
   createPublishCommand,
 } from './commands/index.js'
 import { DEFAULT_DB_PATH } from './config.js'
+import { sanitizeError } from './utils/sanitize.js'
 
 const program = new Command()
 
@@ -47,7 +48,7 @@ program
         ...(options.verbose !== undefined && { verbose: options.verbose }),
       })
     } catch (error) {
-      console.error('Import failed:', error)
+      console.error('Import failed:', sanitizeError(error))
       process.exit(1)
     }
   })

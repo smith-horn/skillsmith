@@ -26,13 +26,19 @@ import { homedir } from 'os'
 import type { ProjectContext } from '../context/project-detector.js'
 import type { SkillSuggestion, SuggestionConfig, SuggestionState } from './types.js'
 
+/** Cooldown period between suggestions in milliseconds (5 minutes) */
+const SUGGESTION_COOLDOWN_MS = 5 * 60 * 1000
+
+/** Maximum suggestions per day per user */
+const MAX_SUGGESTIONS_PER_DAY = 3
+
 /** Default directory for storing Skillsmith configuration and state */
 const DEFAULT_SUGGESTIONS_DIR = join(homedir(), '.skillsmith')
 
 /** Default configuration values */
 const DEFAULT_CONFIG: SuggestionConfig = {
-  cooldownMs: 5 * 60 * 1000, // 5 minutes
-  maxSuggestionsPerDay: 3,
+  cooldownMs: SUGGESTION_COOLDOWN_MS,
+  maxSuggestionsPerDay: MAX_SUGGESTIONS_PER_DAY,
   enableOptOut: true,
 }
 
@@ -160,7 +166,12 @@ export class SuggestionEngine {
           data.suggestionsToday = 0
         }
         return data
-      } catch {
+      } catch (error) {
+        console.warn(
+          '[suggestion-engine] Failed to load state:',
+          this.stateFile,
+          error instanceof Error ? error.message : String(error)
+        )
         return this.getDefaultState()
       }
     }

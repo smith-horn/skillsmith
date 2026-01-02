@@ -17,6 +17,7 @@ import {
   detectNativeModules,
   detectLanguage,
   getSuggestedSkills,
+  validatePath,
   type ProjectContext,
 } from '../../src/context/project-detector.js'
 
@@ -54,7 +55,10 @@ function createMockProject(options: {
   }
 
   if (options.packageJson) {
-    fs.writeFileSync(path.join(projectDir, 'package.json'), JSON.stringify(options.packageJson, null, 2))
+    fs.writeFileSync(
+      path.join(projectDir, 'package.json'),
+      JSON.stringify(options.packageJson, null, 2)
+    )
   }
 
   if (options.tsconfig) {
@@ -729,6 +733,93 @@ pydantic==2.5.0`,
 
       const suggestions = getSuggestedSkills(context)
       expect(suggestions).toEqual([])
+    })
+  })
+
+  describe('validatePath - path traversal prevention', () => {
+    it('should allow valid paths within base directory', () => {
+      const baseDir = TEST_TEMP_DIR
+      const subDir = path.join(baseDir, 'subdir')
+      fs.mkdirSync(subDir, { recursive: true })
+
+      const result = validatePath('subdir', baseDir)
+      expect(result).toBe(subDir)
+    })
+
+    it('should allow the base directory itself', () => {
+      const baseDir = TEST_TEMP_DIR
+      const result = validatePath(baseDir, baseDir)
+      expect(result).toBe(path.resolve(baseDir))
+    })
+
+    it('should reject paths with ../ that escape the base directory', () => {
+      const baseDir = path.join(TEST_TEMP_DIR, 'project')
+      fs.mkdirSync(baseDir, { recursive: true })
+
+      expect(() => validatePath('../escape', baseDir)).toThrow('Path traversal attempt detected')
+    })
+
+    it('should reject absolute paths outside allowed directory', () => {
+      const baseDir = path.join(TEST_TEMP_DIR, 'project')
+      fs.mkdirSync(baseDir, { recursive: true })
+
+      expect(() => validatePath('/etc/passwd', baseDir)).toThrow('Path traversal attempt detected')
+    })
+
+    it('should reject complex traversal attempts', () => {
+      const baseDir = path.join(TEST_TEMP_DIR, 'project')
+      fs.mkdirSync(baseDir, { recursive: true })
+
+      expect(() => validatePath('subdir/../../escape', baseDir)).toThrow(
+        'Path traversal attempt detected'
+      )
+    })
+
+    it('should reject paths that look similar but are outside base', () => {
+      const baseDir = path.join(TEST_TEMP_DIR, 'base')
+      const similarDir = path.join(TEST_TEMP_DIR, 'base-other')
+      fs.mkdirSync(baseDir, { recursive: true })
+      fs.mkdirSync(similarDir, { recursive: true })
+
+      expect(() => validatePath(similarDir, baseDir)).toThrow('Path traversal attempt detected')
+    })
+
+    it('should allow deeply nested valid paths', () => {
+      const baseDir = TEST_TEMP_DIR
+      const deepPath = path.join(baseDir, 'a', 'b', 'c', 'd')
+      fs.mkdirSync(deepPath, { recursive: true })
+
+      const result = validatePath('a/b/c/d', baseDir)
+      expect(result).toBe(deepPath)
+    })
+  })
+
+  describe('detectProjectContext - path traversal prevention', () => {
+    it('should throw when path tries to escape via relative traversal', () => {
+      const baseDir = path.join(TEST_TEMP_DIR, 'allowed')
+      fs.mkdirSync(baseDir, { recursive: true })
+
+      expect(() => detectProjectContext('../escape', baseDir)).toThrow(
+        'Path traversal attempt detected'
+      )
+    })
+
+    it('should throw when absolute path is outside allowed base', () => {
+      const baseDir = path.join(TEST_TEMP_DIR, 'allowed')
+      fs.mkdirSync(baseDir, { recursive: true })
+
+      expect(() => detectProjectContext('/tmp/outside', baseDir)).toThrow(
+        'Path traversal attempt detected'
+      )
+    })
+
+    it('should work normally for valid paths within allowed base', () => {
+      const baseDir = TEST_TEMP_DIR
+      const projectDir = createMockProject({ dockerfile: true })
+
+      // Project is within TEST_TEMP_DIR, so this should work
+      const context = detectProjectContext(projectDir, baseDir)
+      expect(context.hasDocker).toBe(true)
     })
   })
 
