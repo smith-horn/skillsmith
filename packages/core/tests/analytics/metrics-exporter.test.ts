@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, rmSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { MetricsAggregator } from '../../src/analytics/metrics-aggregator.js'
-import { MetricsExporter } from '../../src/analytics/metrics-exporter.js'
+import { MetricsExporter, validatePath } from '../../src/analytics/metrics-exporter.js'
 import type { AggregationPeriod } from '../../src/analytics/metrics-aggregator.js'
 import type { SkillUsageOutcome } from '../../src/analytics/types.js'
 
@@ -213,10 +213,14 @@ describe('MetricsExporter', () => {
       }
 
       const data = exporter.export(period)
-      const filepath = exporter.saveToFile(data, {
-        outputDir: testDir,
-        format: 'json',
-      })
+      const filepath = exporter.saveToFile(
+        data,
+        {
+          outputDir: testDir,
+          format: 'json',
+        },
+        testDir
+      )
 
       expect(existsSync(filepath)).toBe(true)
       expect(filepath).toMatch(/\.json$/)
@@ -238,10 +242,14 @@ describe('MetricsExporter', () => {
       }
 
       const data = exporter.export(period)
-      const filepath = exporter.saveToFile(data, {
-        outputDir: testDir,
-        format: 'csv',
-      })
+      const filepath = exporter.saveToFile(
+        data,
+        {
+          outputDir: testDir,
+          format: 'csv',
+        },
+        testDir
+      )
 
       expect(existsSync(filepath)).toBe(true)
       expect(filepath).toMatch(/\.csv$/)
@@ -265,7 +273,7 @@ describe('MetricsExporter', () => {
       }
 
       const data = exporter.export(period)
-      const filepath = exporter.saveToFile(data, { outputDir: nestedDir })
+      const filepath = exporter.saveToFile(data, { outputDir: nestedDir }, testDir)
 
       expect(existsSync(filepath)).toBe(true)
       expect(existsSync(nestedDir)).toBe(true)
@@ -285,10 +293,14 @@ describe('MetricsExporter', () => {
       }
 
       const data = exporter.export(period, { includeRetention: true })
-      const filepath = exporter.saveToFile(data, {
-        outputDir: testDir,
-        format: 'csv',
-      })
+      const filepath = exporter.saveToFile(
+        data,
+        {
+          outputDir: testDir,
+          format: 'csv',
+        },
+        testDir
+      )
 
       const content = readFileSync(filepath, 'utf-8')
       expect(content).toContain('retention_rate')
@@ -343,10 +355,14 @@ describe('MetricsExporter', () => {
       }
 
       const data = exporter.export(period)
-      const filepath = exporter.saveToFile(data, {
-        outputDir: testDir,
-        format: 'csv',
-      })
+      const filepath = exporter.saveToFile(
+        data,
+        {
+          outputDir: testDir,
+          format: 'csv',
+        },
+        testDir
+      )
 
       const content = readFileSync(filepath, 'utf-8')
       expect(content).toContain('"author/skill,with,commas"')
@@ -363,10 +379,14 @@ describe('MetricsExporter', () => {
       }
 
       const data = exporter.export(period)
-      const filepath = exporter.saveToFile(data, {
-        outputDir: testDir,
-        format: 'csv',
-      })
+      const filepath = exporter.saveToFile(
+        data,
+        {
+          outputDir: testDir,
+          format: 'csv',
+        },
+        testDir
+      )
 
       const content = readFileSync(filepath, 'utf-8')
       expect(content).toContain('"author/""quoted""skill"')
@@ -386,6 +406,117 @@ describe('MetricsExporter', () => {
 
       // Jan 1, 2026 may be in week 53 of 2025 or week 1 of 2026 (ISO week rules)
       expect(data.period.label).toMatch(/^(2025-W53|2026-W0[1-2])$/)
+    })
+  })
+
+  describe('validatePath - path traversal prevention', () => {
+    it('should allow valid paths within base directory', () => {
+      const subDir = join(testDir, 'subdir')
+      mkdirSync(subDir, { recursive: true })
+
+      const result = validatePath('subdir', testDir)
+      expect(result).toBe(subDir)
+    })
+
+    it('should allow the base directory itself', () => {
+      const result = validatePath(testDir, testDir)
+      expect(result).toBe(testDir)
+    })
+
+    it('should reject paths with ../ that escape the base directory', () => {
+      const baseDir = join(testDir, 'project')
+      mkdirSync(baseDir, { recursive: true })
+
+      expect(() => validatePath('../escape', baseDir)).toThrow('Path traversal attempt detected')
+    })
+
+    it('should reject absolute paths outside allowed directory', () => {
+      const baseDir = join(testDir, 'project')
+      mkdirSync(baseDir, { recursive: true })
+
+      expect(() => validatePath('/etc/passwd', baseDir)).toThrow('Path traversal attempt detected')
+    })
+
+    it('should reject complex traversal attempts', () => {
+      const baseDir = join(testDir, 'project')
+      mkdirSync(baseDir, { recursive: true })
+
+      expect(() => validatePath('subdir/../../escape', baseDir)).toThrow(
+        'Path traversal attempt detected'
+      )
+    })
+
+    it('should reject paths that look similar but are outside base', () => {
+      const baseDir = join(testDir, 'base')
+      const similarDir = join(testDir, 'base-other')
+      mkdirSync(baseDir, { recursive: true })
+      mkdirSync(similarDir, { recursive: true })
+
+      expect(() => validatePath(similarDir, baseDir)).toThrow('Path traversal attempt detected')
+    })
+  })
+
+  describe('saveToFile - path traversal prevention', () => {
+    it('should throw when outputDir tries to escape via relative traversal', () => {
+      const now = Date.now()
+
+      insertEvent('skill-1', 'user-1', now - 1000, 100, 'success')
+
+      const period: AggregationPeriod = {
+        start: now - 3000,
+        end: now,
+      }
+
+      const data = exporter.export(period)
+      const allowedBase = join(testDir, 'exports')
+      mkdirSync(allowedBase, { recursive: true })
+
+      expect(() => exporter.saveToFile(data, { outputDir: '../escape' }, allowedBase)).toThrow(
+        'Path traversal attempt detected'
+      )
+    })
+
+    it('should throw when absolute outputDir is outside allowed base', () => {
+      const now = Date.now()
+
+      insertEvent('skill-1', 'user-1', now - 1000, 100, 'success')
+
+      const period: AggregationPeriod = {
+        start: now - 3000,
+        end: now,
+      }
+
+      const data = exporter.export(period)
+      const allowedBase = join(testDir, 'exports')
+      mkdirSync(allowedBase, { recursive: true })
+
+      expect(() => exporter.saveToFile(data, { outputDir: '/tmp/outside' }, allowedBase)).toThrow(
+        'Path traversal attempt detected'
+      )
+    })
+
+    it('should work normally for valid outputDir within allowed base', () => {
+      const now = Date.now()
+
+      insertEvent('skill-1', 'user-1', now - 1000, 100, 'success')
+
+      const period: AggregationPeriod = {
+        start: now - 3000,
+        end: now,
+      }
+
+      const data = exporter.export(period)
+      const allowedBase = testDir
+      const validOutputDir = join(testDir, 'valid-exports')
+
+      const filepath = exporter.saveToFile(
+        data,
+        { outputDir: validOutputDir, format: 'json' },
+        allowedBase
+      )
+
+      expect(existsSync(filepath)).toBe(true)
+      expect(filepath.startsWith(testDir)).toBe(true)
     })
   })
 })

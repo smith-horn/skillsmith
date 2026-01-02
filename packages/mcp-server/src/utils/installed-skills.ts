@@ -111,8 +111,12 @@ export function getSkillIdFromDir(skillDir: string, dirName: string): string {
         return parsed.id
       }
     }
-  } catch {
-    // Fall through to use directory name
+  } catch (error) {
+    console.warn(
+      '[installed-skills] Failed to parse SKILL.md:',
+      skillMdPath,
+      error instanceof Error ? error.message : String(error)
+    )
   }
 
   return dirName
@@ -160,8 +164,12 @@ export async function getInstalledSkills(skillsDir?: string): Promise<string[]> 
     }
 
     return skillIds.sort()
-  } catch {
-    // Return empty array if directory read fails
+  } catch (error) {
+    console.warn(
+      '[installed-skills] Failed to read skills directory:',
+      dir,
+      error instanceof Error ? error.message : String(error)
+    )
     return []
   }
 }
@@ -196,8 +204,12 @@ export function getInstalledSkillsSync(skillsDir?: string): string[] {
     }
 
     return skillIds.sort()
-  } catch {
-    // Return empty array if directory read fails
+  } catch (error) {
+    console.warn(
+      '[installed-skills] Failed to read skills directory:',
+      dir,
+      error instanceof Error ? error.message : String(error)
+    )
     return []
   }
 }
@@ -259,8 +271,12 @@ export async function getInstalledSkillsDetailed(
           }
           description = parsed.description
         }
-      } catch {
-        // Use defaults
+      } catch (error) {
+        console.warn(
+          '[installed-skills] Failed to parse SKILL.md for detailed info:',
+          skillMdPath,
+          error instanceof Error ? error.message : String(error)
+        )
       }
 
       skills.push({
@@ -273,7 +289,12 @@ export async function getInstalledSkillsDetailed(
     }
 
     return skills.sort((a, b) => a.id.localeCompare(b.id))
-  } catch {
+  } catch (error) {
+    console.warn(
+      '[installed-skills] Failed to get detailed skills:',
+      dir,
+      error instanceof Error ? error.message : String(error)
+    )
     return []
   }
 }

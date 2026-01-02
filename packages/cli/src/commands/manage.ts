@@ -20,6 +20,7 @@ import {
   type TrustTier,
 } from '@skillsmith/core'
 import { DEFAULT_DB_PATH } from '../config.js'
+import { sanitizeError } from '../utils/sanitize.js'
 
 const TRUST_TIER_COLORS: Record<TrustTier, (text: string) => string> = {
   verified: chalk.green,
@@ -221,7 +222,7 @@ async function updateSkill(skillName: string, dbPath: string): Promise<boolean> 
     updateSpinner.succeed(`Successfully updated ${skillName}`)
     return true
   } catch (error) {
-    spinner.fail(`Failed to update ${skillName}: ${error}`)
+    spinner.fail(`Failed to update ${skillName}: ${sanitizeError(error)}`)
     return false
   }
 }
@@ -296,7 +297,7 @@ async function removeSkill(skillName: string, force: boolean): Promise<boolean> 
     spinner.succeed(`Successfully removed ${skill.name}`)
     return true
   } catch (error) {
-    spinner.fail(`Failed to remove ${skill.name}: ${error}`)
+    spinner.fail(`Failed to remove ${skill.name}: ${sanitizeError(error)}`)
     return false
   }
 }
@@ -313,7 +314,7 @@ export function createListCommand(): Command {
         const skills = await getInstalledSkills()
         displaySkillsTable(skills)
       } catch (error) {
-        console.error(chalk.red('Error listing skills:'), error)
+        console.error(chalk.red('Error listing skills:'), sanitizeError(error))
         process.exit(1)
       }
     })
@@ -340,7 +341,7 @@ export function createUpdateCommand(): Command {
             await updateSkill(skillName, dbPath)
           }
         } catch (error) {
-          console.error(chalk.red('Error updating skills:'), error)
+          console.error(chalk.red('Error updating skills:'), sanitizeError(error))
           process.exit(1)
         }
       }
@@ -364,7 +365,7 @@ export function createRemoveCommand(): Command {
         const success = await removeSkill(skillName, force)
         process.exit(success ? 0 : 1)
       } catch (error) {
-        console.error(chalk.red('Error removing skill:'), error)
+        console.error(chalk.red('Error removing skill:'), sanitizeError(error))
         process.exit(1)
       }
     })

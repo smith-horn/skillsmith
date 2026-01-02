@@ -4,7 +4,7 @@
   "description": "CLI tools for Skillsmith skill discovery",
   "type": "module",
   "bin": {
-    "skillsmith": "dist/index.js"
+    "skillsmith": "dist/src/index.js"
   },
   "scripts": {
     "build": "tsc",

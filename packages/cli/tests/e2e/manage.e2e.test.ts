@@ -18,7 +18,7 @@ import { queueIssue, type TestFailure } from './utils/linear-reporter.js'
 // Test configuration
 const TEST_DIR = join(tmpdir(), 'skillsmith-e2e-manage')
 const TEST_SKILLS_DIR = join(TEST_DIR, '.claude', 'skills')
-const CLI_PATH = join(__dirname, '../../dist/index.js')
+const CLI_PATH = join(__dirname, '../../dist/src/index.js')
 
 // Mock skill for testing
 const MOCK_SKILL = {

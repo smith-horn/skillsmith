@@ -14,6 +14,7 @@ import { createHash } from 'crypto'
 import { SkillParser, type ValidationResult } from '@skillsmith/core'
 
 import { SKILL_MD_TEMPLATE, README_MD_TEMPLATE } from '../templates/index.js'
+import { sanitizeError } from '../utils/sanitize.js'
 
 /**
  * Initialize a new skill directory
@@ -136,7 +137,7 @@ Thumbs.db
     console.log(chalk.dim('  5. Run skillsmith publish to prepare for sharing'))
     console.log()
   } catch (error) {
-    spinner.fail(`Failed to create skill: ${error}`)
+    spinner.fail(`Failed to create skill: ${sanitizeError(error)}`)
     throw error
   }
 }
@@ -228,15 +229,16 @@ async function validateSkill(skillPath: string): Promise<boolean> {
 
     return validation.valid
   } catch (error) {
-    spinner.fail(`Validation failed: ${error}`)
+    spinner.fail(`Validation failed: ${sanitizeError(error)}`)
     return false
   }
 }
 
 /**
  * Prepare skill for publishing
+ * @returns true if publishing succeeded, false if validation failed
  */
-async function publishSkill(skillPath: string): Promise<void> {
+async function publishSkill(skillPath: string): Promise<boolean> {
   const spinner = ora('Preparing skill for publishing...').start()
 
   try {
@@ -252,7 +254,7 @@ async function publishSkill(skillPath: string): Promise<void> {
     } catch {
       // Path doesn't exist
       spinner.fail(`Directory not found: ${dirPath}`)
-      return
+      return false
     }
 
     const skillMdPath = join(dirPath, 'SKILL.md')
@@ -267,12 +269,12 @@ async function publishSkill(skillPath: string): Promise<void> {
     if (!validation.valid) {
       spinner.fail('Skill validation failed')
       printValidationResult(validation, skillMdPath)
-      return
+      return false
     }
 
     if (!metadata) {
       spinner.fail('Could not parse skill metadata')
-      return
+      return false
     }
 
     // Generate checksum
@@ -315,9 +317,11 @@ async function publishSkill(skillPath: string): Promise<void> {
     console.log(chalk.dim(`  1. Create archive: tar -czf ${metadata.name}.tar.gz ${dirPath}`))
     console.log(chalk.dim('  2. Share the archive'))
     console.log()
+
+    return true
   } catch (error) {
-    spinner.fail(`Publishing failed: ${error}`)
-    throw error
+    spinner.fail(`Publishing failed: ${sanitizeError(error)}`)
+    return false
   }
 }
 
@@ -335,7 +339,7 @@ export function createInitCommand(): Command {
       try {
         await initSkill(name, targetPath)
       } catch (error) {
-        console.error(chalk.red('Error initializing skill:'), error)
+        console.error(chalk.red('Error initializing skill:'), sanitizeError(error))
         process.exit(1)
       }
     })
@@ -353,7 +357,7 @@ export function createValidateCommand(): Command {
         const valid = await validateSkill(skillPath)
         process.exit(valid ? 0 : 1)
       } catch (error) {
-        console.error(chalk.red('Error validating skill:'), error)
+        console.error(chalk.red('Error validating skill:'), sanitizeError(error))
         process.exit(1)
       }
     })
@@ -368,9 +372,10 @@ export function createPublishCommand(): Command {
     .argument('[path]', 'Path to skill directory', '.')
     .action(async (skillPath: string) => {
       try {
-        await publishSkill(skillPath)
+        const success = await publishSkill(skillPath)
+        process.exit(success ? 0 : 1)
       } catch (error) {
-        console.error(chalk.red('Error publishing skill:'), error)
+        console.error(chalk.red('Error publishing skill:'), sanitizeError(error))
         process.exit(1)
       }
     })

@@ -14,6 +14,12 @@ import { anonymizeUserId, hashProjectContext } from './anonymizer.js'
 import type { SkillUsageEvent, SkillUsageOutcome, SkillMetrics } from './types.js'
 
 /**
+ * Session timeout in milliseconds (1 hour)
+ * Sessions older than this are considered stale and will be cleaned up
+ */
+const SESSION_TIMEOUT_MS = 60 * 60 * 1000
+
+/**
  * Pending tracking state
  */
 interface PendingTracking {
@@ -63,6 +69,7 @@ export class UsageTracker {
   private storage: AnalyticsStorage
   private pendingEvents: Map<string, PendingTracking>
   private cleanupTimer: ReturnType<typeof setInterval> | null = null
+  private sessionCleanupTimer: ReturnType<typeof setInterval> | null = null
 
   /**
    * Create a usage tracker instance
@@ -82,6 +89,16 @@ export class UsageTracker {
         this.cleanupTimer.unref()
       }
     }
+
+    // Setup session cleanup at half the timeout interval to prevent unbounded growth
+    this.sessionCleanupTimer = setInterval(
+      () => this.cleanupStaleSessions(),
+      SESSION_TIMEOUT_MS / 2
+    )
+    // Don't block Node.js from exiting
+    if (this.sessionCleanupTimer.unref) {
+      this.sessionCleanupTimer.unref()
+    }
   }
 
   /**
@@ -92,6 +109,9 @@ export class UsageTracker {
    * @returns Tracking ID to use when ending tracking
    */
   startTracking(skillId: string, userId: string): string {
+    // Clean up stale sessions opportunistically to prevent buildup
+    this.cleanupStaleSessions()
+
     const trackingId = `${skillId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
     this.pendingEvents.set(trackingId, {
@@ -211,6 +231,26 @@ export class UsageTracker {
   }
 
   /**
+   * Clean up stale sessions that have exceeded the timeout
+   * This prevents unbounded memory growth from sessions that are started but never ended
+   */
+  private cleanupStaleSessions(): void {
+    const now = Date.now()
+    let expiredCount = 0
+
+    for (const [trackingId, pending] of this.pendingEvents.entries()) {
+      if (now - pending.startTime > SESSION_TIMEOUT_MS) {
+        this.pendingEvents.delete(trackingId)
+        expiredCount++
+      }
+    }
+
+    if (expiredCount > 0) {
+      console.warn(`[usage-tracker] Cleaned up ${expiredCount} stale sessions`)
+    }
+  }
+
+  /**
    * Close the tracker and release resources
    */
   close(): void {
@@ -218,6 +258,18 @@ export class UsageTracker {
       clearInterval(this.cleanupTimer)
       this.cleanupTimer = null
     }
+    if (this.sessionCleanupTimer) {
+      clearInterval(this.sessionCleanupTimer)
+      this.sessionCleanupTimer = null
+    }
     this.storage.close()
+  }
+
+  /**
+   * Dispose of the tracker (alias for close)
+   * Clears all intervals and releases resources
+   */
+  dispose(): void {
+    this.close()
   }
 }

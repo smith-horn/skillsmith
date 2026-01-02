@@ -16,6 +16,7 @@ import {
   type TrustTier,
 } from '@skillsmith/core'
 import { DEFAULT_DB_PATH } from '../config.js'
+import { sanitizeError } from '../utils/sanitize.js'
 
 const TRUST_TIER_COLORS: Record<TrustTier, (text: string) => string> = {
   verified: chalk.green,
@@ -348,32 +349,45 @@ export function createSearchCommand(): Command {
     .option('-s, --min-score <number>', 'Minimum quality score (0-100)')
     .action(
       async (query: string | undefined, opts: Record<string, string | boolean | undefined>) => {
-        const interactive = opts['interactive'] as boolean | undefined
-        const dbPath = opts['db'] as string
-        const limit = parseInt(opts['limit'] as string, 10)
-        const tier = opts['tier'] as TrustTier | undefined
-        const minScore = opts['min-score'] ? parseInt(opts['min-score'] as string, 10) : undefined
+        try {
+          const interactive = opts['interactive'] as boolean | undefined
+          const dbPath = opts['db'] as string
+          const limit = parseInt(opts['limit'] as string, 10)
+          const tier = opts['tier'] as TrustTier | undefined
+          const minScore = opts['min-score'] ? parseInt(opts['min-score'] as string, 10) : undefined
 
-        if (interactive) {
-          await runInteractiveSearch(dbPath)
-        } else if (query) {
-          // Build options object - only include defined values
-          const searchOpts: { db: string; limit: number; tier?: TrustTier; minScore?: number } = {
-            db: dbPath,
-            limit,
+          if (interactive) {
+            await runInteractiveSearch(dbPath)
+          } else if (query) {
+            // Validate minimum query length
+            if (query.length < 2) {
+              console.error(chalk.red('Error: Search query must be at least 2 characters'))
+              process.exit(1)
+            }
+
+            // Build options object - only include defined values
+            const searchOpts: { db: string; limit: number; tier?: TrustTier; minScore?: number } = {
+              db: dbPath,
+              limit,
+            }
+            if (tier !== undefined) {
+              searchOpts.tier = tier
+            }
+            if (minScore !== undefined) {
+              searchOpts.minScore = minScore
+            }
+            await runSearch(query, searchOpts)
+          } else {
+            console.log(
+              chalk.yellow('Please provide a search query or use -i for interactive mode')
+            )
+            console.log(
+              chalk.dim('Example: skillsmith search "authentication" or skillsmith search -i')
+            )
           }
-          if (tier !== undefined) {
-            searchOpts.tier = tier
-          }
-          if (minScore !== undefined) {
-            searchOpts.minScore = minScore
-          }
-          await runSearch(query, searchOpts)
-        } else {
-          console.log(chalk.yellow('Please provide a search query or use -i for interactive mode'))
-          console.log(
-            chalk.dim('Example: skillsmith search "authentication" or skillsmith search -i')
-          )
+        } catch (error) {
+          console.error(chalk.red('Search error:'), sanitizeError(error))
+          process.exit(1)
         }
       }
     )
