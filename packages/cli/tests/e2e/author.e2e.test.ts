@@ -9,8 +9,13 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { spawn } from 'child_process'
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { tmpdir } from 'os'
+import { fileURLToPath } from 'url'
+
+// ESM compatibility for __dirname
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 import { scanCommandOutput } from './utils/hardcoded-detector.js'
 import { recordTiming } from './utils/baseline-collector.js'
 import { queueIssue, type TestFailure } from './utils/linear-reporter.js'
