@@ -169,10 +169,31 @@ for pattern in "${ADDITIONAL_EXCLUDES[@]}"; do
   fi
 done
 
+# Build a grep -v filter for specific file paths from ignore file
+IGNORE_FILTER=""
+for pattern in "${ADDITIONAL_EXCLUDES[@]}"; do
+  # Only handle specific file paths (not globs)
+  if [[ "$pattern" != *"*"* && "$pattern" != */ ]]; then
+    if [ -n "$IGNORE_FILTER" ]; then
+      IGNORE_FILTER="$IGNORE_FILTER|$pattern"
+    else
+      IGNORE_FILTER="$pattern"
+    fi
+  fi
+done
+
 # Scan for each pattern
 for pattern in "${SECRET_PATTERNS[@]}"; do
   # Use grep with Perl regex for better pattern matching
-  if grep -r -n -E $GREP_EXCLUDE "$pattern" . 2>/dev/null; then
+  MATCHES=$(grep -r -n -E $GREP_EXCLUDE "$pattern" . 2>/dev/null || true)
+
+  # Filter out ignored file paths
+  if [ -n "$IGNORE_FILTER" ] && [ -n "$MATCHES" ]; then
+    MATCHES=$(echo "$MATCHES" | grep -v -E "$IGNORE_FILTER" || true)
+  fi
+
+  if [ -n "$MATCHES" ]; then
+    echo "$MATCHES"
     SECRETS_FOUND=1
   fi
 done
