@@ -1,0 +1,13 @@
+# Security scanner exclusions
+# These files contain detection patterns, not actual secrets
+
+# Hardcoded value detection utilities (contain regex patterns)
+packages/mcp-server/tests/e2e/utils/hardcoded-detector.ts
+
+# Path validation utilities (contain token format documentation)
+scripts/utils/path-validation.ts
+
+# Test fixtures with mock credentials
+**/tests/fixtures/**
+**/tests/**/*.fixture.*
+**/__mocks__/**

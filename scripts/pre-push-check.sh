@@ -113,6 +113,29 @@ EXCLUDE_DIRS=(
   "dist"
 )
 
+# =============================================================================
+# Read .security-scan-ignore for additional exclusions
+# This file contains paths to files that may trigger false positives because
+# they contain detection patterns (regex), token format documentation, or
+# test fixtures with mock credentials - not actual secrets.
+# =============================================================================
+IGNORE_FILE=".security-scan-ignore"
+ADDITIONAL_EXCLUDES=()
+
+if [ -f "$IGNORE_FILE" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Skip empty lines and comments
+    if [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]]; then
+      continue
+    fi
+    # Trim whitespace
+    line=$(echo "$line" | xargs)
+    if [ -n "$line" ]; then
+      ADDITIONAL_EXCLUDES+=("$line")
+    fi
+  done < "$IGNORE_FILE"
+fi
+
 # Build exclude arguments for grep
 GREP_EXCLUDE=""
 for pattern in "${EXCLUDE_FILES[@]}"; do
@@ -120,6 +143,30 @@ for pattern in "${EXCLUDE_FILES[@]}"; do
 done
 for dir in "${EXCLUDE_DIRS[@]}"; do
   GREP_EXCLUDE="$GREP_EXCLUDE --exclude-dir=$dir"
+done
+
+# Add exclusions from .security-scan-ignore
+# These patterns may be:
+#   - Specific files: path/to/file.ts
+#   - Glob patterns: **/tests/fixtures/**
+#   - Wildcard patterns: **/*.fixture.*
+for pattern in "${ADDITIONAL_EXCLUDES[@]}"; do
+  # Check if it's a directory pattern (ends with ** or /)
+  if [[ "$pattern" == *"/**" || "$pattern" == */ ]]; then
+    # Extract directory name from pattern like **/tests/fixtures/**
+    dir_pattern=$(echo "$pattern" | sed 's/\*\*\///g' | sed 's/\/\*\*//g' | sed 's/\/$//g')
+    if [ -n "$dir_pattern" ]; then
+      GREP_EXCLUDE="$GREP_EXCLUDE --exclude-dir=$dir_pattern"
+    fi
+  elif [[ "$pattern" == *"*"* ]]; then
+    # It's a glob pattern for files (e.g., **/*.fixture.*)
+    # Convert to grep --exclude format
+    file_pattern=$(echo "$pattern" | sed 's/\*\*\///g')
+    GREP_EXCLUDE="$GREP_EXCLUDE --exclude=$file_pattern"
+  else
+    # It's a specific file path
+    GREP_EXCLUDE="$GREP_EXCLUDE --exclude=$pattern"
+  fi
 done
 
 # Scan for each pattern
