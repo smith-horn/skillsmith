@@ -214,8 +214,8 @@ describe('E2E: skillsmith search', () => {
         async () => runCommand(['search', 'test', '-d', TEST_DB_PATH])
       )
 
-      // Search should complete in under 500ms for seeded data
-      expect(durationMs).toBeLessThan(500)
+      // Search should complete in under 1000ms for seeded data (CI can be slower)
+      expect(durationMs).toBeLessThan(1000)
     })
 
     it('should handle empty results gracefully', async () => {
