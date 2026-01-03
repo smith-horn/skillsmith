@@ -1,0 +1,137 @@
+Skillsmith
+Copyright 2024-2026 Smith Horn Group Ltd
+
+This product includes software developed by Smith Horn Group Ltd.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+================================================================================
+THIRD-PARTY DEPENDENCIES
+================================================================================
+
+This software includes the following third-party components:
+
+--------------------------------------------------------------------------------
+better-sqlite3
+--------------------------------------------------------------------------------
+Copyright (c) 2017 Joshua Wise
+License: MIT
+https://github.com/WiseLibs/better-sqlite3
+
+--------------------------------------------------------------------------------
+@xenova/transformers (Transformers.js)
+--------------------------------------------------------------------------------
+Copyright (c) 2023 Xenova
+License: Apache-2.0
+https://github.com/xenova/transformers.js
+
+Includes pre-trained model: all-MiniLM-L6-v2
+Original model by Microsoft, fine-tuned by sentence-transformers
+License: Apache-2.0
+
+--------------------------------------------------------------------------------
+@modelcontextprotocol/sdk
+--------------------------------------------------------------------------------
+Copyright (c) 2024 Anthropic, PBC
+License: MIT
+https://github.com/modelcontextprotocol/typescript-sdk
+
+Model Context Protocol is now governed by the Agentic AI Foundation
+under the Linux Foundation.
+
+--------------------------------------------------------------------------------
+zod
+--------------------------------------------------------------------------------
+Copyright (c) 2020 Colin McDonnell
+License: MIT
+https://github.com/colinhacks/zod
+
+--------------------------------------------------------------------------------
+lru-cache
+--------------------------------------------------------------------------------
+Copyright (c) Isaac Z. Schlueter and Contributors
+License: ISC
+https://github.com/isaacs/node-lru-cache
+
+--------------------------------------------------------------------------------
+OpenTelemetry JavaScript
+--------------------------------------------------------------------------------
+Copyright The OpenTelemetry Authors
+License: Apache-2.0
+https://github.com/open-telemetry/opentelemetry-js
+
+Includes:
+- @opentelemetry/api
+- @opentelemetry/sdk-node
+- @opentelemetry/sdk-trace-base
+- @opentelemetry/resources
+- @opentelemetry/semantic-conventions
+- @opentelemetry/exporter-trace-otlp-http
+- @opentelemetry/auto-instrumentations-node
+
+--------------------------------------------------------------------------------
+commander
+--------------------------------------------------------------------------------
+Copyright (c) 2011 TJ Holowaychuk
+License: MIT
+https://github.com/tj/commander.js
+
+--------------------------------------------------------------------------------
+chalk
+--------------------------------------------------------------------------------
+Copyright (c) Sindre Sorhus
+License: MIT
+https://github.com/chalk/chalk
+
+--------------------------------------------------------------------------------
+@inquirer/prompts
+--------------------------------------------------------------------------------
+Copyright (c) 2023 Simon Boudrias
+License: MIT
+https://github.com/SBoudrias/Inquirer.js
+
+--------------------------------------------------------------------------------
+cli-table3
+--------------------------------------------------------------------------------
+Copyright (c) 2014 James Talmage
+License: MIT
+https://github.com/cli-table/cli-table3
+
+--------------------------------------------------------------------------------
+ora
+--------------------------------------------------------------------------------
+Copyright (c) Sindre Sorhus
+License: MIT
+https://github.com/sindresorhus/ora
+
+--------------------------------------------------------------------------------
+esbuild
+--------------------------------------------------------------------------------
+Copyright (c) 2020 Evan Wallace
+License: MIT
+https://github.com/evanw/esbuild
+
+================================================================================
+DEVELOPMENT DEPENDENCIES (not included in distribution)
+================================================================================
+
+The following are used during development only and are not distributed
+with the product:
+
+- TypeScript (Apache-2.0) - Microsoft
+- Vitest (MIT) - Anthony Fu and Vitest Contributors
+- ESLint (MIT) - OpenJS Foundation
+- Prettier (MIT) - James Long
+- Husky (MIT) - typicode
+
+================================================================================
