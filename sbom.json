@@ -38,10 +38,10 @@
       "name": "better-sqlite3",
       "version": "11.10.0",
       "description": "The fastest and simplest library for SQLite3 in Node.js",
-      "licenses": [{"license": {"id": "MIT"}}],
+      "licenses": [{ "license": { "id": "MIT" } }],
       "purl": "pkg:npm/better-sqlite3@11.10.0",
       "externalReferences": [
-        {"type": "website", "url": "https://github.com/WiseLibs/better-sqlite3"}
+        { "type": "website", "url": "https://github.com/WiseLibs/better-sqlite3" }
       ]
     },
     {
@@ -50,10 +50,10 @@
       "name": "@xenova/transformers",
       "version": "2.17.2",
       "description": "State-of-the-art Machine Learning for the web",
-      "licenses": [{"license": {"id": "Apache-2.0"}}],
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
       "purl": "pkg:npm/%40xenova/transformers@2.17.2",
       "externalReferences": [
-        {"type": "website", "url": "https://github.com/xenova/transformers.js"}
+        { "type": "website", "url": "https://github.com/xenova/transformers.js" }
       ]
     },
     {
@@ -62,11 +62,9 @@
       "name": "zod",
       "version": "4.2.1",
       "description": "TypeScript-first schema declaration and validation library",
-      "licenses": [{"license": {"id": "MIT"}}],
+      "licenses": [{ "license": { "id": "MIT" } }],
       "purl": "pkg:npm/zod@4.2.1",
-      "externalReferences": [
-        {"type": "website", "url": "https://github.com/colinhacks/zod"}
-      ]
+      "externalReferences": [{ "type": "website", "url": "https://github.com/colinhacks/zod" }]
     },
     {
       "type": "library",
@@ -74,10 +72,10 @@
       "name": "lru-cache",
       "version": "10.1.0",
       "description": "A cache object that deletes the least-recently-used items",
-      "licenses": [{"license": {"id": "ISC"}}],
+      "licenses": [{ "license": { "id": "ISC" } }],
       "purl": "pkg:npm/lru-cache@10.1.0",
       "externalReferences": [
-        {"type": "website", "url": "https://github.com/isaacs/node-lru-cache"}
+        { "type": "website", "url": "https://github.com/isaacs/node-lru-cache" }
       ]
     },
     {
@@ -86,10 +84,10 @@
       "name": "@opentelemetry/api",
       "version": "1.9.0",
       "description": "OpenTelemetry API for JavaScript",
-      "licenses": [{"license": {"id": "Apache-2.0"}}],
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
       "purl": "pkg:npm/%40opentelemetry/api@1.9.0",
       "externalReferences": [
-        {"type": "website", "url": "https://github.com/open-telemetry/opentelemetry-js"}
+        { "type": "website", "url": "https://github.com/open-telemetry/opentelemetry-js" }
       ]
     },
     {
@@ -98,7 +96,7 @@
       "name": "@opentelemetry/sdk-node",
       "version": "0.56.0",
       "description": "OpenTelemetry SDK for Node.js",
-      "licenses": [{"license": {"id": "Apache-2.0"}}],
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
       "purl": "pkg:npm/%40opentelemetry/sdk-node@0.56.0"
     },
     {
@@ -107,7 +105,7 @@
       "name": "@opentelemetry/sdk-trace-base",
       "version": "1.30.1",
       "description": "OpenTelemetry Tracing SDK",
-      "licenses": [{"license": {"id": "Apache-2.0"}}],
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
       "purl": "pkg:npm/%40opentelemetry/sdk-trace-base@1.30.1"
     },
     {
@@ -116,7 +114,7 @@
       "name": "@opentelemetry/resources",
       "version": "1.30.1",
       "description": "OpenTelemetry Resources SDK",
-      "licenses": [{"license": {"id": "Apache-2.0"}}],
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
       "purl": "pkg:npm/%40opentelemetry/resources@1.30.1"
     },
     {
@@ -125,7 +123,7 @@
       "name": "@opentelemetry/semantic-conventions",
       "version": "1.38.0",
       "description": "OpenTelemetry semantic conventions",
-      "licenses": [{"license": {"id": "Apache-2.0"}}],
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
       "purl": "pkg:npm/%40opentelemetry/semantic-conventions@1.38.0"
     },
     {
@@ -134,7 +132,7 @@
       "name": "@opentelemetry/exporter-trace-otlp-http",
       "version": "0.56.0",
       "description": "OpenTelemetry OTLP HTTP Trace Exporter",
-      "licenses": [{"license": {"id": "Apache-2.0"}}],
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
       "purl": "pkg:npm/%40opentelemetry/exporter-trace-otlp-http@0.56.0"
     },
     {
@@ -143,7 +141,7 @@
       "name": "@opentelemetry/auto-instrumentations-node",
       "version": "0.52.1",
       "description": "OpenTelemetry Auto Instrumentations for Node.js",
-      "licenses": [{"license": {"id": "Apache-2.0"}}],
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
       "purl": "pkg:npm/%40opentelemetry/auto-instrumentations-node@0.52.1"
     },
     {
@@ -152,10 +150,10 @@
       "name": "@modelcontextprotocol/sdk",
       "version": "1.0.4",
       "description": "Model Context Protocol SDK",
-      "licenses": [{"license": {"id": "MIT"}}],
+      "licenses": [{ "license": { "id": "MIT" } }],
       "purl": "pkg:npm/%40modelcontextprotocol/sdk@1.0.4",
       "externalReferences": [
-        {"type": "website", "url": "https://github.com/modelcontextprotocol/typescript-sdk"}
+        { "type": "website", "url": "https://github.com/modelcontextprotocol/typescript-sdk" }
       ]
     },
     {
@@ -164,11 +162,9 @@
       "name": "esbuild",
       "version": "0.27.2",
       "description": "An extremely fast JavaScript and CSS bundler and minifier",
-      "licenses": [{"license": {"id": "MIT"}}],
+      "licenses": [{ "license": { "id": "MIT" } }],
       "purl": "pkg:npm/esbuild@0.27.2",
-      "externalReferences": [
-        {"type": "website", "url": "https://github.com/evanw/esbuild"}
-      ]
+      "externalReferences": [{ "type": "website", "url": "https://github.com/evanw/esbuild" }]
     },
     {
       "type": "library",
@@ -176,10 +172,10 @@
       "name": "@inquirer/prompts",
       "version": "7.0.0",
       "description": "Inquirer prompts for interactive CLI",
-      "licenses": [{"license": {"id": "MIT"}}],
+      "licenses": [{ "license": { "id": "MIT" } }],
       "purl": "pkg:npm/%40inquirer/prompts@7.0.0",
       "externalReferences": [
-        {"type": "website", "url": "https://github.com/SBoudrias/Inquirer.js"}
+        { "type": "website", "url": "https://github.com/SBoudrias/Inquirer.js" }
       ]
     },
     {
@@ -188,11 +184,9 @@
       "name": "commander",
       "version": "12.0.0",
       "description": "The complete solution for node.js command-line programs",
-      "licenses": [{"license": {"id": "MIT"}}],
+      "licenses": [{ "license": { "id": "MIT" } }],
       "purl": "pkg:npm/commander@12.0.0",
-      "externalReferences": [
-        {"type": "website", "url": "https://github.com/tj/commander.js"}
-      ]
+      "externalReferences": [{ "type": "website", "url": "https://github.com/tj/commander.js" }]
     },
     {
       "type": "library",
@@ -200,11 +194,9 @@
       "name": "chalk",
       "version": "5.3.0",
       "description": "Terminal string styling done right",
-      "licenses": [{"license": {"id": "MIT"}}],
+      "licenses": [{ "license": { "id": "MIT" } }],
       "purl": "pkg:npm/chalk@5.3.0",
-      "externalReferences": [
-        {"type": "website", "url": "https://github.com/chalk/chalk"}
-      ]
+      "externalReferences": [{ "type": "website", "url": "https://github.com/chalk/chalk" }]
     },
     {
       "type": "library",
@@ -212,10 +204,10 @@
       "name": "cli-table3",
       "version": "0.6.5",
       "description": "Pretty unicode tables for the command line",
-      "licenses": [{"license": {"id": "MIT"}}],
+      "licenses": [{ "license": { "id": "MIT" } }],
       "purl": "pkg:npm/cli-table3@0.6.5",
       "externalReferences": [
-        {"type": "website", "url": "https://github.com/cli-table/cli-table3"}
+        { "type": "website", "url": "https://github.com/cli-table/cli-table3" }
       ]
     },
     {
@@ -224,19 +216,15 @@
       "name": "ora",
       "version": "8.0.0",
       "description": "Elegant terminal spinner",
-      "licenses": [{"license": {"id": "MIT"}}],
+      "licenses": [{ "license": { "id": "MIT" } }],
       "purl": "pkg:npm/ora@8.0.0",
-      "externalReferences": [
-        {"type": "website", "url": "https://github.com/sindresorhus/ora"}
-      ]
+      "externalReferences": [{ "type": "website", "url": "https://github.com/sindresorhus/ora" }]
     }
   ],
   "dependencies": [
     {
       "ref": "skillsmith@0.1.0",
-      "dependsOn": [
-        "pkg:npm/esbuild@0.27.2"
-      ]
+      "dependsOn": ["pkg:npm/esbuild@0.27.2"]
     },
     {
       "ref": "pkg:npm/@skillsmith/core@0.1.0",
@@ -256,10 +244,7 @@
     },
     {
       "ref": "pkg:npm/@skillsmith/mcp-server@0.1.0",
-      "dependsOn": [
-        "pkg:npm/@modelcontextprotocol/sdk@1.0.4",
-        "pkg:npm/esbuild@0.27.2"
-      ]
+      "dependsOn": ["pkg:npm/@modelcontextprotocol/sdk@1.0.4", "pkg:npm/esbuild@0.27.2"]
     },
     {
       "ref": "pkg:npm/@skillsmith/cli@0.1.0",
