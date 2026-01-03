@@ -37,14 +37,12 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: skillsmith/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        working-directory: skillsmith
         run: npm ci
 
       - name: Build packages
-        working-directory: skillsmith
         run: npm run build
 
       - name: Clone test repository
@@ -53,7 +51,6 @@ jobs:
         continue-on-error: true
 
       - name: Run CLI E2E tests
-        working-directory: skillsmith
         run: npm run test:e2e:cli
         env:
           SKILLSMITH_TEST_REPO: /tmp/test-repo
@@ -64,8 +61,8 @@ jobs:
         with:
           name: cli-e2e-results
           path: |
-            skillsmith/test-results/cli-*.xml
-            skillsmith/test-results/cli-*.json
+            test-results/cli-*.xml
+            test-results/cli-*.json
           retention-days: 30
 
   # Phase B: MCP E2E Tests (only runs after CLI passes)
@@ -86,14 +83,12 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: skillsmith/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        working-directory: skillsmith
         run: npm ci
 
       - name: Build packages
-        working-directory: skillsmith
         run: npm run build
 
       - name: Clone test repository
@@ -102,7 +97,6 @@ jobs:
         continue-on-error: true
 
       - name: Run MCP E2E tests
-        working-directory: skillsmith
         run: npm run test:e2e:mcp
         env:
           SKILLSMITH_TEST_REPO: /tmp/test-repo
@@ -113,8 +107,8 @@ jobs:
         with:
           name: mcp-e2e-results
           path: |
-            skillsmith/test-results/mcp-*.xml
-            skillsmith/test-results/mcp-*.json
+            test-results/mcp-*.xml
+            test-results/mcp-*.json
           retention-days: 30
 
   # Generate reports and create Linear issues for failures
@@ -133,34 +127,31 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: skillsmith/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Download CLI results
         uses: actions/download-artifact@v4
         with:
           name: cli-e2e-results
-          path: skillsmith/test-results/cli
+          path: test-results/cli
         continue-on-error: true
 
       - name: Download MCP results
         uses: actions/download-artifact@v4
         with:
           name: mcp-e2e-results
-          path: skillsmith/test-results/mcp
+          path: test-results/mcp
         continue-on-error: true
 
       - name: Install dependencies
-        working-directory: skillsmith
         run: npm ci
 
       - name: Generate combined report
-        working-directory: skillsmith
         run: npm run test:e2e:report
         continue-on-error: true
 
       - name: Create Linear issues for failures
         if: failure()
-        working-directory: skillsmith
         run: npm run test:e2e:create-issues
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
@@ -172,8 +163,8 @@ jobs:
         with:
           name: e2e-combined-reports
           path: |
-            skillsmith/test-results/combined-*.json
-            skillsmith/docs/testing/results/*.md
+            test-results/combined-*.json
+            docs/testing/results/*.md
           retention-days: 90
 
       - name: Post summary to PR
@@ -182,7 +173,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const path = 'skillsmith/docs/testing/results/latest-summary.md';
+            const path = 'docs/testing/results/latest-summary.md';
 
             let summary = '## E2E Test Results\n\n';
 
@@ -218,7 +209,7 @@ jobs:
       - name: Download all results
         uses: actions/download-artifact@v4
         with:
-          path: skillsmith/test-results/all
+          path: test-results/all
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -226,22 +217,19 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install dependencies
-        working-directory: skillsmith
         run: npm ci
 
       - name: Generate baseline report
-        working-directory: skillsmith
         run: npm run test:e2e:baseline
 
       - name: Upload baseline report
         uses: actions/upload-artifact@v4
         with:
           name: performance-baselines
-          path: skillsmith/test-results/baselines.json
+          path: test-results/baselines.json
           retention-days: 365
 
       - name: Create Linear issue for baselines
-        working-directory: skillsmith
         run: |
           echo "Performance baselines collected. See artifact for details."
         env:
