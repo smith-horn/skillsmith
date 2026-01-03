@@ -55,3 +55,22 @@ Thumbs.db
 docs/IP/
 docs/licensing/
 docs/valuation/
+
+# Development artifacts
+data/
+output/
+test-results/
+
+# Phase 4 working documents (not finalized)
+docs/phase4/
+docs/phase4-research/
+docs/reports/
+docs/architecture/phase-4.5-large-scale-testing.md
+docs/architecture/phase4-trigger-system.md
+docs/retros/phase-4-product-strategy.md
+
+# Development scripts (not production)
+scripts/full-import.ts
+scripts/security-scan.ts
+scripts/security-scan.test.ts
+scripts/utils/
