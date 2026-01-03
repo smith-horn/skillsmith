@@ -17,7 +17,10 @@ describe('UsageTracker', () => {
 
   beforeEach(() => {
     // Create a unique test directory for each test
-    testDir = join(tmpdir(), `skillsmith-tracker-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    testDir = join(
+      tmpdir(),
+      `skillsmith-tracker-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    )
     mkdirSync(testDir, { recursive: true })
     testDbPath = join(testDir, 'test-tracker.db')
     // Disable auto-cleanup for tests

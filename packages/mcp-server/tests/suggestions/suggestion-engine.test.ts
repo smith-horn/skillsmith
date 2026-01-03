@@ -45,7 +45,10 @@ function writeMockState(stateDir: string, state: Partial<SuggestionState>): void
   if (!fs.existsSync(stateDir)) {
     fs.mkdirSync(stateDir, { recursive: true })
   }
-  fs.writeFileSync(path.join(stateDir, 'suggestions-state.json'), JSON.stringify(fullState, null, 2))
+  fs.writeFileSync(
+    path.join(stateDir, 'suggestions-state.json'),
+    JSON.stringify(fullState, null, 2)
+  )
 }
 
 /**
@@ -60,7 +63,9 @@ function cleanupTestDir(): void {
 /**
  * Create a SuggestionEngine with test state directory
  */
-function createTestEngine(config: Partial<{ cooldownMs: number; maxSuggestionsPerDay: number }> = {}) {
+function createTestEngine(
+  config: Partial<{ cooldownMs: number; maxSuggestionsPerDay: number }> = {}
+) {
   return new SuggestionEngine({ ...config, stateDir: testDir })
 }
 
@@ -426,7 +431,9 @@ describe('SuggestionEngine', () => {
       engine.dismissSkill('community/docker')
       engine.dismissSkill('community/docker')
 
-      expect(engine.getState().dismissedSkills.filter((s) => s === 'community/docker')).toHaveLength(1)
+      expect(
+        engine.getState().dismissedSkills.filter((s) => s === 'community/docker')
+      ).toHaveLength(1)
     })
 
     it('should persist dismissed skills to disk', () => {
