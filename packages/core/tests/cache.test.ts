@@ -115,8 +115,11 @@ describe('L2Cache (SQLite)', () => {
   })
 
   it('should prune expired entries', () => {
-    // Create cache with 1 second TTL
-    const shortCache = new L2Cache({ dbPath: dbPath + '.short', ttlSeconds: 1 })
+    // SMI-973: Use 5-second TTL to avoid timing race condition
+    // With ttlSeconds: 1, the second boundary could be crossed between
+    // set() and has(), causing the entry to appear expired immediately.
+    // 5 seconds provides sufficient buffer while still testing expiration logic.
+    const shortCache = new L2Cache({ dbPath: dbPath + '.short', ttlSeconds: 5 })
 
     shortCache.set('key1', [], 0)
     expect(shortCache.has('key1')).toBe(true)
