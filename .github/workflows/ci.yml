@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: '20'
+  NODE_VERSION: '22'
   DOCKER_BUILDKIT: 1
   COMPOSE_DOCKER_CLI_BUILD: 1
 
@@ -240,12 +240,20 @@ jobs:
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
 
       - name: Run dependency audit in Docker
+        # Fail on high/critical vulnerabilities, continue-on-error allows workflow to complete for reporting
+        continue-on-error: true
+        id: audit
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npm audit --audit-level=high || true
+            npm audit --audit-level=high
+
+      - name: Check audit result
+        if: steps.audit.outcome == 'failure'
+        run: |
+          echo "::warning::npm audit found high-severity vulnerabilities. Review the audit output above."
 
       - name: Build project for security tests
         run: |
@@ -350,6 +358,10 @@ jobs:
       - name: Extract node_modules
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
 
+      # SMI-970: This build is intentional, not a duplicate
+      # The Test job builds for test execution, but that output is discarded
+      # when the job ends. GitHub Actions jobs have isolated workspaces, so
+      # we must rebuild here to generate artifacts for upload.
       - name: Build all packages in Docker
         run: |
           docker run --rm \
