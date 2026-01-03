@@ -7,7 +7,12 @@
  */
 
 import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
+import { fileURLToPath } from 'url'
+
+// ESM compatibility for __dirname
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 const ROOT_DIR = join(__dirname, '..', '..')
 const RESULTS_DIR = join(ROOT_DIR, 'test-results')
