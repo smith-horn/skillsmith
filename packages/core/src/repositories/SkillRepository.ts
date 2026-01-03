@@ -193,9 +193,29 @@ export class SkillRepository {
   }
 
   /**
-   * Find all skills with pagination
+   * SMI-976: Find all skills with pagination
+   * Accepts either options object or positional parameters for backward compatibility
    */
-  findAll(limit: number = 20, offset: number = 0): PaginatedResults<Skill> {
+  findAll(options?: { limit?: number; offset?: number }): PaginatedResults<Skill>
+  findAll(limit?: number, offset?: number): PaginatedResults<Skill>
+  findAll(
+    optionsOrLimit?: { limit?: number; offset?: number } | number,
+    offsetParam?: number
+  ): PaginatedResults<Skill> {
+    // Handle both calling conventions
+    let limit: number
+    let offset: number
+
+    if (typeof optionsOrLimit === 'object' && optionsOrLimit !== null) {
+      // Options object: findAll({ limit: 10, offset: 0 })
+      limit = optionsOrLimit.limit ?? 20
+      offset = optionsOrLimit.offset ?? 0
+    } else {
+      // Positional params: findAll(10, 0) or findAll()
+      limit = optionsOrLimit ?? 20
+      offset = offsetParam ?? 0
+    }
+
     const rows = this.stmts.selectAll.all(limit, offset) as SkillRow[]
     const { count } = this.stmts.selectCount.get() as { count: number }
 

@@ -5,14 +5,16 @@
 // Version
 export const VERSION = '0.1.0'
 
-// Database (SMI-577)
+// Database (SMI-577, SMI-974)
 export {
   SCHEMA_VERSION,
   createDatabase,
+  openDatabase,
   closeDatabase,
   initializeSchema,
   getSchemaVersion,
   runMigrations,
+  runMigrationsSafe,
 } from './db/schema.js'
 export type { DatabaseType } from './db/schema.js'
 

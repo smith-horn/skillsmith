@@ -14,7 +14,7 @@ import type { Database as BetterSqliteDatabase } from 'better-sqlite3'
 
 export type DatabaseType = BetterSqliteDatabase
 
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 /**
  * SQL statements for creating the database schema
@@ -158,7 +158,42 @@ export const MIGRATIONS: Migration[] = [
     description: 'Initial schema creation',
     sql: SCHEMA_SQL,
   },
+  {
+    version: 2,
+    description: 'SMI-974: Add missing columns for Phase 5 imported databases',
+    sql: `
+-- Add updated_at column if missing (for Phase 5 imported databases)
+ALTER TABLE skills ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'));
+
+-- Add source column if missing (from import scripts)
+ALTER TABLE skills ADD COLUMN source TEXT;
+
+-- Add stars column if missing (from import scripts)
+ALTER TABLE skills ADD COLUMN stars INTEGER;
+`,
+  },
 ]
+
+/**
+ * SMI-974: Migration SQL for adding FTS5 to existing database
+ * Run separately as FTS5 creation can fail if table exists
+ */
+export const FTS5_MIGRATION_SQL = `
+-- Create FTS5 virtual table if not exists
+CREATE VIRTUAL TABLE IF NOT EXISTS skills_fts USING fts5(
+  name,
+  description,
+  tags,
+  author,
+  content='skills',
+  content_rowid='rowid',
+  tokenize='porter unicode61'
+);
+
+-- Populate FTS from existing skills (safe to run multiple times)
+INSERT OR IGNORE INTO skills_fts(rowid, name, description, tags, author)
+SELECT rowid, name, description, tags, author FROM skills;
+`
 
 /**
  * Initialize the database with the complete schema
@@ -187,6 +222,9 @@ export function getSchemaVersion(db: DatabaseType): number {
 
 /**
  * Run pending migrations to upgrade the schema
+ * Handles duplicate column errors gracefully since the initial schema
+ * already includes all columns, but migrations need to support databases
+ * created by other means (e.g., Phase 5 import scripts)
  */
 export function runMigrations(db: DatabaseType): number {
   const currentVersion = getSchemaVersion(db)
@@ -194,7 +232,19 @@ export function runMigrations(db: DatabaseType): number {
 
   for (const migration of MIGRATIONS) {
     if (migration.version > currentVersion) {
-      db.exec(migration.sql)
+      // Execute each statement separately to handle duplicate column errors
+      const statements = migration.sql.split(';').filter((s) => s.trim())
+      for (const stmt of statements) {
+        try {
+          db.exec(stmt)
+        } catch (error) {
+          // Ignore "duplicate column" errors - column already exists from initial schema
+          const msg = error instanceof Error ? error.message : String(error)
+          if (!msg.includes('duplicate column')) {
+            throw error
+          }
+        }
+      }
       db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(migration.version)
       migrationsRun++
     }
@@ -205,6 +255,7 @@ export function runMigrations(db: DatabaseType): number {
 
 /**
  * Create a new database connection with proper configuration
+ * This initializes the full schema - use openDatabase for existing databases
  */
 export function createDatabase(path: string = ':memory:'): DatabaseType {
   const db = new Database(path)
@@ -216,6 +267,81 @@ export function createDatabase(path: string = ':memory:'): DatabaseType {
   initializeSchema(db)
 
   return db
+}
+
+/**
+ * SMI-974: Open an existing database and run any pending migrations
+ * Use this for databases that may have been created by different versions
+ */
+export function openDatabase(path: string): DatabaseType {
+  const db = new Database(path)
+
+  // Enable foreign keys
+  db.pragma('foreign_keys = ON')
+
+  // Check if schema_version table exists
+  const hasSchemaVersion = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'")
+    .get()
+
+  if (!hasSchemaVersion) {
+    // Database has no version tracking - assume it's a Phase 5 import or similar
+    // Create schema_version table and set to version 1
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+    `)
+  }
+
+  // Run pending migrations safely
+  runMigrationsSafe(db)
+
+  return db
+}
+
+/**
+ * SMI-974: Run migrations with error handling for existing columns
+ */
+export function runMigrationsSafe(db: DatabaseType): number {
+  const currentVersion = getSchemaVersion(db)
+  let migrationsRun = 0
+
+  for (const migration of MIGRATIONS) {
+    if (migration.version > currentVersion) {
+      try {
+        // Try to run migration, but handle "duplicate column" errors gracefully
+        const statements = migration.sql.split(';').filter((s) => s.trim())
+        for (const stmt of statements) {
+          try {
+            db.exec(stmt)
+          } catch (error) {
+            // Ignore "duplicate column" errors - column already exists
+            const msg = error instanceof Error ? error.message : String(error)
+            if (!msg.includes('duplicate column')) {
+              throw error
+            }
+          }
+        }
+        db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(migration.version)
+        migrationsRun++
+      } catch (error) {
+        // Log but don't fail on migration errors
+        console.warn(`Migration ${migration.version} failed:`, error)
+      }
+    }
+  }
+
+  // Try to create FTS5 table (may already exist)
+  try {
+    db.exec(FTS5_MIGRATION_SQL)
+  } catch {
+    // FTS5 may already exist or have issues - that's ok
+  }
+
+  return migrationsRun
 }
 
 /**
