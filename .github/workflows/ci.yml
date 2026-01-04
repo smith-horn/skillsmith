@@ -255,6 +255,12 @@ jobs:
         run: |
           echo "::warning::npm audit found high-severity vulnerabilities. Review the audit output above."
 
+      - name: Fail on high-severity vulnerabilities
+        if: steps.audit.outcome == 'failure'
+        run: |
+          echo "::error::npm audit found high-severity vulnerabilities. See audit output above."
+          exit 1
+
       - name: Build project for security tests
         run: |
           docker run --rm \
@@ -334,7 +340,7 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lint, typecheck, test, compliance]
+    needs: [lint, typecheck, test, security, compliance]
 
     steps:
       - name: Checkout

@@ -163,6 +163,96 @@ describe('validateUrl', () => {
       // Cloudflare's public IPv6 DNS
       expect(() => validateUrl('http://[2606:4700:4700::1111]')).not.toThrow()
     })
+
+    it('should block 6to4 addresses with embedded private IPv4 (SMI-1004)', () => {
+      // 2002:0a00:0001:: embeds 10.0.0.1 (private)
+      expect(() => validateUrl('http://[2002:0a00:0001::1]')).toThrow(ValidationError)
+      expect(() => validateUrl('http://[2002:0a00:0001::1]')).toThrow(/6to4.*private IPv4/)
+
+      // 2002:c0a8:0101:: embeds 192.168.1.1 (private)
+      expect(() => validateUrl('http://[2002:c0a8:0101::1]')).toThrow(ValidationError)
+      expect(() => validateUrl('http://[2002:c0a8:0101::1]')).toThrow(/6to4.*embedded.*private/)
+
+      // 2002:7f00:0001:: embeds 127.0.0.1 (loopback)
+      expect(() => validateUrl('http://[2002:7f00:0001::1]')).toThrow(ValidationError)
+
+      // 2002:ac10:0001:: embeds 172.16.0.1 (private)
+      expect(() => validateUrl('http://[2002:ac10:0001::1]')).toThrow(ValidationError)
+
+      // Public 6to4 should be allowed: 2002:0808:0808:: embeds 8.8.8.8
+      expect(() => validateUrl('http://[2002:0808:0808::1]')).not.toThrow()
+    })
+
+    it('should block IPv4-compatible addresses with private IPv4 (SMI-1005)', () => {
+      // Note: URL parser normalizes ::192.168.1.1 to ::c0a8:101 (hex format)
+      // Our validation handles both formats
+
+      // ::192.168.1.1 (private) - normalized to ::c0a8:101
+      expect(() => validateUrl('http://[::192.168.1.1]')).toThrow(ValidationError)
+      expect(() => validateUrl('http://[::192.168.1.1]')).toThrow(/IPv4-compatible.*private/)
+
+      // ::10.0.0.1 (private) - normalized to ::a00:1
+      expect(() => validateUrl('http://[::10.0.0.1]')).toThrow(ValidationError)
+      expect(() => validateUrl('http://[::10.0.0.1]')).toThrow(/IPv4-compatible.*private/)
+
+      // ::127.0.0.1 (loopback) - normalized to ::7f00:1
+      expect(() => validateUrl('http://[::127.0.0.1]')).toThrow(ValidationError)
+
+      // ::172.16.0.1 (private) - normalized to ::ac10:1
+      expect(() => validateUrl('http://[::172.16.0.1]')).toThrow(ValidationError)
+
+      // Public IPv4-compatible addresses should be allowed
+      // ::8.8.8.8 normalizes to ::808:808
+      expect(() => validateUrl('http://[::8.8.8.8]')).not.toThrow()
+    })
+
+    it('should block Teredo addresses (SMI-1006)', () => {
+      // 2001:0000::/32 is the Teredo prefix
+      // Full Teredo address format: 2001:0000:SSSS:FFFF:PPPP:PPPP:CCCC:CCCC
+      expect(() => validateUrl('http://[2001:0000:4136:e378:8000:63bf:3fff:fdd2]')).toThrow(
+        ValidationError
+      )
+      expect(() => validateUrl('http://[2001:0000:4136:e378:8000:63bf:3fff:fdd2]')).toThrow(
+        /Teredo tunnel.*blocked/
+      )
+
+      // Another Teredo address variant
+      expect(() => validateUrl('http://[2001:0:53aa:64c:0:5efe:10.0.0.1]')).toThrow(ValidationError)
+
+      // Make sure we don't block other 2001: addresses (like Google DNS 2001:4860::)
+      expect(() => validateUrl('http://[2001:4860:4860::8888]')).not.toThrow()
+    })
+
+    it('should include correct error codes for IPv6 transition mechanisms', () => {
+      // SMI-1004: 6to4
+      try {
+        validateUrl('http://[2002:c0a8:0101::1]')
+        expect.fail('Should have thrown')
+      } catch (error) {
+        expect(error).toBeInstanceOf(ValidationError)
+        expect((error as ValidationError).code).toBe('IPV6_6TO4_PRIVATE')
+        expect((error as ValidationError).details).toHaveProperty('embeddedIPv4')
+      }
+
+      // SMI-1005: IPv4-compatible (URL normalizes to hex format)
+      try {
+        validateUrl('http://[::192.168.1.1]')
+        expect.fail('Should have thrown')
+      } catch (error) {
+        expect(error).toBeInstanceOf(ValidationError)
+        expect((error as ValidationError).code).toBe('IPV6_COMPATIBLE_PRIVATE')
+        expect((error as ValidationError).details).toHaveProperty('embeddedIPv4')
+      }
+
+      // SMI-1006: Teredo (use a full Teredo address)
+      try {
+        validateUrl('http://[2001:0000:4136:e378:8000:63bf:3fff:fdd2]')
+        expect.fail('Should have thrown')
+      } catch (error) {
+        expect(error).toBeInstanceOf(ValidationError)
+        expect((error as ValidationError).code).toBe('IPV6_TEREDO_BLOCKED')
+      }
+    })
   })
 
   describe('invalid URLs', () => {

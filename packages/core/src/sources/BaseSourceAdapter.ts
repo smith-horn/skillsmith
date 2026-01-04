@@ -4,6 +4,7 @@
  */
 
 import type { ISourceAdapter } from './ISourceAdapter.js'
+import { validateUrl } from '../validation/index.js'
 import type {
   SourceConfig,
   SourceLocation,
@@ -198,6 +199,7 @@ export abstract class BaseSourceAdapter implements ISourceAdapter {
    * Make a rate-limited fetch request
    */
   protected async fetchWithRateLimit(url: string, options?: RequestInit): Promise<Response> {
+    validateUrl(url)
     await this.waitForRateLimit()
 
     const headers = new Headers(options?.headers)
