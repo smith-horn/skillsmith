@@ -48,5 +48,12 @@ export {
   InMemoryRateLimitStorage,
   RATE_LIMIT_PRESETS,
   createRateLimiterFromPreset,
+  RateLimitQueueTimeoutError,
+  RateLimitQueueFullError,
 } from './RateLimiter.js'
-export type { RateLimitConfig, RateLimitResult, RateLimitStorage } from './RateLimiter.js'
+export type {
+  RateLimitConfig,
+  RateLimitResult,
+  RateLimitStorage,
+  RateLimitMetrics,
+} from './RateLimiter.js'

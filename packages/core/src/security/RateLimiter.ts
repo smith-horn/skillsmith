@@ -1,5 +1,5 @@
 /**
- * Rate Limiter - SMI-730
+ * Rate Limiter - SMI-730, SMI-1013
  *
  * Token bucket algorithm for rate limiting API endpoints and adapters.
  * Prevents abuse and DoS attacks with configurable limits and windows.
@@ -10,6 +10,8 @@
  * - Configurable limits and windows
  * - In-memory storage (Redis-compatible interface)
  * - Graceful degradation on errors
+ * - Request queue for waiting when rate limited (SMI-1013)
+ * - Configurable timeout for queued requests (SMI-1013)
  */
 
 import { createLogger } from '../utils/logger.js'
@@ -48,6 +50,12 @@ export interface RateLimitConfig {
   onLimitExceeded?: (key: string, metrics: RateLimitMetrics) => void
   /** Fail mode on storage errors: 'open' allows requests, 'closed' denies them (default: 'open') */
   failMode?: 'open' | 'closed'
+  /** Enable request queuing when rate limited (SMI-1013, default: false) */
+  enableQueue?: boolean
+  /** Maximum time to wait in queue in milliseconds (SMI-1013, default: 30000) */
+  queueTimeoutMs?: number
+  /** Maximum number of requests that can wait in queue (SMI-1013, default: 100) */
+  maxQueueSize?: number
 }
 
 /**
@@ -78,6 +86,52 @@ export interface RateLimitResult {
   resetAt?: string
   /** Current metrics for this key (optional) */
   metrics?: RateLimitMetrics
+  /** Whether the request waited in queue (SMI-1013) */
+  queued?: boolean
+  /** Time spent waiting in queue in milliseconds (SMI-1013) */
+  queueWaitMs?: number
+}
+
+/**
+ * Queued request waiting for a token (SMI-1013)
+ */
+interface QueuedRequest {
+  /** Resolve function to signal the request can proceed */
+  resolve: (result: RateLimitResult) => void
+  /** Reject function for timeout */
+  reject: (error: Error) => void
+  /** Token cost for this request */
+  cost: number
+  /** Timestamp when request was queued */
+  queuedAt: number
+  /** Timeout handle */
+  timeoutHandle: NodeJS.Timeout
+}
+
+/**
+ * Error thrown when queue timeout is exceeded (SMI-1013)
+ */
+export class RateLimitQueueTimeoutError extends Error {
+  constructor(
+    public readonly key: string,
+    public readonly timeoutMs: number
+  ) {
+    super(`Rate limit queue timeout exceeded for key '${key}' after ${timeoutMs}ms`)
+    this.name = 'RateLimitQueueTimeoutError'
+  }
+}
+
+/**
+ * Error thrown when queue is full (SMI-1013)
+ */
+export class RateLimitQueueFullError extends Error {
+  constructor(
+    public readonly key: string,
+    public readonly maxQueueSize: number
+  ) {
+    super(`Rate limit queue full for key '${key}' (max: ${maxQueueSize})`)
+    this.name = 'RateLimitQueueFullError'
+  }
 }
 
 /**
@@ -201,21 +255,41 @@ export class InMemoryRateLimitStorage implements RateLimitStorage {
  * ```
  */
 export class RateLimiter {
-  private readonly config: Required<Omit<RateLimitConfig, 'onLimitExceeded' | 'failMode'>> & {
+  private readonly config: Required<
+    Omit<
+      RateLimitConfig,
+      'onLimitExceeded' | 'failMode' | 'enableQueue' | 'queueTimeoutMs' | 'maxQueueSize'
+    >
+  > & {
     onLimitExceeded?: (key: string, metrics: RateLimitMetrics) => void
     failMode: 'open' | 'closed'
+    enableQueue: boolean
+    queueTimeoutMs: number
+    maxQueueSize: number
   }
   private readonly storage: RateLimitStorage
   private readonly metrics: Map<string, RateLimitMetrics> = new Map()
+  /** Queue of waiting requests per key (SMI-1013) */
+  private readonly queues: Map<string, QueuedRequest[]> = new Map()
+  /** Timer for processing queues (SMI-1013) */
+  private queueProcessorInterval: NodeJS.Timeout | null = null
 
   constructor(config: RateLimitConfig, storage: RateLimitStorage = new InMemoryRateLimitStorage()) {
     this.config = {
       keyPrefix: 'ratelimit',
       debug: false,
       failMode: 'open',
+      enableQueue: false,
+      queueTimeoutMs: 30000,
+      maxQueueSize: 100,
       ...config,
     }
     this.storage = storage
+
+    // Start queue processor if queuing is enabled (SMI-1013)
+    if (this.config.enableQueue) {
+      this.startQueueProcessor()
+    }
 
     if (this.config.debug) {
       log.info('Rate limiter initialized', {
@@ -223,7 +297,125 @@ export class RateLimiter {
         refillRate: this.config.refillRate,
         windowMs: this.config.windowMs,
         failMode: this.config.failMode,
+        enableQueue: this.config.enableQueue,
+        queueTimeoutMs: this.config.queueTimeoutMs,
+        maxQueueSize: this.config.maxQueueSize,
       })
+    }
+  }
+
+  /**
+   * Start the queue processor that periodically checks for available tokens (SMI-1013)
+   */
+  private startQueueProcessor(): void {
+    // Check queue every 100ms
+    this.queueProcessorInterval = setInterval(() => {
+      this.processQueues()
+    }, 100)
+  }
+
+  /**
+   * Process all queues and release waiting requests when tokens become available (SMI-1013)
+   */
+  private async processQueues(): Promise<void> {
+    for (const [key, queue] of this.queues.entries()) {
+      if (queue.length === 0) continue
+
+      // Try to process the first request in the queue
+      const request = queue[0]
+      const result = await this.tryConsumeToken(key, request.cost)
+
+      if (result.allowed) {
+        // Remove from queue
+        queue.shift()
+        // Clear timeout
+        clearTimeout(request.timeoutHandle)
+        // Resolve with queue info
+        const queueWaitMs = Date.now() - request.queuedAt
+        request.resolve({
+          ...result,
+          queued: true,
+          queueWaitMs,
+        })
+
+        if (this.config.debug) {
+          log.debug(`Queue request released for ${key}`, {
+            queueWaitMs,
+            remaining: result.remaining,
+          })
+        }
+      }
+    }
+  }
+
+  /**
+   * Try to consume a token without queuing (internal method)
+   */
+  private async tryConsumeToken(key: string, cost: number): Promise<RateLimitResult> {
+    const storageKey = `${this.config.keyPrefix}:${key}`
+    const now = Date.now()
+
+    try {
+      let bucket = await this.storage.get(storageKey)
+
+      if (!bucket) {
+        bucket = {
+          tokens: this.config.maxTokens,
+          lastRefill: now,
+          firstRequest: now,
+        }
+      }
+
+      // Refill tokens based on elapsed time
+      const elapsedMs = now - bucket.lastRefill
+      const elapsedSeconds = elapsedMs / 1000
+      const tokensToAdd = elapsedSeconds * this.config.refillRate
+
+      if (tokensToAdd > 0) {
+        bucket.tokens = Math.min(this.config.maxTokens, bucket.tokens + tokensToAdd)
+        bucket.lastRefill = now
+      }
+
+      // Check if we have enough tokens
+      const allowed = bucket.tokens >= cost
+
+      if (allowed) {
+        bucket.tokens -= cost
+        await this.storage.set(storageKey, bucket, this.config.windowMs)
+
+        return {
+          allowed: true,
+          remaining: Math.floor(bucket.tokens),
+          limit: this.config.maxTokens,
+        }
+      } else {
+        const tokensNeeded = cost - bucket.tokens
+        const retryAfterMs = Math.ceil((tokensNeeded / this.config.refillRate) * 1000)
+        const resetAt = new Date(now + retryAfterMs).toISOString()
+
+        return {
+          allowed: false,
+          remaining: Math.floor(bucket.tokens),
+          limit: this.config.maxTokens,
+          retryAfterMs,
+          resetAt,
+        }
+      }
+    } catch {
+      // On error, return based on fail mode
+      if (this.config.failMode === 'closed') {
+        return {
+          allowed: false,
+          remaining: 0,
+          limit: this.config.maxTokens,
+          retryAfterMs: this.config.windowMs,
+        }
+      }
+      return {
+        allowed: true,
+        remaining: this.config.maxTokens,
+        limit: this.config.maxTokens,
+      }
     }
   }
 
@@ -385,6 +577,159 @@ export class RateLimiter {
   }
 
   /**
+   * Wait for a token to become available (SMI-1013)
+   *
+   * If tokens are available, consumes immediately.
+   * If not, queues the request and waits until tokens become available or timeout.
+   *
+   * @param key - Unique identifier (e.g., 'ip:192.168.1.1' or 'adapter:github')
+   * @param cost - Number of tokens to consume (default: 1)
+   * @returns Promise that resolves when token is available
+   * @throws RateLimitQueueTimeoutError if timeout is exceeded
+   * @throws RateLimitQueueFullError if queue is at capacity
+   *
+   * @example
+   * ```typescript
+   * const limiter = new RateLimiter({
+   *   maxTokens: 10,
+   *   refillRate: 1,
+   *   windowMs: 60000,
+   *   enableQueue: true,
+   *   queueTimeoutMs: 30000,
+   * })
+   *
+   * // Will wait up to 30s for token
+   * const result = await limiter.waitForToken('adapter:github')
+   * if (result.queued) {
+   *   console.log(`Waited ${result.queueWaitMs}ms in queue`)
+   * }
+   * ```
+   */
+  async waitForToken(key: string, cost = 1): Promise<RateLimitResult> {
+    if (!this.config.enableQueue) {
+      // Queue not enabled, fall back to checkLimit behavior
+      return this.checkLimit(key, cost)
+    }
+
+    // First, try to get token immediately
+    const immediateResult = await this.tryConsumeToken(key, cost)
+
+    if (immediateResult.allowed) {
+      this.updateMetrics(key, true)
+      return {
+        ...immediateResult,
+        queued: false,
+        metrics: this.metrics.get(key),
+      }
+    }
+
+    // Check queue size
+    const queue = this.queues.get(key) || []
+    if (queue.length >= this.config.maxQueueSize) {
+      this.updateMetrics(key, false)
+      throw new RateLimitQueueFullError(key, this.config.maxQueueSize)
+    }
+
+    // Queue the request
+    return new Promise<RateLimitResult>((resolve, reject) => {
+      const queuedAt = Date.now()
+
+      // Set up timeout
+      const timeoutHandle = setTimeout(() => {
+        // Remove from queue
+        const currentQueue = this.queues.get(key) || []
+        const index = currentQueue.findIndex((r) => r.queuedAt === queuedAt)
+        if (index !== -1) {
+          currentQueue.splice(index, 1)
+        }
+
+        this.updateMetrics(key, false)
+        reject(new RateLimitQueueTimeoutError(key, this.config.queueTimeoutMs))
+      }, this.config.queueTimeoutMs)
+
+      const request: QueuedRequest = {
+        resolve: (result) => {
+          this.updateMetrics(key, true)
+          resolve({
+            ...result,
+            metrics: this.metrics.get(key),
+          })
+        },
+        reject,
+        cost,
+        queuedAt,
+        timeoutHandle,
+      }
+
+      // Add to queue
+      if (!this.queues.has(key)) {
+        this.queues.set(key, [])
+      }
+      this.queues.get(key)!.push(request)
+
+      if (this.config.debug) {
+        log.debug(`Request queued for ${key}`, {
+          queueSize: this.queues.get(key)!.length,
+          cost,
+          timeoutMs: this.config.queueTimeoutMs,
+        })
+      }
+    })
+  }
+
+  /**
+   * Get queue status for a key (SMI-1013)
+   *
+   * @param key - Optional key to get queue status for
+   * @returns Queue size and waiting requests info
+   */
+  getQueueStatus(key?: string): { totalQueued: number; queues: Map<string, number> } | number {
+    if (key) {
+      return this.queues.get(key)?.length ?? 0
+    }
+
+    const queues = new Map<string, number>()
+    let totalQueued = 0
+    for (const [k, q] of this.queues.entries()) {
+      queues.set(k, q.length)
+      totalQueued += q.length
+    }
+    return { totalQueued, queues }
+  }
+
+  /**
+   * Clear queue for a key (SMI-1013)
+   *
+   * Rejects all waiting requests with a timeout error.
+   *
+   * @param key - Optional key to clear queue for (clears all if not specified)
+   */
+  clearQueue(key?: string): void {
+    const clearQueueForKey = (k: string) => {
+      const queue = this.queues.get(k)
+      if (queue) {
+        for (const request of queue) {
+          clearTimeout(request.timeoutHandle)
+          request.reject(new RateLimitQueueTimeoutError(k, 0))
+        }
+        this.queues.delete(k)
+      }
+    }
+
+    if (key) {
+      clearQueueForKey(key)
+    } else {
+      for (const k of this.queues.keys()) {
+        clearQueueForKey(k)
+      }
+    }
+
+    if (this.config.debug) {
+      log.debug(`Queue cleared${key ? ` for key: ${key}` : ' (all)'}`)
+    }
+  }
+
+  /**
    * Reset rate limit for a key (e.g., after authentication)
    */
   async reset(key: string): Promise<void> {
@@ -438,6 +783,15 @@ export class RateLimiter {
    * Dispose of resources
    */
   dispose(): void {
+    // Stop queue processor (SMI-1013)
+    if (this.queueProcessorInterval) {
+      clearInterval(this.queueProcessorInterval)
+      this.queueProcessorInterval = null
+    }
+
+    // Clear all queues (SMI-1013)
+    this.clearQueue()
+
     if (this.storage instanceof InMemoryRateLimitStorage) {
       this.storage.dispose()
     }

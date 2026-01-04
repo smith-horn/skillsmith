@@ -447,6 +447,297 @@ describe('AuditLogger', () => {
     })
   })
 
+  describe('cleanupOldLogs (SMI-1012)', () => {
+    it('should delete logs older than retention period', () => {
+      // Insert log older than 90 days (default retention)
+      const oldTimestamp = new Date(FIXED_TIMESTAMP - 100 * ONE_DAY_MS) // 100 days ago
+      auditLogger.log({
+        event_type: 'url_fetch',
+        actor: 'adapter',
+        resource: 'https://old-example.com',
+        action: 'fetch',
+        result: 'success',
+        timestamp: oldTimestamp.toISOString(),
+      })
+
+      // Insert recent log
+      auditLogger.log({
+        event_type: 'url_fetch',
+        actor: 'adapter',
+        resource: 'https://recent-example.com',
+        action: 'fetch',
+        result: 'success',
+      })
+
+      const deleted = auditLogger.cleanupOldLogs() // Default 90 days
+
+      expect(deleted).toBe(1)
+
+      const remaining = auditLogger.query({ event_type: 'url_fetch' })
+      expect(remaining).toHaveLength(1)
+      expect(remaining[0].resource).toBe('https://recent-example.com')
+    })
+
+    it('should respect custom retention days', () => {
+      // Insert log that's 15 days old
+      const oldTimestamp = new Date(FIXED_TIMESTAMP - 15 * ONE_DAY_MS)
+      auditLogger.log({
+        event_type: 'file_access',
+        actor: 'system',
+        resource: '/path/to/old-file',
+        action: 'read',
+        result: 'success',
+        timestamp: oldTimestamp.toISOString(),
+      })
+
+      // Insert recent log (within 7 days)
+      const recentTimestamp = new Date(FIXED_TIMESTAMP - 5 * ONE_DAY_MS)
+      auditLogger.log({
+        event_type: 'file_access',
+        actor: 'system',
+        resource: '/path/to/recent-file',
+        action: 'read',
+        result: 'success',
+        timestamp: recentTimestamp.toISOString(),
+      })
+
+      // Cleanup with 10-day retention (should delete the 15-day-old log)
+      const deleted = auditLogger.cleanupOldLogs(10)
+
+      expect(deleted).toBe(1)
+
+      const remaining = auditLogger.query({ event_type: 'file_access' })
+      expect(remaining).toHaveLength(1)
+      expect(remaining[0].resource).toBe('/path/to/recent-file')
+    })
+
+    it('should preserve recent logs within retention period', () => {
+      // Insert multiple logs within retention period
+      for (let i = 0; i < 5; i++) {
+        const timestamp = new Date(FIXED_TIMESTAMP - i * ONE_DAY_MS)
+        auditLogger.log({
+          event_type: 'skill_install',
+          actor: 'user',
+          resource: `skill-${i}`,
+          action: 'install',
+          result: 'success',
+          timestamp: timestamp.toISOString(),
+        })
+      }
+
+      const deleted = auditLogger.cleanupOldLogs(30) // 30 day retention
+
+      expect(deleted).toBe(0)
+
+      const remaining = auditLogger.query({ event_type: 'skill_install' })
+      expect(remaining).toHaveLength(5)
+    })
+
+    it('should return correct count of deleted rows', () => {
+      // Insert 10 logs older than retention
+      const oldTimestamp = new Date(FIXED_TIMESTAMP - 120 * ONE_DAY_MS) // 120 days ago
+      for (let i = 0; i < 10; i++) {
+        auditLogger.log({
+          event_type: 'security_scan',
+          actor: 'scanner',
+          resource: `skill-${i}`,
+          action: 'scan',
+          result: 'success',
+          timestamp: oldTimestamp.toISOString(),
+        })
+      }
+
+      // Insert 3 recent logs
+      for (let i = 0; i < 3; i++) {
+        auditLogger.log({
+          event_type: 'security_scan',
+          actor: 'scanner',
+          resource: `recent-skill-${i}`,
+          action: 'scan',
+          result: 'success',
+        })
+      }
+
+      const deleted = auditLogger.cleanupOldLogs(90)
+
+      expect(deleted).toBe(10)
+
+      const remaining = auditLogger.query({ event_type: 'security_scan' })
+      expect(remaining).toHaveLength(3)
+    })
+
+    it('should create meta-log entry for cleanup operation', () => {
+      // Insert an old log to trigger cleanup
+      const oldTimestamp = new Date(FIXED_TIMESTAMP - 100 * ONE_DAY_MS)
+      auditLogger.log({
+        event_type: 'url_fetch',
+        actor: 'adapter',
+        resource: 'https://old.com',
+        action: 'fetch',
+        result: 'success',
+        timestamp: oldTimestamp.toISOString(),
+      })
+
+      auditLogger.cleanupOldLogs(90)
+
+      // Query for the cleanup meta-log
+      const metaLogs = auditLogger.query({
+        event_type: 'config_change',
+        resource: 'audit_logs',
+      })
+
+      expect(metaLogs.length).toBeGreaterThanOrEqual(1)
+
+      const cleanupLog = metaLogs.find((log) => log.action === 'cleanup')
+      expect(cleanupLog).toBeDefined()
+      expect(cleanupLog!.actor).toBe('system')
+      expect(cleanupLog!.result).toBe('success')
+      expect(cleanupLog!.metadata).toBeDefined()
+      expect(cleanupLog!.metadata!.retentionDays).toBe(90)
+      expect(cleanupLog!.metadata!.deletedCount).toBe(1)
+    })
+  })
+
+  describe('autoCleanup config (SMI-1012)', () => {
+    it('should run cleanup on initialization when autoCleanup is enabled', () => {
+      // Create a database with old logs first
+      const testDb = createDatabase(':memory:')
+      const initialLogger = new AuditLogger(testDb)
+
+      // Insert old logs
+      const oldTimestamp = new Date(FIXED_TIMESTAMP - 100 * ONE_DAY_MS)
+      for (let i = 0; i < 5; i++) {
+        initialLogger.log({
+          event_type: 'url_fetch',
+          actor: 'adapter',
+          resource: `https://old-${i}.com`,
+          action: 'fetch',
+          result: 'success',
+          timestamp: oldTimestamp.toISOString(),
+        })
+      }
+
+      // Insert recent logs
+      for (let i = 0; i < 3; i++) {
+        initialLogger.log({
+          event_type: 'url_fetch',
+          actor: 'adapter',
+          resource: `https://recent-${i}.com`,
+          action: 'fetch',
+          result: 'success',
+        })
+      }
+
+      // Create new logger with autoCleanup enabled
+      const autoCleanupLogger = new AuditLogger(testDb, { autoCleanup: true })
+
+      // Check that old logs were deleted
+      const remaining = autoCleanupLogger.query({ event_type: 'url_fetch' })
+      expect(remaining).toHaveLength(3)
+
+      closeDatabase(testDb)
+    })
+
+    it('should use custom retentionDays with autoCleanup', () => {
+      const testDb = createDatabase(':memory:')
+      const initialLogger = new AuditLogger(testDb)
+
+      // Insert logs of varying ages
+      const ages = [5, 15, 25, 35, 45] // days old
+      for (const age of ages) {
+        const timestamp = new Date(FIXED_TIMESTAMP - age * ONE_DAY_MS)
+        initialLogger.log({
+          event_type: 'file_access',
+          actor: 'system',
+          resource: `/file-${age}-days`,
+          action: 'read',
+          result: 'success',
+          timestamp: timestamp.toISOString(),
+        })
+      }
+
+      // Create logger with 30-day retention
+      const autoCleanupLogger = new AuditLogger(testDb, {
+        autoCleanup: true,
+        retentionDays: 30,
+      })
+
+      // Logs older than 30 days (35 and 45 days) should be deleted
+      const remaining = autoCleanupLogger.query({ event_type: 'file_access' })
+      expect(remaining).toHaveLength(3)
+
+      // Verify remaining logs are within retention period
+      for (const log of remaining) {
+        expect(log.resource).toMatch(/file-(5|15|25)-days/)
+      }
+
+      closeDatabase(testDb)
+    })
+
+    it('should not run cleanup when autoCleanup is disabled (default)', () => {
+      const testDb = createDatabase(':memory:')
+      const initialLogger = new AuditLogger(testDb)
+
+      // Insert old logs
+      const oldTimestamp = new Date(FIXED_TIMESTAMP - 100 * ONE_DAY_MS)
+      for (let i = 0; i < 5; i++) {
+        initialLogger.log({
+          event_type: 'skill_install',
+          actor: 'user',
+          resource: `old-skill-${i}`,
+          action: 'install',
+          result: 'success',
+          timestamp: oldTimestamp.toISOString(),
+        })
+      }
+
+      // Create new logger WITHOUT autoCleanup
+      const noAutoCleanupLogger = new AuditLogger(testDb)
+
+      // Old logs should still exist
+      const remaining = noAutoCleanupLogger.query({ event_type: 'skill_install' })
+      expect(remaining).toHaveLength(5)
+
+      closeDatabase(testDb)
+    })
+
+    it('should default retentionDays to 90', () => {
+      const testDb = createDatabase(':memory:')
+      const initialLogger = new AuditLogger(testDb)
+
+      // Insert log that's 85 days old (within default 90-day retention)
+      const withinRetention = new Date(FIXED_TIMESTAMP - 85 * ONE_DAY_MS)
+      initialLogger.log({
+        event_type: 'cache_operation',
+        actor: 'system',
+        resource: 'cache',
+        action: 'clear',
+        result: 'success',
+        timestamp: withinRetention.toISOString(),
+      })
+
+      // Insert log that's 95 days old (beyond default 90-day retention)
+      const beyondRetention = new Date(FIXED_TIMESTAMP - 95 * ONE_DAY_MS)
+      initialLogger.log({
+        event_type: 'cache_operation',
+        actor: 'system',
+        resource: 'cache-old',
+        action: 'clear',
+        result: 'success',
+        timestamp: beyondRetention.toISOString(),
+      })
+
+      // Create logger with autoCleanup but no custom retentionDays
+      const autoCleanupLogger = new AuditLogger(testDb, { autoCleanup: true })
+
+      const remaining = autoCleanupLogger.query({ event_type: 'cache_operation' })
+      expect(remaining).toHaveLength(1)
+      expect(remaining[0].resource).toBe('cache')
+
+      closeDatabase(testDb)
+    })
+  })
+
   describe('export', () => {
     beforeEach(() => {
       auditLogger.log({
