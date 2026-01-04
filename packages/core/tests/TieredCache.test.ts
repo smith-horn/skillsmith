@@ -1,5 +1,7 @@
 /**
  * SMI-644: Tiered Cache with TTL Management Tests
+ *
+ * Uses fake timers for deterministic date testing (SMI-992)
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -27,6 +29,10 @@ import {
   CacheManager,
   type SearchResult,
 } from '../src/cache/index.js'
+import { FIXED_TIMESTAMP, setupFakeTimers, cleanupFakeTimers } from './test-utils.js'
+
+// Counter for unique test paths
+let testPathCounter = 0
 
 // Test data helpers
 function createTestResults(count: number): SearchResult[] {
@@ -40,10 +46,8 @@ function createTestResults(count: number): SearchResult[] {
 }
 
 function getTempDbPath(): string {
-  return path.join(
-    os.tmpdir(),
-    `test-cache-${Date.now()}-${Math.random().toString(36).slice(2)}.db`
-  )
+  testPathCounter++
+  return path.join(os.tmpdir(), `test-cache-${FIXED_TIMESTAMP}-${testPathCounter.toString(36)}.db`)
 }
 
 function cleanupDb(dbPath: string): void {
@@ -55,6 +59,14 @@ function cleanupDb(dbPath: string): void {
 }
 
 describe('CacheEntry', () => {
+  beforeEach(() => {
+    setupFakeTimers()
+  })
+
+  afterEach(() => {
+    cleanupFakeTimers()
+  })
+
   describe('createCacheEntry', () => {
     it('should create entry with default STANDARD TTL', () => {
       const results = createTestResults(3)
@@ -101,13 +113,13 @@ describe('CacheEntry', () => {
 
   describe('calculateTTLTier', () => {
     it('should return STANDARD for new entries', () => {
-      const now = Date.now()
+      const now = FIXED_TIMESTAMP
       const tier = calculateTTLTier(now - 1000, 5, now) // 5 hits in 1 second
       expect(tier).toBe(TTLTier.STANDARD) // Too new to evaluate
     })
 
     it('should return POPULAR for high-frequency queries', () => {
-      const now = Date.now()
+      const now = FIXED_TIMESTAMP
       const fiveMinutesAgo = now - 5 * 60 * 1000
       // 100 hits in 5 minutes = 1200 hits/hour
       const tier = calculateTTLTier(fiveMinutesAgo, 100, now)
@@ -115,7 +127,7 @@ describe('CacheEntry', () => {
     })
 
     it('should return RARE for low-frequency queries', () => {
-      const now = Date.now()
+      const now = FIXED_TIMESTAMP
       const twoHoursAgo = now - 2 * 60 * 60 * 1000
       // 1 hit in 2 hours = 0.5 hits/hour = 12 hits/day
       // But we need < 1 hit/day AND > 1 hour age to be RARE
@@ -133,7 +145,7 @@ describe('CacheEntry', () => {
     })
 
     it('should return STANDARD for medium-frequency queries', () => {
-      const now = Date.now()
+      const now = FIXED_TIMESTAMP
       const oneHourAgo = now - 60 * 60 * 1000
       // 5 hits in 1 hour = 5 hits/hour
       const tier = calculateTTLTier(oneHourAgo, 5, now)
@@ -205,10 +217,10 @@ describe('CacheEntry', () => {
           key: 'key',
           data_json: 'invalid json {{{',
           total_count: 0,
-          created_at: Date.now(),
-          expires_at: Date.now() + 1000,
+          created_at: FIXED_TIMESTAMP,
+          expires_at: FIXED_TIMESTAMP + 1000,
           hit_count: 0,
-          last_accessed_at: Date.now(),
+          last_accessed_at: FIXED_TIMESTAMP,
           ttl_tier: TTLTier.STANDARD,
         })
       ).toThrow('Failed to deserialize')
@@ -229,6 +241,7 @@ describe('EnhancedTieredCache', () => {
   let dbPath: string
 
   beforeEach(() => {
+    setupFakeTimers()
     dbPath = getTempDbPath()
     cache = new EnhancedTieredCache({
       l1: { maxEntries: 10 },
@@ -239,6 +252,7 @@ describe('EnhancedTieredCache', () => {
   afterEach(() => {
     cache.close()
     cleanupDb(dbPath)
+    cleanupFakeTimers()
   })
 
   describe('L1/L2 tier operations', () => {
@@ -295,7 +309,7 @@ describe('EnhancedTieredCache', () => {
       const l1Internal = l1OnlyCache['l1']
       const entry = l1Internal.get('key1')
       if (entry) {
-        entry.expiresAt = Date.now() - 1000
+        entry.expiresAt = FIXED_TIMESTAMP - 1000
         l1Internal.set('key1', entry)
       }
 
@@ -430,6 +444,7 @@ describe('CacheManager', () => {
   let dbPath: string
 
   beforeEach(() => {
+    setupFakeTimers()
     dbPath = getTempDbPath()
     manager = new CacheManager({
       l1: { maxEntries: 10 },
@@ -441,6 +456,7 @@ describe('CacheManager', () => {
   afterEach(() => {
     manager.close()
     cleanupDb(dbPath)
+    cleanupFakeTimers()
   })
 
   describe('key generation', () => {

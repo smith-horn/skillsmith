@@ -1,12 +1,16 @@
 /**
  * Tests for L1/L2 Cache (SMI-585)
+ * SMI-992: Fixed unmocked Date.now() calls for deterministic test file naming
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { L1Cache, L2Cache, TieredCache } from '../src/cache/index.js'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+
+// SMI-992: Use fixed timestamp for deterministic test database file names
+const TEST_TIMESTAMP = 1704067200000 // 2024-01-01T00:00:00.000Z
 
 describe('L1Cache (LRU)', () => {
   let cache: L1Cache
@@ -88,11 +92,18 @@ describe('L2Cache (SQLite)', () => {
   let dbPath: string
 
   beforeEach(() => {
-    dbPath = path.join(os.tmpdir(), 'test-cache-' + Date.now() + '.db')
+    // SMI-992: Use mocked time for deterministic file naming
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(TEST_TIMESTAMP))
+    // Use unique prefix to avoid collision with TieredCache tests in parallel runs
+    dbPath = path.join(os.tmpdir(), 'test-cache-l2-' + Date.now() + '.db')
     cache = new L2Cache({ dbPath, ttlSeconds: 3600 })
+    // Restore real timers for actual test execution
+    vi.useRealTimers()
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     cache.close()
     try {
       fs.unlinkSync(dbPath)
@@ -141,14 +152,21 @@ describe('TieredCache', () => {
   let dbPath: string
 
   beforeEach(() => {
-    dbPath = path.join(os.tmpdir(), 'test-tiered-' + Date.now() + '.db')
+    // SMI-992: Use mocked time for deterministic file naming
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(TEST_TIMESTAMP))
+    // Use unique prefix to avoid collision with L2Cache tests in parallel runs
+    dbPath = path.join(os.tmpdir(), 'test-cache-tiered-' + Date.now() + '.db')
     cache = new TieredCache({
       l1MaxSize: 5,
       l2Options: { dbPath, ttlSeconds: 3600 },
     })
+    // Restore real timers for actual test execution
+    vi.useRealTimers()
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     cache.close()
     try {
       fs.unlinkSync(dbPath)

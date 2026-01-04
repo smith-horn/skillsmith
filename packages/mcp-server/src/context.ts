@@ -2,11 +2,13 @@
  * @fileoverview MCP Server Tool Context - Database initialization and shared services
  * @module @skillsmith/mcp-server/context
  * @see SMI-792: Add database initialization to MCP server
+ * @see SMI-898: Path traversal protection for DB_PATH
  *
  * Provides shared context for MCP tool handlers including:
  * - SQLite database connection with FTS5 search
  * - SearchService for skill discovery
  * - SkillRepository for CRUD operations
+ * - Secure path validation for database paths
  *
  * @example
  * // Initialize context at server startup
@@ -20,7 +22,7 @@ import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { mkdirSync, existsSync } from 'fs'
 import type { Database as DatabaseType } from 'better-sqlite3'
-import { createDatabase, SearchService, SkillRepository } from '@skillsmith/core'
+import { createDatabase, SearchService, SkillRepository, validateDbPath } from '@skillsmith/core'
 
 /**
  * Shared context for MCP tool handlers
@@ -47,11 +49,34 @@ export interface ToolContextOptions {
 /**
  * Get the default database path
  * Respects SKILLSMITH_DB_PATH environment variable
+ *
+ * @see SMI-898: Path traversal protection
+ * - Validates SKILLSMITH_DB_PATH against path traversal attacks
+ * - Rejects paths with ".." traversal sequences
+ * - Ensures path is within allowed directories
+ *
+ * @throws Error if SKILLSMITH_DB_PATH contains path traversal attempt
  */
 export function getDefaultDbPath(): string {
-  if (process.env.SKILLSMITH_DB_PATH) {
-    return process.env.SKILLSMITH_DB_PATH
+  const envPath = process.env.SKILLSMITH_DB_PATH
+
+  if (envPath) {
+    // SMI-898: Validate environment variable path for path traversal
+    const validation = validateDbPath(envPath, {
+      allowInMemory: true,
+      allowTempDir: true,
+    })
+
+    if (!validation.valid) {
+      throw new Error(
+        `Invalid SKILLSMITH_DB_PATH: ${validation.error}. ` +
+          'Path must be within ~/.skillsmith, ~/.claude, or temp directories.'
+      )
+    }
+
+    return validation.resolvedPath!
   }
+
   return join(homedir(), '.skillsmith', 'skills.db')
 }
 
@@ -71,20 +96,45 @@ function ensureDbDirectory(dbPath: string): void {
  * @param options - Configuration options
  * @returns Initialized tool context
  *
+ * @see SMI-898: Path traversal protection
+ * - Custom dbPath is validated for path traversal attacks
+ * - Rejects paths with ".." or outside allowed directories
+ *
  * @example
  * // With default path (~/.skillsmith/skills.db)
  * const context = createToolContext();
  *
  * @example
- * // With custom path
- * const context = createToolContext({ dbPath: '/custom/path/skills.db' });
+ * // With custom path (must be in allowed directory)
+ * const context = createToolContext({ dbPath: '~/.skillsmith/custom.db' });
  *
  * @example
  * // For testing with in-memory database
  * const context = createToolContext({ dbPath: ':memory:' });
+ *
+ * @throws Error if dbPath contains path traversal attempt
  */
 export function createToolContext(options: ToolContextOptions = {}): ToolContext {
-  const dbPath = options.dbPath ?? getDefaultDbPath()
+  let dbPath: string
+
+  if (options.dbPath) {
+    // SMI-898: Validate custom path for path traversal
+    const validation = validateDbPath(options.dbPath, {
+      allowInMemory: true,
+      allowTempDir: true,
+    })
+
+    if (!validation.valid) {
+      throw new Error(
+        `Invalid database path: ${validation.error}. ` +
+          'Path must be within ~/.skillsmith, ~/.claude, or temp directories.'
+      )
+    }
+
+    dbPath = validation.resolvedPath!
+  } else {
+    dbPath = getDefaultDbPath()
+  }
 
   // Ensure directory exists (skip for in-memory)
   if (dbPath !== ':memory:') {
