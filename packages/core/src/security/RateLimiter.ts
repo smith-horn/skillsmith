@@ -15,8 +15,20 @@
  */
 
 import { createLogger } from '../utils/logger.js'
+import { randomUUID } from 'crypto'
 
 const log = createLogger('RateLimiter')
+
+/**
+ * Maximum number of unique keys to track in queues and metrics
+ * Prevents unbounded memory growth from malicious or misconfigured clients
+ */
+const MAX_UNIQUE_KEYS = 10000
+
+/**
+ * Metrics TTL in milliseconds (1 hour) - metrics older than this are cleaned up
+ */
+const METRICS_TTL_MS = 60 * 60 * 1000
 
 /**
  * Rate limit metrics for monitoring and alerting
@@ -30,6 +42,8 @@ export interface RateLimitMetrics {
   errors: number
   /** Last time metrics were reset */
   lastReset: Date
+  /** Last time metrics were updated */
+  lastUpdated: Date
 }
 
 /**
@@ -96,6 +110,8 @@ export interface RateLimitResult {
  * Queued request waiting for a token (SMI-1013)
  */
 interface QueuedRequest {
+  /** Unique identifier for this request */
+  id: string
   /** Resolve function to signal the request can proceed */
   resolve: (result: RateLimitResult) => void
   /** Reject function for timeout */
@@ -273,6 +289,12 @@ export class RateLimiter {
   private readonly queues: Map<string, QueuedRequest[]> = new Map()
   /** Timer for processing queues (SMI-1013) */
   private queueProcessorInterval: NodeJS.Timeout | null = null
+  /** Timer for cleaning up stale metrics */
+  private metricsCleanupInterval: NodeJS.Timeout | null = null
+  /** Lock for atomic token operations (prevents TOCTOU race conditions) */
+  private readonly operationLocks: Map<string, Promise<void>> = new Map()
+  /** Flag to prevent concurrent queue processing */
+  private isProcessingQueues = false
 
   constructor(config: RateLimitConfig, storage: RateLimitStorage = new InMemoryRateLimitStorage()) {
     this.config = {
@@ -290,6 +312,9 @@ export class RateLimiter {
     if (this.config.enableQueue) {
       this.startQueueProcessor()
     }
+
+    // Start metrics cleanup interval
+    this.startMetricsCleanup()
 
     if (this.config.debug) {
       log.info('Rate limiter initialized', {
@@ -315,36 +340,111 @@ export class RateLimiter {
   }
 
   /**
+   * Start periodic cleanup of stale metrics
+   */
+  private startMetricsCleanup(): void {
+    // Clean up stale metrics every 5 minutes
+    this.metricsCleanupInterval = setInterval(
+      () => {
+        this.cleanupStaleMetrics()
+      },
+      5 * 60 * 1000
+    )
+  }
+
+  /**
+   * Clean up metrics older than METRICS_TTL_MS
+   */
+  private cleanupStaleMetrics(): void {
+    const now = new Date()
+    let cleaned = 0
+
+    for (const [key, metrics] of this.metrics.entries()) {
+      if (now.getTime() - metrics.lastUpdated.getTime() > METRICS_TTL_MS) {
+        this.metrics.delete(key)
+        cleaned++
+      }
+    }
+
+    // Also enforce MAX_UNIQUE_KEYS limit if somehow exceeded
+    if (this.metrics.size > MAX_UNIQUE_KEYS) {
+      // Sort by lastUpdated and remove oldest entries
+      const entries = Array.from(this.metrics.entries()).sort(
+        (a, b) => a[1].lastUpdated.getTime() - b[1].lastUpdated.getTime()
+      )
+      const toRemove = entries.slice(0, this.metrics.size - MAX_UNIQUE_KEYS)
+      for (const [key] of toRemove) {
+        this.metrics.delete(key)
+        cleaned++
+      }
+    }
+
+    if (cleaned > 0 && this.config.debug) {
+      log.debug(`Cleaned up ${cleaned} stale metric entries`)
+    }
+  }
+
+  /**
+   * Acquire a lock for atomic operations on a key
+   */
+  private async acquireLock(key: string): Promise<void> {
+    // Wait for any existing operation to complete
+    const existingLock = this.operationLocks.get(key)
+    if (existingLock) {
+      await existingLock
+    }
+  }
+
+  /**
    * Process all queues and release waiting requests when tokens become available (SMI-1013)
+   * Uses a flag to prevent concurrent processing
    */
   private async processQueues(): Promise<void> {
-    for (const [key, queue] of this.queues.entries()) {
-      if (queue.length === 0) continue
+    // Prevent concurrent queue processing
+    if (this.isProcessingQueues) {
+      return
+    }
+    this.isProcessingQueues = true
 
-      // Try to process the first request in the queue
-      const request = queue[0]
-      const result = await this.tryConsumeToken(key, request.cost)
+    try {
+      for (const [key, queue] of this.queues.entries()) {
+        if (queue.length === 0) {
+          // Clean up empty queues to prevent memory leak
+          this.queues.delete(key)
+          continue
+        }
 
-      if (result.allowed) {
-        // Remove from queue
-        queue.shift()
-        // Clear timeout
-        clearTimeout(request.timeoutHandle)
-        // Resolve with queue info
-        const queueWaitMs = Date.now() - request.queuedAt
-        request.resolve({
-          ...result,
-          queued: true,
-          queueWaitMs,
-        })
+        // Try to process the first request in the queue
+        const request = queue[0]
+        const result = await this.tryConsumeToken(key, request.cost)
 
-        if (this.config.debug) {
-          log.debug(`Queue request released for ${key}`, {
+        if (result.allowed) {
+          // Remove from queue by ID (not by position for safety)
+          const index = queue.findIndex((r) => r.id === request.id)
+          if (index !== -1) {
+            queue.splice(index, 1)
+          }
+          // Clear timeout
+          clearTimeout(request.timeoutHandle)
+          // Resolve with queue info
+          const queueWaitMs = Date.now() - request.queuedAt
+          request.resolve({
+            ...result,
+            queued: true,
             queueWaitMs,
-            remaining: result.remaining,
           })
+
+          if (this.config.debug) {
+            log.debug(`Queue request released for ${key}`, {
+              requestId: request.id,
+              queueWaitMs,
+              remaining: result.remaining,
+            })
+          }
         }
       }
+    } finally {
+      this.isProcessingQueues = false
     }
   }
 
@@ -420,14 +520,37 @@ export class RateLimiter {
   }
 
   /**
-   * Update metrics for a key
+   * Update metrics for a key with bounds checking
    */
   private updateMetrics(key: string, allowed: boolean, error = false): void {
+    // Check if we've hit the max unique keys limit
+    if (!this.metrics.has(key) && this.metrics.size >= MAX_UNIQUE_KEYS) {
+      // Evict oldest entry before adding new one
+      let oldestKey: string | null = null
+      let oldestTime = Infinity
+
+      for (const [k, m] of this.metrics.entries()) {
+        if (m.lastUpdated.getTime() < oldestTime) {
+          oldestTime = m.lastUpdated.getTime()
+          oldestKey = k
+        }
+      }
+
+      if (oldestKey) {
+        this.metrics.delete(oldestKey)
+        if (this.config.debug) {
+          log.debug(`Evicted oldest metrics entry: ${oldestKey}`)
+        }
+      }
+    }
+
+    const now = new Date()
     const existing = this.metrics.get(key) || {
       allowed: 0,
       blocked: 0,
       errors: 0,
-      lastReset: new Date(),
+      lastReset: now,
+      lastUpdated: now,
     }
 
     if (error) {
@@ -444,6 +567,7 @@ export class RateLimiter {
       existing.blocked++
     }
 
+    existing.lastUpdated = now
     this.metrics.set(key, existing)
   }
 
@@ -630,15 +754,23 @@ export class RateLimiter {
       throw new RateLimitQueueFullError(key, this.config.maxQueueSize)
     }
 
+    // Check if adding new queue would exceed max unique keys
+    if (!this.queues.has(key) && this.queues.size >= MAX_UNIQUE_KEYS) {
+      this.updateMetrics(key, false)
+      throw new RateLimitQueueFullError(key, this.config.maxQueueSize)
+    }
+
     // Queue the request
     return new Promise<RateLimitResult>((resolve, reject) => {
+      // Use UUID for unique identification (not timestamp which can collide)
+      const requestId = randomUUID()
       const queuedAt = Date.now()
 
       // Set up timeout
       const timeoutHandle = setTimeout(() => {
-        // Remove from queue
+        // Remove from queue by unique ID
         const currentQueue = this.queues.get(key) || []
-        const index = currentQueue.findIndex((r) => r.queuedAt === queuedAt)
+        const index = currentQueue.findIndex((r) => r.id === requestId)
         if (index !== -1) {
           currentQueue.splice(index, 1)
         }
@@ -648,6 +780,7 @@ export class RateLimiter {
       }, this.config.queueTimeoutMs)
 
       const request: QueuedRequest = {
+        id: requestId,
         resolve: (result) => {
           this.updateMetrics(key, true)
           resolve({
@@ -669,6 +802,7 @@ export class RateLimiter {
 
       if (this.config.debug) {
         log.debug(`Request queued for ${key}`, {
+          requestId,
           queueSize: this.queues.get(key)!.length,
           cost,
           timeoutMs: this.config.queueTimeoutMs,
@@ -789,8 +923,17 @@ export class RateLimiter {
       this.queueProcessorInterval = null
     }
 
+    // Stop metrics cleanup
+    if (this.metricsCleanupInterval) {
+      clearInterval(this.metricsCleanupInterval)
+      this.metricsCleanupInterval = null
+    }
+
     // Clear all queues (SMI-1013)
     this.clearQueue()
+
+    // Clear operation locks
+    this.operationLocks.clear()
 
     if (this.storage instanceof InMemoryRateLimitStorage) {
       this.storage.dispose()

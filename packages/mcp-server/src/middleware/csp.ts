@@ -96,6 +96,17 @@ export function generateNonce(): string {
 }
 
 /**
+ * Sanitize a CSP source value to prevent directive injection
+ * @param source - The source value to sanitize
+ * @returns Sanitized source value
+ */
+function sanitizeCspSource(source: string): string {
+  // Remove characters that could be used for injection
+  // CSP sources should not contain ; (directive separator) or newlines
+  return source.replace(/[;\r\n]/g, '')
+}
+
+/**
  * Converts CSP directives object to a CSP header string
  * @param directives - The CSP directives to convert
  * @param nonce - Optional nonce to add to script-src and style-src
@@ -105,22 +116,29 @@ export function buildCspHeader(directives: CspDirectives, nonce?: string): strin
   const parts: string[] = []
 
   for (const [directive, value] of Object.entries(directives)) {
+    // Sanitize directive name (should be alphanumeric with hyphens only)
+    const sanitizedDirective = directive.replace(/[^a-zA-Z0-9-]/g, '')
+
     if (typeof value === 'boolean') {
       if (value) {
-        parts.push(directive)
+        parts.push(sanitizedDirective)
       }
     } else if (typeof value === 'string') {
       // Handle string directives like report-to
-      parts.push(`${directive} ${value}`)
+      const sanitizedValue = sanitizeCspSource(value)
+      parts.push(`${sanitizedDirective} ${sanitizedValue}`)
     } else if (Array.isArray(value)) {
-      const sources = [...value]
+      const sources = value.map(sanitizeCspSource)
 
       // Add nonce to script-src and style-src if provided
       if (nonce && (directive === 'script-src' || directive === 'style-src')) {
-        sources.push(`'nonce-${nonce}'`)
+        // Validate nonce format (base64)
+        if (/^[A-Za-z0-9+/=]+$/.test(nonce)) {
+          sources.push(`'nonce-${nonce}'`)
+        }
       }
 
-      parts.push(`${directive} ${sources.join(' ')}`)
+      parts.push(`${sanitizedDirective} ${sources.join(' ')}`)
     }
   }
 
@@ -135,6 +153,33 @@ export function buildCspHeader(directives: CspDirectives, nonce?: string): strin
 export function validateCspHeader(csp: string): boolean {
   const result = validateCspHeaderDetailed(csp)
   return result.valid
+}
+
+/**
+ * Parse CSP header into directives map
+ * @param csp - The CSP header string
+ * @returns Map of directive name to values
+ */
+function parseCspDirectives(csp: string): Map<string, string> {
+  const directives = new Map<string, string>()
+  const parts = csp
+    .split(';')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+
+  for (const part of parts) {
+    const spaceIndex = part.indexOf(' ')
+    if (spaceIndex === -1) {
+      // Directive without value (e.g., upgrade-insecure-requests)
+      directives.set(part.toLowerCase(), '')
+    } else {
+      const name = part.substring(0, spaceIndex).toLowerCase()
+      const value = part.substring(spaceIndex + 1)
+      directives.set(name, value)
+    }
+  }
+
+  return directives
 }
 
 /**
@@ -155,46 +200,74 @@ export function validateCspHeaderDetailed(csp: string): CspValidationResult {
     return result
   }
 
+  // Parse directives for per-directive analysis
+  const directives = parseCspDirectives(csp)
   const lowercaseCsp = csp.toLowerCase()
 
-  // Should not allow 'unsafe-eval' in production
-  if (lowercaseCsp.includes("'unsafe-eval'")) {
-    result.warnings.push('unsafe-eval detected - allows arbitrary code execution')
+  // Check for unsafe-eval in script-src or default-src (per-directive check)
+  const scriptSrc = directives.get('script-src') || ''
+  const defaultSrc = directives.get('default-src') || ''
+
+  if (scriptSrc.includes("'unsafe-eval'") || defaultSrc.includes("'unsafe-eval'")) {
+    result.warnings.push(
+      'unsafe-eval detected in script-src or default-src - allows arbitrary code execution'
+    )
     console.warn('[CSP] Warning: unsafe-eval detected in CSP policy')
   }
 
-  // Should not allow 'unsafe-inline' without nonces
-  if (lowercaseCsp.includes("'unsafe-inline'") && !lowercaseCsp.includes("'nonce-")) {
-    result.warnings.push('unsafe-inline without nonce detected - vulnerable to XSS')
-    console.warn('[CSP] Warning: unsafe-inline without nonce detected in CSP policy')
+  // Check for unsafe-inline WITHOUT nonce in the SAME directive (per-directive check)
+  // This is the correct check - unsafe-inline in script-src is only mitigated by nonce in script-src
+  if (scriptSrc.includes("'unsafe-inline'") && !scriptSrc.includes("'nonce-")) {
+    result.warnings.push('unsafe-inline without nonce in script-src - vulnerable to XSS')
+    console.warn('[CSP] Warning: unsafe-inline without nonce detected in script-src')
+  }
+
+  const styleSrc = directives.get('style-src') || ''
+  if (styleSrc.includes("'unsafe-inline'") && !styleSrc.includes("'nonce-")) {
+    result.warnings.push('unsafe-inline without nonce in style-src - vulnerable to CSS injection')
+    console.warn('[CSP] Warning: unsafe-inline without nonce detected in style-src')
   }
 
   // Check for wildcard sources in sensitive directives
   const sensitiveDirectives = ['script-src', 'style-src', 'object-src', 'base-uri']
   for (const directive of sensitiveDirectives) {
-    const directiveMatch = lowercaseCsp.match(new RegExp(`${directive}\\s+([^;]+)`))
-    if (directiveMatch && directiveMatch[1].includes('*')) {
+    const directiveValue = directives.get(directive) || ''
+    // Check for standalone wildcard (not part of *.example.com)
+    if (/(?:^|\s)\*(?:\s|$)/.test(directiveValue)) {
       result.warnings.push(`Wildcard (*) in ${directive} is overly permissive`)
     }
   }
 
   // Check for data: URI in script-src (XSS risk)
-  if (lowercaseCsp.includes('script-src') && lowercaseCsp.includes('data:')) {
-    const scriptSrcMatch = lowercaseCsp.match(/script-src\s+([^;]+)/)
-    if (scriptSrcMatch && scriptSrcMatch[1].includes('data:')) {
-      result.warnings.push('data: URI in script-src allows XSS attacks')
-    }
+  if (scriptSrc.includes('data:')) {
+    result.warnings.push('data: URI in script-src allows XSS attacks')
   }
 
-  // Verify object-src is restricted (Flash/plugin attacks)
-  if (!lowercaseCsp.includes("object-src 'none'") && !lowercaseCsp.includes("object-src 'self'")) {
-    if (lowercaseCsp.includes('object-src')) {
-      result.warnings.push('object-src should be restricted to prevent plugin-based attacks')
+  // Check for blob: and filesystem: in script-src (XSS risk)
+  if (scriptSrc.includes('blob:')) {
+    result.warnings.push('blob: URI in script-src can be used for XSS')
+  }
+  if (scriptSrc.includes('filesystem:')) {
+    result.warnings.push('filesystem: URI in script-src can be used for XSS')
+  }
+
+  // Verify object-src is properly restricted (Flash/plugin attacks)
+  const objectSrc = directives.get('object-src') || ''
+  if (directives.has('object-src')) {
+    if (!objectSrc.includes("'none'") && !objectSrc.includes("'self'")) {
+      // Check if it has potentially dangerous values
+      if (objectSrc.includes('*') || objectSrc.includes('data:') || objectSrc.includes('blob:')) {
+        result.warnings.push(
+          'object-src has permissive values - vulnerable to plugin-based attacks'
+        )
+      } else if (objectSrc.trim() !== '') {
+        result.warnings.push('object-src should be restricted to prevent plugin-based attacks')
+      }
     }
   }
 
   // Check for missing default-src (fallback for other directives)
-  if (!lowercaseCsp.includes('default-src')) {
+  if (!directives.has('default-src')) {
     result.warnings.push(
       'Missing default-src - other directives may fall back to permissive defaults'
     )
@@ -237,24 +310,33 @@ export function cspMiddleware(directives: CspDirectives = DEFAULT_CSP_DIRECTIVES
 
 /**
  * Gets CSP configuration for different environments
+ *
+ * NOTE: Test environment uses relaxed CSP for testing purposes.
+ * Production code should always use STRICT_CSP_DIRECTIVES.
+ *
  * @param env - The environment (development, production, test)
  * @returns The appropriate CSP directives
  */
 export function getCspForEnvironment(env: string = 'production'): CspDirectives {
   switch (env) {
     case 'development':
-      // Slightly relaxed for development
+      // Slightly relaxed for development - only unsafe-eval for dev tools
+      // Still maintains object-src: 'none' for plugin protection
       return {
         ...DEFAULT_CSP_DIRECTIVES,
         'script-src': ["'self'", "'unsafe-eval'"], // Allow eval for dev tools
+        'object-src': ["'none'"], // Always restrict plugins
       }
 
     case 'test':
-      // More permissive for testing
+      // More permissive for testing, but maintain critical security restrictions
+      // Note: Tests requiring unsafe-inline should use nonces instead for better security testing
       return {
         ...DEFAULT_CSP_DIRECTIVES,
         'script-src': ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
         'style-src': ["'self'", "'unsafe-inline'"],
+        'object-src': ["'none'"], // Always restrict plugins even in test
+        'frame-ancestors': ["'none'"], // Prevent clickjacking even in test
       }
 
     case 'production':

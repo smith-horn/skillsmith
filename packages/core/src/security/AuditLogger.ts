@@ -83,6 +83,16 @@ export interface AuditQueryFilter {
 /**
  * Configuration options for AuditLogger
  */
+/**
+ * Minimum retention period in days (security requirement)
+ */
+export const MIN_RETENTION_DAYS = 1
+
+/**
+ * Maximum retention period in days (storage constraint)
+ */
+export const MAX_RETENTION_DAYS = 3650 // 10 years
+
 export interface AuditLoggerConfig {
   /**
    * Enable automatic cleanup of old logs on initialization
@@ -92,6 +102,7 @@ export interface AuditLoggerConfig {
 
   /**
    * Number of days to retain logs (used with autoCleanup)
+   * Must be between MIN_RETENTION_DAYS (1) and MAX_RETENTION_DAYS (3650)
    * @default 90
    */
   retentionDays?: number
@@ -151,12 +162,31 @@ export class AuditLogger {
     this.ensureTableExists()
     this.prepareStatements()
 
+    // Validate config retention days early
+    if (this.config.retentionDays !== undefined) {
+      if (
+        this.config.retentionDays < MIN_RETENTION_DAYS ||
+        this.config.retentionDays > MAX_RETENTION_DAYS
+      ) {
+        throw new Error(
+          `Invalid retentionDays config: must be between ${MIN_RETENTION_DAYS} and ${MAX_RETENTION_DAYS}, got ${this.config.retentionDays}`
+        )
+      }
+    }
+
     // Run auto-cleanup if enabled
     if (this.config.autoCleanup) {
-      const deleted = this.cleanupOldLogs(this.config.retentionDays!)
-      if (deleted > 0) {
-        logger.info('Auto-cleanup completed on initialization', {
-          deleted,
+      try {
+        const deleted = this.cleanupOldLogs(this.config.retentionDays!)
+        if (deleted > 0) {
+          logger.info('Auto-cleanup completed on initialization', {
+            deleted,
+            retentionDays: this.config.retentionDays,
+          })
+        }
+      } catch (err) {
+        // Log but don't throw - don't fail initialization due to cleanup issues
+        logger.error('Auto-cleanup failed on initialization', err as Error, {
           retentionDays: this.config.retentionDays,
         })
       }
@@ -362,12 +392,13 @@ export class AuditLogger {
   }
 
   /**
-   * Clean up old audit logs
+   * Clean up old audit logs (internal implementation)
    *
    * @param olderThan - Delete logs older than this date
+   * @param skipMetaLog - Skip meta-logging (used internally to prevent recursion)
    * @returns Number of deleted entries
    */
-  cleanup(olderThan: Date): number {
+  private cleanupInternal(olderThan: Date, skipMetaLog = false): number {
     const olderThanIso = olderThan.toISOString()
 
     try {
@@ -377,6 +408,26 @@ export class AuditLogger {
         deleted: result.changes,
         olderThan: olderThanIso,
       })
+
+      // Meta-log the cleanup operation (unless skipped to prevent recursion)
+      if (!skipMetaLog && result.changes > 0) {
+        try {
+          this.log({
+            event_type: 'config_change',
+            actor: 'system',
+            resource: 'audit_logs',
+            action: 'cleanup_internal',
+            result: 'success',
+            metadata: {
+              cutoffDate: olderThanIso,
+              deletedCount: result.changes,
+            },
+          })
+        } catch {
+          // Meta-logging failure should not affect cleanup result
+          logger.warn('Failed to meta-log cleanup operation')
+        }
+      }
 
       return result.changes
     } catch (err) {
@@ -388,12 +439,49 @@ export class AuditLogger {
   }
 
   /**
+   * Clean up old audit logs
+   *
+   * @deprecated Use cleanupOldLogs() instead for validated retention-based cleanup
+   * @param olderThan - Delete logs older than this date
+   * @returns Number of deleted entries
+   */
+  cleanup(olderThan: Date): number {
+    return this.cleanupInternal(olderThan)
+  }
+
+  /**
+   * Validate retention days parameter
+   *
+   * @param retentionDays - Number of days to validate
+   * @throws Error if retentionDays is invalid
+   */
+  private validateRetentionDays(retentionDays: number): void {
+    if (!Number.isFinite(retentionDays)) {
+      throw new Error(`Invalid retention days: must be a finite number, got ${retentionDays}`)
+    }
+    if (!Number.isInteger(retentionDays)) {
+      throw new Error(`Invalid retention days: must be an integer, got ${retentionDays}`)
+    }
+    if (retentionDays < MIN_RETENTION_DAYS) {
+      throw new Error(
+        `Invalid retention days: minimum is ${MIN_RETENTION_DAYS} day(s), got ${retentionDays}`
+      )
+    }
+    if (retentionDays > MAX_RETENTION_DAYS) {
+      throw new Error(
+        `Invalid retention days: maximum is ${MAX_RETENTION_DAYS} days, got ${retentionDays}`
+      )
+    }
+  }
+
+  /**
    * Clean up old audit logs based on retention policy
    *
-   * SMI-1012: Audit log retention policy
+   * SMI-1012: Audit log retention policy with input validation
    *
-   * @param retentionDays - Number of days to retain logs (default: 90)
+   * @param retentionDays - Number of days to retain logs (default: 90, min: 1, max: 3650)
    * @returns Number of deleted rows
+   * @throws Error if retentionDays is invalid (< 1, > 3650, or non-integer)
    *
    * @example
    * ```typescript
@@ -402,45 +490,74 @@ export class AuditLogger {
    *
    * // Delete logs older than 30 days
    * const deleted = auditLogger.cleanupOldLogs(30)
+   *
+   * // These will throw errors:
+   * auditLogger.cleanupOldLogs(0)  // Error: minimum is 1 day
+   * auditLogger.cleanupOldLogs(-5) // Error: minimum is 1 day
    * ```
    */
   cleanupOldLogs(retentionDays: number = 90): number {
+    // Validate input to prevent accidental data loss
+    this.validateRetentionDays(retentionDays)
+
     const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000)
+    const originalError: Error | null = null
 
     try {
-      const deleted = this.cleanup(cutoffDate)
+      // Use internal cleanup to skip double meta-logging
+      const deleted = this.cleanupInternal(cutoffDate, true)
 
       // Meta-logging: Log the cleanup operation using the audit logger itself
-      this.log({
-        event_type: 'config_change',
-        actor: 'system',
-        resource: 'audit_logs',
-        action: 'cleanup',
-        result: 'success',
-        metadata: {
-          retentionDays,
-          cutoffDate: cutoffDate.toISOString(),
-          deletedCount: deleted,
-        },
-      })
+      try {
+        this.log({
+          event_type: 'config_change',
+          actor: 'system',
+          resource: 'audit_logs',
+          action: 'cleanup',
+          result: 'success',
+          metadata: {
+            retentionDays,
+            cutoffDate: cutoffDate.toISOString(),
+            deletedCount: deleted,
+          },
+        })
+      } catch (metaLogErr) {
+        // Meta-logging failure should not affect cleanup result
+        logger.warn('Failed to meta-log successful cleanup', {
+          error: (metaLogErr as Error).message,
+          deleted,
+        })
+      }
 
       return deleted
     } catch (err) {
-      // Log failed cleanup attempt
-      this.log({
-        event_type: 'config_change',
-        actor: 'system',
-        resource: 'audit_logs',
-        action: 'cleanup',
-        result: 'error',
-        metadata: {
-          retentionDays,
-          cutoffDate: cutoffDate.toISOString(),
-          error: (err as Error).message,
-        },
-      })
+      // Store original error before attempting meta-logging
+      const cleanupError = err as Error
 
-      throw err
+      // Try to log failed cleanup attempt (best effort)
+      try {
+        this.log({
+          event_type: 'config_change',
+          actor: 'system',
+          resource: 'audit_logs',
+          action: 'cleanup',
+          result: 'error',
+          metadata: {
+            retentionDays,
+            cutoffDate: cutoffDate.toISOString(),
+            error: cleanupError.message,
+          },
+        })
+      } catch (metaLogErr) {
+        // Log meta-logging failure but preserve original error
+        logger.warn('Failed to meta-log cleanup error', {
+          originalError: cleanupError.message,
+          metaLogError: (metaLogErr as Error).message,
+        })
+      }
+
+      // Always throw the original cleanup error
+      throw cleanupError
     }
   }
 
