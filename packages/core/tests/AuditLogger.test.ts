@@ -2,18 +2,27 @@
  * SMI-733: Audit Logger Tests
  *
  * Comprehensive test suite for the audit logging system
+ * Uses fake timers for deterministic date testing (SMI-992)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { AuditLogger } from '../src/security/AuditLogger.js'
 import { createDatabase, closeDatabase } from '../src/db/schema.js'
 import type { Database as DatabaseType } from 'better-sqlite3'
+import {
+  FIXED_DATE,
+  FIXED_TIMESTAMP,
+  ONE_DAY_MS,
+  setupFakeTimers,
+  cleanupFakeTimers,
+} from './test-utils.js'
 
 describe('AuditLogger', () => {
   let db: DatabaseType
   let auditLogger: AuditLogger
 
   beforeEach(() => {
+    setupFakeTimers()
     // Create in-memory database for testing
     db = createDatabase(':memory:')
     auditLogger = new AuditLogger(db)
@@ -21,6 +30,7 @@ describe('AuditLogger', () => {
 
   afterEach(() => {
     closeDatabase(db)
+    cleanupFakeTimers()
   })
 
   describe('log', () => {
@@ -65,7 +75,7 @@ describe('AuditLogger', () => {
     })
 
     it('should auto-generate timestamps', () => {
-      const before = new Date()
+      const before = FIXED_DATE
       auditLogger.log({
         event_type: 'skill_install',
         actor: 'user',
@@ -73,7 +83,7 @@ describe('AuditLogger', () => {
         action: 'install',
         result: 'success',
       })
-      const after = new Date()
+      const after = FIXED_DATE
 
       const logs = auditLogger.query({ limit: 1 })
       const timestamp = new Date(logs[0].timestamp)
@@ -230,8 +240,8 @@ describe('AuditLogger', () => {
     })
 
     it('should filter by date range', () => {
-      const since = new Date(Date.now() - 1000) // 1 second ago
-      const until = new Date(Date.now() + 1000) // 1 second from now
+      const since = new Date(FIXED_TIMESTAMP - 1000) // 1 second ago
+      const until = new Date(FIXED_TIMESTAMP + 1000) // 1 second from now
 
       const logs = auditLogger.query({ since, until })
       expect(logs.length).toBeGreaterThanOrEqual(4)
@@ -268,9 +278,9 @@ describe('AuditLogger', () => {
       const logs = auditLogger.query({ limit: 4 })
 
       for (let i = 0; i < logs.length - 1; i++) {
-        const current = new Date(logs[i].timestamp)
-        const next = new Date(logs[i + 1].timestamp)
-        expect(current.getTime()).toBeGreaterThanOrEqual(next.getTime())
+        const currentTs = new Date(logs[i].timestamp)
+        const nextTs = new Date(logs[i + 1].timestamp)
+        expect(currentTs.getTime()).toBeGreaterThanOrEqual(nextTs.getTime())
       }
     })
   })
@@ -345,9 +355,9 @@ describe('AuditLogger', () => {
       expect(stats.oldest_event).toBeTruthy()
       expect(stats.newest_event).toBeTruthy()
 
-      const oldest = new Date(stats.oldest_event!)
-      const newest = new Date(stats.newest_event!)
-      expect(oldest.getTime()).toBeLessThanOrEqual(newest.getTime())
+      const oldestEvent = new Date(stats.oldest_event!)
+      const newestEvent = new Date(stats.newest_event!)
+      expect(oldestEvent.getTime()).toBeLessThanOrEqual(newestEvent.getTime())
     })
 
     it('should handle empty database', () => {
@@ -368,7 +378,7 @@ describe('AuditLogger', () => {
   describe('cleanup', () => {
     it('should delete old audit logs', () => {
       // Insert old logs
-      const oldTimestamp = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // 7 days ago
+      const oldTimestamp = new Date(FIXED_TIMESTAMP - 7 * ONE_DAY_MS) // 7 days ago
 
       auditLogger.log({
         event_type: 'url_fetch',
@@ -388,7 +398,7 @@ describe('AuditLogger', () => {
         result: 'success',
       })
 
-      const cutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) // 3 days ago
+      const cutoff = new Date(FIXED_TIMESTAMP - 3 * ONE_DAY_MS) // 3 days ago
       const deleted = auditLogger.cleanup(cutoff)
 
       expect(deleted).toBe(1)
@@ -399,7 +409,7 @@ describe('AuditLogger', () => {
 
     it('should return count of deleted entries', () => {
       // Insert multiple old logs
-      const oldTimestamp = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) // 30 days ago
+      const oldTimestamp = new Date(FIXED_TIMESTAMP - 30 * ONE_DAY_MS) // 30 days ago
 
       for (let i = 0; i < 5; i++) {
         auditLogger.log({
@@ -412,7 +422,7 @@ describe('AuditLogger', () => {
         })
       }
 
-      const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // 7 days ago
+      const cutoff = new Date(FIXED_TIMESTAMP - 7 * ONE_DAY_MS) // 7 days ago
       const deleted = auditLogger.cleanup(cutoff)
 
       expect(deleted).toBe(5)
@@ -427,7 +437,7 @@ describe('AuditLogger', () => {
         result: 'success',
       })
 
-      const cutoff = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000) // 1 day ago
+      const cutoff = new Date(FIXED_TIMESTAMP - 1 * ONE_DAY_MS) // 1 day ago
       const deleted = auditLogger.cleanup(cutoff)
 
       expect(deleted).toBe(0)

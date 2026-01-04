@@ -2,14 +2,19 @@
  * SMI-914: AnalyticsStorage Tests
  *
  * Tests for SQLite storage of skill usage events.
+ * Uses fake timers for deterministic date testing (SMI-992)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { AnalyticsStorage } from '../src/analytics/storage.js'
 import type { SkillUsageEvent } from '../src/analytics/types.js'
 import { existsSync, unlinkSync, mkdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { FIXED_TIMESTAMP, ONE_DAY_MS, setupFakeTimers, cleanupFakeTimers } from './test-utils.js'
+
+// Counter for unique test directory names
+let testDirCounter = 0
 
 describe('AnalyticsStorage', () => {
   let storage: AnalyticsStorage
@@ -17,14 +22,17 @@ describe('AnalyticsStorage', () => {
   let testDir: string
 
   beforeEach(() => {
-    // Create a unique test directory for each test
-    testDir = join(tmpdir(), `skillsmith-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    setupFakeTimers()
+    // Create a unique test directory for each test using counter instead of Date.now()
+    testDirCounter++
+    testDir = join(tmpdir(), `skillsmith-test-${FIXED_TIMESTAMP}-${testDirCounter.toString(36)}`)
     mkdirSync(testDir, { recursive: true })
     testDbPath = join(testDir, 'test-analytics.db')
     storage = new AnalyticsStorage(testDbPath)
   })
 
   afterEach(() => {
+    cleanupFakeTimers()
     if (storage) {
       storage.close()
     }
@@ -39,7 +47,7 @@ describe('AnalyticsStorage', () => {
       const event: SkillUsageEvent = {
         skillId: 'anthropic/commit',
         userId: 'abc123def456',
-        timestamp: Date.now(),
+        timestamp: FIXED_TIMESTAMP,
         taskDuration: 1500,
         outcome: 'success',
         contextHash: 'a1b2c3d4',
@@ -56,7 +64,7 @@ describe('AnalyticsStorage', () => {
         storage.recordEvent({
           skillId: 'anthropic/commit',
           userId: `user${i}`,
-          timestamp: Date.now() + i,
+          timestamp: FIXED_TIMESTAMP + i,
           taskDuration: 1000 + i * 100,
           outcome: i % 2 === 0 ? 'success' : 'error',
           contextHash: 'context1',
@@ -74,7 +82,7 @@ describe('AnalyticsStorage', () => {
         storage.recordEvent({
           skillId: 'test/skill',
           userId: 'user1',
-          timestamp: Date.now(),
+          timestamp: FIXED_TIMESTAMP,
           taskDuration: 1000,
           outcome,
           contextHash: 'context1',
@@ -93,7 +101,7 @@ describe('AnalyticsStorage', () => {
       storage.recordEvent({
         skillId: 'anthropic/commit',
         userId: 'user1',
-        timestamp: Date.now(),
+        timestamp: FIXED_TIMESTAMP,
         taskDuration: 1000,
         outcome: 'success',
         contextHash: 'context1',
@@ -102,7 +110,7 @@ describe('AnalyticsStorage', () => {
       storage.recordEvent({
         skillId: 'anthropic/review',
         userId: 'user1',
-        timestamp: Date.now(),
+        timestamp: FIXED_TIMESTAMP,
         taskDuration: 2000,
         outcome: 'success',
         contextHash: 'context1',
@@ -119,7 +127,7 @@ describe('AnalyticsStorage', () => {
         storage.recordEvent({
           skillId: 'anthropic/commit',
           userId: 'user1',
-          timestamp: Date.now() + i,
+          timestamp: FIXED_TIMESTAMP + i,
           taskDuration: 1000,
           outcome: 'success',
           contextHash: 'context1',
@@ -132,7 +140,7 @@ describe('AnalyticsStorage', () => {
     })
 
     it('should return events in reverse chronological order', () => {
-      const baseTime = Date.now()
+      const baseTime = FIXED_TIMESTAMP
 
       for (let i = 0; i < 3; i++) {
         storage.recordEvent({
@@ -164,7 +172,7 @@ describe('AnalyticsStorage', () => {
         storage.recordEvent({
           skillId: 'anthropic/commit',
           userId: `user${i % 3}`, // 3 unique users
-          timestamp: Date.now() + i,
+          timestamp: FIXED_TIMESTAMP + i,
           taskDuration: 1000 + i * 100, // 1000, 1100, 1200, ...
           outcome: i < 8 ? 'success' : 'error',
           contextHash: 'context1',
@@ -186,7 +194,7 @@ describe('AnalyticsStorage', () => {
       storage.recordEvent({
         skillId: 'anthropic/commit',
         userId: 'user1',
-        timestamp: Date.now(),
+        timestamp: FIXED_TIMESTAMP,
         taskDuration: 1000,
         outcome: 'success',
         contextHash: 'context1',
@@ -201,7 +209,7 @@ describe('AnalyticsStorage', () => {
       storage.recordEvent({
         skillId: 'anthropic/commit',
         userId: 'user1',
-        timestamp: Date.now(),
+        timestamp: FIXED_TIMESTAMP,
         taskDuration: 1000,
         outcome: 'error',
         contextHash: 'context1',
@@ -215,8 +223,8 @@ describe('AnalyticsStorage', () => {
 
   describe('cleanup', () => {
     it('should delete events older than 30 days', () => {
-      const now = Date.now()
-      const thirtyOneDaysAgo = now - 31 * 24 * 60 * 60 * 1000
+      const now = FIXED_TIMESTAMP
+      const thirtyOneDaysAgo = now - 31 * ONE_DAY_MS
 
       // Add old event
       storage.recordEvent({
@@ -247,8 +255,8 @@ describe('AnalyticsStorage', () => {
     })
 
     it('should not delete events within 30 days', () => {
-      const now = Date.now()
-      const twentyNineDaysAgo = now - 29 * 24 * 60 * 60 * 1000
+      const now = FIXED_TIMESTAMP
+      const twentyNineDaysAgo = now - 29 * ONE_DAY_MS
 
       storage.recordEvent({
         skillId: 'anthropic/commit',
@@ -281,7 +289,7 @@ describe('AnalyticsStorage', () => {
       storage.recordEvent({
         skillId: 'test/skill',
         userId: 'user1',
-        timestamp: Date.now(),
+        timestamp: FIXED_TIMESTAMP,
         taskDuration: 1000,
         outcome: 'success',
         contextHash: 'context1',
@@ -290,7 +298,7 @@ describe('AnalyticsStorage', () => {
       storage.recordEvent({
         skillId: 'test/skill',
         userId: 'user1',
-        timestamp: Date.now(),
+        timestamp: FIXED_TIMESTAMP,
         taskDuration: 1000,
         outcome: 'success',
         contextHash: 'context1',
@@ -299,7 +307,7 @@ describe('AnalyticsStorage', () => {
       storage.recordEvent({
         skillId: 'test/skill',
         userId: 'user1',
-        timestamp: Date.now(),
+        timestamp: FIXED_TIMESTAMP,
         taskDuration: 1000,
         outcome: 'error',
         contextHash: 'context1',

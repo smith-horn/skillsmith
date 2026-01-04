@@ -4,6 +4,7 @@
  * SMI-730: Rate limiting with token bucket algorithm
  * SMI-732: Input sanitization functions
  * SMI-733: Audit logging system
+ * SMI-898: Path traversal protection for database paths
  */
 
 export { SecurityScanner } from './scanner.js'
@@ -23,6 +24,14 @@ export {
   sanitizeUrl,
   sanitizeText,
 } from './sanitization.js'
+
+export {
+  validateDbPath,
+  validateDbPathOrThrow,
+  isPathSafe,
+  DEFAULT_ALLOWED_DIRS,
+} from './pathValidation.js'
+export type { PathValidationOptions, PathValidationResult } from './pathValidation.js'
 
 export { AuditLogger } from './AuditLogger.js'
 export type {

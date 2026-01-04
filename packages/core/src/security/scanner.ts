@@ -1,6 +1,7 @@
 /**
  * SMI-587: Security Scanner
  * SMI-685: Enhanced security scanning with severity scoring
+ * SMI-882: ReDoS protection with input length limits and safe regex matching
  * Security scanning for skill content with advanced pattern detection
  */
 
@@ -248,6 +249,52 @@ const CATEGORY_WEIGHTS: Record<string, number> = {
   url: 0.8,
 }
 
+/**
+ * SMI-882: ReDoS Protection Constants
+ * Maximum line length to process with regex patterns.
+ * Lines exceeding this limit are truncated before regex matching
+ * to prevent catastrophic backtracking attacks.
+ */
+const MAX_LINE_LENGTH_FOR_REGEX = 10000
+
+/**
+ * SMI-882: Safe regex test with length limit
+ * Applies input length limit before regex matching to prevent ReDoS attacks.
+ *
+ * @param pattern - Regex pattern to test
+ * @param input - Input string to test against
+ * @param maxLength - Maximum input length (default: MAX_LINE_LENGTH_FOR_REGEX)
+ * @returns Match result or null if input is too long/no match
+ */
+function safeRegexTest(
+  pattern: RegExp,
+  input: string,
+  maxLength: number = MAX_LINE_LENGTH_FOR_REGEX
+): RegExpMatchArray | null {
+  // Truncate input if it exceeds max length to prevent ReDoS
+  const safeInput = input.length > maxLength ? input.slice(0, maxLength) : input
+  return safeInput.match(pattern)
+}
+
+/**
+ * SMI-882: Check if pattern matches safely
+ * Returns boolean instead of match array for simple tests.
+ *
+ * @param pattern - Regex pattern to test
+ * @param input - Input string to test against
+ * @param maxLength - Maximum input length (default: MAX_LINE_LENGTH_FOR_REGEX)
+ * @returns True if pattern matches (within safe input limits)
+ */
+function safeRegexCheck(
+  pattern: RegExp,
+  input: string,
+  maxLength: number = MAX_LINE_LENGTH_FOR_REGEX
+): boolean {
+  // Truncate input if it exceeds max length to prevent ReDoS
+  const safeInput = input.length > maxLength ? input.slice(0, maxLength) : input
+  return pattern.test(safeInput)
+}
+
 export class SecurityScanner {
   private allowedDomains: Set<string>
   private blockedPatterns: RegExp[]
@@ -320,6 +367,7 @@ export class SecurityScanner {
 
   /**
    * Scan for sensitive file path references
+   * SMI-882: Uses safeRegexCheck to prevent ReDoS
    */
   private scanSensitivePaths(content: string): SecurityFinding[] {
     const findings: SecurityFinding[] = []
@@ -327,7 +375,8 @@ export class SecurityScanner {
 
     lines.forEach((line, index) => {
       for (const pattern of SENSITIVE_PATH_PATTERNS) {
-        if (pattern.test(line)) {
+        // SMI-882: Use safe regex check with length limit
+        if (safeRegexCheck(pattern, line)) {
           findings.push({
             type: 'sensitive_path',
             severity: 'high',
@@ -345,6 +394,7 @@ export class SecurityScanner {
 
   /**
    * Scan for jailbreak attempts
+   * SMI-882: Uses safeRegexTest to prevent ReDoS
    */
   private scanJailbreakPatterns(content: string): SecurityFinding[] {
     const findings: SecurityFinding[] = []
@@ -352,7 +402,8 @@ export class SecurityScanner {
 
     lines.forEach((line, index) => {
       for (const pattern of JAILBREAK_PATTERNS) {
-        const match = line.match(pattern)
+        // SMI-882: Use safe regex test with length limit
+        const match = safeRegexTest(pattern, line)
         if (match) {
           findings.push({
             type: 'jailbreak',
@@ -371,6 +422,7 @@ export class SecurityScanner {
 
   /**
    * Scan for suspicious code patterns
+   * SMI-882: Uses safeRegexTest to prevent ReDoS
    */
   private scanSuspiciousPatterns(content: string): SecurityFinding[] {
     const findings: SecurityFinding[] = []
@@ -378,7 +430,8 @@ export class SecurityScanner {
 
     lines.forEach((line, index) => {
       for (const pattern of SUSPICIOUS_PATTERNS) {
-        const match = line.match(pattern)
+        // SMI-882: Use safe regex test with length limit
+        const match = safeRegexTest(pattern, line)
         if (match) {
           findings.push({
             type: 'suspicious_pattern',
@@ -393,7 +446,8 @@ export class SecurityScanner {
 
       // Check custom blocked patterns
       for (const pattern of this.blockedPatterns) {
-        const match = line.match(pattern)
+        // SMI-882: Use safe regex test with length limit
+        const match = safeRegexTest(pattern, line)
         if (match) {
           findings.push({
             type: 'suspicious_pattern',
@@ -412,6 +466,7 @@ export class SecurityScanner {
 
   /**
    * SMI-685: Scan for social engineering attempts
+   * SMI-882: Uses safeRegexTest to prevent ReDoS
    * Detects patterns like "pretend to be", "roleplay as", "you are now"
    */
   private scanSocialEngineering(content: string): SecurityFinding[] {
@@ -420,7 +475,8 @@ export class SecurityScanner {
 
     lines.forEach((line, index) => {
       for (const pattern of SOCIAL_ENGINEERING_PATTERNS) {
-        const match = line.match(pattern)
+        // SMI-882: Use safe regex test with length limit
+        const match = safeRegexTest(pattern, line)
         if (match) {
           findings.push({
             type: 'social_engineering',
@@ -440,6 +496,7 @@ export class SecurityScanner {
 
   /**
    * SMI-685: Scan for prompt leaking attempts
+   * SMI-882: Uses safeRegexTest to prevent ReDoS
    * Detects patterns like "show me your instructions", "what are your rules"
    */
   private scanPromptLeaking(content: string): SecurityFinding[] {
@@ -448,7 +505,8 @@ export class SecurityScanner {
 
     lines.forEach((line, index) => {
       for (const pattern of PROMPT_LEAKING_PATTERNS) {
-        const match = line.match(pattern)
+        // SMI-882: Use safe regex test with length limit
+        const match = safeRegexTest(pattern, line)
         if (match) {
           findings.push({
             type: 'prompt_leaking',
@@ -468,6 +526,7 @@ export class SecurityScanner {
 
   /**
    * SMI-685: Scan for data exfiltration patterns
+   * SMI-882: Uses safeRegexTest to prevent ReDoS
    * Detects encoding to external URLs, file upload patterns
    */
   private scanDataExfiltration(content: string): SecurityFinding[] {
@@ -476,7 +535,8 @@ export class SecurityScanner {
 
     lines.forEach((line, index) => {
       for (const pattern of DATA_EXFILTRATION_PATTERNS) {
-        const match = line.match(pattern)
+        // SMI-882: Use safe regex test with length limit
+        const match = safeRegexTest(pattern, line)
         if (match) {
           findings.push({
             type: 'data_exfiltration',
@@ -496,6 +556,7 @@ export class SecurityScanner {
 
   /**
    * SMI-685: Scan for privilege escalation patterns
+   * SMI-882: Uses safeRegexTest to prevent ReDoS
    * Detects sudo with passwords, chmod patterns, root access attempts
    */
   private scanPrivilegeEscalation(content: string): SecurityFinding[] {
@@ -504,7 +565,8 @@ export class SecurityScanner {
 
     lines.forEach((line, index) => {
       for (const pattern of PRIVILEGE_ESCALATION_PATTERNS) {
-        const match = line.match(pattern)
+        // SMI-882: Use safe regex test with length limit
+        const match = safeRegexTest(pattern, line)
         if (match) {
           findings.push({
             type: 'privilege_escalation',
@@ -657,11 +719,13 @@ export class SecurityScanner {
 
   /**
    * Quick check without full scan
+   * SMI-882: Uses safeRegexCheck to prevent ReDoS
    */
   quickCheck(content: string): boolean {
     // Check for critical patterns only
     for (const pattern of JAILBREAK_PATTERNS) {
-      if (pattern.test(content)) return false
+      // SMI-882: Use safe regex check with length limit
+      if (safeRegexCheck(pattern, content)) return false
     }
     return true
   }

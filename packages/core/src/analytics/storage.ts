@@ -1,18 +1,21 @@
 /**
  * SMI-914: Analytics Storage with SQLite
+ * SMI-898: Path traversal protection for database paths
  *
  * Provides persistent storage for skill usage events with:
  * - SQLite database in ~/.skillsmith/analytics.db
  * - 30-day rolling window for data retention
  * - Efficient indexes for querying by skill and timestamp
+ * - Secure path validation to prevent path traversal attacks
  */
 
 import Database from 'better-sqlite3'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { homedir } from 'os'
 import { existsSync, mkdirSync } from 'fs'
 import type { SkillUsageEvent, SkillMetrics } from './types.js'
 import { RETENTION_DAYS, MS_PER_DAY } from './constants.js'
+import { validateDbPath } from '../security/pathValidation.js'
 
 /**
  * Default directory for analytics data
@@ -34,15 +37,41 @@ export class AnalyticsStorage {
    * Create an analytics storage instance
    *
    * @param dbPath - Optional custom database path (defaults to ~/.skillsmith/analytics.db)
+   * @throws Error if dbPath contains path traversal attempt
+   *
+   * @see SMI-898: Path traversal protection
+   * - Validates custom dbPath against path traversal attacks
+   * - Rejects paths with ".." or outside allowed directories
    */
   constructor(dbPath: string = ANALYTICS_DB) {
-    // Ensure directory exists
-    const dir = dbPath === ANALYTICS_DB ? ANALYTICS_DIR : join(dbPath, '..')
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true })
+    let resolvedPath = dbPath
+
+    // SMI-898: Validate custom paths for path traversal
+    if (dbPath !== ANALYTICS_DB) {
+      const validation = validateDbPath(dbPath, {
+        allowInMemory: true,
+        allowTempDir: true,
+      })
+
+      if (!validation.valid) {
+        throw new Error(
+          `Invalid analytics database path: ${validation.error}. ` +
+            'Path must be within ~/.skillsmith, ~/.claude, or temp directories.'
+        )
+      }
+
+      resolvedPath = validation.resolvedPath!
     }
 
-    this.db = new Database(dbPath)
+    // Ensure directory exists (skip for in-memory)
+    if (resolvedPath !== ':memory:') {
+      const dir = dirname(resolvedPath)
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true })
+      }
+    }
+
+    this.db = new Database(resolvedPath)
     this.initSchema()
   }
 

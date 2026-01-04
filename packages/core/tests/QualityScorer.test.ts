@@ -1,20 +1,35 @@
 /**
  * Quality Scoring Algorithm Tests (SMI-592)
+ *
+ * Uses fake timers for deterministic date testing (SMI-992)
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   QualityScorer,
   quickScore,
   scoreFromRepository,
   type QualityScoringInput,
 } from '../src/scoring/index.js'
+import {
+  FIXED_DATE_ISO,
+  FIXED_TIMESTAMP,
+  ONE_YEAR_MS,
+  ONE_DAY_MS,
+  setupFakeTimers,
+  cleanupFakeTimers,
+} from './test-utils.js'
 
-describe('QualityScorer (SMI-592)', () => {
+describe('QualityScorer (SMI-992)', () => {
   let scorer: QualityScorer
 
   beforeEach(() => {
+    setupFakeTimers()
     scorer = new QualityScorer()
+  })
+
+  afterEach(() => {
+    cleanupFakeTimers()
   })
 
   describe('calculate', () => {
@@ -22,8 +37,8 @@ describe('QualityScorer (SMI-592)', () => {
       const result = scorer.calculate({
         stars: 100,
         forks: 20,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: new Date(FIXED_TIMESTAMP - ONE_YEAR_MS).toISOString(),
       })
 
       expect(result.total).toBeGreaterThanOrEqual(0)
@@ -34,15 +49,15 @@ describe('QualityScorer (SMI-592)', () => {
       const popular = scorer.calculate({
         stars: 1000,
         forks: 200,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
       })
 
       const unpopular = scorer.calculate({
         stars: 1,
         forks: 0,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
       })
 
       expect(popular.total).toBeGreaterThan(unpopular.total)
@@ -53,15 +68,15 @@ describe('QualityScorer (SMI-592)', () => {
       const recent = scorer.calculate({
         stars: 50,
         forks: 10,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
       })
 
       const old = scorer.calculate({
         stars: 50,
         forks: 10,
-        updatedAt: new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000).toISOString(),
-        createdAt: new Date(Date.now() - 3 * 365 * 24 * 60 * 60 * 1000).toISOString(),
+        updatedAt: new Date(FIXED_TIMESTAMP - 2 * ONE_YEAR_MS).toISOString(),
+        createdAt: new Date(FIXED_TIMESTAMP - 3 * ONE_YEAR_MS).toISOString(),
       })
 
       expect(recent.total).toBeGreaterThan(old.total)
@@ -72,8 +87,8 @@ describe('QualityScorer (SMI-592)', () => {
       const documented = scorer.calculate({
         stars: 50,
         forks: 10,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         hasReadme: true,
         hasSkillFile: true,
         skillFileLength: 2000,
@@ -83,8 +98,8 @@ describe('QualityScorer (SMI-592)', () => {
       const undocumented = scorer.calculate({
         stars: 50,
         forks: 10,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         hasReadme: false,
         hasSkillFile: false,
         descriptionLength: 0,
@@ -98,16 +113,16 @@ describe('QualityScorer (SMI-592)', () => {
       const verified = scorer.calculate({
         stars: 50,
         forks: 10,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         owner: 'anthropics',
       })
 
       const unverified = scorer.calculate({
         stars: 50,
         forks: 10,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         owner: 'random-user',
       })
 
@@ -121,16 +136,16 @@ describe('QualityScorer (SMI-592)', () => {
       const licensed = scorer.calculate({
         stars: 50,
         forks: 10,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         license: 'MIT',
       })
 
       const unlicensed = scorer.calculate({
         stars: 50,
         forks: 10,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         license: null,
       })
 
@@ -142,16 +157,16 @@ describe('QualityScorer (SMI-592)', () => {
       const relevant = scorer.calculate({
         stars: 50,
         forks: 10,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         topics: ['claude-skill', 'mcp', 'anthropic'],
       })
 
       const irrelevant = scorer.calculate({
         stars: 50,
         forks: 10,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         topics: ['random', 'unrelated'],
       })
 
@@ -162,8 +177,8 @@ describe('QualityScorer (SMI-592)', () => {
       const result = scorer.calculate({
         stars: 100,
         forks: 20,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         hasReadme: true,
         hasSkillFile: true,
         license: 'MIT',
@@ -187,8 +202,8 @@ describe('QualityScorer (SMI-592)', () => {
       const result = scorer.calculate({
         stars: 0,
         forks: 0,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
       })
 
       expect(result.total).toBeGreaterThanOrEqual(0)
@@ -202,8 +217,8 @@ describe('QualityScorer (SMI-592)', () => {
       const input: QualityScoringInput = {
         stars: 10,
         forks: 2,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         owner: 'anthropics',
       }
 
@@ -215,8 +230,8 @@ describe('QualityScorer (SMI-592)', () => {
       const input: QualityScoringInput = {
         stars: 10,
         forks: 2,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         isVerifiedOwner: true,
       }
 
@@ -228,8 +243,8 @@ describe('QualityScorer (SMI-592)', () => {
       const input: QualityScoringInput = {
         stars: 10,
         forks: 2,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         topics: ['claude-code-official'],
       }
 
@@ -241,8 +256,8 @@ describe('QualityScorer (SMI-592)', () => {
       const input: QualityScoringInput = {
         stars: 100,
         forks: 20,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         hasLicense: true,
       }
 
@@ -254,8 +269,8 @@ describe('QualityScorer (SMI-592)', () => {
       const input: QualityScoringInput = {
         stars: 10,
         forks: 2,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
       }
 
       const tier = scorer.calculateTrustTier(input, 50)
@@ -266,8 +281,8 @@ describe('QualityScorer (SMI-592)', () => {
       const input: QualityScoringInput = {
         stars: 0,
         forks: 0,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
       }
 
       const tier = scorer.calculateTrustTier(input, 20)
@@ -284,8 +299,8 @@ describe('QualityScorer (SMI-592)', () => {
       const result = customScorer.calculate({
         stars: 100,
         forks: 0,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
       })
 
       // With higher star weight, popularity should be higher
@@ -295,15 +310,15 @@ describe('QualityScorer (SMI-592)', () => {
 
   describe('quickScore', () => {
     it('should return a quick score', () => {
-      const score = quickScore(100, 20, new Date().toISOString())
+      const score = quickScore(100, 20, FIXED_DATE_ISO)
 
       expect(score).toBeGreaterThanOrEqual(0)
       expect(score).toBeLessThanOrEqual(100)
     })
 
     it('should give higher scores to better repositories', () => {
-      const good = quickScore(1000, 100, new Date().toISOString())
-      const bad = quickScore(1, 0, new Date().toISOString())
+      const good = quickScore(1000, 100, FIXED_DATE_ISO)
+      const bad = quickScore(1, 0, FIXED_DATE_ISO)
 
       expect(good).toBeGreaterThan(bad)
     })
@@ -315,8 +330,8 @@ describe('QualityScorer (SMI-592)', () => {
         stars: 100,
         forks: 20,
         watchers: 50,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         topics: ['claude-skill'],
         owner: 'test-user',
         license: 'MIT',
@@ -334,8 +349,8 @@ describe('QualityScorer (SMI-592)', () => {
       const result = scoreFromRepository({
         stars: 10,
         forks: 2,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
       })
 
       expect(result.total).toBeGreaterThanOrEqual(0)
@@ -347,8 +362,8 @@ describe('QualityScorer (SMI-592)', () => {
       const result = scorer.calculate({
         stars: 100000,
         forks: 50000,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
       })
 
       expect(result.total).toBeLessThanOrEqual(100)
@@ -368,12 +383,12 @@ describe('QualityScorer (SMI-592)', () => {
     })
 
     it('should handle future dates gracefully', () => {
-      const future = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+      const future = new Date(FIXED_TIMESTAMP + ONE_YEAR_MS)
       const result = scorer.calculate({
         stars: 100,
         forks: 20,
         updatedAt: future.toISOString(),
-        createdAt: new Date().toISOString(),
+        createdAt: FIXED_DATE_ISO,
       })
 
       expect(result.total).toBeGreaterThanOrEqual(0)
@@ -383,8 +398,8 @@ describe('QualityScorer (SMI-592)', () => {
       const result = scorer.calculate({
         stars: 50,
         forks: 10,
-        updatedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
+        updatedAt: FIXED_DATE_ISO,
+        createdAt: FIXED_DATE_ISO,
         hasExamples: true,
         hasTroubleshooting: true,
         hasPrerequisites: true,

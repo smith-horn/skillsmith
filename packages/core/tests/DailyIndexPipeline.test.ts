@@ -1,8 +1,10 @@
 /**
  * Daily Index Pipeline Tests (SMI-593)
+ *
+ * Uses fake timers for deterministic date testing (SMI-992)
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   DailyIndexPipeline,
   createScheduledPipeline,
@@ -25,6 +27,7 @@ import type {
   ISkillRepository,
   ParsedSkillMetadata,
 } from '../src/sources/SourceIndexer.js'
+import { FIXED_DATE_ISO, setupFakeTimers, cleanupFakeTimers } from './test-utils.js'
 
 /**
  * Mock source adapter for testing
@@ -67,8 +70,8 @@ class MockSourceAdapter extends BaseSourceAdapter {
       stars: 5,
       forks: 1,
       topics: [],
-      updatedAt: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
+      updatedAt: FIXED_DATE_ISO,
+      createdAt: FIXED_DATE_ISO,
       license: null,
       metadata: {},
     }
@@ -95,6 +98,7 @@ describe('DailyIndexPipeline (SMI-593)', () => {
   let mockRepository: ISkillRepository
 
   beforeEach(() => {
+    setupFakeTimers()
     pipeline = new DailyIndexPipeline()
 
     mockParser = {
@@ -123,6 +127,10 @@ describe('DailyIndexPipeline (SMI-593)', () => {
       }),
       getSkillBySha: vi.fn().mockResolvedValue(null),
     }
+  })
+
+  afterEach(() => {
+    cleanupFakeTimers()
   })
 
   describe('Basic operations', () => {

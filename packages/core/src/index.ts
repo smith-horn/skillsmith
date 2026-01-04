@@ -64,6 +64,15 @@ export type {
 export { SecurityScanner } from './security/index.js'
 export type { SecurityFinding, ScanReport, ScannerOptions } from './security/index.js'
 
+// SMI-898: Path Traversal Protection
+export {
+  validateDbPath,
+  validateDbPathOrThrow,
+  isPathSafe,
+  DEFAULT_ALLOWED_DIRS,
+} from './security/index.js'
+export type { PathValidationOptions, PathValidationResult } from './security/index.js'
+
 // Error handling (SMI-583)
 export {
   ErrorCodes,
