@@ -18,6 +18,7 @@ import type {
 import { createHash } from 'crypto'
 import { createLogger } from '../utils/logger.js'
 import { validateUrl } from '../validation/index.js'
+import { ApiError, NetworkError, wrapError } from '../errors/SkillsmithError.js'
 
 const log = createLogger('RawUrlAdapter')
 
@@ -111,7 +112,10 @@ export class RawUrlSourceAdapter extends BaseSourceAdapter {
       const response = await this.fetchWithTimeout(registryUrl)
 
       if (!response.ok) {
-        throw new Error(`Failed to load registry: ${response.status}`)
+        throw new ApiError(`Failed to load registry: ${response.status}`, {
+          statusCode: response.status,
+          url: registryUrl,
+        })
       }
 
       const data = (await response.json()) as { skills?: SkillUrlEntry[] }
@@ -120,10 +124,9 @@ export class RawUrlSourceAdapter extends BaseSourceAdapter {
         this.skillUrls = [...this.skillUrls, ...data.skills]
       }
     } catch (error) {
-      // Registry load is optional - log but don't fail
-      log.warn(
-        `Failed to load registry from ${registryUrl}: ${error instanceof Error ? error.message : String(error)}`
-      )
+      // Registry load is optional - log but don't fail (SMI-881: preserve error context)
+      const wrappedError = wrapError(error, `Failed to load registry from ${registryUrl}`)
+      log.warn(wrappedError.message)
     }
   }
 
@@ -246,7 +249,10 @@ export class RawUrlSourceAdapter extends BaseSourceAdapter {
     const response = await this.fetchWithTimeout(url)
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch skill content: ${response.status} from ${url}`)
+      throw new ApiError(`Failed to fetch skill content: ${response.status}`, {
+        statusCode: response.status,
+        url,
+      })
     }
 
     const rawContent = await response.text()

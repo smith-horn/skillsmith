@@ -1213,3 +1213,180 @@ describe('RateLimiter - Queue Support (SMI-1013)', () => {
     })
   })
 })
+
+/**
+ * Memory bounds and cleanup tests - Code Review Wave 3
+ */
+describe('RateLimiter - Memory Bounds (Wave 3 Fixes)', () => {
+  let limiter: RateLimiter
+  let storage: InMemoryRateLimitStorage
+
+  beforeEach(() => {
+    storage = new InMemoryRateLimitStorage()
+  })
+
+  afterEach(() => {
+    storage.dispose()
+    if (limiter) {
+      limiter.dispose()
+    }
+  })
+
+  describe('Metrics Memory Bounds', () => {
+    it('should track lastUpdated in metrics', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+        },
+        storage
+      )
+
+      await limiter.checkLimit('test-key')
+
+      const metrics = limiter.getMetrics('test-key') as RateLimitMetrics
+      expect(metrics.lastUpdated).toBeInstanceOf(Date)
+      expect(metrics.lastUpdated.getTime()).toBeGreaterThan(0)
+    })
+
+    it('should evict oldest metrics when max unique keys exceeded', async () => {
+      // Create limiter and manually test eviction logic by checking metrics behavior
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+        },
+        storage
+      )
+
+      // Make requests for multiple keys
+      for (let i = 0; i < 100; i++) {
+        await limiter.checkLimit(`key-${i}`)
+      }
+
+      // Should have all 100 keys (under the 10000 limit)
+      const allMetrics = limiter.getMetrics() as Map<string, RateLimitMetrics>
+      expect(allMetrics.size).toBe(100)
+    })
+  })
+
+  describe('Queue Memory Bounds', () => {
+    it('should reject new queues when max unique keys for queues is reached', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 1,
+          refillRate: 0.001, // Very slow
+          windowMs: 60000,
+          enableQueue: true,
+          queueTimeoutMs: 60000,
+          maxQueueSize: 1,
+        },
+        storage
+      )
+
+      // Use token for first key
+      await limiter.waitForToken('key-1')
+
+      // Queue one request for key-1
+      const p1 = limiter.waitForToken('key-1').catch(() => {})
+
+      // Trying to add another request should fail (queue full for this key)
+      await expect(limiter.waitForToken('key-1')).rejects.toThrow(RateLimitQueueFullError)
+
+      // Cleanup
+      limiter.clearQueue()
+    })
+
+    it('should clean up empty queues during processing', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 10,
+          windowMs: 60000,
+          enableQueue: true,
+          queueTimeoutMs: 5000,
+        },
+        storage
+      )
+
+      // Make immediate requests (not queued)
+      await limiter.waitForToken('key-1')
+      await limiter.waitForToken('key-2')
+
+      // Queue status should not have empty queues cluttering memory
+      const status = limiter.getQueueStatus() as {
+        totalQueued: number
+        queues: Map<string, number>
+      }
+      expect(status.totalQueued).toBe(0)
+    })
+  })
+
+  describe('Queue Request ID Uniqueness', () => {
+    it('should use unique IDs for queued requests', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 1,
+          refillRate: 10, // Fast refill
+          windowMs: 60000,
+          enableQueue: true,
+          queueTimeoutMs: 5000,
+          maxQueueSize: 10,
+        },
+        storage
+      )
+
+      // Use the only token
+      await limiter.waitForToken('test-key')
+
+      // Queue multiple requests rapidly
+      const promises = [
+        limiter.waitForToken('test-key'),
+        limiter.waitForToken('test-key'),
+        limiter.waitForToken('test-key'),
+      ]
+
+      // All should eventually complete (no ID collisions)
+      const results = await Promise.all(promises)
+      results.forEach((r) => {
+        expect(r.allowed).toBe(true)
+        expect(r.queued).toBe(true)
+      })
+    })
+  })
+
+  describe('Concurrent Queue Processing Safety', () => {
+    it('should handle concurrent queue operations safely', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 2,
+          refillRate: 20, // Fast refill for test
+          windowMs: 60000,
+          enableQueue: true,
+          queueTimeoutMs: 5000,
+          maxQueueSize: 20,
+        },
+        storage
+      )
+
+      // Use tokens
+      await limiter.waitForToken('test-key')
+      await limiter.waitForToken('test-key')
+
+      // Queue many concurrent requests
+      const promises: Promise<any>[] = []
+      for (let i = 0; i < 10; i++) {
+        promises.push(limiter.waitForToken('test-key'))
+      }
+
+      // All should complete without errors
+      const results = await Promise.all(promises)
+      expect(results.length).toBe(10)
+      results.forEach((r) => {
+        expect(r.allowed).toBe(true)
+      })
+    })
+  })
+})

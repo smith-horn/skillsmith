@@ -50,17 +50,23 @@ describe('UsageTracker', () => {
       expect(tracker.getEventCount()).toBe(1)
     })
 
-    it('should record correct task duration', async () => {
+    it('should record correct task duration', () => {
+      // Use fake timers for deterministic timing tests
+      vi.useFakeTimers()
+
       const trackingId = tracker.startTracking('anthropic/commit', 'user123')
 
-      // Wait a bit to create measurable duration
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      // Advance time by exactly 100ms for reliable measurement
+      vi.advanceTimersByTime(100)
 
       tracker.endTracking(trackingId, 'success')
 
       const events = tracker.getEvents('anthropic/commit')
       expect(events).toHaveLength(1)
-      expect(events[0].taskDuration).toBeGreaterThanOrEqual(50)
+      // With fake timers, duration should be exactly 100ms
+      expect(events[0].taskDuration).toBe(100)
+
+      vi.useRealTimers()
     })
 
     it('should handle multiple concurrent trackings', () => {

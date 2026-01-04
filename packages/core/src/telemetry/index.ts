@@ -35,6 +35,14 @@ export {
   type MetricsSnapshot,
 } from './metrics.js'
 
+// Prometheus exports (SMI-1018)
+export {
+  exportToPrometheus,
+  getPrometheusMetrics,
+  createPrometheusHandler,
+  type PrometheusExportOptions,
+} from './prometheus.js'
+
 /**
  * Initialize all telemetry (tracing + metrics)
  * Call this at application startup

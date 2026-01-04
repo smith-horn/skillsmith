@@ -94,3 +94,19 @@ export {
   type ISkillRepository,
   type SourceIndexerOptions,
 } from './SourceIndexer.js'
+
+// Shared Utilities (SMI-879)
+export {
+  SKILL_FILE_PATHS,
+  decodeBase64Content,
+  isRateLimitStatus,
+  isServerError,
+  isNotFoundStatus,
+  handleApiError,
+  assertResponseOk,
+  parseRateLimitHeaders,
+  extractDefaultBranch,
+  buildPaginationParams,
+  parseJsonResponse,
+  type NormalizedRepository,
+} from './shared.js'

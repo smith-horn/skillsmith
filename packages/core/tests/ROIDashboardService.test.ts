@@ -4,7 +4,7 @@
  * Tests for Epic 4: ROI Dashboard
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import type { Database as DatabaseType } from 'better-sqlite3'
 import { initializeAnalyticsSchema } from '../src/analytics/schema.js'
@@ -18,6 +18,8 @@ describe('ROIDashboardService', () => {
   let repo: AnalyticsRepository
 
   beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-15T12:00:00.000Z'))
     db = new Database(':memory:')
     initializeAnalyticsSchema(db)
     service = new ROIDashboardService(db)
@@ -25,6 +27,7 @@ describe('ROIDashboardService', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     if (db) db.close()
   })
 
@@ -345,7 +348,7 @@ describe('ROIDashboardService', () => {
         service.refreshMetrics()
       }).not.toThrow()
 
-      // Verify metrics were computed
+      // Verify metrics were computed using the same frozen time
       const now = new Date()
       const yesterday = new Date(now)
       yesterday.setDate(yesterday.getDate() - 1)
