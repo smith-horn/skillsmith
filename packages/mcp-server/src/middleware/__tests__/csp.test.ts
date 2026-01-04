@@ -56,7 +56,8 @@ describe('CSP Utilities', () => {
       const directives: CspDirectives = {
         'script-src': ["'self'"],
       }
-      const nonce = 'test-nonce-123'
+      // Use valid base64 nonce (no hyphens)
+      const nonce = 'dGVzdG5vbmNlMTIz'
       const header = buildCspHeader(directives, nonce)
       expect(header).toContain(`'nonce-${nonce}'`)
     })
@@ -65,7 +66,8 @@ describe('CSP Utilities', () => {
       const directives: CspDirectives = {
         'style-src': ["'self'"],
       }
-      const nonce = 'test-nonce-123'
+      // Use valid base64 nonce (no hyphens)
+      const nonce = 'dGVzdG5vbmNlMTIz'
       const header = buildCspHeader(directives, nonce)
       expect(header).toContain(`'nonce-${nonce}'`)
     })
@@ -235,7 +237,10 @@ describe('CSP Utilities', () => {
       const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const header = "default-src 'self'; script-src 'self' 'unsafe-eval'"
       const result = validateCspHeaderDetailed(header)
-      expect(result.warnings).toContain('unsafe-eval detected - allows arbitrary code execution')
+      // Updated warning message for per-directive validation
+      expect(result.warnings).toContain(
+        'unsafe-eval detected in script-src or default-src - allows arbitrary code execution'
+      )
       consoleSpy.mockRestore()
     })
 
@@ -243,7 +248,10 @@ describe('CSP Utilities', () => {
       const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const header = "default-src 'self'; script-src 'self' 'unsafe-inline'"
       const result = validateCspHeaderDetailed(header)
-      expect(result.warnings).toContain('unsafe-inline without nonce detected - vulnerable to XSS')
+      // Updated warning message for per-directive validation
+      expect(result.warnings).toContain(
+        'unsafe-inline without nonce in script-src - vulnerable to XSS'
+      )
       consoleSpy.mockRestore()
     })
 
@@ -251,8 +259,9 @@ describe('CSP Utilities', () => {
       const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const header = "default-src 'self'; script-src 'self' 'unsafe-inline' 'nonce-abc123'"
       const result = validateCspHeaderDetailed(header)
+      // Updated warning message check
       expect(result.warnings).not.toContain(
-        'unsafe-inline without nonce detected - vulnerable to XSS'
+        'unsafe-inline without nonce in script-src - vulnerable to XSS'
       )
       consoleSpy.mockRestore()
     })

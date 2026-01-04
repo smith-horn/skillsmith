@@ -404,7 +404,13 @@ describe('AuditLogger', () => {
       expect(deleted).toBe(1)
 
       const remaining = auditLogger.query()
-      expect(remaining).toHaveLength(1)
+      // After cleanup, we have: 1 recent log + 1 meta-log of the cleanup operation = 2 entries
+      expect(remaining).toHaveLength(2)
+      // Verify the cleanup meta-log was created
+      const cleanupLogs = remaining.filter(
+        (r) => r.event_type === 'config_change' && r.action === 'cleanup_internal'
+      )
+      expect(cleanupLogs).toHaveLength(1)
     })
 
     it('should return count of deleted entries', () => {
