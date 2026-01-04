@@ -25,7 +25,8 @@
     "benchmark:search": "npx tsx src/benchmarks/cli.ts --suite search",
     "benchmark:index": "npx tsx src/benchmarks/cli.ts --suite index",
     "benchmark:cache": "npx tsx src/benchmarks/cli.ts --suite cache",
-    "benchmark:embedding": "npx tsx src/benchmarks/cli.ts --suite embedding"
+    "benchmark:embedding": "npx tsx src/benchmarks/cli.ts --suite embedding",
+    "import:skills": "npx tsx src/scripts/import-to-database.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "1.9.0",

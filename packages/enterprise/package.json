@@ -1,0 +1,41 @@
+{
+  "name": "@skillsmith/enterprise",
+  "version": "0.1.0",
+  "description": "Enterprise features for Skillsmith including audit logging, SSO, and RBAC",
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./audit": {
+      "types": "./dist/src/audit/index.d.ts",
+      "import": "./dist/src/audit/index.js"
+    },
+    "./audit/streaming": {
+      "types": "./dist/src/audit/streaming/EventStream.d.ts",
+      "import": "./dist/src/audit/streaming/EventStream.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudwatch-logs": "^3.700.0",
+    "@skillsmith/core": "*",
+    "zod": "4.2.1"
+  },
+  "devDependencies": {
+    "vitest": "4.0.16"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "Apache-2.0"
+}

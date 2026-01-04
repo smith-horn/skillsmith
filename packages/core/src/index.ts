@@ -422,3 +422,38 @@ export type {
   GlobalMetrics,
   MetricsExport,
 } from './analytics/index.js'
+
+// Quarantine Management (SMI-865)
+export {
+  initializeQuarantineSchema,
+  hasQuarantineTable,
+  migrateQuarantineSchema,
+  QUARANTINE_SEVERITY_POLICIES,
+  type QuarantineSeverity,
+  type QuarantineReviewStatus,
+} from './db/quarantine-schema.js'
+
+export {
+  QuarantineRepository,
+  type QuarantineEntry,
+  type QuarantineCreateInput,
+  type QuarantineUpdateInput,
+  type QuarantineQueryFilter,
+  type PaginatedQuarantineResults,
+  type QuarantineStats,
+  type ReviewDecision,
+} from './repositories/QuarantineRepository.js'
+
+// Audit Logging (SMI-733)
+export {
+  AuditLogger,
+  MIN_RETENTION_DAYS,
+  MAX_RETENTION_DAYS,
+  type AuditEventType,
+  type AuditActor,
+  type AuditResult,
+  type AuditLogEntry,
+  type AuditQueryFilter,
+  type AuditLoggerConfig,
+  type AuditStats,
+} from './security/AuditLogger.js'
