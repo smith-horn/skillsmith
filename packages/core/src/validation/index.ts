@@ -239,6 +239,108 @@ function validateIPv6(hostname: string, url: string): void {
       }
     }
   }
+
+  // Block 6to4 addresses with embedded private IPv4 (2002::/16) - SMI-1004
+  // 6to4 embeds IPv4 in bits 16-48: 2002:AABB:CCDD::/48 where IPv4 is AA.BB.CC.DD
+  if (normalized.startsWith('2002:')) {
+    // Extract the two hex segments after 2002:
+    const segments = normalized.split(':')
+    if (segments.length >= 3 && segments[1] && segments[2]) {
+      // Parse hex segments: 2002:AABB:CCDD -> IPv4 is 0xAA.0xBB.0xCC.0xDD
+      const highHex = segments[1].padStart(4, '0')
+      const lowHex = segments[2].padStart(4, '0')
+      const a = parseInt(highHex.slice(0, 2), 16)
+      const b = parseInt(highHex.slice(2, 4), 16)
+      const c = parseInt(lowHex.slice(0, 2), 16)
+      const d = parseInt(lowHex.slice(2, 4), 16)
+
+      // Check if embedded IPv4 is private
+      if (
+        a === 10 ||
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168) ||
+        a === 127 ||
+        (a === 169 && b === 254) ||
+        a === 0
+      ) {
+        throw new ValidationError(
+          `Access to 6to4 address with embedded private IPv4 blocked: ${hostname}`,
+          'IPV6_6TO4_PRIVATE',
+          { hostname, url, embeddedIPv4: `${a}.${b}.${c}.${d}`, ipRange: getIpRangeName(a, b) }
+        )
+      }
+    }
+  }
+
+  // Block IPv4-compatible addresses (::IPv4) without ffff prefix - SMI-1005
+  // Pattern: ::x.x.x.x (deprecated but still valid)
+  // Note: URL parser normalizes ::192.168.1.1 to ::c0a8:101 (hex format)
+  // So we need to match both dotted-decimal and the normalized hex format
+  const ipv4CompatibleMatch = normalized.match(/^::(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (ipv4CompatibleMatch) {
+    const [, aStr, bStr, cStr, dStr] = ipv4CompatibleMatch
+    const a = parseInt(aStr!, 10)
+    const b = parseInt(bStr!, 10)
+    const c = parseInt(cStr!, 10)
+    const d = parseInt(dStr!, 10)
+
+    // Validate octets
+    if (a <= 255 && b <= 255 && c <= 255 && d <= 255) {
+      // Check if embedded IPv4 is private
+      if (
+        a === 10 ||
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168) ||
+        a === 127 ||
+        (a === 169 && b === 254) ||
+        a === 0
+      ) {
+        throw new ValidationError(
+          `Access to IPv4-compatible IPv6 address with private IPv4 blocked: ${hostname}`,
+          'IPV6_COMPATIBLE_PRIVATE',
+          { hostname, url, embeddedIPv4: `${a}.${b}.${c}.${d}`, ipRange: getIpRangeName(a, b) }
+        )
+      }
+    }
+  }
+
+  // Also check for normalized hex format: ::XXXX:XXXX (without ffff: prefix)
+  // URL parser normalizes ::192.168.1.1 to ::c0a8:101
+  const ipv4CompatibleHexMatch = normalized.match(/^::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+  if (ipv4CompatibleHexMatch) {
+    const high = parseInt(ipv4CompatibleHexMatch[1]!, 16)
+    const low = parseInt(ipv4CompatibleHexMatch[2]!, 16)
+    const a = (high >> 8) & 0xff
+    const b = high & 0xff
+    const c = (low >> 8) & 0xff
+    const d = low & 0xff
+
+    // Check if embedded IPv4 is private
+    if (
+      a === 10 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      a === 0
+    ) {
+      throw new ValidationError(
+        `Access to IPv4-compatible IPv6 address with private IPv4 blocked: ${hostname}`,
+        'IPV6_COMPATIBLE_PRIVATE',
+        { hostname, url, embeddedIPv4: `${a}.${b}.${c}.${d}`, ipRange: getIpRangeName(a, b) }
+      )
+    }
+  }
+
+  // Block Teredo addresses (2001:0::/32) - SMI-1006
+  // Teredo tunneling can bypass firewall rules
+  if (normalized.startsWith('2001:0000:') || normalized.startsWith('2001:0:')) {
+    throw new ValidationError(
+      `Access to Teredo tunnel address blocked: ${hostname}`,
+      'IPV6_TEREDO_BLOCKED',
+      { hostname, url }
+    )
+  }
 }
 
 /**

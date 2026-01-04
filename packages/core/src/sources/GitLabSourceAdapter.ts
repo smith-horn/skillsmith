@@ -6,6 +6,7 @@
  */
 
 import { BaseSourceAdapter } from './BaseSourceAdapter.js'
+import { validateUrl } from '../validation/index.js'
 import type {
   SourceConfig,
   SourceLocation,
@@ -95,6 +96,7 @@ export class GitLabSourceAdapter extends BaseSourceAdapter {
   constructor(config: SourceConfig) {
     super(config)
     this.apiBaseUrl = config.baseUrl || 'https://gitlab.com/api/v4'
+    validateUrl(this.apiBaseUrl)
   }
 
   /**
