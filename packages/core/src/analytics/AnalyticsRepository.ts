@@ -38,14 +38,17 @@ export class AnalyticsRepository {
 
   /**
    * Record a skill usage event
+   * SMI-992: Explicitly set timestamp from JS Date for fake timer compatibility
    */
   recordUsageEvent(input: UsageEventInput): UsageEvent {
     const id = randomUUID()
     const context = input.context ? JSON.stringify(input.context) : null
+    // SMI-992: Use JavaScript Date instead of SQLite datetime('now') for testability
+    const timestamp = new Date().toISOString()
 
     const stmt = this.db.prepare(`
-      INSERT INTO skill_usage_events (id, skill_id, user_id, session_id, event_type, context, value_score)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO skill_usage_events (id, skill_id, user_id, session_id, event_type, context, value_score, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     stmt.run(
@@ -55,7 +58,8 @@ export class AnalyticsRepository {
       input.sessionId,
       input.eventType,
       context,
-      input.valueScore ?? null
+      input.valueScore ?? null,
+      timestamp
     )
 
     return this.getUsageEvent(id)!
