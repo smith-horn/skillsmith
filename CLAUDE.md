@@ -303,6 +303,39 @@ npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts create-issue
 npx tsx ~/.claude/skills/linear/skills/linear/scripts/query.ts 'query { issues(filter: {project: {name: {eq: "Skillsmith"}}}) { nodes { identifier title state { name } } } }'
 ```
 
+### CI/DevOps Skills (User-Level)
+
+Five CI/DevOps skills are available globally for pipeline debugging and optimization:
+
+| Skill | Trigger Phrases | Purpose |
+|-------|-----------------|---------|
+| `flaky-test-detector` | "flaky test", "intermittent failure" | Detect timing-sensitive test patterns |
+| `version-sync` | "version mismatch", "upgrade node" | Sync Node.js versions across files |
+| `ci-doctor` | "CI failing", "workflow broken" | Diagnose CI/CD pipeline issues |
+| `docker-optimizer` | "slow docker build", "optimize Dockerfile" | Optimize Dockerfile for speed/size |
+| `security-auditor` | "npm audit", "security vulnerability" | Run structured security audits |
+
+**Quick Commands**:
+
+```bash
+# Detect flaky test patterns
+npx tsx ~/.claude/skills/flaky-test-detector/scripts/index.ts
+
+# Check Node.js version consistency
+npx tsx ~/.claude/skills/version-sync/scripts/index.ts check
+
+# Diagnose CI issues
+npx tsx ~/.claude/skills/ci-doctor/scripts/index.ts
+
+# Analyze Dockerfile
+npx tsx ~/.claude/skills/docker-optimizer/scripts/index.ts
+
+# Security audit
+npx tsx ~/.claude/skills/security-auditor/scripts/index.ts
+```
+
+> **Spec**: See [docs/skills/ci-devops-skills.md](docs/skills/ci-devops-skills.md) for full specification.
+
 ### Two-Document Model
 
 | Document | Purpose | Location |
@@ -325,6 +358,7 @@ Project: Skillsmith (SMI-xxx issues)
 - Phase 3a: MCP Tool Wiring - COMPLETED
 - Phase 3b: Data Import & Testing - COMPLETED
 - Phase 3c: Documentation - COMPLETED
+- Phase 4.5: CI/DevOps Skills - COMPLETED (SMI-978 through SMI-990)
 
 ### Key Issues
 
