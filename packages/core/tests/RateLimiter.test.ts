@@ -10,6 +10,8 @@ import {
   InMemoryRateLimitStorage,
   RATE_LIMIT_PRESETS,
   createRateLimiterFromPreset,
+  RateLimitQueueTimeoutError,
+  RateLimitQueueFullError,
   type RateLimitConfig,
   type RateLimitStorage,
   type RateLimitMetrics,
@@ -935,6 +937,279 @@ describe('Rate Limiting Scenarios', () => {
       expect(result.allowed).toBe(false)
 
       vi.useRealTimers()
+    })
+  })
+})
+
+/**
+ * Queue functionality tests - SMI-1013
+ */
+describe('RateLimiter - Queue Support (SMI-1013)', () => {
+  let limiter: RateLimiter
+  let storage: InMemoryRateLimitStorage
+
+  beforeEach(() => {
+    storage = new InMemoryRateLimitStorage()
+  })
+
+  afterEach(() => {
+    storage.dispose()
+    if (limiter) {
+      limiter.dispose()
+    }
+  })
+
+  describe('waitForToken()', () => {
+    it('should return immediately when tokens are available', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+          enableQueue: true,
+          queueTimeoutMs: 5000,
+        },
+        storage
+      )
+
+      const result = await limiter.waitForToken('test-key')
+      expect(result.allowed).toBe(true)
+      expect(result.queued).toBe(false)
+      expect(result.remaining).toBe(9)
+    })
+
+    it('should queue request when no tokens available', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 2,
+          refillRate: 10, // Fast refill: 10 tokens/sec
+          windowMs: 60000,
+          enableQueue: true,
+          queueTimeoutMs: 5000,
+        },
+        storage
+      )
+
+      // Use all tokens
+      await limiter.waitForToken('test-key')
+      await limiter.waitForToken('test-key')
+
+      // Third request should be queued and wait for refill
+      const startTime = Date.now()
+      const result = await limiter.waitForToken('test-key')
+      const elapsed = Date.now() - startTime
+
+      expect(result.allowed).toBe(true)
+      expect(result.queued).toBe(true)
+      expect(result.queueWaitMs).toBeGreaterThan(0)
+      expect(elapsed).toBeGreaterThan(50) // Should have waited for tokens
+    })
+
+    it('should respect configured limit with sequential requests', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 3,
+          refillRate: 10, // Fast refill for quick test
+          windowMs: 60000,
+          enableQueue: true,
+          queueTimeoutMs: 5000,
+        },
+        storage
+      )
+
+      // Make 3 requests - should all succeed immediately
+      const r1 = await limiter.waitForToken('test-key')
+      const r2 = await limiter.waitForToken('test-key')
+      const r3 = await limiter.waitForToken('test-key')
+
+      expect(r1.allowed).toBe(true)
+      expect(r2.allowed).toBe(true)
+      expect(r3.allowed).toBe(true)
+
+      // These should not have been queued (immediate success)
+      expect(r1.queued).toBe(false)
+      expect(r2.queued).toBe(false)
+      expect(r3.queued).toBe(false)
+    })
+
+    it('should timeout when queue wait exceeds limit', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 1,
+          refillRate: 0.01, // Very slow: 0.01 tokens/sec (100 seconds per token)
+          windowMs: 60000,
+          enableQueue: true,
+          queueTimeoutMs: 100, // 100ms timeout
+        },
+        storage
+      )
+
+      // Use the only token
+      await limiter.waitForToken('test-key')
+
+      // Next request should timeout
+      await expect(limiter.waitForToken('test-key')).rejects.toThrow(RateLimitQueueTimeoutError)
+    })
+
+    it('should throw RateLimitQueueFullError when queue is at capacity', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 1,
+          refillRate: 0.01, // Very slow
+          windowMs: 60000,
+          enableQueue: true,
+          queueTimeoutMs: 60000,
+          maxQueueSize: 2,
+        },
+        storage
+      )
+
+      // Use the only token
+      await limiter.waitForToken('test-key')
+
+      // Queue 2 requests (max queue size) - add catch to prevent unhandled rejections
+      const p1 = limiter.waitForToken('test-key').catch(() => {})
+      const p2 = limiter.waitForToken('test-key').catch(() => {})
+
+      // Third queued request should fail immediately
+      await expect(limiter.waitForToken('test-key')).rejects.toThrow(RateLimitQueueFullError)
+
+      // Cleanup happens in afterEach
+    })
+
+    it('should fall back to checkLimit when queue is disabled', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 2,
+          refillRate: 0.01,
+          windowMs: 60000,
+          enableQueue: false, // Queue disabled
+        },
+        storage
+      )
+
+      // Use all tokens
+      await limiter.waitForToken('test-key')
+      await limiter.waitForToken('test-key')
+
+      // Third request should be denied immediately (no queuing)
+      const result = await limiter.waitForToken('test-key')
+      expect(result.allowed).toBe(false)
+    })
+  })
+
+  describe('getQueueStatus()', () => {
+    it('should return 0 for empty queue', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+          enableQueue: true,
+          queueTimeoutMs: 60000,
+        },
+        storage
+      )
+
+      // No requests queued
+      const status = limiter.getQueueStatus('test-key')
+      expect(status).toBe(0)
+    })
+
+    it('should return all queue info when no key specified', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+          enableQueue: true,
+          queueTimeoutMs: 60000,
+        },
+        storage
+      )
+
+      // No queued requests yet
+      const status = limiter.getQueueStatus() as {
+        totalQueued: number
+        queues: Map<string, number>
+      }
+      expect(status.totalQueued).toBe(0)
+      expect(status.queues.size).toBe(0)
+    })
+  })
+
+  describe('clearQueue()', () => {
+    it('should not throw when clearing empty queue', () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+          enableQueue: true,
+          queueTimeoutMs: 60000,
+        },
+        storage
+      )
+
+      // Clearing empty queue should not throw
+      expect(() => limiter.clearQueue('nonexistent-key')).not.toThrow()
+      expect(() => limiter.clearQueue()).not.toThrow()
+    })
+  })
+
+  describe('Queue with metrics', () => {
+    it('should track metrics for allowed requests with queue enabled', async () => {
+      limiter = new RateLimiter(
+        {
+          maxTokens: 5,
+          refillRate: 1,
+          windowMs: 60000,
+          enableQueue: true,
+          queueTimeoutMs: 5000,
+        },
+        storage
+      )
+
+      // Make requests that succeed immediately
+      await limiter.waitForToken('test-key')
+      await limiter.waitForToken('test-key')
+
+      const metrics = limiter.getMetrics('test-key') as RateLimitMetrics
+      expect(metrics).toBeDefined()
+      expect(metrics.allowed).toBe(2)
+      expect(metrics.blocked).toBe(0)
+    })
+  })
+
+  describe('dispose()', () => {
+    it('should stop queue processor interval on dispose', () => {
+      const localLimiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+          enableQueue: true,
+        },
+        storage
+      )
+
+      // Dispose should not throw
+      expect(() => localLimiter.dispose()).not.toThrow()
+    })
+
+    it('should clean up resources without queue enabled', () => {
+      const localLimiter = new RateLimiter(
+        {
+          maxTokens: 10,
+          refillRate: 1,
+          windowMs: 60000,
+          enableQueue: false,
+        },
+        storage
+      )
+
+      // Dispose should not throw
+      expect(() => localLimiter.dispose()).not.toThrow()
     })
   })
 })

@@ -1,10 +1,18 @@
 /**
  * Base Source Adapter
  * Abstract base class providing common functionality for source adapters
+ *
+ * SMI-1013: Enhanced with token bucket rate limiting and request queuing
  */
 
 import type { ISourceAdapter } from './ISourceAdapter.js'
 import { validateUrl } from '../validation/index.js'
+import {
+  RateLimiter,
+  InMemoryRateLimitStorage,
+  RATE_LIMIT_PRESETS,
+  type RateLimitConfig as TokenBucketConfig,
+} from '../security/RateLimiter.js'
 import type {
   SourceConfig,
   SourceLocation,
@@ -17,12 +25,22 @@ import type {
 } from './types.js'
 
 /**
- * Default rate limit configuration
+ * Default rate limit configuration (legacy window-based)
  */
 const DEFAULT_RATE_LIMIT: RateLimitConfig = {
   maxRequests: 30,
   windowMs: 60000,
   minDelayMs: 150,
+}
+
+/**
+ * Extended source config with token bucket rate limiting (SMI-1013)
+ */
+export interface ExtendedSourceConfig extends SourceConfig {
+  /** Use token bucket rate limiter with queue support (SMI-1013) */
+  useTokenBucket?: boolean
+  /** Token bucket configuration (overrides legacy rateLimit) */
+  tokenBucketConfig?: TokenBucketConfig
 }
 
 /**
@@ -41,7 +59,7 @@ const DEFAULT_RATE_LIMIT: RateLimitConfig = {
  * - doHealthCheck()
  */
 export abstract class BaseSourceAdapter implements ISourceAdapter {
-  readonly config: SourceConfig
+  readonly config: ExtendedSourceConfig
   readonly id: string
   readonly name: string
   readonly type: string
@@ -51,7 +69,10 @@ export abstract class BaseSourceAdapter implements ISourceAdapter {
   protected requestCount = 0
   protected windowStart = 0
 
-  constructor(config: SourceConfig) {
+  /** Token bucket rate limiter (SMI-1013) */
+  protected rateLimiter: RateLimiter | null = null
+
+  constructor(config: SourceConfig | ExtendedSourceConfig) {
     this.config = {
       ...config,
       rateLimit: config.rateLimit ?? DEFAULT_RATE_LIMIT,
@@ -59,6 +80,19 @@ export abstract class BaseSourceAdapter implements ISourceAdapter {
     this.id = config.id
     this.name = config.name
     this.type = config.type
+
+    // Initialize token bucket rate limiter if enabled (SMI-1013)
+    const extConfig = config as ExtendedSourceConfig
+    if (extConfig.useTokenBucket) {
+      const tokenBucketConfig: TokenBucketConfig = extConfig.tokenBucketConfig ?? {
+        ...RATE_LIMIT_PRESETS.STANDARD,
+        enableQueue: true,
+        queueTimeoutMs: 30000,
+        maxQueueSize: 100,
+        keyPrefix: `adapter:${config.id}`,
+      }
+      this.rateLimiter = new RateLimiter(tokenBucketConfig, new InMemoryRateLimitStorage())
+    }
   }
 
   /**
@@ -151,6 +185,12 @@ export abstract class BaseSourceAdapter implements ISourceAdapter {
    * Dispose of resources
    */
   async dispose(): Promise<void> {
+    // SMI-1013: Dispose rate limiter
+    if (this.rateLimiter) {
+      this.rateLimiter.dispose()
+      this.rateLimiter = null
+    }
+
     await this.doDispose()
     this.initialized = false
   }
@@ -197,10 +237,21 @@ export abstract class BaseSourceAdapter implements ISourceAdapter {
 
   /**
    * Make a rate-limited fetch request
+   *
+   * SMI-1013: Uses token bucket rate limiter with queue support when enabled,
+   * otherwise falls back to legacy window-based rate limiting.
    */
   protected async fetchWithRateLimit(url: string, options?: RequestInit): Promise<Response> {
     validateUrl(url)
-    await this.waitForRateLimit()
+
+    // SMI-1013: Use token bucket rate limiter if available
+    if (this.rateLimiter) {
+      // waitForToken will queue the request if rate limited
+      await this.rateLimiter.waitForToken(this.id)
+    } else {
+      // Legacy window-based rate limiting
+      await this.waitForRateLimit()
+    }
 
     const headers = new Headers(options?.headers)
 
@@ -220,6 +271,26 @@ export abstract class BaseSourceAdapter implements ISourceAdapter {
     this.updateRateLimitFromResponse(response)
 
     return response
+  }
+
+  /**
+   * Get rate limiter status (SMI-1013)
+   *
+   * Returns information about the token bucket rate limiter state,
+   * including queue status if queuing is enabled.
+   */
+  getRateLimiterStatus(): {
+    usingTokenBucket: boolean
+    queueStatus?: { totalQueued: number; queues: Map<string, number> } | number
+  } {
+    if (!this.rateLimiter) {
+      return { usingTokenBucket: false }
+    }
+
+    return {
+      usingTokenBucket: true,
+      queueStatus: this.rateLimiter.getQueueStatus(),
+    }
   }
 
   /**

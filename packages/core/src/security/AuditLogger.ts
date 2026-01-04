@@ -81,6 +81,23 @@ export interface AuditQueryFilter {
 }
 
 /**
+ * Configuration options for AuditLogger
+ */
+export interface AuditLoggerConfig {
+  /**
+   * Enable automatic cleanup of old logs on initialization
+   * @default false
+   */
+  autoCleanup?: boolean
+
+  /**
+   * Number of days to retain logs (used with autoCleanup)
+   * @default 90
+   */
+  retentionDays?: number
+}
+
+/**
  * Audit statistics
  */
 export interface AuditStats {
@@ -119,15 +136,31 @@ export interface AuditStats {
  */
 export class AuditLogger {
   private db: DatabaseType
+  private config: AuditLoggerConfig
   private stmts!: {
     insert: { run: (...args: unknown[]) => { changes: number } }
     query: { all: (...args: unknown[]) => AuditLogRow[] }
   }
 
-  constructor(db: DatabaseType) {
+  constructor(db: DatabaseType, config: AuditLoggerConfig = {}) {
     this.db = db
+    this.config = {
+      autoCleanup: config.autoCleanup ?? false,
+      retentionDays: config.retentionDays ?? 90,
+    }
     this.ensureTableExists()
     this.prepareStatements()
+
+    // Run auto-cleanup if enabled
+    if (this.config.autoCleanup) {
+      const deleted = this.cleanupOldLogs(this.config.retentionDays!)
+      if (deleted > 0) {
+        logger.info('Auto-cleanup completed on initialization', {
+          deleted,
+          retentionDays: this.config.retentionDays,
+        })
+      }
+    }
   }
 
   /**
@@ -350,6 +383,63 @@ export class AuditLogger {
       logger.error('Failed to cleanup audit logs', err as Error, {
         olderThan: olderThan.toISOString(),
       })
+      throw err
+    }
+  }
+
+  /**
+   * Clean up old audit logs based on retention policy
+   *
+   * SMI-1012: Audit log retention policy
+   *
+   * @param retentionDays - Number of days to retain logs (default: 90)
+   * @returns Number of deleted rows
+   *
+   * @example
+   * ```typescript
+   * // Delete logs older than 90 days (default)
+   * const deleted = auditLogger.cleanupOldLogs()
+   *
+   * // Delete logs older than 30 days
+   * const deleted = auditLogger.cleanupOldLogs(30)
+   * ```
+   */
+  cleanupOldLogs(retentionDays: number = 90): number {
+    const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000)
+
+    try {
+      const deleted = this.cleanup(cutoffDate)
+
+      // Meta-logging: Log the cleanup operation using the audit logger itself
+      this.log({
+        event_type: 'config_change',
+        actor: 'system',
+        resource: 'audit_logs',
+        action: 'cleanup',
+        result: 'success',
+        metadata: {
+          retentionDays,
+          cutoffDate: cutoffDate.toISOString(),
+          deletedCount: deleted,
+        },
+      })
+
+      return deleted
+    } catch (err) {
+      // Log failed cleanup attempt
+      this.log({
+        event_type: 'config_change',
+        actor: 'system',
+        resource: 'audit_logs',
+        action: 'cleanup',
+        result: 'error',
+        metadata: {
+          retentionDays,
+          cutoffDate: cutoffDate.toISOString(),
+          error: (err as Error).message,
+        },
+      })
+
       throw err
     }
   }

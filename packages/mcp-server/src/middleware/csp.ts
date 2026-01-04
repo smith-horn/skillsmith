@@ -24,8 +24,22 @@ export interface CspDirectives {
   'form-action'?: string[]
   'frame-ancestors'?: string[]
   'base-uri'?: string[]
+  'manifest-src'?: string[]
+  sandbox?: string[]
+  'report-uri'?: string[]
+  'report-to'?: string
+  'require-trusted-types-for'?: string[]
   'upgrade-insecure-requests'?: boolean
   'block-all-mixed-content'?: boolean
+}
+
+/**
+ * CSP validation result with details
+ */
+export interface CspValidationResult {
+  valid: boolean
+  warnings: string[]
+  errors: string[]
 }
 
 /**
@@ -66,6 +80,8 @@ export const STRICT_CSP_DIRECTIVES: CspDirectives = {
   'form-action': ["'none'"],
   'frame-ancestors': ["'none'"],
   'base-uri': ["'none'"],
+  'manifest-src': ["'self'"],
+  'require-trusted-types-for': ["'script'"],
   'upgrade-insecure-requests': true,
   'block-all-mixed-content': true,
 }
@@ -93,6 +109,9 @@ export function buildCspHeader(directives: CspDirectives, nonce?: string): strin
       if (value) {
         parts.push(directive)
       }
+    } else if (typeof value === 'string') {
+      // Handle string directives like report-to
+      parts.push(`${directive} ${value}`)
     } else if (Array.isArray(value)) {
       const sources = [...value]
 
@@ -114,29 +133,84 @@ export function buildCspHeader(directives: CspDirectives, nonce?: string): strin
  * @returns true if valid, false otherwise
  */
 export function validateCspHeader(csp: string): boolean {
-  if (!csp || typeof csp !== 'string') {
-    return false
+  const result = validateCspHeaderDetailed(csp)
+  return result.valid
+}
+
+/**
+ * Validates a CSP header string with detailed results
+ * @param csp - The CSP header string to validate
+ * @returns Detailed validation result with warnings and errors
+ */
+export function validateCspHeaderDetailed(csp: string): CspValidationResult {
+  const result: CspValidationResult = {
+    valid: true,
+    warnings: [],
+    errors: [],
   }
 
-  // Check for common issues
+  if (!csp || typeof csp !== 'string') {
+    result.valid = false
+    result.errors.push('CSP header must be a non-empty string')
+    return result
+  }
+
   const lowercaseCsp = csp.toLowerCase()
 
   // Should not allow 'unsafe-eval' in production
   if (lowercaseCsp.includes("'unsafe-eval'")) {
+    result.warnings.push('unsafe-eval detected - allows arbitrary code execution')
     console.warn('[CSP] Warning: unsafe-eval detected in CSP policy')
   }
 
   // Should not allow 'unsafe-inline' without nonces
   if (lowercaseCsp.includes("'unsafe-inline'") && !lowercaseCsp.includes("'nonce-")) {
+    result.warnings.push('unsafe-inline without nonce detected - vulnerable to XSS')
     console.warn('[CSP] Warning: unsafe-inline without nonce detected in CSP policy')
   }
 
-  // Should have at least one directive
-  if (!csp.includes('-src') && !csp.includes('upgrade-insecure-requests')) {
-    return false
+  // Check for wildcard sources in sensitive directives
+  const sensitiveDirectives = ['script-src', 'style-src', 'object-src', 'base-uri']
+  for (const directive of sensitiveDirectives) {
+    const directiveMatch = lowercaseCsp.match(new RegExp(`${directive}\\s+([^;]+)`))
+    if (directiveMatch && directiveMatch[1].includes('*')) {
+      result.warnings.push(`Wildcard (*) in ${directive} is overly permissive`)
+    }
   }
 
-  return true
+  // Check for data: URI in script-src (XSS risk)
+  if (lowercaseCsp.includes('script-src') && lowercaseCsp.includes('data:')) {
+    const scriptSrcMatch = lowercaseCsp.match(/script-src\s+([^;]+)/)
+    if (scriptSrcMatch && scriptSrcMatch[1].includes('data:')) {
+      result.warnings.push('data: URI in script-src allows XSS attacks')
+    }
+  }
+
+  // Verify object-src is restricted (Flash/plugin attacks)
+  if (!lowercaseCsp.includes("object-src 'none'") && !lowercaseCsp.includes("object-src 'self'")) {
+    if (lowercaseCsp.includes('object-src')) {
+      result.warnings.push('object-src should be restricted to prevent plugin-based attacks')
+    }
+  }
+
+  // Check for missing default-src (fallback for other directives)
+  if (!lowercaseCsp.includes('default-src')) {
+    result.warnings.push(
+      'Missing default-src - other directives may fall back to permissive defaults'
+    )
+  }
+
+  // Should have at least one directive
+  if (
+    !csp.includes('-src') &&
+    !csp.includes('upgrade-insecure-requests') &&
+    !csp.includes('sandbox')
+  ) {
+    result.valid = false
+    result.errors.push('CSP must contain at least one valid directive')
+  }
+
+  return result
 }
 
 /**
