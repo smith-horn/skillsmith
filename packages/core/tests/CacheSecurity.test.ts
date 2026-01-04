@@ -1,9 +1,11 @@
 /**
  * SMI-683 & SMI-684: Security and Concurrency Tests for Tiered Cache
  * TDD approach: These tests are written FIRST and should FAIL until fixes are implemented
+ *
+ * Uses fake timers for deterministic date testing (SMI-992)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
@@ -15,6 +17,10 @@ import {
   type SearchResult,
   CacheManager,
 } from '../src/cache/index.js'
+import { FIXED_TIMESTAMP, setupFakeTimers, cleanupFakeTimers } from './test-utils.js'
+
+// Counter for unique paths
+let testPathCounter = 0
 
 // Helper functions
 function createTestResults(count: number): SearchResult[] {
@@ -28,9 +34,10 @@ function createTestResults(count: number): SearchResult[] {
 }
 
 function getTempDbPath(): string {
+  testPathCounter++
   return path.join(
     os.tmpdir(),
-    `test-cache-security-${Date.now()}-${Math.random().toString(36).slice(2)}.db`
+    `test-cache-security-${FIXED_TIMESTAMP}-${testPathCounter.toString(36)}.db`
   )
 }
 
@@ -47,15 +54,23 @@ function createSerializedEntry(dataJson: string): SerializedCacheEntry {
     key: 'test-key',
     data_json: dataJson,
     total_count: 1,
-    created_at: Date.now(),
-    expires_at: Date.now() + TTLTier.STANDARD,
+    created_at: FIXED_TIMESTAMP,
+    expires_at: FIXED_TIMESTAMP + TTLTier.STANDARD,
     hit_count: 0,
-    last_accessed_at: Date.now(),
+    last_accessed_at: FIXED_TIMESTAMP,
     ttl_tier: TTLTier.STANDARD,
   }
 }
 
 describe('SMI-684: Prototype Pollution Detection', () => {
+  beforeEach(() => {
+    setupFakeTimers()
+  })
+
+  afterEach(() => {
+    cleanupFakeTimers()
+  })
+
   describe('deserializeCacheEntry security', () => {
     it('should detect __proto__ with unicode escape bypass', () => {
       // Unicode escape: \u005f = underscore, so \u005f\u005fproto\u005f\u005f = __proto__

@@ -2,20 +2,30 @@
  * AnalyticsRepository Tests
  *
  * Tests for Epic 3 and Epic 4 analytics infrastructure
+ * Uses fake timers for deterministic date testing (SMI-992)
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import type { Database as DatabaseType } from 'better-sqlite3'
 import { initializeAnalyticsSchema } from '../src/analytics/schema.js'
 import { AnalyticsRepository } from '../src/analytics/AnalyticsRepository.js'
 import type { UsageEventInput, ExperimentInput, OutcomeInput } from '../src/analytics/types.js'
+import {
+  FIXED_DATE,
+  FIXED_DATE_ISO,
+  FIXED_TIMESTAMP,
+  ONE_DAY_MS,
+  setupFakeTimers,
+  cleanupFakeTimers,
+} from './test-utils.js'
 
 describe('AnalyticsRepository', () => {
   let db: DatabaseType
   let repo: AnalyticsRepository
 
   beforeEach(() => {
+    setupFakeTimers()
     db = new Database(':memory:')
     initializeAnalyticsSchema(db)
     repo = new AnalyticsRepository(db)
@@ -23,6 +33,7 @@ describe('AnalyticsRepository', () => {
 
   afterEach(() => {
     if (db) db.close()
+    cleanupFakeTimers()
   })
 
   describe('Usage Events', () => {
@@ -78,11 +89,9 @@ describe('AnalyticsRepository', () => {
     })
 
     it('should get usage events for a skill', () => {
-      const now = new Date()
-      const yesterday = new Date(now)
-      yesterday.setDate(yesterday.getDate() - 1)
-      const tomorrow = new Date(now)
-      tomorrow.setDate(tomorrow.getDate() + 1)
+      const now = FIXED_DATE
+      const yesterday = new Date(FIXED_TIMESTAMP - ONE_DAY_MS)
+      const tomorrow = new Date(FIXED_TIMESTAMP + ONE_DAY_MS)
 
       // Record multiple events
       repo.recordUsageEvent({
@@ -115,11 +124,9 @@ describe('AnalyticsRepository', () => {
     })
 
     it('should get usage events for a user', () => {
-      const now = new Date()
-      const yesterday = new Date(now)
-      yesterday.setDate(yesterday.getDate() - 1)
-      const tomorrow = new Date(now)
-      tomorrow.setDate(tomorrow.getDate() + 1)
+      const now = FIXED_DATE
+      const yesterday = new Date(FIXED_TIMESTAMP - ONE_DAY_MS)
+      const tomorrow = new Date(FIXED_TIMESTAMP + ONE_DAY_MS)
 
       // Record multiple events
       repo.recordUsageEvent({
@@ -161,8 +168,7 @@ describe('AnalyticsRepository', () => {
       })
 
       // Manually update timestamp to 31 days ago
-      const thirtyOneDaysAgo = new Date()
-      thirtyOneDaysAgo.setDate(thirtyOneDaysAgo.getDate() - 31)
+      const thirtyOneDaysAgo = new Date(FIXED_TIMESTAMP - 31 * ONE_DAY_MS)
       db.prepare('UPDATE skill_usage_events SET timestamp = ? WHERE id = ?').run(
         thirtyOneDaysAgo.toISOString(),
         oldEvent.id
@@ -402,7 +408,7 @@ describe('AnalyticsRepository', () => {
         avgValueScore: 0.85,
         estimatedTimeSaved: 2250,
         estimatedValueUsd: 4500,
-        computedAt: new Date().toISOString(),
+        computedAt: FIXED_DATE_ISO,
       })
 
       expect(metrics.id).toBeDefined()
@@ -423,7 +429,7 @@ describe('AnalyticsRepository', () => {
         avgValueScore: 0.85,
         estimatedTimeSaved: 2250,
         estimatedValueUsd: 4500,
-        computedAt: new Date().toISOString(),
+        computedAt: FIXED_DATE_ISO,
       })
 
       repo.storeROIMetrics({
@@ -437,7 +443,7 @@ describe('AnalyticsRepository', () => {
         avgValueScore: 0.9,
         estimatedTimeSaved: 2750,
         estimatedValueUsd: 5500,
-        computedAt: new Date().toISOString(),
+        computedAt: FIXED_DATE_ISO,
       })
 
       const metrics = repo.getROIMetrics('daily', '2025-01-01', '2025-01-03')
@@ -459,7 +465,7 @@ describe('AnalyticsRepository', () => {
         avgValueScore: 0.9,
         estimatedTimeSaved: 225,
         estimatedValueUsd: 450,
-        computedAt: new Date().toISOString(),
+        computedAt: FIXED_DATE_ISO,
       })
 
       repo.storeROIMetrics({
@@ -474,7 +480,7 @@ describe('AnalyticsRepository', () => {
         avgValueScore: 0.8,
         estimatedTimeSaved: 100,
         estimatedValueUsd: 200,
-        computedAt: new Date().toISOString(),
+        computedAt: FIXED_DATE_ISO,
       })
 
       const metrics = repo.getEntityROIMetrics('user-1', '2025-01-01', '2025-01-03')
