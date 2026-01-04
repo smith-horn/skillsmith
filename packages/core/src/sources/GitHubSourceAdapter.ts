@@ -7,6 +7,12 @@
 
 import { BaseSourceAdapter } from './BaseSourceAdapter.js'
 import { validateUrl } from '../validation/index.js'
+import {
+  decodeBase64Content,
+  isRateLimitStatus,
+  SKILL_FILE_PATHS as SHARED_SKILL_FILE_PATHS,
+} from './shared.js'
+import { ApiError } from '../errors/SkillsmithError.js'
 import type {
   SourceConfig,
   SourceLocation,
@@ -85,9 +91,9 @@ interface GitHubFileResponse {
 const DEFAULT_TOPICS = ['claude-code-skill', 'claude-code', 'anthropic-claude', 'claude-skill']
 
 /**
- * Default skill file paths to check
+ * Default skill file paths to check (use shared paths, SMI-879)
  */
-const SKILL_FILE_PATHS = ['SKILL.md', 'skill.md', '.claude/skills/SKILL.md']
+const SKILL_FILE_PATHS = SHARED_SKILL_FILE_PATHS
 
 /**
  * GitHub Source Adapter
@@ -164,10 +170,16 @@ export class GitHubSourceAdapter extends BaseSourceAdapter {
     const response = await this.fetchWithRateLimit(url)
 
     if (!response.ok) {
-      if (response.status === 403 || response.status === 429) {
-        throw new Error('API rate limit exceeded')
+      if (isRateLimitStatus(response.status)) {
+        throw new ApiError('GitHub API rate limit exceeded', {
+          statusCode: response.status,
+          url,
+        })
       }
-      throw new Error(`GitHub API error: ${response.status}`)
+      throw new ApiError(`GitHub API error: ${response.status}`, {
+        statusCode: response.status,
+        url,
+      })
     }
 
     const data = (await response.json()) as GitHubSearchResponse
@@ -192,9 +204,15 @@ export class GitHubSourceAdapter extends BaseSourceAdapter {
 
     if (!response.ok) {
       if (response.status === 404) {
-        throw new Error(`Repository not found: ${location.owner}/${location.repo}`)
+        throw new ApiError(`Repository not found: ${location.owner}/${location.repo}`, {
+          statusCode: 404,
+          url,
+        })
       }
-      throw new Error(`GitHub API error: ${response.status}`)
+      throw new ApiError(`GitHub API error: ${response.status}`, {
+        statusCode: response.status,
+        url,
+      })
     }
 
     const data = (await response.json()) as GitHubApiRepository
@@ -218,7 +236,8 @@ export class GitHubSourceAdapter extends BaseSourceAdapter {
 
         if (response.ok) {
           const data = (await response.json()) as GitHubFileResponse
-          const rawContent = this.decodeContent(data.content, data.encoding)
+          // SMI-879: Use shared decodeBase64Content utility
+          const rawContent = decodeBase64Content(data.content, data.encoding)
 
           return {
             rawContent,
@@ -307,10 +326,16 @@ export class GitHubSourceAdapter extends BaseSourceAdapter {
     const response = await this.fetchWithRateLimit(url)
 
     if (!response.ok) {
-      if (response.status === 403 || response.status === 429) {
-        throw new Error('API rate limit exceeded')
+      if (isRateLimitStatus(response.status)) {
+        throw new ApiError('GitHub API rate limit exceeded', {
+          statusCode: response.status,
+          url,
+        })
       }
-      throw new Error(`GitHub API error: ${response.status}`)
+      throw new ApiError(`GitHub API error: ${response.status}`, {
+        statusCode: response.status,
+        url,
+      })
     }
 
     const data = (await response.json()) as GitHubSearchResponse
@@ -350,21 +375,7 @@ export class GitHubSourceAdapter extends BaseSourceAdapter {
     }
   }
 
-  /**
-   * Decode base64 content from GitHub API
-   */
-  private decodeContent(content: string, encoding: string): string {
-    if (encoding === 'base64') {
-      // Handle base64 encoding (Node.js and browser compatible)
-      const base64 = content.replace(/\n/g, '')
-      if (typeof Buffer !== 'undefined') {
-        return Buffer.from(base64, 'base64').toString('utf-8')
-      }
-      // Browser fallback
-      return atob(base64)
-    }
-    return content
-  }
+  // SMI-879: decodeContent removed - using shared decodeBase64Content utility
 }
 
 /**

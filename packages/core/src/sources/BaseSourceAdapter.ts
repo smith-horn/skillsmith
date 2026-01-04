@@ -13,6 +13,7 @@ import {
   RATE_LIMIT_PRESETS,
   type RateLimitConfig as TokenBucketConfig,
 } from '../security/RateLimiter.js'
+import { fetchWithRetry, isRetryableStatus, type RetryConfig } from '../utils/retry.js'
 import type {
   SourceConfig,
   SourceLocation,
@@ -41,6 +42,10 @@ export interface ExtendedSourceConfig extends SourceConfig {
   useTokenBucket?: boolean
   /** Token bucket configuration (overrides legacy rateLimit) */
   tokenBucketConfig?: TokenBucketConfig
+  /** Enable retry logic for transient network failures (SMI-880) */
+  enableRetry?: boolean
+  /** Retry configuration (SMI-880) */
+  retryConfig?: RetryConfig
 }
 
 /**
@@ -236,10 +241,13 @@ export abstract class BaseSourceAdapter implements ISourceAdapter {
   }
 
   /**
-   * Make a rate-limited fetch request
+   * Make a rate-limited fetch request with retry support
    *
    * SMI-1013: Uses token bucket rate limiter with queue support when enabled,
    * otherwise falls back to legacy window-based rate limiting.
+   *
+   * SMI-880: Automatically retries on transient network failures (ETIMEDOUT,
+   * ECONNRESET, 5xx) with exponential backoff when enableRetry is true.
    */
   protected async fetchWithRateLimit(url: string, options?: RequestInit): Promise<Response> {
     validateUrl(url)
@@ -262,10 +270,21 @@ export abstract class BaseSourceAdapter implements ISourceAdapter {
       headers.set('Authorization', `Basic ${this.config.auth.credentials}`)
     }
 
-    const response = await fetch(url, {
+    const fetchOptions: RequestInit = {
       ...options,
       headers,
-    })
+    }
+
+    // SMI-880: Use retry logic if explicitly enabled
+    const extendedConfig = this.config as ExtendedSourceConfig
+    let response: Response
+
+    if (extendedConfig.enableRetry === true) {
+      // Opt-in retry for resilience against transient failures
+      response = await fetchWithRetry(url, fetchOptions, extendedConfig.retryConfig)
+    } else {
+      response = await fetch(url, fetchOptions)
+    }
 
     // Update rate limit info from response headers if available
     this.updateRateLimitFromResponse(response)

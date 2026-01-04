@@ -256,29 +256,52 @@ export class SearchService {
 
   /**
    * Build FTS5 query with proper escaping
+   *
+   * SMI-1034: Enhanced to filter empty tokens after escaping special characters.
    */
   private buildFtsQuery(query: string): string {
-    // Handle special FTS5 syntax
-    if (
-      query.includes('"') ||
-      query.includes('AND') ||
-      query.includes('OR') ||
-      query.includes('NOT')
-    ) {
+    // Handle special FTS5 syntax (advanced users can use raw FTS5 queries)
+    // Only pass through if quotes are balanced (phrase query) and operators are space-separated
+    const quoteCount = (query.match(/"/g) || []).length
+    const hasBalancedQuotes = quoteCount > 0 && quoteCount % 2 === 0
+    const hasOperators =
+      query.includes(' AND ') || query.includes(' OR ') || query.includes(' NOT ')
+
+    if (hasBalancedQuotes || hasOperators) {
       return query
     }
 
-    // Split into tokens and escape each
-    const tokens = query.trim().split(/\s+/).filter(Boolean)
-    return tokens.map((t) => this.escapeFtsToken(t) + '*').join(' ')
+    // Split into tokens, escape each, and filter empty results
+    const tokens = query
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((t) => this.escapeFtsToken(t))
+      .filter((t) => t.length > 0) // Remove empty tokens after escaping
+
+    // Return empty string if no valid tokens remain
+    if (tokens.length === 0) {
+      return ''
+    }
+
+    return tokens.map((t) => t + '*').join(' ')
   }
 
   /**
    * Escape a single FTS token
+   *
+   * SMI-1034: Escape FTS5 special characters to prevent syntax errors.
+   * FTS5 special characters include: . " ' ( ) [ ] { } * ^ -
+   * The hyphen `-` is the NOT operator in FTS5, so it must be escaped too.
+   * These are replaced with spaces to ensure queries don't fail.
    */
   private escapeFtsToken(token: string): string {
-    // Escape special characters
-    return token.replace(/["-]/g, (match) => `"${match}"`)
+    // Remove FTS5 special syntax characters that would cause parse errors
+    // Including hyphen which is the NOT operator in FTS5
+    return token
+      .replace(/[."'()[\]{}*^-]/g, ' ') // Replace special chars with space (including hyphen)
+      .replace(/\s+/g, ' ') // Collapse multiple spaces
+      .trim()
   }
 
   /**

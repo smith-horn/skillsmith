@@ -85,6 +85,25 @@ export {
   type ErrorResponse,
 } from './errors.js'
 
+/**
+ * Enhanced error classes with cause chaining (SMI-881)
+ *
+ * Error class versioning:
+ * - `SkillsmithError` (legacy): Simple error with code property
+ * - `SkillsmithErrorV2` (new): Enhanced with cause chaining, context object, getErrorChain() method
+ */
+export {
+  SkillsmithError as SkillsmithErrorV2,
+  NetworkError,
+  ApiError,
+  ValidationError,
+  SkillError,
+  ConfigurationError,
+  wrapError,
+  getErrorMessage,
+  isSkillsmithError,
+} from './errors/index.js'
+
 // MCP types (SMI-581, SMI-582)
 export {
   TrustTierDescriptions,
@@ -272,6 +291,10 @@ export {
   initializeTelemetry,
   shutdownTelemetry,
   LATENCY_BUCKETS,
+  // SMI-1018: Prometheus metrics export
+  exportToPrometheus,
+  getPrometheusMetrics,
+  createPrometheusHandler,
   type TracerConfig,
   type SpanAttributes,
   type SpanWrapper,
@@ -281,6 +304,7 @@ export {
   type Histogram,
   type Gauge,
   type MetricsSnapshot,
+  type PrometheusExportOptions,
 } from './telemetry/index.js'
 
 // Codebase Analysis (SMI-600)
