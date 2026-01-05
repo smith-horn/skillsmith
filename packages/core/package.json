@@ -70,5 +70,8 @@
     "mcp",
     "llm",
     "anthropic"
-  ]
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  }
 }

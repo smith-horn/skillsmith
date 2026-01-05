@@ -65,11 +65,11 @@ interface EnterpriseValidationResult {
 }
 
 /**
- * License validator interface (for optional enterprise package integration)
+ * License validator instance type from enterprise package
+ * Uses duck typing to avoid interface drift with the actual implementation
  */
-export interface LicenseValidator {
+type EnterpriseValidator = {
   validate(licenseKey: string): Promise<EnterpriseValidationResult>
-  hasFeature(licenseKey: string, feature: string): Promise<boolean>
 }
 
 /**
@@ -77,7 +77,7 @@ export interface LicenseValidator {
  */
 function isEnterpriseModule(
   mod: unknown
-): mod is { LicenseValidator: new () => LicenseValidator } {
+): mod is { LicenseValidator: new () => EnterpriseValidator } {
   return (
     typeof mod === 'object' &&
     mod !== null &&
@@ -90,7 +90,7 @@ function isEnterpriseModule(
  * Attempt to load the enterprise license validator
  * Returns null if the package is not installed
  */
-async function tryLoadEnterpriseValidator(): Promise<LicenseValidator | null> {
+async function tryLoadEnterpriseValidator(): Promise<EnterpriseValidator | null> {
   try {
     // Dynamic import with variable to prevent TypeScript from resolving at compile time
     // This is an optional peer dependency that may not be installed
@@ -156,7 +156,7 @@ function getExpirationWarning(expiresAt?: Date): string | undefined {
  * License middleware context
  */
 export interface LicenseMiddlewareContext {
-  validator: LicenseValidator | null
+  validator: EnterpriseValidator | null
   licenseKey: string | undefined
   cachedLicense: LicenseInfo | null
   cacheExpiry: number
@@ -211,9 +211,9 @@ export function createLicenseMiddleware(options?: {
   }
 
   // Initialize validator lazily
-  let validatorPromise: Promise<LicenseValidator | null> | null = null
+  let validatorPromise: Promise<EnterpriseValidator | null> | null = null
 
-  async function getValidator(): Promise<LicenseValidator | null> {
+  async function getValidator(): Promise<EnterpriseValidator | null> {
     if (!validatorPromise) {
       validatorPromise = tryLoadEnterpriseValidator()
     }

@@ -1,6 +1,6 @@
 # Skillsmith Enterprise License
 
-Copyright (c) 2024 Smith Horn Group Ltd. All rights reserved.
+Copyright (c) 2024-2025 Smith Horn Group Ltd. All rights reserved.
 
 ## Terms and Conditions
 

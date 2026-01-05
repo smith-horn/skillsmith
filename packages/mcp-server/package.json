@@ -56,5 +56,8 @@
     "llm",
     "anthropic",
     "model-context-protocol"
-  ]
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  }
 }

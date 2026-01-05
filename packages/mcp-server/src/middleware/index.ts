@@ -30,7 +30,6 @@ export {
   type LicenseMiddlewareContext,
   type LicenseValidationResult,
   type LicenseInfo,
-  type LicenseValidator,
   type FeatureFlag,
   TOOL_FEATURES,
   FEATURE_DISPLAY_NAMES,

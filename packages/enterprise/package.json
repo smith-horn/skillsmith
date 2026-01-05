@@ -67,5 +67,8 @@
     "sso",
     "rbac",
     "audit"
-  ]
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  }
 }

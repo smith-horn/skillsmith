@@ -34,6 +34,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
@@ -67,6 +68,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
@@ -95,6 +97,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
@@ -123,6 +126,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
@@ -153,6 +157,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: 'https://npm.pkg.github.com'
           scope: '@skillsmith'
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
