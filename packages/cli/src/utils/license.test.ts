@@ -113,20 +113,19 @@ describe('license utilities', () => {
       _resetEnterpriseValidatorCache()
     })
 
-    it('uses enterprise validator when available for valid license', async () => {
-      // Note: This test documents expected behavior when enterprise package is available
-      // In practice, the dynamic import approach makes mocking challenging in vitest
-      // When enterprise package IS available, getLicenseStatus would use the
-      // LicenseValidator.validate() method for proper RS256 JWT verification
+    it('falls back to community tier when enterprise validator cannot validate', async () => {
+      // Note: This test verifies fallback behavior when enterprise validation fails
+      // Due to dynamic import mocking limitations in vitest, the enterprise package
+      // cannot be properly mocked to return validated results. This test confirms
+      // the graceful fallback to community tier when validation cannot complete.
 
       process.env['SKILLSMITH_LICENSE_KEY'] = 'valid-jwt-token'
 
       // Since we can't easily mock dynamic imports in vitest without module reset,
-      // we test the behavior through the getLicenseStatusLegacy which uses the old logic
-      // The main getLicenseStatus will attempt to load enterprise and fall back gracefully
+      // getLicenseStatus will attempt to load enterprise and fall back gracefully
       const status = await getLicenseStatus()
 
-      // Without actual enterprise package, falls back to community
+      // Without actual enterprise package validation, falls back to community
       expect(status.tier).toBe('community')
     })
 

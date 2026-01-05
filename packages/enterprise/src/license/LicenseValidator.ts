@@ -63,7 +63,10 @@ const DEFAULT_OPTIONS: Required<Omit<LicenseValidatorOptions, 'publicKey'>> = {
  * Key type returned by jose import functions (importSPKI, importJWK)
  * Defined locally to avoid jose version compatibility issues
  */
-type JoseKeyLike = Awaited<ReturnType<typeof jose.importSPKI>> | Uint8Array
+type JoseKeyLike =
+  | Awaited<ReturnType<typeof jose.importSPKI>>
+  | Awaited<ReturnType<typeof jose.importJWK>>
+  | Uint8Array
 
 export class LicenseValidator {
   private readonly options: Required<Omit<LicenseValidatorOptions, 'publicKey'>> & {
