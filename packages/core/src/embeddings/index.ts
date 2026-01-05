@@ -1,6 +1,7 @@
 /**
  * SMI-584: Semantic Embeddings Service
  * SMI-754: Added fallback mode for deterministic mock embeddings
+ * SMI-1127: Lazy loading of @xenova/transformers to avoid CLI crashes from sharp
  *
  * Uses all-MiniLM-L6-v2 model for fast, accurate skill embeddings.
  * Supports fallback mode for tests and when model unavailable.
@@ -8,11 +9,51 @@
  * @see ADR-009: Embedding Service Fallback Strategy
  */
 
-import { pipeline } from '@xenova/transformers'
 import Database from 'better-sqlite3'
 
-// Type for feature extraction pipeline output
-type FeatureExtractionPipeline = Awaited<ReturnType<typeof pipeline<'feature-extraction'>>>
+// Lazy-loaded pipeline function - only loaded when embeddings are actually used
+let pipelineModule: typeof import('@xenova/transformers') | null = null
+let pipelineLoadPromise: Promise<typeof import('@xenova/transformers')> | null = null
+let pipelineLoadFailed = false
+let pipelineLoadError: Error | null = null
+
+/**
+ * Lazily load the @xenova/transformers module.
+ * This avoids loading sharp at startup, which causes CLI crashes.
+ */
+async function loadTransformersModule(): Promise<typeof import('@xenova/transformers') | null> {
+  // Return cached module if already loaded
+  if (pipelineModule) {
+    return pipelineModule
+  }
+
+  // Return null if we already tried and failed
+  if (pipelineLoadFailed) {
+    return null
+  }
+
+  // Start loading if not already in progress
+  if (!pipelineLoadPromise) {
+    pipelineLoadPromise = import('@xenova/transformers')
+      .then((mod) => {
+        pipelineModule = mod
+        return mod
+      })
+      .catch((err) => {
+        pipelineLoadFailed = true
+        pipelineLoadError = err instanceof Error ? err : new Error(String(err))
+        return null as unknown as typeof import('@xenova/transformers')
+      })
+  }
+
+  const result = await pipelineLoadPromise
+  return result || null
+}
+
+// Type for feature extraction pipeline output - defined without importing
+type FeatureExtractionPipeline = {
+  (text: string, options?: { pooling?: string; normalize?: boolean }): Promise<{ data: Float32Array }>
+}
 
 export interface EmbeddingResult {
   skillId: string
@@ -163,6 +204,36 @@ export class EmbeddingService {
   }
 
   /**
+   * Check if the transformers module is available without loading it.
+   * This is a synchronous check that returns the current known state.
+   *
+   * @returns true if module is loaded, false if loading failed, undefined if not yet attempted
+   */
+  static isTransformersAvailable(): boolean | undefined {
+    if (pipelineModule) return true
+    if (pipelineLoadFailed) return false
+    return undefined
+  }
+
+  /**
+   * Check if embeddings functionality is available.
+   * Attempts to load the transformers module if not yet loaded.
+   *
+   * @returns true if embeddings can be used, false otherwise
+   */
+  static async checkAvailability(): Promise<boolean> {
+    const mod = await loadTransformersModule()
+    return mod !== null
+  }
+
+  /**
+   * Get the error that occurred when loading the transformers module, if any.
+   */
+  static getTransformersLoadError(): Error | null {
+    return pipelineLoadError
+  }
+
+  /**
    * Lazily load the embedding model.
    * Returns null if in fallback mode or if model loading fails.
    */
@@ -181,9 +252,20 @@ export class EmbeddingService {
     }
 
     if (!this.modelPromise) {
-      this.modelPromise = pipeline('feature-extraction', this.modelName, {
-        quantized: true, // Use quantized model for faster inference
-      }) as Promise<FeatureExtractionPipeline>
+      // Lazily load the transformers module first
+      this.modelPromise = (async () => {
+        const transformers = await loadTransformersModule()
+        if (!transformers) {
+          throw new Error(
+            pipelineLoadError?.message ||
+              'Failed to load @xenova/transformers module (sharp may not be available)'
+          )
+        }
+
+        return transformers.pipeline('feature-extraction', this.modelName, {
+          quantized: true, // Use quantized model for faster inference
+        }) as Promise<FeatureExtractionPipeline>
+      })()
     }
 
     try {

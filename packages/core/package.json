@@ -13,6 +13,10 @@
     "./errors": {
       "types": "./dist/src/errors.d.ts",
       "import": "./dist/src/errors.js"
+    },
+    "./embeddings": {
+      "types": "./dist/src/embeddings/index.d.ts",
+      "import": "./dist/src/embeddings/index.js"
     }
   },
   "scripts": {
