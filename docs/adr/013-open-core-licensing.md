@@ -16,7 +16,7 @@ Phase 6 established an Open Core licensing model to balance community adoption w
 The three-tier structure was designed as follows:
 - **Community Tier**: Apache-2.0 (free, open source)
 - **Team Tier**: $25/user/month (commercial license)
-- **Enterprise Tier**: $69/user/month (proprietary features)
+- **Enterprise Tier**: $55/user/month (proprietary features)
 
 See [TERMS.md](../legal/TERMS.md) for complete pricing and licensing terms.
 
@@ -131,10 +131,32 @@ The CLA ensures:
 - **Cons**: Not OSI-approved, confusing for users, limited ecosystem compatibility
 - **Why rejected**: Source-available licenses create uncertainty and are not recognized as true open source
 
+## Publishing Strategy
+
+The open core model enables a staged publishing approach:
+
+| Package | Registry | License | Phase |
+|---------|----------|---------|-------|
+| `@skillsmith/core` | Public npm | Apache-2.0 | 5A (immediate) |
+| `@skillsmith/mcp-server` | Public npm | Apache-2.0 | 5A (immediate) |
+| `@skillsmith/cli` | Public npm | Apache-2.0 | 5A (immediate) |
+| `@skillsmith/enterprise` | Private npm | Proprietary | 7 (after gating) |
+
+**Key Insight**: Free tier packages can be published and tested before billing infrastructure is complete. Enterprise package requires license validation (Phase 5B) and feature gating to be in place first.
+
+## Commercialization Strategy
+
+This ADR uses **feature bifurcation** (not usage limits):
+- No rate limiting on core features
+- No install/search quotas
+- Feature flags in JWT payload determine tier access
+- See [go-to-market-analysis.md](../strategy/go-to-market-analysis.md) for details
+
 ## References
 
 - [TERMS.md](../legal/TERMS.md) - Complete Terms of Service with pricing tiers
 - [ENTERPRISE_PACKAGE.md](../enterprise/ENTERPRISE_PACKAGE.md) - Enterprise feature specifications
+- [go-to-market-analysis.md](../strategy/go-to-market-analysis.md) - Feature bifurcation strategy
 - [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
 - [ADR-001: Monorepo Structure](./001-monorepo-structure.md)
 - [Open Core Model Best Practices](https://opensource.guide/legal/)

@@ -44,7 +44,7 @@ The Service is offered under three distinct tiers:
 - 99.5% uptime service level target
 - Access to premium skill repositories
 
-**c) Enterprise Tier ($69.00 USD per user per month)**
+**c) Enterprise Tier ($55.00 USD per user per month)**
 - Enterprise commercial license
 - Dedicated support with 4-hour response time
 - Custom integrations and deployment options
@@ -149,8 +149,8 @@ We reserve the right to suspend or terminate your account at any time for violat
 - Billing cycle begins on the date of initial subscription
 
 **b) Enterprise Tier Pricing**
-- Monthly subscription: $69.00 USD per user per month
-- Annual subscription (prepaid): $690.00 USD per user per year (approximately 17% discount)
+- Monthly subscription: $55.00 USD per user per month
+- Annual subscription (prepaid): $550.00 USD per user per year (approximately 17% discount)
 - Custom pricing available for large deployments (100+ users)
 
 ### 5.2 Payment Methods
@@ -624,4 +624,4 @@ BY USING THE SERVICE, YOU ACKNOWLEDGE THAT YOU HAVE READ THESE TERMS OF SERVICE,
 
 ---
 
-*This document was last updated on January 2, 2026.*
+*This document was last updated on January 4, 2026.*
