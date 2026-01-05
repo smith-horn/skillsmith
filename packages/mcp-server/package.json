@@ -26,6 +26,14 @@
     "vitest": "4.0.16",
     "zod": "^3.25.0"
   },
+  "peerDependencies": {
+    "@skillsmith/enterprise": "*"
+  },
+  "peerDependenciesMeta": {
+    "@skillsmith/enterprise": {
+      "optional": true
+    }
+  },
   "files": [
     "dist"
   ],

@@ -246,62 +246,37 @@ git worktree add ../worktrees/feature-name -b feature/feature-name
 
 ### Linear Skill (User-Level)
 
-> **Location**: `~/.claude/skills/linear/skills/linear/SKILL.md`
+> **Full Documentation**: [`~/.claude/skills/linear/skills/linear/SKILL.md`](~/.claude/skills/linear/skills/linear/SKILL.md)
 
 Manages Linear issues, projects, and workflows. Available globally across all sessions.
 
 **Skillsmith Project Context**:
-- **Project**: Skillsmith
+- **Project**: Skillsmith Phase 7: Enterprise Features
 - **Issue Prefix**: SMI-xxx
-- **Team**: Check with `npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts whoami`
+- **Team**: Smith Horn Group
 
-**Quick Commands** (preferred):
-
-```bash
-# Mark issue as done
-npm run linear:done SMI-644
-
-# Mark issue as in progress
-npm run linear:wip SMI-640
-
-# Check issues in recent commits
-npm run linear:check
-
-# Auto-sync from last commit message
-npm run linear:sync
-
-# Test the post-commit hook manually
-npm run linear:hook
-
-# Test with debug output
-npm run linear:hook:debug
-```
-
-**Automatic Post-Commit Hook** (SMI-710):
-
-The project includes an automatic post-commit hook that syncs Linear issues:
-
-- Extracts `SMI-xxx` issue references from commit messages
-- Marks issues as `in_progress` by default
-- Marks as `done` if commit message contains: fix, close, complete, done, finish, resolve
-- Runs in background (does not block git operations)
-- Fails silently if `LINEAR_API_KEY` is not set
-- Times out after 2 seconds
-
-**Configuration**:
-- `LINEAR_API_KEY` - Required for Linear API access (silent fail if unset)
-- `LINEAR_TEAM_ID` - Required for E2E test issue creation (UUID format)
-- `DEBUG_LINEAR_HOOK=true` - Enable verbose output for debugging
-
-**Advanced Operations**:
+**Quick Commands**:
 
 ```bash
-# Create issue for Skillsmith
-npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts create-issue "Skillsmith" "Issue title" "Description"
+# Mark issues as done (accepts SMI-123 or 123 format)
+npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts done SMI-1089 SMI-1090
 
-# Query project issues
-npx tsx ~/.claude/skills/linear/skills/linear/scripts/query.ts 'query { issues(filter: {project: {name: {eq: "Skillsmith"}}}) { nodes { identifier title state { name } } } }'
+# Mark issues as in progress
+npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts wip SMI-1091
+
+# Update to any status
+npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts status Done 1089 1090 1091
+
+# Create issue
+npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts create-issue "Skillsmith" "Title" "Description"
+
+# Check setup
+npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts whoami
 ```
+
+**Configuration**: Requires `LINEAR_API_KEY` environment variable.
+
+> **See the Linear skill for**: MCP integration, GraphQL API patterns, project updates, bulk operations, timeout handling, and advanced workflows.
 
 ### CI/DevOps Skills (User-Level)
 

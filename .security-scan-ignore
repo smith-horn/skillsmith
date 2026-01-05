@@ -11,3 +11,8 @@ scripts/utils/path-validation.ts
 **/tests/fixtures/**
 **/tests/**/*.fixture.*
 **/__mocks__/**
+
+# Untracked development directories (password validation messages, not secrets)
+packages/web/**
+src/**
+docs/site/**
