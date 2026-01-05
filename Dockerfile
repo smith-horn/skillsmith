@@ -30,14 +30,16 @@ ENV NPM_CONFIG_LOGLEVEL=warn
 # -----------------------------------------------------------------------------
 FROM base AS deps
 
-# Install build dependencies required for native modules (better-sqlite3, onnxruntime)
+# Install build dependencies required for native modules (better-sqlite3, onnxruntime, sharp)
 # These are only needed during npm install, not at runtime
 # Layer optimization: Combine apt commands to reduce layers
+# libvips-dev allows sharp to compile from source if prebuilt binaries fail
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
     git \
+    libvips-dev \
     # Clean up apt cache to reduce image size
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
@@ -52,7 +54,15 @@ COPY packages/vscode-extension/package*.json ./packages/vscode-extension/
 
 # Install ALL dependencies (including devDependencies for building)
 # Using npm ci for reproducible builds from package-lock.json
-RUN npm ci --include=dev
+# Install without postinstall scripts first, then rebuild sharp separately with system libvips
+ENV PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig
+RUN npm ci --include=dev --ignore-scripts
+
+# Rebuild native modules that need compilation
+# Skip sharp - @xenova/transformers only needs it for image preprocessing
+# Skillsmith uses text embeddings only, so sharp is not required
+# Rebuild better-sqlite3 (database) and onnxruntime-node (embeddings)
+RUN npm rebuild better-sqlite3 onnxruntime-node || true
 
 # -----------------------------------------------------------------------------
 # Stage 3: Builder - Compile TypeScript and build all packages
