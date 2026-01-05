@@ -114,6 +114,19 @@ function getExpirationWarning(expiresAt?: Date): string | undefined {
 | `middleware/license.ts` | 422 | +type guard, +expiration warning, +organizationId, -rawToken |
 | `middleware/license.test.ts` | 596 | +mock tests, +expiration tests, +validation tests |
 
+## Actions Taken
+
+The following learnings were embedded into engineering standards:
+
+| Learning | Action | Location |
+|----------|--------|----------|
+| Type guards for dynamic imports | Added §4.9 Dynamic Import Safety | standards.md |
+| Lazy loading for heavy dependencies | Added §4.10 Lazy Loading | standards.md |
+| License validation hierarchy | Enhanced §7.1 License Validation | standards.md |
+| Code review checklist expansion | Added Phase 7a checks to §1.5 | standards.md |
+
+**Lazy loading status**: ✅ Already implemented in SMI-1127 (`loadTransformersModule()` in embeddings/index.ts)
+
 ## Next Steps
 
 | Item | Priority | Description |

@@ -1,6 +1,6 @@
 # Engineering Standards - Skillsmith
 
-**Version**: 1.6
+**Version**: 1.7
 **Status**: Active
 **Owner**: Skillsmith Team
 
@@ -105,7 +105,19 @@ packages/
 | Schema | Database changes follow [schema.ts](../../packages/core/src/db/schema.ts) patterns |
 | Scope | No unrelated changes |
 
+**Additional Checks (Phase 7a learnings):**
+
+| Category | Criteria |
+|----------|----------|
+| Dynamic Imports | Type guards used, not unsafe `as` casts (§4.9) |
+| Heavy Dependencies | Native modules lazily loaded (§4.10) |
+| External Integration | Response interfaces explicitly typed, including nested objects |
+| License Validation | Returns `null` on failure, never silent fallback (§7.1) |
+| Expiration Handling | Time-sensitive features include warning thresholds |
+
 > **Security Reviews**: For security-sensitive code (input handling, external data, file access), use the [Security Code Review Checklist](../security/checklists/code-review.md).
+
+> **Enterprise Reviews**: For license/SSO/RBAC code, verify the License Validation Hierarchy in §7.1.
 
 ### 1.6 ESLint Configuration
 
@@ -533,6 +545,103 @@ const id = `item-${randomUUID()}`;
 const hash = createHash('sha256').update(content).digest('hex');
 ```
 
+### 4.9 Dynamic Import Safety (Phase 7a)
+
+When dynamically importing optional packages, always use type guards instead of unsafe `as` casts.
+
+**Rules:**
+- Use type guards to validate module structure before use
+- Handle import failures gracefully with try-catch
+- Never assume imported module has expected exports
+
+```typescript
+// ❌ WRONG: Unsafe cast assumes structure
+const mod = (await import(packageName)) as Record<string, unknown>;
+if (mod['SomeClass']) {
+  const Class = mod['SomeClass'] as new () => SomeInterface;
+  return new Class();
+}
+
+// ✅ CORRECT: Type guard validates structure
+function isValidModule(
+  mod: unknown
+): mod is { SomeClass: new () => SomeInterface } {
+  return (
+    typeof mod === 'object' &&
+    mod !== null &&
+    'SomeClass' in mod &&
+    typeof (mod as Record<string, unknown>)['SomeClass'] === 'function'
+  );
+}
+
+async function tryLoadModule(): Promise<SomeInterface | null> {
+  try {
+    const mod = await import(/* webpackIgnore: true */ packageName);
+    if (isValidModule(mod)) {
+      return new mod.SomeClass();
+    }
+    return null;
+  } catch {
+    // Package not installed - expected for optional dependencies
+    return null;
+  }
+}
+```
+
+### 4.10 Lazy Loading for Heavy Dependencies (Phase 7a)
+
+Heavy optional dependencies (ML models, native modules) must be lazily loaded to prevent startup crashes.
+
+**Rules:**
+- Never eagerly import packages with native modules at module level
+- Use dynamic `import()` inside async functions
+- Provide static `checkAvailability()` method for consumers
+- Export types separately from runtime code
+
+```typescript
+// ❌ WRONG: Eager import crashes if native module unavailable
+import { pipeline } from '@xenova/transformers';
+
+export class EmbeddingService {
+  async embed(text: string) {
+    return pipeline('feature-extraction', text);
+  }
+}
+
+// ✅ CORRECT: Lazy load with availability check
+let transformersModule: typeof import('@xenova/transformers') | null = null;
+
+async function loadTransformers() {
+  if (!transformersModule) {
+    try {
+      transformersModule = await import('@xenova/transformers');
+    } catch {
+      return null;
+    }
+  }
+  return transformersModule;
+}
+
+export class EmbeddingService {
+  static async checkAvailability(): Promise<boolean> {
+    return (await loadTransformers()) !== null;
+  }
+
+  async embed(text: string) {
+    const mod = await loadTransformers();
+    if (!mod) throw new Error('Transformers not available');
+    return mod.pipeline('feature-extraction', text);
+  }
+}
+```
+
+**Packages requiring lazy loading:**
+- `@xenova/transformers` (ONNX runtime, sharp)
+- `better-sqlite3` (native module)
+- `onnxruntime-node` (native module)
+
+> **Reference**: See SMI-1127 fix and [ADR-009](../adr/009-embedding-service-fallback.md)
+
 ---
 
 ## 5. Mock vs Production Separation (SMI-763)
@@ -676,9 +785,10 @@ All enterprise features must gate on a valid license before execution.
 
 **Rules:**
 - Use `LicenseValidator` from `@skillsmith/enterprise` for all license checks
-- Graceful degradation when license is invalid or expired
+- Return `null` for validation failures (never silently fallback to lower tier)
 - License check caching with 5-minute TTL to reduce API calls
 - Never expose license keys in logs or error messages
+- Include expiration warnings when license expires within 30 days
 
 ```typescript
 import { LicenseValidator } from '@skillsmith/enterprise';
@@ -687,12 +797,35 @@ const validator = new LicenseValidator({ cacheTtl: 5 * 60 * 1000 });
 
 async function enterpriseFeature(): Promise<Result> {
   const license = await validator.validate();
+
+  // IMPORTANT: null means validation failed - don't silently degrade
+  if (!license) {
+    return { success: false, error: 'License validation failed' };
+  }
+
   if (!license.valid) {
     return { success: false, error: 'Enterprise license required' };
   }
+
+  // Check for expiration warning
+  if (license.warning) {
+    console.warn(license.warning); // e.g., "License expires in 15 days"
+  }
+
   // Proceed with enterprise functionality
 }
 ```
+
+**License Validation Hierarchy (from Phase 7a retro):**
+
+| Scenario | Behavior |
+|----------|----------|
+| No license key | Community tier (valid) |
+| License key + validator unavailable | Return `null` (failed) |
+| License key + validator success | Validated tier with features |
+| License key + validator failure | Return `null` (failed) |
+
+> **Security**: Never silently fallback to community tier when a license key is present. Customers expect validation feedback.
 
 ### 7.2 SSO Integration Patterns
 
@@ -950,6 +1083,7 @@ async function verifySkillPackage(
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.7 | 2026-01-04 | Added §4.9 Dynamic Import Safety, §4.10 Lazy Loading, updated §1.5 Code Review, enhanced §7.1 License Validation (Phase 7a retro) |
 | 1.6 | 2026-01-02 | Added §7 Enterprise Development Standards |
 | 1.5.1 | 2025-12-29 | Added §5 Mock vs Production Separation (SMI-763) |
 | 1.5 | 2025-12-29 | Added §1.5 Schema review criteria, Security Documentation appendix, cross-links to security checklist |
