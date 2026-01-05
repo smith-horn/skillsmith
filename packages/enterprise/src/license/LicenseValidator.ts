@@ -6,6 +6,7 @@
  */
 
 import * as jose from 'jose'
+import type { KeyLike } from 'jose'
 
 import type {
   FeatureFlag,
@@ -60,7 +61,7 @@ const DEFAULT_OPTIONS: Required<Omit<LicenseValidatorOptions, 'publicKey'>> = {
  * ```
  */
 /** Key type returned by jose import functions */
-type JoseKeyLike = jose.CryptoKey | jose.KeyObject | Uint8Array
+type JoseKeyLike = KeyLike | Uint8Array
 
 export class LicenseValidator {
   private readonly options: Required<Omit<LicenseValidatorOptions, 'publicKey'>> & {
