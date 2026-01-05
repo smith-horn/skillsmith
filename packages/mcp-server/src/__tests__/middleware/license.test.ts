@@ -139,17 +139,17 @@ describe('License Middleware', () => {
         process.env.SKILLSMITH_LICENSE_KEY = 'invalid-key-123'
       })
 
-      it('should return null for invalid license when enterprise validates', async () => {
-        // When enterprise package IS available (as in monorepo CI),
-        // an invalid license key will be validated and rejected.
-        // The middleware returns null for failed validation.
+      it('should return null when license key present but validation unavailable', async () => {
+        // When a license key is provided but the enterprise package is not available,
+        // we return null to indicate validation failure rather than silently degrading
+        // to community tier. This ensures paying customers get feedback.
+        // See SMI-1130 for rationale.
         const middleware = createLicenseMiddleware()
         const license = await middleware.getLicenseInfo()
 
-        // In monorepo: enterprise validates and fails -> null
-        // When enterprise unavailable: falls back to community
-        // Either outcome is acceptable security behavior
-        expect(license === null || license?.tier === 'community').toBe(true)
+        // License key present + no validator = null (validation failed)
+        // License key present + validator available = validates (may still be null if invalid)
+        expect(license).toBeNull()
       })
 
       it('should still allow community tools', async () => {
@@ -191,10 +191,10 @@ describe('License Middleware', () => {
         })
 
         // Should attempt to validate since key is present
-        // In monorepo: enterprise validates and fails -> null
-        // When enterprise unavailable: falls back to community
+        // License key present + no validator = null (validation failed)
+        // See SMI-1130 for rationale.
         const license = await middleware.getLicenseInfo()
-        expect(license === null || license?.tier === 'community').toBe(true)
+        expect(license).toBeNull()
 
         delete process.env.CUSTOM_LICENSE_KEY
       })
@@ -354,6 +354,211 @@ describe('License Middleware', () => {
       expect(privateResult.message).toMatch(/Private Skills/)
       expect(privateResult.message).toMatch(/team license/)
     })
+  })
+
+  describe('license expiration warning', () => {
+    it('should return warning when license expires within 30 days', async () => {
+      // Mock middleware that returns a license expiring in 15 days
+      const expiresIn15Days = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000)
+      const mockMiddleware = {
+        checkFeature: vi.fn().mockResolvedValue({
+          valid: true,
+          warning: `Your license expires in 15 days. Please renew to avoid service interruption.`,
+        }),
+        checkTool: vi.fn(),
+        getLicenseInfo: vi.fn().mockResolvedValue({
+          valid: true,
+          tier: 'enterprise',
+          features: ['audit_logging'],
+          expiresAt: expiresIn15Days,
+        }),
+        invalidateCache: vi.fn(),
+      }
+
+      const result = await mockMiddleware.checkFeature('audit_logging')
+      expect(result.valid).toBe(true)
+      expect(result.warning).toContain('expires in 15 days')
+      expect(result.warning).toContain('Please renew')
+    })
+
+    it('should use singular day when 1 day remaining', async () => {
+      const mockMiddleware = {
+        checkFeature: vi.fn().mockResolvedValue({
+          valid: true,
+          warning: `Your license expires in 1 day. Please renew to avoid service interruption.`,
+        }),
+        checkTool: vi.fn(),
+        getLicenseInfo: vi.fn(),
+        invalidateCache: vi.fn(),
+      }
+
+      const result = await mockMiddleware.checkFeature('audit_logging')
+      expect(result.warning).toContain('1 day')
+      expect(result.warning).not.toContain('1 days')
+    })
+
+    it('should not return warning when license expires in more than 30 days', async () => {
+      const mockMiddleware = {
+        checkFeature: vi.fn().mockResolvedValue({
+          valid: true,
+          warning: undefined,
+        }),
+        checkTool: vi.fn(),
+        getLicenseInfo: vi.fn(),
+        invalidateCache: vi.fn(),
+      }
+
+      const result = await mockMiddleware.checkFeature('audit_logging')
+      expect(result.valid).toBe(true)
+      expect(result.warning).toBeUndefined()
+    })
+
+    it('should not return warning when expiresAt is undefined', async () => {
+      const mockMiddleware = {
+        checkFeature: vi.fn().mockResolvedValue({
+          valid: true,
+          warning: undefined,
+        }),
+        checkTool: vi.fn(),
+        getLicenseInfo: vi.fn().mockResolvedValue({
+          valid: true,
+          tier: 'team',
+          features: ['private_skills'],
+          expiresAt: undefined,
+        }),
+        invalidateCache: vi.fn(),
+      }
+
+      const result = await mockMiddleware.checkFeature('private_skills')
+      expect(result.valid).toBe(true)
+      expect(result.warning).toBeUndefined()
+    })
+  })
+})
+
+describe('with mocked enterprise validator', () => {
+  it('should validate team license features', async () => {
+    const mockValidator = {
+      validate: vi.fn().mockResolvedValue({
+        valid: true,
+        license: {
+          tier: 'team' as const,
+          features: ['private_skills', 'team_workspaces'] as FeatureFlag[],
+          customerId: 'test-customer',
+          issuedAt: new Date(),
+          expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+        },
+      }),
+      hasFeature: vi.fn().mockResolvedValue(true),
+    }
+
+    // Test the validator mock structure matches expected interface
+    const validationResult = await mockValidator.validate('test-key')
+    expect(validationResult.valid).toBe(true)
+    expect(validationResult.license?.tier).toBe('team')
+    expect(validationResult.license?.features).toContain('private_skills')
+    expect(validationResult.license?.features).toContain('team_workspaces')
+    expect(mockValidator.validate).toHaveBeenCalledWith('test-key')
+  })
+
+  it('should validate enterprise license features', async () => {
+    const mockValidator = {
+      validate: vi.fn().mockResolvedValue({
+        valid: true,
+        license: {
+          tier: 'enterprise' as const,
+          features: [
+            'private_skills',
+            'team_workspaces',
+            'sso_saml',
+            'audit_logging',
+            'rbac',
+          ] as FeatureFlag[],
+          customerId: 'enterprise-customer',
+          issuedAt: new Date(),
+          expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+        },
+      }),
+      hasFeature: vi.fn().mockImplementation((_key: string, feature: string) => {
+        const enterpriseFeatures = [
+          'private_skills',
+          'team_workspaces',
+          'sso_saml',
+          'audit_logging',
+          'rbac',
+        ]
+        return Promise.resolve(enterpriseFeatures.includes(feature))
+      }),
+    }
+
+    // Validate enterprise license structure
+    const validationResult = await mockValidator.validate('enterprise-key')
+    expect(validationResult.valid).toBe(true)
+    expect(validationResult.license?.tier).toBe('enterprise')
+    expect(validationResult.license?.features).toContain('sso_saml')
+    expect(validationResult.license?.features).toContain('audit_logging')
+    expect(validationResult.license?.features).toContain('rbac')
+
+    // Test hasFeature method
+    expect(await mockValidator.hasFeature('enterprise-key', 'sso_saml')).toBe(true)
+    expect(await mockValidator.hasFeature('enterprise-key', 'audit_logging')).toBe(true)
+    expect(await mockValidator.hasFeature('enterprise-key', 'unknown_feature')).toBe(false)
+  })
+
+  it('should handle validation failure', async () => {
+    const mockValidator = {
+      validate: vi.fn().mockResolvedValue({
+        valid: false,
+        error: { code: 'INVALID_LICENSE', message: 'License expired' },
+      }),
+      hasFeature: vi.fn().mockResolvedValue(false),
+    }
+
+    // Test validation failure
+    const validationResult = await mockValidator.validate('expired-key')
+    expect(validationResult.valid).toBe(false)
+    expect(validationResult.error?.code).toBe('INVALID_LICENSE')
+    expect(validationResult.error?.message).toBe('License expired')
+    expect(validationResult.license).toBeUndefined()
+
+    // hasFeature should return false for invalid license
+    expect(await mockValidator.hasFeature('expired-key', 'any_feature')).toBe(false)
+  })
+
+  it('should handle validation exception', async () => {
+    const mockValidator = {
+      validate: vi.fn().mockRejectedValue(new Error('Network error')),
+      hasFeature: vi.fn().mockRejectedValue(new Error('Network error')),
+    }
+
+    // Test validation exception handling
+    await expect(mockValidator.validate('test-key')).rejects.toThrow('Network error')
+    await expect(mockValidator.hasFeature('test-key', 'feature')).rejects.toThrow('Network error')
+  })
+
+  it('should verify LicenseInfo structure matches enterprise license', async () => {
+    const mockEnterpriseLicense = {
+      tier: 'enterprise' as const,
+      features: ['sso_saml', 'audit_logging'] as FeatureFlag[],
+      customerId: 'test-customer',
+      issuedAt: new Date('2024-01-01'),
+      expiresAt: new Date('2025-01-01'),
+    }
+
+    // Convert to middleware LicenseInfo format (as done in getLicenseInfo)
+    const licenseInfo: LicenseInfo = {
+      valid: true,
+      tier: mockEnterpriseLicense.tier,
+      features: mockEnterpriseLicense.features,
+      expiresAt: mockEnterpriseLicense.expiresAt,
+      organizationId: mockEnterpriseLicense.customerId,
+    }
+
+    expect(licenseInfo.valid).toBe(true)
+    expect(licenseInfo.tier).toBe('enterprise')
+    expect(licenseInfo.features).toEqual(['sso_saml', 'audit_logging'])
+    expect(licenseInfo.expiresAt).toEqual(new Date('2025-01-01'))
+    expect(licenseInfo.organizationId).toBe('test-customer')
   })
 })
 

@@ -27,6 +27,7 @@ export interface LicenseValidationResult {
   feature?: FeatureFlag
   message?: string
   upgradeUrl?: string
+  warning?: string
 }
 
 /**
@@ -41,11 +42,48 @@ export interface LicenseInfo {
 }
 
 /**
+ * License from enterprise package validation
+ */
+interface EnterpriseLicense {
+  tier: 'community' | 'team' | 'enterprise'
+  features: FeatureFlag[]
+  customerId: string
+  issuedAt: Date
+  expiresAt: Date
+}
+
+/**
+ * Validation result from enterprise package
+ */
+interface EnterpriseValidationResult {
+  valid: boolean
+  license?: EnterpriseLicense
+  error?: {
+    code: string
+    message: string
+  }
+}
+
+/**
  * License validator interface (for optional enterprise package integration)
  */
 export interface LicenseValidator {
-  validate(licenseKey: string): Promise<LicenseInfo>
+  validate(licenseKey: string): Promise<EnterpriseValidationResult>
   hasFeature(licenseKey: string, feature: string): Promise<boolean>
+}
+
+/**
+ * Type guard to validate enterprise module structure
+ */
+function isEnterpriseModule(
+  mod: unknown
+): mod is { LicenseValidator: new () => LicenseValidator } {
+  return (
+    typeof mod === 'object' &&
+    mod !== null &&
+    'LicenseValidator' in mod &&
+    typeof (mod as Record<string, unknown>)['LicenseValidator'] === 'function'
+  )
 }
 
 /**
@@ -57,13 +95,9 @@ async function tryLoadEnterpriseValidator(): Promise<LicenseValidator | null> {
     // Dynamic import with variable to prevent TypeScript from resolving at compile time
     // This is an optional peer dependency that may not be installed
     const packageName = '@skillsmith/enterprise'
-    const enterprise = (await import(/* webpackIgnore: true */ packageName)) as Record<
-      string,
-      unknown
-    >
-    if (enterprise['LicenseValidator']) {
-      const ValidatorClass = enterprise['LicenseValidator'] as new () => LicenseValidator
-      return new ValidatorClass()
+    const enterprise = await import(/* webpackIgnore: true */ packageName)
+    if (isEnterpriseModule(enterprise)) {
+      return new enterprise.LicenseValidator()
     }
     return null
   } catch {
@@ -80,7 +114,7 @@ async function tryLoadEnterpriseValidator(): Promise<LicenseValidator | null> {
  */
 export function isEnterpriseFeature(toolName: string): boolean {
   const feature = TOOL_FEATURES[toolName]
-  if (feature === null || feature === undefined) {
+  if (feature == null) {
     return false
   }
   return FEATURE_TIERS[feature] === 'enterprise'
@@ -104,6 +138,18 @@ export function requiresLicense(toolName: string): boolean {
  */
 export function getRequiredFeature(toolName: string): FeatureFlag | null {
   return TOOL_FEATURES[toolName] ?? null
+}
+
+/**
+ * Check if license is expiring soon (within 30 days)
+ */
+function getExpirationWarning(expiresAt?: Date): string | undefined {
+  if (!expiresAt) return undefined
+  const daysUntilExpiry = Math.floor((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+  if (daysUntilExpiry <= 30 && daysUntilExpiry > 0) {
+    return `Your license expires in ${daysUntilExpiry} day${daysUntilExpiry === 1 ? '' : 's'}. Please renew to avoid service interruption.`
+  }
+  return undefined
 }
 
 /**
@@ -199,24 +245,36 @@ export function createLicenseMiddleware(options?: {
     const validator = await getValidator()
     if (!validator) {
       // Enterprise package not installed but license key provided
-      // Treat as community since we can't validate
-      const communityLicense: LicenseInfo = {
-        valid: true,
-        tier: 'community',
-        features: [],
-      }
-      context.cachedLicense = communityLicense
-      context.cacheExpiry = Date.now() + cacheTtl
-      return communityLicense
+      // Security-conscious decision: Return null to indicate validation failure
+      // rather than silently degrading to community tier. This ensures paying
+      // customers get feedback that their license couldn't be validated.
+      // See SMI-1130 for rationale.
+      return null
     }
 
     try {
-      const license = await validator.validate(context.licenseKey)
+      const result = await validator.validate(context.licenseKey)
+
+      // Check if validation was successful
+      if (!result.valid || !result.license) {
+        // Invalid license - return null to indicate validation failure
+        return null
+      }
+
+      // Convert enterprise License to middleware LicenseInfo
+      const license: LicenseInfo = {
+        valid: true,
+        tier: result.license.tier,
+        features: result.license.features,
+        expiresAt: result.license.expiresAt,
+        organizationId: result.license.customerId,
+      }
+
       context.cachedLicense = license
       context.cacheExpiry = Date.now() + cacheTtl
       return license
     } catch {
-      // Validation failed - treat as invalid license
+      // Validation threw an exception - treat as invalid license
       return null
     }
   }
@@ -271,7 +329,8 @@ export function createLicenseMiddleware(options?: {
       }
     }
 
-    return { valid: true }
+    const warning = getExpirationWarning(license.expiresAt)
+    return { valid: true, warning }
   }
 
   async function checkTool(toolName: string): Promise<LicenseValidationResult> {
