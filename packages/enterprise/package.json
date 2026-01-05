@@ -24,6 +24,7 @@
     }
   },
   "scripts": {
+    "prepublishOnly": "npm run build && npm run test",
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
@@ -42,5 +43,29 @@
   "files": [
     "dist"
   ],
-  "license": "Apache-2.0"
+  "license": "SEE LICENSE IN LICENSE.md",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smith-horn-group/skillsmith.git",
+    "directory": "packages/enterprise"
+  },
+  "homepage": "https://skillsmith.dev/enterprise",
+  "bugs": {
+    "url": "https://github.com/smith-horn-group/skillsmith/issues",
+    "email": "enterprise@skillsmith.dev"
+  },
+  "keywords": [
+    "claude",
+    "ai",
+    "skills",
+    "mcp",
+    "enterprise",
+    "sso",
+    "rbac",
+    "audit"
+  ]
 }

@@ -4,7 +4,7 @@
  * Tests for the feature flag checking utilities.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   FeatureChecker,
   withFeatureCheck,
@@ -493,10 +493,14 @@ describe('FeatureChecker integration', () => {
     const checker = new FeatureChecker(validator)
 
     // Simulating feature-gated code
-    const getSSOSettings = withFeatureCheck(checker, 'sso_saml', () => ({
-      enabled: false,
-      provider: null,
-    }))(() => ({
+    const getSSOSettings = withFeatureCheck(
+      checker,
+      'sso_saml',
+      (): { enabled: boolean; provider: string | null } => ({
+        enabled: false,
+        provider: null,
+      })
+    )(() => ({
       enabled: true,
       provider: 'okta',
       endpoint: 'https://sso.example.com',

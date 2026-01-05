@@ -244,29 +244,29 @@ describe('Tier Comparison', () => {
       const comparison = getTierComparison()
 
       expect(comparison).toHaveLength(3)
-      expect(comparison[0].tier).toBe('community')
-      expect(comparison[1].tier).toBe('team')
-      expect(comparison[2].tier).toBe('enterprise')
+      expect(comparison[0]!.tier).toBe('community')
+      expect(comparison[1]!.tier).toBe('team')
+      expect(comparison[2]!.tier).toBe('enterprise')
     })
 
     it('should have correct pricing for each tier', () => {
       const comparison = getTierComparison()
 
-      expect(comparison[0].pricing).toBe('$0/month')
-      expect(comparison[1].pricing).toBe('$25/user/month')
-      expect(comparison[2].pricing).toBe('$55/user/month')
+      expect(comparison[0]!.pricing).toBe('$0/month')
+      expect(comparison[1]!.pricing).toBe('$25/user/month')
+      expect(comparison[2]!.pricing).toBe('$55/user/month')
     })
 
     it('should have no features for community tier', () => {
       const comparison = getTierComparison()
-      const community = comparison[0]
+      const community = comparison[0]!
 
       expect(community.features).toHaveLength(0)
     })
 
     it('should have team features for team tier', () => {
       const comparison = getTierComparison()
-      const team = comparison[1]
+      const team = comparison[1]!
 
       expect(team.features).toContain('team_workspaces')
       expect(team.features).toContain('private_skills')
@@ -275,7 +275,7 @@ describe('Tier Comparison', () => {
 
     it('should have all features for enterprise tier', () => {
       const comparison = getTierComparison()
-      const enterprise = comparison[2]
+      const enterprise = comparison[2]!
 
       expect(enterprise.features).toContain('team_workspaces')
       expect(enterprise.features).toContain('sso_saml')
@@ -382,7 +382,7 @@ describe('formatAsMcpResponse', () => {
     const mcpResponse = formatAsMcpResponse(degradationResult)
 
     expect(mcpResponse.content).toHaveLength(1)
-    expect(mcpResponse.content[0].type).toBe('text')
+    expect(mcpResponse.content[0]!.type).toBe('text')
     expect(mcpResponse.isError).toBe(false)
     expect(mcpResponse._meta).toBeDefined()
   })
@@ -402,7 +402,7 @@ describe('formatAsMcpResponse', () => {
     const degradationResult = handleFeatureDenied('rbac', 'team')
     const mcpResponse = formatAsMcpResponse(degradationResult)
 
-    const parsed = JSON.parse(mcpResponse.content[0].text)
+    const parsed = JSON.parse(mcpResponse.content[0]!.text)
 
     expect(parsed.status).toBe('upgrade_required')
     expect(parsed.feature).toBe('rbac')
