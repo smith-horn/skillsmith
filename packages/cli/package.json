@@ -24,5 +24,13 @@
   "devDependencies": {
     "@types/node": "^20.10.0",
     "vitest": "4.0.16"
+  },
+  "peerDependencies": {
+    "@skillsmith/enterprise": "*"
+  },
+  "peerDependenciesMeta": {
+    "@skillsmith/enterprise": {
+      "optional": true
+    }
   }
 }

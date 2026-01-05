@@ -26,10 +26,22 @@ import {
 } from './commands/index.js'
 import { DEFAULT_DB_PATH } from './config.js'
 import { sanitizeError } from './utils/sanitize.js'
+import { displayStartupHeader } from './utils/license.js'
+
+const CLI_VERSION = '0.1.0'
 
 const program = new Command()
 
-program.name('skillsmith').description('Claude Skill Discovery and Management CLI').version('0.1.0')
+program
+  .name('skillsmith')
+  .description('Claude Skill Discovery and Management CLI')
+  .version(CLI_VERSION)
+
+// Display startup header with license status before parsing commands
+// Use hook to display header before any command runs
+program.hook('preAction', async () => {
+  await displayStartupHeader(CLI_VERSION)
+})
 
 // SMI-580: Import command
 program

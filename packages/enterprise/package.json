@@ -17,6 +17,10 @@
     "./audit/streaming": {
       "types": "./dist/src/audit/streaming/EventStream.d.ts",
       "import": "./dist/src/audit/streaming/EventStream.js"
+    },
+    "./license": {
+      "types": "./dist/src/license/index.d.ts",
+      "import": "./dist/src/license/index.js"
     }
   },
   "scripts": {
@@ -29,6 +33,7 @@
   "dependencies": {
     "@aws-sdk/client-cloudwatch-logs": "^3.700.0",
     "@skillsmith/core": "*",
+    "jose": "^5.2.0",
     "zod": "4.2.1"
   },
   "devDependencies": {

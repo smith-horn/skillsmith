@@ -5,3 +5,4 @@
  */
 
 export * from './audit/index.js'
+export * from './license/index.js'

@@ -74,3 +74,8 @@ scripts/full-import.ts
 scripts/security-scan.ts
 scripts/security-scan.test.ts
 scripts/utils/
+
+# Untracked scaffolding/development directories
+packages/web/
+src/
+docs/site/
