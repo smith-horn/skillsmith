@@ -23,6 +23,7 @@ ADRs document significant architectural decisions made during the project. They 
 | [ADR-012](012-native-module-version-management.md) | Native Module Version Management Strategy | Accepted | 2025-12-31 |
 | [ADR-013](013-open-core-licensing.md) | Open Core Licensing Model | Accepted | 2026-01-02 |
 | [ADR-014](014-enterprise-package-architecture.md) | Enterprise Package Architecture | Accepted | 2026-01-02 |
+| [ADR-015](015-immutable-audit-log-storage.md) | Immutable Audit Log Storage with SHA-256 Hash Chains | Accepted | 2026-01-04 |
 
 ## Template
 
