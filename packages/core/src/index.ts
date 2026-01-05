@@ -47,9 +47,18 @@ export type {
 export { HybridSearch } from './search/index.js'
 export type { HybridSearchOptions, SearchQuery, SearchResponse } from './search/index.js'
 
-// Embeddings
-export { EmbeddingService } from './embeddings/index.js'
-export type { EmbeddingResult, SimilarityResult } from './embeddings/index.js'
+// Embeddings - LAZY LOADED
+// To avoid eagerly loading @xenova/transformers (which crashes CLI),
+// EmbeddingService is exported via a separate entry point.
+// Import from '@skillsmith/core/embeddings' instead.
+// See SMI-1127 for details.
+//
+// Types are safe to export here (no runtime loading):
+export type {
+  EmbeddingResult,
+  SimilarityResult,
+  EmbeddingServiceOptions,
+} from './embeddings/index.js'
 
 // Cache
 export { L1Cache, L2Cache, TieredCache } from './cache/index.js'

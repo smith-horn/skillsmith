@@ -6,7 +6,6 @@
  */
 
 import * as jose from 'jose'
-import type { KeyLike } from 'jose'
 
 import type {
   FeatureFlag,
@@ -60,8 +59,11 @@ const DEFAULT_OPTIONS: Required<Omit<LicenseValidatorOptions, 'publicKey'>> = {
  * validator.clearKeyCache();
  * ```
  */
-/** Key type returned by jose import functions */
-type JoseKeyLike = KeyLike | Uint8Array
+/**
+ * Key type returned by jose import functions (importSPKI, importJWK)
+ * Defined locally to avoid jose version compatibility issues
+ */
+type JoseKeyLike = Awaited<ReturnType<typeof jose.importSPKI>> | Uint8Array
 
 export class LicenseValidator {
   private readonly options: Required<Omit<LicenseValidatorOptions, 'publicKey'>> & {
