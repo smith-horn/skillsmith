@@ -9,7 +9,6 @@ import {
   EventStreamManager,
   type StreamAuditEvent,
   type EventFilter,
-  type EventSeverity,
 } from '../../../src/audit/streaming/EventStream.js'
 
 // Test utilities - fixed date for deterministic testing
@@ -93,7 +92,7 @@ describe('EventStreamManager', () => {
 
       const subscriptions = manager.getActiveSubscriptions()
       expect(subscriptions).toHaveLength(1)
-      expect(subscriptions[0].filter).toEqual(filter)
+      expect(subscriptions[0]!.filter).toEqual(filter)
     })
   })
 
@@ -165,7 +164,7 @@ describe('EventStreamManager', () => {
       await iterator.next()
 
       const subscriptions = manager.getActiveSubscriptions()
-      expect(subscriptions[0].eventCount).toBe(2)
+      expect(subscriptions[0]!.eventCount).toBe(2)
     })
   })
 
@@ -381,8 +380,8 @@ describe('EventStreamManager', () => {
 
       // Should have the most recent events
       const recent = smallManager.getRecentEvents()
-      expect(recent[0].id).toBe('evt-5')
-      expect(recent[4].id).toBe('evt-9')
+      expect(recent[0]!.id).toBe('evt-5')
+      expect(recent[4]!.id).toBe('evt-9')
 
       smallManager.clear()
     })
@@ -401,7 +400,7 @@ describe('EventStreamManager', () => {
       expect(count).toBe(0)
 
       const subscriptions = manager.getActiveSubscriptions()
-      expect(subscriptions[0].isPaused).toBe(true)
+      expect(subscriptions[0]!.isPaused).toBe(true)
     })
 
     it('should resume event delivery after resume', async () => {
@@ -442,8 +441,8 @@ describe('EventStreamManager', () => {
 
       const events = manager.getRecentEvents()
       expect(events).toHaveLength(3)
-      expect(events[0].id).toBe('evt-1')
-      expect(events[2].id).toBe('evt-3')
+      expect(events[0]!.id).toBe('evt-1')
+      expect(events[2]!.id).toBe('evt-3')
     })
 
     it('should respect limit parameter', () => {
@@ -454,8 +453,8 @@ describe('EventStreamManager', () => {
       const events = manager.getRecentEvents(3)
       expect(events).toHaveLength(3)
       // Should return the most recent 3
-      expect(events[0].id).toBe('evt-7')
-      expect(events[2].id).toBe('evt-9')
+      expect(events[0]!.id).toBe('evt-7')
+      expect(events[2]!.id).toBe('evt-9')
     })
   })
 
@@ -516,8 +515,8 @@ describe('EventStreamManager', () => {
       }
 
       expect(received).toHaveLength(2)
-      expect(received[0].id).toBe('evt-1')
-      expect(received[1].id).toBe('evt-2')
+      expect(received[0]!.id).toBe('evt-1')
+      expect(received[1]!.id).toBe('evt-2')
     })
 
     it('should support iterator return for early termination', async () => {
@@ -586,8 +585,8 @@ describe('EventStreamManager', () => {
       }
 
       expect(events).toHaveLength(100)
-      expect(events[0].id).toBe('evt-0')
-      expect(events[99].id).toBe('evt-99')
+      expect(events[0]!.id).toBe('evt-0')
+      expect(events[99]!.id).toBe('evt-99')
     })
 
     it('should handle metadata in events', async () => {

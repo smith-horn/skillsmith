@@ -16,6 +16,11 @@ import { LICENSE_KEY_ENV_VAR, LICENSE_PUBLIC_KEY_ENV_VAR } from '../../src/licen
 // ============================================================================
 
 /**
+ * Key type for jose operations
+ */
+type JoseKey = Awaited<ReturnType<typeof jose.generateKeyPair>>['publicKey']
+
+/**
  * Generate an RSA key pair for testing
  */
 async function generateTestKeyPair() {
@@ -26,7 +31,7 @@ async function generateTestKeyPair() {
 /**
  * Export public key as SPKI PEM
  */
-async function exportPublicKey(publicKey: jose.KeyLike): Promise<string> {
+async function exportPublicKey(publicKey: JoseKey): Promise<string> {
   return jose.exportSPKI(publicKey)
 }
 
@@ -35,7 +40,7 @@ async function exportPublicKey(publicKey: jose.KeyLike): Promise<string> {
  */
 async function createLicenseToken(
   payload: LicensePayload,
-  privateKey: jose.KeyLike,
+  privateKey: JoseKey,
   options: {
     issuer?: string
     audience?: string
@@ -81,8 +86,8 @@ function createTestPayload(overrides: Partial<LicensePayload> = {}): LicensePayl
 // ============================================================================
 
 describe('LicenseValidator', () => {
-  let publicKey: jose.KeyLike
-  let privateKey: jose.KeyLike
+  let publicKey: JoseKey
+  let privateKey: JoseKey
   let publicKeyPem: string
 
   // Generate keys before all tests

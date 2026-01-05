@@ -9,12 +9,12 @@
  * - Compliance-aware (no delete during legal hold)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { existsSync, mkdirSync, rmSync, readFileSync, readdirSync } from 'fs'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { existsSync, rmSync, readFileSync, readdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import Database from 'better-sqlite3'
-import type { AuditEventType, AuditLogEntry } from '@skillsmith/core'
+import type { AuditEventType, AuditLogEntry, AuditActor, AuditResult } from '@skillsmith/core'
 import {
   RetentionEnforcer,
   validateRetentionConfig,
@@ -32,10 +32,18 @@ import type {
 
 /**
  * Mock AuditLogger for testing
+ *
+ * Uses a structural approach to match the EnterpriseAuditLogger interface
+ * without extending the base class, avoiding private member conflicts.
  */
-class MockAuditLogger implements EnterpriseAuditLogger {
-  private events: AuditLogEntry[] = []
-  private db: Database.Database
+class MockAuditLogger {
+  db: Database.Database
+  // Required stub properties to satisfy EnterpriseAuditLogger interface
+  config = { dbPath: ':memory:', retentionDays: 90 }
+  stmts = {}
+  prepareStatements = (): void => {}
+  cleanupInternal = (): void => {}
+  validateRetentionDays = (): void => {}
 
   constructor(db: Database.Database) {
     this.db = db
@@ -60,7 +68,9 @@ class MockAuditLogger implements EnterpriseAuditLogger {
     `)
   }
 
-  log(entry: Omit<AuditLogEntry, 'id' | 'created_at'> & { timestamp?: string }): void {
+  log(
+    entry: Omit<AuditLogEntry, 'id' | 'timestamp' | 'created_at'> & { timestamp?: string }
+  ): void {
     const id = crypto.randomUUID()
     const timestamp = entry.timestamp || new Date().toISOString()
     const created_at = new Date().toISOString()
@@ -119,10 +129,10 @@ class MockAuditLogger implements EnterpriseAuditLogger {
       id: string
       event_type: AuditEventType
       timestamp: string
-      actor: string
+      actor: AuditActor
       resource: string
       action: string
-      result: string
+      result: AuditResult
       metadata: string | null
       created_at: string
     }>
@@ -281,12 +291,14 @@ describe('RetentionPolicy', () => {
 
 describe('RetentionEnforcer', () => {
   let db: Database.Database
-  let auditLogger: MockAuditLogger
+  let auditLogger: EnterpriseAuditLogger
+  let mockLogger: MockAuditLogger
   let archivePath: string
 
   beforeEach(() => {
     db = new Database(':memory:')
-    auditLogger = new MockAuditLogger(db)
+    mockLogger = new MockAuditLogger(db)
+    auditLogger = mockLogger as unknown as EnterpriseAuditLogger
     archivePath = join(tmpdir(), 'audit-archive-test-' + Date.now())
   })
 
@@ -355,7 +367,7 @@ describe('RetentionEnforcer', () => {
 
       // Add an old event
       const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000) // 60 days ago
-      auditLogger.log({
+      mockLogger.log({
         event_type: 'security_scan',
         timestamp: oldDate.toISOString(),
         actor: 'system',
@@ -382,7 +394,7 @@ describe('RetentionEnforcer', () => {
 
       // Add an old event (60 days ago)
       const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
-      auditLogger.log({
+      mockLogger.log({
         event_type: 'security_scan',
         timestamp: oldDate.toISOString(),
         actor: 'system',
@@ -392,7 +404,7 @@ describe('RetentionEnforcer', () => {
       })
 
       // Add a recent event
-      auditLogger.log({
+      mockLogger.log({
         event_type: 'security_scan',
         actor: 'system',
         resource: '/test2',
@@ -418,7 +430,7 @@ describe('RetentionEnforcer', () => {
 
       // Add an old event
       const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
-      auditLogger.log({
+      mockLogger.log({
         event_type: 'security_scan',
         timestamp: oldDate.toISOString(),
         actor: 'system',
@@ -450,7 +462,7 @@ describe('RetentionEnforcer', () => {
 
       // Add a security_scan event from 45 days ago (should be deleted with 30-day policy)
       const oldDate = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000)
-      auditLogger.log({
+      mockLogger.log({
         event_type: 'security_scan',
         timestamp: oldDate.toISOString(),
         actor: 'system',
@@ -460,7 +472,7 @@ describe('RetentionEnforcer', () => {
       })
 
       // Add a config_change event from 45 days ago (should NOT be deleted with 90-day default)
-      auditLogger.log({
+      mockLogger.log({
         event_type: 'config_change',
         timestamp: oldDate.toISOString(),
         actor: 'user',
@@ -489,7 +501,7 @@ describe('RetentionEnforcer', () => {
 
       // Add old event
       const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
-      auditLogger.log({
+      mockLogger.log({
         event_type: 'security_scan',
         timestamp: oldDate.toISOString(),
         actor: 'system',
@@ -510,7 +522,7 @@ describe('RetentionEnforcer', () => {
 
       // Add old events of different types
       const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
-      auditLogger.log({
+      mockLogger.log({
         event_type: 'security_scan',
         timestamp: oldDate.toISOString(),
         actor: 'system',
@@ -518,7 +530,7 @@ describe('RetentionEnforcer', () => {
         action: 'scan',
         result: 'success',
       })
-      auditLogger.log({
+      mockLogger.log({
         event_type: 'config_change',
         timestamp: oldDate.toISOString(),
         actor: 'user',
@@ -564,7 +576,11 @@ describe('RetentionEnforcer', () => {
       const files = readdirSync(archivePath)
       expect(files.length).toBe(1)
 
-      const archiveContent = JSON.parse(readFileSync(join(archivePath, files[0]), 'utf-8'))
+      const firstFile = files[0]
+      if (!firstFile) {
+        throw new Error('Expected archive file not found')
+      }
+      const archiveContent = JSON.parse(readFileSync(join(archivePath, firstFile), 'utf-8'))
       expect(archiveContent.eventCount).toBe(1)
       expect(archiveContent.events[0].id).toBe('test-1')
     })
@@ -644,7 +660,7 @@ describe('RetentionEnforcer', () => {
 
       // Add some old events
       const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
-      auditLogger.log({
+      mockLogger.log({
         event_type: 'security_scan',
         timestamp: oldDate.toISOString(),
         actor: 'system',

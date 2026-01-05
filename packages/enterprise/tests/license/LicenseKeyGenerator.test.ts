@@ -16,19 +16,30 @@ import { TEAM_FEATURES, ENTERPRISE_FEATURES } from '../../src/license/types.js'
 // ============================================================================
 
 /**
+ * Verified license payload with known properties
+ */
+interface VerifiedLicensePayload extends jose.JWTPayload {
+  tier?: string
+  features?: string[]
+  customerId?: string
+  issuedAt?: number
+  expiresAt?: number
+}
+
+/**
  * Verify a JWT token and extract payload
  */
 async function verifyToken(
   token: string,
   publicKey: string,
   options: { issuer?: string; audience?: string } = {}
-): Promise<jose.JWTPayload> {
+): Promise<VerifiedLicensePayload> {
   const key = await jose.importSPKI(publicKey, 'RS256')
   const { payload } = await jose.jwtVerify(token, key, {
     issuer: options.issuer ?? 'skillsmith',
     audience: options.audience ?? 'skillsmith-enterprise',
   })
-  return payload
+  return payload as VerifiedLicensePayload
 }
 
 /**
@@ -114,8 +125,8 @@ describe('LicenseKeyGenerator', () => {
       // Verify with public key
       const verified = await verifyToken(token, keyPair.publicKey)
 
-      expect(verified.tier).toBe(payload.tier)
-      expect(verified.customerId).toBe(payload.customerId)
+      expect(verified['tier']).toBe(payload.tier)
+      expect(verified['customerId']).toBe(payload.customerId)
     })
   })
 
@@ -144,11 +155,11 @@ describe('LicenseKeyGenerator', () => {
       const token = await generator.generateLicenseKey(payload, privateKey)
       const verified = await verifyToken(token, publicKey)
 
-      expect(verified.tier).toBe('team')
-      expect(verified.features).toEqual(['team_workspaces', 'private_skills'])
-      expect(verified.customerId).toBe('cust_specific_123')
-      expect(verified.issuedAt).toBe(payload.issuedAt)
-      expect(verified.expiresAt).toBe(payload.expiresAt)
+      expect(verified['tier']).toBe('team')
+      expect(verified['features']).toEqual(['team_workspaces', 'private_skills'])
+      expect(verified['customerId']).toBe('cust_specific_123')
+      expect(verified['issuedAt']).toBe(payload.issuedAt)
+      expect(verified['expiresAt']).toBe(payload.expiresAt)
     })
 
     it('should set correct issuer and audience', async () => {
@@ -196,7 +207,7 @@ describe('LicenseKeyGenerator', () => {
       const token = await generator.generateLicenseKey(payload, privateKey)
       const verified = await verifyToken(token, publicKey)
 
-      expect(verified.features).toEqual([])
+      expect(verified['features']).toEqual([])
     })
 
     it('should handle all tier types', async () => {
@@ -207,7 +218,7 @@ describe('LicenseKeyGenerator', () => {
         const token = await generator.generateLicenseKey(payload, privateKey)
         const verified = await verifyToken(token, publicKey)
 
-        expect(verified.tier).toBe(tier)
+        expect(verified['tier']).toBe(tier)
       }
     })
 
@@ -237,9 +248,9 @@ describe('LicenseKeyGenerator', () => {
       // Verify with new public key
       const verified = await verifyToken(rotatedToken, newKeyPair.publicKey)
 
-      expect(verified.tier).toBe(payload.tier)
-      expect(verified.customerId).toBe(payload.customerId)
-      expect(verified.features).toEqual(payload.features)
+      expect(verified['tier']).toBe(payload.tier)
+      expect(verified['customerId']).toBe(payload.customerId)
+      expect(verified['features']).toEqual(payload.features)
     })
 
     it('should preserve all claims during rotation', async () => {
@@ -255,11 +266,11 @@ describe('LicenseKeyGenerator', () => {
 
       const verified = await verifyToken(rotatedToken, newKeyPair.publicKey)
 
-      expect(verified.tier).toBe('team')
-      expect(verified.customerId).toBe('cust_rotate_test')
-      expect(verified.features).toEqual(['team_workspaces', 'usage_analytics'])
-      expect(verified.issuedAt).toBe(payload.issuedAt)
-      expect(verified.expiresAt).toBe(payload.expiresAt)
+      expect(verified['tier']).toBe('team')
+      expect(verified['customerId']).toBe('cust_rotate_test')
+      expect(verified['features']).toEqual(['team_workspaces', 'usage_analytics'])
+      expect(verified['issuedAt']).toBe(payload.issuedAt)
+      expect(verified['expiresAt']).toBe(payload.expiresAt)
     })
 
     it('should fail rotation with original public key', async () => {
@@ -304,16 +315,16 @@ describe('LicenseKeyGenerator', () => {
       const token = await generator.createTeamLicense('cust_team_123', 365, privateKey)
       const verified = await verifyToken(token, publicKey)
 
-      expect(verified.tier).toBe('team')
-      expect(verified.customerId).toBe('cust_team_123')
-      expect(verified.features).toEqual([...TEAM_FEATURES])
+      expect(verified['tier']).toBe('team')
+      expect(verified['customerId']).toBe('cust_team_123')
+      expect(verified['features']).toEqual([...TEAM_FEATURES])
     })
 
     it('should include all team features', async () => {
       const token = await generator.createTeamLicense('cust_team', 30, privateKey)
       const verified = await verifyToken(token, publicKey)
 
-      const features = verified.features as FeatureFlag[]
+      const features = verified['features'] as FeatureFlag[]
       expect(features).toContain('team_workspaces')
       expect(features).toContain('private_skills')
       expect(features).toContain('usage_analytics')
@@ -340,7 +351,7 @@ describe('LicenseKeyGenerator', () => {
       const token = await generator.createTeamLicense('cust_team', 30, privateKey)
       const verified = await verifyToken(token, publicKey)
 
-      const features = verified.features as FeatureFlag[]
+      const features = verified['features'] as FeatureFlag[]
       expect(features).not.toContain('sso_saml')
       expect(features).not.toContain('rbac')
       expect(features).not.toContain('audit_logging')
@@ -356,15 +367,15 @@ describe('LicenseKeyGenerator', () => {
       const token = await generator.createEnterpriseLicense('cust_ent_456', 365, privateKey)
       const verified = await verifyToken(token, publicKey)
 
-      expect(verified.tier).toBe('enterprise')
-      expect(verified.customerId).toBe('cust_ent_456')
+      expect(verified['tier']).toBe('enterprise')
+      expect(verified['customerId']).toBe('cust_ent_456')
     })
 
     it('should include all team and enterprise features', async () => {
       const token = await generator.createEnterpriseLicense('cust_ent', 30, privateKey)
       const verified = await verifyToken(token, publicKey)
 
-      const features = verified.features as FeatureFlag[]
+      const features = verified['features'] as FeatureFlag[]
 
       // Team features
       expect(features).toContain('team_workspaces')
@@ -385,7 +396,7 @@ describe('LicenseKeyGenerator', () => {
       const token = await generator.createEnterpriseLicense('cust_ent', 30, privateKey)
       const verified = await verifyToken(token, publicKey)
 
-      const features = verified.features as FeatureFlag[]
+      const features = verified['features'] as FeatureFlag[]
       const expectedCount = TEAM_FEATURES.length + ENTERPRISE_FEATURES.length
 
       expect(features).toHaveLength(expectedCount)
@@ -417,9 +428,9 @@ describe('LicenseKeyGenerator', () => {
       const token = await generator.createCommunityLicense('cust_free_789', 365, privateKey)
       const verified = await verifyToken(token, publicKey)
 
-      expect(verified.tier).toBe('community')
-      expect(verified.customerId).toBe('cust_free_789')
-      expect(verified.features).toEqual([])
+      expect(verified['tier']).toBe('community')
+      expect(verified['customerId']).toBe('cust_free_789')
+      expect(verified['features']).toEqual([])
     })
 
     it('should set correct expiration based on duration', async () => {
@@ -450,13 +461,13 @@ describe('LicenseKeyGenerator', () => {
       const token = await generator.generateLicenseKey(payload, privateKey)
 
       // Decode the token to verify structure
-      const decoded = jose.decodeJwt(token)
+      const decoded = jose.decodeJwt(token) as VerifiedLicensePayload
 
-      expect(decoded.tier).toBe(payload.tier)
-      expect(decoded.features).toEqual(payload.features)
-      expect(decoded.customerId).toBe(payload.customerId)
-      expect(decoded.issuedAt).toBe(payload.issuedAt)
-      expect(decoded.expiresAt).toBe(payload.expiresAt)
+      expect(decoded['tier']).toBe(payload.tier)
+      expect(decoded['features']).toEqual(payload.features)
+      expect(decoded['customerId']).toBe(payload.customerId)
+      expect(decoded['issuedAt']).toBe(payload.issuedAt)
+      expect(decoded['expiresAt']).toBe(payload.expiresAt)
       expect(decoded.iss).toBe('skillsmith')
       expect(decoded.aud).toBe('skillsmith-enterprise')
     })
@@ -474,7 +485,7 @@ describe('LicenseKeyGenerator', () => {
       const token = await generator.generateLicenseKey(payload, privateKey)
       const verified = await verifyToken(token, publicKey)
 
-      expect(verified.customerId).toBe(longCustomerId)
+      expect(verified['customerId']).toBe(longCustomerId)
     })
 
     it('should handle special characters in customer ID', async () => {
@@ -484,7 +495,7 @@ describe('LicenseKeyGenerator', () => {
       const token = await generator.generateLicenseKey(payload, privateKey)
       const verified = await verifyToken(token, publicKey)
 
-      expect(verified.customerId).toBe(specialCustomerId)
+      expect(verified['customerId']).toBe(specialCustomerId)
     })
 
     it('should handle 1 day duration', async () => {
@@ -529,11 +540,11 @@ describe('LicenseKeyGenerator', () => {
       const verified1 = await verifyToken(token1, publicKey)
       const verified2 = await verifyToken(token2, publicKey)
 
-      expect(verified1.tier).toBe(verified2.tier)
-      expect(verified1.customerId).toBe(verified2.customerId)
-      expect(verified1.features).toEqual(verified2.features)
-      expect(verified1.issuedAt).toBe(verified2.issuedAt)
-      expect(verified1.expiresAt).toBe(verified2.expiresAt)
+      expect(verified1['tier']).toBe(verified2['tier'])
+      expect(verified1['customerId']).toBe(verified2['customerId'])
+      expect(verified1['features']).toEqual(verified2['features'])
+      expect(verified1['issuedAt']).toBe(verified2['issuedAt'])
+      expect(verified1['expiresAt']).toBe(verified2['expiresAt'])
     })
   })
 })

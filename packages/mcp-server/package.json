@@ -9,6 +9,7 @@
     "skillsmith-mcp": "./dist/index.js"
   },
   "scripts": {
+    "prepublishOnly": "npm run build && npm run test",
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
@@ -37,5 +38,23 @@
   "files": [
     "dist"
   ],
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smith-horn-group/skillsmith.git",
+    "directory": "packages/mcp-server"
+  },
+  "homepage": "https://github.com/smith-horn-group/skillsmith#readme",
+  "bugs": {
+    "url": "https://github.com/smith-horn-group/skillsmith/issues"
+  },
+  "keywords": [
+    "claude",
+    "ai",
+    "skills",
+    "mcp",
+    "llm",
+    "anthropic",
+    "model-context-protocol"
+  ]
 }

@@ -7,6 +7,7 @@
     "skillsmith": "dist/src/index.js"
   },
   "scripts": {
+    "prepublishOnly": "npm run build && npm run test",
     "build": "tsc",
     "dev": "tsc --watch",
     "import": "node dist/import.js",
@@ -32,5 +33,27 @@
     "@skillsmith/enterprise": {
       "optional": true
     }
-  }
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smith-horn-group/skillsmith.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/smith-horn-group/skillsmith#readme",
+  "bugs": {
+    "url": "https://github.com/smith-horn-group/skillsmith/issues"
+  },
+  "keywords": [
+    "claude",
+    "ai",
+    "skills",
+    "mcp",
+    "llm",
+    "anthropic",
+    "cli"
+  ]
 }

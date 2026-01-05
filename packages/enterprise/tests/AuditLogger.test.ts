@@ -26,7 +26,6 @@ import type { Database as DatabaseType } from 'better-sqlite3'
  */
 const FIXED_TIMESTAMP = 1705312800000 // January 15, 2024 at 10:00 UTC
 const FIXED_DATE = new Date(FIXED_TIMESTAMP)
-const ONE_DAY_MS = 24 * 60 * 60 * 1000
 
 function setupFakeTimers(): void {
   vi.useFakeTimers()
@@ -234,7 +233,7 @@ describe('EnterpriseAuditLogger', () => {
       const logs = logger.queryEnterprise({ enterpriseEventType: 'sso_login' })
       expect(logs.length).toBeGreaterThan(0)
 
-      const ssoLog = logs[0]
+      const ssoLog = logs[0]!
       expect(ssoLog.event_type).toBe('sso_login')
       expect(ssoLog.result).toBe('success')
       expect(ssoLog.metadata).toMatchObject({
@@ -256,7 +255,7 @@ describe('EnterpriseAuditLogger', () => {
       const logs = logger.queryEnterprise({ enterpriseEventType: 'sso_login' })
       expect(logs.length).toBeGreaterThan(0)
 
-      const ssoLog = logs[0]
+      const ssoLog = logs[0]!
       expect(ssoLog.action).toBe('login_attempt')
       expect(ssoLog.result).toBe('blocked')
     })
@@ -275,7 +274,7 @@ describe('EnterpriseAuditLogger', () => {
       logger.logSSOEvent(event)
 
       const logs = logger.queryEnterprise({ enterpriseEventType: 'sso_login' })
-      expect(logs[0].metadata).toMatchObject({
+      expect(logs[0]!.metadata).toMatchObject({
         mfaUsed: true,
         loginMethod: 'password',
       })
@@ -298,7 +297,7 @@ describe('EnterpriseAuditLogger', () => {
       const logs = logger.queryEnterprise({ enterpriseEventType: 'rbac_check' })
       expect(logs.length).toBeGreaterThan(0)
 
-      const rbacLog = logs[0]
+      const rbacLog = logs[0]!
       expect(rbacLog.event_type).toBe('rbac_check')
       expect(rbacLog.actor).toBe('user')
       expect(rbacLog.action).toBe('check:read')
@@ -320,9 +319,11 @@ describe('EnterpriseAuditLogger', () => {
       const logs = logger.queryEnterprise({ enterpriseEventType: 'rbac_check' })
       expect(logs.length).toBeGreaterThan(0)
 
-      const rbacLog = logs[0]
+      const rbacLog = logs[0]!
       expect(rbacLog.result).toBe('blocked')
-      expect(rbacLog.metadata?.denialReason).toBe('Insufficient permissions for admin resource')
+      expect((rbacLog.metadata as Record<string, unknown>)?.['denialReason']).toBe(
+        'Insufficient permissions for admin resource'
+      )
     })
 
     it('should handle service account principal type', () => {
@@ -337,7 +338,7 @@ describe('EnterpriseAuditLogger', () => {
       logger.logRBACEvent(event)
 
       const logs = logger.queryEnterprise({ enterpriseEventType: 'rbac_check' })
-      expect(logs[0].actor).toBe('system')
+      expect(logs[0]!.actor).toBe('system')
     })
   })
 
@@ -357,12 +358,12 @@ describe('EnterpriseAuditLogger', () => {
       const logs = logger.queryEnterprise({ enterpriseEventType: 'license_validation' })
       expect(logs.length).toBeGreaterThan(0)
 
-      const licenseLog = logs[0]
+      const licenseLog = logs[0]!
       expect(licenseLog.event_type).toBe('license_validation')
       expect(licenseLog.resource).toBe('license:enterprise')
       expect(licenseLog.result).toBe('success')
-      expect(licenseLog.metadata?.seatsUsed).toBe(45)
-      expect(licenseLog.metadata?.seatsTotal).toBe(100)
+      expect((licenseLog.metadata as Record<string, unknown>)?.['seatsUsed']).toBe(45)
+      expect((licenseLog.metadata as Record<string, unknown>)?.['seatsTotal']).toBe(100)
     })
 
     it('should log feature-specific license check', () => {
@@ -376,7 +377,7 @@ describe('EnterpriseAuditLogger', () => {
       logger.logLicenseEvent(event)
 
       const logs = logger.queryEnterprise({ enterpriseEventType: 'license_validation' })
-      expect(logs[0].action).toBe('validate:advanced_analytics')
+      expect(logs[0]!.action).toBe('validate:advanced_analytics')
     })
 
     it('should log failed license validation', () => {
@@ -392,8 +393,8 @@ describe('EnterpriseAuditLogger', () => {
       logger.logLicenseEvent(event)
 
       const logs = logger.queryEnterprise({ enterpriseEventType: 'license_validation' })
-      expect(logs[0].result).toBe('error')
-      expect(logs[0].metadata?.reason).toBe('License expired')
+      expect(logs[0]!.result).toBe('error')
+      expect((logs[0]!.metadata as Record<string, unknown>)?.['reason']).toBe('License expired')
     })
 
     it('should handle all license tiers', () => {
@@ -716,7 +717,7 @@ describe('EnterpriseAuditLogger', () => {
       // Query using core method to see actual stored type
       const coreLogs = logger.query({ event_type: 'security_scan' })
       const ssoLog = coreLogs.find(
-        (l) => (l.metadata as Record<string, unknown>)?._enterpriseEventType === 'sso_login'
+        (l) => (l.metadata as Record<string, unknown>)?.['_enterpriseEventType'] === 'sso_login'
       )
       expect(ssoLog).toBeDefined()
     })
@@ -732,7 +733,7 @@ describe('EnterpriseAuditLogger', () => {
 
       const coreLogs = logger.query({ event_type: 'security_scan' })
       const rbacLog = coreLogs.find(
-        (l) => (l.metadata as Record<string, unknown>)?._enterpriseEventType === 'rbac_check'
+        (l) => (l.metadata as Record<string, unknown>)?.['_enterpriseEventType'] === 'rbac_check'
       )
       expect(rbacLog).toBeDefined()
     })
@@ -747,7 +748,7 @@ describe('EnterpriseAuditLogger', () => {
       const coreLogs = logger.query({ event_type: 'config_change' })
       const licenseLog = coreLogs.find(
         (l) =>
-          (l.metadata as Record<string, unknown>)?._enterpriseEventType === 'license_validation'
+          (l.metadata as Record<string, unknown>)?.['_enterpriseEventType'] === 'license_validation'
       )
       expect(licenseLog).toBeDefined()
     })
@@ -812,9 +813,9 @@ describe('EnterpriseAuditLogger', () => {
       expect(datadogEvents.length).toBe(3)
 
       // Verify event order and types
-      expect(splunkEvents[0].event_type).toBe('sso_login')
-      expect(splunkEvents[1].event_type).toBe('rbac_check')
-      expect(splunkEvents[2].event_type).toBe('license_validation')
+      expect(splunkEvents[0]!.event_type).toBe('sso_login')
+      expect(splunkEvents[1]!.event_type).toBe('rbac_check')
+      expect(splunkEvents[2]!.event_type).toBe('license_validation')
 
       // Query enterprise logs
       const allLogs = logger.queryEnterprise()

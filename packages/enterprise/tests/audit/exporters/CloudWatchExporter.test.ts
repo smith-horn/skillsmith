@@ -223,7 +223,7 @@ describe('CloudWatchExporter', () => {
       await exporter.initialize()
 
       const createGroupCalls = mockClient.send.mock.calls.filter(
-        ([cmd]: [{ type: string }]) => cmd.type === 'CreateLogGroupCommand'
+        (call) => (call[0] as { type: string } | undefined)?.type === 'CreateLogGroupCommand'
       )
       expect(createGroupCalls).toHaveLength(0)
     })
@@ -501,7 +501,7 @@ describe('CloudWatchExporter', () => {
 
       // Verify PutLogEvents was called
       const putLogEventsCalls = mockClient.send.mock.calls.filter(
-        ([cmd]: [{ type: string }]) => cmd.type === 'PutLogEventsCommand'
+        (call) => (call[0] as { type: string } | undefined)?.type === 'PutLogEventsCommand'
       )
       expect(putLogEventsCalls.length).toBeGreaterThan(0)
 
