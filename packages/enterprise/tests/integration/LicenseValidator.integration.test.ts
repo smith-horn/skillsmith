@@ -23,7 +23,6 @@ import {
   createTierTokens,
   type TestKeyPair,
 } from '../fixtures/license-test-utils.js'
-import type * as jose from 'jose'
 
 describe('LicenseValidator Integration Tests', () => {
   let keyPair: TestKeyPair
