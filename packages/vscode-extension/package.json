@@ -2,7 +2,7 @@
   "name": "@skillsmith/vscode-extension",
   "displayName": "Skillsmith",
   "description": "Discover and install Claude Code skills directly in VS Code",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "skillsmith",
   "engines": {
     "vscode": "^1.85.0"

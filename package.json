@@ -1,6 +1,6 @@
 {
   "name": "skillsmith",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Skill discovery, recommendation, and learning system for Claude Code",
   "private": true,
   "type": "module",
