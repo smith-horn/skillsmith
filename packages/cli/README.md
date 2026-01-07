@@ -14,6 +14,20 @@ Or use directly with npx:
 npx @skillsmith/cli search "testing"
 ```
 
+## Command Alias
+
+The CLI provides two command names:
+- `skillsmith` - Full command name
+- `sklx` - Short alias for faster typing
+
+Both commands are identical:
+
+```bash
+# These are equivalent
+skillsmith search "testing"
+sklx search "testing"
+```
+
 ## Commands
 
 ### search

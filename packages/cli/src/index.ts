@@ -32,9 +32,12 @@ const CLI_VERSION = '0.1.1'
 
 const program = new Command()
 
+// Detect which command name was used (skillsmith or sklx)
+const commandName = process.argv[1]?.endsWith('sklx') ? 'sklx' : 'skillsmith'
+
 program
-  .name('skillsmith')
-  .description('Claude Skill Discovery and Management CLI')
+  .name(commandName)
+  .description('Claude Skill Discovery and Management CLI (alias: sklx)')
   .version(CLI_VERSION)
 
 // Display startup header with license status before parsing commands

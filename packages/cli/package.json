@@ -4,7 +4,8 @@
   "description": "CLI tools for Skillsmith skill discovery",
   "type": "module",
   "bin": {
-    "skillsmith": "dist/src/index.js"
+    "skillsmith": "dist/src/index.js",
+    "sklx": "dist/src/index.js"
   },
   "scripts": {
     "prepublishOnly": "npm run build && npm run test",
