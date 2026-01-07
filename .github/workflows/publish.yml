@@ -79,7 +79,7 @@ jobs:
       - name: Publish core
         run: npm publish -w @skillsmith/core --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.SKILLSMITH_NPM_TOKEN }}
 
   publish-mcp-server:
     name: Publish @skillsmith/mcp-server
@@ -108,7 +108,7 @@ jobs:
       - name: Publish mcp-server
         run: npm publish -w @skillsmith/mcp-server --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.SKILLSMITH_NPM_TOKEN }}
 
   publish-cli:
     name: Publish @skillsmith/cli
@@ -137,7 +137,7 @@ jobs:
       - name: Publish cli
         run: npm publish -w @skillsmith/cli --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.SKILLSMITH_NPM_TOKEN }}
 
   # Publish enterprise package to GitHub Packages (private)
   publish-enterprise:
