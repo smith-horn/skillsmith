@@ -38,7 +38,7 @@ const toolDefinitions = [
 const server = new Server(
   {
     name: 'skillsmith',
-    version: '0.1.1',
+    version: '0.1.2',
   },
   {
     capabilities: {

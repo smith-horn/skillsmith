@@ -17,7 +17,7 @@ describe('Server Configuration', () => {
   })
 
   it('should have valid semver version', () => {
-    const SERVER_VERSION = '0.1.1'
+    const SERVER_VERSION = '0.1.2'
     expect(SERVER_VERSION).toMatch(/^\d+\.\d+\.\d+$/)
   })
 })
