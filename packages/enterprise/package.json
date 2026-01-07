@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/enterprise",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Enterprise features for Skillsmith including audit logging, SSO, and RBAC",
   "type": "module",
   "main": "./dist/src/index.js",

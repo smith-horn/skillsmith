@@ -28,7 +28,7 @@ import { DEFAULT_DB_PATH } from './config.js'
 import { sanitizeError } from './utils/sanitize.js'
 import { displayStartupHeader } from './utils/license.js'
 
-const CLI_VERSION = '0.1.1'
+const CLI_VERSION = '0.1.2'
 
 const program = new Command()
 
