@@ -66,6 +66,54 @@ if (license.tier === 'enterprise') {
 }
 ```
 
+## Testing
+
+### Integration Tests
+
+The enterprise package includes comprehensive integration tests for license validation with real RS256 JWT verification:
+
+```bash
+# Run integration tests
+npm test -- packages/enterprise/tests/integration/
+
+# Run all enterprise tests
+npm test -- packages/enterprise/
+```
+
+**Test Coverage:**
+- Valid token validation (all tiers)
+- Expired/not-yet-valid token rejection
+- Invalid signature detection
+- Issuer/audience validation
+- Missing/invalid claims handling
+- Public key caching and rotation
+- Concurrent validation
+
+### Test Utilities
+
+Test utilities are available in `tests/fixtures/license-test-utils.ts` for creating test JWT tokens:
+
+```typescript
+import {
+  generateTestKeyPair,
+  createTestLicenseToken,
+  createExpiredToken,
+  createWrongSignatureToken,
+} from '@skillsmith/enterprise/tests/fixtures/license-test-utils';
+
+// Generate RSA key pair for testing
+const { publicKey, privateKey } = await generateTestKeyPair();
+
+// Create valid test token
+const token = await createTestLicenseToken(privateKey, {
+  tier: 'enterprise',
+  features: ['sso_saml', 'audit_logging'],
+});
+
+// Create expired token for error testing
+const expiredToken = await createExpiredToken(privateKey);
+```
+
 ## License
 
 This software is proprietary. See [LICENSE.md](./LICENSE.md) for terms.
