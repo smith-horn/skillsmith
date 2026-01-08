@@ -64,10 +64,14 @@
     "globals": "^15.14.0",
     "husky": "^9.1.7",
     "lint-staged": "^15.2.11",
+    "posthog-node": "5.19.0",
     "prettier": "^3.4.2",
+    "supabase": "2.71.3",
     "tsx": "^4.7.0",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.0",
+    "varlock": "0.1.4",
+    "vercel": "50.1.6",
     "vitest": "4.0.16"
   },
   "lint-staged": {

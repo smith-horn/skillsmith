@@ -79,3 +79,4 @@ scripts/utils/
 packages/web/
 src/
 docs/site/
+.env.registry
