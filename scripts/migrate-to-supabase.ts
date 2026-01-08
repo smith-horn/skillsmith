@@ -21,7 +21,7 @@
  * - SMI-1209: Rate limit handling with exponential backoff
  */
 
-import Database from 'better-sqlite3';
+import Database from 'better-sqlite3'
 import {
   validateEnv,
   createSupabaseClient,
@@ -39,19 +39,27 @@ import {
   type SQLiteSkill,
   type MigrationMetrics,
   type MigrationCheckpoint,
-  type SupabaseSkill as _SupabaseSkill,
-} from './lib/migration-utils.js';
+} from './lib/migration-utils.js'
 
 // Configuration
-const BATCH_SIZE = 500;
-const CONCURRENT_BATCHES = 3; // SMI-1202: Number of parallel batches
-const CHECKPOINT_INTERVAL = 5; // Save checkpoint every N batches
+const BATCH_SIZE = Math.max(
+  10,
+  Math.min(5000, parseInt(process.env.MIGRATION_BATCH_SIZE || '500', 10) || 500)
+)
+const CONCURRENT_BATCHES = Math.max(
+  1,
+  Math.min(10, parseInt(process.env.MIGRATION_CONCURRENCY || '3', 10) || 3)
+)
+const CHECKPOINT_INTERVAL = Math.max(
+  1,
+  Math.min(100, parseInt(process.env.MIGRATION_CHECKPOINT_INTERVAL || '5', 10) || 5)
+)
 
 interface MigrationOptions {
-  dryRun: boolean;
-  clean: boolean;
-  resume: boolean;
-  parallel: boolean;
+  dryRun: boolean
+  clean: boolean
+  resume: boolean
+  parallel: boolean
 }
 
 function parseArgs(): MigrationOptions {
@@ -60,221 +68,240 @@ function parseArgs(): MigrationOptions {
     clean: process.argv.includes('--clean'),
     resume: process.argv.includes('--resume'),
     parallel: !process.argv.includes('--no-parallel'), // Parallel by default
-  };
+  }
 }
 
 async function migrate() {
-  console.log('='.repeat(60));
-  console.log('SMI-1181: Skills Database Migration to Supabase');
-  console.log('='.repeat(60));
+  console.log('='.repeat(60))
+  console.log('SMI-1181: Skills Database Migration to Supabase')
+  console.log('='.repeat(60))
 
-  const options = parseArgs();
+  const options = parseArgs()
 
   if (options.dryRun) {
-    console.log('\n[DRY RUN MODE] No data will be written to Supabase\n');
+    console.log('\n[DRY RUN MODE] No data will be written to Supabase\n')
   }
 
   // SMI-1197: Validate environment BEFORE using variables
-  const config = validateEnv();
+  const config = validateEnv()
 
   // Find database
-  const dbPath = findDatabase();
-  const sqlite = new Database(dbPath, { readonly: true });
+  const dbPath = findDatabase()
+  const sqlite = new Database(dbPath, { readonly: true })
 
   // Create Supabase client
-  const supabase = createSupabaseClient(config);
+  const supabase = createSupabaseClient(config)
 
   // SMI-1207: Check for existing checkpoint
-  let checkpoint: MigrationCheckpoint | null = null;
-  let startOffset = 0;
+  // SMI-1215: Use cursor-based pagination instead of offset
+  let checkpoint: MigrationCheckpoint | null = null
+  let lastProcessedId: string | null = null
 
   if (options.resume) {
-    checkpoint = loadCheckpoint();
+    checkpoint = loadCheckpoint()
     if (checkpoint && checkpoint.dbPath === dbPath) {
-      startOffset = checkpoint.lastProcessedOffset;
-      console.log(`\n▶️ Resuming from offset ${startOffset}`);
+      lastProcessedId = checkpoint.lastProcessedId ?? null
+      console.log(`\n▶️ Resuming from id ${lastProcessedId ?? 'start'}`)
     } else if (checkpoint) {
-      console.log('\n⚠️ Checkpoint exists but for different database, starting fresh');
-      checkpoint = null;
+      console.log('\n⚠️ Checkpoint exists but for different database, starting fresh')
+      checkpoint = null
     }
   }
 
   // SMI-1198: Clear existing data if requested
   if (options.clean && !options.resume) {
-    console.log('\nClearing existing skills from Supabase...');
+    console.log('\nClearing existing skills from Supabase...')
     if (!options.dryRun) {
-      const { error: deleteError } = await supabase
-        .from('skills')
-        .delete()
-        .not('id', 'is', null);
+      const { error: deleteError } = await supabase.from('skills').delete().not('id', 'is', null)
 
       if (deleteError) {
-        console.error('Failed to clear existing skills:', deleteError.message);
-        process.exit(1);
+        console.error('Failed to clear existing skills:', deleteError.message)
+        process.exit(1)
       }
-      clearCheckpoint();
+      clearCheckpoint()
     }
-    console.log(options.dryRun ? '[DRY RUN] Would clear existing skills' : 'Existing skills cleared.');
+    console.log(
+      options.dryRun ? '[DRY RUN] Would clear existing skills' : 'Existing skills cleared.'
+    )
   }
 
   // Get total count for progress
-  const totalCount = sqlite.prepare('SELECT COUNT(*) as count FROM skills').get() as { count: number };
-  const totalSkills = totalCount.count;
-  console.log(`\nTotal skills in database: ${totalSkills}`);
+  const totalCount = sqlite.prepare('SELECT COUNT(*) as count FROM skills').get() as {
+    count: number
+  }
+  const totalSkills = totalCount.count
+  console.log(`\nTotal skills in database: ${totalSkills}`)
 
   // SMI-1208: Initialize metrics
-  const metrics: MigrationMetrics = createMetrics(totalSkills);
+  const metrics: MigrationMetrics = createMetrics(totalSkills)
   if (checkpoint) {
-    metrics.successCount = checkpoint.successCount;
-    metrics.errorCount = checkpoint.errorCount;
-    metrics.errors = [...checkpoint.errors];
+    metrics.successCount = checkpoint.successCount
+    metrics.errorCount = checkpoint.errorCount
+    metrics.errors = [...checkpoint.errors]
   }
 
   // SMI-1201: Use streaming with LIMIT/OFFSET for constant memory
-  console.log(`\nMigrating in batches of ${BATCH_SIZE}${options.parallel ? ` (${CONCURRENT_BATCHES} concurrent)` : ''}...`);
+  console.log(
+    `\nMigrating in batches of ${BATCH_SIZE}${options.parallel ? ` (${CONCURRENT_BATCHES} concurrent)` : ''}...`
+  )
 
   // SMI-1202: Create concurrency limiter for parallel processing
-  const limiter = new ConcurrencyLimiter(options.parallel ? CONCURRENT_BATCHES : 1);
+  const limiter = new ConcurrencyLimiter(options.parallel ? CONCURRENT_BATCHES : 1)
 
-  let currentOffset = startOffset;
-  let batchesProcessed = 0;
-  const pendingBatches: Promise<void>[] = [];
+  let currentCursor = lastProcessedId
+  let processedCount = checkpoint?.processedCount ?? 0
+  let batchesProcessed = 0
+  const pendingBatches: Promise<void>[] = []
 
-  // SMI-1201: Stream batches using LIMIT/OFFSET instead of loading all into memory
-  while (currentOffset < totalSkills) {
-    const batchOffset = currentOffset;
-    const batchNum = Math.floor(batchOffset / BATCH_SIZE) + 1;
+  // SMI-1201: Stream batches using cursor-based pagination for O(1) performance
+  // SMI-1215: Changed from LIMIT/OFFSET to WHERE id > ? for efficiency at scale
+  while (processedCount < totalSkills) {
+    const batchNum = batchesProcessed + 1
 
-    // Query only this batch from SQLite (constant memory)
-    const batch = sqlite
-      .prepare('SELECT * FROM skills ORDER BY id LIMIT ? OFFSET ?')
-      .all(BATCH_SIZE, batchOffset) as SQLiteSkill[];
+    // Query only this batch from SQLite using cursor (constant time at any offset)
+    const batch = currentCursor
+      ? (sqlite
+          .prepare('SELECT * FROM skills WHERE id > ? ORDER BY id LIMIT ?')
+          .all(currentCursor, BATCH_SIZE) as SQLiteSkill[])
+      : (sqlite
+          .prepare('SELECT * FROM skills ORDER BY id LIMIT ?')
+          .all(BATCH_SIZE) as SQLiteSkill[])
 
-    if (batch.length === 0) break;
+    if (batch.length === 0) break
 
-    const transformed = batch.map(transformSkill);
+    // Capture batch data for closure
+    const batchData = [...batch] // SMI-1227: Shallow copy for immutability
+    const batchNumber = batchNum
 
     // SMI-1202: Process batch with concurrency control
+    // SMI-1214: Move transformation INSIDE callback to avoid stale closure
     const batchPromise = limiter.run(async () => {
-      const batchStart = Date.now();
+      const batchStart = Date.now()
+      // SMI-1214: Transform inside callback - each batch gets fresh transformation
+      const transformed = batchData.map(transformSkill)
 
       if (options.dryRun) {
         if (DEBUG) {
-          console.log(`\n[DRY RUN] Batch ${batchNum}: ${batch.length} skills`);
-          console.log(`  First: ${batch[0].id} - ${batch[0].name}`);
+          console.log(`\n[DRY RUN] Batch ${batchNumber}: ${batchData.length} skills`)
+          console.log(`  First: ${batchData[0].id} - ${batchData[0].name}`)
         }
-        metrics.successCount += batch.length;
+        metrics.successCount += batchData.length
       } else {
         // SMI-1209: Use retry with exponential backoff
-        const result = await processBatchWithRetry(supabase, transformed, 3, metrics);
+        const result = await processBatchWithRetry(supabase, transformed, 3, metrics)
 
         if (result.success) {
-          metrics.successCount += batch.length;
+          metrics.successCount += batchData.length
         } else {
-          console.error(`\nBatch ${batchNum} failed: ${result.error}`);
-          metrics.errors.push(`Batch ${batchNum}: ${result.error}`);
-          metrics.errorCount += batch.length;
+          console.error(`\nBatch ${batchNumber} failed: ${result.error}`)
+          metrics.errors.push(`Batch ${batchNumber}: ${result.error}`)
+          metrics.errorCount += batchData.length
         }
       }
 
-      metrics.batchTimes.push(Date.now() - batchStart);
-    });
+      metrics.batchTimes.push(Date.now() - batchStart)
+    })
 
-    pendingBatches.push(batchPromise);
-    currentOffset += batch.length;
-    batchesProcessed++;
+    pendingBatches.push(batchPromise)
+    // SMI-1215: Update cursor to last processed id
+    currentCursor = batch[batch.length - 1].id
+    processedCount += batch.length
+    batchesProcessed++
 
     // SMI-1207: Save checkpoint periodically
+    // SMI-1215: Use cursor-based checkpoint instead of offset
     if (batchesProcessed % CHECKPOINT_INTERVAL === 0) {
       // Wait for pending batches before checkpoint
-      await Promise.all(pendingBatches);
-      pendingBatches.length = 0;
+      await Promise.all(pendingBatches)
+      pendingBatches.length = 0
 
-      metrics.processedSkills = currentOffset;
+      metrics.processedSkills = processedCount
 
       if (!options.dryRun) {
         saveCheckpoint({
-          lastProcessedOffset: currentOffset,
-          processedCount: currentOffset,
+          lastProcessedOffset: processedCount, // Keep for backward compatibility
+          lastProcessedId: currentCursor ?? undefined, // SMI-1215: Cursor-based
+          processedCount: processedCount,
           successCount: metrics.successCount,
           errorCount: metrics.errorCount,
           errors: metrics.errors.slice(-20), // Keep last 20 errors
           timestamp: new Date().toISOString(),
           dbPath,
-        });
+        })
       }
     }
 
     // Update progress
-    metrics.processedSkills = currentOffset;
-    const pct = ((currentOffset / totalSkills) * 100).toFixed(1);
-    const avgTime = metrics.batchTimes.length > 0
-      ? metrics.batchTimes.reduce((a, b) => a + b, 0) / metrics.batchTimes.length
-      : 0;
-    const remaining = totalSkills - currentOffset;
-    const eta = avgTime > 0 ? formatDuration((remaining / BATCH_SIZE) * avgTime) : '...';
+    metrics.processedSkills = processedCount
+    const pct = ((processedCount / totalSkills) * 100).toFixed(1)
+    const avgTime =
+      metrics.batchTimes.length > 0
+        ? metrics.batchTimes.reduce((a, b) => a + b, 0) / metrics.batchTimes.length
+        : 0
+    const remaining = totalSkills - processedCount
+    const eta = avgTime > 0 ? formatDuration((remaining / BATCH_SIZE) * avgTime) : '...'
 
     process.stdout.write(
-      `\rProgress: ${currentOffset}/${totalSkills} (${pct}%) | ` +
-      `Batches: ${batchesProcessed} | ETA: ${eta}  `
-    );
+      `\rProgress: ${processedCount}/${totalSkills} (${pct}%) | ` +
+        `Batches: ${batchesProcessed} | ETA: ${eta}  `
+    )
   }
 
   // Wait for any remaining batches
-  await Promise.all(pendingBatches);
+  await Promise.all(pendingBatches)
 
-  console.log('\n');
-  sqlite.close();
+  console.log('\n')
+  sqlite.close()
 
   // Clear checkpoint on successful completion
   if (!options.dryRun && metrics.errorCount === 0) {
-    clearCheckpoint();
+    clearCheckpoint()
   }
 
   // Summary
-  console.log('='.repeat(60));
-  console.log('Migration Summary');
-  console.log('='.repeat(60));
-  console.log(`Total skills:    ${totalSkills}`);
-  console.log(`Processed:       ${metrics.processedSkills}`);
-  console.log(`Successful:      ${metrics.successCount}`);
-  console.log(`Failed:          ${metrics.errorCount}`);
-  console.log(`Retries:         ${metrics.retryCount}`);
+  console.log('='.repeat(60))
+  console.log('Migration Summary')
+  console.log('='.repeat(60))
+  console.log(`Total skills:    ${totalSkills}`)
+  console.log(`Processed:       ${metrics.processedSkills}`)
+  console.log(`Successful:      ${metrics.successCount}`)
+  console.log(`Failed:          ${metrics.errorCount}`)
+  console.log(`Retries:         ${metrics.retryCount}`)
 
   if (metrics.errors.length > 0) {
-    console.log('\nErrors:');
-    metrics.errors.slice(0, 10).forEach((e) => console.log(`  - ${e}`));
+    console.log('\nErrors:')
+    metrics.errors.slice(0, 10).forEach((e) => console.log(`  - ${e}`))
     if (metrics.errors.length > 10) {
-      console.log(`  ... and ${metrics.errors.length - 10} more`);
+      console.log(`  ... and ${metrics.errors.length - 10} more`)
     }
   }
 
   // SMI-1208: Print performance metrics
-  printMetricsReport(metrics);
+  printMetricsReport(metrics)
 
   // Usage hints
-  console.log('\n' + '='.repeat(60));
-  console.log('Usage');
-  console.log('='.repeat(60));
-  console.log('  --dry-run      Test without writing data');
-  console.log('  --clean        Clear existing data first');
-  console.log('  --resume       Resume from last checkpoint');
-  console.log('  --no-parallel  Disable parallel batch processing');
+  console.log('\n' + '='.repeat(60))
+  console.log('Usage')
+  console.log('='.repeat(60))
+  console.log('  --dry-run      Test without writing data')
+  console.log('  --clean        Clear existing data first')
+  console.log('  --resume       Resume from last checkpoint')
+  console.log('  --no-parallel  Disable parallel batch processing')
 
   if (options.dryRun) {
-    console.log('\n[DRY RUN] No data was written. Remove --dry-run to execute migration.');
+    console.log('\n[DRY RUN] No data was written. Remove --dry-run to execute migration.')
   } else if (metrics.errorCount === 0) {
-    console.log('\n✅ Migration completed successfully!');
-    console.log('\nNext step: Run validation script');
-    console.log('  npx tsx scripts/validate-migration.ts');
+    console.log('\n✅ Migration completed successfully!')
+    console.log('\nNext step: Run validation script')
+    console.log('  npx tsx scripts/validate-migration.ts')
   } else {
-    console.log('\n⚠️ Migration completed with errors');
-    console.log('Use --resume to continue from last checkpoint');
-    process.exit(1);
+    console.log('\n⚠️ Migration completed with errors')
+    console.log('Use --resume to continue from last checkpoint')
+    process.exit(1)
   }
 }
 
 migrate().catch((err) => {
-  console.error('Migration failed:', err);
-  process.exit(1);
-});
+  console.error('Migration failed:', err)
+  process.exit(1)
+})

@@ -80,3 +80,4 @@ packages/web/
 src/
 docs/site/
 .env.registry
+.migration-checkpoint.json
