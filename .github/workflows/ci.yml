@@ -277,28 +277,8 @@ jobs:
             skillsmith-ci:${{ github.sha }} \
             npm test -- packages/core/tests/security/
 
-      - name: Run security tests with coverage
-        # Coverage thresholds are for full suite, not security-only tests
-        # Security tests already passed above; this is just for coverage reporting
-        continue-on-error: true
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/app \
-            -w /app \
-            skillsmith-ci:${{ github.sha }} \
-            npm run test:coverage -- packages/core/tests/security/
-
-      - name: Copy security coverage from container
-        run: |
-          cp coverage/coverage-final.json security-coverage.json 2>/dev/null || true
-
-      - name: Upload security coverage artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: security-coverage
-          path: security-coverage.json
-          retention-days: 7
+      # SMI-1250: Removed coverage step - global thresholds don't apply to subset tests
+      # Security tests run above without coverage; full coverage in main test job
 
   compliance:
     name: Standards Compliance
