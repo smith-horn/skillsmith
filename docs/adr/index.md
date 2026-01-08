@@ -26,6 +26,14 @@ ADRs document significant architectural decisions made during the project. They 
 | [ADR-015](015-immutable-audit-log-storage.md) | Immutable Audit Log Storage with SHA-256 Hash Chains | Accepted | 2026-01-04 |
 | [ADR-016](016-vercel-api-proxy.md) | Vercel API Proxy for Custom Domain | Accepted | 2026-01-08 |
 
+### Legacy ADRs (Pre-Implementation Design Phase)
+
+| ADR | Title | Status | Date |
+|-----|-------|--------|------|
+| [ADR-100](100-mcp-as-api-layer.md) | MCP as API Layer | Accepted | 2025-12 |
+| [ADR-101](101-sqlite-local-first.md) | SQLite Local-First Architecture | Accepted | 2025-12 |
+| [ADR-102](102-behavioral-instrumentation.md) | Behavioral Instrumentation | Accepted | 2025-12 |
+
 ## Template
 
 New ADRs should follow the template in [000-template.md](000-template.md).
