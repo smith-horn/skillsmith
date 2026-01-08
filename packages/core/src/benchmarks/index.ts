@@ -1,6 +1,7 @@
 /**
  * SMI-632: Benchmark module exports
  * SMI-689: Enhanced with MemoryProfiler integration
+ * SMI-1189: Updated to export from split modules
  *
  * Provides performance benchmarking infrastructure for:
  * - Search query latency
@@ -10,7 +11,7 @@
  * - Memory profiling and leak detection
  */
 
-// Core benchmark runner
+// Core benchmark runner (includes re-exports for backwards compatibility)
 export {
   BenchmarkRunner,
   type BenchmarkConfig,
@@ -27,8 +28,21 @@ export {
   type MemoryRegressionInfo,
   formatReportAsJson,
   formatReportAsText,
+  formatBytes,
   compareReports,
+  hasRegressions,
+  getRegressedBenchmarks,
+  getImprovedBenchmarks,
 } from './BenchmarkRunner.js'
+
+// Types module (direct access)
+export { DEFAULT_CONFIG } from './types.js'
+
+// Formatters module (direct access)
+export { formatBytes as formatBytesUtil } from './formatters.js'
+
+// Comparator module (direct access)
+export { hasRegressions as hasRegressionsUtil } from './comparator.js'
 
 // SMI-689: Memory profiler
 export {

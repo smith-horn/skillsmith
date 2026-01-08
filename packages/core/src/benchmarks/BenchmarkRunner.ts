@@ -1,6 +1,7 @@
 /**
  * SMI-632: BenchmarkRunner - Performance benchmark infrastructure
  * SMI-689: Enhanced with MemoryProfiler integration
+ * SMI-1189: Refactored to use extracted modules
  *
  * Features:
  * - Run benchmark suites
@@ -16,166 +17,45 @@ import * as fs from 'fs'
 import { percentile, sampleStddev, mean } from './stats.js'
 import {
   MemoryProfiler,
-  type MemoryStats as ProfilerMemoryStats,
   type MemoryBaseline,
   type MemoryRegressionResult,
 } from './MemoryProfiler.js'
+import {
+  DEFAULT_CONFIG,
+  type BenchmarkConfig,
+  type BenchmarkResult,
+  type BenchmarkStats,
+  type BenchmarkReport,
+  type BenchmarkDefinition,
+  type EnvironmentInfo,
+  type MemoryStats,
+  type DetailedMemoryStats,
+} from './types.js'
 
-/**
- * Benchmark configuration options
- */
-export interface BenchmarkConfig {
-  /** Number of warm-up iterations before measurement */
-  warmupIterations?: number
-  /** Number of measured iterations */
-  iterations?: number
-  /** Enable memory profiling */
-  measureMemory?: boolean
-  /** Suite name for grouping */
-  suiteName?: string
-  /** Enable detailed memory profiling with MemoryProfiler (SMI-689) */
-  enableMemoryProfiler?: boolean
-  /** Memory regression threshold percentage (SMI-689, default: 10) */
-  memoryRegressionThreshold?: number
-  /** Memory baselines for regression comparison (SMI-689) */
-  memoryBaselines?: Record<string, MemoryBaseline>
-}
+// Re-export types for backwards compatibility
+export type {
+  BenchmarkConfig,
+  BenchmarkResult,
+  BenchmarkStats,
+  BenchmarkReport,
+  BenchmarkDefinition,
+  BenchmarkFn,
+  EnvironmentInfo,
+  MemoryStats,
+  DetailedMemoryStats,
+  MemoryRegressionInfo,
+  ComparisonResult,
+  MetricComparison,
+} from './types.js'
 
-/**
- * Single benchmark result
- */
-export interface BenchmarkResult {
-  name: string
-  iterations: number
-  latencies: number[]
-  memoryUsage?: MemoryStats
-  /** Number of errors encountered during benchmark execution */
-  errors: number
-  /** Error messages (capped at 10 to prevent memory issues) */
-  errorMessages: string[]
-}
-
-/**
- * Memory usage statistics
- */
-export interface MemoryStats {
-  heapUsedBefore: number
-  heapUsedAfter: number
-  heapUsedPeak: number
-  externalBefore: number
-  externalAfter: number
-}
-
-/**
- * Statistical summary of benchmark results
- */
-export interface BenchmarkStats {
-  name: string
-  iterations: number
-  p50_ms: number
-  p95_ms: number
-  p99_ms: number
-  mean_ms: number
-  stddev_ms: number
-  min_ms: number
-  max_ms: number
-  memoryPeak_mb?: number
-  /** Number of errors encountered during benchmark execution */
-  errors?: number
-  /** Error messages (capped at 10) */
-  errorMessages?: string[]
-}
-
-/**
- * Detailed memory profiling stats (SMI-689)
- */
-export interface DetailedMemoryStats {
-  /** Start heap size in bytes */
-  startHeapSize: number
-  /** End heap size in bytes */
-  endHeapSize: number
-  /** Peak heap size in bytes */
-  peakHeapSize: number
-  /** Heap growth in bytes */
-  heapGrowth: number
-  /** Heap growth as percentage */
-  heapGrowthPercent: number
-  /** Duration of profiling in ms */
-  profilingDuration: number
-  /** Number of samples collected */
-  sampleCount: number
-}
-
-/**
- * Memory regression info (SMI-689)
- */
-export interface MemoryRegressionInfo {
-  /** Whether any regressions were detected */
-  hasRegressions: boolean
-  /** Threshold used for detection */
-  threshold: number
-  /** Details per benchmark */
-  regressions: MemoryRegressionResult[]
-}
-
-/**
- * Complete benchmark report
- */
-export interface BenchmarkReport {
-  suite: string
-  timestamp: string
-  environment: EnvironmentInfo
-  results: Record<string, BenchmarkStats>
-  summary: {
-    totalBenchmarks: number
-    totalIterations: number
-    totalDuration_ms: number
-  }
-  /** Detailed memory profiling data (SMI-689) */
-  memoryProfile?: Record<string, DetailedMemoryStats>
-  /** Memory regression info (SMI-689) */
-  memoryRegression?: MemoryRegressionInfo
-  /** Memory baselines for future comparison (SMI-689) */
-  memoryBaselines?: Record<string, MemoryBaseline>
-}
-
-/**
- * Environment information for reproducibility
- */
-export interface EnvironmentInfo {
-  node: string
-  platform: string
-  arch: string
-  docker: boolean
-  database: string
-  cpuCount: number
-  memoryTotal_mb: number
-}
-
-/**
- * Benchmark function type
- */
-export type BenchmarkFn = () => void | Promise<void>
-
-/**
- * Benchmark definition
- */
-export interface BenchmarkDefinition {
-  name: string
-  fn: BenchmarkFn
-  setup?: () => void | Promise<void>
-  teardown?: () => void | Promise<void>
-}
-
-const DEFAULT_CONFIG: Required<BenchmarkConfig> = {
-  warmupIterations: 10,
-  iterations: 1000,
-  measureMemory: true,
-  suiteName: 'default',
-  enableMemoryProfiler: false,
-  memoryRegressionThreshold: 10,
-  memoryBaselines: {},
-}
+// Re-export formatters and comparator for backwards compatibility
+export { formatReportAsJson, formatReportAsText, formatBytes } from './formatters.js'
+export {
+  compareReports,
+  hasRegressions,
+  getRegressedBenchmarks,
+  getImprovedBenchmarks,
+} from './comparator.js'
 
 /**
  * Core benchmark runner for performance testing
@@ -264,7 +144,7 @@ export class BenchmarkRunner {
     for (let i = 0; i < warmupIterations; i++) {
       try {
         await definition.fn()
-      } catch (err) {
+      } catch (_err) {
         // Ignore warmup errors, just continue
       }
     }
@@ -534,163 +414,4 @@ export class BenchmarkRunner {
     }
     return this.memoryProfiler.formatMemoryReport()
   }
-}
-
-/**
- * Format a benchmark report as JSON for CI integration
- */
-export function formatReportAsJson(report: BenchmarkReport): string {
-  return JSON.stringify(report, null, 2)
-}
-
-/**
- * Format a benchmark report as human-readable text
- */
-export function formatReportAsText(report: BenchmarkReport): string {
-  const lines: string[] = [
-    `Benchmark Report: ${report.suite}`,
-    `Timestamp: ${report.timestamp}`,
-    `Environment: Node ${report.environment.node} on ${report.environment.platform}/${report.environment.arch}`,
-    `Docker: ${report.environment.docker ? 'Yes' : 'No'}`,
-    '',
-    'Results:',
-    '-'.repeat(80),
-  ]
-
-  for (const [name, stats] of Object.entries(report.results)) {
-    lines.push(`  ${name}:`)
-    lines.push(`    Iterations: ${stats.iterations}`)
-    lines.push(`    p50: ${stats.p50_ms}ms, p95: ${stats.p95_ms}ms, p99: ${stats.p99_ms}ms`)
-    lines.push(`    Mean: ${stats.mean_ms}ms, StdDev: ${stats.stddev_ms}ms`)
-    lines.push(`    Min: ${stats.min_ms}ms, Max: ${stats.max_ms}ms`)
-    if (stats.memoryPeak_mb !== undefined) {
-      lines.push(`    Memory Peak: ${stats.memoryPeak_mb}MB`)
-    }
-    // SMI-689: Add detailed memory profile if available
-    if (report.memoryProfile?.[name]) {
-      const mp = report.memoryProfile[name]
-      lines.push(`    Memory Profile:`)
-      lines.push(
-        `      Heap Growth: ${formatBytes(mp.heapGrowth)} (${mp.heapGrowthPercent.toFixed(1)}%)`
-      )
-      lines.push(`      Peak Heap: ${formatBytes(mp.peakHeapSize)}`)
-      lines.push(`      Samples: ${mp.sampleCount}`)
-    }
-    lines.push('')
-  }
-
-  lines.push('-'.repeat(80))
-  lines.push(`Summary:`)
-  lines.push(`  Total Benchmarks: ${report.summary.totalBenchmarks}`)
-  lines.push(`  Total Iterations: ${report.summary.totalIterations}`)
-  lines.push(`  Total Duration: ${report.summary.totalDuration_ms}ms`)
-
-  // SMI-689: Add memory regression summary
-  if (report.memoryRegression) {
-    lines.push('')
-    lines.push('Memory Regression Check:')
-    if (report.memoryRegression.hasRegressions) {
-      lines.push(
-        `  WARNING: ${report.memoryRegression.regressions.length} regression(s) detected (threshold: ${report.memoryRegression.threshold}%)`
-      )
-      for (const reg of report.memoryRegression.regressions) {
-        lines.push(`    - ${reg.label}: ${reg.changePercent.toFixed(1)}% increase`)
-      }
-    } else {
-      lines.push(
-        `  No memory regressions detected (threshold: ${report.memoryRegression.threshold}%)`
-      )
-    }
-  }
-
-  return lines.join('\n')
-}
-
-/**
- * Format bytes to human-readable string (internal helper)
- */
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(k))
-  const value = bytes / Math.pow(k, i)
-  return `${value.toFixed(1)} ${sizes[i]}`
-}
-
-/**
- * Compare two benchmark reports
- */
-export function compareReports(
-  baseline: BenchmarkReport,
-  current: BenchmarkReport
-): ComparisonResult {
-  const comparisons: Record<string, MetricComparison> = {}
-  let regressions = 0
-  let improvements = 0
-
-  for (const [name, currentStats] of Object.entries(current.results)) {
-    const baselineStats = baseline.results[name]
-    if (!baselineStats) continue
-
-    const p50Change = ((currentStats.p50_ms - baselineStats.p50_ms) / baselineStats.p50_ms) * 100
-    const p95Change = ((currentStats.p95_ms - baselineStats.p95_ms) / baselineStats.p95_ms) * 100
-    const p99Change = ((currentStats.p99_ms - baselineStats.p99_ms) / baselineStats.p99_ms) * 100
-
-    const isRegression = p95Change > 10 // 10% threshold
-    const isImprovement = p95Change < -10
-
-    if (isRegression) regressions++
-    if (isImprovement) improvements++
-
-    comparisons[name] = {
-      baseline: baselineStats,
-      current: currentStats,
-      p50ChangePercent: Math.round(p50Change * 100) / 100,
-      p95ChangePercent: Math.round(p95Change * 100) / 100,
-      p99ChangePercent: Math.round(p99Change * 100) / 100,
-      isRegression,
-      isImprovement,
-    }
-  }
-
-  return {
-    baseline: baseline.timestamp,
-    current: current.timestamp,
-    comparisons,
-    summary: {
-      totalComparisons: Object.keys(comparisons).length,
-      regressions,
-      improvements,
-      unchanged: Object.keys(comparisons).length - regressions - improvements,
-    },
-  }
-}
-
-/**
- * Comparison result between two reports
- */
-export interface ComparisonResult {
-  baseline: string
-  current: string
-  comparisons: Record<string, MetricComparison>
-  summary: {
-    totalComparisons: number
-    regressions: number
-    improvements: number
-    unchanged: number
-  }
-}
-
-/**
- * Single metric comparison
- */
-export interface MetricComparison {
-  baseline: BenchmarkStats
-  current: BenchmarkStats
-  p50ChangePercent: number
-  p95ChangePercent: number
-  p99ChangePercent: number
-  isRegression: boolean
-  isImprovement: boolean
 }

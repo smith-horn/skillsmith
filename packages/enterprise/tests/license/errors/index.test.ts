@@ -63,7 +63,7 @@ describe('LicenseError', () => {
       code: LICENSE_ERROR_CODES.LICENSE_INVALID,
     })
 
-    expect(error.upgradeUrl).toBe('https://skillsmith.io/upgrade')
+    expect(error.upgradeUrl).toBe('https://skillsmith.app/upgrade')
   })
 
   it('should have a timestamp', () => {
@@ -128,7 +128,7 @@ describe('LicenseExpiredError', () => {
   it('should have renew URL', () => {
     const error = new LicenseExpiredError(new Date())
 
-    expect(error.upgradeUrl).toBe('https://skillsmith.io/renew')
+    expect(error.upgradeUrl).toBe('https://skillsmith.app/renew')
   })
 
   it('should work without current tier', () => {
@@ -163,7 +163,7 @@ describe('LicenseInvalidError', () => {
   it('should have support URL', () => {
     const error = new LicenseInvalidError('Bad format')
 
-    expect(error.upgradeUrl).toBe('https://skillsmith.io/support')
+    expect(error.upgradeUrl).toBe('https://skillsmith.app/support')
   })
 })
 
@@ -186,7 +186,7 @@ describe('LicenseNotFoundError', () => {
   it('should have pricing URL', () => {
     const error = new LicenseNotFoundError()
 
-    expect(error.upgradeUrl).toBe('https://skillsmith.io/pricing')
+    expect(error.upgradeUrl).toBe('https://skillsmith.app/pricing')
   })
 
   it('should include optional context', () => {
@@ -220,7 +220,7 @@ describe('FeatureNotAvailableError', () => {
     const error = new FeatureNotAvailableError('sso_saml', 'community', 'enterprise')
 
     expect(error.upgradeUrl).toBe(
-      'https://skillsmith.io/upgrade?feature=sso_saml&from=community&to=enterprise'
+      'https://skillsmith.app/upgrade?feature=sso_saml&from=community&to=enterprise'
     )
   })
 
@@ -255,7 +255,7 @@ describe('LicenseQuotaExceededError', () => {
   it('should generate upgrade URL with quota type', () => {
     const error = new LicenseQuotaExceededError('api_calls', 1000, 1500)
 
-    expect(error.upgradeUrl).toBe('https://skillsmith.io/upgrade?quota=api_calls')
+    expect(error.upgradeUrl).toBe('https://skillsmith.app/upgrade?quota=api_calls')
   })
 
   it('should work without current tier', () => {

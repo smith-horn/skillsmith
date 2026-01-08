@@ -234,7 +234,7 @@ describe('License Middleware', () => {
         valid: false,
         feature: 'audit_logging' as FeatureFlag,
         message: 'Audit logging requires enterprise license',
-        upgradeUrl: 'https://skillsmith.io/pricing?feature=audit_logging',
+        upgradeUrl: 'https://skillsmith.app/pricing?feature=audit_logging',
       }
 
       const response = createLicenseErrorResponse(validationResult)
@@ -253,11 +253,11 @@ describe('License Middleware', () => {
       const validationResult = {
         valid: false,
         message: 'Feature not available',
-        upgradeUrl: 'https://skillsmith.io/pricing',
+        upgradeUrl: 'https://skillsmith.app/pricing',
       }
 
       const response = createLicenseErrorResponse(validationResult)
-      expect(response._meta?.upgradeUrl).toBe('https://skillsmith.io/pricing')
+      expect(response._meta?.upgradeUrl).toBe('https://skillsmith.app/pricing')
     })
   })
 
@@ -330,7 +330,7 @@ describe('License Middleware', () => {
       expect(result.message).toContain('Audit Logging')
       expect(result.message).toContain('enterprise')
       expect(result.message).toContain('community')
-      expect(result.upgradeUrl).toContain('skillsmith.io/pricing')
+      expect(result.upgradeUrl).toContain('skillsmith.app/pricing')
       expect(result.upgradeUrl).toContain('feature=audit_logging')
     })
 

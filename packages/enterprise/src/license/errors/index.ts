@@ -90,7 +90,7 @@ export class LicenseError extends Error {
     if (details.currentTier !== undefined) this.currentTier = details.currentTier
     if (details.requiredTier !== undefined) this.requiredTier = details.requiredTier
     if (details.feature !== undefined) this.feature = details.feature
-    this.upgradeUrl = details.upgradeUrl ?? 'https://skillsmith.io/upgrade'
+    this.upgradeUrl = details.upgradeUrl ?? 'https://skillsmith.app/upgrade'
     if (details.context !== undefined) this.context = details.context
     this.timestamp = new Date()
 
@@ -138,7 +138,7 @@ export class LicenseExpiredError extends LicenseError {
     const message = `License expired on ${expiredAt.toISOString()}`
     const details: LicenseErrorDetails = {
       code: LICENSE_ERROR_CODES.LICENSE_EXPIRED,
-      upgradeUrl: 'https://skillsmith.io/renew',
+      upgradeUrl: 'https://skillsmith.app/renew',
       context: { expiredAt: expiredAt.toISOString() },
     }
     if (currentTier !== undefined) details.currentTier = currentTier
@@ -164,7 +164,7 @@ export class LicenseInvalidError extends LicenseError {
     const message = `Invalid license: ${reason}`
     super(message, {
       code: LICENSE_ERROR_CODES.LICENSE_INVALID,
-      upgradeUrl: 'https://skillsmith.io/support',
+      upgradeUrl: 'https://skillsmith.app/support',
       context: { reason, ...context },
     })
     this.name = 'LicenseInvalidError'
@@ -186,7 +186,7 @@ export class LicenseNotFoundError extends LicenseError {
     const details: LicenseErrorDetails = {
       code: LICENSE_ERROR_CODES.LICENSE_NOT_FOUND,
       currentTier: 'community',
-      upgradeUrl: 'https://skillsmith.io/pricing',
+      upgradeUrl: 'https://skillsmith.app/pricing',
     }
     if (context !== undefined) details.context = context
     super(message, details)
@@ -218,7 +218,7 @@ export class FeatureNotAvailableError extends LicenseError {
       feature,
       currentTier,
       requiredTier,
-      upgradeUrl: `https://skillsmith.io/upgrade?feature=${feature}&from=${currentTier}&to=${requiredTier}`,
+      upgradeUrl: `https://skillsmith.app/upgrade?feature=${feature}&from=${currentTier}&to=${requiredTier}`,
     }
     if (context !== undefined) details.context = context
     super(message, details)
@@ -254,7 +254,7 @@ export class LicenseQuotaExceededError extends LicenseError {
     const message = `${quotaType} quota exceeded: using ${currentUsage} of ${maxQuota} allowed`
     const details: LicenseErrorDetails = {
       code: LICENSE_ERROR_CODES.QUOTA_EXCEEDED,
-      upgradeUrl: `https://skillsmith.io/upgrade?quota=${quotaType}`,
+      upgradeUrl: `https://skillsmith.app/upgrade?quota=${quotaType}`,
       context: { quotaType, maxQuota, currentUsage, ...context },
     }
     if (currentTier !== undefined) details.currentTier = currentTier

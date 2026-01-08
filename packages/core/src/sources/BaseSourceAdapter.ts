@@ -12,8 +12,8 @@ import {
   InMemoryRateLimitStorage,
   RATE_LIMIT_PRESETS,
   type RateLimitConfig as TokenBucketConfig,
-} from '../security/RateLimiter.js'
-import { fetchWithRetry, isRetryableStatus, type RetryConfig } from '../utils/retry.js'
+} from '../security/index.js'
+import { fetchWithRetry, type RetryConfig } from '../utils/retry.js'
 import type {
   SourceConfig,
   SourceLocation,
@@ -324,7 +324,7 @@ export abstract class BaseSourceAdapter implements ISourceAdapter {
       const remainingNum = parseInt(remaining, 10)
       if (remainingNum <= 0 && reset) {
         // We've hit the rate limit, update window
-        const resetTime = parseInt(reset, 10) * 1000
+        const _resetTime = parseInt(reset, 10) * 1000
         this.windowStart = Date.now()
         this.requestCount = this.config.rateLimit?.maxRequests ?? DEFAULT_RATE_LIMIT.maxRequests
       }

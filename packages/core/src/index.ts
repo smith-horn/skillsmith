@@ -341,17 +341,19 @@ export {
   type OverlapDetectorOptions,
 } from './matching/index.js'
 
-// Security (SMI-730)
+// Security (SMI-730, SMI-1189: Split into modular subpackages)
 export {
   RateLimiter,
   InMemoryRateLimitStorage,
   createRateLimiterFromPreset,
   RATE_LIMIT_PRESETS,
+  RateLimitQueueTimeoutError,
+  RateLimitQueueFullError,
   type RateLimitConfig,
   type RateLimitResult,
   type RateLimitStorage,
   type RateLimitMetrics,
-} from './security/RateLimiter.js'
+} from './security/index.js'
 
 // Trigger System (Phase 4)
 export {

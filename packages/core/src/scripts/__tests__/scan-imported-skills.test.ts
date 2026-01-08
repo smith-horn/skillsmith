@@ -1,73 +1,28 @@
 /**
  * SMI-864: Tests for Security Scanner for Imported Skills
+ * SMI-1189: Updated to use modular imports
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs/promises'
 import { existsSync, mkdirSync, rmSync } from 'fs'
 import * as path from 'path'
-import { SecurityScanner } from '../../security/scanner.js'
-import type { ScanReport, SecurityFinding } from '../../security/scanner.js'
+import { SecurityScanner } from '../../security/index.js'
+import type { ScanReport, SecurityFinding } from '../../security/index.js'
 
-// ============================================================================
-// Type Definitions (mirror from main script for testing)
-// ============================================================================
-
-interface ImportedSkill {
-  id: string
-  name: string
-  description?: string
-  author?: string
-  content?: string
-  repo_url?: string
-  source?: string
-  tags?: string[]
-  instructions?: string
-  trigger?: string
-  metadata?: Record<string, unknown>
-}
-
-type SeverityCategory = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
-
-// ============================================================================
-// Helper Functions (from main script for unit testing)
-// ============================================================================
-
-function determineSeverityCategory(findings: SecurityFinding[]): SeverityCategory {
-  if (findings.some((f) => f.severity === 'critical')) return 'CRITICAL'
-  if (findings.some((f) => f.severity === 'high')) return 'HIGH'
-  if (findings.some((f) => f.severity === 'medium')) return 'MEDIUM'
-  return 'LOW'
-}
-
-function shouldQuarantine(report: ScanReport, threshold: number = 40): boolean {
-  return (
-    !report.passed ||
-    report.riskScore >= threshold ||
-    report.findings.some((f) => f.severity === 'critical' || f.severity === 'high')
-  )
-}
-
-function extractScannableContent(skill: ImportedSkill): string {
-  const parts: string[] = []
-
-  if (skill.name) parts.push(`# ${skill.name}`)
-  if (skill.description) parts.push(skill.description)
-  if (skill.content) parts.push(skill.content)
-  if (skill.instructions) parts.push(skill.instructions)
-  if (skill.trigger) parts.push(skill.trigger)
-  if (skill.tags?.length) parts.push(`Tags: ${skill.tags.join(', ')}`)
-
-  if (skill.metadata) {
-    try {
-      parts.push(JSON.stringify(skill.metadata))
-    } catch {
-      // Ignore serialization errors
-    }
-  }
-
-  return parts.join('\n\n')
-}
+// Import from the new modular structure (SMI-1189)
+import {
+  determineSeverityCategory,
+  type SeverityCategory,
+} from '../skill-scanner/categorizer.js'
+import {
+  shouldQuarantine,
+  
+} from '../skill-scanner/trust-scorer.js'
+import {
+  extractScannableContent,
+} from '../skill-scanner/file-scanner.js'
+import type { ImportedSkill } from '../skill-scanner/types.js'
 
 // ============================================================================
 // Tests
@@ -159,7 +114,7 @@ describe('SMI-864: Scan Imported Skills', () => {
         },
       }
 
-      expect(shouldQuarantine(report, 40)).toBe(true)
+      expect(shouldQuarantine(report, { quarantineThreshold: 40 })).toBe(true)
     })
 
     it('should quarantine when critical findings exist', () => {

@@ -21,11 +21,11 @@ import {
 describe('First Run Detection (SMI-911)', () => {
   // Use a temp directory for testing to avoid modifying real ~/.skillsmith
   const TEST_DIR = join(tmpdir(), `skillsmith-test-${Date.now()}`)
-  const TEST_MARKER = join(TEST_DIR, '.first-run-complete')
+  const _TEST_MARKER = join(TEST_DIR, '.first-run-complete')
 
   // Override the module constants for testing
-  let originalSkillsmithDir: string
-  let originalMarkerFile: string
+  let _originalSkillsmithDir: string
+  let _originalMarkerFile: string
 
   beforeEach(() => {
     // Clean up any previous test directory

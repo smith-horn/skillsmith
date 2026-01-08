@@ -60,8 +60,8 @@ IMPORTANT CONTEXT:
 - Standards: docs/architecture/standards.md
 - Schema: packages/core/src/db/schema.ts
 - All commands run in Docker: docker exec skillsmith-dev-1 npm run <command>
-- Run npm run typecheck and npm test after each file change
-- Mark each issue Done in Linear: npm run linear:done SMI-XXX
+- Run docker exec skillsmith-dev-1 npm run typecheck and docker exec skillsmith-dev-1 npm test after each file change
+- Mark each issue Done in Linear: docker exec skillsmith-dev-1 npm run linear:done SMI-XXX
 - Use claude-flow hooks for coordination between agents" \
   --strategy development \
   --mode hierarchical \

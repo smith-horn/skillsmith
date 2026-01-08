@@ -90,7 +90,7 @@ export function formatLicenseError(error: LicenseErrorLike): MCPErrorResponse {
     feature: error.feature,
     currentTier: error.currentTier,
     requiredTier: error.requiredTier,
-    upgradeUrl: error.upgradeUrl || 'https://skillsmith.io/upgrade',
+    upgradeUrl: error.upgradeUrl || 'https://skillsmith.app/upgrade',
     timestamp: error.timestamp?.toISOString(),
   }
 
@@ -217,7 +217,7 @@ export interface UpgradeUrlConfig {
 }
 
 const DEFAULT_UPGRADE_URL_CONFIG: UpgradeUrlConfig = {
-  baseUrl: 'https://skillsmith.io/upgrade',
+  baseUrl: 'https://skillsmith.app/upgrade',
   includeFeature: true,
   includeTiers: true,
   includeSource: true,
@@ -271,7 +271,7 @@ export function buildUpgradeRequiredResponse(
   currentTier: string,
   requiredTier: string
 ): MCPErrorResponse {
-  const upgradeUrl = `https://skillsmith.io/upgrade?feature=${feature}&from=${currentTier}&to=${requiredTier}`
+  const upgradeUrl = `https://skillsmith.app/upgrade?feature=${feature}&from=${currentTier}&to=${requiredTier}`
 
   return {
     content: [
@@ -308,7 +308,7 @@ export function buildUpgradeRequiredResponse(
  * Build a license expired response with renewal URL
  */
 export function buildLicenseExpiredResponse(expiredAt?: Date): MCPErrorResponse {
-  const renewUrl = 'https://skillsmith.io/renew'
+  const renewUrl = 'https://skillsmith.app/renew'
 
   return {
     content: [
@@ -347,7 +347,7 @@ export function buildQuotaExceededResponse(
   current: number,
   max: number
 ): MCPErrorResponse {
-  const upgradeUrl = `https://skillsmith.io/upgrade?quota=${quotaType}`
+  const upgradeUrl = `https://skillsmith.app/upgrade?quota=${quotaType}`
 
   return {
     content: [

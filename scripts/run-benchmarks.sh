@@ -108,9 +108,9 @@ fi
 # Ensure dependencies are built
 echo -e "\n${BLUE}Building project...${NC}"
 cd "$PROJECT_ROOT"
-npm run build --workspace=@skillsmith/core 2>/dev/null || {
+docker exec skillsmith-dev-1 npm run build --workspace=@skillsmith/core 2>/dev/null || {
   echo -e "${YELLOW}Building core package...${NC}"
-  npm run build --workspace=@skillsmith/core
+  docker exec skillsmith-dev-1 npm run build --workspace=@skillsmith/core
 }
 
 # Create benchmarks output directory

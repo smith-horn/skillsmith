@@ -29,7 +29,7 @@ import { z } from 'zod'
 import { TriggerDetector, ContextScorer } from '@skillsmith/core'
 import { CodebaseAnalyzer } from '@skillsmith/core'
 import { SkillMatcher } from '@skillsmith/core'
-import { RateLimiter, RATE_LIMIT_PRESETS } from '@skillsmith/core'
+import { RateLimiter } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import type { MCPTrustTier as TrustTier } from '@skillsmith/core'
 

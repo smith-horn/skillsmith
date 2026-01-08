@@ -12,10 +12,9 @@ import {
   createRateLimiterFromPreset,
   RateLimitQueueTimeoutError,
   RateLimitQueueFullError,
-  type RateLimitConfig,
   type RateLimitStorage,
   type RateLimitMetrics,
-} from '../src/security/RateLimiter.js'
+} from '../src/security/index.js'
 
 describe('RateLimiter - Token Bucket Algorithm', () => {
   let limiter: RateLimiter
@@ -1068,8 +1067,8 @@ describe('RateLimiter - Queue Support (SMI-1013)', () => {
       await limiter.waitForToken('test-key')
 
       // Queue 2 requests (max queue size) - add catch to prevent unhandled rejections
-      const p1 = limiter.waitForToken('test-key').catch(() => {})
-      const p2 = limiter.waitForToken('test-key').catch(() => {})
+      const _p1 = limiter.waitForToken('test-key').catch(() => {})
+      const _p2 = limiter.waitForToken('test-key').catch(() => {})
 
       // Third queued request should fail immediately
       await expect(limiter.waitForToken('test-key')).rejects.toThrow(RateLimitQueueFullError)
@@ -1290,7 +1289,7 @@ describe('RateLimiter - Memory Bounds (Wave 3 Fixes)', () => {
       await limiter.waitForToken('key-1')
 
       // Queue one request for key-1
-      const p1 = limiter.waitForToken('key-1').catch(() => {})
+      const _p1 = limiter.waitForToken('key-1').catch(() => {})
 
       // Trying to add another request should fail (queue full for this key)
       await expect(limiter.waitForToken('key-1')).rejects.toThrow(RateLimitQueueFullError)

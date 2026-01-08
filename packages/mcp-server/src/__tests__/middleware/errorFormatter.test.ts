@@ -17,7 +17,6 @@ import {
   isLicenseErrorLike,
   safeFormatError,
   type LicenseErrorLike,
-  type MCPErrorResponse,
 } from '../../middleware/errorFormatter.js'
 
 // ============================================================================
@@ -52,12 +51,12 @@ describe('formatLicenseError', () => {
     const error: LicenseErrorLike = {
       code: 'E004',
       message: 'Upgrade required',
-      upgradeUrl: 'https://skillsmith.io/upgrade?feature=sso',
+      upgradeUrl: 'https://skillsmith.app/upgrade?feature=sso',
     }
 
     const response = formatLicenseError(error)
 
-    expect(response._meta?.upgradeUrl).toBe('https://skillsmith.io/upgrade?feature=sso')
+    expect(response._meta?.upgradeUrl).toBe('https://skillsmith.app/upgrade?feature=sso')
     expect(response._meta?.errorCode).toBe('E004')
   })
 
@@ -69,7 +68,7 @@ describe('formatLicenseError', () => {
     const response = formatLicenseError(error)
     const parsed = JSON.parse(response.content[0].text)
 
-    expect(parsed.error.details.upgradeUrl).toBe('https://skillsmith.io/upgrade')
+    expect(parsed.error.details.upgradeUrl).toBe('https://skillsmith.app/upgrade')
   })
 
   it('should handle errors with timestamp', () => {
@@ -110,7 +109,7 @@ describe('formatLicenseError', () => {
     const parsed = JSON.parse(response.content[0].text)
 
     // Details should still be present if upgradeUrl is added by default
-    expect(parsed.error.details.upgradeUrl).toBe('https://skillsmith.io/upgrade')
+    expect(parsed.error.details.upgradeUrl).toBe('https://skillsmith.app/upgrade')
   })
 })
 
@@ -286,7 +285,7 @@ describe('buildLicenseExpiredResponse', () => {
     const parsed = JSON.parse(response.content[0].text)
     expect(parsed.error.code).toBe('E001')
     expect(parsed.error.details.expiredAt).toBe('2024-01-15T12:00:00.000Z')
-    expect(parsed.error.details.renewUrl).toBe('https://skillsmith.io/renew')
+    expect(parsed.error.details.renewUrl).toBe('https://skillsmith.app/renew')
   })
 
   it('should work without expiredAt date', () => {

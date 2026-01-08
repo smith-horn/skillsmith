@@ -12,7 +12,6 @@ import {
   createRateLimiter,
   isRateLimited,
   destroyRateLimiter,
-  type RateLimiterState,
 } from '../../src/webhooks/webhook-endpoint.js'
 
 describe('Rate Limiter Memory Leak Prevention (SMI-681)', () => {

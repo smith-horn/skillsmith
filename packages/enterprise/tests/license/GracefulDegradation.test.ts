@@ -100,12 +100,12 @@ describe('URL Generation', () => {
   describe('getUpgradeUrl', () => {
     it('should generate basic upgrade URL for community tier', () => {
       const url = getUpgradeUrl('community')
-      expect(url).toBe('https://skillsmith.io/upgrade')
+      expect(url).toBe('https://skillsmith.app/upgrade')
     })
 
     it('should generate upgrade URL with tier parameter', () => {
       const url = getUpgradeUrl('team')
-      expect(url).toBe('https://skillsmith.io/upgrade?tier=team')
+      expect(url).toBe('https://skillsmith.app/upgrade?tier=team')
     })
 
     it('should include feature parameter when provided', () => {
@@ -130,7 +130,7 @@ describe('URL Generation', () => {
   describe('getPricingUrl', () => {
     it('should generate basic pricing URL', () => {
       const url = getPricingUrl()
-      expect(url).toBe('https://skillsmith.io/pricing')
+      expect(url).toBe('https://skillsmith.app/pricing')
     })
 
     it('should include feature highlight when provided', () => {
@@ -162,7 +162,7 @@ describe('Upgrade Prompts', () => {
       expect(prompt).toContain('Team Workspaces')
       expect(prompt).toContain('Team tier')
       expect(prompt).toContain('$25/user/month')
-      expect(prompt).toContain('https://skillsmith.io/upgrade')
+      expect(prompt).toContain('https://skillsmith.app/upgrade')
     })
 
     it('should create prompt for enterprise feature', () => {
@@ -226,7 +226,7 @@ describe('Tier Comparison', () => {
       expect(message).toContain('Team ($25/user/month)')
       expect(message).toContain('Enterprise ($55/user/month)')
       expect(message).toContain('search, install, recommend, validate, compare')
-      expect(message).toContain('https://skillsmith.io/pricing')
+      expect(message).toContain('https://skillsmith.app/pricing')
     })
 
     it('should include feature names for paid tiers', () => {
@@ -424,7 +424,7 @@ describe('createShortUpgradeNotice', () => {
 
     expect(notice).toContain('Team Workspaces')
     expect(notice).toContain('Team feature')
-    expect(notice).toContain('https://skillsmith.io/pricing')
+    expect(notice).toContain('https://skillsmith.app/pricing')
   })
 
   it('should create short notice for enterprise feature', () => {

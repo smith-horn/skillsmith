@@ -67,6 +67,7 @@ export {
 } from './SessionRecovery.js'
 
 // SessionHealthMonitor - SMI-761: Session health monitoring
+// SMI-1189: Refactored to use TypedEventEmitter
 export {
   SessionHealthMonitor,
   getHealthMonitor,
@@ -75,4 +76,31 @@ export {
   type SessionHealth,
   type SessionHealthStatus,
   type HealthMonitorConfig,
+  type SessionHealthEvents,
 } from './SessionHealthMonitor.js'
+
+// TypedEventEmitter - SMI-1189: Reusable typed event emitter
+export { TypedEventEmitter } from './typed-event-emitter.js'
+
+// Health types - SMI-1189: Extracted types
+export {
+  type SessionHealthState,
+  type RequiredHealthMonitorConfig,
+  MAX_RECOVERY_ATTEMPTS,
+  DEFAULT_CONFIG as DEFAULT_HEALTH_CONFIG,
+} from './health-types.js'
+
+// Health checks - SMI-1189: Extracted functions
+export {
+  calculateHealth,
+  determineHealthStatus,
+  hasStatusChanged,
+  isAlertableStatus,
+} from './health-checks.js'
+
+// Metrics collector - SMI-1189: Extracted metrics functions
+export {
+  recordSessionCount,
+  recordRecoverySuccess,
+  recordHealthStatusError,
+} from './metrics-collector.js'

@@ -371,7 +371,7 @@ export function createWebhookServer(options: WebhookServerOptions): WebhookServe
       let body: string
       try {
         body = await readBody(req, maxBodySize)
-      } catch (error) {
+      } catch {
         sendJson(res, 413, { error: 'Request body too large' })
         return
       }

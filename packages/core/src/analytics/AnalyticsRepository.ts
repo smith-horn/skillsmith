@@ -13,6 +13,7 @@ import { randomUUID } from 'crypto'
 import type {
   UsageEvent,
   UsageEventInput,
+  UsageEventType,
   Experiment,
   ExperimentInput,
   ExperimentAssignment,
@@ -23,6 +24,22 @@ import type {
   ExperimentVariant,
   ExperimentStatus,
 } from './types.js'
+
+/**
+ * Raw database row type for skill_usage_events table
+ * Used for type-safe parsing of external database data
+ */
+interface UsageEventRow {
+  id: string
+  skill_id: string
+  user_id: string
+  session_id: string
+  event_type: string
+  context: string | null
+  value_score: number | null
+  timestamp: string
+  created_at: string
+}
 
 /**
  * Repository for analytics operations
@@ -69,7 +86,9 @@ export class AnalyticsRepository {
    * Get a usage event by ID
    */
   getUsageEvent(id: string): UsageEvent | null {
-    const row = this.db.prepare('SELECT * FROM skill_usage_events WHERE id = ?').get(id) as any
+    const row = this.db.prepare('SELECT * FROM skill_usage_events WHERE id = ?').get(id) as
+      | UsageEventRow
+      | undefined
 
     if (!row) return null
 
@@ -78,9 +97,9 @@ export class AnalyticsRepository {
       skillId: row.skill_id,
       userId: row.user_id,
       sessionId: row.session_id,
-      eventType: row.event_type,
+      eventType: row.event_type as UsageEventType,
       context: row.context ? JSON.parse(row.context) : undefined,
-      valueScore: row.value_score,
+      valueScore: row.value_score ?? undefined,
       timestamp: row.timestamp,
       createdAt: row.created_at,
     }
@@ -96,16 +115,16 @@ export class AnalyticsRepository {
          WHERE skill_id = ? AND timestamp >= ? AND timestamp <= ?
          ORDER BY timestamp DESC`
       )
-      .all(skillId, startDate, endDate) as any[]
+      .all(skillId, startDate, endDate) as UsageEventRow[]
 
     return rows.map((row) => ({
       id: row.id,
       skillId: row.skill_id,
       userId: row.user_id,
       sessionId: row.session_id,
-      eventType: row.event_type,
+      eventType: row.event_type as UsageEventType,
       context: row.context ? JSON.parse(row.context) : undefined,
-      valueScore: row.value_score,
+      valueScore: row.value_score ?? undefined,
       timestamp: row.timestamp,
       createdAt: row.created_at,
     }))
@@ -121,16 +140,16 @@ export class AnalyticsRepository {
          WHERE user_id = ? AND timestamp >= ? AND timestamp <= ?
          ORDER BY timestamp DESC`
       )
-      .all(userId, startDate, endDate) as any[]
+      .all(userId, startDate, endDate) as UsageEventRow[]
 
     return rows.map((row) => ({
       id: row.id,
       skillId: row.skill_id,
       userId: row.user_id,
       sessionId: row.session_id,
-      eventType: row.event_type,
+      eventType: row.event_type as UsageEventType,
       context: row.context ? JSON.parse(row.context) : undefined,
-      valueScore: row.value_score,
+      valueScore: row.value_score ?? undefined,
       timestamp: row.timestamp,
       createdAt: row.created_at,
     }))
@@ -146,16 +165,16 @@ export class AnalyticsRepository {
          WHERE timestamp >= ? AND timestamp <= ?
          ORDER BY timestamp DESC`
       )
-      .all(startDate, endDate) as any[]
+      .all(startDate, endDate) as UsageEventRow[]
 
     return rows.map((row) => ({
       id: row.id,
       skillId: row.skill_id,
       userId: row.user_id,
       sessionId: row.session_id,
-      eventType: row.event_type,
+      eventType: row.event_type as UsageEventType,
       context: row.context ? JSON.parse(row.context) : undefined,
-      valueScore: row.value_score,
+      valueScore: row.value_score ?? undefined,
       timestamp: row.timestamp,
       createdAt: row.created_at,
     }))

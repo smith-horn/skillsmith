@@ -15,7 +15,7 @@ import { getRequiredTier, getFeaturesForTier } from './TierMapping.js'
 /**
  * Base URL for upgrade pages
  */
-const BASE_URL = 'https://skillsmith.io'
+const BASE_URL = 'https://skillsmith.app'
 
 /**
  * Pricing information for each tier
@@ -199,7 +199,7 @@ export function getPricingUrl(options?: {
  * @example
  * ```typescript
  * createUpgradePrompt('sso_saml');
- * // "SSO/SAML Integration requires Enterprise tier ($55/user/month). Upgrade at https://skillsmith.io/upgrade?tier=enterprise&feature=sso_saml"
+ * // "SSO/SAML Integration requires Enterprise tier ($55/user/month). Upgrade at https://skillsmith.app/upgrade?tier=enterprise&feature=sso_saml"
  * ```
  */
 export function createUpgradePrompt(feature: FeatureFlag, options?: UpgradePromptOptions): string {
@@ -339,7 +339,7 @@ export function getTierComparison(): TierComparisonEntry[] {
  * ```typescript
  * const result = handleFeatureDenied('audit_logging', 'team');
  * console.log(result.message);
- * // "Audit Logging requires Enterprise tier ($55/user/month). Upgrade at https://skillsmith.io/upgrade?tier=enterprise&feature=audit_logging"
+ * // "Audit Logging requires Enterprise tier ($55/user/month). Upgrade at https://skillsmith.app/upgrade?tier=enterprise&feature=audit_logging"
  * ```
  */
 export function handleFeatureDenied(

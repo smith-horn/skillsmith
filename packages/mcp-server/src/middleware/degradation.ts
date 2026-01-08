@@ -23,7 +23,7 @@ import {
 // Constants
 // ============================================================================
 
-const BASE_URL = 'https://skillsmith.io'
+const BASE_URL = 'https://skillsmith.app'
 
 /**
  * Pricing information for each tier
@@ -145,7 +145,7 @@ export const consoleDegradationLogger: DegradationLogger = {
  */
 function createUpgradePrompt(
   feature: FeatureFlag,
-  currentTier: 'community' | 'team' | 'enterprise'
+  _currentTier: 'community' | 'team' | 'enterprise'
 ): string {
   const displayName = FEATURE_DISPLAY_NAMES[feature]
   const requiredTier = FEATURE_TIERS[feature]
@@ -221,7 +221,7 @@ function createGracefulDegradationResponse(
   toolName: string,
   feature: FeatureFlag,
   currentTier: 'community' | 'team' | 'enterprise',
-  validationResult: LicenseValidationResult
+  _validationResult: LicenseValidationResult
 ): McpToolResponse {
   const requiredTier = FEATURE_TIERS[feature]
   const displayName = FEATURE_DISPLAY_NAMES[feature]

@@ -43,6 +43,24 @@ export interface CspValidationResult {
 }
 
 /**
+ * HTTP request interface for CSP middleware
+ * Minimal interface for HTTP request objects
+ */
+export interface CspHttpRequest {
+  headers?: Record<string, string | string[] | undefined>
+  url?: string
+}
+
+/**
+ * HTTP response interface for CSP middleware
+ * Minimal interface for HTTP response objects with CSP-related methods
+ */
+export interface CspHttpResponse {
+  setHeader: (name: string, value: string) => void
+  locals?: Record<string, unknown>
+}
+
+/**
  * Default CSP directives for MCP server
  */
 export const DEFAULT_CSP_DIRECTIVES: CspDirectives = {
@@ -202,7 +220,7 @@ export function validateCspHeaderDetailed(csp: string): CspValidationResult {
 
   // Parse directives for per-directive analysis
   const directives = parseCspDirectives(csp)
-  const lowercaseCsp = csp.toLowerCase()
+  const _lowercaseCsp = csp.toLowerCase()
 
   // Check for unsafe-eval in script-src or default-src (per-directive check)
   const scriptSrc = directives.get('script-src') || ''
@@ -291,7 +309,7 @@ export function validateCspHeaderDetailed(csp: string): CspValidationResult {
  * This can be used if the MCP server adds HTTP transport in the future
  */
 export function cspMiddleware(directives: CspDirectives = DEFAULT_CSP_DIRECTIVES) {
-  return (req: any, res: any, next: () => void) => {
+  return (_req: CspHttpRequest, res: CspHttpResponse, next: () => void): void => {
     const nonce = generateNonce()
     const cspHeader = buildCspHeader(directives, nonce)
 

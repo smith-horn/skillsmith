@@ -12,7 +12,7 @@ import {
   cspMiddleware,
   getCspForEnvironment,
   type CspDirectives,
-  type CspValidationResult,
+  type CspHttpRequest,
 } from '../csp.js'
 
 describe('CSP Utilities', () => {
@@ -153,9 +153,9 @@ describe('CSP Utilities', () => {
     })
 
     it('should reject non-string CSP', () => {
-      expect(validateCspHeader(null as any)).toBe(false)
-      expect(validateCspHeader(undefined as any)).toBe(false)
-      expect(validateCspHeader(123 as any)).toBe(false)
+      expect(validateCspHeader(null as unknown as string)).toBe(false)
+      expect(validateCspHeader(undefined as unknown as string)).toBe(false)
+      expect(validateCspHeader(123 as unknown as string)).toBe(false)
     })
 
     it('should warn about unsafe-eval', () => {
@@ -268,14 +268,19 @@ describe('CSP Utilities', () => {
   })
 
   describe('cspMiddleware', () => {
-    let mockReq: any
-    let mockRes: any
-    let mockNext: any
+    interface MockResponse {
+      setHeader: ReturnType<typeof vi.fn> & ((name: string, value: string) => void)
+      locals?: Record<string, unknown>
+    }
+
+    let mockReq: CspHttpRequest
+    let mockRes: MockResponse
+    let mockNext: () => void
 
     beforeEach(() => {
       mockReq = {}
       mockRes = {
-        setHeader: vi.fn(),
+        setHeader: vi.fn() as MockResponse['setHeader'],
         locals: {},
       }
       mockNext = vi.fn()
@@ -292,8 +297,9 @@ describe('CSP Utilities', () => {
       const middleware = cspMiddleware()
       middleware(mockReq, mockRes, mockNext)
 
-      expect(mockRes.locals.cspNonce).toBeDefined()
-      expect(typeof mockRes.locals.cspNonce).toBe('string')
+      expect(mockRes.locals).toBeDefined()
+      expect(mockRes.locals!.cspNonce).toBeDefined()
+      expect(typeof mockRes.locals!.cspNonce).toBe('string')
     })
 
     it('should call next', () => {
@@ -320,7 +326,7 @@ describe('CSP Utilities', () => {
       middleware(mockReq, mockRes, mockNext)
 
       expect(mockRes.locals).toBeDefined()
-      expect(mockRes.locals.cspNonce).toBeDefined()
+      expect(mockRes.locals!.cspNonce).toBeDefined()
     })
   })
 

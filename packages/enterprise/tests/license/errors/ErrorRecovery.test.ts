@@ -318,7 +318,7 @@ describe('formatErrorForLogging', () => {
     expect(formatted).toContain('team')
     expect(formatted).toContain('enterprise')
     expect(formatted).toContain('audit_logging')
-    expect(formatted).toContain('https://skillsmith.io')
+    expect(formatted).toContain('https://skillsmith.app')
   })
 
   it('should include stack trace when requested', () => {

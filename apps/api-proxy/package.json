@@ -1,0 +1,14 @@
+{
+  "name": "@skillsmith/api-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Vercel proxy for Skillsmith API (routes to Supabase Edge Functions)",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "devDependencies": {
+    "@vercel/node": "^3.0.0",
+    "typescript": "^5.3.0"
+  }
+}

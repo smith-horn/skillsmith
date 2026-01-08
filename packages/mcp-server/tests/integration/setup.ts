@@ -9,7 +9,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { createDatabase, closeDatabase, SkillRepository, SearchService } from '@skillsmith/core'
-import { seedTestSkills, TEST_SKILLS, TEST_SKILLS_STATS } from './fixtures/test-skills.js'
+import { seedTestSkills } from './fixtures/test-skills.js'
 
 // Re-export for test access
 export { TEST_SKILLS, TEST_SKILLS_STATS } from './fixtures/test-skills.js'

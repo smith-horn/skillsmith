@@ -17,7 +17,7 @@ import {
 /**
  * Configuration for the upgrade URL
  */
-const UPGRADE_URL = 'https://skillsmith.io/pricing'
+const UPGRADE_URL = 'https://skillsmith.app/pricing'
 
 /**
  * License validation result

@@ -5,9 +5,11 @@
  * SMI-732: Input sanitization functions
  * SMI-733: Audit logging system
  * SMI-898: Path traversal protection for database paths
+ * SMI-1189: Split into modular subpackages
  */
 
-export { SecurityScanner } from './scanner.js'
+// Scanner module
+export { SecurityScanner } from './scanner/index.js'
 export type {
   SecurityFinding,
   SecurityFindingType,
@@ -15,8 +17,9 @@ export type {
   ScanReport,
   ScannerOptions,
   RiskScoreBreakdown,
-} from './scanner.js'
+} from './scanner/index.js'
 
+// Sanitization
 export {
   sanitizeHtml,
   sanitizeFileName,
@@ -25,6 +28,7 @@ export {
   sanitizeText,
 } from './sanitization.js'
 
+// Path validation
 export {
   validateDbPath,
   validateDbPathOrThrow,
@@ -33,6 +37,7 @@ export {
 } from './pathValidation.js'
 export type { PathValidationOptions, PathValidationResult } from './pathValidation.js'
 
+// Audit logger
 export { AuditLogger } from './AuditLogger.js'
 export type {
   AuditLogEntry,
@@ -43,6 +48,7 @@ export type {
   AuditStats,
 } from './AuditLogger.js'
 
+// Rate limiter module
 export {
   RateLimiter,
   InMemoryRateLimitStorage,
@@ -50,10 +56,10 @@ export {
   createRateLimiterFromPreset,
   RateLimitQueueTimeoutError,
   RateLimitQueueFullError,
-} from './RateLimiter.js'
+} from './rate-limiter/index.js'
 export type {
   RateLimitConfig,
   RateLimitResult,
   RateLimitStorage,
   RateLimitMetrics,
-} from './RateLimiter.js'
+} from './rate-limiter/index.js'
