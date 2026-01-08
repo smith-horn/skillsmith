@@ -41,11 +41,15 @@ echo ""
 
 # =============================================================================
 # CHECK 2: npm audit (Optimized - single run with Docker)
+# SMI-1255: Only audit production dependencies, skip devDependencies
+# Dev tools like vercel CLI have transitive vulnerabilities that don't affect production
 # =============================================================================
-echo "🔍 Running npm audit (high severity and above)..."
+echo "🔍 Running npm audit (production dependencies, high severity)..."
 
 # Run audit once, capture both output and exit code
-AUDIT_OUTPUT=$(docker exec skillsmith-dev-1 npm audit --audit-level=high 2>&1) || AUDIT_STATUS=$?
+# --omit=dev skips devDependencies (vercel, tsx, etc.) which have known vulnerabilities
+# that don't affect production code
+AUDIT_OUTPUT=$(docker exec skillsmith-dev-1 npm audit --audit-level=high --omit=dev 2>&1) || AUDIT_STATUS=$?
 AUDIT_STATUS=${AUDIT_STATUS:-0}
 
 if [ $AUDIT_STATUS -ne 0 ]; then
