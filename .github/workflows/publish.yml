@@ -1,3 +1,4 @@
+# SMI-1251: Aligned with Docker-first CI strategy
 name: Publish Packages
 
 on:
@@ -17,41 +18,122 @@ concurrency:
 
 env:
   NODE_VERSION: '22'
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
 
 jobs:
-  # Validate before publishing
-  validate:
-    name: Validate
+  # Build Docker image once, use for all jobs (matches ci.yml pattern)
+  docker-build:
+    name: Build Docker Image
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and cache Docker image
+        uses: docker/build-push-action@v5
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          registry-url: 'https://registry.npmjs.org'
-          cache: 'npm'
+          context: .
+          push: false
+          load: true
+          tags: skillsmith-publish:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          target: dev
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Save Docker image
+        run: docker save skillsmith-publish:${{ github.sha }} | gzip > /tmp/skillsmith-publish.tar.gz
 
-      - name: Build all packages
-        run: npm run build
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-publish
+          path: /tmp/skillsmith-publish.tar.gz
+          retention-days: 1
 
-      - name: Run tests
-        run: npm test
+      - name: Extract node_modules from Docker image
+        run: |
+          docker create --name extract-deps skillsmith-publish:${{ github.sha }}
+          docker cp extract-deps:/app/node_modules /tmp/node_modules
+          docker rm extract-deps
+          tar -czf /tmp/node_modules.tar.gz -C /tmp node_modules
 
-      - name: Type check
-        run: npm run typecheck
+      - name: Upload node_modules artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-modules-publish
+          path: /tmp/node_modules.tar.gz
+          retention-days: 1
+          compression-level: 1
 
-      - name: Lint
-        run: npm run lint
+  # Validate before publishing (using Docker)
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: docker-build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image-publish
+          path: /tmp
+
+      - name: Download node_modules
+        uses: actions/download-artifact@v4
+        with:
+          name: node-modules-publish
+          path: /tmp
+
+      - name: Load Docker image
+        run: gunzip -c /tmp/skillsmith-publish.tar.gz | docker load
+
+      - name: Extract node_modules
+        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+
+      - name: Build all packages in Docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-publish:${{ github.sha }} \
+            npm run build
+
+      - name: Run tests in Docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-publish:${{ github.sha }} \
+            npm test
+
+      - name: Type check in Docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-publish:${{ github.sha }} \
+            npm run typecheck
+
+      - name: Lint in Docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-publish:${{ github.sha }} \
+            npm run lint
 
   # Publish free tier packages to public npm
+  # Note: npm publish requires direct npm ci for registry authentication
   publish-core:
     name: Publish @skillsmith/core
     runs-on: ubuntu-latest
