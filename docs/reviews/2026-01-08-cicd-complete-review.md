@@ -235,8 +235,64 @@ All CI/CD infrastructure changes have been successfully implemented and verified
 
 ---
 
+---
+
+## Addendum: Post-Merge Fixes (2026-01-09)
+
+After the initial merge to main, additional CI failures were discovered and fixed:
+
+### Additional Issues Resolved
+
+| Issue | Problem | Solution |
+|-------|---------|----------|
+| SMI-1255 | `jose.KeyLike` type not found | Use `GenerateKeyPairResult['privateKey']` instead |
+| SMI-1256 | E2E workflow couldn't post PR comments | Added `permissions` block to `e2e-tests.yml` |
+| - | npm audit failing on devDependencies | Added `--omit=dev` to ci.yml audit step |
+| - | Prettier formatting errors | Ran `npm run format` on affected files |
+
+### Additional Commits
+
+| Commit | Description |
+|--------|-------------|
+| `65c50c0` | fix(enterprise): use GenerateKeyPairResult type from jose |
+| `0b2bd50` | fix(ci): add permissions for E2E workflow PR comments |
+| `30bf5c1` | docs: add CI/CD learnings to standards and github-setup |
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `packages/enterprise/tests/fixtures/license-test-utils.ts` | Fixed jose type imports |
+| `.github/workflows/e2e-tests.yml` | Added permissions block |
+| `.github/workflows/ci.yml` | Added `--omit=dev` to npm audit |
+| `docs/architecture/standards.md` | Added §4.10, §3.3 (v1.8) |
+| `docs/ops/github-setup.md` | Added workflow permissions section |
+
+### Documentation Updates
+
+The following standards were documented from these learnings:
+
+1. **§4.10 Third-Party Type Extraction** - Pattern for extracting types from libraries that use Web Crypto API types
+2. **§3.3 Security Audit Configuration** - Using `--omit=dev` for npm audit in CI
+3. **Workflow Permissions** (github-setup.md) - Explicit permissions required for PR interactions
+
+### Linear Issues Created
+
+| Issue | Title |
+|-------|-------|
+| SMI-1274 | CI/CD Learnings: Type Safety, Audit, and Workflow Permissions |
+| SMI-1275 | Document jose TypeScript type pattern |
+| SMI-1276 | Document npm audit --omit=dev pattern |
+| SMI-1277 | Document GitHub Actions permissions pattern |
+
+**All issues marked Done on 2026-01-09.**
+
+---
+
 ## References
 
 - [GitHub Actions Workflow Syntax](https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions)
 - [Supabase Edge Functions](https://supabase.com/docs/guides/functions)
 - [GitHub Branch Protection](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches)
+- [jose Library Documentation](https://github.com/panva/jose)
+- [GitHub Actions Permissions](https://docs.github.com/en/actions/using-jobs/assigning-permissions-to-jobs)

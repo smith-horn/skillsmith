@@ -100,7 +100,7 @@ describe('E2E: skill_compare tool', () => {
       skillRepo.create(skill)
     }
 
-    context = createToolContext({ dbPath: TEST_DB_PATH })
+    context = createToolContext({ dbPath: TEST_DB_PATH, apiClientConfig: { offlineMode: true } })
   })
 
   afterAll(() => {

@@ -18,10 +18,12 @@ let toolContext: ToolContext
 
 beforeAll(async () => {
   testDbContext = await createTestDatabase()
+  // SMI-1183: Include apiClient for API integration
   toolContext = {
     db: testDbContext.db,
     searchService: testDbContext.searchService,
     skillRepository: testDbContext.skillRepository,
+    apiClient: testDbContext.apiClient,
   }
 })
 

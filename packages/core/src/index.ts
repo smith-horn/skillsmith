@@ -31,6 +31,42 @@ export type {
 // Services (SMI-579)
 export { SearchService } from './services/SearchService.js'
 
+// API Client (SMI-1244, SMI-1245, SMI-1300)
+export {
+  SkillsmithApiClient,
+  createApiClient,
+  generateAnonymousId,
+  ApiCache,
+  createCache,
+  getGlobalCache,
+  DEFAULT_TTL,
+} from './api/index.js'
+export type {
+  ApiClientConfig,
+  ApiResponse,
+  ApiErrorResponse,
+  ApiSearchResult,
+  RecommendationRequest,
+  TelemetryEvent,
+  CacheConfig,
+  CacheStats as ApiCacheStats,
+  // OpenAPI-aligned types
+  ApiTrustTier,
+  ApiCategory,
+  ApiProjectType,
+  ApiSkill,
+  SearchParams,
+  SearchResponse as ApiSearchResponse,
+  RecommendParams,
+  RecommendResponse,
+  SkillResponse,
+  HealthStatus,
+  TelemetryEventType,
+  TelemetryEventPayload,
+  RateLimitInfo,
+  ApiClientOptions,
+} from './api/index.js'
+
 // Types (SMI-577)
 export type {
   Skill,

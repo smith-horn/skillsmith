@@ -28,7 +28,12 @@
  */
 
 import { z } from 'zod'
-import { type MCPTrustTier as TrustTier, SkillMatcher, OverlapDetector } from '@skillsmith/core'
+import {
+  type MCPTrustTier as TrustTier,
+  SkillMatcher,
+  OverlapDetector,
+  
+} from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { getInstalledSkills } from '../utils/installed-skills.js'
 
@@ -223,10 +228,9 @@ async function loadSkillsFromDatabase(
 /**
  * Execute skill recommendation based on installed skills and context.
  *
- * Uses semantic similarity to find skills that complement the user's
- * current installation. When project context is provided, it's used
- * to improve recommendation relevance. Overlap detection prevents
- * recommending skills that are too similar to installed ones.
+ * SMI-1183: Uses API as primary source with local fallback.
+ * - Tries live API first (api.skillsmith.app)
+ * - Falls back to local semantic matching if API is offline or fails
  *
  * @param input - Recommendation parameters
  * @returns Promise resolving to recommendation response
@@ -238,7 +242,6 @@ async function loadSkillsFromDatabase(
  *   project_context: 'React TypeScript frontend',
  *   limit: 5
  * }, toolContext);
- * console.log(response.recommendations[0].reason);
  */
 export async function executeRecommend(
   input: RecommendInput,
@@ -257,7 +260,59 @@ export async function executeRecommend(
     installed_skills = await getInstalledSkills()
   }
 
-  // Load skills from database (limit to reasonable number for performance)
+  // SMI-1183: Try API first, fall back to local semantic matching
+  if (!context.apiClient.isOffline()) {
+    try {
+      // Build stack from installed skill names and project context keywords
+      const stack = [...installed_skills.map((id) => id.split('/').pop() || id)]
+      if (project_context) {
+        // Extract key terms from project context (simple word split)
+        const contextWords = project_context
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((w) => w.length > 3)
+          .slice(0, 5)
+        stack.push(...contextWords)
+      }
+
+      const apiResponse = await context.apiClient.getRecommendations({
+        stack: stack.slice(0, 10), // API limits to 10 stack items
+        limit,
+      })
+
+      const endTime = performance.now()
+
+      // Convert API results to response format
+      const recommendations: SkillRecommendation[] = apiResponse.data.map((skill) => ({
+        skill_id: skill.id,
+        name: skill.name,
+        reason: `Matches your stack: ${stack.slice(0, 3).join(', ')}`,
+        similarity_score: 0.8, // API doesn't return similarity score, use default
+        trust_tier: mapTrustTierFromDb(skill.trust_tier),
+        quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
+      }))
+
+      return {
+        recommendations,
+        candidates_considered: recommendations.length,
+        overlap_filtered: 0,
+        context: {
+          installed_count: installed_skills.length,
+          has_project_context: !!project_context,
+          using_semantic_matching: true,
+          auto_detected: autoDetected,
+        },
+        timing: {
+          totalMs: Math.round(endTime - startTime),
+        },
+      }
+    } catch (error) {
+      // Log and fall through to local semantic matching
+      console.warn('[skillsmith] API recommend failed, using local matching:', (error as Error).message)
+    }
+  }
+
+  // Fallback: Load skills from database and use local semantic matching
   // Use 500 as default to balance coverage vs performance
   const skillDatabase = await loadSkillsFromDatabase(context, 500)
 

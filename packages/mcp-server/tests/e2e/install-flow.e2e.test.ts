@@ -83,7 +83,7 @@ describe('E2E: skill install/uninstall flow', () => {
       skillRepo.create(skill)
     }
 
-    context = createToolContext({ dbPath: TEST_DB_PATH })
+    context = createToolContext({ dbPath: TEST_DB_PATH, apiClientConfig: { offlineMode: true } })
   })
 
   afterAll(() => {

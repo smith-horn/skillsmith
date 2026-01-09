@@ -22,18 +22,28 @@ import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { mkdirSync, existsSync } from 'fs'
 import type { Database as DatabaseType } from 'better-sqlite3'
-import { createDatabase, SearchService, SkillRepository, validateDbPath } from '@skillsmith/core'
+import {
+  createDatabase,
+  SearchService,
+  SkillRepository,
+  validateDbPath,
+  SkillsmithApiClient,
+  type ApiClientConfig,
+} from '@skillsmith/core'
 
 /**
  * Shared context for MCP tool handlers
+ * SMI-1183: Added apiClient for live API access with local fallback
  */
 export interface ToolContext {
   /** SQLite database connection */
   db: DatabaseType
-  /** Search service with FTS5/BM25 */
+  /** Search service with FTS5/BM25 (fallback) */
   searchService: SearchService
-  /** Skill repository for CRUD operations */
+  /** Skill repository for CRUD operations (fallback) */
   skillRepository: SkillRepository
+  /** API client for live Supabase API (primary) */
+  apiClient: SkillsmithApiClient
 }
 
 /**
@@ -44,6 +54,8 @@ export interface ToolContextOptions {
   dbPath?: string
   /** Search cache TTL in seconds (default: 300) */
   searchCacheTtl?: number
+  /** API client configuration (SMI-1183) */
+  apiClientConfig?: ApiClientConfig
 }
 
 /**
@@ -151,10 +163,22 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
 
   const skillRepository = new SkillRepository(db)
 
+  // SMI-1183: Initialize API client with configuration
+  // API is primary data source; local DB is fallback
+  const apiClient = new SkillsmithApiClient({
+    baseUrl: options.apiClientConfig?.baseUrl,
+    anonKey: options.apiClientConfig?.anonKey,
+    timeout: options.apiClientConfig?.timeout ?? 10000, // 10s default
+    maxRetries: options.apiClientConfig?.maxRetries ?? 3,
+    debug: options.apiClientConfig?.debug,
+    offlineMode: options.apiClientConfig?.offlineMode,
+  })
+
   return {
     db,
     searchService,
     skillRepository,
+    apiClient,
   }
 }
 

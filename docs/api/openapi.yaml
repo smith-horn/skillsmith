@@ -1,0 +1,554 @@
+openapi: 3.0.3
+info:
+  title: Skillsmith API
+  description: |
+    API for discovering, searching, and managing Claude Code skills.
+
+    ## Authentication
+    Most endpoints are publicly accessible. Rate limiting is applied per IP.
+
+    ## Rate Limits
+    - Search endpoints: 100 requests/minute
+    - Recommend endpoint: 50 requests/minute
+    - Telemetry endpoint: 200 requests/minute
+
+    Rate limit headers are included in all responses:
+    - `X-RateLimit-Limit`: Maximum requests allowed
+    - `X-RateLimit-Remaining`: Remaining requests in window
+    - `X-RateLimit-Reset`: Unix timestamp when limit resets
+  version: 1.0.0
+  contact:
+    name: Skillsmith Support
+    url: https://github.com/skillsmith/skillsmith
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.skillsmith.dev/v1
+    description: Production server
+  - url: http://localhost:54321/functions/v1
+    description: Local development (Supabase)
+
+tags:
+  - name: Skills
+    description: Skill discovery and retrieval
+  - name: Recommendations
+    description: AI-powered skill recommendations
+  - name: Telemetry
+    description: Anonymous usage analytics
+
+paths:
+  /skills-search:
+    get:
+      tags:
+        - Skills
+      summary: Search for skills
+      description: |
+        Search for skills using full-text search with optional filters.
+        Results are ranked by relevance and quality score.
+      operationId: searchSkills
+      parameters:
+        - name: query
+          in: query
+          required: true
+          description: Search query (minimum 2 characters)
+          schema:
+            type: string
+            minLength: 2
+            example: 'testing'
+        - name: category
+          in: query
+          required: false
+          description: Filter by category name
+          schema:
+            type: string
+            enum:
+              - Development
+              - Testing
+              - DevOps
+              - Documentation
+              - Productivity
+              - Security
+            example: 'Testing'
+        - name: trust_tier
+          in: query
+          required: false
+          description: Filter by trust level
+          schema:
+            type: string
+            enum:
+              - verified
+              - community
+              - experimental
+              - unknown
+            example: 'verified'
+        - name: min_score
+          in: query
+          required: false
+          description: Minimum quality score (0-100)
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100
+            example: 70
+        - name: limit
+          in: query
+          required: false
+          description: Maximum results to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          description: Pagination offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Successful search
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/X-RateLimit-Limit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/X-RateLimit-Remaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/X-RateLimit-Reset'
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /skills-get:
+    get:
+      tags:
+        - Skills
+      summary: Get skill by ID
+      description: |
+        Retrieve detailed information about a specific skill.
+        Supports ID lookup, author/name format, and fuzzy name matching.
+      operationId: getSkill
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: |
+            Skill identifier. Accepts:
+            - UUID: Direct skill ID
+            - author/name: Format like "anthropic/commit"
+            - name: Fuzzy match by skill name
+          schema:
+            type: string
+            example: 'anthropic/commit'
+      responses:
+        '200':
+          description: Skill found
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/X-RateLimit-Limit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/X-RateLimit-Remaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/X-RateLimit-Reset'
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /skills-recommend:
+    post:
+      tags:
+        - Recommendations
+      summary: Get skill recommendations
+      description: |
+        Get AI-powered skill recommendations based on your technology stack.
+        Returns skills ranked by relevance to your project.
+      operationId: recommendSkills
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecommendRequest'
+      responses:
+        '200':
+          description: Recommendations generated
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/X-RateLimit-Limit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/X-RateLimit-Remaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/X-RateLimit-Reset'
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /events:
+    post:
+      tags:
+        - Telemetry
+      summary: Record telemetry event
+      description: |
+        Record anonymous telemetry events for analytics.
+        No personally identifiable information is collected.
+
+        **Privacy**: Events are aggregated and anonymous_id should be
+        a client-generated hash, not any user identifier.
+      operationId: recordEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TelemetryEvent'
+      responses:
+        '200':
+          description: Event recorded
+          headers:
+            X-RateLimit-Limit:
+              $ref: '#/components/headers/X-RateLimit-Limit'
+            X-RateLimit-Remaining:
+              $ref: '#/components/headers/X-RateLimit-Remaining'
+            X-RateLimit-Reset:
+              $ref: '#/components/headers/X-RateLimit-Reset'
+            X-Request-ID:
+              $ref: '#/components/headers/X-Request-ID'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+components:
+  schemas:
+    Skill:
+      type: object
+      required:
+        - id
+        - name
+        - trust_tier
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique skill identifier
+          example: '550e8400-e29b-41d4-a716-446655440000'
+        name:
+          type: string
+          description: Skill name
+          example: 'jest-helper'
+        description:
+          type: string
+          nullable: true
+          description: Skill description
+          example: 'Helper utilities for Jest testing'
+        author:
+          type: string
+          nullable: true
+          description: Skill author
+          example: 'community'
+        repo_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Source repository URL
+          example: 'https://github.com/example/jest-helper'
+        quality_score:
+          type: number
+          format: float
+          nullable: true
+          minimum: 0
+          maximum: 1
+          description: Quality score (0-1 scale)
+          example: 0.85
+        trust_tier:
+          type: string
+          enum:
+            - verified
+            - community
+            - experimental
+            - unknown
+          description: Trust level
+          example: 'community'
+        tags:
+          type: array
+          items:
+            type: string
+          description: Tags for categorization
+          example: ['testing', 'jest', 'javascript']
+        stars:
+          type: integer
+          nullable: true
+          description: GitHub stars count
+          example: 150
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+        categories:
+          type: array
+          items:
+            type: string
+          description: Associated category names
+          example: ['Testing', 'Development']
+
+    SearchResult:
+      allOf:
+        - $ref: '#/components/schemas/Skill'
+        - type: object
+          properties:
+            rank:
+              type: number
+              format: float
+              description: Search relevance rank
+
+    RecommendedSkill:
+      allOf:
+        - $ref: '#/components/schemas/Skill'
+        - type: object
+          properties:
+            relevance_score:
+              type: number
+              format: float
+              description: Relevance score for the given stack
+
+    SearchResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchResult'
+        meta:
+          type: object
+          properties:
+            query:
+              type: string
+            total:
+              type: integer
+            limit:
+              type: integer
+            offset:
+              type: integer
+            filters:
+              type: object
+              properties:
+                category:
+                  type: string
+                  nullable: true
+                trust_tier:
+                  type: string
+                  nullable: true
+                min_score:
+                  type: integer
+                  nullable: true
+
+    SkillResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Skill'
+
+    RecommendRequest:
+      type: object
+      required:
+        - stack
+      properties:
+        stack:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 10
+          description: Technology stack (e.g., ["react", "typescript"])
+          example: ['typescript', 'react', 'jest']
+        project_type:
+          type: string
+          enum:
+            - web
+            - api
+            - cli
+            - mobile
+            - data
+            - ml
+          description: Type of project
+          example: 'web'
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 10
+          description: Maximum recommendations
+
+    RecommendResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecommendedSkill'
+        meta:
+          type: object
+          properties:
+            stack:
+              type: array
+              items:
+                type: string
+            project_type:
+              type: string
+              nullable: true
+            total:
+              type: integer
+            limit:
+              type: integer
+
+    TelemetryEvent:
+      type: object
+      required:
+        - event
+        - anonymous_id
+      properties:
+        event:
+          type: string
+          enum:
+            - skill_view
+            - skill_install
+            - skill_uninstall
+            - skill_rate
+            - search
+            - recommend
+            - compare
+            - validate
+          description: Event type
+          example: 'search'
+        skill_id:
+          type: string
+          description: Associated skill ID (optional)
+          example: '550e8400-e29b-41d4-a716-446655440000'
+        anonymous_id:
+          type: string
+          pattern: '^[a-f0-9-]{16,128}$'
+          description: Anonymous client identifier (hex string)
+          example: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4'
+        metadata:
+          type: object
+          description: Optional event metadata
+          properties:
+            query:
+              type: string
+            results_count:
+              type: integer
+            duration_ms:
+              type: integer
+            version:
+              type: string
+            platform:
+              type: string
+
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Error message
+        details:
+          type: object
+          description: Additional error details
+
+  headers:
+    X-RateLimit-Limit:
+      schema:
+        type: string
+      description: Maximum requests per minute
+      example: '100'
+    X-RateLimit-Remaining:
+      schema:
+        type: string
+      description: Remaining requests in current window
+      example: '99'
+    X-RateLimit-Reset:
+      schema:
+        type: string
+      description: Unix timestamp when limit resets
+      example: '1704672000'
+    X-Request-ID:
+      schema:
+        type: string
+        format: uuid
+      description: Request tracking ID
+      example: '550e8400-e29b-41d4-a716-446655440000'
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: 'Query parameter required (minimum 2 characters)'
+            details:
+              parameter: 'query'
+              received: 'a'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: 'Skill not found'
+            details:
+              id: 'non-existent-skill'
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: 'Internal server error'
+            details:
+              request_id: '550e8400-e29b-41d4-a716-446655440000'
