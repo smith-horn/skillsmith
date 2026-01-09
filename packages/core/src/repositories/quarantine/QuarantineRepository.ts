@@ -111,13 +111,21 @@ export class QuarantineRepository {
   private prepareStatements(): void {
     this.stmts = {
       insert: this.db.prepare(INSERT_QUERY) as unknown as PreparedStatements['insert'],
-      selectById: this.db.prepare(SELECT_BY_ID_QUERY) as unknown as PreparedStatements['selectById'],
-      selectBySkillId: this.db.prepare(SELECT_BY_SKILL_ID_QUERY) as unknown as PreparedStatements['selectBySkillId'],
+      selectById: this.db.prepare(
+        SELECT_BY_ID_QUERY
+      ) as unknown as PreparedStatements['selectById'],
+      selectBySkillId: this.db.prepare(
+        SELECT_BY_SKILL_ID_QUERY
+      ) as unknown as PreparedStatements['selectBySkillId'],
       selectAll: this.db.prepare(SELECT_ALL_QUERY) as unknown as PreparedStatements['selectAll'],
-      selectCount: this.db.prepare(SELECT_COUNT_QUERY) as unknown as PreparedStatements['selectCount'],
+      selectCount: this.db.prepare(
+        SELECT_COUNT_QUERY
+      ) as unknown as PreparedStatements['selectCount'],
       update: this.db.prepare(UPDATE_QUERY) as unknown as PreparedStatements['update'],
       delete: this.db.prepare(DELETE_QUERY) as unknown as PreparedStatements['delete'],
-      deleteBySkillId: this.db.prepare(DELETE_BY_SKILL_ID_QUERY) as unknown as PreparedStatements['deleteBySkillId'],
+      deleteBySkillId: this.db.prepare(
+        DELETE_BY_SKILL_ID_QUERY
+      ) as unknown as PreparedStatements['deleteBySkillId'],
     }
   }
 

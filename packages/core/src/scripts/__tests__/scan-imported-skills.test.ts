@@ -11,17 +11,9 @@ import { SecurityScanner } from '../../security/index.js'
 import type { ScanReport, SecurityFinding } from '../../security/index.js'
 
 // Import from the new modular structure (SMI-1189)
-import {
-  determineSeverityCategory,
-  type SeverityCategory,
-} from '../skill-scanner/categorizer.js'
-import {
-  shouldQuarantine,
-  
-} from '../skill-scanner/trust-scorer.js'
-import {
-  extractScannableContent,
-} from '../skill-scanner/file-scanner.js'
+import { determineSeverityCategory, type SeverityCategory } from '../skill-scanner/categorizer.js'
+import { shouldQuarantine } from '../skill-scanner/trust-scorer.js'
+import { extractScannableContent } from '../skill-scanner/file-scanner.js'
 import type { ImportedSkill } from '../skill-scanner/types.js'
 
 // ============================================================================

@@ -23,7 +23,17 @@ export interface QueryBuilderResult {
  * @returns Query strings and parameters for execution
  */
 export function buildFilteredQuery(filter: QuarantineQueryFilter): QueryBuilderResult {
-  const { skillId, source, severity, reviewStatus, reviewedBy, since, until, limit = 20, offset = 0 } = filter
+  const {
+    skillId,
+    source,
+    severity,
+    reviewStatus,
+    reviewedBy,
+    since,
+    until,
+    limit = 20,
+    offset = 0,
+  } = filter
 
   let query = 'SELECT * FROM quarantine WHERE 1=1'
   let countQuery = 'SELECT COUNT(*) as count FROM quarantine WHERE 1=1'

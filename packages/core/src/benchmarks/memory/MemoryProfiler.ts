@@ -284,10 +284,10 @@ export class MemoryProfiler {
 
     // Completed tracking stats
     if (this.completedStats.size > 0) {
+      lines.push(' Tracked Operations:                                                           ')
       lines.push(
-        ' Tracked Operations:                                                           '
+        '---------------------------------------------------------------------------------------------------'
       )
-      lines.push('---------------------------------------------------------------------------------------------------')
 
       for (const [label, stats] of this.completedStats) {
         const growthColor =
@@ -300,19 +300,13 @@ export class MemoryProfiler {
         )
       }
     } else {
-      lines.push(
-        ' No tracked operations recorded.                                               '
-      )
+      lines.push(' No tracked operations recorded.                                               ')
     }
 
     // Active tracking
     if (this.activeTracking.size > 0) {
-      lines.push(
-        '                                                                               '
-      )
-      lines.push(
-        ' Active Tracking:                                                              '
-      )
+      lines.push('                                                                               ')
+      lines.push(' Active Tracking:                                                              ')
       for (const [label, entry] of this.activeTracking) {
         const elapsed = (performance.now() - entry.startTime).toFixed(0)
         lines.push(
@@ -341,7 +335,9 @@ export class MemoryProfiler {
       )
     }
 
-    lines.push('===================================================================================================')
+    lines.push(
+      '==================================================================================================='
+    )
 
     return lines.join('\n')
   }

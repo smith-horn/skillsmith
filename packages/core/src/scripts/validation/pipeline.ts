@@ -4,12 +4,7 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import {
-  RawSkillInput,
-  ValidatedSkill,
-  ValidationReport,
-  DuplicatesReport,
-} from './types.js'
+import { RawSkillInput, ValidatedSkill, ValidationReport, DuplicatesReport } from './types.js'
 import { validateSkill } from './field-validators.js'
 import { deduplicateByRepoUrl, detectSemanticDuplicates } from './deduplication.js'
 

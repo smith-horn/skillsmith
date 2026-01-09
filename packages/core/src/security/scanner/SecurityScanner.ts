@@ -4,12 +4,7 @@
  * Security scanning for skill content with advanced pattern detection.
  */
 
-import type {
-  SecurityFinding,
-  ScanReport,
-  ScannerOptions,
-  RiskScoreBreakdown,
-} from './types.js'
+import type { SecurityFinding, ScanReport, ScannerOptions, RiskScoreBreakdown } from './types.js'
 import {
   DEFAULT_ALLOWED_DOMAINS,
   SENSITIVE_PATH_PATTERNS,

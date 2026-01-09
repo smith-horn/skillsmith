@@ -12,6 +12,11 @@ on:
         default: 'true'
         type: boolean
 
+# Required for GitHub Packages publishing
+permissions:
+  contents: read
+  packages: write
+
 concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: false
