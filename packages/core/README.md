@@ -33,6 +33,34 @@ const results = await searchService.search({
 })
 ```
 
+## Live API
+
+As of v0.2.0, Skillsmith uses a live API at `api.skillsmith.app` to serve skills.
+
+### Configuration
+
+```bash
+# Use default API (recommended)
+# No configuration needed
+
+# Custom API URL
+export SKILLSMITH_API_URL=https://your-api.example.com
+
+# Offline mode (use local database)
+export SKILLSMITH_OFFLINE_MODE=true
+```
+
+### Telemetry
+
+Skillsmith collects anonymous usage data to improve the product.
+To opt out:
+
+```bash
+export SKILLSMITH_TELEMETRY=false
+```
+
+See [PRIVACY.md](./PRIVACY.md) for details on what data is collected.
+
 ## Features
 
 ### Database Operations

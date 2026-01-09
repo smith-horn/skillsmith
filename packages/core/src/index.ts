@@ -3,7 +3,7 @@
  */
 
 // Version
-export const VERSION = '0.1.2'
+export const VERSION = '0.2.0'
 
 // Database (SMI-577, SMI-974)
 export {

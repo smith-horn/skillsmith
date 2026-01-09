@@ -32,6 +32,20 @@ Then ask Claude:
 "Compare jest-helper and vitest-helper"
 ```
 
+## Live Skill Registry
+
+Version 0.2.0 introduces the live skill registry with 9,717+ skills.
+
+Skills are served from `api.skillsmith.app` and cached locally for 24 hours.
+
+### API Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SKILLSMITH_API_URL` | `https://api.skillsmith.app/functions/v1` | API endpoint |
+| `SKILLSMITH_OFFLINE_MODE` | `false` | Use local database instead |
+| `SKILLSMITH_TELEMETRY` | `true` | Enable anonymous telemetry |
+
 ## Available Tools
 
 | Tool | Description | Example |
