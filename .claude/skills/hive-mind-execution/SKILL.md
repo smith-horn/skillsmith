@@ -21,6 +21,7 @@ Orchestrates complex task execution using claude-flow hive mind with automatic c
 ┌─────────────────────────────────────────────────────────────────┐
 │                    HIVE MIND EXECUTION                          │
 ├─────────────────────────────────────────────────────────────────┤
+│  0. EXPLORE       │  Discover existing code BEFORE implementing │
 │  1. INITIALIZE    │  swarm_init with topology                   │
 │  2. PLAN          │  TodoWrite with all tasks batched           │
 │  3. EXECUTE       │  Parallel implementation                    │
@@ -33,10 +34,47 @@ Orchestrates complex task execution using claude-flow hive mind with automatic c
 └─────────────────────────────────────────────────────────────────┘
 
 Key:
+- Phase 0: MANDATORY - prevents duplicate work (see Wave 5 retro)
 - Phase 4: Reviews written to docs/reviews/YYYY-MM-DD-<feature>.md
 - Phase 7: Brief summary before cleanup (not a full retrospective)
 - Linear issues: Must include details, links, and labels
 ```
+
+## Phase 0: Exploration (MANDATORY)
+
+**CRITICAL**: Before any implementation, discover what already exists. This prevents duplicate work and leverages existing code.
+
+See [Exploration Phase Template](../../../docs/process/exploration-phase-template.md) for full details.
+
+### Quick Exploration
+
+```bash
+# Search for existing implementations
+grep -r "keyword" packages/
+find packages/ -name "*feature*" -type f
+
+# Check infrastructure
+ls .github/workflows/
+ls supabase/functions/
+
+# Review architecture docs
+ls docs/architecture/
+ls docs/adr/
+```
+
+### Exploration Report
+
+Document findings before proceeding:
+
+```markdown
+## Exploration Report: [Feature]
+
+**Existing Implementation**: None / Partial / Complete
+**Location**: [paths if found]
+**Recommended Approach**: [based on what exists]
+```
+
+**Why This Matters**: In Wave 5, we discovered PostHog telemetry already existed but wasn't wired up. Exploration saved hours of duplicate work.
 
 ## Phase 1: Initialize Hive Mind
 
@@ -366,6 +404,7 @@ Bash("npm run linear:done ENG-XXX")
 For executing a Linear issue with hive mind:
 
 ```
+0. EXPLORE: Search codebase for existing implementations (MANDATORY)
 1. Read the Linear issue: ENG-XXX
 2. Initialize hive mind: swarm_init({ topology: "hierarchical" })
 3. Create todos: TodoWrite with all tasks from issue
@@ -379,6 +418,11 @@ For executing a Linear issue with hive mind:
 11. Generate sprint report (summary table, new issues, decisions)
 12. Cleanup: swarm_destroy, linear:done
 ```
+
+**Process Documents**:
+- [Wave Completion Checklist](../../../docs/process/wave-completion-checklist.md) - Pre/post commit verification
+- [Exploration Phase Template](../../../docs/process/exploration-phase-template.md) - Discover existing code
+- [Infrastructure Inventory](../../../docs/architecture/infrastructure-inventory.md) - What exists in the codebase
 
 ## Example: Execute ENG-123
 

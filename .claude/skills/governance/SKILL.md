@@ -33,6 +33,8 @@ docker exec skillsmith-dev-1 npm test
 docker exec skillsmith-dev-1 npm run audit:standards
 ```
 
+For the complete wave completion checklist, see [docs/process/wave-completion-checklist.md](../../../docs/process/wave-completion-checklist.md).
+
 ## Two-Document Model
 
 | Document | Purpose | Location |
@@ -89,3 +91,24 @@ This skill activates automatically during:
 ## Full Standards
 
 For complete policy details, see [docs/architecture/standards.md](../../../docs/architecture/standards.md).
+
+## Related Process Documents
+
+| Document | Purpose |
+|----------|---------|
+| [Wave Completion Checklist](../../../docs/process/wave-completion-checklist.md) | Pre/post commit verification steps |
+| [Exploration Phase Template](../../../docs/process/exploration-phase-template.md) | Discover existing code before implementing |
+| [Linear Hygiene Guide](../../../docs/process/linear-hygiene-guide.md) | Prevent duplicate issues |
+| [Infrastructure Inventory](../../../docs/architecture/infrastructure-inventory.md) | What exists in the codebase |
+
+## Git Hooks
+
+A pre-commit hook is available to warn about untracked files in `packages/*/src/`:
+
+```bash
+# Install the hook
+cp scripts/git-hooks/pre-commit-check-src.sh .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
+See [scripts/git-hooks/README.md](../../../scripts/git-hooks/README.md) for details.
