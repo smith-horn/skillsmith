@@ -31,10 +31,7 @@ async function deploySchema(): Promise<void> {
     process.exit(1)
   }
 
-  const migrationPath = path.join(
-    process.cwd(),
-    'supabase/migrations/001_initial_schema.sql'
-  )
+  const migrationPath = path.join(process.cwd(), 'supabase/migrations/001_initial_schema.sql')
 
   if (!fs.existsSync(migrationPath)) {
     console.error(`Error: Migration file not found: ${migrationPath}`)
@@ -79,7 +76,7 @@ async function deploySchema(): Promise<void> {
       const response = await fetch(sqlApiUrl, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ query: stmt }),
@@ -96,7 +93,7 @@ async function deploySchema(): Promise<void> {
         if (
           errorMsg.includes('already exists') ||
           errorMsg.includes('duplicate key') ||
-          errorMsg.includes('relation') && errorMsg.includes('already')
+          (errorMsg.includes('relation') && errorMsg.includes('already'))
         ) {
           console.log(' ⏭ (already exists)')
           successCount++
