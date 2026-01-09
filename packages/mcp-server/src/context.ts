@@ -28,12 +28,16 @@ import {
   SkillRepository,
   validateDbPath,
   SkillsmithApiClient,
+  initializePostHog,
+  shutdownPostHog,
+  generateAnonymousId,
   type ApiClientConfig,
 } from '@skillsmith/core'
 
 /**
  * Shared context for MCP tool handlers
  * SMI-1183: Added apiClient for live API access with local fallback
+ * SMI-1184: Added distinctId for telemetry tracking
  */
 export interface ToolContext {
   /** SQLite database connection */
@@ -44,6 +48,29 @@ export interface ToolContext {
   skillRepository: SkillRepository
   /** API client for live Supabase API (primary) */
   apiClient: SkillsmithApiClient
+  /** Anonymous user ID for telemetry (undefined if telemetry disabled) */
+  distinctId?: string
+}
+
+/**
+ * Telemetry configuration for PostHog (SMI-1184)
+ * Privacy-first: disabled by default (opt-in)
+ */
+export interface TelemetryConfig {
+  /**
+   * Enable telemetry collection (default: false for privacy)
+   * Can also be set via SKILLSMITH_TELEMETRY_ENABLED env var
+   */
+  enabled?: boolean
+  /**
+   * PostHog API key (starts with phc_)
+   * Can also be set via POSTHOG_API_KEY env var
+   */
+  postHogApiKey?: string
+  /**
+   * PostHog host URL (default: https://app.posthog.com)
+   */
+  postHogHost?: string
 }
 
 /**
@@ -56,6 +83,11 @@ export interface ToolContextOptions {
   searchCacheTtl?: number
   /** API client configuration (SMI-1183) */
   apiClientConfig?: ApiClientConfig
+  /**
+   * Telemetry configuration (SMI-1184)
+   * Privacy-first: telemetry is OPT-IN and disabled by default
+   */
+  telemetryConfig?: TelemetryConfig
 }
 
 /**
@@ -174,21 +206,50 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
     offlineMode: options.apiClientConfig?.offlineMode,
   })
 
+  // SMI-1184: Initialize PostHog telemetry (opt-in, privacy first)
+  let distinctId: string | undefined
+
+  // Check env vars first, then fall back to config
+  const telemetryEnabled =
+    process.env.SKILLSMITH_TELEMETRY_ENABLED === 'true' || options.telemetryConfig?.enabled === true
+
+  const postHogApiKey = process.env.POSTHOG_API_KEY || options.telemetryConfig?.postHogApiKey
+
+  if (telemetryEnabled && postHogApiKey) {
+    // Generate anonymous user ID for telemetry
+    distinctId = generateAnonymousId()
+
+    // Initialize PostHog client
+    initializePostHog({
+      apiKey: postHogApiKey,
+      host: options.telemetryConfig?.postHogHost,
+      disabled: false,
+    })
+  }
+
   return {
     db,
     searchService,
     skillRepository,
     apiClient,
+    distinctId,
   }
 }
 
 /**
  * Close the tool context and release resources
+ * SMI-1184: Also shuts down PostHog telemetry if initialized
  *
  * @param context - Tool context to close
  */
-export function closeToolContext(context: ToolContext): void {
+export async function closeToolContext(context: ToolContext): Promise<void> {
+  // Close database connection
   context.db.close()
+
+  // SMI-1184: Shutdown PostHog if telemetry was enabled
+  if (context.distinctId) {
+    await shutdownPostHog()
+  }
 }
 
 // Singleton context for the MCP server
@@ -218,10 +279,11 @@ export function getToolContext(options?: ToolContextOptions): ToolContext {
 
 /**
  * Reset the global context (for testing)
+ * SMI-1184: Made async to properly shutdown PostHog
  */
-export function resetToolContext(): void {
+export async function resetToolContext(): Promise<void> {
   if (globalContext) {
-    closeToolContext(globalContext)
+    await closeToolContext(globalContext)
     globalContext = null
   }
 }

@@ -30,7 +30,7 @@ import {
   TrustTierDescriptions,
   SkillsmithError,
   ErrorCodes,
-  
+  trackSkillView,
 } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { isValidSkillId, mapTrustTierFromDb, extractCategoryFromTags } from '../utils/validation.js'
@@ -144,6 +144,11 @@ export async function executeGetSkill(
 
       const endTime = performance.now()
 
+      // SMI-1184: Track skill view event (silent on failure)
+      if (context.distinctId) {
+        trackSkillView(context.distinctId, skill.id, 'mcp')
+      }
+
       return {
         skill,
         installCommand: skill.installCommand || 'claude skill add ' + skill.id,
@@ -154,7 +159,10 @@ export async function executeGetSkill(
     } catch (error) {
       // SMI-1183: Log and fall through to local database for all errors
       // This allows local-only skills to be found even if API returns 404
-      console.warn('[skillsmith] API getSkill failed, using local database:', (error as Error).message)
+      console.warn(
+        '[skillsmith] API getSkill failed, using local database:',
+        (error as Error).message
+      )
     }
   }
 
@@ -187,6 +195,11 @@ export async function executeGetSkill(
   }
 
   const endTime = performance.now()
+
+  // SMI-1184: Track skill view event (silent on failure)
+  if (context.distinctId) {
+    trackSkillView(context.distinctId, skill.id, 'mcp')
+  }
 
   return {
     skill,
