@@ -1,6 +1,6 @@
 # Engineering Standards - Skillsmith
 
-**Version**: 1.7
+**Version**: 1.8
 **Status**: Active
 **Owner**: Skillsmith Team
 
@@ -298,9 +298,29 @@ The GitHub Actions CI pipeline runs on all PRs and pushes to main:
 | Typecheck | TypeScript strict | Yes |
 | Test | Unit + integration tests (Node 18 & 20) | Yes |
 | Compliance | `npm run audit:standards` | Yes |
-| Security | `npm audit --audit-level=high` | No (warning only) |
+| Security | `npm audit --audit-level=high --omit=dev` | No (warning only) |
 
 **Build artifacts** are uploaded for 7 days after successful builds.
+
+#### Security Audit Configuration (SMI-1276)
+
+The security audit uses `--omit=dev` to skip devDependency vulnerabilities that don't affect production bundles.
+
+```yaml
+# .github/workflows/ci.yml
+- name: Run dependency audit
+  run: npm audit --audit-level=high --omit=dev
+```
+
+**Rationale:**
+- DevDependencies (vercel, tsx, vitest) may have transitive vulnerabilities
+- These never ship to production - only affect developer machines
+- Blocking CI on devDep vulnerabilities slows development unnecessarily
+- Production dependencies are still strictly audited
+
+**When to use full audit:**
+- Before major releases: `npm audit` (no --omit=dev)
+- If devDeps handle user data: Evaluate case-by-case
 
 ### 3.4 Definition of Done
 
@@ -588,7 +608,39 @@ async function tryLoadModule(): Promise<SomeInterface | null> {
 }
 ```
 
-### 4.10 Lazy Loading for Heavy Dependencies (Phase 7a)
+### 4.10 Third-Party Type Extraction (SMI-1275)
+
+When external libraries use Web Crypto API types (like `CryptoKey`) that TypeScript doesn't recognize without DOM lib, extract types from library interfaces.
+
+**Rules:**
+- Don't rely on global types like `CryptoKey` unless tsconfig includes DOM lib
+- Use type extraction from library-provided result types
+- Test type compatibility with `npm run typecheck` after changes
+
+```typescript
+// ❌ WRONG: Bare CryptoKey not recognized without DOM lib
+import * as jose from 'jose'
+
+interface KeyPair {
+  privateKey: CryptoKey  // Error: Cannot find name 'CryptoKey'
+}
+
+// ✅ CORRECT: Extract type from library's result interface
+import type { GenerateKeyPairResult } from 'jose'
+
+type JosePrivateKey = GenerateKeyPairResult['privateKey']
+
+interface KeyPair {
+  privateKey: JosePrivateKey  // Works without DOM lib
+}
+```
+
+**Common packages requiring this pattern:**
+- `jose` - JWT library (CryptoKey, KeyLike)
+- `webcrypto` - Web Crypto polyfills
+- Browser API polyfills used in Node.js
+
+### 4.11 Lazy Loading for Heavy Dependencies (Phase 7a)
 
 Heavy optional dependencies (ML models, native modules) must be lazily loaded to prevent startup crashes.
 
@@ -1083,6 +1135,7 @@ async function verifySkillPackage(
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.8 | 2026-01-09 | Added §4.10 Third-Party Type Extraction (SMI-1275), §3.3 Security Audit Configuration (SMI-1276) |
 | 1.7 | 2026-01-04 | Added §4.9 Dynamic Import Safety, §4.10 Lazy Loading, updated §1.5 Code Review, enhanced §7.1 License Validation (Phase 7a retro) |
 | 1.6 | 2026-01-02 | Added §7 Enterprise Development Standards |
 | 1.5.1 | 2025-12-29 | Added §5 Mock vs Production Separation (SMI-763) |
