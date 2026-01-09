@@ -110,9 +110,38 @@ Wave 6 focused on releasing Skillsmith v0.2.0 to npm with the live skill registr
 
 4. **Monitoring**: Set up npm download tracking for Gate 1 metrics
 
+## Post-Release: Security Fixes
+
+After the v0.2.0 release, Dependabot flagged security vulnerabilities that were promptly addressed.
+
+### Vulnerabilities Resolved (SMI-1281)
+
+| Alert | Package | Severity | Resolution |
+|-------|---------|----------|------------|
+| #1, #2 | esbuild | Medium | npm override to 0.27.2 |
+| #4 | @modelcontextprotocol/sdk | High | Already fixed via override |
+| #5 | path-to-regexp | High | Already fixed via override |
+| #6, #7 | undici | Medium/Low | Already fixed via override |
+
+### Solution
+
+Added esbuild to npm overrides in `package.json`:
+
+```json
+"overrides": {
+  "undici": "^7.18.0",
+  "path-to-regexp": "^8.3.0",
+  "esbuild": "0.27.2"
+}
+```
+
+The esbuild vulnerability (GHSA-67mh-4wv8-2f99) allowed any website to send requests to the dev server. The override forces all nested dependencies to use the secure version.
+
+**Result:** `npm audit` now reports 0 vulnerabilities.
+
 ## Conclusion
 
-Despite the secret configuration hiccup, Wave 6 was ultimately successful. The v0.2.0 release is live on npm and users can now access 9,717+ skills through the Skillsmith MCP server. The key learning is to ensure secrets are configured in the correct repository when working with fork/upstream patterns.
+Despite the secret configuration hiccup, Wave 6 was ultimately successful. The v0.2.0 release is live on npm and users can now access 9,717+ skills through the Skillsmith MCP server. Post-release security fixes ensured all Dependabot alerts are resolved. The key learning is to ensure secrets are configured in the correct repository when working with fork/upstream patterns.
 
 ---
 
@@ -121,4 +150,5 @@ Despite the secret configuration hiccup, Wave 6 was ultimately successful. The v
 - [GitHub Release v0.2.0](https://github.com/Smith-Horn-Group/skillsmith/releases/tag/v0.2.0)
 - [npm: @skillsmith/mcp-server](https://www.npmjs.com/package/@skillsmith/mcp-server)
 - [Linear Issue SMI-1186](https://linear.app/smith-horn-group/issue/SMI-1186)
+- [Linear Issue SMI-1281 (Security Fix)](https://linear.app/smith-horn-group/issue/SMI-1281)
 - [Phase 6A Project](https://linear.app/smith-horn-group/project/skillsmith-phase-6a-critical-path-to-live-40f0780c7e1f)
