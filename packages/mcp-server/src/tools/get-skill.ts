@@ -30,6 +30,7 @@ import {
   TrustTierDescriptions,
   SkillsmithError,
   ErrorCodes,
+  
 } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { isValidSkillId, mapTrustTierFromDb, extractCategoryFromTags } from '../utils/validation.js'
@@ -73,10 +74,12 @@ export interface GetSkillInput {
 /**
  * Retrieve full details for a specific skill by ID.
  *
- * Uses SkillRepository to fetch skill from the SQLite database.
+ * SMI-1183: Uses API as primary source with local DB fallback.
+ * - Tries live API first (api.skillsmith.app)
+ * - Falls back to local SkillRepository if API is offline or fails
  *
  * @param input - Input containing the skill ID to retrieve
- * @param context - Tool context with database and services
+ * @param context - Tool context with API client and local services
  * @returns Promise resolving to skill details and install command
  * @throws {SkillsmithError} VALIDATION_REQUIRED_FIELD - When ID is empty
  * @throws {SkillsmithError} SKILL_INVALID_ID - When ID format is invalid
@@ -86,17 +89,6 @@ export interface GetSkillInput {
  * // Get a verified skill
  * const response = await executeGetSkill({ id: 'anthropic/commit' }, context);
  * console.log(response.skill.score); // 95
- * console.log(response.installCommand); // 'claude skill add anthropic/commit'
- *
- * @example
- * // Handle not found
- * try {
- *   await executeGetSkill({ id: 'unknown/skill' }, context);
- * } catch (error) {
- *   if (error.code === 'SKILL_NOT_FOUND') {
- *     console.log(error.suggestion); // 'Try searching for similar skills...'
- *   }
- * }
  */
 export async function executeGetSkill(
   input: GetSkillInput,
@@ -126,7 +118,47 @@ export async function executeGetSkill(
     )
   }
 
-  // Look up skill from database using SkillRepository
+  // SMI-1183: Try API first, fall back to local DB
+  if (!context.apiClient.isOffline()) {
+    try {
+      const apiResponse = await context.apiClient.getSkill(skillId)
+      const apiSkill = apiResponse.data
+
+      // Convert API skill to MCP skill format
+      const skill: Skill = {
+        id: apiSkill.id,
+        name: apiSkill.name,
+        description: apiSkill.description || '',
+        author: apiSkill.author || 'unknown',
+        repository: apiSkill.repo_url || undefined,
+        version: undefined,
+        category: extractCategoryFromTags(apiSkill.tags),
+        trustTier: mapTrustTierFromDb(apiSkill.trust_tier as import('@skillsmith/core').TrustTier),
+        score: Math.round((apiSkill.quality_score ?? 0) * 100),
+        scoreBreakdown: undefined,
+        tags: apiSkill.tags || [],
+        installCommand: 'claude skill add ' + apiSkill.id,
+        createdAt: apiSkill.created_at,
+        updatedAt: apiSkill.updated_at,
+      }
+
+      const endTime = performance.now()
+
+      return {
+        skill,
+        installCommand: skill.installCommand || 'claude skill add ' + skill.id,
+        timing: {
+          totalMs: Math.round(endTime - startTime),
+        },
+      }
+    } catch (error) {
+      // SMI-1183: Log and fall through to local database for all errors
+      // This allows local-only skills to be found even if API returns 404
+      console.warn('[skillsmith] API getSkill failed, using local database:', (error as Error).message)
+    }
+  }
+
+  // Fallback: Look up skill from local database using SkillRepository
   const dbSkill = context.skillRepository.findById(skillId)
 
   if (!dbSkill) {

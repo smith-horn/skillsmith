@@ -14,10 +14,12 @@ describe('Recommend Tool Integration', () => {
 
   beforeEach(async () => {
     ctx = await createTestDatabase()
+    // SMI-1183: Include apiClient for API integration
     toolContext = {
       db: ctx.db,
       searchService: ctx.searchService,
       skillRepository: ctx.skillRepository,
+      apiClient: ctx.apiClient,
     }
   })
 

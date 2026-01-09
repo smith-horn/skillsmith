@@ -142,7 +142,7 @@ describe('E2E: skill_recommend tool', () => {
     }
 
     // Create context pointing to test database
-    context = createToolContext({ dbPath: TEST_DB_PATH })
+    context = createToolContext({ dbPath: TEST_DB_PATH, apiClientConfig: { offlineMode: true } })
   })
 
   afterAll(() => {

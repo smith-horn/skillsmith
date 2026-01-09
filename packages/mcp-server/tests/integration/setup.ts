@@ -8,7 +8,13 @@ import type { Database as DatabaseType } from 'better-sqlite3'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
-import { createDatabase, closeDatabase, SkillRepository, SearchService } from '@skillsmith/core'
+import {
+  createDatabase,
+  closeDatabase,
+  SkillRepository,
+  SearchService,
+  SkillsmithApiClient,
+} from '@skillsmith/core'
 import { seedTestSkills } from './fixtures/test-skills.js'
 
 // Re-export for test access
@@ -16,22 +22,31 @@ export { TEST_SKILLS, TEST_SKILLS_STATS } from './fixtures/test-skills.js'
 
 /**
  * Test database context
+ * SMI-1183: Added apiClient for API integration tests
  */
 export interface TestDatabaseContext {
   db: DatabaseType
   skillRepository: SkillRepository
   searchService: SearchService
+  apiClient: SkillsmithApiClient
   cleanup: () => Promise<void>
 }
 
 /**
  * Create an in-memory test database with sample data
  * Seeds 56 skills across all categories and trust tiers for realistic testing
+ * SMI-1183: Creates apiClient in offline mode for local-only testing
  */
 export async function createTestDatabase(): Promise<TestDatabaseContext> {
   const db = createDatabase(':memory:')
   const skillRepository = new SkillRepository(db)
   const searchService = new SearchService(db)
+
+  // SMI-1183: Create API client in offline mode for tests
+  // Tests use local database, not live API
+  const apiClient = new SkillsmithApiClient({
+    offlineMode: true,
+  })
 
   // Seed with comprehensive test data (56 skills)
   seedTestSkills(skillRepository)
@@ -40,6 +55,7 @@ export async function createTestDatabase(): Promise<TestDatabaseContext> {
     db,
     skillRepository,
     searchService,
+    apiClient,
     cleanup: async () => {
       closeDatabase(db)
     },

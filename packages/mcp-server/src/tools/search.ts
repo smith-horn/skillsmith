@@ -33,6 +33,7 @@ import {
   type TrustTier as DBTrustTier,
   SkillsmithError,
   ErrorCodes,
+  
 } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { extractCategoryFromTags } from '../utils/validation.js'
@@ -134,11 +135,12 @@ export interface SearchInput {
 /**
  * Execute a search for Claude Code skills with optional filters.
  *
- * Uses SearchService with FTS5/BM25 ranking for relevance-based results.
- * Results are sorted by BM25 rank and limited to specified count.
+ * SMI-1183: Uses API as primary source with local DB fallback.
+ * - Tries live API first (api.skillsmith.app)
+ * - Falls back to local SearchService if API is offline or fails
  *
  * @param input - Search parameters including query and optional filters
- * @param context - Tool context with database and services
+ * @param context - Tool context with API client and local services
  * @returns Promise resolving to search response with results and timing
  * @throws {SkillsmithError} When query is empty or less than 2 characters
  * @throws {SkillsmithError} When min_score is outside 0-100 range
@@ -147,14 +149,6 @@ export interface SearchInput {
  * // Search for commit-related skills
  * const response = await executeSearch({ query: 'commit' }, context);
  * console.log(`Found ${response.total} skills in ${response.timing.totalMs}ms`);
- *
- * @example
- * // Search with multiple filters
- * const response = await executeSearch({
- *   query: 'react',
- *   category: 'testing',
- *   min_score: 85
- * }, context);
  */
 export async function executeSearch(
   input: SearchInput,
@@ -196,10 +190,52 @@ export async function executeSearch(
 
   const searchStart = performance.now()
 
-  // Map MCP trust tier to DB trust tier if provided
+  // SMI-1183: Try API first, fall back to local DB
+  if (!context.apiClient.isOffline()) {
+    try {
+      const apiResponse = await context.apiClient.search({
+        query: input.query.trim(),
+        limit: 10,
+        offset: 0,
+        trustTier: filters.trustTier ? mapTrustTierToDb(filters.trustTier) : undefined,
+        minQualityScore: filters.minScore,
+        category: filters.category,
+      })
+
+      const searchEnd = performance.now()
+
+      // Convert API results to SkillSearchResult format
+      const results: SkillSearchResult[] = apiResponse.data.map((item) => ({
+        id: item.id,
+        name: item.name,
+        description: item.description || '',
+        author: item.author || 'unknown',
+        category: extractCategoryFromTags(item.tags),
+        trustTier: mapTrustTierFromDb(item.trust_tier),
+        score: Math.round((item.quality_score ?? 0) * 100),
+      }))
+
+      const endTime = performance.now()
+
+      return {
+        results,
+        total: apiResponse.meta?.total as number ?? results.length,
+        query: input.query,
+        filters,
+        timing: {
+          searchMs: Math.round(searchEnd - searchStart),
+          totalMs: Math.round(endTime - startTime),
+        },
+      }
+    } catch (error) {
+      // Log and fall through to local search
+      console.warn('[skillsmith] API search failed, using local database:', (error as Error).message)
+    }
+  }
+
+  // Fallback: Use local SearchService for FTS5 search with BM25 ranking
   const dbTrustTier = filters.trustTier ? mapTrustTierToDb(filters.trustTier) : undefined
 
-  // Use SearchService for FTS5 search with BM25 ranking
   const searchResults = context.searchService.search({
     query: input.query.trim(),
     limit: 10,

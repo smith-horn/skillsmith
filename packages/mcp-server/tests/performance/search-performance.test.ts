@@ -69,8 +69,12 @@ describe('SMI-797: Performance Validation', () => {
       skillRepository.create(skill)
     }
 
-    // Create context
-    context = createToolContext({ dbPath: testDbPath })
+    // Create context with offline API client for performance testing
+    // SMI-1183: Use offline mode to avoid API calls during performance tests
+    context = createToolContext({
+      dbPath: testDbPath,
+      apiClientConfig: { offlineMode: true },
+    })
   })
 
   afterAll(() => {

@@ -9,9 +9,13 @@ export type { ToolContext }
 
 /**
  * Create a test context with in-memory database
+ * SMI-1183: Uses offline mode to avoid API calls during tests
  */
 export function createTestContext(): ToolContext {
-  return createToolContext({ dbPath: ':memory:' })
+  return createToolContext({
+    dbPath: ':memory:',
+    apiClientConfig: { offlineMode: true },
+  })
 }
 
 /**

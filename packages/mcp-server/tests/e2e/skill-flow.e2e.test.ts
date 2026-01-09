@@ -92,8 +92,12 @@ describe('E2E: Skill Discovery Flow', () => {
       skillRepository.create(skill)
     }
 
-    // Create context
-    context = createToolContext({ dbPath: testDbPath })
+    // Create context with offline API client for E2E testing
+    // SMI-1183: Use offline mode to avoid API calls during E2E tests
+    context = createToolContext({
+      dbPath: testDbPath,
+      apiClientConfig: { offlineMode: true },
+    })
   })
 
   afterAll(() => {
@@ -279,7 +283,7 @@ describe('E2E: Data Quality Validation', () => {
       skillRepository.create(skill)
     }
 
-    context = createToolContext({ dbPath: testDbPath })
+    context = createToolContext({ dbPath: testDbPath, apiClientConfig: { offlineMode: true } })
   })
 
   afterAll(() => {
