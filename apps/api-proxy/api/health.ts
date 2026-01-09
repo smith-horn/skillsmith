@@ -1,4 +1,4 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
   res.status(200).json({
@@ -6,6 +6,6 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     timestamp: new Date().toISOString(),
     service: 'skillsmith-api-proxy',
     version: '1.0.0',
-    upstream: 'https://vrcnzpmndtroqxxoqkzy.supabase.co'
-  });
+    upstream: 'https://vrcnzpmndtroqxxoqkzy.supabase.co',
+  })
 }
