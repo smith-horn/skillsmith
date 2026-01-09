@@ -77,7 +77,7 @@ scripts/utils/
 
 # Untracked scaffolding/development directories
 packages/web/
-src/
+/src/
 docs/site/
 .env.registry
 .migration-checkpoint.json

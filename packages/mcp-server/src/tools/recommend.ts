@@ -32,7 +32,7 @@ import {
   type MCPTrustTier as TrustTier,
   SkillMatcher,
   OverlapDetector,
-  
+  trackEvent,
 } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { getInstalledSkills } from '../utils/installed-skills.js'
@@ -292,7 +292,7 @@ export async function executeRecommend(
         quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
       }))
 
-      return {
+      const response: RecommendResponse = {
         recommendations,
         candidates_considered: recommendations.length,
         overlap_filtered: 0,
@@ -306,9 +306,23 @@ export async function executeRecommend(
           totalMs: Math.round(endTime - startTime),
         },
       }
+
+      // SMI-1184: Track recommend event (silent on failure)
+      if (context.distinctId) {
+        trackEvent(context.distinctId, 'skill_recommend', {
+          result_count: response.recommendations.length,
+          duration_ms: response.timing.totalMs,
+          source: 'mcp',
+        })
+      }
+
+      return response
     } catch (error) {
       // Log and fall through to local semantic matching
-      console.warn('[skillsmith] API recommend failed, using local matching:', (error as Error).message)
+      console.warn(
+        '[skillsmith] API recommend failed, using local matching:',
+        (error as Error).message
+      )
     }
   }
 
@@ -424,7 +438,7 @@ export async function executeRecommend(
 
   matcher.close()
 
-  return {
+  const response: RecommendResponse = {
     recommendations,
     candidates_considered: candidates.length,
     overlap_filtered: overlapFiltered,
@@ -438,6 +452,17 @@ export async function executeRecommend(
       totalMs: Math.round(endTime - startTime),
     },
   }
+
+  // SMI-1184: Track recommend event (silent on failure)
+  if (context.distinctId) {
+    trackEvent(context.distinctId, 'skill_recommend', {
+      result_count: response.recommendations.length,
+      duration_ms: response.timing.totalMs,
+      source: 'mcp',
+    })
+  }
+
+  return response
 }
 
 /**

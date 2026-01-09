@@ -43,6 +43,27 @@ export {
   type PrometheusExportOptions,
 } from './prometheus.js'
 
+// PostHog exports (SMI-1184)
+export {
+  initializePostHog,
+  shutdownPostHog,
+  flushPostHog,
+  trackEvent,
+  trackSkillSearch,
+  trackSkillView,
+  trackSkillInstall,
+  trackApiError,
+  identifyUser,
+  isFeatureFlagEnabled,
+  getPostHog,
+  isPostHogEnabled,
+  ALLOWED_TRAITS,
+  type PostHogConfig,
+  type SkillsmithEventType,
+  type SkillEventProperties,
+  type AllowedUserTraits,
+} from './posthog.js'
+
 /**
  * Initialize all telemetry (tracing + metrics)
  * Call this at application startup

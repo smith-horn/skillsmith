@@ -340,6 +340,20 @@ export {
   exportToPrometheus,
   getPrometheusMetrics,
   createPrometheusHandler,
+  // SMI-1184: PostHog telemetry
+  initializePostHog,
+  shutdownPostHog,
+  flushPostHog,
+  trackEvent,
+  trackSkillSearch,
+  trackSkillView,
+  trackSkillInstall,
+  trackApiError,
+  identifyUser,
+  isFeatureFlagEnabled,
+  getPostHog,
+  isPostHogEnabled,
+  ALLOWED_TRAITS,
   type TracerConfig,
   type SpanAttributes,
   type SpanWrapper,
@@ -350,6 +364,10 @@ export {
   type Gauge,
   type MetricsSnapshot,
   type PrometheusExportOptions,
+  type PostHogConfig,
+  type SkillsmithEventType,
+  type SkillEventProperties,
+  type AllowedUserTraits,
 } from './telemetry/index.js'
 
 // Codebase Analysis (SMI-600)

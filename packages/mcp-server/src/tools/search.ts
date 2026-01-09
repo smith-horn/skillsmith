@@ -33,7 +33,7 @@ import {
   type TrustTier as DBTrustTier,
   SkillsmithError,
   ErrorCodes,
-  
+  trackSkillSearch,
 } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { extractCategoryFromTags } from '../utils/validation.js'
@@ -217,9 +217,9 @@ export async function executeSearch(
 
       const endTime = performance.now()
 
-      return {
+      const response: SearchResponse = {
         results,
-        total: apiResponse.meta?.total as number ?? results.length,
+        total: (apiResponse.meta?.total as number) ?? results.length,
         query: input.query,
         filters,
         timing: {
@@ -227,9 +227,22 @@ export async function executeSearch(
           totalMs: Math.round(endTime - startTime),
         },
       }
+
+      // SMI-1184: Track search event (silent on failure)
+      if (context.distinctId) {
+        trackSkillSearch(context.distinctId, input.query, response.total, response.timing.totalMs, {
+          trustTier: filters.trustTier,
+          category: filters.category,
+        })
+      }
+
+      return response
     } catch (error) {
       // Log and fall through to local search
-      console.warn('[skillsmith] API search failed, using local database:', (error as Error).message)
+      console.warn(
+        '[skillsmith] API search failed, using local database:',
+        (error as Error).message
+      )
     }
   }
 
@@ -260,7 +273,7 @@ export async function executeSearch(
 
   const endTime = performance.now()
 
-  return {
+  const response: SearchResponse = {
     results,
     total: searchResults.total,
     query: input.query,
@@ -270,6 +283,16 @@ export async function executeSearch(
       totalMs: Math.round(endTime - startTime),
     },
   }
+
+  // SMI-1184: Track search event (silent on failure)
+  if (context.distinctId) {
+    trackSkillSearch(context.distinctId, input.query, response.total, response.timing.totalMs, {
+      trustTier: filters.trustTier,
+      category: filters.category,
+    })
+  }
+
+  return response
 }
 
 /**

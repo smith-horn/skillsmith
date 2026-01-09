@@ -122,6 +122,21 @@ Compare multiple skills side-by-side.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SKILLSMITH_DB_PATH` | Database file location | `~/.skillsmith/skills.db` |
+| `SKILLSMITH_TELEMETRY_ENABLED` | Enable anonymous telemetry | `false` |
+| `POSTHOG_API_KEY` | PostHog API key (required if telemetry enabled) | - |
+
+## Telemetry
+
+Skillsmith includes optional, anonymous telemetry to help improve the product. **Telemetry is disabled by default.**
+
+To enable telemetry:
+
+```bash
+export SKILLSMITH_TELEMETRY_ENABLED=true
+export POSTHOG_API_KEY=your_api_key
+```
+
+See [PRIVACY.md](./PRIVACY.md) for full details on what data is collected and how it's used.
 
 ## License
 
