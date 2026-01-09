@@ -31,6 +31,9 @@ coverage/
 .env
 .env.local
 .env.*.local
+# Explicitly allow environment templates (should be committed)
+!.env.example
+!.env.schema
 
 # Logs
 logs/
@@ -56,10 +59,13 @@ docs/IP/
 docs/licensing/
 docs/valuation/
 
-# Development artifacts
-data/
-output/
+# Development artifacts (anchored to root level)
+/data/
+/output/
 test-results/
+
+# Ignore test databases in packages (generated during tests)
+packages/*/data/
 
 # Phase 4 working documents (not finalized)
 docs/phase4/

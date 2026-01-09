@@ -99,6 +99,24 @@ To find your project IDs:
 3. Go to Settings
 4. Copy the project ID
 
+## Git Hooks
+
+Custom git hooks are available in `scripts/git-hooks/` to prevent common development issues.
+
+### `pre-commit-check-src.sh`
+
+Warns about untracked files in `packages/*/src/` directories before each commit. This prevents the Wave 4/5 gitignore bug from happening again.
+
+**Installation:**
+
+```bash
+# Copy to .git/hooks/
+cp scripts/git-hooks/pre-commit-check-src.sh .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
+See `scripts/git-hooks/README.md` for detailed documentation and alternative installation methods.
+
 ## Adding New Scripts
 
 1. Place scripts in `/scripts` directory
