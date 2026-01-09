@@ -16,7 +16,13 @@
 export * from './github-import/index.js'
 
 // Import and re-run the CLI if this file is executed directly
-import { CONFIG, SEARCH_QUERIES, ImportedSkill, ImportStats, Checkpoint } from './github-import/types.js'
+import {
+  CONFIG,
+  SEARCH_QUERIES,
+  ImportedSkill,
+  ImportStats,
+  Checkpoint,
+} from './github-import/types.js'
 import { log, sleep } from './github-import/utils.js'
 import { checkRateLimit, fetchGitHubSearch } from './github-import/github-client.js'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint } from './github-import/checkpoint.js'
@@ -79,7 +85,8 @@ async function main(): Promise<void> {
     isShuttingDown = true
     log('\nGraceful shutdown initiated (Ctrl+C again to force)...')
     const checkpoint: Checkpoint = {
-      last_query: stats.queries_completed[stats.queries_completed.length - 1] || SEARCH_QUERIES[0].name,
+      last_query:
+        stats.queries_completed[stats.queries_completed.length - 1] || SEARCH_QUERIES[0].name,
       last_page: 1,
       skills: allSkills,
       stats,

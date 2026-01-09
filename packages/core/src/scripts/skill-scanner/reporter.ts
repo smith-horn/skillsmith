@@ -131,9 +131,7 @@ export function generateSecurityReport(
  * @param results - Array of quarantined scan results
  * @returns QuarantineOutput object
  */
-export function generateQuarantineOutput(
-  results: SkillScanResult[]
-): QuarantineOutput {
+export function generateQuarantineOutput(results: SkillScanResult[]): QuarantineOutput {
   const quarantinedSkills = results.filter((r) => r.isQuarantined)
 
   return {
@@ -160,9 +158,7 @@ export function generateQuarantineOutput(
  * @param results - Array of scan results
  * @returns SafeSkillsOutput object
  */
-export function generateSafeSkillsOutput(
-  results: SkillScanResult[]
-): SafeSkillsOutput {
+export function generateSafeSkillsOutput(results: SkillScanResult[]): SafeSkillsOutput {
   const safeSkills = results.filter((r) => !r.isQuarantined)
 
   return {
@@ -184,10 +180,7 @@ export function generateSafeSkillsOutput(
  * @param results - Array of scan results
  * @param criticalCount - Number of critical findings
  */
-export function logRecommendations(
-  results: SkillScanResult[],
-  criticalCount: number
-): void {
+export function logRecommendations(results: SkillScanResult[], criticalCount: number): void {
   const { passed, quarantined } = getPassFailStats(results)
 
   console.log('RECOMMENDATIONS:')

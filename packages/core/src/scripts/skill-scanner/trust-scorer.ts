@@ -48,9 +48,7 @@ export function shouldQuarantine(
  * @param results - Array of scan results with risk scores
  * @returns Average risk score (0 if no results)
  */
-export function calculateAverageRiskScore(
-  results: Array<{ scanReport: ScanReport }>
-): number {
+export function calculateAverageRiskScore(results: Array<{ scanReport: ScanReport }>): number {
   const total = results.length
   if (total === 0) return 0
 
@@ -64,9 +62,7 @@ export function calculateAverageRiskScore(
  * @param results - Array of scan results with risk scores
  * @returns Maximum risk score (0 if no results)
  */
-export function calculateMaxRiskScore(
-  results: Array<{ scanReport: ScanReport }>
-): number {
+export function calculateMaxRiskScore(results: Array<{ scanReport: ScanReport }>): number {
   if (results.length === 0) return 0
   return Math.max(...results.map((r) => r.scanReport.riskScore))
 }
@@ -77,9 +73,10 @@ export function calculateMaxRiskScore(
  * @param results - Array of scan results
  * @returns Object with passed and quarantined counts
  */
-export function getPassFailStats(
-  results: Array<{ isQuarantined: boolean }>
-): { passed: number; quarantined: number } {
+export function getPassFailStats(results: Array<{ isQuarantined: boolean }>): {
+  passed: number
+  quarantined: number
+} {
   const passed = results.filter((r) => !r.isQuarantined).length
   const quarantined = results.filter((r) => r.isQuarantined).length
 

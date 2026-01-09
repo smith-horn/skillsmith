@@ -21,11 +21,7 @@ import {
   MAX_RECOVERY_ATTEMPTS,
   DEFAULT_CONFIG,
 } from './health-types.js'
-import {
-  calculateHealth,
-  determineHealthStatus,
-  hasStatusChanged,
-} from './health-checks.js'
+import { calculateHealth, determineHealthStatus, hasStatusChanged } from './health-checks.js'
 import {
   recordSessionCount,
   recordRecoverySuccess,
@@ -33,12 +29,7 @@ import {
 } from './metrics-collector.js'
 
 // Re-export types for backwards compatibility
-export type {
-  SessionHealth,
-  SessionHealthStatus,
-  HealthMonitorConfig,
-  SessionHealthEvents,
-}
+export type { SessionHealth, SessionHealthStatus, HealthMonitorConfig, SessionHealthEvents }
 
 /**
  * Session Health Monitor

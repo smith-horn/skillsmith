@@ -212,8 +212,9 @@ async function main(): Promise<void> {
 }
 
 // Run the import
-const isMainModule = process.argv[1]?.includes('import-github-skills') ||
-                     process.argv[1]?.includes('github-import/index')
+const isMainModule =
+  process.argv[1]?.includes('import-github-skills') ||
+  process.argv[1]?.includes('github-import/index')
 if (isMainModule) {
   main().catch((error) => {
     log(`Fatal error: ${error}`, 'error')

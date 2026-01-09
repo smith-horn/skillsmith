@@ -6,11 +6,7 @@
 
 import * as path from 'path'
 import { SecurityScanner } from '../../security/index.js'
-import type {
-  ImportedSkill,
-  SkillScanResult,
-  FindingWithContext,
-} from './types.js'
+import type { ImportedSkill, SkillScanResult, FindingWithContext } from './types.js'
 import { shouldQuarantine, type TrustScorerConfig, DEFAULT_TRUST_CONFIG } from './trust-scorer.js'
 import { determineSeverityCategory } from './categorizer.js'
 import {

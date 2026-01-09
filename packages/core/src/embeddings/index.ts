@@ -52,7 +52,10 @@ async function loadTransformersModule(): Promise<typeof import('@xenova/transfor
 
 // Type for feature extraction pipeline output - defined without importing
 type FeatureExtractionPipeline = {
-  (text: string, options?: { pooling?: string; normalize?: boolean }): Promise<{ data: Float32Array }>
+  (
+    text: string,
+    options?: { pooling?: string; normalize?: boolean }
+  ): Promise<{ data: Float32Array }>
 }
 
 export interface EmbeddingResult {

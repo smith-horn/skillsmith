@@ -82,8 +82,8 @@ Output files:
 }
 
 // Run if executed directly
-const isMainModule = process.argv[1]?.includes('validate-skills') ||
-                     process.argv[1]?.includes('validation/index')
+const isMainModule =
+  process.argv[1]?.includes('validate-skills') || process.argv[1]?.includes('validation/index')
 if (isMainModule) {
   main().catch(console.error)
 }
