@@ -129,6 +129,73 @@ gh run list --workflow=indexer.yml --limit=5
 gh run view <run-id> --log
 ```
 
+## Workflow Permissions (SMI-1277)
+
+GitHub Actions workflows need explicit permissions to interact with PRs and issues.
+
+### Adding Workflow Permissions
+
+When a workflow needs to post comments, create issues, or modify PRs:
+
+```yaml
+# At the top of your workflow file, after 'on:' block
+permissions:
+  contents: read
+  pull-requests: write  # For PR comments
+  issues: write         # For issue comments
+```
+
+### Common Permission Errors
+
+**Error**: `Resource not accessible by integration`
+
+**Cause**: Workflow lacks required permissions
+
+**Solution**: Add explicit permissions block:
+
+```yaml
+name: E2E Tests
+
+on:
+  pull_request:
+    branches: [main]
+
+# SMI-1277: Required for PR comments
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  test:
+    # ...
+```
+
+### Fallback Pattern
+
+For non-critical steps (like posting status comments), use `continue-on-error`:
+
+```yaml
+- name: Post summary to PR
+  if: github.event_name == 'pull_request'
+  continue-on-error: true  # Don't fail workflow if comment fails
+  uses: actions/github-script@v7
+  with:
+    script: |
+      github.rest.issues.createComment({...})
+```
+
+### Permission Reference
+
+| Action | Required Permission |
+|--------|---------------------|
+| Read code | `contents: read` |
+| Push commits | `contents: write` |
+| Comment on PRs | `pull-requests: write` |
+| Comment on issues | `issues: write` |
+| Modify checks | `checks: write` |
+| Create releases | `contents: write` |
+
 ## Security Notes
 
 - Never commit secrets to the repository
