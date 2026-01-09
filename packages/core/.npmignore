@@ -1,0 +1,51 @@
+# SMI-1279: Exclude test files from npm package
+# This reduces package size from ~4.5MB to ~1MB
+
+# Test files
+dist/tests/
+dist/**/*.test.js
+dist/**/*.test.d.ts
+dist/**/*.test.js.map
+dist/**/*.test.d.ts.map
+
+# Vitest config
+dist/vitest.config.js
+dist/vitest.config.d.ts
+dist/vitest.config.js.map
+dist/vitest.config.d.ts.map
+vitest.config.ts
+
+# Source test files (in case they get included)
+tests/
+src/**/*.test.ts
+
+# Development files
+.eslintrc*
+.prettierrc*
+tsconfig.json
+*.tsbuildinfo
+
+# Benchmarks (not needed in package)
+dist/benchmarks/
+src/benchmarks/
+
+# Scripts (not needed in package)
+dist/scripts/
+src/scripts/
+
+# Coverage reports
+coverage/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker development files
+Dockerfile
+docker-compose*.yml
+
+# Git files
+.git/
+.gitignore

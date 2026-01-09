@@ -1,0 +1,42 @@
+# SMI-1279: Exclude test files from npm package
+
+# Test files
+dist/tests/
+dist/**/*.test.js
+dist/**/*.test.d.ts
+dist/**/*.test.js.map
+dist/**/*.test.d.ts.map
+
+# Vitest config
+dist/vitest.config.js
+dist/vitest.config.d.ts
+dist/vitest.config.js.map
+dist/vitest.config.d.ts.map
+vitest.config.ts
+
+# Source test files
+tests/
+src/**/*.test.ts
+
+# Development files
+.eslintrc*
+.prettierrc*
+tsconfig.json
+*.tsbuildinfo
+
+# Coverage reports
+coverage/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker development files
+Dockerfile
+docker-compose*.yml
+
+# Git files
+.git/
+.gitignore

@@ -85,5 +85,9 @@
   },
   "dependencies": {
     "esbuild": "0.27.2"
+  },
+  "overrides": {
+    "undici": "^7.18.0",
+    "path-to-regexp": "^8.3.0"
   }
 }

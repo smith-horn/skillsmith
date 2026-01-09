@@ -134,6 +134,7 @@ jobs:
 
   # Publish free tier packages to public npm
   # Note: npm publish requires direct npm ci for registry authentication
+  # SMI-1278: Added version check to prevent 403 errors on duplicate publish
   publish-core:
     name: Publish @skillsmith/core
     runs-on: ubuntu-latest
@@ -158,7 +159,23 @@ jobs:
       - name: Build core package
         run: npm run build -w @skillsmith/core
 
+      - name: Check if version already published
+        id: version-check
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./packages/core/package.json').version")
+          NPM_VERSION=$(npm view @skillsmith/core version 2>/dev/null || echo 'not-found')
+          echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+          echo "npm_version=$NPM_VERSION" >> $GITHUB_OUTPUT
+          if [ "$PACKAGE_VERSION" = "$NPM_VERSION" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "::notice::@skillsmith/core@$PACKAGE_VERSION already published, skipping..."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "::notice::Publishing @skillsmith/core@$PACKAGE_VERSION (current npm: $NPM_VERSION)"
+          fi
+
       - name: Publish core
+        if: steps.version-check.outputs.exists != 'true'
         run: npm publish -w @skillsmith/core --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.SKILLSMITH_NPM_TOKEN }}
@@ -187,7 +204,23 @@ jobs:
       - name: Build packages
         run: npm run build
 
+      - name: Check if version already published
+        id: version-check
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./packages/mcp-server/package.json').version")
+          NPM_VERSION=$(npm view @skillsmith/mcp-server version 2>/dev/null || echo 'not-found')
+          echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+          echo "npm_version=$NPM_VERSION" >> $GITHUB_OUTPUT
+          if [ "$PACKAGE_VERSION" = "$NPM_VERSION" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "::notice::@skillsmith/mcp-server@$PACKAGE_VERSION already published, skipping..."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "::notice::Publishing @skillsmith/mcp-server@$PACKAGE_VERSION (current npm: $NPM_VERSION)"
+          fi
+
       - name: Publish mcp-server
+        if: steps.version-check.outputs.exists != 'true'
         run: npm publish -w @skillsmith/mcp-server --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.SKILLSMITH_NPM_TOKEN }}
@@ -216,7 +249,23 @@ jobs:
       - name: Build packages
         run: npm run build
 
+      - name: Check if version already published
+        id: version-check
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./packages/cli/package.json').version")
+          NPM_VERSION=$(npm view @skillsmith/cli version 2>/dev/null || echo 'not-found')
+          echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+          echo "npm_version=$NPM_VERSION" >> $GITHUB_OUTPUT
+          if [ "$PACKAGE_VERSION" = "$NPM_VERSION" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "::notice::@skillsmith/cli@$PACKAGE_VERSION already published, skipping..."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "::notice::Publishing @skillsmith/cli@$PACKAGE_VERSION (current npm: $NPM_VERSION)"
+          fi
+
       - name: Publish cli
+        if: steps.version-check.outputs.exists != 'true'
         run: npm publish -w @skillsmith/cli --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.SKILLSMITH_NPM_TOKEN }}
@@ -247,7 +296,27 @@ jobs:
       - name: Build packages
         run: npm run build
 
+      # Note: GITHUB_TOKEN needs packages:read scope for version check
+      - name: Check if version already published
+        id: version-check
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./packages/enterprise/package.json').version")
+          # GitHub Packages uses different registry - check there
+          NPM_VERSION=$(npm view @skillsmith/enterprise version --registry=https://npm.pkg.github.com 2>/dev/null || echo 'not-found')
+          echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
+          echo "npm_version=$NPM_VERSION" >> $GITHUB_OUTPUT
+          if [ "$PACKAGE_VERSION" = "$NPM_VERSION" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "::notice::@skillsmith/enterprise@$PACKAGE_VERSION already published, skipping..."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "::notice::Publishing @skillsmith/enterprise@$PACKAGE_VERSION (current registry: $NPM_VERSION)"
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Publish enterprise to GitHub Packages
+        if: steps.version-check.outputs.exists != 'true'
         run: npm publish -w @skillsmith/enterprise
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
