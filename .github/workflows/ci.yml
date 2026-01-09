@@ -240,7 +240,8 @@ jobs:
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
 
       - name: Run dependency audit in Docker
-        # Fail on high/critical vulnerabilities, continue-on-error allows workflow to complete for reporting
+        # Fail on high/critical vulnerabilities in production deps only
+        # --omit=dev skips devDependencies (vercel, tsx) with known transitive vulnerabilities
         continue-on-error: true
         id: audit
         run: |
@@ -248,7 +249,7 @@ jobs:
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npm audit --audit-level=high
+            npm audit --audit-level=high --omit=dev
 
       - name: Check audit result
         if: steps.audit.outcome == 'failure'

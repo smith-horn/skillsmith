@@ -63,7 +63,7 @@ Replace \`any\` with proper types or \`unknown\` for external data.
 - [ ] TypeScript strict mode passes
 - [ ] Tests pass`,
     priority: 4,
-    labels: ['tech-debt', 'type-safety']
+    labels: ['tech-debt', 'type-safety'],
   },
   {
     title: 'Fix any types in CSP middleware',
@@ -81,7 +81,7 @@ Add proper type definitions for CSP validation results.
 - [ ] No \`any\` types remain
 - [ ] Tests pass`,
     priority: 4,
-    labels: ['tech-debt', 'type-safety']
+    labels: ['tech-debt', 'type-safety'],
   },
   // File Length Issues - Group by package
   {
@@ -110,7 +110,7 @@ Split into smaller, focused modules (<500 lines each).
 - [ ] No breaking changes to public API
 - [ ] Tests pass`,
     priority: 3,
-    labels: ['tech-debt', 'refactor']
+    labels: ['tech-debt', 'refactor'],
   },
   {
     title: 'Split large files in @skillsmith/core utilities (7 files > 500 lines)',
@@ -134,7 +134,7 @@ Extract helper functions and types into separate files.
 - [ ] All files under 500 lines
 - [ ] Tests pass`,
     priority: 4,
-    labels: ['tech-debt', 'refactor']
+    labels: ['tech-debt', 'refactor'],
   },
   {
     title: 'Split large files in @skillsmith/core webhooks & validation',
@@ -154,7 +154,7 @@ Split validation schemas and webhook handlers.
 - [ ] All files under 500 lines
 - [ ] Tests pass`,
     priority: 4,
-    labels: ['tech-debt', 'refactor']
+    labels: ['tech-debt', 'refactor'],
   },
   {
     title: 'Split large files in @skillsmith/enterprise (4 files > 500 lines)',
@@ -175,7 +175,7 @@ Split audit event types into categories, extract exporter base class.
 - [ ] All files under 500 lines
 - [ ] Tests pass`,
     priority: 4,
-    labels: ['tech-debt', 'refactor']
+    labels: ['tech-debt', 'refactor'],
   },
   {
     title: 'Split large files in @skillsmith/mcp-server (4 files > 500 lines)',
@@ -196,7 +196,7 @@ Extract comparison logic, validation rules, and test fixtures.
 - [ ] All files under 500 lines
 - [ ] Tests pass`,
     priority: 4,
-    labels: ['tech-debt', 'refactor']
+    labels: ['tech-debt', 'refactor'],
   },
   {
     title: 'Split SkillDetailPanel.ts in VS Code extension',
@@ -211,7 +211,7 @@ Extract webview HTML generation and message handlers.
 - [ ] Extension functionality unchanged
 - [ ] Tests pass`,
     priority: 4,
-    labels: ['tech-debt', 'refactor']
+    labels: ['tech-debt', 'refactor'],
   },
   // Docker Compliance
   {
@@ -231,7 +231,7 @@ Update to use \`docker exec skillsmith-dev-1 npm ...\`
 - [ ] Scripts work correctly in Docker
 - [ ] Documentation updated`,
     priority: 3,
-    labels: ['tech-debt', 'docker']
+    labels: ['tech-debt', 'docker'],
   },
   // Unused Variables (from lint)
   {
@@ -255,8 +255,8 @@ Either use the variables or prefix with \`_\` to indicate intentionally unused.
 - [ ] No unused variable warnings
 - [ ] Tests pass`,
     priority: 4,
-    labels: ['tech-debt', 'lint']
-  }
+    labels: ['tech-debt', 'lint'],
+  },
 ]
 
 async function main() {
@@ -264,7 +264,7 @@ async function main() {
 
   // Get team
   const teams = await client.teams()
-  const team = teams.nodes.find(t => t.key === 'SMI')
+  const team = teams.nodes.find((t) => t.key === 'SMI')
   if (!team) {
     console.error('Team SMI not found')
     process.exit(1)
@@ -273,16 +273,15 @@ async function main() {
 
   // Get projects
   const projects = await client.projects({
-    filter: { name: { containsIgnoreCase: 'phase 6' } }
+    filter: { name: { containsIgnoreCase: 'phase 6' } },
   })
 
   let project = projects.nodes[0]
   if (!project) {
     // Try broader search
     const allProjects = await client.projects()
-    project = allProjects.nodes.find(p =>
-      p.name.toLowerCase().includes('phase 6') ||
-      p.name.toLowerCase().includes('skillsmith')
+    project = allProjects.nodes.find(
+      (p) => p.name.toLowerCase().includes('phase 6') || p.name.toLowerCase().includes('skillsmith')
     )
   }
 
@@ -291,7 +290,8 @@ async function main() {
     const newProject = await client.createProject({
       name: 'Skillsmith Phase 6: Production Deployment',
       teamIds: [team.id],
-      description: 'Deploy Skillsmith to production with Supabase, Vercel, and enterprise features.'
+      description:
+        'Deploy Skillsmith to production with Supabase, Vercel, and enterprise features.',
     })
     project = (await newProject.project) as typeof project
   }
@@ -301,7 +301,7 @@ async function main() {
 
   // Get or create labels
   const labelsResult = await client.issueLabels()
-  const existingLabels = new Map(labelsResult.nodes.map(l => [l.name, l.id]))
+  const existingLabels = new Map(labelsResult.nodes.map((l) => [l.name, l.id]))
 
   const neededLabels = ['tech-debt', 'type-safety', 'refactor', 'docker', 'lint']
   for (const labelName of neededLabels) {
@@ -309,7 +309,7 @@ async function main() {
       console.log(`Creating label: ${labelName}`)
       const result = await client.createIssueLabel({
         name: labelName,
-        teamId: team.id
+        teamId: team.id,
       })
       const label = await result.issueLabel
       if (label) {
@@ -325,7 +325,7 @@ async function main() {
 
   for (const warning of warnings) {
     const labelIds = (warning.labels || [])
-      .map(name => existingLabels.get(name))
+      .map((name) => existingLabels.get(name))
       .filter((id): id is string => !!id)
 
     try {
@@ -335,7 +335,7 @@ async function main() {
         teamId: team.id,
         projectId: project.id,
         priority: warning.priority,
-        labelIds
+        labelIds,
       })
 
       const issue = await result.issue
