@@ -27,14 +27,14 @@ Orchestrates complex task execution using claude-flow hive mind with automatic c
 │  4. REVIEW        │  Code review → docs/reviews/ (MANDATORY)    │
 │  5. FIX           │  Address review findings                    │
 │  5.5 GOVERNANCE   │  BLOCKING standards audit gate              │
-│  6. RETRO         │  PROJECT PHASES ONLY (skip if mid-phase)    │
-│  7. DOCUMENT      │  ADR, Linear update, CLAUDE.md              │
+│  6. DOCUMENT      │  ADR, Linear update, CLAUDE.md              │
+│  7. SPRINT REPORT │  Summary of completed work & decisions      │
 │  8. CLEANUP       │  swarm_destroy, mark issues done            │
 └─────────────────────────────────────────────────────────────────┘
 
 Key:
 - Phase 4: Reviews written to docs/reviews/YYYY-MM-DD-<feature>.md
-- Phase 6: Only at end of project phases, not every hive mind wave
+- Phase 7: Brief summary before cleanup (not a full retrospective)
 - Linear issues: Must include details, links, and labels
 ```
 
@@ -235,182 +235,9 @@ Task({
 
 **On Failure**: Fix all violations, then re-run governance audit.
 
-## Phase 6: Retrospective (PROJECT PHASES ONLY)
+## Phase 6: Documentation Updates
 
-> **IMPORTANT**: Retrospectives are conducted ONLY at the end of a **project phase**, NOT after every hive mind wave. Skip this phase if you're in the middle of a larger project phase.
-
-### 6.0 Check if Retrospective is Required
-
-```javascript
-AskUserQuestion({
-  questions: [{
-    question: "Is this the end of a project phase (not just a hive mind wave)?",
-    header: "Retro Check",
-    multiSelect: false,
-    options: [
-      { label: "Yes - End of phase", description: "This completes a major project milestone (e.g., Phase 2a, Phase 3b)" },
-      { label: "No - Continue work", description: "This is just one wave of work within an ongoing phase - skip retro" }
-    ]
-  }]
-})
-```
-
-**If "No - Continue work"**: Skip to Phase 7 (Documentation) or Phase 8 (Cleanup).
-
-**If "Yes - End of phase"**: Proceed with retrospective below.
-
-### 6.1 Write Retrospective
-
-Write to `docs/retros/<phase-name>.md` (e.g., `docs/retros/phase-2a-github-indexing.md`):
-
-```markdown
-# [Phase/Feature] Retrospective
-
-**Date**: YYYY-MM-DD
-**Duration**: [time spent]
-
-## Summary
-[Brief description of what was accomplished]
-
-## Metrics
-| Metric | Value |
-|--------|-------|
-| Files Changed | X |
-| Lines Added | X |
-| Issues Completed | X |
-
-## What Went Well
-1. [Success 1]
-2. [Success 2]
-
-## What Could Be Improved
-1. [Issue 1]
-2. [Issue 2]
-
-## Lessons Learned
-1. [Lesson 1]
-2. [Lesson 2]
-
-## Next Steps
-| Item | Priority | Description |
-|------|----------|-------------|
-| [Item 1] | High/Medium/Low | [Description] |
-| [Item 2] | High/Medium/Low | [Description] |
-```
-
-### 6.2 Handle Next Steps
-
-**REQUIRED**: After identifying next steps, prompt the user:
-
-```javascript
-AskUserQuestion({
-  questions: [{
-    question: "How would you like to handle the next steps from the retrospective?",
-    header: "Next Steps",
-    multiSelect: false,
-    options: [
-      { label: "Add all to Linear", description: "Create Linear issues for all next steps identified" },
-      { label: "Select which to add", description: "Review each item and choose which to create as issues" },
-      { label: "Skip for now", description: "Don't create any issues - document only" }
-    ]
-  }]
-})
-```
-
-**If "Add all to Linear"**: Create detailed issues with proper structure.
-
-### 6.3 Create Detailed Linear Issues
-
-**REQUIRED**: All Linear issues must include:
-- **Detailed description** with context and acceptance criteria
-- **Links to resources** (code files, docs, ADRs, reviews)
-- **Labels** (priority, type, component)
-
-```javascript
-// Create detailed issues for each next step
-for (const item of nextSteps) {
-  const description = `
-## Context
-${item.context || 'Identified during retrospective for ' + phaseName}
-
-## Acceptance Criteria
-${item.acceptanceCriteria || '- [ ] Criteria to be defined'}
-
-## Technical Details
-${item.technicalDetails || 'See related resources below'}
-
-## Resources
-- [Retrospective](docs/retros/${phaseName}.md)
-- [Code Review](docs/reviews/${reviewDate}-${feature}.md)
-${item.relatedADR ? `- [ADR](docs/adr/${item.relatedADR}.md)` : ''}
-${item.relatedFiles ? item.relatedFiles.map(f => `- [${f}](${f})`).join('\n') : ''}
-
-## Labels
-- Priority: ${item.priority}
-- Type: ${item.type || 'enhancement'}
-- Component: ${item.component || 'core'}
-`;
-
-  // Use Linear GraphQL mutation for full control
-  Bash(`varlock run -- npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts create-issue \
-    --title "${item.title}" \
-    --description "${description}" \
-    --priority ${item.priority} \
-    --labels "${item.labels?.join(',') || 'enhancement'}"`)
-}
-```
-
-**Issue Template Fields**:
-
-| Field | Required | Example |
-|-------|----------|---------|
-| Title | Yes | "Implement caching layer for search results" |
-| Description | Yes | Context, acceptance criteria, technical details |
-| Priority | Yes | urgent, high, medium, low |
-| Labels | Yes | enhancement, bug, security, performance |
-| Component | Recommended | core, mcp-server, cli |
-| Related Issues | If applicable | SMI-123, SMI-456 |
-| Resources | Yes | Links to retro, review, ADRs, code files |
-
-**If "Select which to add"**:
-
-```javascript
-AskUserQuestion({
-  questions: [{
-    question: "Which next steps should be added to Linear?",
-    header: "Select Items",
-    multiSelect: true,
-    options: nextSteps.map(item => ({
-      label: item.title,
-      description: `${item.priority} priority - ${item.description}`
-    }))
-  }]
-})
-// Then create issues for selected items using the detailed template above
-```
-
-### 6.4 Link Issues to Retrospective
-
-After creating issues, update the retrospective with issue links:
-
-```javascript
-// Append issue links to retrospective
-Edit("docs/retros/<phase>.md",
-  "## Next Steps",
-  `## Next Steps
-
-### Created Issues
-| Issue | Title | Priority | Status |
-|-------|-------|----------|--------|
-| [SMI-XXX](https://linear.app/team/SMI-XXX) | ${item.title} | ${item.priority} | Created |
-
-### Original Next Steps`
-)
-```
-
-## Phase 7: Documentation Updates
-
-### 7.1 Create/Update ADR (if architectural decision)
+### 6.1 Create/Update ADR (if architectural decision)
 
 ```markdown
 # ADR-0XX: [Title]
@@ -434,7 +261,7 @@ Edit("docs/retros/<phase>.md",
 [Pattern for future reference]
 ```
 
-### 7.2 Update ADR Index
+### 6.2 Update ADR Index
 
 ```javascript
 Edit("docs/adr/index.md",
@@ -443,7 +270,7 @@ Edit("docs/adr/index.md",
 )
 ```
 
-### 7.3 Create Linear Project Update
+### 6.3 Create Linear Project Update
 
 ```javascript
 // GraphQL mutation for project update
@@ -458,7 +285,7 @@ mutation {
 }
 ```
 
-### 7.4 Update CLAUDE.md (High-Level Only)
+### 6.4 Update CLAUDE.md (High-Level Only)
 
 **Policy**: CLAUDE.md should remain high-level. Push details to skills/ADRs.
 
@@ -483,6 +310,47 @@ Brief description. See [Skill Name](path/to/SKILL.md) for details.
 
 **Security**: Never document env var values in markdown. Reference `.env.schema` instead.
 
+## Phase 7: Sprint Report
+
+Generate a brief summary of the work completed before cleanup. This is NOT a retrospective—it's a quick status report.
+
+### 7.1 Generate Sprint Report
+
+Output a summary in the following format:
+
+```markdown
+## Sprint Report: [Issue/Feature Name]
+
+**Date**: YYYY-MM-DD
+**Issues**: SMI-XXX, SMI-YYY
+
+### Completed Work
+
+| Task | Status | Files Changed |
+|------|--------|---------------|
+| Implement feature X | ✅ Done | `src/x.ts`, `src/y.ts` |
+| Add tests for X | ✅ Done | `tests/x.test.ts` |
+| Update documentation | ✅ Done | `docs/x.md` |
+
+### New Issues Created
+
+| Issue | Title | Priority |
+|-------|-------|----------|
+| SMI-XXX | [Brief title] | High |
+| SMI-YYY | [Brief title] | Medium |
+
+### Manual Steps & Decisions
+
+| Decision/Step | Outcome |
+|---------------|---------|
+| User chose Option A for auth | Implemented JWT-based auth |
+| Skipped optional feature Y | Deferred to next phase |
+```
+
+### 7.2 Present to User
+
+Display the sprint report directly in the conversation. No file creation required unless the user requests it.
+
 ## Phase 8: Cleanup
 
 ```javascript
@@ -504,11 +372,11 @@ For executing a Linear issue with hive mind:
 4. Execute in parallel where possible
 5. Run code review with Task agent
 6. Fix any "Must Fix" items
-7. Write retrospective with lessons learned and next steps
-8. Prompt user: Add all / Select / Skip next steps for Linear
-9. Create ADR if architectural decision
-10. Create Linear project update
-11. Update CLAUDE.md if new patterns
+7. Run governance audit
+8. Create ADR if architectural decision
+9. Create Linear project update
+10. Update CLAUDE.md if new patterns
+11. Generate sprint report (summary table, new issues, decisions)
 12. Cleanup: swarm_destroy, linear:done
 ```
 
@@ -524,14 +392,12 @@ Claude:
 4. [Parallel edits to relevant files]
 5. [Task agent for code review]
 6. [Fix any review findings]
-7. [Write retrospective to docs/retros/]
-8. [Ask user: "How would you like to handle the 3 next steps?"]
-   User selects: "Add all to Linear"
-9. [Create 3 Linear issues for next steps]
-10. [Create ADR if needed]
-11. [Create Linear project update]
-12. [Update CLAUDE.md if new patterns]
-13. [swarm_destroy, linear:done ENG-123]
+7. [Run governance audit]
+8. [Create ADR if needed]
+9. [Create Linear project update]
+10. [Update CLAUDE.md if new patterns]
+11. [Display sprint report with completed work table]
+12. [swarm_destroy, linear:done ENG-123]
 ```
 
 ## Best Practices

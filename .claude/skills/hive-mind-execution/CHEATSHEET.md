@@ -93,22 +93,27 @@ mutation {
 | star | Central coordinator |
 | ring | Sequential pipeline |
 
-## Retrospective Next Steps
+## Sprint Report Template
 
-After writing retrospective, **ALWAYS** ask user:
+Display before cleanup:
 
-```javascript
-AskUserQuestion({
-  questions: [{
-    question: "How would you like to handle the next steps?",
-    header: "Next Steps",
-    options: [
-      { label: "Add all to Linear", description: "Create issues for all next steps" },
-      { label: "Select which to add", description: "Choose which items to create" },
-      { label: "Skip for now", description: "Document only, no issues" }
-    ]
-  }]
-})
+```markdown
+## Sprint Report: [Feature]
+
+### Completed Work
+| Task | Status | Files |
+|------|--------|-------|
+| Feature X | ✅ Done | `src/x.ts` |
+
+### New Issues Created
+| Issue | Title | Priority |
+|-------|-------|----------|
+| SMI-XXX | Title | High |
+
+### Manual Steps & Decisions
+| Decision | Outcome |
+|----------|---------|
+| User chose X | Did Y |
 ```
 
 ## CLAUDE.md Policy
@@ -126,10 +131,10 @@ Keep CLAUDE.md **HIGH-LEVEL**:
 - [ ] Parallel execution used
 - [ ] Code review completed
 - [ ] Review fixes applied
-- [ ] **Retrospective written**
-- [ ] **User prompted for next steps**
+- [ ] Governance audit passed
 - [ ] ADR created (if needed)
 - [ ] Linear updated
 - [ ] CLAUDE.md updated (high-level only!)
+- [ ] **Sprint report displayed**
 - [ ] Swarm destroyed
 - [ ] Issue marked done
