@@ -36,12 +36,14 @@ async function runTests(): Promise<void> {
 
   const startTime = Date.now()
 
-  // Run vitest with JSON reporter
+  // Run vitest with JSON reporter using E2E-specific config
+  // SMI-1315: Use vitest-e2e.config.ts to avoid exclude patterns from main config
   const vitestProcess = spawn(
     'npx',
     [
       'vitest',
       'run',
+      '--config=vitest-e2e.config.ts',
       '--reporter=json',
       '--reporter=junit',
       '--outputFile.json=test-results/cli-results.json',

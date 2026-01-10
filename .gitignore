@@ -71,9 +71,6 @@ packages/*/output/
 # Generated technical data
 docs/technical/data/
 
-# E2E test config (optional, not needed for CI)
-vitest-e2e.config.ts
-
 # Phase 4 working documents (not finalized)
 docs/phase4/
 docs/phase4-research/
