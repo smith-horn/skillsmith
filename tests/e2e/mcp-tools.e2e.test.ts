@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, execSync } from 'child_process'
-import { mkdir, rm, readdir, access, writeFile } from 'fs/promises'
+import { mkdir, rm, access, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { homedir } from 'os'
 
@@ -48,17 +48,23 @@ async function callCli(args: string[]): Promise<{ stdout: string; stderr: string
   })
 }
 
+// Type for parsed CLI JSON output
+interface CliJsonOutput {
+  results?: Array<{ id: string; name?: string }>
+  skills?: Array<{ id: string; name?: string }>
+}
+
 // Helper to parse JSON from CLI output
-function parseJsonOutput(stdout: string): any {
+function parseJsonOutput(stdout: string): CliJsonOutput | null {
   try {
     // Try direct parse
-    return JSON.parse(stdout.trim())
+    return JSON.parse(stdout.trim()) as CliJsonOutput
   } catch {
     // Try to find JSON in output
     const jsonMatch = stdout.match(/\{[\s\S]*\}|\[[\s\S]*\]/)
     if (jsonMatch) {
       try {
-        return JSON.parse(jsonMatch[0])
+        return JSON.parse(jsonMatch[0]) as CliJsonOutput
       } catch {
         return null
       }
@@ -316,8 +322,6 @@ This is a test skill created by the E2E test suite.
   })
 
   describe('install/uninstall commands', () => {
-    const testInstallSkillId = 'community/test-install-' + Date.now()
-
     // Note: These tests are marked as skipped by default to avoid modifying ~/.claude/skills
     // Enable them for full E2E testing
     it.skip('should install a skill', async () => {

@@ -77,8 +77,8 @@ describe('Skillsmith API E2E Tests', () => {
 
       // Results should be different (unless < 5 total)
       if (data1.data.length >= 5) {
-        const ids1 = data1.data.map((s: any) => s.id)
-        const ids2 = data2.data.map((s: any) => s.id)
+        const ids1 = data1.data.map((s: { id: string }) => s.id)
+        const ids2 = data2.data.map((s: { id: string }) => s.id)
         const overlap = ids1.filter((id: string) => ids2.includes(id))
         expect(overlap.length).toBe(0)
       }
@@ -260,12 +260,8 @@ describe('Skillsmith API E2E Tests', () => {
       })
 
       // OPTIONS might return 204 or 200
-      const corsHeader =
-        response.headers.get('access-control-allow-origin') ||
-        response.headers.get('Access-Control-Allow-Origin')
-
-      // If CORS is configured, header should be present
       // Some APIs don't respond to OPTIONS from fetch
+      // CORS headers are checked implicitly via cross-origin requests
       expect([200, 204, 405]).toContain(response.status)
     })
 
