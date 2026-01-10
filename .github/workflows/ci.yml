@@ -18,10 +18,12 @@ env:
 jobs:
   # SMI-1300: Validate package configurations before expensive Docker build
   # Catches scope mismatches for GitHub Packages early
+  # Only runs on upstream repo (Smith-Horn-Group) - skipped on forks
   package-validation:
     name: Package Validation
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    if: github.repository_owner == 'Smith-Horn-Group'
 
     steps:
       - name: Checkout
@@ -94,6 +96,8 @@ jobs:
   # SMI-708: Optimized to extract node_modules once instead of running npm ci per job
   docker-build:
     needs: package-validation
+    # Run if package-validation succeeded OR was skipped (on forks)
+    if: ${{ !cancelled() && (needs.package-validation.result == 'success' || needs.package-validation.result == 'skipped') }}
     name: Build Docker Image
     runs-on: ubuntu-latest
     timeout-minutes: 10
