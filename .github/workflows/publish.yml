@@ -116,19 +116,26 @@ jobs:
           fi
 
           # SMI-1316: Check @smith-horn-group/enterprise with authenticated GitHub Packages check
+          # Only check on upstream repo - forks can't access GitHub Packages for this scope
           VERSION=$(jq -r .version packages/enterprise/package.json)
-          # Configure npm for GitHub Packages auth (using GITHUB_TOKEN)
-          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> ~/.npmrc
-          PUBLISHED=$(npm view @smith-horn-group/enterprise@$VERSION version --registry=https://npm.pkg.github.com 2>/dev/null || echo '')
-          # Clean up npmrc
-          rm -f ~/.npmrc
-          if [ -n "$PUBLISHED" ]; then
-            echo "enterprise_exists=true" >> $GITHUB_OUTPUT
-            echo "| @smith-horn-group/enterprise | $VERSION | $PUBLISHED | ⏭️ Skip |" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.repository_owner }}" = "Smith-Horn-Group" ]; then
+            # Configure npm for GitHub Packages auth (using GITHUB_TOKEN)
+            echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> ~/.npmrc
+            PUBLISHED=$(npm view @smith-horn-group/enterprise@$VERSION version --registry=https://npm.pkg.github.com 2>/dev/null || echo '')
+            # Clean up npmrc
+            rm -f ~/.npmrc
+            if [ -n "$PUBLISHED" ]; then
+              echo "enterprise_exists=true" >> $GITHUB_OUTPUT
+              echo "| @smith-horn-group/enterprise | $VERSION | $PUBLISHED | ⏭️ Skip |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "enterprise_exists=false" >> $GITHUB_OUTPUT
+              echo "| @smith-horn-group/enterprise | $VERSION | - | 📦 Publish |" >> $GITHUB_STEP_SUMMARY
+              ANY_TO_PUBLISH=true
+            fi
           else
-            echo "enterprise_exists=false" >> $GITHUB_OUTPUT
-            echo "| @smith-horn-group/enterprise | $VERSION | - | 📦 Publish |" >> $GITHUB_STEP_SUMMARY
-            ANY_TO_PUBLISH=true
+            # On forks, skip enterprise package entirely
+            echo "enterprise_exists=true" >> $GITHUB_OUTPUT
+            echo "| @smith-horn-group/enterprise | $VERSION | (fork) | ⏭️ Skip |" >> $GITHUB_STEP_SUMMARY
           fi
 
           echo "any_to_publish=$ANY_TO_PUBLISH" >> $GITHUB_OUTPUT
@@ -158,7 +165,9 @@ jobs:
             echo "✅ All packages have .npmignore files" >> $GITHUB_STEP_SUMMARY
           fi
 
+      # Only validate scopes on upstream repo - forks have different owners
       - name: Validate package scopes for GitHub Packages
+        if: github.repository_owner == 'Smith-Horn-Group'
         run: |
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Scope Validation" >> $GITHUB_STEP_SUMMARY
@@ -179,6 +188,13 @@ jobs:
               echo "✅ $PKG_NAME scope matches org" >> $GITHUB_STEP_SUMMARY
             fi
           done
+
+      - name: Skip scope validation on forks
+        if: github.repository_owner != 'Smith-Horn-Group'
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Scope Validation" >> $GITHUB_STEP_SUMMARY
+          echo "⏭️ Skipped on fork (only applies to Smith-Horn-Group)" >> $GITHUB_STEP_SUMMARY
 
   # Build Docker image once, use for all jobs (matches ci.yml pattern)
   # SMI-1319: Skip Docker build if nothing to publish
