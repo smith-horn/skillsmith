@@ -10,9 +10,18 @@ export default defineConfig({
       'packages/*/tests/**/*.test.ts',
       'packages/*/tests/**/*.spec.ts',
       'tests/**/*.test.ts',
-      'tests/**/*.e2e.test.ts',
+      // E2E tests excluded from main run - they run in dedicated e2e-tests.yml workflow
+      // See SMI-1312: E2E tests require test repos and seeded DB not available in CI
     ],
-    exclude: ['**/node_modules/**', '**/dist/**'],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      // SMI-1312: E2E and integration tests require external services (API, DB, test repos)
+      // These run in dedicated workflows: e2e-tests.yml
+      'tests/e2e/**',
+      'tests/api/**',
+      '**/*.e2e.test.ts',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

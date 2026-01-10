@@ -31,6 +31,16 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      - name: Validate Secrets
+        run: |
+          # SMI-1313: Fail fast with clear error if secrets not configured
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::Required secrets not configured. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to repository secrets."
+            echo "See: https://github.com/wrsmith108/skillsmith/settings/secrets/actions"
+            exit 1
+          fi
+          echo "✓ Secrets validated"
+
       - name: Trigger Indexer
         id: indexer
         run: |
