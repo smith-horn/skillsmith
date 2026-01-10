@@ -70,8 +70,7 @@ export function parseSkillId(id: string): { author: string; name: string } | nul
 /**
  * Map MCP trust tier to database trust tier.
  *
- * MCP types: verified, community, standard, unverified
- * DB types: verified, community, experimental, unknown
+ * Types are now unified: verified, community, experimental, unknown
  *
  * @param mcpTier - MCP trust tier
  * @returns Database trust tier
@@ -82,9 +81,9 @@ export function mapTrustTierToDb(mcpTier: MCPTrustTier): DBTrustTier {
       return 'verified'
     case 'community':
       return 'community'
-    case 'standard':
+    case 'experimental':
       return 'experimental'
-    case 'unverified':
+    case 'unknown':
       return 'unknown'
   }
 }
@@ -92,8 +91,7 @@ export function mapTrustTierToDb(mcpTier: MCPTrustTier): DBTrustTier {
 /**
  * Map database trust tier to MCP trust tier.
  *
- * DB types: verified, community, experimental, unknown
- * MCP types: verified, community, standard, unverified
+ * Types are now unified: verified, community, experimental, unknown
  *
  * @param dbTier - Database trust tier
  * @returns MCP trust tier
@@ -105,9 +103,9 @@ export function mapTrustTierFromDb(dbTier: DBTrustTier): MCPTrustTier {
     case 'community':
       return 'community'
     case 'experimental':
-      return 'standard'
+      return 'experimental'
     case 'unknown':
-      return 'unverified'
+      return 'unknown'
   }
 }
 

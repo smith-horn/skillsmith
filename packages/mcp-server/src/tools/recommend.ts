@@ -176,10 +176,10 @@ function mapTrustTierFromDb(dbTier: string): TrustTier {
     case 'community':
       return 'community'
     case 'experimental':
-      return 'standard'
+      return 'experimental'
     case 'unknown':
     default:
-      return 'unverified'
+      return 'unknown'
   }
 }
 
@@ -523,10 +523,10 @@ function getTrustBadge(tier: TrustTier): string {
       return '[VERIFIED]'
     case 'community':
       return '[COMMUNITY]'
-    case 'standard':
-      return '[STANDARD]'
-    case 'unverified':
-      return '[UNVERIFIED]'
+    case 'experimental':
+      return '[EXPERIMENTAL]'
+    case 'unknown':
+      return '[UNKNOWN]'
     default:
       return '[UNKNOWN]'
   }
