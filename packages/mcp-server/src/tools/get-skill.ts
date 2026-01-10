@@ -301,10 +301,10 @@ function formatTrustTier(tier: TrustTier): string {
       return '[*] VERIFIED'
     case 'community':
       return '[+] COMMUNITY'
-    case 'standard':
-      return '[=] STANDARD'
-    case 'unverified':
-      return '[?] UNVERIFIED'
+    case 'experimental':
+      return '[~] EXPERIMENTAL'
+    case 'unknown':
+      return '[?] UNKNOWN'
   }
 }
 

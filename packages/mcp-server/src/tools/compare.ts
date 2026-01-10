@@ -145,8 +145,8 @@ type ExtendedSkill = Skill & { dependencies: string[]; features: string[] }
 const TRUST_TIER_RANK: Record<TrustTier, number> = {
   verified: 4,
   community: 3,
-  standard: 2,
-  unverified: 1,
+  experimental: 2,
+  unknown: 1,
 }
 
 /**

@@ -49,9 +49,9 @@ function mapTrustTierToDb(mcpTier: TrustTier): DBTrustTier {
       return 'verified'
     case 'community':
       return 'community'
-    case 'standard':
+    case 'experimental':
       return 'experimental'
-    case 'unverified':
+    case 'unknown':
       return 'unknown'
   }
 }
@@ -66,9 +66,9 @@ function mapTrustTierFromDb(dbTier: DBTrustTier): TrustTier {
     case 'community':
       return 'community'
     case 'experimental':
-      return 'standard'
+      return 'experimental'
     case 'unknown':
-      return 'unverified'
+      return 'unknown'
   }
 }
 
@@ -104,7 +104,7 @@ export const searchToolSchema = {
       trust_tier: {
         type: 'string',
         description: 'Filter by trust tier level',
-        enum: ['verified', 'community', 'standard', 'unverified'],
+        enum: ['verified', 'community', 'experimental', 'unknown'],
       },
       min_score: {
         type: 'number',
@@ -357,10 +357,10 @@ function getTrustBadge(tier: TrustTier): string {
       return '[VERIFIED]'
     case 'community':
       return '[COMMUNITY]'
-    case 'standard':
-      return '[STANDARD]'
-    case 'unverified':
-      return '[UNVERIFIED]'
+    case 'experimental':
+      return '[EXPERIMENTAL]'
+    case 'unknown':
+      return '[UNKNOWN]'
     default:
       return '[UNKNOWN]'
   }

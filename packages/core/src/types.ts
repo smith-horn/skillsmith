@@ -4,12 +4,13 @@
 
 /**
  * Trust tier levels for skill quality assessment
+ * NOTE: Must match database schema (packages/core/src/database/schema.ts)
  */
 export type TrustTier =
   | 'verified' // Manually reviewed and verified
   | 'community' // High community ratings
-  | 'standard' // Meets basic quality checks
-  | 'unverified' // Not yet assessed
+  | 'experimental' // New or beta skills
+  | 'unknown' // Not yet assessed
 
 /**
  * Trust tier descriptions for user display
@@ -17,8 +18,8 @@ export type TrustTier =
 export const TrustTierDescriptions: Record<TrustTier, string> = {
   verified: 'Manually reviewed by the Skillsmith team. High quality and safe to use.',
   community: 'Highly rated by the community. Generally reliable.',
-  standard: 'Meets basic quality checks. Use with normal caution.',
-  unverified: 'Not yet assessed. Review carefully before using.',
+  experimental: 'New or beta skill. Use with caution.',
+  unknown: 'Not yet assessed. Review carefully before using.',
 }
 
 /**
