@@ -27,8 +27,133 @@ env:
   COMPOSE_DOCKER_CLI_BUILD: 1
 
 jobs:
+  # SMI-1301: Pre-publish validation before expensive Docker build
+  # Catches version conflicts and configuration issues early
+  pre-publish-check:
+    name: Pre-Publish Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      core-exists: ${{ steps.version-check.outputs.core_exists }}
+      mcp-exists: ${{ steps.version-check.outputs.mcp_exists }}
+      cli-exists: ${{ steps.version-check.outputs.cli_exists }}
+      enterprise-exists: ${{ steps.version-check.outputs.enterprise_exists }}
+      any-to-publish: ${{ steps.version-check.outputs.any_to_publish }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Check version availability
+        id: version-check
+        run: |
+          echo "## Version Availability Check" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Local Version | Published | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|---------------|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          ANY_TO_PUBLISH=false
+
+          # Check @skillsmith/core
+          VERSION=$(jq -r .version packages/core/package.json)
+          PUBLISHED=$(npm view @skillsmith/core@$VERSION version 2>/dev/null || echo '')
+          if [ -n "$PUBLISHED" ]; then
+            echo "core_exists=true" >> $GITHUB_OUTPUT
+            echo "| @skillsmith/core | $VERSION | $PUBLISHED | ⏭️ Skip |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "core_exists=false" >> $GITHUB_OUTPUT
+            echo "| @skillsmith/core | $VERSION | - | 📦 Publish |" >> $GITHUB_STEP_SUMMARY
+            ANY_TO_PUBLISH=true
+          fi
+
+          # Check @skillsmith/mcp-server
+          VERSION=$(jq -r .version packages/mcp-server/package.json)
+          PUBLISHED=$(npm view @skillsmith/mcp-server@$VERSION version 2>/dev/null || echo '')
+          if [ -n "$PUBLISHED" ]; then
+            echo "mcp_exists=true" >> $GITHUB_OUTPUT
+            echo "| @skillsmith/mcp-server | $VERSION | $PUBLISHED | ⏭️ Skip |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "mcp_exists=false" >> $GITHUB_OUTPUT
+            echo "| @skillsmith/mcp-server | $VERSION | - | 📦 Publish |" >> $GITHUB_STEP_SUMMARY
+            ANY_TO_PUBLISH=true
+          fi
+
+          # Check @skillsmith/cli
+          VERSION=$(jq -r .version packages/cli/package.json)
+          PUBLISHED=$(npm view @skillsmith/cli@$VERSION version 2>/dev/null || echo '')
+          if [ -n "$PUBLISHED" ]; then
+            echo "cli_exists=true" >> $GITHUB_OUTPUT
+            echo "| @skillsmith/cli | $VERSION | $PUBLISHED | ⏭️ Skip |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "cli_exists=false" >> $GITHUB_OUTPUT
+            echo "| @skillsmith/cli | $VERSION | - | 📦 Publish |" >> $GITHUB_STEP_SUMMARY
+            ANY_TO_PUBLISH=true
+          fi
+
+          # Check @smith-horn-group/enterprise (GitHub Packages - can't check without auth)
+          VERSION=$(jq -r .version packages/enterprise/package.json)
+          echo "enterprise_exists=false" >> $GITHUB_OUTPUT
+          echo "| @smith-horn-group/enterprise | $VERSION | (GitHub Pkgs) | 📦 Check at publish |" >> $GITHUB_STEP_SUMMARY
+          ANY_TO_PUBLISH=true
+
+          echo "any_to_publish=$ANY_TO_PUBLISH" >> $GITHUB_OUTPUT
+
+      - name: Validate .npmignore files exist
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Package Configuration Check" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | .npmignore | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|------------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          MISSING=0
+          for pkg in packages/*/; do
+            PKG_NAME=$(basename "$pkg")
+            if [ ! -f "${pkg}.npmignore" ]; then
+              echo "::warning file=${pkg}package.json::Missing .npmignore file in $PKG_NAME - test files may be included in package"
+              echo "| $PKG_NAME | Missing | ⚠️ Warning |" >> $GITHUB_STEP_SUMMARY
+              MISSING=1
+            else
+              echo "| $PKG_NAME | Present | ✅ |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+          if [ $MISSING -eq 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✅ All packages have .npmignore files" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Validate package scopes for GitHub Packages
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Scope Validation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+
+          for pkg in packages/*/package.json; do
+            PKG_NAME=$(jq -r '.name' "$pkg")
+            REGISTRY=$(jq -r '.publishConfig.registry // empty' "$pkg")
+
+            if [[ "$REGISTRY" == *"npm.pkg.github.com"* ]]; then
+              SCOPE=$(echo "$PKG_NAME" | cut -d'/' -f1 | tr -d '@' | tr '[:upper:]' '[:lower:]')
+              if [[ "$SCOPE" != "$OWNER" ]]; then
+                echo "::error file=$pkg::Package scope '@$SCOPE' doesn't match org '$OWNER'"
+                exit 1
+              fi
+              echo "✅ $PKG_NAME scope matches org" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
   # Build Docker image once, use for all jobs (matches ci.yml pattern)
   docker-build:
+    needs: pre-publish-check
     name: Build Docker Image
     runs-on: ubuntu-latest
     timeout-minutes: 10
