@@ -1,16 +1,36 @@
 /**
  * SMI-600: Codebase Analysis Types
  * SMI-1189: Extracted from CodebaseAnalyzer.ts
+ * SMI-1303: Extended with multi-language support
  *
- * Type definitions for codebase analysis functionality.
+ * Type definitions for multi-language codebase analysis.
  *
  * @see ADR-010: Codebase Analysis Scope
+ * @see docs/architecture/multi-language-analysis.md
+ * @module analysis/types
  */
 
 /**
- * Supported file extensions for analysis
+ * Supported languages for multi-language analysis
+ */
+export type SupportedLanguage = 'typescript' | 'javascript' | 'python' | 'go' | 'rust' | 'java'
+
+/**
+ * Supported file extensions for analysis (legacy, for backwards compatibility)
  */
 export const SUPPORTED_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
+
+/**
+ * Multi-language file extensions mapping
+ */
+export const LANGUAGE_EXTENSIONS: Record<SupportedLanguage, string[]> = {
+  typescript: ['.ts', '.tsx', '.mts', '.cts'],
+  javascript: ['.js', '.jsx', '.mjs', '.cjs'],
+  python: ['.py', '.pyi', '.pyw'],
+  go: ['.go'],
+  rust: ['.rs'],
+  java: ['.java'],
+}
 
 /**
  * Default directories to exclude from analysis
@@ -23,13 +43,35 @@ export const DEFAULT_EXCLUDE_DIRS = [
   'coverage',
   '.next',
   '.nuxt',
+  '__pycache__',
+  '.pytest_cache',
+  'target',
+  'vendor',
+  'venv',
+  '.venv',
+  'env',
 ]
+
+/**
+ * Export kind enumeration (extended for multi-language)
+ */
+export type ExportKind =
+  | 'function'
+  | 'class'
+  | 'variable'
+  | 'type'
+  | 'interface'
+  | 'enum'
+  | 'struct' // Go, Rust
+  | 'trait' // Rust
+  | 'module' // Python, Rust
+  | 'unknown'
 
 /**
  * Import information extracted from source files
  */
 export interface ImportInfo {
-  /** Module specifier (e.g., 'react', './utils') */
+  /** Module specifier (e.g., 'react', './utils', 'os') */
   module: string
   /** Named imports (e.g., ['useState', 'useEffect']) */
   namedImports: string[]
@@ -41,6 +83,10 @@ export interface ImportInfo {
   isTypeOnly: boolean
   /** Source file where import was found */
   sourceFile: string
+  /** Source language */
+  language?: SupportedLanguage
+  /** Line number */
+  line?: number
 }
 
 /**
@@ -49,12 +95,18 @@ export interface ImportInfo {
 export interface ExportInfo {
   /** Exported name */
   name: string
-  /** Kind of export (function, class, variable, type, interface) */
-  kind: 'function' | 'class' | 'variable' | 'type' | 'interface' | 'enum' | 'unknown'
+  /** Kind of export (function, class, variable, type, interface, etc.) */
+  kind: ExportKind
   /** Whether this is a default export */
   isDefault: boolean
   /** Source file where export was found */
   sourceFile: string
+  /** Source language */
+  language?: SupportedLanguage
+  /** Visibility (for Go, Rust, Java) */
+  visibility?: 'public' | 'private' | 'protected' | 'internal'
+  /** Line number */
+  line?: number
 }
 
 /**
@@ -73,6 +125,14 @@ export interface FunctionInfo {
   sourceFile: string
   /** Line number */
   line: number
+  /** Source language */
+  language?: SupportedLanguage
+  /** Method receiver (Go) */
+  receiver?: string
+  /** Decorators (Python, Java) */
+  decorators?: string[]
+  /** Attributes (Rust) */
+  attributes?: string[]
 }
 
 /**
@@ -113,7 +173,7 @@ export interface CodebaseContext {
   functions: FunctionInfo[]
   /** Detected frameworks */
   frameworks: FrameworkInfo[]
-  /** Dependencies from package.json */
+  /** Dependencies from all package managers */
   dependencies: DependencyInfo[]
   /** File statistics */
   stats: {
@@ -121,6 +181,8 @@ export interface CodebaseContext {
     totalFiles: number
     /** Files by extension */
     filesByExtension: Record<string, number>
+    /** Files by language (optional for backward compatibility) */
+    filesByLanguage?: Record<SupportedLanguage, number>
     /** Total lines of code (approximate) */
     totalLines: number
   }
@@ -130,6 +192,10 @@ export interface CodebaseContext {
     durationMs: number
     /** Analyzer version */
     version: string
+    /** Languages detected (optional for backward compatibility) */
+    languages?: SupportedLanguage[]
+    /** Cache hit rate (0-1, optional for backward compatibility) */
+    cacheHitRate?: number
   }
 }
 
@@ -152,4 +218,30 @@ export interface ParseResult {
   imports: ImportInfo[]
   exports: ExportInfo[]
   functions: FunctionInfo[]
+}
+
+/**
+ * Framework detection rule
+ */
+export interface FrameworkRule {
+  /** Framework name */
+  name: string
+  /** Dependency indicators (package names) */
+  depIndicators: string[]
+  /** Import indicators (module specifiers) */
+  importIndicators: string[]
+}
+
+/**
+ * Cache statistics
+ */
+export interface CacheStats {
+  /** Current size in bytes */
+  size: number
+  /** Number of entries */
+  entries: number
+  /** Maximum size in bytes */
+  maxSize: number
+  /** Cache hit rate (0-1) */
+  hitRate: number
 }

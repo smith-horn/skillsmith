@@ -1,6 +1,8 @@
 # @skillsmith/core
 
-Core library for Skillsmith - provides database operations, search services, caching, security, and analytics for Claude Code skill discovery.
+Core library for Skillsmith - provides database operations, search services, caching, security, analytics, and **multi-language codebase analysis** for Claude Code skill discovery.
+
+**v2.0.0** introduces multi-language support for analyzing TypeScript, JavaScript, Python, Go, Rust, and Java codebases.
 
 ## Installation
 
@@ -226,6 +228,178 @@ class MyService {
 }
 ```
 
+### Multi-Language Codebase Analysis (v2.0.0)
+
+Analyze codebases in TypeScript, JavaScript, Python, Go, Rust, and Java.
+
+```typescript
+import { CodebaseAnalyzer } from '@skillsmith/core'
+
+const analyzer = new CodebaseAnalyzer()
+const context = await analyzer.analyze('/path/to/project')
+
+// Languages detected
+console.log(context.metadata.languages)
+// ['typescript', 'python', 'go']
+
+// Files by language
+console.log(context.stats.filesByLanguage)
+// { typescript: 45, python: 23, go: 12 }
+
+// Detected frameworks across all languages
+console.log(context.frameworks)
+// [{ name: 'React', confidence: 0.95 }, { name: 'Django', confidence: 0.9 }]
+
+analyzer.dispose()
+```
+
+#### Language Router
+
+Route files to appropriate language adapters:
+
+```typescript
+import {
+  LanguageRouter,
+  TypeScriptAdapter,
+  PythonAdapter,
+  GoAdapter,
+  RustAdapter,
+  JavaAdapter,
+} from '@skillsmith/core'
+
+const router = new LanguageRouter()
+router.registerAdapter(new TypeScriptAdapter())
+router.registerAdapter(new PythonAdapter())
+router.registerAdapter(new GoAdapter())
+router.registerAdapter(new RustAdapter())
+router.registerAdapter(new JavaAdapter())
+
+// Check if file is supported
+router.canHandle('main.py') // true
+router.getLanguage('main.go') // 'go'
+
+// Parse a file
+const result = router.parseFile(content, 'main.py')
+console.log(result.imports, result.exports, result.functions)
+
+router.dispose()
+```
+
+#### Parse Caching
+
+Cache parse results for improved performance:
+
+```typescript
+import { ParseCache } from '@skillsmith/core'
+
+const cache = new ParseCache({ maxMemoryMB: 100 })
+
+// Check cache before parsing
+const cached = cache.get('src/main.ts', content)
+if (cached) {
+  return cached
+}
+
+// Parse and cache
+const result = adapter.parseFile(content, 'src/main.ts')
+cache.set('src/main.ts', content, result)
+
+// View cache statistics
+console.log(cache.getStats())
+// { size: 1048576, entries: 50, maxSize: 104857600, hitRate: 0.85 }
+```
+
+#### Incremental Parsing
+
+Efficiently parse changes:
+
+```typescript
+import { IncrementalParser, TypeScriptAdapter } from '@skillsmith/core'
+
+const parser = new IncrementalParser({ maxTrees: 50 })
+const adapter = new TypeScriptAdapter()
+
+// First parse (full)
+const result1 = parser.parse('src/main.ts', content1, adapter)
+console.log(result1.wasIncremental) // false
+
+// Second parse with small change (incremental, <100ms)
+const result2 = parser.parse('src/main.ts', content2, adapter)
+console.log(result2.wasIncremental) // true
+
+parser.dispose()
+```
+
+#### Parallel Parsing
+
+Parse large codebases in parallel:
+
+```typescript
+import { ParserWorkerPool } from '@skillsmith/core'
+
+const pool = new ParserWorkerPool({ poolSize: 4 })
+
+const tasks = files.map(f => ({
+  filePath: f.path,
+  content: f.content,
+  language: 'typescript'
+}))
+
+const results = await pool.parseFiles(tasks)
+console.log(`Parsed ${results.length} files`)
+
+pool.dispose()
+```
+
+#### Dependency Parsers
+
+Parse language-specific dependency files:
+
+```typescript
+import {
+  parseGoMod,
+  parseCargoToml,
+  parsePomXml,
+  parseBuildGradle,
+} from '@skillsmith/core'
+
+// Go dependencies
+const goMod = parseGoMod(goModContent)
+console.log(goMod.module)  // "github.com/user/project"
+console.log(goMod.require) // [{ path: "...", version: "..." }]
+
+// Rust dependencies
+const cargo = parseCargoToml(cargoTomlContent)
+// [{ name: "serde", version: "1.0", isDev: false }]
+
+// Java Maven dependencies
+const maven = parsePomXml(pomXmlContent)
+// [{ name: "org.springframework:spring-core", version: "5.3.0", isDev: false }]
+
+// Java Gradle dependencies
+const gradle = parseBuildGradle(buildGradleContent)
+// [{ name: "org.springframework:spring-core", version: "5.3.0", isDev: false }]
+```
+
+#### Supported Languages & Frameworks
+
+| Language | Extensions | Frameworks Detected |
+|----------|------------|---------------------|
+| TypeScript/JS | `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs` | React, Vue, Angular, Next.js, Express, Nest.js, Jest, Vitest |
+| Python | `.py`, `.pyi`, `.pyw` | Django, FastAPI, Flask, pytest, pandas, numpy |
+| Go | `.go` | Gin, Echo, Fiber, GORM, Cobra, gRPC, testify |
+| Rust | `.rs` | Actix, Rocket, Axum, Tokio, Serde, Diesel, SQLx |
+| Java | `.java` | Spring Boot, Quarkus, Micronaut, JUnit, Hibernate, Lombok |
+
+#### Performance
+
+| Metric | Target |
+|--------|--------|
+| 10k file analysis | <5 seconds |
+| Incremental parse | <100ms |
+| Cache hit rate | >80% |
+| Memory efficiency | LRU eviction |
+
 ## Exports
 
 The package provides multiple entry points:
@@ -239,6 +413,35 @@ import { SkillsmithError, ValidationError } from '@skillsmith/core/errors'
 
 // Embeddings (lazy-loaded to avoid startup overhead)
 import { EmbeddingService } from '@skillsmith/core/embeddings'
+
+// Analysis module (v2.0.0)
+import {
+  CodebaseAnalyzer,
+  LanguageRouter,
+  ParseCache,
+  TreeCache,
+  IncrementalParser,
+  ParserWorkerPool,
+  MemoryMonitor,
+  // Adapters
+  TypeScriptAdapter,
+  PythonAdapter,
+  GoAdapter,
+  RustAdapter,
+  JavaAdapter,
+  // Dependency parsers
+  parseGoMod,
+  parseCargoToml,
+  parsePomXml,
+  parseBuildGradle,
+  // Types
+  type SupportedLanguage,
+  type ParseResult,
+  type ImportInfo,
+  type ExportInfo,
+  type FunctionInfo,
+  type CodebaseContext,
+} from '@skillsmith/core'
 ```
 
 ## Requirements
