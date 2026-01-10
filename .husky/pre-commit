@@ -12,6 +12,12 @@ echo ""
 echo "${BLUE}=== Pre-Commit Checks ===${NC}"
 echo ""
 
+# Phase 0: Clear TypeScript build cache (SMI-1348)
+# Prevents stale .tsbuildinfo from causing false positive type errors
+echo "${YELLOW}[0/2] Clearing TypeScript build cache...${NC}"
+npx tsc --build --clean > /dev/null 2>&1 || true
+echo "${GREEN}  ✓ Build cache cleared${NC}"
+
 # Phase 1: TypeScript Type Checking
 echo "${YELLOW}[1/2] Running TypeScript type check...${NC}"
 if npm run typecheck; then
