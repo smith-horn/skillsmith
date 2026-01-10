@@ -1,5 +1,69 @@
-# Run typecheck first (catches type errors before commit)
-npm run typecheck
+#!/bin/sh
+# SMI-1346: Enhanced pre-commit hook with early lint error detection
 
-# Then run lint-staged for formatting/linting
-npx lint-staged
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo ""
+echo "${BLUE}=== Pre-Commit Checks ===${NC}"
+echo ""
+
+# Phase 1: TypeScript Type Checking
+echo "${YELLOW}[1/2] Running TypeScript type check...${NC}"
+if npm run typecheck; then
+    echo "${GREEN}  ✓ TypeScript check passed${NC}"
+else
+    echo ""
+    echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo "${RED}  ✗ TypeScript Errors Found${NC}"
+    echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "  ${YELLOW}How to fix:${NC}"
+    echo "    1. Review the errors above"
+    echo "    2. Fix type errors in the listed files"
+    echo "    3. Run 'npm run typecheck' to verify fixes"
+    echo ""
+    echo "  ${YELLOW}Emergency bypass:${NC} git commit --no-verify"
+    echo ""
+    exit 1
+fi
+
+# Phase 2: Lint and Format (staged files only)
+echo "${YELLOW}[2/2] Running lint and format on staged files...${NC}"
+if npx lint-staged; then
+    echo "${GREEN}  ✓ Lint and format passed${NC}"
+else
+    echo ""
+    echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo "${RED}  ✗ Lint Errors Found${NC}"
+    echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "  ${YELLOW}Common issues and fixes:${NC}"
+    echo ""
+    echo "  ${BLUE}Unused imports:${NC}"
+    echo "    - Remove: import { UnusedType } from './module'"
+    echo "    - Or prefix with underscore: import { _UnusedType } from './module'"
+    echo ""
+    echo "  ${BLUE}Unused variables:${NC}"
+    echo "    - Remove the variable declaration"
+    echo "    - Or prefix with underscore: const _unused = value"
+    echo ""
+    echo "  ${BLUE}Unnecessary escapes in regex:${NC}"
+    echo "    - Remove backslash: /\\)/ → /\\)/ (if needed) or /\)/ → /)/"
+    echo ""
+    echo "  ${YELLOW}Quick fix:${NC}"
+    echo "    npm run lint:fix    # Auto-fix what can be fixed"
+    echo "    npm run lint        # See remaining errors"
+    echo ""
+    echo "  ${YELLOW}Emergency bypass:${NC} git commit --no-verify"
+    echo ""
+    exit 1
+fi
+
+echo ""
+echo "${GREEN}=== All Pre-Commit Checks Passed ===${NC}"
+echo ""
