@@ -9,7 +9,7 @@ This document describes how to configure npm publishing for Skillsmith packages.
 | `@skillsmith/core` | npmjs.org | Public | Apache-2.0 |
 | `@skillsmith/mcp-server` | npmjs.org | Public | Apache-2.0 |
 | `@skillsmith/cli` | npmjs.org | Public | Apache-2.0 |
-| `@skillsmith/enterprise` | npm.pkg.github.com | Restricted | Proprietary |
+| `@smith-horn-group/enterprise` | npm.pkg.github.com | Restricted | Proprietary |
 
 ## Prerequisites
 
@@ -38,7 +38,7 @@ Go to: Repository → Settings → Secrets and variables → Actions → New rep
 
 ### 4. GitHub Packages (for Enterprise)
 
-The `@skillsmith/enterprise` package is published to GitHub Packages:
+The `@smith-horn-group/enterprise` package is published to GitHub Packages:
 
 - Registry: `https://npm.pkg.github.com`
 - Authentication: Uses `GITHUB_TOKEN` (automatic in Actions)
@@ -83,7 +83,7 @@ npm publish -w @skillsmith/mcp-server --access public
 npm publish -w @skillsmith/cli --access public
 
 # For enterprise (requires GitHub Packages auth)
-npm publish -w @skillsmith/enterprise
+npm publish -w @smith-horn-group/enterprise
 ```
 
 ## Version Management
@@ -97,7 +97,7 @@ Before publishing a new version:
 npm version patch -w @skillsmith/core
 npm version patch -w @skillsmith/mcp-server
 npm version patch -w @skillsmith/cli
-npm version patch -w @skillsmith/enterprise
+npm version patch -w @smith-horn-group/enterprise
 ```
 
 ### Version Synchronization

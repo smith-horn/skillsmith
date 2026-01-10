@@ -3,7 +3,7 @@
 **Version**: 1.0.0
 **Status**: Specification Draft
 **Estimated Implementation**: 10 weeks (40+ hours)
-**Package Name**: `@skillsmith/enterprise`
+**Package Name**: `@smith-horn-group/enterprise`
 
 ---
 
@@ -122,7 +122,7 @@ packages/enterprise/
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                        @skillsmith/enterprise                     │
+│                     @smith-horn-group/enterprise                   │
 ├──────────────────────────────────────────────────────────────────┤
 │  License  │   SSO    │   Audit   │   RBAC   │  Private Registry  │
 └─────┬─────┴────┬─────┴─────┬─────┴────┬─────┴─────────┬──────────┘
@@ -146,7 +146,7 @@ packages/enterprise/
 
 ```json
 {
-  "name": "@skillsmith/enterprise",
+  "name": "@smith-horn-group/enterprise",
   "version": "0.1.0",
   "dependencies": {
     "@skillsmith/core": "workspace:*",
