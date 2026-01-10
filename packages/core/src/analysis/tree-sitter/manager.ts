@@ -83,9 +83,23 @@ export class TreeSitterManager {
   private initialized = false
   private initPromise: Promise<void> | null = null
   private ParserClass: (new () => TreeSitterParser) | null = null
+  // SMI-1333: Track access order for proper LRU eviction
+  private accessOrder: SupportedLanguage[] = []
 
   constructor(options: TreeSitterManagerOptions = {}) {
     this.maxParsers = options.maxParsers ?? 6
+  }
+
+  /**
+   * SMI-1333: Update access order for LRU tracking
+   * Moves the accessed language to the end (most recently used)
+   */
+  private updateAccessOrder(language: SupportedLanguage): void {
+    const index = this.accessOrder.indexOf(language)
+    if (index > -1) {
+      this.accessOrder.splice(index, 1)
+    }
+    this.accessOrder.push(language)
   }
 
   /**
@@ -151,6 +165,8 @@ export class TreeSitterManager {
     // Return cached parser
     const cached = this.parsers.get(language)
     if (cached) {
+      // SMI-1333: Update access order on cache hit
+      this.updateAccessOrder(language)
       return cached
     }
 
@@ -167,17 +183,19 @@ export class TreeSitterManager {
     try {
       const parser = await loadPromise
 
-      // Evict oldest if at capacity
+      // SMI-1333: Evict LRU (first in accessOrder) if at capacity
       if (this.parsers.size >= this.maxParsers) {
-        const oldest = this.parsers.keys().next().value
-        if (oldest) {
-          const oldParser = this.parsers.get(oldest)
+        const lru = this.accessOrder.shift()
+        if (lru) {
+          const oldParser = this.parsers.get(lru)
           oldParser?.delete()
-          this.parsers.delete(oldest)
+          this.parsers.delete(lru)
         }
       }
 
       this.parsers.set(language, parser)
+      // SMI-1333: Track new parser in access order
+      this.updateAccessOrder(language)
       return parser
     } finally {
       this.loading.delete(language)
@@ -282,6 +300,8 @@ export class TreeSitterManager {
     }
     this.parsers.clear()
     this.loading.clear()
+    // SMI-1333: Clear access order
+    this.accessOrder = []
     this.initialized = false
     this.initPromise = null
     this.ParserClass = null

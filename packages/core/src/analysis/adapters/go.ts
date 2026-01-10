@@ -355,7 +355,8 @@ export class GoAdapter extends LanguageAdapter {
       // Captures: [1] receiver, [2] name, [3] params
       const match = line.match(/^func\s+(?:\(([^)]+)\)\s+)?(\w+)\s*\(([^)]*)\)/)
       if (match) {
-        const _receiver = match[1]?.trim() || undefined
+        // SMI-1334: Capture receiver for method output
+        const receiver = match[1]?.trim() || undefined
         const name = match[2]
         const paramsStr = match[3]
 
@@ -374,6 +375,8 @@ export class GoAdapter extends LanguageAdapter {
           isExported: this.isExported(name),
           sourceFile: filePath,
           line: lineNum,
+          // SMI-1334: Include receiver in function output
+          receiver,
         })
       }
     }

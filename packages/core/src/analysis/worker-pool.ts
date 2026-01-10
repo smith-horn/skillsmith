@@ -74,6 +74,9 @@ export interface WorkerPoolOptions {
  * pool.dispose()
  * ```
  */
+// SMI-1330/1331: Import types for cached router
+type LanguageRouterType = InstanceType<(typeof import('./router.js'))['LanguageRouter']>
+
 export class ParserWorkerPool extends EventEmitter {
   private workers: Worker[] = []
   private taskQueue: Array<{
@@ -85,11 +88,48 @@ export class ParserWorkerPool extends EventEmitter {
   private readonly poolSize: number
   private readonly minBatchForWorkers: number
   private disposed = false
+  // SMI-1330/1331: Cache router to avoid recreation on each parseInline call
+  private router: LanguageRouterType | null = null
+  private routerPromise: Promise<LanguageRouterType> | null = null
 
   constructor(options: WorkerPoolOptions = {}) {
     super()
     this.poolSize = options.poolSize ?? Math.max(1, os.cpus().length - 1)
     this.minBatchForWorkers = options.minBatchForWorkers ?? 10
+  }
+
+  /**
+   * SMI-1330/1331: Get or create shared router instance
+   * Lazily initializes the router on first use and caches it
+   */
+  private async getRouter(): Promise<LanguageRouterType> {
+    if (this.router) return this.router
+    if (this.routerPromise) return this.routerPromise
+
+    this.routerPromise = this.initializeRouter()
+    this.router = await this.routerPromise
+    return this.router
+  }
+
+  /**
+   * SMI-1330/1331: Initialize router with all adapters
+   */
+  private async initializeRouter(): Promise<LanguageRouterType> {
+    const { LanguageRouter } = await import('./router.js')
+    const { TypeScriptAdapter } = await import('./adapters/typescript.js')
+    const { PythonAdapter } = await import('./adapters/python.js')
+    const { GoAdapter } = await import('./adapters/go.js')
+    const { RustAdapter } = await import('./adapters/rust.js')
+    const { JavaAdapter } = await import('./adapters/java.js')
+
+    const router = new LanguageRouter()
+    router.registerAdapter(new TypeScriptAdapter())
+    router.registerAdapter(new PythonAdapter())
+    router.registerAdapter(new GoAdapter())
+    router.registerAdapter(new RustAdapter())
+    router.registerAdapter(new JavaAdapter())
+
+    return router
   }
 
   /**
@@ -128,24 +168,16 @@ export class ParserWorkerPool extends EventEmitter {
    * Parse files inline (no workers)
    *
    * Used for small batches where worker overhead exceeds benefit.
+   * SMI-1330/1331: Uses cached router to avoid recreation overhead
    */
   private async parseInline(tasks: ParseTask[]): Promise<WorkerResult[]> {
     const results: WorkerResult[] = []
+    // SMI-1330/1331: Get shared router instance
+    const router = await this.getRouter()
 
     for (const task of tasks) {
       const start = performance.now()
       try {
-        // Dynamic import to avoid circular dependency
-        const { LanguageRouter } = await import('./router.js')
-        const { TypeScriptAdapter } = await import('./adapters/typescript.js')
-        const { PythonAdapter } = await import('./adapters/python.js')
-        const { GoAdapter } = await import('./adapters/go.js')
-
-        const router = new LanguageRouter()
-        router.registerAdapter(new TypeScriptAdapter())
-        router.registerAdapter(new PythonAdapter())
-        router.registerAdapter(new GoAdapter())
-
         const adapter = router.tryGetAdapter(task.filePath)
         if (adapter) {
           const result = adapter.parseFile(task.content, task.filePath)
@@ -163,8 +195,6 @@ export class ParserWorkerPool extends EventEmitter {
             error: `Unsupported file type: ${task.filePath}`,
           })
         }
-
-        router.dispose()
       } catch (error) {
         results.push({
           filePath: task.filePath,
@@ -393,6 +423,7 @@ export class ParserWorkerPool extends EventEmitter {
    * Dispose of worker pool
    *
    * Terminates all workers and clears the task queue.
+   * SMI-1330/1331: Also disposes cached router
    */
   dispose(): void {
     this.disposed = true
@@ -401,6 +432,12 @@ export class ParserWorkerPool extends EventEmitter {
     }
     this.workers = []
     this.taskQueue = []
+    // SMI-1330/1331: Clean up cached router
+    if (this.router) {
+      this.router.dispose()
+      this.router = null
+      this.routerPromise = null
+    }
   }
 }
 

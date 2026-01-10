@@ -1,11 +1,13 @@
 /**
  * SMI-600: Codebase Analysis Module
  * SMI-1189: Updated to export from split modules
+ * SMI-1303: Extended with multi-language support
  *
- * Provides tools for analyzing TypeScript/JavaScript codebases
+ * Provides tools for analyzing multi-language codebases
  * to extract context for skill recommendations.
  *
  * @see ADR-010: Codebase Analysis Scope
+ * @see docs/architecture/multi-language-analysis.md
  */
 
 // Main analyzer class

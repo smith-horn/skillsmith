@@ -256,17 +256,20 @@ export class ParseCache {
    * Estimate memory size of a parse result
    *
    * Rough estimate based on array sizes and average item sizes.
+   * SMI-1335: Named constants for magic numbers
    */
   private estimateSize(result: ParseResult): number {
-    // Rough estimate: 100 bytes per import/export/function
-    const itemSize = 100
-    const baseOverhead = 1000
+    // SMI-1335: Named constants for clarity and maintainability
+    /** Average bytes per import/export/function entry (strings + object overhead) */
+    const BYTES_PER_ITEM = 100
+    /** Fixed overhead for result object structure and metadata */
+    const BASE_OVERHEAD_BYTES = 1000
 
     return (
-      result.imports.length * itemSize +
-      result.exports.length * itemSize +
-      result.functions.length * itemSize +
-      baseOverhead
+      result.imports.length * BYTES_PER_ITEM +
+      result.exports.length * BYTES_PER_ITEM +
+      result.functions.length * BYTES_PER_ITEM +
+      BASE_OVERHEAD_BYTES
     )
   }
 
