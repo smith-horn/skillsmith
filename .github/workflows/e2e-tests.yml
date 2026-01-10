@@ -131,19 +131,12 @@ jobs:
             skillsmith-e2e:${{ github.sha }} \
             npm run build
 
-      - name: Clone test repository
-        run: |
-          git clone https://github.com/wrsmith108/021-school-platform.git /tmp/test-repo
-        continue-on-error: true
-
       - name: Run CLI E2E tests in Docker
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
-            -v /tmp/test-repo:/tmp/test-repo \
             -w /app \
             -e SKILLSMITH_E2E=true \
-            -e SKILLSMITH_TEST_REPO=/tmp/test-repo \
             skillsmith-e2e:${{ github.sha }} \
             npm run test:e2e:cli
 
@@ -197,19 +190,12 @@ jobs:
             skillsmith-e2e:${{ github.sha }} \
             npm run build
 
-      - name: Clone test repository
-        run: |
-          git clone https://github.com/wrsmith108/021-school-platform.git /tmp/test-repo
-        continue-on-error: true
-
       - name: Run MCP E2E tests in Docker
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
-            -v /tmp/test-repo:/tmp/test-repo \
             -w /app \
             -e SKILLSMITH_E2E=true \
-            -e SKILLSMITH_TEST_REPO=/tmp/test-repo \
             skillsmith-e2e:${{ github.sha }} \
             npm run test:e2e:mcp
 
@@ -373,7 +359,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: performance-baselines
-          path: test-results/baselines.json
+          path: test-results/combined-report.json
           retention-days: 365
 
       - name: Create Linear issue for baselines
