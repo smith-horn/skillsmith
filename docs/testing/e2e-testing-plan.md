@@ -1,8 +1,10 @@
 # Skillsmith E2E Testing Plan - Phase 4.5
 
 **Created**: 2026-01-01
-**Status**: Draft - Pending Approval
+**Status**: Implemented (with modifications)
 **Related Issues**: SMI-902, SMI-904 (hardcoded data patterns)
+
+> **Update (January 2026)**: The external test repository (`021-school-platform`) requirement has been removed. E2E tests now run against the Skillsmith codebase itself, eliminating external dependencies and CI annotation warnings.
 
 ## Executive Summary
 

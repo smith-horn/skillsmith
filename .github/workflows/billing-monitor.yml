@@ -1,0 +1,279 @@
+# SMI-1302: GitHub Billing Usage Monitor
+# Tracks Actions minutes and Packages storage to prevent surprise billing limits
+# Created: January 10, 2026
+name: Billing Monitor
+
+on:
+  schedule:
+    # Every Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      create_issue:
+        description: 'Create issue even if usage is normal'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+env:
+  # SMI-1318: Configurable thresholds for billing alerts
+  # Configured billing limits (from org settings)
+  # Free tier: 2000 minutes/month, 500MB packages
+  # Current org settings: $20 each for Actions and Packages
+  FAILURE_RATE_THRESHOLD: 20 # Percent - trigger warning if failure rate exceeds
+  ARTIFACT_COUNT_THRESHOLD: 50 # Count - trigger warning if artifact count exceeds
+  CACHE_SIZE_MB_THRESHOLD: 5000 # MB - trigger warning if cache size exceeds
+
+jobs:
+  billing-report:
+    name: Generate Billing Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get Actions cache usage
+        id: actions-billing
+        run: |
+          echo "## GitHub Actions Usage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Get cache usage for this repo
+          RESPONSE=$(gh api /repos/${{ github.repository }}/actions/cache/usage 2>/dev/null || echo '{"total_active_caches_size_in_bytes":0,"active_caches_count":0}')
+          CACHE_SIZE=$(echo "$RESPONSE" | jq -r '.total_active_caches_size_in_bytes // 0')
+          CACHE_COUNT=$(echo "$RESPONSE" | jq -r '.active_caches_count // 0')
+          CACHE_SIZE_MB=$((CACHE_SIZE / 1024 / 1024))
+
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Active Caches | $CACHE_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cache Storage | ${CACHE_SIZE_MB} MB |" >> $GITHUB_STEP_SUMMARY
+
+          echo "cache_size_mb=$CACHE_SIZE_MB" >> $GITHUB_OUTPUT
+          echo "cache_count=$CACHE_COUNT" >> $GITHUB_OUTPUT
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📊 *Full billing details: [Organization Billing](https://github.com/organizations/${{ github.repository_owner }}/settings/billing/summary)*" >> $GITHUB_STEP_SUMMARY
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get Packages info
+        id: packages-billing
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## GitHub Packages" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # List packages in org (requires packages:read which GITHUB_TOKEN has)
+          PACKAGES=$(gh api /orgs/${{ github.repository_owner }}/packages?package_type=npm 2>/dev/null || echo '[]')
+          PKG_COUNT=$(echo "$PACKAGES" | jq 'length')
+
+          echo "| Package | Visibility |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|------------|" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$PKG_COUNT" -gt 0 ]; then
+            echo "$PACKAGES" | jq -r '.[] | "| \(.name) | \(.visibility) |"' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| (no packages found) | - |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "package_count=$PKG_COUNT" >> $GITHUB_OUTPUT
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📊 *Storage details: [Packages Billing](https://github.com/organizations/${{ github.repository_owner }}/settings/billing/packages)*" >> $GITHUB_STEP_SUMMARY
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check recent workflow runs
+        id: workflow-check
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Workflow Activity (Last 7 Days)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # SMI-1320: Get workflow runs from past week
+          # GNU date uses -d, BSD/macOS date uses -v; try both for cross-platform support
+          SINCE=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-7d +%Y-%m-%dT%H:%M:%SZ)
+          RUNS=$(gh api "/repos/${{ github.repository }}/actions/runs?created=>$SINCE&per_page=100" 2>/dev/null || echo '{"workflow_runs":[],"total_count":0}')
+
+          TOTAL=$(echo "$RUNS" | jq '.total_count')
+          SUCCESS=$(echo "$RUNS" | jq '[.workflow_runs[] | select(.conclusion == "success")] | length')
+          FAILURE=$(echo "$RUNS" | jq '[.workflow_runs[] | select(.conclusion == "failure")] | length')
+          CANCELLED=$(echo "$RUNS" | jq '[.workflow_runs[] | select(.conclusion == "cancelled")] | length')
+
+          echo "| Status | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| ✅ Success | $SUCCESS |" >> $GITHUB_STEP_SUMMARY
+          echo "| ❌ Failed | $FAILURE |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⏹️ Cancelled | $CANCELLED |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total** | **$TOTAL** |" >> $GITHUB_STEP_SUMMARY
+
+          echo "total_runs=$TOTAL" >> $GITHUB_OUTPUT
+          echo "failed_runs=$FAILURE" >> $GITHUB_OUTPUT
+
+          # Flag if failure rate is high (SMI-1315: use env var threshold)
+          if [ "$TOTAL" -gt 0 ]; then
+            FAIL_RATE=$((FAILURE * 100 / TOTAL))
+            echo "failure_rate=$FAIL_RATE" >> $GITHUB_OUTPUT
+            if [ "${FAIL_RATE:-0}" -gt ${{ env.FAILURE_RATE_THRESHOLD }} ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "⚠️ **Warning**: High failure rate ($FAIL_RATE%) - review failing workflows" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "failure_rate=0" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check artifact storage
+        id: artifact-check
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Artifact Storage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Get artifact usage
+          ARTIFACTS=$(gh api /repos/${{ github.repository }}/actions/artifacts?per_page=20 2>/dev/null || echo '{"artifacts":[],"total_count":0}')
+          ARTIFACT_COUNT=$(echo "$ARTIFACTS" | jq '.total_count')
+          TOTAL_SIZE=$(echo "$ARTIFACTS" | jq '[.artifacts[].size_in_bytes] | add // 0')
+          TOTAL_SIZE_MB=$((TOTAL_SIZE / 1024 / 1024))
+
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Artifacts | $ARTIFACT_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Storage Used | ${TOTAL_SIZE_MB} MB |" >> $GITHUB_STEP_SUMMARY
+
+          echo "artifact_count=$ARTIFACT_COUNT" >> $GITHUB_OUTPUT
+          echo "artifact_size_mb=$TOTAL_SIZE_MB" >> $GITHUB_OUTPUT
+
+          # Warn if artifacts are accumulating (SMI-1315/SMI-1318: use env var threshold)
+          if [ "${ARTIFACT_COUNT:-0}" -gt ${{ env.ARTIFACT_COUNT_THRESHOLD }} ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **Warning**: Many artifacts stored - consider reducing retention days" >> $GITHUB_STEP_SUMMARY
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate summary
+        id: summary
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "## Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          ISSUES=0
+
+          # SMI-1315/SMI-1318: Check for issues using env var thresholds with safe defaults
+          FAIL_RATE="${{ steps.workflow-check.outputs.failure_rate }}"
+          FAIL_RATE="${FAIL_RATE:-0}"
+          if [ "$FAIL_RATE" -gt ${{ env.FAILURE_RATE_THRESHOLD }} ]; then
+            echo "- ⚠️ High workflow failure rate (${FAIL_RATE}%)" >> $GITHUB_STEP_SUMMARY
+            ISSUES=$((ISSUES + 1))
+          fi
+
+          ARTIFACT_CT="${{ steps.artifact-check.outputs.artifact_count }}"
+          ARTIFACT_CT="${ARTIFACT_CT:-0}"
+          if [ "$ARTIFACT_CT" -gt ${{ env.ARTIFACT_COUNT_THRESHOLD }} ]; then
+            echo "- ⚠️ Many artifacts stored (${ARTIFACT_CT})" >> $GITHUB_STEP_SUMMARY
+            ISSUES=$((ISSUES + 1))
+          fi
+
+          CACHE_MB="${{ steps.actions-billing.outputs.cache_size_mb }}"
+          CACHE_MB="${CACHE_MB:-0}"
+          if [ "$CACHE_MB" -gt ${{ env.CACHE_SIZE_MB_THRESHOLD }} ]; then
+            echo "- ⚠️ Large cache usage (${CACHE_MB} MB)" >> $GITHUB_STEP_SUMMARY
+            ISSUES=$((ISSUES + 1))
+          fi
+
+          if [ "$ISSUES" -eq 0 ]; then
+            echo "✅ No billing concerns detected" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "issue_count=$ISSUES" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Report generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)*" >> $GITHUB_STEP_SUMMARY
+
+      - name: Create issue if needed
+        # SMI-1315: Use fromJSON for safe numeric comparison
+        if: fromJSON(steps.summary.outputs.issue_count || '0') > 0 || github.event.inputs.create_issue == 'true'
+        run: |
+          TITLE="📊 Weekly Billing Report - $(date +%Y-%m-%d)"
+
+          # Check if issue already exists this week
+          EXISTING=$(gh issue list --search "Weekly Billing Report in:title" --state open --limit 1 --json number | jq '.[0].number // 0')
+
+          if [ "$EXISTING" -gt 0 ]; then
+            echo "Issue #$EXISTING already exists for this week, adding comment"
+            gh issue comment "$EXISTING" --body "## Updated Report - $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          ### Metrics
+          - Cache Storage: ${{ steps.actions-billing.outputs.cache_size_mb }} MB
+          - Active Caches: ${{ steps.actions-billing.outputs.cache_count }}
+          - Published Packages: ${{ steps.packages-billing.outputs.package_count }}
+          - Workflow Runs (7d): ${{ steps.workflow-check.outputs.total_runs }}
+          - Failed Runs: ${{ steps.workflow-check.outputs.failed_runs }}
+          - Artifacts: ${{ steps.artifact-check.outputs.artifact_count }} (${{ steps.artifact-check.outputs.artifact_size_mb }} MB)
+
+          Issues Found: ${{ steps.summary.outputs.issue_count }}"
+          else
+            gh issue create \
+              --title "$TITLE" \
+              --body "## Billing Usage Report
+
+          Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          ### GitHub Actions
+          | Metric | Value |
+          |--------|-------|
+          | Cache Storage | ${{ steps.actions-billing.outputs.cache_size_mb }} MB |
+          | Active Caches | ${{ steps.actions-billing.outputs.cache_count }} |
+
+          ### GitHub Packages
+          | Metric | Value |
+          |--------|-------|
+          | Published Packages | ${{ steps.packages-billing.outputs.package_count }} |
+
+          ### Workflow Activity (Last 7 Days)
+          | Metric | Value |
+          |--------|-------|
+          | Total Runs | ${{ steps.workflow-check.outputs.total_runs }} |
+          | Failed Runs | ${{ steps.workflow-check.outputs.failed_runs }} |
+          | Failure Rate | ${{ steps.workflow-check.outputs.failure_rate }}% |
+
+          ### Artifact Storage
+          | Metric | Value |
+          |--------|-------|
+          | Total Artifacts | ${{ steps.artifact-check.outputs.artifact_count }} |
+          | Storage Used | ${{ steps.artifact-check.outputs.artifact_size_mb }} MB |
+
+          ### Issues Found: ${{ steps.summary.outputs.issue_count }}
+
+          ### Quick Links
+          - [Actions Billing](https://github.com/organizations/${{ github.repository_owner }}/settings/billing/actions)
+          - [Packages Billing](https://github.com/organizations/${{ github.repository_owner }}/settings/billing/packages)
+          - [Storage Settings](https://github.com/organizations/${{ github.repository_owner }}/settings/billing/storage)
+
+          ---
+          *Auto-generated by billing-monitor workflow*" \
+              --label "billing"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Report completion
+        run: |
+          echo ""
+          echo "✅ Billing report completed"
+          echo "- Cache: ${{ steps.actions-billing.outputs.cache_size_mb }} MB"
+          echo "- Packages: ${{ steps.packages-billing.outputs.package_count }}"
+          echo "- Workflow runs (7d): ${{ steps.workflow-check.outputs.total_runs }}"
+          echo "- Issues found: ${{ steps.summary.outputs.issue_count }}"

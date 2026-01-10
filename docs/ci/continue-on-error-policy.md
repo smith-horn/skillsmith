@@ -64,14 +64,16 @@ When coverage is for visibility but thresholds are validated elsewhere:
 When cloning optional repositories or fetching external data:
 
 ```yaml
-# From skillsmith/.github/workflows/e2e-tests.yml
-- name: Clone test repository
+# Example pattern for optional external resources
+- name: Clone optional test fixtures
   run: |
-    git clone https://github.com/wrsmith108/021-school-platform.git /tmp/test-repo
+    git clone https://github.com/example/test-fixtures.git /tmp/fixtures
   continue-on-error: true
 ```
 
 **Why**: External repositories may be temporarily unavailable. Tests can still run with fallback data.
+
+> **Note**: As of January 2026, Skillsmith E2E tests no longer require external test repositories.
 
 ### 4. Artifact Downloads (May Not Exist)
 

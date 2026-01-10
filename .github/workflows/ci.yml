@@ -16,9 +16,88 @@ env:
   COMPOSE_DOCKER_CLI_BUILD: 1
 
 jobs:
+  # SMI-1300: Validate package configurations before expensive Docker build
+  # Catches scope mismatches for GitHub Packages early
+  # Only runs on upstream repo (Smith-Horn-Group) - skipped on forks
+  package-validation:
+    name: Package Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.repository_owner == 'Smith-Horn-Group'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # SMI-1317: Verify required dependencies are available
+      - name: Verify dependencies
+        run: |
+          if ! command -v jq &> /dev/null; then
+            echo "::error::jq is required but not installed"
+            exit 1
+          fi
+          echo "✓ jq is available"
+
+      # SMI-1321: Validate packages directory exists
+      - name: Validate packages directory
+        run: |
+          if [ ! -d packages ] || [ -z "$(ls -A packages 2>/dev/null)" ]; then
+            echo "::error::No packages found in packages/ directory"
+            exit 1
+          fi
+          PKG_COUNT=$(ls -d packages/*/package.json 2>/dev/null | wc -l)
+          echo "✓ Found $PKG_COUNT packages"
+
+      - name: Validate package configurations
+        run: |
+          echo "## Package Validation Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Registry | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          FAILED=0
+
+          # Get org name from repository (lowercase for comparison)
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "Repository owner: $OWNER"
+
+          for pkg in packages/*/package.json; do
+            PKG_NAME=$(jq -r '.name' "$pkg")
+            REGISTRY=$(jq -r '.publishConfig.registry // empty' "$pkg")
+
+            # Check if publishing to GitHub Packages
+            if [[ "$REGISTRY" == *"npm.pkg.github.com"* ]]; then
+              SCOPE=$(echo "$PKG_NAME" | cut -d'/' -f1 | tr -d '@' | tr '[:upper:]' '[:lower:]')
+
+              if [[ "$SCOPE" != "$OWNER" ]]; then
+                echo "::error file=$pkg::Package scope '@$SCOPE' doesn't match org '$OWNER' for GitHub Packages"
+                echo "| $PKG_NAME | GitHub Packages | ❌ Scope mismatch: @$SCOPE != @$OWNER |" >> $GITHUB_STEP_SUMMARY
+                FAILED=1
+              else
+                echo "✓ $pkg: scope @$SCOPE matches org"
+                echo "| $PKG_NAME | GitHub Packages | ✅ Valid |" >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              echo "✓ $pkg: using npmjs.org registry"
+              echo "| $PKG_NAME | npmjs.org | ✅ Valid |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+          if [ $FAILED -eq 1 ]; then
+            echo ""
+            echo "::error::Package scope validation failed. GitHub Packages requires scope to match org name."
+            echo "See: https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry"
+            exit 1
+          fi
+
+          echo ""
+          echo "All package configurations valid!"
+
   # Build Docker image once, extract dependencies, use for all jobs
   # SMI-708: Optimized to extract node_modules once instead of running npm ci per job
   docker-build:
+    needs: package-validation
+    # Run if package-validation succeeded OR was skipped (on forks)
+    if: ${{ !cancelled() && (needs.package-validation.result == 'success' || needs.package-validation.result == 'skipped') }}
     name: Build Docker Image
     runs-on: ubuntu-latest
     timeout-minutes: 10

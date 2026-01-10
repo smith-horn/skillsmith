@@ -64,8 +64,15 @@ docs/valuation/
 /output/
 test-results/
 
-# Ignore test databases in packages (generated during tests)
+# Ignore test databases and output in packages (generated during tests)
 packages/*/data/
+packages/*/output/
+
+# Generated technical data
+docs/technical/data/
+
+# E2E test config (optional, not needed for CI)
+vitest-e2e.config.ts
 
 # Phase 4 working documents (not finalized)
 docs/phase4/
