@@ -21,10 +21,13 @@ permissions:
   actions: read
 
 env:
+  # SMI-1318: Configurable thresholds for billing alerts
   # Configured billing limits (from org settings)
   # Free tier: 2000 minutes/month, 500MB packages
   # Current org settings: $20 each for Actions and Packages
-  WARNING_THRESHOLD: 80
+  FAILURE_RATE_THRESHOLD: 20 # Percent - trigger warning if failure rate exceeds
+  ARTIFACT_COUNT_THRESHOLD: 50 # Count - trigger warning if artifact count exceeds
+  CACHE_SIZE_MB_THRESHOLD: 5000 # MB - trigger warning if cache size exceeds
 
 jobs:
   billing-report:
@@ -95,7 +98,8 @@ jobs:
           echo "## Workflow Activity (Last 7 Days)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Get workflow runs from past week
+          # SMI-1320: Get workflow runs from past week
+          # GNU date uses -d, BSD/macOS date uses -v; try both for cross-platform support
           SINCE=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-7d +%Y-%m-%dT%H:%M:%SZ)
           RUNS=$(gh api "/repos/${{ github.repository }}/actions/runs?created=>$SINCE&per_page=100" 2>/dev/null || echo '{"workflow_runs":[],"total_count":0}')
 
@@ -114,11 +118,11 @@ jobs:
           echo "total_runs=$TOTAL" >> $GITHUB_OUTPUT
           echo "failed_runs=$FAILURE" >> $GITHUB_OUTPUT
 
-          # Flag if failure rate is high
+          # Flag if failure rate is high (SMI-1315: use env var threshold)
           if [ "$TOTAL" -gt 0 ]; then
             FAIL_RATE=$((FAILURE * 100 / TOTAL))
             echo "failure_rate=$FAIL_RATE" >> $GITHUB_OUTPUT
-            if [ "$FAIL_RATE" -gt 20 ]; then
+            if [ "${FAIL_RATE:-0}" -gt ${{ env.FAILURE_RATE_THRESHOLD }} ]; then
               echo "" >> $GITHUB_STEP_SUMMARY
               echo "⚠️ **Warning**: High failure rate ($FAIL_RATE%) - review failing workflows" >> $GITHUB_STEP_SUMMARY
             fi
@@ -149,8 +153,8 @@ jobs:
           echo "artifact_count=$ARTIFACT_COUNT" >> $GITHUB_OUTPUT
           echo "artifact_size_mb=$TOTAL_SIZE_MB" >> $GITHUB_OUTPUT
 
-          # Warn if artifacts are accumulating
-          if [ "$ARTIFACT_COUNT" -gt 50 ]; then
+          # Warn if artifacts are accumulating (SMI-1315/SMI-1318: use env var threshold)
+          if [ "${ARTIFACT_COUNT:-0}" -gt ${{ env.ARTIFACT_COUNT_THRESHOLD }} ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "⚠️ **Warning**: Many artifacts stored - consider reducing retention days" >> $GITHUB_STEP_SUMMARY
           fi
@@ -167,19 +171,25 @@ jobs:
 
           ISSUES=0
 
-          # Check for issues
-          if [ "${{ steps.workflow-check.outputs.failure_rate }}" -gt 20 ]; then
-            echo "- ⚠️ High workflow failure rate (${{ steps.workflow-check.outputs.failure_rate }}%)" >> $GITHUB_STEP_SUMMARY
+          # SMI-1315/SMI-1318: Check for issues using env var thresholds with safe defaults
+          FAIL_RATE="${{ steps.workflow-check.outputs.failure_rate }}"
+          FAIL_RATE="${FAIL_RATE:-0}"
+          if [ "$FAIL_RATE" -gt ${{ env.FAILURE_RATE_THRESHOLD }} ]; then
+            echo "- ⚠️ High workflow failure rate (${FAIL_RATE}%)" >> $GITHUB_STEP_SUMMARY
             ISSUES=$((ISSUES + 1))
           fi
 
-          if [ "${{ steps.artifact-check.outputs.artifact_count }}" -gt 50 ]; then
-            echo "- ⚠️ Many artifacts stored (${{ steps.artifact-check.outputs.artifact_count }})" >> $GITHUB_STEP_SUMMARY
+          ARTIFACT_CT="${{ steps.artifact-check.outputs.artifact_count }}"
+          ARTIFACT_CT="${ARTIFACT_CT:-0}"
+          if [ "$ARTIFACT_CT" -gt ${{ env.ARTIFACT_COUNT_THRESHOLD }} ]; then
+            echo "- ⚠️ Many artifacts stored (${ARTIFACT_CT})" >> $GITHUB_STEP_SUMMARY
             ISSUES=$((ISSUES + 1))
           fi
 
-          if [ "${{ steps.actions-billing.outputs.cache_size_mb }}" -gt 5000 ]; then
-            echo "- ⚠️ Large cache usage (${{ steps.actions-billing.outputs.cache_size_mb }} MB)" >> $GITHUB_STEP_SUMMARY
+          CACHE_MB="${{ steps.actions-billing.outputs.cache_size_mb }}"
+          CACHE_MB="${CACHE_MB:-0}"
+          if [ "$CACHE_MB" -gt ${{ env.CACHE_SIZE_MB_THRESHOLD }} ]; then
+            echo "- ⚠️ Large cache usage (${CACHE_MB} MB)" >> $GITHUB_STEP_SUMMARY
             ISSUES=$((ISSUES + 1))
           fi
 
@@ -193,7 +203,8 @@ jobs:
           echo "*Report generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)*" >> $GITHUB_STEP_SUMMARY
 
       - name: Create issue if needed
-        if: steps.summary.outputs.issue_count > 0 || github.event.inputs.create_issue == 'true'
+        # SMI-1315: Use fromJSON for safe numeric comparison
+        if: fromJSON(steps.summary.outputs.issue_count || '0') > 0 || github.event.inputs.create_issue == 'true'
         run: |
           TITLE="📊 Weekly Billing Report - $(date +%Y-%m-%d)"
 
