@@ -1,20 +1,36 @@
-# Pre-push hook: Security checks before pushing
-# Issue: SMI-727
+# Pre-push hook: Uncommitted changes warning + Security checks
+# Issues: SMI-727, SMI-1342
 #
-# This hook runs comprehensive security checks before allowing a push to remote.
-# It helps prevent security vulnerabilities from reaching production.
+# This hook runs two sets of checks before allowing a push to remote:
+#   1. Warns about uncommitted changes (SMI-1342) - prevents accidental loss
+#   2. Security checks (SMI-727) - prevents vulnerabilities in production
 #
 # Configuration:
-#   NO_VERIFY  - Set to skip hook (use with caution): git push --no-verify
+#   --no-verify  - Skip all hooks (use with caution): git push --no-verify
 #
 # Checks performed:
-#   1. Security test suite (packages/core/tests/security/)
-#   2. npm audit (high severity or above)
-#   3. Hardcoded secrets pattern detection
+#   Phase 1 (SMI-1342): Uncommitted changes detection
+#     - Staged changes (added but not committed)
+#     - Unstaged changes (modified but not added)
+#     - Untracked files (new files not in git)
+#   Phase 2 (SMI-727): Security checks
+#     - Security test suite (packages/core/tests/security/)
+#     - npm audit (high severity or above)
+#     - Hardcoded secrets pattern detection
 #
 # Exit codes:
-#   0 - All security checks passed
-#   1 - Security issues detected (push blocked)
+#   0 - All checks passed (or user confirmed)
+#   1 - Check failed or user aborted
 
-# Run security checks
+# Phase 1: Check for uncommitted changes (SMI-1342)
+# This runs first to warn developers before they push
+bash "$(dirname "$0")/../scripts/pre-push-uncommitted-check.sh"
+UNCOMMITTED_STATUS=$?
+
+# If user chose to abort, stop here
+if [ $UNCOMMITTED_STATUS -ne 0 ]; then
+  exit 1
+fi
+
+# Phase 2: Run security checks (SMI-727)
 bash "$(dirname "$0")/../scripts/pre-push-check.sh"
