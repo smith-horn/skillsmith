@@ -15,3 +15,6 @@ export { createInitCommand, createValidateCommand, createPublishCommand } from '
 
 // SMI-1283: Codebase Analysis
 export { createAnalyzeCommand } from './analyze.js'
+
+// SMI-1299: Recommendations
+export { createRecommendCommand } from './recommend.js'
