@@ -2,6 +2,7 @@
  * SMI-600: Codebase Analysis Module
  * SMI-1189: Updated to export from split modules
  * SMI-1303: Extended with multi-language support
+ * SMI-1337: Added metrics and telemetry
  *
  * Provides tools for analyzing multi-language codebases
  * to extract context for skill recommendations.
@@ -51,11 +52,37 @@ export {
 // Language router for dispatching to appropriate adapters
 export { LanguageRouter, type LanguageRouterOptions } from './router.js'
 
+// SMI-1339: Adapter Factory Pattern
+export { AdapterFactory } from './adapters/factory.js'
+
+// SMI-1340: Language Detection for extensionless files
+export {
+  LanguageDetector,
+  detectLanguage,
+  type LanguageDetectionResult,
+} from './language-detector.js'
+
 // Parse result caching
 export { ParseCache, type ParseCacheOptions } from './cache.js'
 
 // Result aggregation
-export { ResultAggregator, type AggregatorInput, type AggregatorMetadata } from './aggregator.js'
+export {
+  ResultAggregator,
+  type AggregatorInput,
+  type AggregatorMetadata,
+  type AggregatorOptions,
+} from './aggregator.js'
+
+// SMI-1337: Analysis metrics and telemetry
+export {
+  AnalysisMetrics,
+  getAnalysisMetrics,
+  initializeAnalysisMetrics,
+  timeParseAsync,
+  timeParseSync,
+  type AnalysisMetricsConfig,
+  type AnalysisMetricsSnapshot,
+} from './metrics.js'
 
 // Tree-sitter parser management
 export {
