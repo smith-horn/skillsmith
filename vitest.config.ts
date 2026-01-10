@@ -9,6 +9,8 @@ export default defineConfig({
       'packages/*/src/**/*.spec.ts',
       'packages/*/tests/**/*.test.ts',
       'packages/*/tests/**/*.spec.ts',
+      'tests/**/*.test.ts',
+      'tests/**/*.e2e.test.ts',
     ],
     exclude: ['**/node_modules/**', '**/dist/**'],
     coverage: {

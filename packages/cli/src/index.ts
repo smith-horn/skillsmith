@@ -11,6 +11,7 @@
  * - init: Initialize new skill project (SMI-746)
  * - validate: Validate local SKILL.md (SMI-746)
  * - publish: Prepare skill for sharing (SMI-746)
+ * - analyze: Analyze codebase for skill recommendations (SMI-1283)
  */
 
 import { Command } from 'commander'
@@ -23,6 +24,7 @@ import {
   createInitCommand,
   createValidateCommand,
   createPublishCommand,
+  createAnalyzeCommand,
 } from './commands/index.js'
 import { DEFAULT_DB_PATH } from './config.js'
 import { sanitizeError } from './utils/sanitize.js'
@@ -80,5 +82,8 @@ program.addCommand(createRemoveCommand())
 program.addCommand(createInitCommand())
 program.addCommand(createValidateCommand())
 program.addCommand(createPublishCommand())
+
+// SMI-1283: Codebase analysis
+program.addCommand(createAnalyzeCommand())
 
 program.parse()
