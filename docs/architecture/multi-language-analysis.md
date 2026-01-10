@@ -20,6 +20,7 @@
 | [SMI-1309](https://linear.app/smith-horn-group/issue/SMI-1309) | Incremental Parsing & Tree Caching | 7 |
 | [SMI-1310](https://linear.app/smith-horn-group/issue/SMI-1310) | TypeScript Adapter (Backward Compatibility) | 1 |
 | [SMI-1311](https://linear.app/smith-horn-group/issue/SMI-1311) | Documentation & v2.0.0 Release | 8 |
+| [SMI-1338](https://linear.app/smith-horn-group/issue/SMI-1338) | Document Tree-sitter WASM setup | 8 |
 
 ---
 
@@ -1906,7 +1907,251 @@ export async function getAnalyzerMode(): Promise<'full' | 'typescript-only'> {
 
 ---
 
-## 12. Risks and Mitigations
+## 12. Tree-sitter WASM Architecture
+
+This section details the WASM-based tree-sitter implementation used for multi-language parsing.
+
+### 12.1 WASM Module Loading Process
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant TSM as TreeSitterManager
+    participant WASM as web-tree-sitter
+    participant Lang as Language Module
+
+    App->>TSM: getParser('python')
+    TSM->>TSM: Check initialized?
+
+    alt Not Initialized
+        TSM->>WASM: import('web-tree-sitter')
+        WASM->>WASM: Load tree-sitter.wasm
+        WASM-->>TSM: TreeSitter module
+        TSM->>WASM: TreeSitter.init()
+        WASM-->>TSM: Ready
+    end
+
+    TSM->>TSM: Check parser cache
+
+    alt Parser Not Cached
+        TSM->>TSM: new Parser()
+        TSM->>Lang: import('tree-sitter-python')
+        Lang-->>TSM: Language module
+        TSM->>TSM: parser.setLanguage(python)
+        TSM->>TSM: Cache parser (LRU)
+    end
+
+    TSM-->>App: Parser instance
+```
+
+**Loading Steps**:
+
+1. **WASM Runtime Initialization**: `web-tree-sitter` loads the core `tree-sitter.wasm` file (~200KB)
+2. **Parser Creation**: Each `Parser` instance manages parsing state
+3. **Language Loading**: Grammar modules are loaded via dynamic import
+4. **Language Binding**: Parser is configured with the language grammar
+
+### 12.2 Fallback Behavior
+
+The TreeSitterManager implements a graceful fallback chain:
+
+```typescript
+// Initialization priority order
+async function doInitialize(): Promise<void> {
+  try {
+    // Priority 1: WASM-based (preferred)
+    const TreeSitter = await import('web-tree-sitter')
+    await TreeSitter.default.init()
+    this.ParserClass = TreeSitter.default
+    this.mode = 'wasm'
+  } catch {
+    try {
+      // Priority 2: Native tree-sitter (requires Docker/glibc)
+      const TreeSitterNative = await import('tree-sitter')
+      this.ParserClass = TreeSitterNative.default
+      this.mode = 'native'
+    } catch {
+      // Priority 3: TypeScript-only mode (graceful degradation)
+      throw new Error('tree-sitter unavailable, multi-language analysis disabled')
+    }
+  }
+}
+```
+
+**Fallback Scenarios**:
+
+| Scenario | Result | Languages Supported |
+|----------|--------|---------------------|
+| web-tree-sitter available | WASM mode | All 6 languages |
+| Only native tree-sitter | Native mode | All 6 languages |
+| Neither available | TypeScript-only | TypeScript/JavaScript only |
+| Language grammar missing | Partial support | Available languages only |
+
+**Graceful Degradation**:
+
+```typescript
+// In CodebaseAnalyzer
+async analyze(rootPath: string, options: AnalyzeOptions = {}): Promise<CodebaseContext> {
+  const mode = await getAnalyzerMode()
+
+  if (mode === 'typescript-only') {
+    // Fall back to TypeScript compiler API
+    return this.analyzeTypeScriptOnly(rootPath, options)
+  }
+
+  // Full multi-language analysis
+  return this.analyzeMultiLanguage(rootPath, options)
+}
+```
+
+### 12.3 Memory Management
+
+WASM memory is managed differently from native Node.js memory:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Node.js Process                               │
+├─────────────────────────────────────────────────────────────────────┤
+│  V8 Heap                      │  WASM Linear Memory                 │
+│  ┌─────────────────────────┐  │  ┌─────────────────────────────┐   │
+│  │ JavaScript Objects      │  │  │ tree-sitter WASM Heap      │   │
+│  │ - ParseResult           │  │  │ - AST Nodes                │   │
+│  │ - Cache entries         │  │  │ - Parser state             │   │
+│  │ - Aggregated results    │  │  │ - Language grammars        │   │
+│  └─────────────────────────┘  │  └─────────────────────────────┘   │
+│                               │                                      │
+│  Memory Budget: ~300MB        │  Memory Budget: ~200MB              │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Memory Management Strategies**:
+
+1. **Parser Pooling with LRU Eviction**
+   ```typescript
+   // TreeSitterManager limits cached parsers
+   private readonly maxParsers: number = 6
+   private accessOrder: SupportedLanguage[] = []
+
+   // Evict least recently used parser when at capacity
+   if (this.parsers.size >= this.maxParsers) {
+     const lru = this.accessOrder.shift()
+     if (lru) {
+       this.parsers.get(lru)?.delete()
+       this.parsers.delete(lru)
+     }
+   }
+   ```
+
+2. **Tree Cleanup**
+   ```typescript
+   // Always delete trees when done
+   const tree = parser.parse(content)
+   try {
+     // Process tree...
+   } finally {
+     tree.delete()  // Release WASM memory
+   }
+   ```
+
+3. **Explicit Disposal**
+   ```typescript
+   // TreeSitterManager.dispose()
+   dispose(): void {
+     for (const parser of this.parsers.values()) {
+       parser.delete()  // Release each parser
+     }
+     this.parsers.clear()
+     this.initialized = false
+     this.ParserClass = null
+   }
+   ```
+
+**Memory Limits**:
+
+| Component | Budget | Notes |
+|-----------|--------|-------|
+| Parser pool | 6 parsers | ~30MB per parser with grammar |
+| Tree cache | 100 trees | ~2MB per tree average |
+| Parse results | 50MB | V8 heap, managed by LRU cache |
+| Total WASM | ~250MB | Bounded by parser pool size |
+
+### 12.4 Thread Safety
+
+WASM parsers are **not thread-safe**. Each worker thread needs its own parser instance:
+
+```typescript
+// worker-pool.ts
+class ParserWorkerPool {
+  private workers: Worker[] = []
+
+  constructor(poolSize = os.cpus().length - 1) {
+    for (let i = 0; i < poolSize; i++) {
+      // Each worker has its own TreeSitterManager
+      const worker = new Worker('./parser-worker.js')
+      this.workers.push(worker)
+    }
+  }
+}
+
+// parser-worker.js
+const manager = new TreeSitterManager()  // Worker-local instance
+
+parentPort.on('message', async ({ files, language }) => {
+  const parser = await manager.getParser(language)
+  const results = files.map(f => parser.parse(f.content))
+  parentPort.postMessage(results)
+})
+```
+
+### 12.5 Error Handling
+
+```typescript
+// Robust initialization with detailed errors
+async initialize(): Promise<void> {
+  try {
+    const TreeSitter = await import('web-tree-sitter')
+    await TreeSitter.default.init()
+    this.ParserClass = TreeSitter.default
+  } catch (wasmError) {
+    // Log WASM-specific failure
+    console.debug('WASM tree-sitter unavailable:', wasmError)
+
+    try {
+      const TreeSitterNative = await import('tree-sitter')
+      this.ParserClass = TreeSitterNative.default
+    } catch (nativeError) {
+      // Provide actionable error message
+      throw new Error(
+        'tree-sitter is not available. ' +
+        'Install web-tree-sitter: npm install web-tree-sitter, ' +
+        'or run in Docker for native module support. ' +
+        `WASM error: ${wasmError}, Native error: ${nativeError}`
+      )
+    }
+  }
+}
+
+// Language-specific error handling
+async loadLanguageModule(language: SupportedLanguage): Promise<TreeSitterLanguage> {
+  try {
+    // ... load language
+  } catch (error) {
+    throw new Error(
+      `Failed to load tree-sitter-${language}. ` +
+      `Install with: npm install tree-sitter-${language}. ` +
+      `Original error: ${error.message}`
+    )
+  }
+}
+```
+
+### 12.6 Setup Documentation
+
+For detailed setup instructions, see the [Tree-sitter WASM Setup Guide](../guides/tree-sitter-setup.md).
+
+---
+
+## 13. Risks and Mitigations
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
@@ -1918,7 +2163,7 @@ export async function getAnalyzerMode(): Promise<'full' | 'typescript-only'> {
 
 ---
 
-## 13. Success Metrics
+## 14. Success Metrics
 
 | Metric | Target | Measurement |
 |--------|--------|-------------|
@@ -1931,9 +2176,13 @@ export async function getAnalyzerMode(): Promise<'full' | 'typescript-only'> {
 
 ---
 
-## References
+## 15. References
 
 - [ADR-010: Codebase Analysis Scope](../adr/010-codebase-analysis-scope.md)
+- [ADR-012: Native Module Version Management](../adr/012-native-module-version-management.md)
 - [Engineering Standards](./standards.md)
+- [Tree-sitter WASM Setup Guide](../guides/tree-sitter-setup.md)
 - [tree-sitter Documentation](https://tree-sitter.github.io/tree-sitter/)
+- [web-tree-sitter GitHub](https://github.com/nicfisch/web-tree-sitter)
 - [SMI-776: Multi-Language AST Analysis](https://linear.app/smith-horn-group/issue/SMI-776)
+- [SMI-1338: Document Tree-sitter WASM setup](https://linear.app/smith-horn-group/issue/SMI-1338)

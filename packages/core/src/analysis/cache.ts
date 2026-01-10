@@ -1,5 +1,6 @@
 /**
  * SMI-1303: Parse Result Cache
+ * SMI-1337: Added metrics integration
  *
  * LRU cache for parse results with content hash validation.
  * Provides memory-based eviction to prevent memory exhaustion.
@@ -9,8 +10,10 @@
  */
 
 import { createHash } from 'crypto'
+import path from 'path'
 import { LRUCache } from 'lru-cache'
 import type { ParseResult, CacheStats } from './types.js'
+import { getAnalysisMetrics, type AnalysisMetrics } from './metrics.js'
 
 /**
  * Internal cache entry structure
@@ -34,6 +37,8 @@ export interface ParseCacheOptions {
   maxMemoryMB?: number
   /** TTL in milliseconds (default: no TTL) */
   ttlMs?: number
+  /** Custom metrics instance (uses default if not provided) */
+  metrics?: AnalysisMetrics
 }
 
 /**
@@ -60,11 +65,13 @@ export interface ParseCacheOptions {
 export class ParseCache {
   private cache: LRUCache<string, CacheEntry>
   private readonly maxMemory: number
+  private readonly metrics: AnalysisMetrics
   private hits = 0
   private misses = 0
 
   constructor(options: ParseCacheOptions = {}) {
     this.maxMemory = (options.maxMemoryMB ?? 200) * 1024 * 1024
+    this.metrics = options.metrics ?? getAnalysisMetrics()
 
     this.cache = new LRUCache({
       maxSize: this.maxMemory,
@@ -83,6 +90,8 @@ export class ParseCache {
    * - Content hash doesn't match (file was modified)
    * - Entry was evicted due to memory pressure
    *
+   * SMI-1337: Records cache hit/miss metrics.
+   *
    * @param filePath - Path to the file
    * @param content - Current file content for hash comparison
    * @returns Cached parse result or null
@@ -97,9 +106,12 @@ export class ParseCache {
    * ```
    */
   get(filePath: string, content: string): ParseResult | null {
+    const language = this.getLanguageFromPath(filePath)
     const entry = this.cache.get(filePath)
+
     if (!entry) {
       this.misses++
+      this.metrics.recordCacheMiss(language)
       return null
     }
 
@@ -109,10 +121,12 @@ export class ParseCache {
       // Content changed, invalidate
       this.cache.delete(filePath)
       this.misses++
+      this.metrics.recordCacheMiss(language)
       return null
     }
 
     this.hits++
+    this.metrics.recordCacheHit(language)
     return entry.result
   }
 
@@ -122,6 +136,8 @@ export class ParseCache {
    * The result is stored with a content hash for future validation.
    * If the cache is at capacity, least recently used entries
    * are evicted to make room.
+   *
+   * SMI-1337: Updates cache size metrics.
    *
    * @param filePath - Path to the file
    * @param content - File content (used for hash)
@@ -143,6 +159,9 @@ export class ParseCache {
       timestamp: Date.now(),
       size,
     })
+
+    // SMI-1337: Update cache size metrics
+    this.metrics.updateCacheSize(this.cache.calculatedSize ?? 0, this.cache.size)
   }
 
   /**
@@ -250,6 +269,31 @@ export class ParseCache {
    */
   private hashContent(content: string): string {
     return createHash('sha256').update(content).digest('hex').slice(0, 16)
+  }
+
+  /**
+   * Get language from file path extension
+   * SMI-1337: Helper for metrics labeling
+   */
+  private getLanguageFromPath(filePath: string): string | undefined {
+    const ext = path.extname(filePath).toLowerCase()
+    const extensionToLanguage: Record<string, string> = {
+      '.ts': 'typescript',
+      '.tsx': 'typescript',
+      '.mts': 'typescript',
+      '.cts': 'typescript',
+      '.js': 'javascript',
+      '.jsx': 'javascript',
+      '.mjs': 'javascript',
+      '.cjs': 'javascript',
+      '.py': 'python',
+      '.pyi': 'python',
+      '.pyw': 'python',
+      '.go': 'go',
+      '.rs': 'rust',
+      '.java': 'java',
+    }
+    return extensionToLanguage[ext]
   }
 
   /**

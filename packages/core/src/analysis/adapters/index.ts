@@ -1,5 +1,6 @@
 /**
  * SMI-1303, SMI-1310: Language Adapters Module
+ * SMI-1339: Added AdapterFactory
  *
  * Exports all language adapter classes and types for multi-language
  * codebase analysis.
@@ -15,6 +16,9 @@ export {
   type FrameworkRule,
   type ParseResult,
 } from './base.js'
+
+// SMI-1339: Adapter Factory Pattern
+export { AdapterFactory } from './factory.js'
 
 // Language-specific adapters
 export { TypeScriptAdapter } from './typescript.js'
