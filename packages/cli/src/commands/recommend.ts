@@ -1,0 +1,337 @@
+/**
+ * SMI-1299: CLI Recommend Command
+ *
+ * Analyzes a codebase and recommends relevant skills based on detected
+ * frameworks, dependencies, and patterns.
+ *
+ * References:
+ * - SMI-1283 (analyze command pattern)
+ * - packages/mcp-server/src/tools/recommend.ts (recommendation logic)
+ */
+
+import { Command } from 'commander'
+import chalk from 'chalk'
+import ora from 'ora'
+import { CodebaseAnalyzer, createApiClient, type CodebaseContext } from '@skillsmith/core'
+import { sanitizeError } from '../utils/sanitize.js'
+
+/**
+ * Skill recommendation from API
+ */
+interface SkillRecommendation {
+  skill_id: string
+  name: string
+  reason: string
+  similarity_score: number
+  trust_tier: 'verified' | 'community' | 'experimental' | 'unknown'
+  quality_score: number
+}
+
+/**
+ * Recommendation response
+ */
+interface RecommendResponse {
+  recommendations: SkillRecommendation[]
+  candidates_considered: number
+  overlap_filtered: number
+  context: {
+    installed_count: number
+    has_project_context: boolean
+    using_semantic_matching: boolean
+    auto_detected: boolean
+  }
+  timing: {
+    totalMs: number
+  }
+}
+
+/**
+ * Get trust badge for display
+ */
+function getTrustBadge(tier: string): string {
+  switch (tier) {
+    case 'verified':
+      return chalk.green('[VERIFIED]')
+    case 'community':
+      return chalk.blue('[COMMUNITY]')
+    case 'experimental':
+      return chalk.yellow('[EXPERIMENTAL]')
+    case 'unknown':
+      return chalk.gray('[UNKNOWN]')
+    default:
+      return chalk.gray('[UNKNOWN]')
+  }
+}
+
+/**
+ * Format recommendations for terminal display
+ */
+function formatRecommendations(
+  response: RecommendResponse,
+  context: CodebaseContext | null
+): string {
+  const lines: string[] = []
+
+  lines.push('')
+  lines.push(chalk.bold.blue('=== Skill Recommendations ==='))
+  lines.push('')
+
+  if (context) {
+    // Show detected frameworks
+    if (context.frameworks.length > 0) {
+      const frameworks = context.frameworks
+        .slice(0, 3)
+        .map((f) => f.name)
+        .join(', ')
+      lines.push(chalk.dim(`Detected: ${frameworks}`))
+      lines.push('')
+    }
+  }
+
+  if (response.recommendations.length === 0) {
+    lines.push(chalk.yellow('No recommendations found.'))
+    lines.push('')
+    lines.push('Suggestions:')
+    lines.push('  - Ensure the project has a package.json')
+    lines.push('  - Try a project with more dependencies')
+    lines.push('  - Use --context to provide additional context')
+  } else {
+    lines.push(`Found ${chalk.bold(response.recommendations.length)} recommendation(s):`)
+    lines.push('')
+
+    response.recommendations.forEach((rec, index) => {
+      const trustBadge = getTrustBadge(rec.trust_tier)
+      const qualityColor =
+        rec.quality_score >= 80 ? chalk.green : rec.quality_score >= 50 ? chalk.yellow : chalk.red
+      // Format relevance - show N/A if not available from API (-1)
+      let relevanceDisplay: string
+      if (rec.similarity_score < 0) {
+        relevanceDisplay = chalk.gray('N/A')
+      } else {
+        const relevanceColor =
+          rec.similarity_score >= 0.7
+            ? chalk.green
+            : rec.similarity_score >= 0.4
+              ? chalk.yellow
+              : chalk.gray
+        relevanceDisplay = relevanceColor(`${Math.round(rec.similarity_score * 100)}%`)
+      }
+
+      lines.push(`${chalk.bold(`${index + 1}.`)} ${chalk.bold(rec.name)} ${trustBadge}`)
+      lines.push(
+        `   Score: ${qualityColor(`${rec.quality_score}/100`)} | Relevance: ${relevanceDisplay}`
+      )
+      lines.push(`   ${chalk.dim(rec.reason)}`)
+      lines.push(`   ${chalk.dim(`ID: ${rec.skill_id}`)}`)
+      lines.push('')
+    })
+  }
+
+  lines.push(chalk.dim('---'))
+  lines.push(chalk.dim(`Candidates considered: ${response.candidates_considered}`))
+  if (response.overlap_filtered > 0) {
+    lines.push(chalk.dim(`Filtered for overlap: ${response.overlap_filtered}`))
+  }
+  if (response.context.auto_detected) {
+    lines.push(
+      chalk.dim(
+        `Installed skills: ${response.context.installed_count} (auto-detected from ~/.claude/skills/)`
+      )
+    )
+  } else {
+    lines.push(chalk.dim(`Installed skills: ${response.context.installed_count}`))
+  }
+  lines.push(chalk.dim(`Completed in ${response.timing.totalMs}ms`))
+
+  return lines.join('\n')
+}
+
+/**
+ * Format recommendations as JSON
+ */
+function formatAsJson(response: RecommendResponse, context: CodebaseContext | null): string {
+  const output = {
+    recommendations: response.recommendations,
+    analysis: context
+      ? {
+          frameworks: context.frameworks.slice(0, 10).map((f) => ({
+            name: f.name,
+            confidence: Math.round(f.confidence * 100),
+          })),
+          dependencies: context.dependencies.slice(0, 20).map((d) => ({
+            name: d.name,
+            is_dev: d.isDev,
+          })),
+          stats: {
+            total_files: context.stats.totalFiles,
+            total_lines: context.stats.totalLines,
+          },
+        }
+      : null,
+    meta: {
+      candidates_considered: response.candidates_considered,
+      overlap_filtered: response.overlap_filtered,
+      installed_count: response.context.installed_count,
+      auto_detected: response.context.auto_detected,
+      timing_ms: response.timing.totalMs,
+    },
+  }
+
+  return JSON.stringify(output, null, 2)
+}
+
+/**
+ * Build stack from codebase analysis
+ */
+function buildStackFromAnalysis(context: CodebaseContext): string[] {
+  const stack: string[] = []
+
+  // Add detected frameworks
+  for (const fw of context.frameworks.slice(0, 5)) {
+    stack.push(fw.name.toLowerCase())
+  }
+
+  // Add key dependencies
+  for (const dep of context.dependencies.slice(0, 10)) {
+    if (!dep.isDev) {
+      stack.push(dep.name.toLowerCase())
+    }
+  }
+
+  return [...new Set(stack)].slice(0, 10)
+}
+
+/**
+ * Run recommendation workflow
+ */
+async function runRecommend(
+  targetPath: string,
+  options: {
+    limit: number
+    json: boolean
+    context: string | undefined
+    installed: string[] | undefined
+    noOverlap: boolean
+    maxFiles: number
+  }
+): Promise<void> {
+  const spinner = ora()
+  let codebaseContext: CodebaseContext | null = null
+
+  try {
+    // Step 1: Analyze codebase
+    spinner.start('Analyzing codebase...')
+    const analyzer = new CodebaseAnalyzer()
+
+    codebaseContext = await analyzer.analyze(targetPath, {
+      maxFiles: options.maxFiles,
+      includeDevDeps: true,
+    })
+
+    spinner.succeed(
+      `Analyzed ${codebaseContext.stats.totalFiles} files (${codebaseContext.frameworks.length} frameworks detected)`
+    )
+
+    // Step 2: Build recommendation request
+    spinner.start('Finding skill recommendations...')
+
+    const stack = buildStackFromAnalysis(codebaseContext)
+
+    // Add user-provided context
+    if (options.context) {
+      const contextWords = options.context
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w) => w.length > 3)
+        .slice(0, 5)
+      stack.push(...contextWords)
+    }
+
+    // Step 3: Call recommendation API
+    const apiClient = createApiClient()
+
+    const apiResponse = await apiClient.getRecommendations({
+      stack: stack.slice(0, 10),
+      limit: options.limit,
+    })
+
+    // Transform API response to expected format
+    const response: RecommendResponse = {
+      recommendations: apiResponse.data.map((skill) => ({
+        skill_id: skill.id,
+        name: skill.name,
+        reason: `Matches your stack: ${stack.slice(0, 3).join(', ')}`,
+        similarity_score: -1, // API doesn't return this; -1 indicates not available
+        trust_tier: skill.trust_tier as 'verified' | 'community' | 'experimental' | 'unknown',
+        quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
+      })),
+      candidates_considered: apiResponse.data.length,
+      overlap_filtered: 0,
+      context: {
+        installed_count: options.installed?.length ?? 0,
+        has_project_context: !!options.context,
+        using_semantic_matching: true,
+        auto_detected: !options.installed || options.installed.length === 0,
+      },
+      timing: {
+        totalMs: codebaseContext.metadata.durationMs,
+      },
+    }
+
+    spinner.succeed(`Found ${response.recommendations.length} recommendations`)
+
+    // Step 4: Output results
+    if (options.json) {
+      console.log(formatAsJson(response, codebaseContext))
+    } else {
+      console.log(formatRecommendations(response, codebaseContext))
+    }
+  } catch (error) {
+    spinner.fail('Recommendation failed')
+
+    if (options.json) {
+      console.error(JSON.stringify({ error: sanitizeError(error) }))
+    } else {
+      console.error(chalk.red('Error:'), sanitizeError(error))
+    }
+    process.exit(1)
+  }
+}
+
+/**
+ * Create recommend command
+ */
+export function createRecommendCommand(): Command {
+  const cmd = new Command('recommend')
+    .description('Analyze a codebase and recommend relevant skills based on detected patterns')
+    .argument('[path]', 'Path to the codebase to analyze', '.')
+    .option('-l, --limit <number>', 'Maximum recommendations to return', '5')
+    .option('-j, --json', 'Output results as JSON')
+    .option('-c, --context <text>', 'Additional context for recommendations')
+    .option('-i, --installed <skills...>', 'Currently installed skill IDs')
+    .option('--no-overlap', 'Disable overlap detection')
+    .option('-m, --max-files <number>', 'Maximum files to analyze', '1000')
+    .action(
+      async (targetPath: string, opts: Record<string, string | boolean | string[] | undefined>) => {
+        const limit = parseInt(opts['limit'] as string, 10)
+        const maxFiles = parseInt(opts['max-files'] as string, 10)
+        const json = (opts['json'] as boolean) === true
+        const context = opts['context'] as string | undefined
+        const installed = opts['installed'] as string[] | undefined
+        const noOverlap = opts['overlap'] === false
+
+        await runRecommend(targetPath, {
+          limit: isNaN(limit) ? 5 : Math.min(Math.max(limit, 1), 50),
+          maxFiles: isNaN(maxFiles) ? 1000 : maxFiles,
+          json,
+          context,
+          installed,
+          noOverlap,
+        })
+      }
+    )
+
+  return cmd
+}
+
+export default createRecommendCommand
