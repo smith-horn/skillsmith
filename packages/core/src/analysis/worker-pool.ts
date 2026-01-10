@@ -1,5 +1,6 @@
 /**
  * SMI-1308: Worker Thread Pool for Parallel File Parsing
+ * SMI-1337: Added metrics integration
  *
  * Uses Node.js worker_threads for true parallelism,
  * bypassing the single-threaded event loop limitation.
@@ -12,6 +13,7 @@ import { Worker, isMainThread, parentPort, workerData } from 'worker_threads'
 import os from 'os'
 import { EventEmitter } from 'events'
 import type { ParseResult } from './types.js'
+import { getAnalysisMetrics, type AnalysisMetrics } from './metrics.js'
 
 /**
  * Task to be parsed by a worker
@@ -47,6 +49,8 @@ export interface WorkerPoolOptions {
   poolSize?: number
   /** Minimum batch size to use workers (default: 10) */
   minBatchForWorkers?: number
+  /** Custom metrics instance (uses default if not provided) */
+  metrics?: AnalysisMetrics
 }
 
 /**
@@ -87,6 +91,7 @@ export class ParserWorkerPool extends EventEmitter {
   private activeWorkers = 0
   private readonly poolSize: number
   private readonly minBatchForWorkers: number
+  private readonly metrics: AnalysisMetrics
   private disposed = false
   // SMI-1330/1331: Cache router to avoid recreation on each parseInline call
   private router: LanguageRouterType | null = null
@@ -96,6 +101,7 @@ export class ParserWorkerPool extends EventEmitter {
     super()
     this.poolSize = options.poolSize ?? Math.max(1, os.cpus().length - 1)
     this.minBatchForWorkers = options.minBatchForWorkers ?? 10
+    this.metrics = options.metrics ?? getAnalysisMetrics()
   }
 
   /**
@@ -135,6 +141,8 @@ export class ParserWorkerPool extends EventEmitter {
   /**
    * Parse files in parallel using worker threads
    *
+   * SMI-1337: Records worker pool metrics.
+   *
    * @param tasks - Array of parse tasks
    * @returns Array of worker results
    * @throws Error if pool has been disposed
@@ -156,12 +164,66 @@ export class ParserWorkerPool extends EventEmitter {
       return []
     }
 
+    // SMI-1337: Update worker pool metrics
+    this.metrics.updateWorkerPool(this.activeWorkers, this.taskQueue.length, this.poolSize)
+
     // For small batches, parse inline (worker overhead not worth it)
     if (tasks.length < this.minBatchForWorkers) {
-      return this.parseInline(tasks)
+      const results = await this.parseInline(tasks)
+      this.recordParseMetrics(results)
+      return results
     }
 
-    return this.parseWithWorkers(tasks)
+    const results = await this.parseWithWorkers(tasks)
+    this.recordParseMetrics(results)
+    return results
+  }
+
+  /**
+   * Record parse metrics for completed results
+   * SMI-1337: Helper to record metrics after parsing
+   */
+  private recordParseMetrics(results: WorkerResult[]): void {
+    for (const result of results) {
+      if (result.error) {
+        this.metrics.recordError('worker_parse_error', result.filePath.split('.').pop())
+      } else {
+        // Extract language from file extension
+        const ext = result.filePath.split('.').pop()?.toLowerCase()
+        const language = this.getLanguageFromExtension(ext)
+        if (language) {
+          this.metrics.recordFileParsed(language)
+          this.metrics.recordParseDuration(language, result.durationMs)
+        }
+      }
+    }
+    // Update memory usage after batch processing
+    this.metrics.updateMemoryUsage()
+  }
+
+  /**
+   * Get language from file extension
+   * SMI-1337: Helper for metrics
+   */
+  private getLanguageFromExtension(ext?: string): string | undefined {
+    if (!ext) return undefined
+    const extensionToLanguage: Record<string, string> = {
+      ts: 'typescript',
+      tsx: 'typescript',
+      mts: 'typescript',
+      cts: 'typescript',
+      js: 'javascript',
+      jsx: 'javascript',
+      mjs: 'javascript',
+      cjs: 'javascript',
+      py: 'python',
+      pyi: 'python',
+      pyw: 'python',
+      go: 'go',
+      rs: 'rust',
+      java: 'java',
+    }
+    return extensionToLanguage[ext]
   }
 
   /**
@@ -409,13 +471,26 @@ export class ParserWorkerPool extends EventEmitter {
   /**
    * Get pool statistics
    *
+   * SMI-1337: Also updates metrics.
+   *
    * @returns Current pool statistics
    */
-  getStats(): { poolSize: number; activeWorkers: number; queuedTasks: number } {
+  getStats(): {
+    poolSize: number
+    activeWorkers: number
+    queuedTasks: number
+    utilization: number
+  } {
+    const utilization = this.poolSize > 0 ? this.activeWorkers / this.poolSize : 0
+
+    // SMI-1337: Update metrics when stats are requested
+    this.metrics.updateWorkerPool(this.activeWorkers, this.taskQueue.length, this.poolSize)
+
     return {
       poolSize: this.poolSize,
       activeWorkers: this.activeWorkers,
       queuedTasks: this.taskQueue.length,
+      utilization,
     }
   }
 

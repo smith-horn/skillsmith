@@ -1,5 +1,6 @@
 /**
  * SMI-1303: Result Aggregator
+ * SMI-1337: Added metrics integration
  *
  * Aggregates parse results from multiple languages into unified context.
  * Collects imports, exports, and functions across all analyzed files.
@@ -19,6 +20,7 @@ import type {
   FrameworkInfo,
   DependencyInfo,
 } from './types.js'
+import { getAnalysisMetrics, type AnalysisMetrics } from './metrics.js'
 
 /**
  * Input for adding a parse result to the aggregator
@@ -42,6 +44,14 @@ export interface AggregatorMetadata {
   version: string
   /** Cache hit rate (0-1) */
   cacheHitRate: number
+}
+
+/**
+ * Options for ResultAggregator
+ */
+export interface AggregatorOptions {
+  /** Custom metrics instance (uses default if not provided) */
+  metrics?: AnalysisMetrics
 }
 
 /**
@@ -80,12 +90,19 @@ export class ResultAggregator {
   private totalLines = 0
   private languages = new Set<SupportedLanguage>()
   private fileCount = 0
+  private readonly metrics: AnalysisMetrics
+
+  constructor(options: AggregatorOptions = {}) {
+    this.metrics = options.metrics ?? getAnalysisMetrics()
+  }
 
   /**
    * Add parse result to aggregation
    *
    * Extracts imports, exports, and functions from the result
    * and annotates them with language information.
+   *
+   * SMI-1337: Updates aggregator metrics.
    *
    * @param input - File path, language, and parse result
    *
@@ -138,6 +155,22 @@ export class ResultAggregator {
         sourceFile: filePath,
       })
     }
+
+    // SMI-1337: Update aggregator metrics
+    this.updateMetrics()
+  }
+
+  /**
+   * Update aggregator metrics
+   * SMI-1337: Helper to keep metrics in sync
+   */
+  private updateMetrics(): void {
+    this.metrics.updateAggregatorStats(
+      this.fileCount,
+      this.imports.length,
+      this.exports.length,
+      this.functions.length
+    )
   }
 
   /**
@@ -193,6 +226,8 @@ export class ResultAggregator {
    * Combines all aggregated data with dependencies, frameworks,
    * and metadata into the final context structure.
    *
+   * SMI-1337: Records final aggregation metrics.
+   *
    * @param rootPath - Root path of the analyzed codebase
    * @param dependencies - Dependencies from all package managers
    * @param frameworks - Detected frameworks
@@ -215,6 +250,10 @@ export class ResultAggregator {
     frameworks: FrameworkInfo[],
     metadata: AggregatorMetadata
   ): CodebaseContext {
+    // SMI-1337: Final metrics update
+    this.updateMetrics()
+    this.metrics.updateMemoryUsage()
+
     return {
       rootPath,
       imports: this.imports,
@@ -262,6 +301,8 @@ export class ResultAggregator {
    *
    * Clears all collected data. Call this before starting
    * a new analysis on a different codebase.
+   *
+   * SMI-1337: Resets aggregator metrics as well.
    */
   reset(): void {
     this.imports = []
@@ -272,6 +313,9 @@ export class ResultAggregator {
     this.totalLines = 0
     this.languages.clear()
     this.fileCount = 0
+
+    // SMI-1337: Reset metrics
+    this.updateMetrics()
   }
 
   /**
