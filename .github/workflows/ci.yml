@@ -27,6 +27,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # SMI-1317: Verify required dependencies are available
+      - name: Verify dependencies
+        run: |
+          if ! command -v jq &> /dev/null; then
+            echo "::error::jq is required but not installed"
+            exit 1
+          fi
+          echo "✓ jq is available"
+
+      # SMI-1321: Validate packages directory exists
+      - name: Validate packages directory
+        run: |
+          if [ ! -d packages ] || [ -z "$(ls -A packages 2>/dev/null)" ]; then
+            echo "::error::No packages found in packages/ directory"
+            exit 1
+          fi
+          PKG_COUNT=$(ls -d packages/*/package.json 2>/dev/null | wc -l)
+          echo "✓ Found $PKG_COUNT packages"
+
       - name: Validate package configurations
         run: |
           echo "## Package Validation Results" >> $GITHUB_STEP_SUMMARY

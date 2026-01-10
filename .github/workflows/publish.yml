@@ -50,6 +50,25 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      # SMI-1317: Verify required dependencies are available
+      - name: Verify dependencies
+        run: |
+          if ! command -v jq &> /dev/null; then
+            echo "::error::jq is required but not installed"
+            exit 1
+          fi
+          echo "✓ jq is available"
+
+      # SMI-1321: Validate packages directory exists
+      - name: Validate packages directory
+        run: |
+          if [ ! -d packages ] || [ -z "$(ls -A packages 2>/dev/null)" ]; then
+            echo "::error::No packages found in packages/ directory"
+            exit 1
+          fi
+          PKG_COUNT=$(ls -d packages/*/package.json 2>/dev/null | wc -l)
+          echo "✓ Found $PKG_COUNT packages"
+
       - name: Check version availability
         id: version-check
         run: |
@@ -96,11 +115,21 @@ jobs:
             ANY_TO_PUBLISH=true
           fi
 
-          # Check @smith-horn-group/enterprise (GitHub Packages - can't check without auth)
+          # SMI-1316: Check @smith-horn-group/enterprise with authenticated GitHub Packages check
           VERSION=$(jq -r .version packages/enterprise/package.json)
-          echo "enterprise_exists=false" >> $GITHUB_OUTPUT
-          echo "| @smith-horn-group/enterprise | $VERSION | (GitHub Pkgs) | 📦 Check at publish |" >> $GITHUB_STEP_SUMMARY
-          ANY_TO_PUBLISH=true
+          # Configure npm for GitHub Packages auth (using GITHUB_TOKEN)
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> ~/.npmrc
+          PUBLISHED=$(npm view @smith-horn-group/enterprise@$VERSION version --registry=https://npm.pkg.github.com 2>/dev/null || echo '')
+          # Clean up npmrc
+          rm -f ~/.npmrc
+          if [ -n "$PUBLISHED" ]; then
+            echo "enterprise_exists=true" >> $GITHUB_OUTPUT
+            echo "| @smith-horn-group/enterprise | $VERSION | $PUBLISHED | ⏭️ Skip |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "enterprise_exists=false" >> $GITHUB_OUTPUT
+            echo "| @smith-horn-group/enterprise | $VERSION | - | 📦 Publish |" >> $GITHUB_STEP_SUMMARY
+            ANY_TO_PUBLISH=true
+          fi
 
           echo "any_to_publish=$ANY_TO_PUBLISH" >> $GITHUB_OUTPUT
 
@@ -152,8 +181,10 @@ jobs:
           done
 
   # Build Docker image once, use for all jobs (matches ci.yml pattern)
+  # SMI-1319: Skip Docker build if nothing to publish
   docker-build:
     needs: pre-publish-check
+    if: needs.pre-publish-check.outputs.any-to-publish == 'true'
     name: Build Docker Image
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -204,11 +235,13 @@ jobs:
           compression-level: 1
 
   # Validate before publishing (using Docker)
+  # SMI-1319: Skip validation if nothing to publish
   validate:
     name: Validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: docker-build
+    needs: [pre-publish-check, docker-build]
+    if: needs.pre-publish-check.outputs.any-to-publish == 'true'
 
     steps:
       - name: Checkout
@@ -304,12 +337,15 @@ jobs:
   # Publish free tier packages to public npm
   # Note: npm publish requires direct npm ci for registry authentication
   # SMI-1278: Added version check to prevent 403 errors on duplicate publish
+  # SMI-1319: Use pre-publish-check outputs to skip already-published packages
   publish-core:
     name: Publish @skillsmith/core
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: validate
-    if: github.event_name == 'release' || github.event.inputs.dry_run == 'false'
+    needs: [pre-publish-check, validate]
+    if: |
+      (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
+      needs.pre-publish-check.outputs.core-exists != 'true'
 
     steps:
       - name: Checkout
@@ -349,12 +385,17 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.SKILLSMITH_NPM_TOKEN }}
 
+  # SMI-1319: Use pre-publish-check outputs to skip already-published packages
   publish-mcp-server:
     name: Publish @skillsmith/mcp-server
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [validate, publish-core]
-    if: github.event_name == 'release' || github.event.inputs.dry_run == 'false'
+    needs: [pre-publish-check, validate, publish-core]
+    if: |
+      always() &&
+      (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
+      needs.pre-publish-check.outputs.mcp-exists != 'true' &&
+      (needs.publish-core.result == 'success' || needs.publish-core.result == 'skipped')
 
     steps:
       - name: Checkout
@@ -394,12 +435,17 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.SKILLSMITH_NPM_TOKEN }}
 
+  # SMI-1319: Use pre-publish-check outputs to skip already-published packages
   publish-cli:
     name: Publish @skillsmith/cli
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [validate, publish-core]
-    if: github.event_name == 'release' || github.event.inputs.dry_run == 'false'
+    needs: [pre-publish-check, validate, publish-core]
+    if: |
+      always() &&
+      (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
+      needs.pre-publish-check.outputs.cli-exists != 'true' &&
+      (needs.publish-core.result == 'success' || needs.publish-core.result == 'skipped')
 
     steps:
       - name: Checkout
@@ -440,12 +486,17 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.SKILLSMITH_NPM_TOKEN }}
 
   # Publish enterprise package to GitHub Packages (private)
+  # SMI-1319: Use pre-publish-check outputs to skip already-published packages
   publish-enterprise:
     name: Publish @smith-horn-group/enterprise
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [validate, publish-core]
-    if: github.event_name == 'release' || github.event.inputs.dry_run == 'false'
+    needs: [pre-publish-check, validate, publish-core]
+    if: |
+      always() &&
+      (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
+      needs.pre-publish-check.outputs.enterprise-exists != 'true' &&
+      (needs.publish-core.result == 'success' || needs.publish-core.result == 'skipped')
 
     steps:
       - name: Checkout
