@@ -56,6 +56,7 @@ jobs:
 
       - name: Upload Docker image artifact
         uses: actions/upload-artifact@v4
+        continue-on-error: true # Don't fail if storage quota exceeded
         with:
           name: docker-image-publish
           path: /tmp/skillsmith-publish.tar.gz
@@ -70,6 +71,7 @@ jobs:
 
       - name: Upload node_modules artifact
         uses: actions/upload-artifact@v4
+        continue-on-error: true # Don't fail if storage quota exceeded
         with:
           name: node-modules-publish
           path: /tmp/node_modules.tar.gz
@@ -89,23 +91,41 @@ jobs:
 
       - name: Download Docker image
         uses: actions/download-artifact@v4
+        id: download-docker
+        continue-on-error: true
         with:
           name: docker-image-publish
           path: /tmp
 
       - name: Download node_modules
         uses: actions/download-artifact@v4
+        id: download-modules
+        continue-on-error: true
         with:
           name: node-modules-publish
           path: /tmp
 
+      - name: Setup Node.js (fallback if no artifacts)
+        if: steps.download-docker.outcome == 'failure'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies (fallback if no artifacts)
+        if: steps.download-docker.outcome == 'failure'
+        run: npm ci
+
       - name: Load Docker image
+        if: steps.download-docker.outcome == 'success'
         run: gunzip -c /tmp/skillsmith-publish.tar.gz | docker load
 
       - name: Extract node_modules
+        if: steps.download-modules.outcome == 'success'
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
 
-      - name: Build all packages in Docker
+      - name: Build all packages (Docker)
+        if: steps.download-docker.outcome == 'success'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
@@ -113,7 +133,12 @@ jobs:
             skillsmith-publish:${{ github.sha }} \
             npm run build
 
-      - name: Run tests in Docker
+      - name: Build all packages (fallback)
+        if: steps.download-docker.outcome == 'failure'
+        run: npm run build
+
+      - name: Run tests (Docker)
+        if: steps.download-docker.outcome == 'success'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
@@ -121,7 +146,12 @@ jobs:
             skillsmith-publish:${{ github.sha }} \
             npm test
 
-      - name: Type check in Docker
+      - name: Run tests (fallback)
+        if: steps.download-docker.outcome == 'failure'
+        run: npm test
+
+      - name: Type check (Docker)
+        if: steps.download-docker.outcome == 'success'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
@@ -129,13 +159,22 @@ jobs:
             skillsmith-publish:${{ github.sha }} \
             npm run typecheck
 
-      - name: Lint in Docker
+      - name: Type check (fallback)
+        if: steps.download-docker.outcome == 'failure'
+        run: npm run typecheck
+
+      - name: Lint (Docker)
+        if: steps.download-docker.outcome == 'success'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-publish:${{ github.sha }} \
             npm run lint
+
+      - name: Lint (fallback)
+        if: steps.download-docker.outcome == 'failure'
+        run: npm run lint
 
   # Publish free tier packages to public npm
   # Note: npm publish requires direct npm ci for registry authentication
