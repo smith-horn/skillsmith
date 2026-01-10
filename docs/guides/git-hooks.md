@@ -73,7 +73,7 @@ Do you want to proceed with push? [y/n/c]:
 - All checks must pass for push to proceed
 - Failures block the push with detailed error messages
 
-## Pre-Commit Hook (SMI-1346)
+## Pre-Commit Hook (SMI-1346, SMI-1348)
 
 Runs before each commit to ensure code quality with early lint error detection.
 
@@ -81,8 +81,15 @@ Runs before each commit to ensure code quality with early lint error detection.
 
 | Phase | Check | Purpose |
 | ----- | ----- | ------- |
+| 0 | Build cache clear (`tsc --build --clean`) | Prevents stale type errors |
 | 1 | TypeScript (`npm run typecheck`) | Catches type errors |
 | 2 | ESLint + Prettier (`lint-staged`) | Catches lint errors and formats code |
+
+### Phase 0: Build Cache Clearing (SMI-1348)
+
+**Why this exists:** TypeScript's incremental build cache (`.tsbuildinfo` files) can become stale after git operations (merge, cherry-pick) or when type definitions change in dependent packages. This can cause false positive type errors that don't actually exist in the code.
+
+**What it does:** Runs `tsc --build --clean` to clear all build artifacts before typecheck, ensuring a fresh type analysis.
 
 ### Two-Phase Lint Check
 
@@ -147,6 +154,8 @@ npm run typecheck
 ```
 === Pre-Commit Checks ===
 
+[0/2] Clearing TypeScript build cache...
+  ✓ Build cache cleared
 [1/2] Running TypeScript type check...
   ✓ TypeScript check passed
 [2/2] Running lint and format on staged files...
@@ -159,6 +168,8 @@ npm run typecheck
 ```
 === Pre-Commit Checks ===
 
+[0/2] Clearing TypeScript build cache...
+  ✓ Build cache cleared
 [1/2] Running TypeScript type check...
   ✓ TypeScript check passed
 [2/2] Running lint and format on staged files...
