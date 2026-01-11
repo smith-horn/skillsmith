@@ -30,47 +30,17 @@ import {
   type MCPSearchResponse as SearchResponse,
   type SkillCategory,
   type MCPTrustTier as TrustTier,
-  type TrustTier as DBTrustTier,
   SkillsmithError,
   ErrorCodes,
   trackSkillSearch,
 } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
-import { extractCategoryFromTags } from '../utils/validation.js'
-
-/**
- * Map MCP trust tier to database trust tier
- * MCP: verified, community, standard, unverified
- * DB:  verified, community, experimental, unknown
- */
-function mapTrustTierToDb(mcpTier: TrustTier): DBTrustTier {
-  switch (mcpTier) {
-    case 'verified':
-      return 'verified'
-    case 'community':
-      return 'community'
-    case 'experimental':
-      return 'experimental'
-    case 'unknown':
-      return 'unknown'
-  }
-}
-
-/**
- * Map database trust tier to MCP trust tier
- */
-function mapTrustTierFromDb(dbTier: DBTrustTier): TrustTier {
-  switch (dbTier) {
-    case 'verified':
-      return 'verified'
-    case 'community':
-      return 'community'
-    case 'experimental':
-      return 'experimental'
-    case 'unknown':
-      return 'unknown'
-  }
-}
+import {
+  extractCategoryFromTags,
+  mapTrustTierToDb,
+  mapTrustTierFromDb,
+  getTrustBadge,
+} from '../utils/validation.js'
 
 /**
  * Search tool schema for MCP
@@ -346,22 +316,4 @@ export function formatSearchResults(response: SearchResponse): string {
   )
 
   return lines.join('\n')
-}
-
-/**
- * Get trust badge for display
- */
-function getTrustBadge(tier: TrustTier): string {
-  switch (tier) {
-    case 'verified':
-      return '[VERIFIED]'
-    case 'community':
-      return '[COMMUNITY]'
-    case 'experimental':
-      return '[EXPERIMENTAL]'
-    case 'unknown':
-      return '[UNKNOWN]'
-    default:
-      return '[UNKNOWN]'
-  }
 }

@@ -91,12 +91,13 @@ export function mapTrustTierToDb(mcpTier: MCPTrustTier): DBTrustTier {
 /**
  * Map database trust tier to MCP trust tier.
  *
- * Types are now unified: verified, community, experimental, unknown
+ * Accepts string input and validates, returning 'unknown' for invalid values.
+ * Types are unified: verified, community, experimental, unknown
  *
- * @param dbTier - Database trust tier
+ * @param dbTier - Database trust tier (string or typed)
  * @returns MCP trust tier
  */
-export function mapTrustTierFromDb(dbTier: DBTrustTier): MCPTrustTier {
+export function mapTrustTierFromDb(dbTier: DBTrustTier | string): MCPTrustTier {
   switch (dbTier) {
     case 'verified':
       return 'verified'
@@ -105,6 +106,7 @@ export function mapTrustTierFromDb(dbTier: DBTrustTier): MCPTrustTier {
     case 'experimental':
       return 'experimental'
     case 'unknown':
+    default:
       return 'unknown'
   }
 }
@@ -161,4 +163,27 @@ export function extractCategoryFromTags(tags: string[] | undefined | null): Skil
   }
 
   return 'other'
+}
+
+/**
+ * Get trust badge string for display.
+ *
+ * Returns a formatted badge string for terminal/CLI display
+ * based on the skill's trust tier.
+ *
+ * @param tier - Trust tier value
+ * @returns Formatted badge string (e.g., '[VERIFIED]')
+ *
+ * @example
+ * getTrustBadge('verified') // '[VERIFIED]'
+ * getTrustBadge('community') // '[COMMUNITY]'
+ */
+export function getTrustBadge(tier: MCPTrustTier): string {
+  const badges: Record<MCPTrustTier, string> = {
+    verified: '[VERIFIED]',
+    community: '[COMMUNITY]',
+    experimental: '[EXPERIMENTAL]',
+    unknown: '[UNKNOWN]',
+  }
+  return badges[tier] ?? '[UNKNOWN]'
 }
