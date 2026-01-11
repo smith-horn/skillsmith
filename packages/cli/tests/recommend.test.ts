@@ -167,7 +167,7 @@ describe('SMI-1353: CLI recommend command', () => {
   afterEach(() => {
     console.log = originalConsoleLog
     console.error = originalConsoleError
-    vi.restoreAllMocks()
+    // Note: Don't use vi.restoreAllMocks() as it removes the process.exit mock
   })
 
   // ==========================================================================

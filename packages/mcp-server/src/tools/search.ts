@@ -7,7 +7,7 @@
  * Provides skill search functionality with support for:
  * - Full-text search across skill names, descriptions, and authors
  * - Category filtering (development, testing, devops, etc.)
- * - Trust tier filtering (verified, community, standard, unverified)
+ * - Trust tier filtering (verified, community, experimental, unknown)
  * - Minimum quality score filtering
  *
  * @example
