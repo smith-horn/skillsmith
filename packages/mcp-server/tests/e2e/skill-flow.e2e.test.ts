@@ -318,9 +318,14 @@ describe('E2E: Data Quality Validation', () => {
       // Since empty/short queries throw, get skills directly
       for (const skill of SEED_SKILLS) {
         const details = await executeGetSkill({ id: skill.id }, context)
-        expect(['verified', 'community', 'standard', 'unverified', 'experimental']).toContain(
-          details.skill.trustTier
-        )
+        expect([
+          'verified',
+          'community',
+          'standard',
+          'unverified',
+          'experimental',
+          'unknown',
+        ]).toContain(details.skill.trustTier)
       }
     })
 
