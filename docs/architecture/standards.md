@@ -1,6 +1,6 @@
 # Engineering Standards - Skillsmith
 
-**Version**: 1.8
+**Version**: 1.9
 **Status**: Active
 **Owner**: Skillsmith Team
 
@@ -154,6 +154,46 @@ The `scripts/` directory follows the same ESLint rules as `packages/`. No separa
 
 > **Reference:** See [ADR-012](../adr/012-native-module-version-management.md) for context on scripts directory standardization.
 
+### 1.7 TypeScript Record<K,V> Exhaustiveness
+
+When using `Record<K, V>` with union type keys, TypeScript requires **all keys** to be present. This prevents runtime errors from missing cases.
+
+**The Problem:**
+
+```typescript
+// Given this union type
+type LicenseTier = 'community' | 'team' | 'enterprise' | 'individual';
+
+// ❌ WRONG: Missing 'individual' key - TypeScript error
+const TIER_PRICING: Record<LicenseTier, string> = {
+  community: '$0/month',
+  team: '$25/user/month',
+  enterprise: '$55/user/month',
+  // Error: Property 'individual' is missing
+};
+
+// ✅ CORRECT: All keys present
+const TIER_PRICING: Record<LicenseTier, string> = {
+  individual: '$9.99/month',
+  community: '$0/month',
+  team: '$25/user/month',
+  enterprise: '$55/user/month',
+};
+```
+
+**When Extending Union Types:**
+
+Adding a new variant to a union type (like adding `'individual'` to `LicenseTier`) will cause TypeScript compilation errors everywhere that union is used in a `Record`. This is intentional - it surfaces all locations requiring updates.
+
+**Checklist when extending union types:**
+
+- [ ] Search codebase: `grep -r "Record<UnionType" packages/`
+- [ ] Update all `Record<UnionType, ...>` declarations
+- [ ] Update test fixtures and mocks
+- [ ] Run `npm run typecheck` to verify completeness
+
+> **Real Example**: SMI-1372 fixed CI failures caused by adding `'individual'` to `LicenseTier` without updating `TIER_PRICING`, `TIER_DISPLAY_NAMES`, and test mocks across 4 files.
+
 ---
 
 ## 2. Testing Standards
@@ -272,9 +312,22 @@ main (protected)
 [optional body]
 
 SMI-XXX
+Resolves: SMI-XXX, SMI-YYY
 ```
 
 **Types:** `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+
+**Issue Reference Patterns:**
+
+| Pattern | Effect | When to Use |
+|---------|--------|-------------|
+| `SMI-XXX` | Links commit to issue | Always include for traceability |
+| `Resolves: SMI-XXX` | **Auto-closes issue** when merged to main | Issue is fully addressed by this commit |
+| `Resolves: SMI-XXX, SMI-YYY` | Auto-closes multiple issues | Single commit addresses multiple issues |
+| `Fixes: SMI-XXX` | Same as Resolves (alias) | Bug fix commits |
+| `Closes: SMI-XXX` | Same as Resolves (alias) | Feature completion |
+
+> **Linear GitHub Integration**: The `Resolves:` syntax triggers Linear's auto-transition feature. When a commit containing `Resolves: SMI-XXX` lands on the default branch, Linear automatically moves the issue to "Done" state. This eliminates manual status updates and ensures issues reflect actual repository state.
 
 ### 3.3 CI/CD Pipeline
 
@@ -1135,6 +1188,7 @@ async function verifySkillPackage(
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.9 | 2026-01-11 | Added §1.7 TypeScript Record<K,V> Exhaustiveness, enhanced §3.2 with Linear auto-close patterns (SMI-1372) |
 | 1.8 | 2026-01-09 | Added §4.10 Third-Party Type Extraction (SMI-1275), §3.3 Security Audit Configuration (SMI-1276) |
 | 1.7 | 2026-01-04 | Added §4.9 Dynamic Import Safety, §4.10 Lazy Loading, updated §1.5 Code Review, enhanced §7.1 License Validation (Phase 7a retro) |
 | 1.6 | 2026-01-02 | Added §7 Enterprise Development Standards |

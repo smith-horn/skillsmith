@@ -239,6 +239,47 @@ If you discover a significant backlog quality issue:
 
 ---
 
+## Commit Message Patterns for Auto-Closing Issues
+
+Linear's GitHub integration automatically closes issues when commits with specific patterns are merged to the default branch.
+
+### Auto-Close Syntax
+
+```bash
+# Single issue - auto-closes SMI-1234 when merged
+git commit -m "feat(auth): implement SSO flow
+
+Resolves: SMI-1234"
+
+# Multiple issues - auto-closes all listed issues
+git commit -m "fix(enterprise): add individual tier support
+
+Fixes TypeScript build errors by completing tier implementation.
+
+Resolves: SMI-1372, SMI-1373, SMI-1374"
+```
+
+### Supported Keywords
+
+All of these keywords trigger auto-close:
+
+| Keyword | Example |
+|---------|---------|
+| `Resolves:` | `Resolves: SMI-1234` |
+| `Fixes:` | `Fixes: SMI-1234` |
+| `Closes:` | `Closes: SMI-1234` |
+
+### Best Practices
+
+1. **Use `Resolves:` for feature completions** - Indicates issue is fully addressed
+2. **Use `Fixes:` for bug fixes** - Semantically clearer for defects
+3. **Include in commit body, not title** - Keeps title concise
+4. **Verify after push** - Check Linear to confirm auto-transition worked
+
+> **Note**: Auto-close only triggers on the default branch (usually `main`). Commits to feature branches won't close issues until merged.
+
+---
+
 ## Related Documentation
 
 - [Engineering Standards](/docs/architecture/standards.md)
