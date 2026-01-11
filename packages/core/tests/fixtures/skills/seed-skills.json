@@ -151,6 +151,16 @@
       "qualityScore": 0.78,
       "trustTier": "community",
       "tags": ["integration", "graphql", "api", "typescript", "backend"]
+    },
+    {
+      "id": "unknown/untested-tool",
+      "name": "untested-tool",
+      "description": "A newly submitted skill that has not yet been reviewed or assessed. Use with caution and review the source code before using.",
+      "author": "unknown-contributor",
+      "repoUrl": "https://github.com/unknown-contributor/untested-tool",
+      "qualityScore": 0.45,
+      "trustTier": "unknown",
+      "tags": ["development", "utility", "unverified"]
     }
   ]
 }

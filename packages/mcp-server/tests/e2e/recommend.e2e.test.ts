@@ -91,6 +91,16 @@ const SEED_SKILLS = [
     trustTier: 'experimental' as const,
     tags: ['debugging', 'ai', 'experimental'],
   },
+  {
+    id: 'unknown/untested-tool',
+    name: 'untested-tool',
+    description: 'A newly submitted skill not yet reviewed or assessed',
+    author: 'unknown-contributor',
+    repoUrl: 'https://github.com/unknown-contributor/untested-tool',
+    qualityScore: 0.45,
+    trustTier: 'unknown' as const,
+    tags: ['development', 'utility', 'unverified'],
+  },
 ]
 
 /**

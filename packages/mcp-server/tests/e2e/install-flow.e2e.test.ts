@@ -27,7 +27,7 @@ const TEST_DB_PATH = join(TEST_DIR, 'install-test.db')
 const TEST_HOME = join(TEST_DIR, 'home')
 const TEST_SKILLS_DIR = join(TEST_HOME, '.claude', 'skills')
 
-// Seed data with real GitHub URLs for testing
+// Seed data with real GitHub URLs for testing - SMI-1365: Must include all 4 trust tiers
 const SEED_SKILLS = [
   {
     id: 'anthropic/commit',
@@ -48,6 +48,26 @@ const SEED_SKILLS = [
     qualityScore: 0.87,
     trustTier: 'community' as const,
     tags: ['testing', 'jest'],
+  },
+  {
+    id: 'experimental/ai-debug',
+    name: 'ai-debug',
+    description: 'AI-powered debugging assistant',
+    author: 'experimental',
+    repoUrl: 'https://github.com/skillsmith-labs/ai-debug',
+    qualityScore: 0.65,
+    trustTier: 'experimental' as const,
+    tags: ['debugging', 'ai'],
+  },
+  {
+    id: 'unknown/untested-tool',
+    name: 'untested-tool',
+    description: 'A newly submitted skill not yet reviewed or assessed',
+    author: 'unknown-contributor',
+    repoUrl: 'https://github.com/unknown-contributor/untested-tool',
+    qualityScore: 0.45,
+    trustTier: 'unknown' as const,
+    tags: ['utility', 'unverified'],
   },
 ]
 
