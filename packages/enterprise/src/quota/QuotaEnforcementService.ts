@@ -150,8 +150,6 @@ export class QuotaEnforcementService {
     const quota = await this.getOrCreateQuota(customerId, tier)
     const limit = quota.api_calls_limit
     const used = quota.api_calls_used
-    const percentUsed = (used / limit) * 100
-    const _warningLevel = getWarningLevel(percentUsed) // Calculated but used after early return
     const resetAt = new Date(quota.billing_period_end)
 
     // Check if quota exceeded

@@ -21,6 +21,7 @@ const BASE_URL = 'https://skillsmith.app'
  * Pricing information for each tier
  */
 export const TIER_PRICING: Readonly<Record<LicenseTier, string>> = {
+  individual: '$9.99/month',
   community: '$0/month',
   team: '$25/user/month',
   enterprise: '$55/user/month',
@@ -30,6 +31,9 @@ export const TIER_PRICING: Readonly<Record<LicenseTier, string>> = {
  * Human-readable display names for features
  */
 export const FEATURE_DISPLAY_NAMES: Readonly<Record<FeatureFlag, string>> = {
+  // Individual tier features
+  basic_analytics: 'Basic Analytics',
+  email_support: 'Email Support',
   // Team tier features
   team_workspaces: 'Team Workspaces',
   private_skills: 'Private Skills',
@@ -50,6 +54,9 @@ export const FEATURE_DISPLAY_NAMES: Readonly<Record<FeatureFlag, string>> = {
  * Brief descriptions of each feature for upgrade prompts
  */
 export const FEATURE_DESCRIPTIONS: Readonly<Record<FeatureFlag, string>> = {
+  // Individual tier features
+  basic_analytics: 'Access to basic usage analytics and reporting dashboard',
+  email_support: 'Email-based technical support with 48-hour response time',
   // Team tier features
   team_workspaces: 'Collaborate with your team on shared skill collections',
   private_skills: 'Create and manage private skills for your organization',
@@ -70,6 +77,7 @@ export const FEATURE_DESCRIPTIONS: Readonly<Record<FeatureFlag, string>> = {
  * Tier display names
  */
 export const TIER_DISPLAY_NAMES: Readonly<Record<LicenseTier, string>> = {
+  individual: 'Individual',
   community: 'Community',
   team: 'Team',
   enterprise: 'Enterprise',
@@ -383,9 +391,10 @@ export function checkFeatureGracefully(
 
   // Check tier hierarchy (enterprise includes all, team includes team features)
   const tierHierarchy: Record<LicenseTier, number> = {
-    community: 0,
-    team: 1,
-    enterprise: 2,
+    individual: 0,
+    community: 1,
+    team: 2,
+    enterprise: 3,
   }
 
   if (tierHierarchy[currentTier] >= tierHierarchy[requiredTier]) {
