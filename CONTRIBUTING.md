@@ -11,8 +11,8 @@
 ### Getting Started
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/wrsmith108/skillsmith.git
+# 1. Clone the repository (or fork first for contributions)
+git clone https://github.com/smith-horn/skillsmith.git
 cd skillsmith
 
 # 2. Start Docker container

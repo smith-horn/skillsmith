@@ -18,12 +18,12 @@ env:
 jobs:
   # SMI-1300: Validate package configurations before expensive Docker build
   # Catches scope mismatches for GitHub Packages early
-  # Only runs on upstream repo (Smith-Horn-Group) - skipped on forks
+  # Only runs on upstream repo (smith-horn) - skipped on forks
   package-validation:
     name: Package Validation
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.repository_owner == 'Smith-Horn-Group'
+    if: github.repository_owner == 'smith-horn'
 
     steps:
       - name: Checkout

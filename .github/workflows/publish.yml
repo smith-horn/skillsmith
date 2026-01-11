@@ -115,19 +115,19 @@ jobs:
             ANY_TO_PUBLISH=true
           fi
 
-          # SMI-1316: Check @smith-horn-group/enterprise with authenticated GitHub Packages check
+          # SMI-1316: Check @smith-horn/enterprise with authenticated GitHub Packages check
           VERSION=$(jq -r .version packages/enterprise/package.json)
           # Configure npm for GitHub Packages auth (using GITHUB_TOKEN)
           echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_TOKEN }}" >> ~/.npmrc
-          PUBLISHED=$(npm view @smith-horn-group/enterprise@$VERSION version --registry=https://npm.pkg.github.com 2>/dev/null || echo '')
+          PUBLISHED=$(npm view @smith-horn/enterprise@$VERSION version --registry=https://npm.pkg.github.com 2>/dev/null || echo '')
           # Clean up npmrc
           rm -f ~/.npmrc
           if [ -n "$PUBLISHED" ]; then
             echo "enterprise_exists=true" >> $GITHUB_OUTPUT
-            echo "| @smith-horn-group/enterprise | $VERSION | $PUBLISHED | ⏭️ Skip |" >> $GITHUB_STEP_SUMMARY
+            echo "| @smith-horn/enterprise | $VERSION | $PUBLISHED | ⏭️ Skip |" >> $GITHUB_STEP_SUMMARY
           else
             echo "enterprise_exists=false" >> $GITHUB_OUTPUT
-            echo "| @smith-horn-group/enterprise | $VERSION | - | 📦 Publish |" >> $GITHUB_STEP_SUMMARY
+            echo "| @smith-horn/enterprise | $VERSION | - | 📦 Publish |" >> $GITHUB_STEP_SUMMARY
             ANY_TO_PUBLISH=true
           fi
 
@@ -488,7 +488,7 @@ jobs:
   # Publish enterprise package to GitHub Packages (private)
   # SMI-1319: Use pre-publish-check outputs to skip already-published packages
   publish-enterprise:
-    name: Publish @smith-horn-group/enterprise
+    name: Publish @smith-horn/enterprise
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [pre-publish-check, validate, publish-core]
@@ -507,7 +507,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: 'https://npm.pkg.github.com'
-          scope: '@skillsmith'
+          scope: '@smith-horn'
           cache: 'npm'
 
       - name: Install dependencies
@@ -522,22 +522,22 @@ jobs:
         run: |
           PACKAGE_VERSION=$(node -p "require('./packages/enterprise/package.json').version")
           # GitHub Packages uses different registry - check there
-          NPM_VERSION=$(npm view @smith-horn-group/enterprise version --registry=https://npm.pkg.github.com 2>/dev/null || echo 'not-found')
+          NPM_VERSION=$(npm view @smith-horn/enterprise version --registry=https://npm.pkg.github.com 2>/dev/null || echo 'not-found')
           echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
           echo "npm_version=$NPM_VERSION" >> $GITHUB_OUTPUT
           if [ "$PACKAGE_VERSION" = "$NPM_VERSION" ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "::notice::@smith-horn-group/enterprise@$PACKAGE_VERSION already published, skipping..."
+            echo "::notice::@smith-horn/enterprise@$PACKAGE_VERSION already published, skipping..."
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "::notice::Publishing @smith-horn-group/enterprise@$PACKAGE_VERSION (current registry: $NPM_VERSION)"
+            echo "::notice::Publishing @smith-horn/enterprise@$PACKAGE_VERSION (current registry: $NPM_VERSION)"
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish enterprise to GitHub Packages
         if: steps.version-check.outputs.exists != 'true'
-        run: npm publish -w @smith-horn-group/enterprise
+        run: npm publish -w @smith-horn/enterprise
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -558,4 +558,4 @@ jobs:
           echo "| @skillsmith/core | ${{ needs.publish-core.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| @skillsmith/mcp-server | ${{ needs.publish-mcp-server.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| @skillsmith/cli | ${{ needs.publish-cli.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| @smith-horn-group/enterprise | ${{ needs.publish-enterprise.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| @smith-horn/enterprise | ${{ needs.publish-enterprise.result }} |" >> $GITHUB_STEP_SUMMARY
