@@ -12,6 +12,9 @@
 import { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import {
   CodebaseAnalyzer,
   createApiClient,
@@ -308,6 +311,171 @@ function formatOfflineResults(context: CodebaseContext, json: boolean): string {
 }
 
 /**
+ * Installed skill metadata (SMI-1358)
+ */
+interface InstalledSkill {
+  name: string
+  directory: string
+  tags: string[]
+  category: string | null
+}
+
+/**
+ * Read installed skills from ~/.claude/skills/ directory (SMI-1358)
+ * Returns array of installed skill metadata
+ */
+function getInstalledSkills(): InstalledSkill[] {
+  const skillsDir = join(homedir(), '.claude', 'skills')
+
+  if (!existsSync(skillsDir)) {
+    return []
+  }
+
+  const installedSkills: InstalledSkill[] = []
+
+  try {
+    const entries = readdirSync(skillsDir)
+
+    for (const entry of entries) {
+      const skillPath = join(skillsDir, entry)
+      const stat = statSync(skillPath)
+
+      if (!stat.isDirectory()) {
+        continue
+      }
+
+      // Try to read SKILL.md or skill.yaml for metadata
+      const skill: InstalledSkill = {
+        name: entry.toLowerCase(),
+        directory: entry,
+        tags: [],
+        category: null,
+      }
+
+      // Try to extract tags from SKILL.md frontmatter
+      const skillMdPath = join(skillPath, 'SKILL.md')
+      if (existsSync(skillMdPath)) {
+        try {
+          const content = readFileSync(skillMdPath, 'utf-8')
+          // Extract tags from YAML frontmatter
+          const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/)
+          const frontmatter = frontmatterMatch?.[1]
+          if (frontmatter) {
+            // Extract tags
+            const tagsMatch = frontmatter.match(/tags:\s*\[(.*?)\]/)
+            const tagsContent = tagsMatch?.[1]
+            if (tagsContent) {
+              skill.tags = tagsContent
+                .split(',')
+                .map((t) => t.trim().replace(/['"]/g, '').toLowerCase())
+                .filter(Boolean)
+            }
+            // Extract category
+            const categoryMatch = frontmatter.match(/category:\s*["']?([^"'\n]+)["']?/)
+            const categoryContent = categoryMatch?.[1]
+            if (categoryContent) {
+              skill.category = categoryContent.trim().toLowerCase()
+            }
+          }
+        } catch {
+          // Ignore read errors
+        }
+      }
+
+      installedSkills.push(skill)
+    }
+  } catch {
+    // Return empty array if directory cannot be read
+    return []
+  }
+
+  return installedSkills
+}
+
+/**
+ * Normalize a skill name for comparison (SMI-1358)
+ * Removes common prefixes/suffixes and normalizes case
+ */
+function normalizeSkillName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[-_]/g, '')
+    .replace(/^skill/, '')
+    .replace(/skill$/, '')
+    .replace(/^helper/, '')
+    .replace(/helper$/, '')
+    .trim()
+}
+
+/**
+ * Check if two skills overlap in functionality (SMI-1358)
+ * Uses name similarity, tag matching, and category comparison
+ */
+function skillsOverlap(installed: InstalledSkill, recommended: SkillRecommendation): boolean {
+  const installedName = normalizeSkillName(installed.name)
+  const recommendedName = normalizeSkillName(recommended.name)
+  const recommendedId = recommended.skill_id.toLowerCase()
+
+  // Direct name match (exact or normalized)
+  if (installedName === recommendedName) {
+    return true
+  }
+
+  // Check if installed name is contained in recommended ID
+  // e.g., installed "jest" overlaps with "community/jest-helper"
+  if (recommendedId.includes(installed.name)) {
+    return true
+  }
+
+  // Check if normalized names contain each other
+  if (installedName.includes(recommendedName) || recommendedName.includes(installedName)) {
+    // Only match if substantial overlap (at least 4 chars)
+    if (installedName.length >= 4 && recommendedName.length >= 4) {
+      return true
+    }
+  }
+
+  // Tag-based overlap detection
+  if (installed.tags.length > 0) {
+    const recommendedNameParts = recommended.name.toLowerCase().split(/[-_\s]+/)
+    const hasTagOverlap = installed.tags.some(
+      (tag) => recommendedNameParts.includes(tag) || recommendedName.includes(tag)
+    )
+    if (hasTagOverlap) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * Filter recommendations to remove overlaps with installed skills (SMI-1358)
+ */
+function filterOverlappingSkills(
+  recommendations: SkillRecommendation[],
+  installedSkills: InstalledSkill[]
+): { filtered: SkillRecommendation[]; overlapCount: number } {
+  if (installedSkills.length === 0) {
+    return { filtered: recommendations, overlapCount: 0 }
+  }
+
+  const filtered: SkillRecommendation[] = []
+  let overlapCount = 0
+
+  for (const rec of recommendations) {
+    const hasOverlap = installedSkills.some((installed) => skillsOverlap(installed, rec))
+    if (hasOverlap) {
+      overlapCount++
+    } else {
+      filtered.push(rec)
+    }
+  }
+
+  return { filtered, overlapCount }
+}
+
+/**
  * Run recommendation workflow
  */
 async function runRecommend(
@@ -362,29 +530,59 @@ async function runRecommend(
     })
 
     // Transform API response to expected format
+    let recommendations: SkillRecommendation[] = apiResponse.data.map((skill) => ({
+      skill_id: skill.id,
+      name: skill.name,
+      reason: `Matches your stack: ${stack.slice(0, 3).join(', ')}`,
+      similarity_score: -1, // API doesn't return this; -1 indicates not available
+      trust_tier: validateTrustTier(skill.trust_tier),
+      quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
+    }))
+
+    // SMI-1358: Apply overlap filtering if enabled (default behavior)
+    // noOverlap = true means user passed --no-overlap, so we should NOT filter
+    let overlapFiltered = 0
+    let installedSkills: InstalledSkill[] = []
+    const autoDetected = !options.installed || options.installed.length === 0
+
+    if (!options.noOverlap) {
+      // Get installed skills (auto-detect from ~/.claude/skills/ if not provided)
+      if (options.installed && options.installed.length > 0) {
+        // Convert provided skill IDs to InstalledSkill format
+        installedSkills = options.installed.map((id) => ({
+          name: id.toLowerCase().split('/').pop() ?? id.toLowerCase(),
+          directory: id,
+          tags: [],
+          category: null,
+        }))
+      } else {
+        // Auto-detect installed skills
+        installedSkills = getInstalledSkills()
+      }
+
+      if (installedSkills.length > 0) {
+        const filterResult = filterOverlappingSkills(recommendations, installedSkills)
+        recommendations = filterResult.filtered
+        overlapFiltered = filterResult.overlapCount
+      }
+    }
+
     const response: RecommendResponse = {
-      recommendations: apiResponse.data.map((skill) => ({
-        skill_id: skill.id,
-        name: skill.name,
-        reason: `Matches your stack: ${stack.slice(0, 3).join(', ')}`,
-        similarity_score: -1, // API doesn't return this; -1 indicates not available
-        trust_tier: validateTrustTier(skill.trust_tier),
-        quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
-      })),
+      recommendations,
       candidates_considered: apiResponse.data.length,
-      overlap_filtered: 0,
+      overlap_filtered: overlapFiltered,
       context: {
-        installed_count: options.installed?.length ?? 0,
+        installed_count: installedSkills.length,
         has_project_context: !!options.context,
         using_semantic_matching: true,
-        auto_detected: !options.installed || options.installed.length === 0,
+        auto_detected: autoDetected,
       },
       timing: {
         totalMs: codebaseContext.metadata.durationMs,
       },
     }
 
-    spinner.succeed(`Found ${response.recommendations.length} recommendations`)
+    spinner.succeed(`Found ${response.recommendations.length} recommendations${overlapFiltered > 0 ? ` (${overlapFiltered} filtered for overlap)` : ''}`)
 
     // Step 4: Output results
     if (options.json) {
