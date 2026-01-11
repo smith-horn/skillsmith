@@ -68,6 +68,26 @@ const SEED_SKILLS: TestSkill[] = [
     trustTier: 'community',
     tags: ['devops', 'docker', 'containers'],
   },
+  {
+    id: 'experimental/llm-prompt-tester',
+    name: 'llm-prompt-tester',
+    description: 'Test and iterate on LLM prompts with automated evaluation',
+    author: 'experimental',
+    repoUrl: 'https://github.com/skillsmith-labs/llm-prompt-tester',
+    qualityScore: 0.7,
+    trustTier: 'experimental',
+    tags: ['ai-ml', 'llm', 'prompt-engineering'],
+  },
+  {
+    id: 'unknown/untested-tool',
+    name: 'untested-tool',
+    description: 'A newly submitted skill not yet reviewed or assessed',
+    author: 'unknown-contributor',
+    repoUrl: 'https://github.com/unknown-contributor/untested-tool',
+    qualityScore: 0.45,
+    trustTier: 'unknown',
+    tags: ['development', 'utility', 'unverified'],
+  },
 ]
 
 describe('E2E: Skill Discovery Flow', () => {
