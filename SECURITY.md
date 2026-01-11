@@ -93,6 +93,6 @@ We appreciate security researchers who help keep Skillsmith secure. With your pe
 
 ## Contact
 
-- **Security Issues**: security@smithhorngroup.com
+- **Security Issues**: security@smithhorn.ca
 - **General Questions**: Via GitHub Issues
 - **Commercial Support**: contact@smithhorn.ca
