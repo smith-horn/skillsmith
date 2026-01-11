@@ -45,6 +45,7 @@ function createMockValidator(tier: LicenseTier, features: FeatureFlag[] = []): L
 
     // Check tier-based features
     const tierFeatures: Record<LicenseTier, FeatureFlag[]> = {
+      individual: ['basic_analytics', 'email_support'],
       community: [],
       team: ['team_workspaces', 'private_skills', 'usage_analytics', 'priority_support'],
       enterprise: [
@@ -58,6 +59,8 @@ function createMockValidator(tier: LicenseTier, features: FeatureFlag[] = []): L
         'siem_export',
         'compliance_reports',
         'private_registry',
+        'custom_integrations',
+        'advanced_analytics',
       ],
     }
 

@@ -226,6 +226,10 @@ export async function createTierTokens(
   privateKey: JosePrivateKey
 ): Promise<Record<LicenseTier, string>> {
   return {
+    individual: await createTestLicenseToken(privateKey, {
+      tier: 'individual',
+      features: ['basic_analytics', 'email_support'],
+    }),
     community: await createTestLicenseToken(privateKey, {
       tier: 'community',
       features: [],
