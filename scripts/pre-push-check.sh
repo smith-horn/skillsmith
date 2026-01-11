@@ -1,5 +1,6 @@
 #!/bin/bash
 # SMI-753: Pre-push Security Checks (Optimized)
+# SMI-1366: Improved Docker developer experience with graceful fallback
 # Comprehensive security validation before pushing code
 # Optimization: Single test run captures both output and exit code
 
@@ -9,6 +10,7 @@
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 echo ""
@@ -19,12 +21,41 @@ echo ""
 CHECKS_FAILED=0
 
 # =============================================================================
+# SMI-1366: Detect execution environment (Docker vs Local)
+# =============================================================================
+USE_DOCKER=0
+DOCKER_CONTAINER="skillsmith-dev-1"
+
+# Check if Docker is available and container is running
+if command -v docker &> /dev/null; then
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DOCKER_CONTAINER}$"; then
+    USE_DOCKER=1
+    echo -e "${BLUE}🐳 Using Docker container: ${DOCKER_CONTAINER}${NC}"
+  else
+    echo -e "${YELLOW}⚠️  Docker container '${DOCKER_CONTAINER}' not running - using local environment${NC}"
+  fi
+else
+  echo -e "${YELLOW}ℹ️  Docker not available - using local environment${NC}"
+fi
+echo ""
+
+# Helper function to run commands in Docker or locally
+run_cmd() {
+  if [ $USE_DOCKER -eq 1 ]; then
+    docker exec $DOCKER_CONTAINER "$@"
+  else
+    "$@"
+  fi
+}
+
+# =============================================================================
 # CHECK 1: Security Test Suite (Optimized - single run)
+# SMI-1366: Uses run_cmd for Docker/local fallback
 # =============================================================================
 echo "📋 Running security test suite..."
 
 # Run tests once, capture both output and exit code
-TEST_OUTPUT=$(docker exec skillsmith-dev-1 npm test -- packages/core/tests/security/ 2>&1) || TEST_STATUS=$?
+TEST_OUTPUT=$(run_cmd npm test -- packages/core/tests/security/ 2>&1) || TEST_STATUS=$?
 TEST_STATUS=${TEST_STATUS:-0}
 
 # Display relevant output (filter for test results)
@@ -40,8 +71,9 @@ fi
 echo ""
 
 # =============================================================================
-# CHECK 2: npm audit (Optimized - single run with Docker)
+# CHECK 2: npm audit (Optimized - single run)
 # SMI-1255: Only audit production dependencies, skip devDependencies
+# SMI-1366: Uses run_cmd for Docker/local fallback
 # Dev tools like vercel CLI have transitive vulnerabilities that don't affect production
 # =============================================================================
 echo "🔍 Running npm audit (production dependencies, high severity)..."
@@ -49,14 +81,18 @@ echo "🔍 Running npm audit (production dependencies, high severity)..."
 # Run audit once, capture both output and exit code
 # --omit=dev skips devDependencies (vercel, tsx, etc.) which have known vulnerabilities
 # that don't affect production code
-AUDIT_OUTPUT=$(docker exec skillsmith-dev-1 npm audit --audit-level=high --omit=dev 2>&1) || AUDIT_STATUS=$?
+AUDIT_OUTPUT=$(run_cmd npm audit --audit-level=high --omit=dev 2>&1) || AUDIT_STATUS=$?
 AUDIT_STATUS=${AUDIT_STATUS:-0}
 
 if [ $AUDIT_STATUS -ne 0 ]; then
   # Show audit output only on failure
   echo "$AUDIT_OUTPUT"
   echo -e "${RED}✗ High-severity vulnerabilities detected${NC}"
-  echo -e "${YELLOW}Run 'docker exec skillsmith-dev-1 npm audit fix' to resolve issues${NC}"
+  if [ $USE_DOCKER -eq 1 ]; then
+    echo -e "${YELLOW}Run 'docker exec $DOCKER_CONTAINER npm audit fix' to resolve issues${NC}"
+  else
+    echo -e "${YELLOW}Run 'npm audit fix' to resolve issues${NC}"
+  fi
   CHECKS_FAILED=1
 else
   echo -e "${GREEN}✓ No high-severity vulnerabilities found${NC}"
