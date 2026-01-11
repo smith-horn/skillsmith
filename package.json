@@ -50,7 +50,7 @@
     "node": ">=22.0.0"
   },
   "author": "Smith Horn Group Ltd",
-  "license": "Apache-2.0",
+  "license": "Elastic-2.0",
   "devDependencies": {
     "@eslint/js": "^9.17.0",
     "@octokit/auth-app": "8.1.2",

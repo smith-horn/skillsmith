@@ -9,7 +9,7 @@ import * as jose from 'jose'
 
 import { LicenseKeyGenerator } from '../../src/license/LicenseKeyGenerator.js'
 import type { LicensePayload, FeatureFlag } from '../../src/license/types.js'
-import { TEAM_FEATURES, ENTERPRISE_FEATURES } from '../../src/license/types.js'
+import { INDIVIDUAL_FEATURES, TEAM_FEATURES, ENTERPRISE_FEATURES } from '../../src/license/types.js'
 
 // ============================================================================
 // Test Utilities
@@ -317,7 +317,8 @@ describe('LicenseKeyGenerator', () => {
 
       expect(verified['tier']).toBe('team')
       expect(verified['customerId']).toBe('cust_team_123')
-      expect(verified['features']).toEqual([...TEAM_FEATURES])
+      // Team tier inherits individual features
+      expect(verified['features']).toEqual([...INDIVIDUAL_FEATURES, ...TEAM_FEATURES])
     })
 
     it('should include all team features', async () => {
@@ -397,7 +398,9 @@ describe('LicenseKeyGenerator', () => {
       const verified = await verifyToken(token, publicKey)
 
       const features = verified['features'] as FeatureFlag[]
-      const expectedCount = TEAM_FEATURES.length + ENTERPRISE_FEATURES.length
+      // Enterprise tier inherits individual and team features
+      const expectedCount =
+        INDIVIDUAL_FEATURES.length + TEAM_FEATURES.length + ENTERPRISE_FEATURES.length
 
       expect(features).toHaveLength(expectedCount)
     })

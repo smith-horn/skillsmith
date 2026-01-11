@@ -8,7 +8,8 @@
 import * as jose from 'jose'
 
 import type { FeatureFlag, LicensePayload, LicenseTier } from './types.js'
-import { ENTERPRISE_FEATURES, TEAM_FEATURES } from './types.js'
+import { ENTERPRISE_FEATURES, INDIVIDUAL_FEATURES, TEAM_FEATURES } from './types.js'
+import { TIER_QUOTAS } from './quotas.js'
 
 // ============================================================================
 // Default Configuration
@@ -213,10 +214,51 @@ export class LicenseKeyGenerator {
   // ==========================================================================
 
   /**
+   * Create an Individual tier license
+   *
+   * For solo developers at $9.99/month with 10,000 API calls/month.
+   * Includes: basic_analytics, email_support
+   *
+   * @param customerId - The customer identifier
+   * @param durationDays - License duration in days
+   * @param privateKey - The private key for signing
+   * @returns Promise resolving to the signed JWT license key
+   *
+   * @example
+   * ```typescript
+   * const individualLicense = await generator.createIndividualLicense(
+   *   'cust_individual_123',
+   *   30, // Monthly
+   *   privateKey
+   * );
+   * ```
+   */
+  async createIndividualLicense(
+    customerId: string,
+    durationDays: number,
+    privateKey: string
+  ): Promise<string> {
+    const now = Math.floor(Date.now() / 1000)
+
+    const payload: LicensePayload = {
+      tier: 'individual',
+      features: [...INDIVIDUAL_FEATURES],
+      customerId,
+      issuedAt: now,
+      expiresAt: now + durationDays * 86400,
+      quotas: {
+        apiCallsPerMonth: TIER_QUOTAS.individual.apiCallsPerMonth,
+      },
+    }
+
+    return this.generateLicenseKey(payload, privateKey)
+  }
+
+  /**
    * Create a Team tier license
    *
-   * Includes all team features: team_workspaces, private_skills,
-   * usage_analytics, priority_support
+   * Includes all individual and team features: basic_analytics, email_support,
+   * team_workspaces, private_skills, usage_analytics, priority_support
    *
    * @param customerId - The customer identifier
    * @param durationDays - License duration in days
@@ -241,10 +283,13 @@ export class LicenseKeyGenerator {
 
     const payload: LicensePayload = {
       tier: 'team',
-      features: [...TEAM_FEATURES],
+      features: [...INDIVIDUAL_FEATURES, ...TEAM_FEATURES],
       customerId,
       issuedAt: now,
       expiresAt: now + durationDays * 86400,
+      quotas: {
+        apiCallsPerMonth: TIER_QUOTAS.team.apiCallsPerMonth,
+      },
     }
 
     return this.generateLicenseKey(payload, privateKey)
@@ -253,9 +298,8 @@ export class LicenseKeyGenerator {
   /**
    * Create an Enterprise tier license
    *
-   * Includes all team and enterprise features: team_workspaces, private_skills,
-   * usage_analytics, priority_support, sso_saml, rbac, audit_logging,
-   * siem_export, compliance_reports, private_registry
+   * Includes all individual, team, and enterprise features.
+   * Unlimited API calls.
    *
    * @param customerId - The customer identifier
    * @param durationDays - License duration in days
@@ -280,10 +324,13 @@ export class LicenseKeyGenerator {
 
     const payload: LicensePayload = {
       tier: 'enterprise',
-      features: [...TEAM_FEATURES, ...ENTERPRISE_FEATURES],
+      features: [...INDIVIDUAL_FEATURES, ...TEAM_FEATURES, ...ENTERPRISE_FEATURES],
       customerId,
       issuedAt: now,
       expiresAt: now + durationDays * 86400,
+      quotas: {
+        apiCallsPerMonth: TIER_QUOTAS.enterprise.apiCallsPerMonth, // -1 = unlimited
+      },
     }
 
     return this.generateLicenseKey(payload, privateKey)
@@ -322,6 +369,9 @@ export class LicenseKeyGenerator {
       customerId,
       issuedAt: now,
       expiresAt: now + durationDays * 86400,
+      quotas: {
+        apiCallsPerMonth: TIER_QUOTAS.community.apiCallsPerMonth,
+      },
     }
 
     return this.generateLicenseKey(payload, privateKey)

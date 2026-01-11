@@ -20,6 +20,39 @@ docker exec skillsmith-dev-1 npm run audit:standards
 
 ---
 
+## ⚠️ IMPORTANT: License and Pricing Update (January 2026)
+
+**As of January 2026, Skillsmith has migrated from Apache-2.0 to Elastic License 2.0.**
+
+> **CRITICAL FOR AI AGENTS**: Documentation written before January 2026 may reference the old Apache-2.0 license and three-tier pricing. **IGNORE** any references to:
+> - "Apache-2.0" license for Skillsmith packages
+> - "Free tier unlimited" or "no rate limiting"
+> - Three-tier structure (Community/Team/Enterprise only)
+
+### Current License: Elastic License 2.0
+
+All Skillsmith packages are now licensed under [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license):
+- ✅ Self-hosting for internal use is permitted
+- ✅ Modification for own use is permitted
+- ❌ Cannot offer as a managed/hosted service to third parties
+- ❌ Cannot circumvent license key functionality
+
+### Current Four-Tier Pricing (with Usage Quotas)
+
+| Tier | Price | API Calls/Month | Features |
+|------|-------|-----------------|----------|
+| **Community** | Free | 1,000 | Core features |
+| **Individual** | $9.99/mo | 10,000 | Core + basic analytics |
+| **Team** | $25/user/mo | 100,000 | Team workspaces, private skills |
+| **Enterprise** | $55/user/mo | Unlimited | SSO, RBAC, audit logging |
+
+**Authoritative References:**
+- [ADR-013: Open Core Licensing](docs/adr/013-open-core-licensing.md) - License model
+- [ADR-017: Quota Enforcement](docs/adr/017-quota-enforcement-system.md) - Usage quotas
+- [packages/enterprise/src/license/quotas.ts](packages/enterprise/src/license/quotas.ts) - Quota constants
+
+---
+
 ## Project Overview
 
 Skillsmith is an MCP server for Claude Code skill discovery, installation, and management. It helps users find, evaluate, and install skills for their Claude Code environment.

@@ -16,8 +16,26 @@ import chalk from 'chalk'
 
 /**
  * Available license tiers
+ * - community: Free tier (1,000 API calls/month)
+ * - individual: Solo developers ($9.99/mo, 10,000 API calls/month)
+ * - team: Teams ($25/user/mo, 100,000 API calls/month)
+ * - enterprise: Full enterprise ($55/user/mo, unlimited)
  */
-export type LicenseTier = 'community' | 'team' | 'enterprise'
+export type LicenseTier = 'community' | 'individual' | 'team' | 'enterprise'
+
+/**
+ * Quota information for display
+ */
+export interface QuotaInfo {
+  /** API calls used this period */
+  used: number
+  /** API call limit (-1 for unlimited) */
+  limit: number
+  /** Percentage used */
+  percentUsed: number
+  /** When the quota resets */
+  resetAt: Date
+}
 
 /**
  * License status information returned by license check
@@ -33,6 +51,8 @@ export interface LicenseStatus {
   features: string[]
   /** Error message if license validation failed */
   error?: string
+  /** Optional quota information */
+  quota?: QuotaInfo
 }
 
 /**
@@ -115,14 +135,27 @@ export function _resetEnterpriseValidatorCache(): void {
  * Default features by tier
  *
  * Note: Community tier uses CLI-specific display names for UI purposes.
- * Team and Enterprise tiers use canonical feature names from @skillsmith/enterprise.
+ * Individual, Team and Enterprise tiers use canonical feature names from @skillsmith/enterprise.
  *
  * @see packages/enterprise/src/license/types.ts for canonical feature definitions
  */
 const TIER_FEATURES: Record<LicenseTier, string[]> = {
   community: ['basic_search', 'skill_install', 'local_validation'],
-  team: ['team_workspaces', 'private_skills', 'usage_analytics', 'priority_support'],
+  individual: ['basic_analytics', 'email_support'],
+  team: [
+    // Individual features (inherited)
+    'basic_analytics',
+    'email_support',
+    // Team features
+    'team_workspaces',
+    'private_skills',
+    'usage_analytics',
+    'priority_support',
+  ],
   enterprise: [
+    // Individual features (inherited)
+    'basic_analytics',
+    'email_support',
     // Team features (inherited)
     'team_workspaces',
     'private_skills',
@@ -135,7 +168,21 @@ const TIER_FEATURES: Record<LicenseTier, string[]> = {
     'siem_export',
     'compliance_reports',
     'private_registry',
+    'custom_integrations',
+    'advanced_analytics',
   ],
+}
+
+/**
+ * API call limits per tier (per month)
+ * Note: These are reference values matching the enterprise package quotas.
+ * Actual quota enforcement happens in the MCP server via QuotaEnforcementService.
+ */
+export const TIER_QUOTAS: Record<LicenseTier, number> = {
+  community: 1_000,
+  individual: 10_000,
+  team: 100_000,
+  enterprise: -1, // Unlimited
 }
 
 /**
@@ -318,6 +365,8 @@ export function formatTierBadge(tier: LicenseTier): string {
       return chalk.magenta.bold('Enterprise')
     case 'team':
       return chalk.blue.bold('Team')
+    case 'individual':
+      return chalk.cyan.bold('Individual')
     case 'community':
     default:
       return chalk.yellow('Community')
@@ -325,9 +374,81 @@ export function formatTierBadge(tier: LicenseTier): string {
 }
 
 /**
+ * Display a progress bar for quota usage
+ *
+ * @param used - API calls used
+ * @param limit - API call limit
+ * @returns Formatted progress bar string
+ */
+export function displayQuotaProgressBar(used: number, limit: number): string {
+  const width = 30
+  const percent = Math.min((used / limit) * 100, 100)
+  const filled = Math.round((percent / 100) * width)
+  const empty = width - filled
+
+  // Color based on usage level
+  let color = chalk.green
+  if (percent >= 90) color = chalk.red
+  else if (percent >= 80) color = chalk.yellow
+
+  const bar = color('█'.repeat(filled)) + chalk.gray('░'.repeat(empty))
+  return `[${bar}] ${percent.toFixed(0)}%`
+}
+
+/**
+ * Display a quota warning box
+ *
+ * @param quota - Quota information
+ * @param tier - Current tier for upgrade suggestions
+ */
+export function displayQuotaWarning(quota: QuotaInfo, tier: LicenseTier): void {
+  const percentUsed = quota.percentUsed
+  const resetFormatted = quota.resetAt.toLocaleDateString()
+
+  console.log()
+  if (percentUsed >= 100) {
+    console.log(chalk.red('━'.repeat(50)))
+    console.log(chalk.red.bold('❌ API Quota Exceeded'))
+    console.log(chalk.red(`You've used all ${quota.limit.toLocaleString()} API calls this month`))
+    console.log(chalk.red(`Quota resets on ${resetFormatted}`))
+    if (tier !== 'enterprise') {
+      console.log(chalk.dim(`Upgrade at: https://skillsmith.app/upgrade`))
+    }
+    console.log(chalk.red('━'.repeat(50)))
+  } else if (percentUsed >= 90) {
+    console.log(chalk.yellow('━'.repeat(50)))
+    console.log(chalk.yellow.bold('⚠️  API Quota Warning'))
+    console.log(
+      chalk.yellow(
+        `You've used ${percentUsed.toFixed(0)}% of your monthly quota (${quota.used.toLocaleString()}/${quota.limit.toLocaleString()})`
+      )
+    )
+    console.log(
+      chalk.yellow(
+        `${(quota.limit - quota.used).toLocaleString()} calls remaining until ${resetFormatted}`
+      )
+    )
+    if (tier !== 'enterprise') {
+      console.log(chalk.dim(`Upgrade at: https://skillsmith.app/upgrade`))
+    }
+    console.log(chalk.yellow('━'.repeat(50)))
+  } else if (percentUsed >= 80) {
+    console.log(chalk.yellow('━'.repeat(50)))
+    console.log(chalk.yellow('⚠️  Approaching API Quota Limit'))
+    console.log(
+      chalk.yellow(
+        `${percentUsed.toFixed(0)}% used (${quota.used.toLocaleString()}/${quota.limit.toLocaleString()})`
+      )
+    )
+    console.log(chalk.yellow('━'.repeat(50)))
+  }
+}
+
+/**
  * Display license status on CLI startup
  *
- * Shows license tier, expiration (if applicable), and features for paid tiers.
+ * Shows license tier, expiration (if applicable), features for paid tiers,
+ * and quota usage information.
  * Uses colored output: green for valid, yellow for community, red for expired/invalid.
  *
  * @param status - License status to display
@@ -336,11 +457,50 @@ export function displayLicenseStatus(status: LicenseStatus): void {
   const tierBadge = formatTierBadge(status.tier)
 
   if (status.tier === 'community') {
-    console.log(`License: ${tierBadge} ${chalk.dim('(free tier)')}`)
+    console.log(`License: ${tierBadge} ${chalk.dim('(free tier - 1,000 API calls/month)')}`)
+  } else if (status.tier === 'individual') {
+    const expiresInfo = status.expiresAt
+      ? chalk.green(`(expires: ${status.expiresAt.toISOString().split('T')[0]})`)
+      : ''
+    console.log(`License: ${tierBadge} ${expiresInfo}`)
   } else if (status.valid && status.expiresAt) {
     const expiresFormatted = status.expiresAt.toISOString().split('T')[0]
     console.log(`License: ${tierBadge} ${chalk.green(`(expires: ${expiresFormatted})`)}`)
     console.log(`Features: ${chalk.dim(status.features.join(', '))}`)
+  }
+
+  // Display quota information if available
+  if (status.quota && status.tier !== 'enterprise') {
+    const { used, limit, percentUsed, resetAt } = status.quota
+    const resetFormatted = resetAt.toISOString().split('T')[0]
+
+    if (percentUsed >= 100) {
+      console.log(
+        chalk.red.bold(
+          `API Quota: EXCEEDED (${used.toLocaleString()}/${limit.toLocaleString()} calls)`
+        )
+      )
+      console.log(chalk.red(`Quota resets on ${resetFormatted}. Upgrade to continue.`))
+    } else if (percentUsed >= 90) {
+      console.log(
+        chalk.yellow.bold(
+          `API Quota: ${used.toLocaleString()}/${limit.toLocaleString()} (${percentUsed.toFixed(0)}%)`
+        )
+      )
+      console.log(chalk.yellow(`Warning: Approaching limit. Resets ${resetFormatted}`))
+    } else if (percentUsed >= 80) {
+      console.log(
+        chalk.yellow(
+          `API Quota: ${used.toLocaleString()}/${limit.toLocaleString()} (${percentUsed.toFixed(0)}%)`
+        )
+      )
+    } else {
+      console.log(
+        chalk.dim(`API Quota: ${used.toLocaleString()}/${limit.toLocaleString()} calls used`)
+      )
+    }
+  } else if (status.tier === 'enterprise') {
+    console.log(chalk.dim('API Quota: Unlimited'))
   }
 
   // Show warnings for invalid/expired licenses

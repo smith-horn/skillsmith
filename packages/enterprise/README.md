@@ -128,6 +128,6 @@ A valid Skillsmith Enterprise or Team subscription is required.
 
 ## Related Packages
 
-- [@skillsmith/core](https://www.npmjs.com/package/@skillsmith/core) - Core functionality (Apache-2.0)
-- [@skillsmith/mcp-server](https://www.npmjs.com/package/@skillsmith/mcp-server) - MCP server (Apache-2.0)
-- [@skillsmith/cli](https://www.npmjs.com/package/@skillsmith/cli) - CLI tools (Apache-2.0)
+- [@skillsmith/core](https://www.npmjs.com/package/@skillsmith/core) - Core functionality (Elastic-2.0)
+- [@skillsmith/mcp-server](https://www.npmjs.com/package/@skillsmith/mcp-server) - MCP server (Elastic-2.0)
+- [@skillsmith/cli](https://www.npmjs.com/package/@skillsmith/cli) - CLI tools (Elastic-2.0)

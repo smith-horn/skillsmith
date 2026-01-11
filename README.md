@@ -248,7 +248,19 @@ See [CLAUDE.md](CLAUDE.md) for full development workflow and skill configuration
 
 ## License
 
-[Apache License 2.0](LICENSE)
+Skillsmith is source-available under the [Elastic License 2.0](LICENSE).
+
+**You CAN:**
+- Use Skillsmith for personal or internal business purposes
+- Modify the source code for your own use
+- Self-host for your team
+- Contribute bug fixes and improvements
+
+**You CANNOT:**
+- Offer Skillsmith as a managed service to third parties
+- Circumvent license key enforcement features
+
+For the full license text, see the [LICENSE](LICENSE) file.
 
 ## Author
 

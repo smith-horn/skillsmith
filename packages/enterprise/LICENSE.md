@@ -39,7 +39,9 @@ For licensing inquiries: enterprise@skillsmith.dev
 
 ---
 
-For the free, open-source Community tier, see the Apache-2.0 licensed packages:
+For the Community tier, see the Elastic License 2.0 packages:
 - @skillsmith/core
 - @skillsmith/mcp-server
 - @skillsmith/cli
+
+All packages are source-available under Elastic License 2.0. See https://www.elastic.co/licensing/elastic-license

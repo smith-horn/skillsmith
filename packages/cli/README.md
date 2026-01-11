@@ -239,7 +239,7 @@ skillsmith search --interactive
 
 ## License
 
-Apache-2.0
+[Elastic License 2.0](https://www.elastic.co/licensing/elastic-license)
 
 ## Links
 

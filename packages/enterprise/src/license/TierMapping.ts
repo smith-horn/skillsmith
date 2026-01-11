@@ -6,36 +6,31 @@
  */
 
 import type { FeatureFlag, LicenseTier } from './FeatureFlags.js'
+import {
+  INDIVIDUAL_FEATURES,
+  TEAM_FEATURES as TEAM_FEATURE_FLAGS,
+  ENTERPRISE_ONLY_FEATURES,
+} from './FeatureFlags.js'
 
 /**
- * Features available in the Team tier
+ * Features available in the Individual tier
+ */
+const INDIVIDUAL_TIER_FEATURES: readonly FeatureFlag[] = [...INDIVIDUAL_FEATURES] as const
+
+/**
+ * Features available in the Team tier (includes Individual features)
  */
 const TEAM_FEATURES: readonly FeatureFlag[] = [
-  'team_workspaces',
-  'private_skills',
-  'usage_analytics',
-  'priority_support',
+  ...INDIVIDUAL_FEATURES,
+  ...TEAM_FEATURE_FLAGS,
 ] as const
 
 /**
- * Additional features available only in the Enterprise tier
- */
-const ENTERPRISE_ONLY_FEATURES: readonly FeatureFlag[] = [
-  'sso_saml',
-  'rbac',
-  'audit_logging',
-  'siem_export',
-  'compliance_reports',
-  'private_registry',
-  'custom_integrations',
-  'advanced_analytics',
-] as const
-
-/**
- * All Enterprise features (Team features + Enterprise-only features)
+ * All Enterprise features (Individual + Team + Enterprise-only features)
  */
 const ENTERPRISE_FEATURES: readonly FeatureFlag[] = [
-  ...TEAM_FEATURES,
+  ...INDIVIDUAL_FEATURES,
+  ...TEAM_FEATURE_FLAGS,
   ...ENTERPRISE_ONLY_FEATURES,
 ] as const
 
@@ -44,6 +39,10 @@ const ENTERPRISE_FEATURES: readonly FeatureFlag[] = [
  * Used for permission checking and feature gating.
  */
 export const FEATURE_TIERS: Readonly<Record<FeatureFlag, readonly LicenseTier[]>> = {
+  // Individual tier features (available in individual, team, and enterprise)
+  basic_analytics: ['individual', 'team', 'enterprise'],
+  email_support: ['individual', 'team', 'enterprise'],
+
   // Team tier features (available in team and enterprise)
   team_workspaces: ['team', 'enterprise'],
   private_skills: ['team', 'enterprise'],
@@ -67,6 +66,7 @@ export const FEATURE_TIERS: Readonly<Record<FeatureFlag, readonly LicenseTier[]>
  */
 const TIER_FEATURES: Readonly<Record<LicenseTier, readonly FeatureFlag[]>> = {
   community: [],
+  individual: INDIVIDUAL_TIER_FEATURES,
   team: TEAM_FEATURES,
   enterprise: ENTERPRISE_FEATURES,
 } as const
@@ -79,6 +79,7 @@ const TIER_FEATURES: Readonly<Record<LicenseTier, readonly FeatureFlag[]>> = {
  *
  * @example
  * ```typescript
+ * getRequiredTier('basic_analytics'); // 'individual'
  * getRequiredTier('team_workspaces'); // 'team'
  * getRequiredTier('sso_saml'); // 'enterprise'
  * ```
@@ -87,6 +88,10 @@ export function getRequiredTier(feature: FeatureFlag): LicenseTier {
   const allowedTiers = FEATURE_TIERS[feature]
 
   // Return the first (lowest) tier that has this feature
+  if (allowedTiers.includes('individual')) {
+    return 'individual'
+  }
+
   if (allowedTiers.includes('team')) {
     return 'team'
   }
@@ -103,7 +108,8 @@ export function getRequiredTier(feature: FeatureFlag): LicenseTier {
  * @example
  * ```typescript
  * getFeaturesForTier('community'); // []
- * getFeaturesForTier('team'); // ['team_workspaces', 'private_skills', ...]
+ * getFeaturesForTier('individual'); // ['basic_analytics', 'email_support']
+ * getFeaturesForTier('team'); // ['basic_analytics', 'email_support', 'team_workspaces', ...]
  * getFeaturesForTier('enterprise'); // All features
  * ```
  */
@@ -120,10 +126,11 @@ export function getFeaturesForTier(tier: LicenseTier): FeatureFlag[] {
  *
  * @example
  * ```typescript
+ * tierIncludes('individual', 'basic_analytics'); // true
  * tierIncludes('team', 'team_workspaces'); // true
  * tierIncludes('team', 'sso_saml'); // false
  * tierIncludes('enterprise', 'sso_saml'); // true
- * tierIncludes('community', 'team_workspaces'); // false
+ * tierIncludes('community', 'basic_analytics'); // false
  * ```
  */
 export function tierIncludes(tier: LicenseTier, feature: FeatureFlag): boolean {

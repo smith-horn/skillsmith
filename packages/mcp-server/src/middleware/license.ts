@@ -31,11 +31,20 @@ export interface LicenseValidationResult {
 }
 
 /**
+ * License tiers available in Skillsmith
+ * - community: Free tier (1,000 API calls/month)
+ * - individual: Solo developers ($9.99/mo, 10,000 API calls/month)
+ * - team: Development teams ($25/user/mo, 100,000 API calls/month)
+ * - enterprise: Full enterprise ($55/user/mo, unlimited)
+ */
+export type LicenseTier = 'community' | 'individual' | 'team' | 'enterprise'
+
+/**
  * License information interface (mirrors @skillsmith/enterprise LicenseInfo)
  */
 export interface LicenseInfo {
   valid: boolean
-  tier: 'community' | 'team' | 'enterprise'
+  tier: LicenseTier
   features: FeatureFlag[]
   expiresAt?: Date
   organizationId?: string
@@ -45,7 +54,7 @@ export interface LicenseInfo {
  * License from enterprise package validation
  */
 interface EnterpriseLicense {
-  tier: 'community' | 'team' | 'enterprise'
+  tier: LicenseTier
   features: FeatureFlag[]
   customerId: string
   issuedAt: Date
@@ -306,8 +315,20 @@ export function createLicenseMiddleware(options?: {
       }
     }
 
-    // Team tier - only team features
-    if (license.tier === 'team' && FEATURE_TIERS[feature] === 'enterprise') {
+    // Individual tier - only individual features (basic_analytics, email_support)
+    const featureTier = FEATURE_TIERS[feature]
+    if (license.tier === 'individual' && (featureTier === 'team' || featureTier === 'enterprise')) {
+      const displayName = FEATURE_DISPLAY_NAMES[feature]
+      return {
+        valid: false,
+        feature,
+        message: `The "${displayName}" feature requires a ${featureTier} license. You are currently on the individual tier.`,
+        upgradeUrl: `${UPGRADE_URL}?feature=${feature}&current=individual`,
+      }
+    }
+
+    // Team tier - only team features (not enterprise)
+    if (license.tier === 'team' && featureTier === 'enterprise') {
       const displayName = FEATURE_DISPLAY_NAMES[feature]
       return {
         valid: false,

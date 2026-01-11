@@ -26,10 +26,17 @@ import {
 const BASE_URL = 'https://skillsmith.app'
 
 /**
+ * License tiers for degradation middleware
+ * Matches the LicenseTier type from license.ts
+ */
+type DegradationLicenseTier = 'community' | 'individual' | 'team' | 'enterprise'
+
+/**
  * Pricing information for each tier
  */
-const TIER_PRICING: Record<'community' | 'team' | 'enterprise', string> = {
+const TIER_PRICING: Record<DegradationLicenseTier, string> = {
   community: '$0/month',
+  individual: '$9.99/month',
   team: '$25/user/month',
   enterprise: '$55/user/month',
 }
@@ -38,6 +45,9 @@ const TIER_PRICING: Record<'community' | 'team' | 'enterprise', string> = {
  * Feature descriptions for upgrade prompts
  */
 const FEATURE_DESCRIPTIONS: Record<FeatureFlag, string> = {
+  // Individual tier features
+  basic_analytics: 'Track your personal skill usage and activity',
+  email_support: 'Get help from our support team via email',
   // Team tier features
   private_skills: 'Create and manage private skills for your organization',
   team_workspaces: 'Collaborate with your team on shared skill collections',
@@ -88,7 +98,7 @@ export interface DegradationLogEvent {
   timestamp: string
   toolName: string
   feature: FeatureFlag | null
-  tier: 'community' | 'team' | 'enterprise'
+  tier: DegradationLicenseTier
   action: 'allowed' | 'degraded' | 'error'
   message?: string
 }
@@ -143,10 +153,7 @@ export const consoleDegradationLogger: DegradationLogger = {
 /**
  * Create an upgrade prompt for a denied feature
  */
-function createUpgradePrompt(
-  feature: FeatureFlag,
-  _currentTier: 'community' | 'team' | 'enterprise'
-): string {
+function createUpgradePrompt(feature: FeatureFlag, _currentTier: DegradationLicenseTier): string {
   const displayName = FEATURE_DISPLAY_NAMES[feature]
   const requiredTier = FEATURE_TIERS[feature]
   const pricing = TIER_PRICING[requiredTier]
@@ -159,7 +166,7 @@ function createUpgradePrompt(
  */
 function createDetailedUpgradeMessage(
   feature: FeatureFlag,
-  currentTier: 'community' | 'team' | 'enterprise'
+  currentTier: DegradationLicenseTier
 ): string {
   const displayName = FEATURE_DISPLAY_NAMES[feature]
   const description = FEATURE_DESCRIPTIONS[feature]
@@ -220,7 +227,7 @@ export function getTierComparisonMessage(): string {
 function createGracefulDegradationResponse(
   toolName: string,
   feature: FeatureFlag,
-  currentTier: 'community' | 'team' | 'enterprise',
+  currentTier: DegradationLicenseTier,
   _validationResult: LicenseValidationResult
 ): McpToolResponse {
   const requiredTier = FEATURE_TIERS[feature]

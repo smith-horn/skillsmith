@@ -19,6 +19,9 @@
  * @see packages/enterprise/src/license/FeatureFlags.ts for canonical definition
  */
 export type FeatureFlag =
+  // Individual tier features
+  | 'basic_analytics'
+  | 'email_support'
   // Team tier features
   | 'private_skills'
   | 'team_workspaces'
@@ -83,6 +86,9 @@ export const TOOL_FEATURES: Record<string, FeatureFlag | null> = {
  * Human-readable names for feature flags
  */
 export const FEATURE_DISPLAY_NAMES: Record<FeatureFlag, string> = {
+  // Individual tier features
+  basic_analytics: 'Basic Analytics',
+  email_support: 'Email Support',
   // Team tier features
   private_skills: 'Private Skills',
   team_workspaces: 'Team Workspaces',
@@ -103,7 +109,10 @@ export const FEATURE_DISPLAY_NAMES: Record<FeatureFlag, string> = {
 /**
  * Tier information for upgrade messaging
  */
-export const FEATURE_TIERS: Record<FeatureFlag, 'team' | 'enterprise'> = {
+export const FEATURE_TIERS: Record<FeatureFlag, 'individual' | 'team' | 'enterprise'> = {
+  // Individual tier features
+  basic_analytics: 'individual',
+  email_support: 'individual',
   // Team tier features
   private_skills: 'team',
   team_workspaces: 'team',

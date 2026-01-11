@@ -43,7 +43,7 @@
   "files": [
     "dist"
   ],
-  "license": "SEE LICENSE IN LICENSE.md",
+  "license": "Elastic-2.0",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "restricted"

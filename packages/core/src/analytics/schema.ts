@@ -119,6 +119,78 @@ CREATE TABLE IF NOT EXISTS value_attributions (
 CREATE INDEX IF NOT EXISTS idx_attributions_event ON value_attributions(usage_event_id);
 CREATE INDEX IF NOT EXISTS idx_attributions_skill ON value_attributions(skill_id);
 CREATE INDEX IF NOT EXISTS idx_attributions_type ON value_attributions(attribution_type);
+
+-- ============================================================================
+-- Quota Management Tables (SMI-XXXX)
+-- ============================================================================
+
+-- Monthly usage quotas per customer/license
+-- Tracks API call usage against tier limits
+CREATE TABLE IF NOT EXISTS usage_quotas (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL,
+  license_tier TEXT NOT NULL CHECK(license_tier IN ('community', 'individual', 'team', 'enterprise')),
+  billing_period_start TEXT NOT NULL,
+  billing_period_end TEXT NOT NULL,
+  api_calls_limit INTEGER NOT NULL,
+  api_calls_used INTEGER DEFAULT 0,
+  last_warning_threshold INTEGER DEFAULT 0, -- 0, 80, 90, or 100
+  last_warning_sent_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(customer_id, billing_period_start)
+);
+
+-- Indexes for quota queries
+CREATE INDEX IF NOT EXISTS idx_quotas_customer ON usage_quotas(customer_id);
+CREATE INDEX IF NOT EXISTS idx_quotas_period ON usage_quotas(billing_period_start, billing_period_end);
+CREATE INDEX IF NOT EXISTS idx_quotas_tier ON usage_quotas(license_tier);
+
+-- Individual API call events for detailed tracking
+-- Used for quota enforcement and analytics
+CREATE TABLE IF NOT EXISTS api_call_events (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL,
+  license_key_hash TEXT, -- SHA256 hash of license key for lookup
+  tool_name TEXT NOT NULL,
+  endpoint TEXT,
+  cost INTEGER DEFAULT 1, -- Some operations may cost multiple quota units
+  success INTEGER DEFAULT 1, -- 1 for success, 0 for failure
+  latency_ms INTEGER,
+  session_id TEXT,
+  metadata TEXT, -- JSON for additional context
+  timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Indexes for API call queries
+CREATE INDEX IF NOT EXISTS idx_api_calls_customer ON api_call_events(customer_id);
+CREATE INDEX IF NOT EXISTS idx_api_calls_timestamp ON api_call_events(timestamp);
+CREATE INDEX IF NOT EXISTS idx_api_calls_license ON api_call_events(license_key_hash);
+CREATE INDEX IF NOT EXISTS idx_api_calls_tool ON api_call_events(tool_name);
+
+-- User subscriptions for billing integration
+-- Links customers to Stripe subscriptions
+CREATE TABLE IF NOT EXISTS user_subscriptions (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL,
+  tier TEXT NOT NULL CHECK(tier IN ('community', 'individual', 'team', 'enterprise')),
+  stripe_customer_id TEXT,
+  stripe_subscription_id TEXT,
+  status TEXT NOT NULL CHECK(status IN ('active', 'past_due', 'canceled', 'trialing', 'paused')),
+  current_period_start TEXT,
+  current_period_end TEXT,
+  last_active_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Indexes for subscription queries
+CREATE INDEX IF NOT EXISTS idx_subs_customer ON user_subscriptions(customer_id);
+CREATE INDEX IF NOT EXISTS idx_subs_stripe ON user_subscriptions(stripe_customer_id);
+CREATE INDEX IF NOT EXISTS idx_subs_status ON user_subscriptions(status);
+CREATE INDEX IF NOT EXISTS idx_subs_tier ON user_subscriptions(tier);
+CREATE INDEX IF NOT EXISTS idx_subs_last_active ON user_subscriptions(last_active_at);
 `
 
 /**

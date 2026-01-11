@@ -93,8 +93,10 @@ export type {
 export type {
   EnterpriseFeatureFlag,
   FeatureFlag,
+  IndividualFeatureFlag,
   License,
   LicensePayload,
+  LicenseQuotas,
   LicenseTier,
   LicenseValidationError,
   LicenseValidationErrorCode,
@@ -106,8 +108,29 @@ export type {
 // Constants
 export {
   ENTERPRISE_FEATURES,
+  INDIVIDUAL_FEATURES,
   LICENSE_KEY_ENV_VAR,
   LICENSE_PUBLIC_KEY_ENV_VAR,
   TEAM_FEATURES,
   TIER_FEATURES,
 } from './types.js'
+
+// Quota configuration and utilities
+export {
+  TIER_QUOTAS,
+  WARNING_THRESHOLDS,
+  WARNING_CONFIG,
+  DORMANT_ACCOUNT_DAYS,
+  BILLING_PERIOD_DAYS,
+  getQuotaLimit,
+  isUnlimited,
+  getWarningLevel,
+  getWarningConfig,
+  getTierPriceDisplay,
+  getQuotaDisplay,
+  getUpgradeRecommendation,
+  buildUpgradeUrl,
+  type TierQuotaConfig,
+  type WarningThreshold,
+  type WarningConfig,
+} from './quotas.js'

@@ -154,7 +154,7 @@ See [PRIVACY.md](./PRIVACY.md) for full details on what data is collected and ho
 
 ## License
 
-Apache-2.0
+[Elastic License 2.0](https://www.elastic.co/licensing/elastic-license)
 
 ## Links
 

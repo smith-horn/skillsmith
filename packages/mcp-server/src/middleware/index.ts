@@ -30,11 +30,26 @@ export {
   type LicenseMiddlewareContext,
   type LicenseValidationResult,
   type LicenseInfo,
+  type LicenseTier,
   type FeatureFlag,
   TOOL_FEATURES,
   FEATURE_DISPLAY_NAMES,
   FEATURE_TIERS,
 } from './license.js'
+
+// Quota enforcement middleware (SMI-1091)
+export {
+  createQuotaMiddleware,
+  withQuotaEnforcement,
+  isUnlimitedTier,
+  getQuotaLimit,
+  formatQuotaRemaining,
+  type QuotaMiddleware,
+  type QuotaMiddlewareOptions,
+  type QuotaCheckResult,
+  type QuotaMetadata,
+  type QuotaStorage,
+} from './quota.js'
 
 // Degradation middleware (SMI-1060)
 export {

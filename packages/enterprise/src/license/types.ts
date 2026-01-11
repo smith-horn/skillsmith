@@ -12,6 +12,11 @@
 // ============================================================================
 
 /**
+ * Individual tier feature flags
+ */
+export type IndividualFeatureFlag = 'basic_analytics' | 'email_support'
+
+/**
  * Team tier feature flags
  */
 export type TeamFeatureFlag =
@@ -36,11 +41,16 @@ export type EnterpriseFeatureFlag =
 /**
  * All available feature flags
  */
-export type FeatureFlag = TeamFeatureFlag | EnterpriseFeatureFlag
+export type FeatureFlag = IndividualFeatureFlag | TeamFeatureFlag | EnterpriseFeatureFlag
 
 /**
  * Feature flags grouped by tier
  */
+export const INDIVIDUAL_FEATURES: readonly IndividualFeatureFlag[] = [
+  'basic_analytics',
+  'email_support',
+] as const
+
 export const TEAM_FEATURES: readonly TeamFeatureFlag[] = [
   'team_workspaces',
   'private_skills',
@@ -65,21 +75,34 @@ export const ENTERPRISE_FEATURES: readonly EnterpriseFeatureFlag[] = [
 
 /**
  * Available license tiers
+ * - community: Free tier (1,000 API calls/month)
+ * - individual: Solo developers ($9.99/mo, 10,000 API calls/month)
+ * - team: Teams ($25/user/mo, 100,000 API calls/month)
+ * - enterprise: Full enterprise ($55/user/mo, unlimited)
  */
-export type LicenseTier = 'community' | 'team' | 'enterprise'
+export type LicenseTier = 'community' | 'individual' | 'team' | 'enterprise'
 
 /**
  * Default features for each tier
  */
 export const TIER_FEATURES: Record<LicenseTier, readonly FeatureFlag[]> = {
   community: [],
-  team: TEAM_FEATURES,
-  enterprise: [...TEAM_FEATURES, ...ENTERPRISE_FEATURES],
+  individual: INDIVIDUAL_FEATURES,
+  team: [...INDIVIDUAL_FEATURES, ...TEAM_FEATURES],
+  enterprise: [...INDIVIDUAL_FEATURES, ...TEAM_FEATURES, ...ENTERPRISE_FEATURES],
 } as const
 
 // ============================================================================
 // JWT Payload
 // ============================================================================
+
+/**
+ * Quota limits for license tiers
+ */
+export interface LicenseQuotas {
+  /** API calls allowed per month (-1 for unlimited) */
+  apiCallsPerMonth: number
+}
 
 /**
  * JWT license payload structure
@@ -95,6 +118,8 @@ export interface LicensePayload {
   issuedAt: number
   /** Unix timestamp when the license expires */
   expiresAt: number
+  /** Optional quota limits (defaults to tier limits if not specified) */
+  quotas?: LicenseQuotas
 }
 
 // ============================================================================

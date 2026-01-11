@@ -10,8 +10,14 @@ import {
 
 describe('FeatureFlags', () => {
   describe('ALL_FEATURE_FLAGS', () => {
-    it('should contain all 12 feature flags', () => {
-      expect(ALL_FEATURE_FLAGS).toHaveLength(12)
+    it('should contain all 14 feature flags', () => {
+      // 2 individual + 4 team + 8 enterprise = 14 features
+      expect(ALL_FEATURE_FLAGS).toHaveLength(14)
+    })
+
+    it('should include all individual tier features', () => {
+      expect(ALL_FEATURE_FLAGS).toContain('basic_analytics')
+      expect(ALL_FEATURE_FLAGS).toContain('email_support')
     })
 
     it('should include all team tier features', () => {
@@ -40,12 +46,13 @@ describe('FeatureFlags', () => {
   })
 
   describe('ALL_LICENSE_TIERS', () => {
-    it('should contain all 3 license tiers', () => {
-      expect(ALL_LICENSE_TIERS).toHaveLength(3)
+    it('should contain all 4 license tiers', () => {
+      expect(ALL_LICENSE_TIERS).toHaveLength(4)
     })
 
-    it('should include community, team, and enterprise tiers', () => {
+    it('should include community, individual, team, and enterprise tiers', () => {
       expect(ALL_LICENSE_TIERS).toContain('community')
+      expect(ALL_LICENSE_TIERS).toContain('individual')
       expect(ALL_LICENSE_TIERS).toContain('team')
       expect(ALL_LICENSE_TIERS).toContain('enterprise')
     })
@@ -93,6 +100,7 @@ describe('FeatureFlags', () => {
   describe('isLicenseTier', () => {
     it('should return true for valid license tiers', () => {
       expect(isLicenseTier('community')).toBe(true)
+      expect(isLicenseTier('individual')).toBe(true)
       expect(isLicenseTier('team')).toBe(true)
       expect(isLicenseTier('enterprise')).toBe(true)
     })
@@ -125,11 +133,13 @@ describe('FeatureFlags', () => {
 
     it('should allow valid LicenseTier assignments', () => {
       const tier1: LicenseTier = 'community'
-      const tier2: LicenseTier = 'team'
-      const tier3: LicenseTier = 'enterprise'
+      const tier2: LicenseTier = 'individual'
+      const tier3: LicenseTier = 'team'
+      const tier4: LicenseTier = 'enterprise'
       expect(tier1).toBe('community')
-      expect(tier2).toBe('team')
-      expect(tier3).toBe('enterprise')
+      expect(tier2).toBe('individual')
+      expect(tier3).toBe('team')
+      expect(tier4).toBe('enterprise')
     })
   })
 })
