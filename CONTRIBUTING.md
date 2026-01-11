@@ -6,7 +6,7 @@
 
 - Docker Desktop running
 - Node.js 20+ (for local tooling)
-- Linear API key in environment (`LINEAR_API_KEY`)
+- `LINEAR_API_KEY` in environment (maintainers only - not required for contributors)
 
 ### Getting Started
 
@@ -29,50 +29,28 @@ docker exec skillsmith-dev-1 npm test
 
 Skillsmith uses [Linear](https://linear.app) for issue tracking. Issue IDs follow the pattern `SMI-XXX`.
 
-### Keeping Linear in Sync
+### For Contributors
 
-Use the built-in Linear sync commands to update issue status:
+External contributors **do not need Linear access**. You can contribute without any Linear API key.
 
-```bash
-# Mark issue as done
-npm run linear:done SMI-619
-
-# Mark issue as in progress
-npm run linear:wip SMI-640
-
-# Check which issues are mentioned in recent commits
-npm run linear:check
-
-# Auto-update issues from last commit message
-npm run linear:sync
-```
-
-### Commit Message Convention
-
-Include issue IDs in commit messages for automatic tracking:
+**Reference issues in commits:**
 
 ```bash
-# Good - issue ID in message
+# Include issue ID for traceability
 git commit -m "feat(cache): implement tiered caching (SMI-644)"
 
-# Also good - multiple issues
+# Multiple issues
 git commit -m "fix(security): address vulnerabilities (SMI-683, SMI-684)"
 ```
 
-#### Auto-Closing Issues
+**Auto-close issues when merged:**
 
-Use `Resolves:` in the commit body to automatically close Linear issues when merged:
+The `Resolves:` syntax automatically closes Linear issues via GitHub webhook:
 
 ```bash
-# Auto-close single issue
 git commit -m "feat(auth): implement SSO integration
 
 Resolves: SMI-1234"
-
-# Auto-close multiple issues
-git commit -m "fix(enterprise): complete individual tier support
-
-Resolves: SMI-1372, SMI-1373, SMI-1374"
 ```
 
 | Keyword | Effect |
@@ -81,15 +59,25 @@ Resolves: SMI-1372, SMI-1373, SMI-1374"
 | `Fixes: SMI-XXX` | Same (alias for bug fixes) |
 | `Closes: SMI-XXX` | Same (alias) |
 
-After committing, run `npm run linear:sync` to automatically update Linear.
+> **How it works**: The auto-close feature uses GitHub's webhook integration with Linear. You're not calling Linear's API directly - GitHub processes your commit message and updates Linear using the org's credentials. This means you can reference and close issues without any API access.
 
-### Issue Status Flow
+### For Maintainers
+
+Maintainers with `LINEAR_API_KEY` can update issues directly:
+
+```bash
+# These commands require LINEAR_API_KEY environment variable
+npm run linear:done SMI-619      # Mark as done
+npm run linear:wip SMI-640       # Mark as in progress
+npm run linear:check             # Check issues in recent commits
+npm run linear:sync              # Auto-update from last commit
+```
+
+**Issue Status Flow:**
 
 ```
 Backlog → Todo → In Progress → Done
 ```
-
-Use these commands to move issues:
 
 | Action | Command |
 |--------|---------|
@@ -115,21 +103,19 @@ Use these commands to move issues:
    git commit -m "feat(module): description (SMI-XXX)"
    ```
 
-4. **Update Linear**
-   ```bash
-   npm run linear:sync
-   ```
-
-5. **Push and create PR**
+4. **Push and create PR**
    ```bash
    git push origin feature/smi-xxx-description
    gh pr create
    ```
 
-6. **After merge, mark done**
+5. **(Maintainers only) Update Linear**
    ```bash
-   npm run linear:done SMI-XXX
+   npm run linear:sync           # Requires LINEAR_API_KEY
+   npm run linear:done SMI-XXX   # After merge
    ```
+
+> **For contributors**: Steps 1-4 are all you need. Use `Resolves: SMI-XXX` in your commit to auto-close issues when merged.
 
 ## Parallel Development with Worktrees
 
