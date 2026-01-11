@@ -12,8 +12,34 @@
 import { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
-import { CodebaseAnalyzer, createApiClient, type CodebaseContext } from '@skillsmith/core'
+import {
+  CodebaseAnalyzer,
+  createApiClient,
+  type CodebaseContext,
+  type TrustTier,
+} from '@skillsmith/core'
 import { sanitizeError } from '../utils/sanitize.js'
+
+/**
+ * Valid trust tier values
+ */
+const VALID_TRUST_TIERS: readonly TrustTier[] = [
+  'verified',
+  'community',
+  'experimental',
+  'unknown',
+] as const
+
+/**
+ * Validate and normalize trust tier from API response (SMI-1354)
+ * Returns 'unknown' for invalid values
+ */
+function validateTrustTier(tier: unknown): TrustTier {
+  if (typeof tier === 'string' && VALID_TRUST_TIERS.includes(tier as TrustTier)) {
+    return tier as TrustTier
+  }
+  return 'unknown'
+}
 
 /**
  * Skill recommendation from API
@@ -23,7 +49,7 @@ interface SkillRecommendation {
   name: string
   reason: string
   similarity_score: number
-  trust_tier: 'verified' | 'community' | 'experimental' | 'unknown'
+  trust_tier: TrustTier
   quality_score: number
 }
 
@@ -46,9 +72,9 @@ interface RecommendResponse {
 }
 
 /**
- * Get trust badge for display
+ * Get trust badge for display (SMI-1357: Use TrustTier type)
  */
-function getTrustBadge(tier: string): string {
+function getTrustBadge(tier: TrustTier): string {
   switch (tier) {
     case 'verified':
       return chalk.green('[VERIFIED]')
@@ -57,8 +83,6 @@ function getTrustBadge(tier: string): string {
     case 'experimental':
       return chalk.yellow('[EXPERIMENTAL]')
     case 'unknown':
-      return chalk.gray('[UNKNOWN]')
-    default:
       return chalk.gray('[UNKNOWN]')
   }
 }
@@ -202,6 +226,88 @@ function buildStackFromAnalysis(context: CodebaseContext): string[] {
 }
 
 /**
+ * Check if error is a network-related error (SMI-1355)
+ */
+function isNetworkError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase()
+    return (
+      message.includes('fetch failed') ||
+      message.includes('network') ||
+      message.includes('enotfound') ||
+      message.includes('econnrefused') ||
+      message.includes('timeout') ||
+      message.includes('socket') ||
+      error.name === 'AbortError'
+    )
+  }
+  return false
+}
+
+/**
+ * Format offline analysis results (SMI-1355)
+ */
+function formatOfflineResults(context: CodebaseContext, json: boolean): string {
+  if (json) {
+    return JSON.stringify(
+      {
+        offline: true,
+        analysis: {
+          frameworks: context.frameworks.slice(0, 10).map((f) => ({
+            name: f.name,
+            confidence: Math.round(f.confidence * 100),
+          })),
+          dependencies: context.dependencies.slice(0, 20).map((d) => ({
+            name: d.name,
+            is_dev: d.isDev,
+          })),
+          stats: {
+            total_files: context.stats.totalFiles,
+            total_lines: context.stats.totalLines,
+          },
+        },
+        message: 'Unable to reach Skillsmith API. Showing analysis-only results.',
+      },
+      null,
+      2
+    )
+  }
+
+  const lines: string[] = []
+  lines.push('')
+  lines.push(chalk.yellow('⚠ Unable to reach Skillsmith API. Showing analysis-only results.'))
+  lines.push('')
+  lines.push(chalk.bold.blue('=== Codebase Analysis ==='))
+  lines.push('')
+
+  if (context.frameworks.length > 0) {
+    lines.push(chalk.bold('Detected Frameworks:'))
+    context.frameworks.slice(0, 5).forEach((f) => {
+      const confidence = Math.round(f.confidence * 100)
+      lines.push(`  - ${f.name} (${confidence}% confidence)`)
+    })
+    lines.push('')
+  }
+
+  if (context.dependencies.length > 0) {
+    const prodDeps = context.dependencies.filter((d) => !d.isDev).slice(0, 10)
+    if (prodDeps.length > 0) {
+      lines.push(chalk.bold('Key Dependencies:'))
+      prodDeps.forEach((d) => lines.push(`  - ${d.name}`))
+      lines.push('')
+    }
+  }
+
+  lines.push(chalk.dim('---'))
+  lines.push(chalk.dim(`Files analyzed: ${context.stats.totalFiles}`))
+  lines.push(chalk.dim(`Total lines: ${context.stats.totalLines.toLocaleString()}`))
+  lines.push('')
+  lines.push(chalk.cyan('To get skill recommendations, ensure network connectivity and retry.'))
+
+  return lines.join('\n')
+}
+
+/**
  * Run recommendation workflow
  */
 async function runRecommend(
@@ -262,7 +368,7 @@ async function runRecommend(
         name: skill.name,
         reason: `Matches your stack: ${stack.slice(0, 3).join(', ')}`,
         similarity_score: -1, // API doesn't return this; -1 indicates not available
-        trust_tier: skill.trust_tier as 'verified' | 'community' | 'experimental' | 'unknown',
+        trust_tier: validateTrustTier(skill.trust_tier),
         quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
       })),
       candidates_considered: apiResponse.data.length,
@@ -287,6 +393,13 @@ async function runRecommend(
       console.log(formatRecommendations(response, codebaseContext))
     }
   } catch (error) {
+    // SMI-1355: Check if this is a network error and we have codebase context
+    if (isNetworkError(error) && codebaseContext) {
+      spinner.warn('Unable to reach API, showing analysis-only results')
+      console.log(formatOfflineResults(codebaseContext, options.json))
+      return
+    }
+
     spinner.fail('Recommendation failed')
 
     if (options.json) {
