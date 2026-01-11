@@ -59,6 +59,28 @@ git commit -m "feat(cache): implement tiered caching (SMI-644)"
 git commit -m "fix(security): address vulnerabilities (SMI-683, SMI-684)"
 ```
 
+#### Auto-Closing Issues
+
+Use `Resolves:` in the commit body to automatically close Linear issues when merged:
+
+```bash
+# Auto-close single issue
+git commit -m "feat(auth): implement SSO integration
+
+Resolves: SMI-1234"
+
+# Auto-close multiple issues
+git commit -m "fix(enterprise): complete individual tier support
+
+Resolves: SMI-1372, SMI-1373, SMI-1374"
+```
+
+| Keyword | Effect |
+|---------|--------|
+| `Resolves: SMI-XXX` | Auto-closes issue when merged to main |
+| `Fixes: SMI-XXX` | Same (alias for bug fixes) |
+| `Closes: SMI-XXX` | Same (alias) |
+
 After committing, run `npm run linear:sync` to automatically update Linear.
 
 ### Issue Status Flow
