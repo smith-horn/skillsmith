@@ -32,6 +32,7 @@ import { SkillMatcher } from '@skillsmith/core'
 import { RateLimiter } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import type { MCPTrustTier as TrustTier } from '@skillsmith/core'
+import { mapTrustTierFromDb, getTrustBadge } from '../utils/validation.js'
 
 /**
  * Zod schema for suggest tool input validation
@@ -170,23 +171,6 @@ interface SkillData {
   trustTier: TrustTier
   /** Categories for filtering (from tags) */
   categories: string[]
-}
-
-/**
- * Map database trust tier to MCP trust tier
- */
-function mapTrustTierFromDb(dbTier: string): TrustTier {
-  switch (dbTier) {
-    case 'verified':
-      return 'verified'
-    case 'community':
-      return 'community'
-    case 'experimental':
-      return 'experimental'
-    case 'unknown':
-    default:
-      return 'unknown'
-  }
 }
 
 /**
@@ -452,22 +436,4 @@ export function formatSuggestions(response: SuggestResponse): string {
   lines.push(`Completed in ${response.timing.totalMs}ms`)
 
   return lines.join('\n')
-}
-
-/**
- * Get trust badge for display
- */
-function getTrustBadge(tier: TrustTier): string {
-  switch (tier) {
-    case 'verified':
-      return '[VERIFIED]'
-    case 'community':
-      return '[COMMUNITY]'
-    case 'experimental':
-      return '[EXPERIMENTAL]'
-    case 'unknown':
-      return '[UNKNOWN]'
-    default:
-      return '[UNKNOWN]'
-  }
 }
