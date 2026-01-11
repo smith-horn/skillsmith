@@ -4,7 +4,6 @@
 
 Skillsmith is a skill discovery, recommendation, and learning system for [Claude Code](https://claude.ai/code) users. Find the right skills for your projects, install them safely, and learn to use them effectively.
 
-
 ## Features
 
 - **Discover** - Search skills from GitHub with semantic search
