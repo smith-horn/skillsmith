@@ -56,12 +56,12 @@
   "license": "Elastic-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/smith-horn-group/skillsmith.git",
+    "url": "https://github.com/smith-horn/skillsmith.git",
     "directory": "packages/core"
   },
-  "homepage": "https://github.com/smith-horn-group/skillsmith#readme",
+  "homepage": "https://github.com/smith-horn/skillsmith#readme",
   "bugs": {
-    "url": "https://github.com/smith-horn-group/skillsmith/issues"
+    "url": "https://github.com/smith-horn/skillsmith/issues"
   },
   "keywords": [
     "claude",

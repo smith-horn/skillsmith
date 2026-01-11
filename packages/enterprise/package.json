@@ -1,5 +1,5 @@
 {
-  "name": "@smith-horn-group/enterprise",
+  "name": "@smith-horn/enterprise",
   "version": "0.1.2",
   "description": "Enterprise features for Skillsmith including audit logging, SSO, and RBAC",
   "type": "module",
@@ -50,12 +50,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/smith-horn-group/skillsmith.git",
+    "url": "https://github.com/smith-horn/skillsmith.git",
     "directory": "packages/enterprise"
   },
   "homepage": "https://skillsmith.dev/enterprise",
   "bugs": {
-    "url": "https://github.com/smith-horn-group/skillsmith/issues",
+    "url": "https://github.com/smith-horn/skillsmith/issues",
     "email": "enterprise@skillsmith.dev"
   },
   "keywords": [
