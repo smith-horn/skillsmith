@@ -582,7 +582,9 @@ async function runRecommend(
       },
     }
 
-    spinner.succeed(`Found ${response.recommendations.length} recommendations${overlapFiltered > 0 ? ` (${overlapFiltered} filtered for overlap)` : ''}`)
+    spinner.succeed(
+      `Found ${response.recommendations.length} recommendations${overlapFiltered > 0 ? ` (${overlapFiltered} filtered for overlap)` : ''}`
+    )
 
     // Step 4: Output results
     if (options.json) {

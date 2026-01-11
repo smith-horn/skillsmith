@@ -466,10 +466,7 @@ export class /* <LANGUAGE_CLASS_NAME> */ LanguageNameAdapter extends LanguageAda
     // - ''' or """ (Python docstrings)
 
     return (
-      line.startsWith('//') ||
-      line.startsWith('#') ||
-      line.startsWith('/*') ||
-      line.startsWith('*')
+      line.startsWith('//') || line.startsWith('#') || line.startsWith('/*') || line.startsWith('*')
     )
   }
 
