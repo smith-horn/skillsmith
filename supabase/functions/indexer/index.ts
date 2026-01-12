@@ -493,7 +493,9 @@ Deno.serve(async (req: Request) => {
     }
 
     const topics = body.topics || DEFAULT_TOPICS
-    const maxPages = Math.min(body.maxPages || 3, 10) // Max 10 pages
+    // Default to 5 pages - optimal for Edge Function timeout (150s)
+    // 7+ pages causes timeout, see SMI-1413 for test results
+    const maxPages = Math.min(body.maxPages || 5, 10)
     const dryRun = body.dryRun ?? false
 
     const result: IndexerResult = {

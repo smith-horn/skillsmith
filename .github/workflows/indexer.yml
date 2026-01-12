@@ -1,5 +1,11 @@
 # SMI-1248: GitHub Actions workflow for scheduled skill indexing
 # Alternative to pg_cron for triggering the indexer
+#
+# Performance Notes (SMI-1413):
+# - Edge Function has 150-second timeout
+# - max_pages=5 indexes ~400 skills reliably (~1 min)
+# - max_pages=7+ causes timeout (502 Bad Gateway)
+# - Uses GitHub App auth for 5000 req/hour rate limit
 
 name: Skill Indexer
 
@@ -15,9 +21,9 @@ on:
         default: 'false'
         type: boolean
       max_pages:
-        description: 'Max pages per topic'
+        description: 'Max pages per topic (5 recommended, 7+ causes timeout)'
         required: false
-        default: '3'
+        default: '5'
         type: string
 
 env:
@@ -46,7 +52,7 @@ jobs:
         run: |
           # Build request body
           DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
-          MAX_PAGES="${{ github.event.inputs.max_pages || '3' }}"
+          MAX_PAGES="${{ github.event.inputs.max_pages || '5' }}"
 
           BODY=$(cat <<EOF
           {
