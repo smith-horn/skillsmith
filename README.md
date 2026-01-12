@@ -4,23 +4,6 @@
 
 Skillsmith is a skill discovery, recommendation, and learning system for [Claude Code](https://claude.ai/code) users. Find the right skills for your projects, install them safely, and learn to use them effectively.
 
-## Status
-
-**Phase 3: Live Data** - GitHub integration, E2E testing, and performance validation.
-
-| Phase | Status | Description |
-|-------|--------|-------------|
-| Phase 0 | ✅ Complete | Planning, architecture, monorepo setup |
-| Phase 1 | ✅ Complete | CI/CD, testing infrastructure, code quality |
-| Phase 2a | ✅ Complete | GitHub indexing, skill parsing |
-| Phase 2b | ✅ Complete | TDD security fixes, vector embeddings |
-| Phase 2c | ✅ Complete | Tiered cache, webhooks, performance |
-| Phase 2d | ✅ Complete | Security hardening, rate limiting |
-| Phase 2e | ✅ Complete | Code review fixes, logging patterns |
-| Phase 2f | ✅ Complete | Batched execution, swarm coordination |
-| Phase 3a | ✅ Complete | MCP tool wiring, core infrastructure |
-| Phase 3b | ✅ Complete | Seed data, E2E tests, performance validation |
-| Phase 3c | ✅ Complete | Documentation updates |
 
 ## Features
 
