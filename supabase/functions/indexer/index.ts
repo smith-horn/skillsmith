@@ -9,7 +9,7 @@
  *
  * Request Body (optional):
  * - topics: Array of GitHub topics to search (default: claude-code related)
- * - maxPages: Max pages per topic (default: 3)
+ * - maxPages: Max pages per topic (default: 5, max: 10, 7+ may timeout)
  * - dryRun: If true, don't write to database (default: false)
  *
  * Authentication:
