@@ -12,6 +12,7 @@ System design, architectural decisions, and technical specifications for Skillsm
 
 - [Standards](standards.md) - Engineering standards and best practices
 - [Audit Logging Architecture](audit-logging-architecture.md) - Enterprise audit trail system
+- [Indexer Infrastructure](indexer-infrastructure.md) - GitHub skill indexing with App authentication
 
 ## Phase Planning
 
