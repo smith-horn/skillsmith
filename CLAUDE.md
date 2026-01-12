@@ -557,6 +557,33 @@ Manages git worktrees for parallel development with conflict prevention.
 git worktree add ../worktrees/feature-name -b feature/feature-name
 ```
 
+### MCP Decision Helper (User-Level)
+
+> **Location**: `~/.claude/skills/mcp-decision-helper/SKILL.md`
+
+Helps decide whether to implement capabilities as Claude Code Skills vs MCP servers using an 8-dimension scoring framework.
+
+**Trigger Phrases**: "should I use MCP", "skill vs MCP", "MCP or skill", "MCP decision"
+
+**Key Features**:
+
+- 8-dimension scoring framework
+- Automatic disqualifiers for quick decisions
+- Interactive CLI evaluation script
+- Templates for Skill, MCP, and Hybrid implementations
+
+**Quick Evaluation**:
+
+```bash
+# Interactive evaluation
+npx tsx ~/.claude/skills/mcp-decision-helper/scripts/evaluate.ts
+
+# With pre-filled task
+npx tsx ~/.claude/skills/mcp-decision-helper/scripts/evaluate.ts --task "daily report generator"
+```
+
+**Decision Thresholds**: Score ≤ -6 → SKILL | Score -5 to +5 → HYBRID | Score ≥ +6 → MCP
+
 ### Linear Skill (User-Level)
 
 > **Full Documentation**: [`~/.claude/skills/linear/skills/linear/SKILL.md`](~/.claude/skills/linear/skills/linear/SKILL.md)
@@ -659,12 +686,13 @@ docker exec skillsmith-dev-1 npm test
 
 Key architecture documents for this project:
 
-| Document                                                      | Purpose                                      |
-| ------------------------------------------------------------- | -------------------------------------------- |
-| [Skill Dependencies](docs/architecture/skill-dependencies.md) | Dependency graph showing skill relationships |
-| [System Overview](docs/architecture/system-overview.md)       | High-level system architecture               |
-| [Architecture Index](docs/architecture/index.md)              | Complete architecture documentation index    |
-| [Engineering Standards](docs/architecture/standards.md)       | Authoritative engineering policy             |
+| Document                                                                        | Purpose                                      |
+| ------------------------------------------------------------------------------- | -------------------------------------------- |
+| [Skill Dependencies](docs/architecture/skill-dependencies.md)                   | Dependency graph showing skill relationships |
+| [System Overview](docs/architecture/system-overview.md)                         | High-level system architecture               |
+| [Architecture Index](docs/architecture/index.md)                                | Complete architecture documentation index    |
+| [Engineering Standards](docs/architecture/standards.md)                         | Authoritative engineering policy             |
+| [MCP Decision Engine](docs/architecture/mcp-decision-engine-architecture.md)    | Skill vs MCP decision framework              |
 
 ### Skill Dependency Quick Reference
 
@@ -675,6 +703,7 @@ Key architecture documents for this project:
 | vercel-github-actions | Vercel CLI, Git | VERCEL_TOKEN                   |
 | dev-browser           | Bun, Playwright | -                              |
 | doc-screenshots       | -               | - (requires dev-browser skill) |
+| mcp-decision-helper   | Node.js         | -                              |
 
 ---
 
