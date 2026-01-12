@@ -39,6 +39,7 @@ interface GitHubRepository {
   topics: string[]
   updatedAt: string
   defaultBranch: string
+  installable: boolean
 }
 
 /**
@@ -86,6 +87,22 @@ interface IndexerResult {
 const DEFAULT_TOPICS = ['claude-code-skill', 'claude-code', 'anthropic-claude', 'claude-skill']
 
 const GITHUB_API_DELAY = 150 // ms between requests
+
+/**
+ * Check if repository has a SKILL.md file at root
+ */
+async function checkSkillMdExists(owner: string, repo: string, branch: string): Promise<boolean> {
+  try {
+    const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/SKILL.md`
+    const response = await fetch(url, {
+      method: 'HEAD',
+      headers: buildGitHubHeaders(),
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
 
 /**
  * Delay helper
@@ -157,6 +174,7 @@ async function searchRepositories(
       topics: item.topics || [],
       updatedAt: item.updated_at,
       defaultBranch: item.default_branch,
+      installable: false, // Will be checked separately
     }))
 
     return { repos, total: data.total_count }
@@ -197,6 +215,7 @@ function repositoryToSkill(repo: GitHubRepository): Record<string, unknown> {
     trust_tier: trustTier,
     tags: repo.topics,
     stars: repo.stars,
+    installable: repo.installable,
     indexed_at: new Date().toISOString(),
   }
 }
@@ -259,7 +278,10 @@ Deno.serve(async (req: Request) => {
         for (const repo of repos) {
           if (!seenUrls.has(repo.url)) {
             seenUrls.add(repo.url)
+            // Check if SKILL.md exists (determines installability)
+            repo.installable = await checkSkillMdExists(repo.owner, repo.name, repo.defaultBranch)
             repositories.push(repo)
+            await delay(50) // Small delay between SKILL.md checks
           }
         }
 

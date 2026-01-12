@@ -13,6 +13,7 @@ export interface Skill {
   qualityScore: number | null
   trustTier: TrustTier
   tags: string[]
+  installable: boolean
   createdAt: string
   updatedAt: string
 }
@@ -26,6 +27,7 @@ export interface SkillCreateInput {
   qualityScore?: number | null
   trustTier?: TrustTier
   tags?: string[]
+  installable?: boolean
 }
 
 export interface SkillUpdateInput {
@@ -36,6 +38,7 @@ export interface SkillUpdateInput {
   qualityScore?: number | null
   trustTier?: TrustTier
   tags?: string[]
+  installable?: boolean
 }
 
 export interface SearchOptions {

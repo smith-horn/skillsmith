@@ -38,6 +38,7 @@ const ApiSearchResultSchema = z.object({
   trust_tier: TrustTierSchema,
   tags: z.array(z.string()),
   stars: z.number().nullable(),
+  installable: z.boolean().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 })
@@ -110,6 +111,7 @@ export interface ApiSearchResult {
   trust_tier: TrustTier
   tags: string[]
   stars: number | null
+  installable: boolean | null
   created_at: string
   updated_at: string
 }
@@ -559,6 +561,7 @@ export class SkillsmithApiClient {
       qualityScore: result.quality_score,
       trustTier: result.trust_tier,
       tags: result.tags || [],
+      installable: result.installable ?? false,
       createdAt: result.created_at,
       updatedAt: result.updated_at,
     }
