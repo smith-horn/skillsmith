@@ -12,6 +12,8 @@
  * - validate: Validate local SKILL.md (SMI-746)
  * - publish: Prepare skill for sharing (SMI-746)
  * - analyze: Analyze codebase for skill recommendations (SMI-1283)
+ * - author subagent: Generate companion subagent for a skill (SMI-1389)
+ * - author transform: Upgrade existing skill with subagent (SMI-1390)
  */
 
 import { Command } from 'commander'
@@ -26,6 +28,8 @@ import {
   createPublishCommand,
   createAnalyzeCommand,
   createRecommendCommand,
+  createSubagentCommand,
+  createTransformCommand,
 } from './commands/index.js'
 import { DEFAULT_DB_PATH } from './config.js'
 import { sanitizeError } from './utils/sanitize.js'
@@ -89,5 +93,15 @@ program.addCommand(createAnalyzeCommand())
 
 // SMI-1299: Recommendations
 program.addCommand(createRecommendCommand())
+
+// SMI-1389, SMI-1390: Author command group with subagent generation
+const authorCommand = new Command('author').description(
+  'Skill authoring and subagent generation commands'
+)
+
+authorCommand.addCommand(createSubagentCommand())
+authorCommand.addCommand(createTransformCommand())
+
+program.addCommand(authorCommand)
 
 program.parse()
