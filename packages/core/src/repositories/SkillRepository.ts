@@ -21,6 +21,7 @@ interface SkillRow {
   quality_score: number | null
   trust_tier: string
   tags: string
+  installable: boolean | null
   created_at: string
   updated_at: string
 }
@@ -110,6 +111,7 @@ export class SkillRepository {
       qualityScore: row.quality_score,
       trustTier: row.trust_tier as Skill['trustTier'],
       tags: JSON.parse(row.tags || '[]'),
+      installable: row.installable ?? false,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }
