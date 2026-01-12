@@ -724,6 +724,7 @@ Key architecture documents for this project:
 | [Architecture Index](docs/architecture/index.md)                                | Complete architecture documentation index    |
 | [Engineering Standards](docs/architecture/standards.md)                         | Authoritative engineering policy             |
 | [MCP Decision Engine](docs/architecture/mcp-decision-engine-architecture.md)    | Skill vs MCP decision framework              |
+| [Indexer Infrastructure](docs/architecture/indexer-infrastructure.md)           | GitHub skill indexing with App authentication |
 
 ### Skill Dependency Quick Reference
 
