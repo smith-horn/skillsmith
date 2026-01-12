@@ -2,11 +2,11 @@
 
 **Parent Issue**: SMI-1378 (Phase 9: Subagent Pair Generation)
 **Created**: 2026-01-11
-**Status**: Implemented (pending Linear issue creation)
+**Status**: Complete (Linear issues created and marked Done)
 
 ---
 
-## SMI-1394: Extract tool detection keywords to configurable constants
+## SMI-1398: Extract tool detection keywords to configurable constants
 
 **Type**: Enhancement
 **Labels**: `enhancement`, `code-quality`, `phase-9`
@@ -35,7 +35,7 @@ Extracted hardcoded tool detection keywords from inline strings to a configurabl
 
 ---
 
-## SMI-1395: Extract shared path resolution utility
+## SMI-1399: Extract shared path resolution utility
 
 **Type**: Enhancement
 **Labels**: `enhancement`, `code-quality`, `DRY`, `phase-9`
@@ -64,7 +64,7 @@ Extracted duplicated path resolution logic into a shared `resolveSkillPath()` ut
 
 ---
 
-## SMI-1396: Add tool name validation for --tools option
+## SMI-1400: Add tool name validation for --tools option
 
 **Type**: Enhancement
 **Labels**: `enhancement`, `validation`, `UX`, `phase-9`
@@ -93,7 +93,7 @@ Added validation for the `--tools` option to warn users when unknown tool names 
 
 ---
 
-## SMI-1397: Add missing test coverage for --model and --batch options
+## SMI-1401: Add missing test coverage for --model and --batch options
 
 **Type**: Test
 **Labels**: `test`, `coverage`, `phase-9`
@@ -124,39 +124,11 @@ Added E2E tests for the `--model` option (subagent command) and `--batch` option
 
 ## Implementation Status
 
-| Issue ID | Title | Status |
-|----------|-------|--------|
-| SMI-1394 | Extract tool detection keywords to constants | ✅ Implemented |
-| SMI-1395 | Extract shared path resolution utility | ✅ Implemented |
-| SMI-1396 | Add tool name validation | ✅ Implemented |
-| SMI-1397 | Add missing test coverage | ✅ Implemented |
+| Issue ID | Title | Status | Linear URL |
+|----------|-------|--------|------------|
+| SMI-1398 | Extract tool detection keywords to constants | ✅ Done | [Link](https://linear.app/smith-horn-group/issue/SMI-1398) |
+| SMI-1399 | Extract shared path resolution utility | ✅ Done | [Link](https://linear.app/smith-horn-group/issue/SMI-1399) |
+| SMI-1400 | Add tool name validation | ✅ Done | [Link](https://linear.app/smith-horn-group/issue/SMI-1400) |
+| SMI-1401 | Add missing test coverage | ✅ Done | [Link](https://linear.app/smith-horn-group/issue/SMI-1401) |
 
-All issues have been implemented and verified with passing tests.
-
----
-
-## Quick Create Commands
-
-To create these issues in Linear, run:
-
-```bash
-# SMI-1394
-npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts create-issue "Skillsmith" \
-  "Extract tool detection keywords to configurable constants" \
-  "Extracted hardcoded tool detection keywords to TOOL_DETECTION_KEYWORDS constant for maintainability."
-
-# SMI-1395
-npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts create-issue "Skillsmith" \
-  "Extract shared path resolution utility" \
-  "Created resolveSkillPath() utility to eliminate duplicated path resolution logic."
-
-# SMI-1396
-npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts create-issue "Skillsmith" \
-  "Add tool name validation for --tools option" \
-  "Added validateToolNames() to warn users about unknown tool names."
-
-# SMI-1397
-npx tsx ~/.claude/skills/linear/skills/linear/scripts/linear-ops.ts create-issue "Skillsmith" \
-  "Add missing test coverage for --model and --batch options" \
-  "Added E2E tests for model and batch options in author commands."
-```
+All issues have been implemented, verified with passing tests, and marked Done in Linear.

@@ -83,10 +83,10 @@ Implementation of automatic subagent pair generation for skills, enabling 37-97%
 
 | Item | Priority | Status | Sub-Issue |
 |------|----------|--------|-----------|
-| Extract tool detection keywords to constants | Low | ✅ Fixed | SMI-1394 |
-| Extract shared path resolution utility | Low | ✅ Fixed | SMI-1395 |
-| Add tool name validation for --tools option | Low | ✅ Fixed | SMI-1396 |
-| Add missing --model and --batch tests | Low | ✅ Fixed | SMI-1397 |
+| Extract tool detection keywords to constants | Low | ✅ Fixed | [SMI-1398](https://linear.app/smith-horn-group/issue/SMI-1398) |
+| Extract shared path resolution utility | Low | ✅ Fixed | [SMI-1399](https://linear.app/smith-horn-group/issue/SMI-1399) |
+| Add tool name validation for --tools option | Low | ✅ Fixed | [SMI-1400](https://linear.app/smith-horn-group/issue/SMI-1400) |
+| Add missing --model and --batch tests | Low | ✅ Fixed | [SMI-1401](https://linear.app/smith-horn-group/issue/SMI-1401) |
 
 See [Phase 9 Sub-Issues](./2026-01-11-phase9-sub-issues.md) for detailed descriptions.
 
