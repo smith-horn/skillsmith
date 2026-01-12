@@ -475,6 +475,37 @@ packages/
 
 ---
 
+## Skillsmith CLI Commands
+
+The CLI (`skillsmith` or `sklx`) provides commands for skill management and authoring.
+
+### Author Commands (SMI-1389, SMI-1390)
+
+Commands for skill authoring and subagent generation, enabling 37-97% token savings through context isolation.
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `author subagent` | Generate companion subagent for a skill | `skillsmith author subagent ./my-skill` |
+| `author transform` | Upgrade existing skill with subagent | `skillsmith author transform ./my-skill` |
+
+**subagent options**:
+- `--output, -o <dir>`: Output directory (default: skill directory)
+- `--tools <list>`: Override detected tools (comma-separated)
+- `--model <model>`: Specify model (sonnet, opus, haiku)
+- `--skip-claude-md`: Skip CLAUDE.md delegation snippet
+
+**transform options**:
+- `--dry-run`: Preview changes without writing files
+- `--batch`: Process multiple skills (when given directory)
+- `--tools <list>`: Override detected tools
+- `--model <model>`: Specify model
+
+**Tool Detection**: The commands automatically analyze skill content to determine minimal required tools (Read, Write, Edit, Bash, Grep, Glob, WebFetch, WebSearch).
+
+> **Architecture**: See [Subagent Pair Generation Architecture](docs/architecture/subagent-pair-generation-architecture.md)
+
+---
+
 ## Varlock Security (MANDATORY)
 
 **All secrets MUST be managed via Varlock. Never expose API keys in terminal output.**
