@@ -1,6 +1,6 @@
 # Skillsmith Infrastructure Inventory
 
-> **Last Updated:** January 8, 2026
+> **Last Updated:** January 12, 2026
 > **Document Status:** Living Document
 > **Maintainer:** Infrastructure Team
 
@@ -61,10 +61,14 @@ All workflows are located in `.github/workflows/` and follow a Docker-first CI s
 #### Indexer Workflow (`indexer.yml`)
 
 - **Schedule:** `0 2 * * *` (daily at 2 AM UTC)
+- **Timeout:** 150 seconds (Supabase Edge Function limit)
+- **Authentication:** GitHub App (5,000 req/hour) with PAT fallback
 - **Inputs:**
   - `dry_run` - Skip database writes (default: false)
-  - `max_pages` - Max pages per topic (default: 3)
+  - `max_pages` - Max pages per topic (default: 5, max: 7 before timeout)
 - **Secrets Required:** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
+- **Performance:** ~400 skills indexed in ~1 minute with max_pages=5
+- **Architecture:** See [Indexer Infrastructure](indexer-infrastructure.md)
 
 #### Publish Workflow (`publish.yml`)
 
@@ -336,7 +340,7 @@ All packages are in `packages/` and use workspace dependencies.
 
 | Integration | Purpose |
 |-------------|---------|
-| **GitHub App** | High-rate skill discovery (15K req/hr) |
+| **GitHub App** | Skill discovery with 5K req/hr rate limit (installation token) |
 | **Actions** | CI/CD workflows |
 | **Packages** | Enterprise package registry |
 
@@ -440,5 +444,6 @@ Full schema defined in `.env.schema`. Key variables by category:
 - [System Overview](./system-overview.md)
 - [Engineering Standards](./standards.md)
 - [Skill Dependencies](./skill-dependencies.md)
+- [Indexer Infrastructure](./indexer-infrastructure.md)
 - [API Documentation](../api/openapi.yaml)
 - [ADR Index](../adr/)
