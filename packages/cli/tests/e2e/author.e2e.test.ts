@@ -475,3 +475,411 @@ describe('E2E: skillsmith publish', () => {
     })
   })
 })
+
+// SMI-1389: E2E tests for author subagent command
+describe('E2E: skillsmith author subagent', () => {
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) {
+      rmSync(TEST_DIR, { recursive: true, force: true })
+    }
+    mkdirSync(TEST_DIR, { recursive: true })
+  })
+
+  afterAll(() => {
+    if (existsSync(TEST_DIR)) {
+      rmSync(TEST_DIR, { recursive: true, force: true })
+    }
+  })
+
+  describe('Author Subagent Command', () => {
+    it('should display help without errors', async () => {
+      const result = await runCommand(['author', 'subagent', '--help'])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain('Generate')
+      expect(result.stdout).toContain('subagent')
+
+      assertNoHardcoded(
+        result,
+        'skillsmith author subagent --help',
+        'author subagent: help',
+        __filename
+      )
+    })
+
+    it('should generate subagent from valid skill', async () => {
+      // Create valid skill
+      const skillDir = join(TEST_DIR, 'subagent-skill')
+      mkdirSync(skillDir, { recursive: true })
+      writeFileSync(join(skillDir, 'SKILL.md'), VALID_SKILL_MD)
+
+      // Create output directory
+      const outputDir = join(TEST_DIR, 'agents')
+
+      const result = await runCommand(['author', 'subagent', skillDir, '-o', outputDir])
+
+      recordTiming('author:subagent', 'skillsmith author subagent', result.durationMs)
+
+      expect(result.exitCode).toBe(0)
+      expect(existsSync(join(outputDir, 'test-skill-specialist.md'))).toBe(true)
+
+      assertNoHardcoded(
+        result,
+        'skillsmith author subagent',
+        'author subagent: generate',
+        __filename
+      )
+    })
+
+    it('should include CLAUDE.md snippet in output', async () => {
+      const skillDir = join(TEST_DIR, 'claude-md-skill')
+      mkdirSync(skillDir, { recursive: true })
+      writeFileSync(join(skillDir, 'SKILL.md'), VALID_SKILL_MD)
+
+      const outputDir = join(TEST_DIR, 'agents-claude')
+
+      const result = await runCommand(['author', 'subagent', skillDir, '-o', outputDir])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain('CLAUDE.md')
+      expect(result.stdout).toContain('Delegation')
+
+      assertNoHardcoded(
+        result,
+        'skillsmith author subagent claude',
+        'author subagent: claude.md',
+        __filename
+      )
+    })
+
+    it('should skip CLAUDE.md snippet with --skip-claude-md', async () => {
+      const skillDir = join(TEST_DIR, 'skip-claude-skill')
+      mkdirSync(skillDir, { recursive: true })
+      writeFileSync(join(skillDir, 'SKILL.md'), VALID_SKILL_MD)
+
+      const outputDir = join(TEST_DIR, 'agents-skip')
+
+      const result = await runCommand([
+        'author',
+        'subagent',
+        skillDir,
+        '-o',
+        outputDir,
+        '--skip-claude-md',
+      ])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).not.toContain('Add to your CLAUDE.md')
+
+      assertNoHardcoded(
+        result,
+        'skillsmith author subagent skip',
+        'author subagent: skip claude',
+        __filename
+      )
+    })
+
+    it('should use custom tools when provided', async () => {
+      const skillDir = join(TEST_DIR, 'custom-tools-skill')
+      mkdirSync(skillDir, { recursive: true })
+      writeFileSync(join(skillDir, 'SKILL.md'), VALID_SKILL_MD)
+
+      const outputDir = join(TEST_DIR, 'agents-tools')
+
+      const result = await runCommand([
+        'author',
+        'subagent',
+        skillDir,
+        '-o',
+        outputDir,
+        '--tools',
+        'Read,Write,Bash',
+      ])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain('Read, Write, Bash')
+
+      assertNoHardcoded(
+        result,
+        'skillsmith author subagent tools',
+        'author subagent: custom tools',
+        __filename
+      )
+    })
+
+    it('should handle missing SKILL.md gracefully', async () => {
+      const emptyDir = join(TEST_DIR, 'empty-subagent')
+      mkdirSync(emptyDir, { recursive: true })
+
+      const result = await runCommand(['author', 'subagent', emptyDir])
+
+      expect(result.exitCode).not.toBe(0)
+
+      assertNoHardcoded(
+        result,
+        'skillsmith author subagent missing',
+        'author subagent: missing',
+        __filename
+      )
+    })
+
+    // SMI-1397: Test for --model option
+    it('should use specified model in subagent output', async () => {
+      const skillDir = join(TEST_DIR, 'model-test-skill')
+      mkdirSync(skillDir, { recursive: true })
+      writeFileSync(join(skillDir, 'SKILL.md'), VALID_SKILL_MD)
+
+      const outputDir = join(TEST_DIR, 'agents-model')
+
+      const result = await runCommand([
+        'author',
+        'subagent',
+        skillDir,
+        '-o',
+        outputDir,
+        '--model',
+        'opus',
+      ])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain('opus')
+
+      // Verify the generated file contains the model
+      const generatedContent = readFileSync(join(outputDir, 'test-skill-specialist.md'), 'utf-8')
+      expect(generatedContent).toContain('model: opus')
+
+      assertNoHardcoded(
+        result,
+        'skillsmith author subagent model',
+        'author subagent: model option',
+        __filename
+      )
+    })
+
+    it('should use haiku model when specified', async () => {
+      const skillDir = join(TEST_DIR, 'haiku-test-skill')
+      mkdirSync(skillDir, { recursive: true })
+      writeFileSync(join(skillDir, 'SKILL.md'), VALID_SKILL_MD)
+
+      const outputDir = join(TEST_DIR, 'agents-haiku')
+
+      const result = await runCommand([
+        'author',
+        'subagent',
+        skillDir,
+        '-o',
+        outputDir,
+        '--model',
+        'haiku',
+      ])
+
+      expect(result.exitCode).toBe(0)
+
+      const generatedContent = readFileSync(join(outputDir, 'test-skill-specialist.md'), 'utf-8')
+      expect(generatedContent).toContain('model: haiku')
+
+      assertNoHardcoded(
+        result,
+        'skillsmith author subagent haiku',
+        'author subagent: haiku model',
+        __filename
+      )
+    })
+  })
+})
+
+// SMI-1390: E2E tests for author transform command
+describe('E2E: skillsmith author transform', () => {
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) {
+      rmSync(TEST_DIR, { recursive: true, force: true })
+    }
+    mkdirSync(TEST_DIR, { recursive: true })
+  })
+
+  afterAll(() => {
+    if (existsSync(TEST_DIR)) {
+      rmSync(TEST_DIR, { recursive: true, force: true })
+    }
+  })
+
+  describe('Author Transform Command', () => {
+    it('should display help without errors', async () => {
+      const result = await runCommand(['author', 'transform', '--help'])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain('Upgrade')
+      expect(result.stdout).toContain('transform')
+
+      assertNoHardcoded(
+        result,
+        'skillsmith author transform --help',
+        'author transform: help',
+        __filename
+      )
+    })
+
+    it('should show dry-run preview without creating files', async () => {
+      const skillDir = join(TEST_DIR, 'dry-run-skill')
+      mkdirSync(skillDir, { recursive: true })
+      writeFileSync(join(skillDir, 'SKILL.md'), VALID_SKILL_MD)
+
+      const result = await runCommand(['author', 'transform', skillDir, '--dry-run'])
+
+      recordTiming(
+        'author:transform:dry-run',
+        'skillsmith author transform --dry-run',
+        result.durationMs
+      )
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain('Dry run')
+      expect(result.stdout).toContain('test-skill')
+      expect(result.stdout).toContain('Required Tools')
+
+      assertNoHardcoded(
+        result,
+        'skillsmith author transform dry-run',
+        'author transform: dry-run',
+        __filename
+      )
+    })
+
+    it('should transform skill and generate subagent', async () => {
+      const skillDir = join(TEST_DIR, 'transform-skill')
+      mkdirSync(skillDir, { recursive: true })
+      writeFileSync(join(skillDir, 'SKILL.md'), VALID_SKILL_MD)
+
+      // Note: This will write to ~/.claude/agents by default
+      // In real E2E we'd want to mock this or use --output
+      const result = await runCommand(['author', 'transform', skillDir, '--dry-run'])
+
+      expect(result.exitCode).toBe(0)
+
+      assertNoHardcoded(
+        result,
+        'skillsmith author transform',
+        'author transform: transform',
+        __filename
+      )
+    })
+
+    it('should handle missing SKILL.md gracefully', async () => {
+      const emptyDir = join(TEST_DIR, 'empty-transform')
+      mkdirSync(emptyDir, { recursive: true })
+
+      const result = await runCommand(['author', 'transform', emptyDir])
+
+      expect(result.exitCode).not.toBe(0)
+
+      assertNoHardcoded(
+        result,
+        'skillsmith author transform missing',
+        'author transform: missing',
+        __filename
+      )
+    })
+
+    it('should detect and display required tools', async () => {
+      // Skill with specific tool requirements
+      const toolSkillMd = `---
+name: tool-test-skill
+version: 1.0.0
+description: A skill that uses bash commands and file editing
+author: test
+---
+
+# tool-test-skill
+
+This skill runs npm commands via bash and writes files.
+
+## Usage
+
+Run \`npm install\` and edit configuration files.
+`
+
+      const skillDir = join(TEST_DIR, 'tool-detect-skill')
+      mkdirSync(skillDir, { recursive: true })
+      writeFileSync(join(skillDir, 'SKILL.md'), toolSkillMd)
+
+      const result = await runCommand(['author', 'transform', skillDir, '--dry-run'])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain('Required Tools')
+      // Should detect Bash from "npm commands via bash"
+      // Should detect Write/Edit from "writes files" and "edit"
+
+      assertNoHardcoded(
+        result,
+        'skillsmith author transform tools',
+        'author transform: detect tools',
+        __filename
+      )
+    })
+
+    // SMI-1397: Test for --batch option
+    it('should batch transform multiple skills', async () => {
+      // Create first skill
+      const skillDir1 = join(TEST_DIR, 'batch-skill-1')
+      mkdirSync(skillDir1, { recursive: true })
+      writeFileSync(
+        join(skillDir1, 'SKILL.md'),
+        `---
+name: batch-skill-one
+version: 1.0.0
+description: First batch skill for testing
+author: test
+---
+
+# batch-skill-one
+
+First skill in batch processing test.
+`
+      )
+
+      // Create second skill
+      const skillDir2 = join(TEST_DIR, 'batch-skill-2')
+      mkdirSync(skillDir2, { recursive: true })
+      writeFileSync(
+        join(skillDir2, 'SKILL.md'),
+        `---
+name: batch-skill-two
+version: 1.0.0
+description: Second batch skill for testing
+author: test
+---
+
+# batch-skill-two
+
+Second skill in batch processing test.
+`
+      )
+
+      const result = await runCommand([
+        'author',
+        'transform',
+        '--batch',
+        `${skillDir1},${skillDir2}`,
+        '--dry-run',
+      ])
+
+      recordTiming(
+        'author:transform:batch',
+        'skillsmith author transform --batch',
+        result.durationMs
+      )
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain('Batch processing 2 skills')
+      expect(result.stdout).toContain('batch-skill-one')
+      expect(result.stdout).toContain('batch-skill-two')
+
+      assertNoHardcoded(
+        result,
+        'skillsmith author transform batch',
+        'author transform: batch',
+        __filename
+      )
+    })
+  })
+})
