@@ -2,7 +2,7 @@
 
 Command-line interface for Skillsmith - discover, manage, and author Claude Code skills.
 
-## What's New in v0.2.0
+## What's New in v0.2.1
 
 - **Live Skills**: Search and install from 9,717+ real skills
 - **Faster Search**: Full-text search with quality ranking
@@ -243,5 +243,5 @@ skillsmith search --interactive
 
 ## Links
 
-- [GitHub](https://github.com/smith-horn-group/skillsmith)
-- [Issues](https://github.com/smith-horn-group/skillsmith/issues)
+- [GitHub](https://github.com/smith-horn/skillsmith)
+- [Issues](https://github.com/smith-horn/skillsmith/issues)
