@@ -489,16 +489,18 @@ Commands for skill authoring and subagent generation, enabling 37-97% token savi
 | `author transform` | Upgrade existing skill with subagent | `skillsmith author transform ./my-skill` |
 
 **subagent options**:
-- `--output, -o <dir>`: Output directory (default: skill directory)
+- `--output, -o <dir>`: Output directory (default: ~/.claude/agents)
 - `--tools <list>`: Override detected tools (comma-separated)
 - `--model <model>`: Specify model (sonnet, opus, haiku)
 - `--skip-claude-md`: Skip CLAUDE.md delegation snippet
+- `--force`: Overwrite existing subagent definition
 
 **transform options**:
 - `--dry-run`: Preview changes without writing files
 - `--batch`: Process multiple skills (when given directory)
 - `--tools <list>`: Override detected tools
 - `--model <model>`: Specify model
+- `--force`: Overwrite existing subagent
 
 **Tool Detection**: The commands automatically analyze skill content to determine minimal required tools (Read, Write, Edit, Bash, Grep, Glob, WebFetch, WebSearch).
 
