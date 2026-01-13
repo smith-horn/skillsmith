@@ -1,12 +1,12 @@
 {
   "name": "@skillsmith/mcp-server",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP server for Skillsmith skill discovery",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "bin": {
-    "skillsmith-mcp": "./dist/index.js"
+    "skillsmith-mcp": "./dist/src/index.js"
   },
   "scripts": {
     "prepublishOnly": "npm run build && npm run test",
