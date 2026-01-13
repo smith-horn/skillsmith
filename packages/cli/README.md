@@ -2,8 +2,11 @@
 
 Command-line interface for Skillsmith - discover, manage, and author Claude Code skills.
 
-## What's New in v0.2.2
+## What's New in v0.2.3
 
+- **Subagent Generation**: Generate companion specialist agents for parallel execution (37-97% token savings)
+- **Skill Transform**: Upgrade existing skills with subagent configuration
+- **Tool Detection**: Automatic analysis of required tools from skill content
 - **Live Skills**: Search and install from 9,717+ real skills
 - **Faster Search**: Full-text search with quality ranking
 - **Privacy First**: Opt-out telemetry, no PII collected
@@ -156,6 +159,57 @@ skillsmith publish --dry-run
 **Options:**
 - `-d, --dry-run` - Preview without making changes
 
+### author subagent
+
+Generate a companion specialist agent for parallel skill execution.
+
+```bash
+# Generate subagent for current directory
+skillsmith author subagent
+
+# Generate for specific skill
+skillsmith author subagent ./my-skill
+
+# Override detected tools
+skillsmith author subagent --tools "Read,Write,Bash"
+
+# Use different model
+skillsmith author subagent --model haiku
+```
+
+**Options:**
+- `-o, --output <path>` - Output directory (default: ~/.claude/agents)
+- `--tools <tools>` - Override detected tools (comma-separated)
+- `--model <model>` - Model: sonnet, opus, haiku (default: sonnet)
+- `--skip-claude-md` - Skip CLAUDE.md snippet generation
+- `--force` - Overwrite existing subagent
+
+**Output:**
+- Creates `~/.claude/agents/[skill-name]-specialist.md`
+- Displays CLAUDE.md integration snippet
+
+### author transform
+
+Upgrade existing skills with subagent configuration (non-destructive).
+
+```bash
+# Preview what would be generated
+skillsmith author transform ./my-skill --dry-run
+
+# Generate subagent for existing skill
+skillsmith author transform ./my-skill
+
+# Process multiple skills at once
+skillsmith author transform ~/.claude/skills --batch
+```
+
+**Options:**
+- `--dry-run` - Preview without creating files
+- `--force` - Overwrite existing subagent
+- `--batch` - Process directory of skills
+- `--tools <tools>` - Override detected tools
+- `--model <model>` - Model: sonnet, opus, haiku (default: sonnet)
+
 ### import
 
 Import skills from GitHub (for populating local database).
@@ -220,8 +274,24 @@ skillsmith init my-awesome-skill
 # Validate your skill
 skillsmith validate ./my-awesome-skill
 
+# Generate companion subagent for parallel execution
+skillsmith author subagent ./my-awesome-skill
+
 # Prepare for publishing
 skillsmith publish ./my-awesome-skill
+```
+
+### Upgrade Existing Skills with Subagents
+
+```bash
+# Preview subagent generation (dry run)
+skillsmith author transform ~/.claude/skills/docker --dry-run
+
+# Generate subagent for a skill
+skillsmith author transform ~/.claude/skills/docker
+
+# Batch upgrade all skills
+skillsmith author transform ~/.claude/skills --batch --force
 ```
 
 ### Manage Skills
