@@ -13,8 +13,21 @@ import { join, resolve } from 'path'
 import { createHash } from 'crypto'
 import { SkillParser, type ValidationResult } from '@skillsmith/core'
 
-import { SKILL_MD_TEMPLATE, README_MD_TEMPLATE } from '../templates/index.js'
+import {
+  SKILL_MD_TEMPLATE,
+  README_MD_TEMPLATE,
+  renderSubagentTemplate,
+  renderClaudeMdSnippet,
+} from '../templates/index.js'
 import { sanitizeError } from '../utils/sanitize.js'
+import {
+  analyzeToolRequirements,
+  formatToolList,
+  parseToolsString,
+  validateTools,
+} from '../utils/tool-analyzer.js'
+import { homedir } from 'os'
+import { access } from 'fs/promises'
 
 /**
  * Initialize a new skill directory
@@ -381,4 +394,415 @@ export function createPublishCommand(): Command {
     })
 }
 
-export { initSkill, validateSkill, publishSkill }
+/**
+ * SMI-1389: Extract trigger phrases from skill description
+ */
+function extractTriggerPhrases(description: string): string[] {
+  const phrases: string[] = []
+
+  // Pattern: "Use when [phrases]" or "when the user asks to [phrases]"
+  const patterns = [
+    /use when (?:the user asks to )?["']([^"']+)["']/gi,
+    /when (?:the user asks to )?["']([^"']+)["']/gi,
+    /trigger(?:ed)? (?:by|when|phrases?)[\s:]+["']([^"']+)["']/gi,
+    /invoke when (?:the user )?["']([^"']+)["']/gi,
+  ]
+
+  for (const pattern of patterns) {
+    const matches = description.matchAll(pattern)
+    for (const match of matches) {
+      if (match[1]) {
+        phrases.push(match[1])
+      }
+    }
+  }
+
+  return phrases
+}
+
+/**
+ * SMI-1389: Validate subagent definition structure
+ */
+function validateSubagentDefinition(content: string): ValidationResult {
+  const errors: string[] = []
+  const warnings: string[] = []
+
+  // Check for YAML frontmatter
+  if (!content.trim().startsWith('---')) {
+    errors.push('Missing YAML frontmatter')
+  }
+
+  // Extract and validate frontmatter
+  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/)
+  if (frontmatterMatch) {
+    const frontmatter = frontmatterMatch[1] || ''
+
+    const requiredFields = ['name', 'description', 'skills', 'tools', 'model']
+    for (const field of requiredFields) {
+      if (!frontmatter.includes(`${field}:`)) {
+        errors.push(`Missing required field: ${field}`)
+      }
+    }
+  } else {
+    errors.push('Could not parse YAML frontmatter')
+  }
+
+  // Check for operating protocol section
+  if (!content.includes('## Operating Protocol')) {
+    warnings.push('Missing Operating Protocol section')
+  }
+
+  // Check for output format section
+  if (!content.includes('## Output Format')) {
+    warnings.push('Missing Output Format section')
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  }
+}
+
+/**
+ * Ensure ~/.claude/agents directory exists
+ */
+async function ensureAgentsDirectory(customPath?: string): Promise<string> {
+  const agentsDir = customPath
+    ? resolve(customPath.replace(/^~/, homedir()))
+    : join(homedir(), '.claude', 'agents')
+
+  await mkdir(agentsDir, { recursive: true })
+  return agentsDir
+}
+
+/**
+ * Check if file exists
+ */
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+interface SubagentOptions {
+  output?: string | undefined
+  tools?: string | undefined
+  model?: string | undefined
+  skipClaudeMd?: boolean | undefined
+  force?: boolean | undefined
+}
+
+/**
+ * SMI-1389: Generate a companion subagent for a skill
+ */
+async function generateSubagent(skillPath: string, options: SubagentOptions): Promise<void> {
+  const spinner = ora('Generating subagent...').start()
+
+  try {
+    // Resolve skill path
+    let dirPath = resolve(skillPath || '.')
+    let skillMdPath: string
+
+    // Check if it's a directory or file
+    try {
+      const stats = await stat(dirPath)
+      if (stats.isDirectory()) {
+        skillMdPath = join(dirPath, 'SKILL.md')
+      } else {
+        skillMdPath = dirPath
+        dirPath = join(dirPath, '..')
+      }
+    } catch {
+      // Try adding SKILL.md
+      skillMdPath = dirPath.endsWith('.md') ? dirPath : join(dirPath, 'SKILL.md')
+    }
+
+    // Read and parse SKILL.md
+    spinner.text = 'Reading SKILL.md...'
+    const content = await readFile(skillMdPath, 'utf-8')
+
+    const parser = new SkillParser({ requireName: true })
+    const { validation, metadata } = parser.parseWithValidation(content)
+
+    if (!validation.valid || !metadata) {
+      spinner.fail('SKILL.md validation failed')
+      printValidationResult(validation, skillMdPath)
+      return
+    }
+
+    // Analyze tool requirements
+    spinner.text = 'Analyzing tool requirements...'
+    const toolAnalysis = analyzeToolRequirements(content)
+
+    // Override tools if specified
+    let tools = toolAnalysis.requiredTools
+    if (options.tools) {
+      const customTools = parseToolsString(options.tools)
+      const validation = validateTools(customTools)
+      if (!validation.valid) {
+        spinner.fail(`Unrecognized tools: ${validation.unrecognized.join(', ')}`)
+        return
+      }
+      tools = customTools
+    }
+
+    // Extract trigger phrases
+    const triggerPhrases = extractTriggerPhrases(metadata.description || '')
+
+    // Determine model
+    const model = (options.model as 'sonnet' | 'opus' | 'haiku') || 'sonnet'
+    if (!['sonnet', 'opus', 'haiku'].includes(model)) {
+      spinner.fail(`Invalid model: ${model}. Must be sonnet, opus, or haiku.`)
+      return
+    }
+
+    // Generate subagent content
+    spinner.text = 'Generating subagent definition...'
+    const subagentContent = renderSubagentTemplate({
+      skillName: metadata.name,
+      description: metadata.description || `Specialist for ${metadata.name}`,
+      triggerPhrases,
+      tools,
+      model,
+    })
+
+    // Validate generated content
+    const subagentValidation = validateSubagentDefinition(subagentContent)
+    if (!subagentValidation.valid) {
+      spinner.fail('Generated subagent is invalid')
+      console.log(chalk.red('\nGeneration errors:'))
+      for (const error of subagentValidation.errors) {
+        console.log(chalk.red(`  - ${error}`))
+      }
+      return
+    }
+
+    // Ensure agents directory exists
+    const agentsDir = await ensureAgentsDirectory(options.output)
+    const subagentPath = join(agentsDir, `${metadata.name}-specialist.md`)
+
+    // Check if subagent already exists
+    if (await fileExists(subagentPath)) {
+      if (!options.force) {
+        spinner.warn(`Subagent already exists: ${subagentPath}`)
+        console.log(chalk.yellow('  Use --force to overwrite'))
+        return
+      }
+    }
+
+    // Write subagent file
+    await writeFile(subagentPath, subagentContent, 'utf-8')
+
+    spinner.succeed(`Generated subagent: ${subagentPath}`)
+
+    // Show tool analysis
+    console.log(chalk.bold('\nTool Analysis:'))
+    console.log(chalk.dim(`  Confidence: ${toolAnalysis.confidence}`))
+    console.log(chalk.dim(`  Tools: ${formatToolList(tools)}`))
+    if (toolAnalysis.detectedPatterns.length > 0) {
+      console.log(chalk.dim('  Detected patterns:'))
+      for (const pattern of toolAnalysis.detectedPatterns.slice(0, 5)) {
+        console.log(chalk.dim(`    - ${pattern}`))
+      }
+    }
+
+    // Generate and display CLAUDE.md snippet
+    if (!options.skipClaudeMd) {
+      const snippet = renderClaudeMdSnippet({
+        skillName: metadata.name,
+        description: metadata.description || '',
+        triggerPhrases,
+        tools,
+        model,
+      })
+
+      console.log(chalk.bold('\nCLAUDE.md Integration Snippet:'))
+      console.log(chalk.cyan('─'.repeat(50)))
+      console.log(snippet)
+      console.log(chalk.cyan('─'.repeat(50)))
+      console.log(chalk.dim('\nAdd this snippet to your project CLAUDE.md to enable delegation.'))
+    }
+
+    console.log()
+  } catch (error) {
+    spinner.fail(`Failed to generate subagent: ${sanitizeError(error)}`)
+    throw error
+  }
+}
+
+interface TransformOptions {
+  dryRun?: boolean | undefined
+  force?: boolean | undefined
+  batch?: boolean | undefined
+  tools?: string | undefined
+  model?: string | undefined
+}
+
+/**
+ * SMI-1390: Transform existing skill by generating subagent (non-destructive)
+ */
+async function transformSkill(skillPath: string, options: TransformOptions): Promise<void> {
+  const spinner = ora('Transforming skill...').start()
+
+  try {
+    const dirPath = resolve(skillPath || '.')
+
+    // Check if batch mode
+    if (options.batch) {
+      spinner.text = 'Scanning for skills...'
+      const entries = await readFile(dirPath, 'utf-8').catch(() => null)
+
+      if (entries === null) {
+        // It's a directory, scan for subdirectories with SKILL.md
+        const { readdir } = await import('fs/promises')
+        const subdirs = await readdir(dirPath, { withFileTypes: true })
+
+        const skillDirs: string[] = []
+        for (const entry of subdirs) {
+          if (entry.isDirectory()) {
+            const skillMdPath = join(dirPath, entry.name, 'SKILL.md')
+            if (await fileExists(skillMdPath)) {
+              skillDirs.push(join(dirPath, entry.name))
+            }
+          }
+        }
+
+        if (skillDirs.length === 0) {
+          spinner.warn('No skills found in directory')
+          return
+        }
+
+        spinner.succeed(`Found ${skillDirs.length} skills`)
+
+        // Process each skill
+        for (const skillDir of skillDirs) {
+          console.log(chalk.dim(`\nProcessing: ${skillDir}`))
+          await transformSkill(skillDir, {
+            ...options,
+            batch: false, // Don't recurse
+          })
+        }
+        return
+      }
+    }
+
+    // Single skill transform
+    const skillMdPath = join(dirPath, 'SKILL.md')
+
+    if (!(await fileExists(skillMdPath))) {
+      spinner.fail(`No SKILL.md found at: ${skillMdPath}`)
+      return
+    }
+
+    // Read and parse
+    spinner.text = 'Reading SKILL.md...'
+    const content = await readFile(skillMdPath, 'utf-8')
+
+    const parser = new SkillParser({ requireName: true })
+    const { validation, metadata } = parser.parseWithValidation(content)
+
+    if (!validation.valid || !metadata) {
+      spinner.fail('SKILL.md validation failed')
+      printValidationResult(validation, skillMdPath)
+      return
+    }
+
+    // Check if subagent already exists
+    const agentsDir = join(homedir(), '.claude', 'agents')
+    const subagentPath = join(agentsDir, `${metadata.name}-specialist.md`)
+
+    if (await fileExists(subagentPath)) {
+      if (!options.force) {
+        spinner.warn(`Subagent already exists: ${subagentPath}`)
+        console.log(chalk.yellow('  Use --force to overwrite'))
+        return
+      }
+    }
+
+    if (options.dryRun) {
+      spinner.succeed('Dry run - would generate:')
+      console.log(chalk.dim(`  Subagent: ${subagentPath}`))
+
+      // Show tool analysis
+      const toolAnalysis = analyzeToolRequirements(content)
+      console.log(chalk.dim(`  Tools: ${formatToolList(toolAnalysis.requiredTools)}`))
+      console.log(chalk.dim(`  Confidence: ${toolAnalysis.confidence}`))
+      return
+    }
+
+    spinner.stop()
+
+    // Generate subagent using existing function
+    await generateSubagent(dirPath, {
+      force: options.force,
+      tools: options.tools,
+      model: options.model,
+      skipClaudeMd: false,
+    })
+  } catch (error) {
+    spinner.fail(`Failed to transform skill: ${sanitizeError(error)}`)
+    throw error
+  }
+}
+
+/**
+ * Create subagent command
+ */
+export function createSubagentCommand(): Command {
+  return new Command('subagent')
+    .description('Generate a companion subagent for a skill')
+    .argument('[path]', 'Path to skill directory', '.')
+    .option('-o, --output <path>', 'Output directory', '~/.claude/agents')
+    .option('--tools <tools>', 'Override detected tools (comma-separated)')
+    .option('--model <model>', 'Model for subagent: sonnet|opus|haiku', 'sonnet')
+    .option('--skip-claude-md', 'Skip CLAUDE.md snippet generation')
+    .option('--force', 'Overwrite existing subagent definition')
+    .action(async (skillPath: string, opts: Record<string, string | boolean | undefined>) => {
+      try {
+        await generateSubagent(skillPath, {
+          output: opts['output'] as string | undefined,
+          tools: opts['tools'] as string | undefined,
+          model: opts['model'] as string | undefined,
+          skipClaudeMd: opts['skipClaudeMd'] as boolean | undefined,
+          force: opts['force'] as boolean | undefined,
+        })
+      } catch (error) {
+        console.error(chalk.red('Error generating subagent:'), sanitizeError(error))
+        process.exit(1)
+      }
+    })
+}
+
+/**
+ * Create transform command
+ */
+export function createTransformCommand(): Command {
+  return new Command('transform')
+    .description('Upgrade existing skill with subagent configuration')
+    .argument('[path]', 'Path to skill directory', '.')
+    .option('--dry-run', 'Preview what would be generated')
+    .option('--force', 'Overwrite existing subagent')
+    .option('--batch', 'Process directory of skills')
+    .option('--tools <tools>', 'Override detected tools (comma-separated)')
+    .option('--model <model>', 'Model for subagent: sonnet|opus|haiku', 'sonnet')
+    .action(async (skillPath: string, opts: Record<string, string | boolean | undefined>) => {
+      try {
+        await transformSkill(skillPath, {
+          dryRun: opts['dryRun'] as boolean | undefined,
+          force: opts['force'] as boolean | undefined,
+          batch: opts['batch'] as boolean | undefined,
+          tools: opts['tools'] as string | undefined,
+          model: opts['model'] as string | undefined,
+        })
+      } catch (error) {
+        console.error(chalk.red('Error transforming skill:'), sanitizeError(error))
+        process.exit(1)
+      }
+    })
+}
+
+export { initSkill, validateSkill, publishSkill, generateSubagent, transformSkill }
