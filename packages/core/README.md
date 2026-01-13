@@ -455,5 +455,5 @@ import {
 
 ## Links
 
-- [GitHub](https://github.com/smith-horn-group/skillsmith)
-- [Issues](https://github.com/smith-horn-group/skillsmith/issues)
+- [GitHub](https://github.com/smith-horn/skillsmith)
+- [Issues](https://github.com/smith-horn/skillsmith/issues)

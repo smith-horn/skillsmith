@@ -34,7 +34,7 @@ Then ask Claude:
 
 ## Live Skill Registry
 
-Version 0.2.0 introduces the live skill registry with 9,717+ skills.
+Version 0.2.1 includes the live skill registry with 9,717+ skills.
 
 Skills are served from `api.skillsmith.app` and cached locally for 24 hours.
 
@@ -158,5 +158,5 @@ See [PRIVACY.md](./PRIVACY.md) for full details on what data is collected and ho
 
 ## Links
 
-- [GitHub](https://github.com/smith-horn-group/skillsmith)
-- [Issues](https://github.com/smith-horn-group/skillsmith/issues)
+- [GitHub](https://github.com/smith-horn/skillsmith)
+- [Issues](https://github.com/smith-horn/skillsmith/issues)
