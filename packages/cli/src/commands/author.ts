@@ -1,16 +1,21 @@
 /**
  * SMI-746: Skill Authoring Commands
+ * SMI-1389: Subagent Generation Command
+ * SMI-1390: Transform Command
+ * SMI-1433: MCP Server Scaffolding
  *
- * Provides CLI commands for creating, validating, and publishing skills.
+ * Provides CLI commands for creating, validating, publishing skills,
+ * and generating companion subagents.
  */
 
 import { Command } from 'commander'
 import { input, confirm, select } from '@inquirer/prompts'
 import chalk from 'chalk'
 import ora from 'ora'
-import { mkdir, writeFile, readFile, stat } from 'fs/promises'
+import { mkdir, writeFile, readFile, stat, access } from 'fs/promises'
 import { dirname, join, resolve } from 'path'
 import { createHash } from 'crypto'
+import { homedir } from 'os'
 import { SkillParser, type ValidationResult } from '@skillsmith/core'
 
 import {
@@ -28,8 +33,6 @@ import {
   parseToolsString,
   validateTools,
 } from '../utils/tool-analyzer.js'
-import { homedir } from 'os'
-import { access } from 'fs/promises'
 
 /**
  * Initialize a new skill directory

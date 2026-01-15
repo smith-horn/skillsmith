@@ -12,6 +12,9 @@
  * - validate: Validate local SKILL.md (SMI-746)
  * - publish: Prepare skill for sharing (SMI-746)
  * - analyze: Analyze codebase for skill recommendations (SMI-1283)
+ * - author subagent: Generate companion subagent for a skill (SMI-1389)
+ * - author transform: Upgrade existing skill with subagent (SMI-1390)
+ * - author mcp-init: Scaffold a new MCP server project (SMI-1433)
  */
 
 import { Command } from 'commander'
@@ -90,8 +93,10 @@ program.addCommand(createUpdateCommand())
 program.addCommand(createRemoveCommand())
 
 // SMI-746: Skill authoring commands (under 'author' group)
+// SMI-1389, SMI-1390: Subagent generation
+// SMI-1433: MCP server scaffolding
 const authorCommand = new Command('author')
-  .description('Skill authoring and publishing tools')
+  .description('Skill authoring, subagent generation, and MCP server tools')
   .addCommand(createInitCommand())
   .addCommand(createValidateCommand())
   .addCommand(createPublishCommand())
