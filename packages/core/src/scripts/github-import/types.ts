@@ -9,6 +9,12 @@
 export interface Config {
   /** GitHub personal access token */
   GITHUB_TOKEN: string | undefined
+  /** GitHub App ID (for higher rate limits) */
+  GITHUB_APP_ID: string | undefined
+  /** GitHub App Installation ID */
+  GITHUB_APP_INSTALLATION_ID: string | undefined
+  /** GitHub App Private Key (PEM format, may be base64-encoded) */
+  GITHUB_APP_PRIVATE_KEY: string | undefined
   /** GitHub API base URL */
   GITHUB_API_URL: string
   /** Results per page for GitHub API */
@@ -33,6 +39,9 @@ export interface Config {
 
 export const CONFIG: Config = {
   GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+  GITHUB_APP_ID: process.env.GITHUB_APP_ID,
+  GITHUB_APP_INSTALLATION_ID: process.env.GITHUB_APP_INSTALLATION_ID,
+  GITHUB_APP_PRIVATE_KEY: process.env.GITHUB_APP_PRIVATE_KEY,
   GITHUB_API_URL: 'https://api.github.com',
   PER_PAGE: 100,
   MAX_RESULTS_PER_QUERY: 1000,
