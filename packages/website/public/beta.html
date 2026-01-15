@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Skillsmith - AI Skill Discovery for Claude Code</title>
+  <meta name="description" content="Find the right Claude Code skills for your stack. 46,000+ skills, finally searchable. Get early access." />
+
+  <!-- Fonts: Satoshi + JetBrains Mono -->
+  <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap" rel="stylesheet" />
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-primary: #0D0D0F;
+      --bg-secondary: #18181B;
+      --coral: #E07A5F;
+      --coral-dark: #D4694E;
+      --sage: #81B29A;
+      --text-primary: #FAFAFA;
+      --text-secondary: #A1A1AA;
+      --text-muted: #71717A;
+    }
+
+    html { font-family: 'Satoshi', system-ui, -apple-system, sans-serif; }
+    body {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      -webkit-font-smoothing: antialiased;
+      line-height: 1.5;
+    }
+
+    /* Background atmosphere */
+    .bg-atmosphere {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .bg-orb {
+      position: absolute;
+      border-radius: 50%;
+      animation: float 20s ease-in-out infinite;
+    }
+    .bg-orb-1 {
+      top: -20%;
+      left: -10%;
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, rgba(224,122,95,0.08) 0%, transparent 70%);
+    }
+    .bg-orb-2 {
+      bottom: -10%;
+      right: -10%;
+      width: 400px;
+      height: 400px;
+      background: radial-gradient(circle, rgba(129,178,154,0.05) 0%, transparent 70%);
+      animation-direction: reverse;
+      animation-duration: 25s;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translate(0, 0); }
+      50% { transform: translate(30px, -20px); }
+    }
+
+    /* Navigation */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 72px;
+      background: rgba(13, 13, 15, 0.8);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      z-index: 50;
+    }
+    .nav-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: inherit;
+    }
+    .logo-text {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+    .nav-link {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    .nav-link:hover { color: var(--coral); }
+    .nav-cta {
+      padding: 8px 16px;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 500;
+      color: inherit;
+      text-decoration: none;
+      transition: border-color 0.2s;
+    }
+    .nav-cta:hover { border-color: rgba(255,255,255,0.2); }
+
+    /* Hero */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding-top: 72px;
+      position: relative;
+      z-index: 1;
+    }
+    .hero-content {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 96px 24px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(40px, 8vw, 72px);
+      font-weight: 900;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      margin-bottom: 24px;
+      opacity: 0;
+      animation: fadeUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      animation-delay: 0.1s;
+    }
+    .hero p {
+      font-size: clamp(16px, 2.5vw, 20px);
+      color: var(--text-secondary);
+      max-width: 600px;
+      margin: 0 auto 40px;
+      opacity: 0;
+      animation: fadeUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      animation-delay: 0.2s;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Form */
+    .signup-form {
+      max-width: 500px;
+      margin: 0 auto 24px;
+      opacity: 0;
+      animation: fadeUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      animation-delay: 0.3s;
+    }
+    .form-row {
+      display: flex;
+      gap: 12px;
+    }
+    @media (max-width: 640px) {
+      .form-row { flex-direction: column; }
+    }
+    .form-input {
+      flex: 1;
+      padding: 16px 20px;
+      background: var(--bg-secondary);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      font-size: 16px;
+      color: var(--text-primary);
+      font-family: inherit;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .form-input::placeholder { color: var(--text-muted); }
+    .form-input:focus {
+      outline: none;
+      border-color: var(--coral);
+      box-shadow: 0 0 0 3px rgba(224,122,95,0.1);
+    }
+    .form-btn {
+      padding: 16px 32px;
+      background: linear-gradient(135deg, var(--coral), var(--coral-dark));
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 700;
+      color: white;
+      font-family: inherit;
+      cursor: pointer;
+      box-shadow: 0 8px 32px rgba(224,122,95,0.25);
+      transition: transform 0.2s, box-shadow 0.2s;
+      white-space: nowrap;
+    }
+    .form-btn:hover {
+      transform: scale(1.02);
+      box-shadow: 0 12px 40px rgba(224,122,95,0.3);
+    }
+    .form-btn:active { transform: scale(0.98); }
+
+    /* Social proof */
+    .social-proof {
+      font-size: 14px;
+      color: var(--text-muted);
+      opacity: 0;
+      animation: fadeUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      animation-delay: 0.5s;
+    }
+    .social-proof-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: var(--coral);
+      border-radius: 50%;
+      margin-right: 8px;
+    }
+
+    /* Value Props */
+    .value-props {
+      padding: 96px 24px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      position: relative;
+      z-index: 1;
+    }
+    .value-props-grid {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 32px;
+    }
+    .value-prop {
+      text-align: center;
+    }
+    .value-prop-icon {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 16px;
+      color: var(--coral);
+    }
+    .value-prop h3 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .value-prop p {
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    /* Problem/Solution */
+    .comparison {
+      padding: 96px 24px;
+      position: relative;
+      z-index: 1;
+    }
+    .comparison-content {
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    .comparison h2 {
+      font-size: clamp(24px, 5vw, 36px);
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 48px;
+    }
+    .comparison-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 24px;
+    }
+    .comparison-card {
+      padding: 32px;
+      background: var(--bg-secondary);
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .comparison-card.highlight {
+      border-color: rgba(224,122,95,0.2);
+      box-shadow: 0 0 40px rgba(224,122,95,0.08);
+    }
+    .comparison-card.dimmed { opacity: 0.7; }
+    .comparison-label {
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+    }
+    .comparison-card.highlight .comparison-label { color: var(--coral); }
+    .comparison-list {
+      list-style: none;
+    }
+    .comparison-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .comparison-list li:last-child { margin-bottom: 0; }
+    .comparison-icon { flex-shrink: 0; margin-top: 2px; }
+    .comparison-icon.negative { color: var(--text-muted); }
+    .comparison-icon.positive { color: var(--sage); }
+    .comparison-card.dimmed .comparison-list { color: var(--text-secondary); }
+
+    /* Final CTA */
+    .final-cta {
+      padding: 96px 24px;
+      position: relative;
+      z-index: 1;
+    }
+    .final-cta::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, transparent, rgba(224,122,95,0.03), transparent);
+      pointer-events: none;
+    }
+    .final-cta-content {
+      max-width: 600px;
+      margin: 0 auto;
+      text-align: center;
+      position: relative;
+    }
+    .final-cta h2 {
+      font-size: clamp(24px, 5vw, 36px);
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+    .final-cta > p {
+      font-size: 18px;
+      color: var(--text-secondary);
+      margin-bottom: 40px;
+    }
+
+    /* Footer */
+    footer {
+      padding: 48px 24px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      text-align: center;
+      position: relative;
+      z-index: 1;
+    }
+    .footer-content {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+    .footer-content a {
+      color: inherit;
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+    .footer-content a:hover { color: var(--coral); }
+    .footer-brand { color: var(--text-secondary); font-weight: 500; }
+  </style>
+</head>
+
+<body>
+  <!-- Background -->
+  <div class="bg-atmosphere">
+    <div class="bg-orb bg-orb-1"></div>
+    <div class="bg-orb bg-orb-2"></div>
+  </div>
+
+  <!-- Navigation -->
+  <nav>
+    <div class="nav-content">
+      <a href="/" class="logo">
+        <svg width="32" height="32" viewBox="0 0 64 64">
+          <g transform="translate(32, 32)">
+            <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
+                  stroke="#FFFFFF" stroke-width="1.5" stroke-opacity="0.3" fill="none"/>
+            <circle cx="10" cy="-18" r="5" fill="#E07A5F"/>
+            <circle cx="-10" cy="-4" r="5" fill="#E07A5F"/>
+            <circle cx="10" cy="8" r="5" fill="#E07A5F"/>
+            <circle cx="-10" cy="20" r="5" fill="#E07A5F"/>
+          </g>
+        </svg>
+        <span class="logo-text">skillsmith</span>
+      </a>
+      <div class="nav-links">
+        <a href="https://api.skillsmith.app" target="_blank" class="nav-link">API Docs</a>
+        <a href="#signup" class="nav-cta">Get Early Access</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-content">
+      <h1>Save Hours Finding<br>the Right Skills.</h1>
+      <p>46,000+ Claude Code skills. Finally searchable.<br>Get stack-aware recommendations before anyone else.</p>
+
+      <form id="signup" class="signup-form">
+        <div class="form-row">
+          <input type="email" placeholder="Enter your email" required class="form-input">
+          <button type="submit" class="form-btn">Get Early Access →</button>
+        </div>
+      </form>
+
+      <p class="social-proof">
+        <span class="social-proof-dot"></span>
+        247 developers already signed up
+      </p>
+    </div>
+  </section>
+
+  <!-- Value Props -->
+  <section class="value-props">
+    <div class="value-props-grid">
+      <div class="value-prop">
+        <svg class="value-prop-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        <h3>Semantic Search</h3>
+        <p>Search by intent, not keywords. AI-powered skill discovery.</p>
+      </div>
+      <div class="value-prop">
+        <svg class="value-prop-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+        </svg>
+        <h3>Quality Scores</h3>
+        <p>0-100 scores based on docs, tests, maintenance, security.</p>
+      </div>
+      <div class="value-prop">
+        <svg class="value-prop-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+        </svg>
+        <h3>Stack-Aware</h3>
+        <p>Recommendations tailored to your project's tech stack.</p>
+      </div>
+      <div class="value-prop">
+        <svg class="value-prop-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+        </svg>
+        <h3>One-Click Install</h3>
+        <p>Install directly to Claude Code. Uninstall just as fast.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Comparison -->
+  <section class="comparison">
+    <div class="comparison-content">
+      <h2>The skill discovery problem</h2>
+      <div class="comparison-grid">
+        <div class="comparison-card dimmed">
+          <p class="comparison-label">Without Skillsmith</p>
+          <ul class="comparison-list">
+            <li><span class="comparison-icon negative">✕</span> Manual searches across fragmented sources</li>
+            <li><span class="comparison-icon negative">✕</span> No quality signals or verification</li>
+            <li><span class="comparison-icon negative">✕</span> Trial and error installations</li>
+            <li><span class="comparison-icon negative">✕</span> Missing skills that would save time</li>
+          </ul>
+        </div>
+        <div class="comparison-card highlight">
+          <p class="comparison-label">With Skillsmith</p>
+          <ul class="comparison-list">
+            <li><span class="comparison-icon positive">✓</span> Semantic search across 46K+ skills</li>
+            <li><span class="comparison-icon positive">✓</span> Quality scores you can trust</li>
+            <li><span class="comparison-icon positive">✓</span> Stack-aware recommendations</li>
+            <li><span class="comparison-icon positive">✓</span> Discover skills before you need them</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Final CTA -->
+  <section class="final-cta">
+    <div class="final-cta-content">
+      <h2>Join 247 developers getting early access</h2>
+      <p>Be first to discover skills that fit your workflow.</p>
+      <form class="signup-form" style="opacity: 1; animation: none;">
+        <div class="form-row">
+          <input type="email" placeholder="Enter your email" required class="form-input">
+          <button type="submit" class="form-btn">Get Early Access →</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-content">
+      <span class="footer-brand">skillsmith</span>
+      <span>·</span>
+      <a href="https://api.skillsmith.app" target="_blank">api.skillsmith.app</a>
+      <span>·</span>
+      <a href="https://github.com/skillsmith" target="_blank">@skillsmith</a>
+    </div>
+  </footer>
+</body>
+</html>

@@ -40,6 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     git \
     libvips-dev \
+    sqlite3 \
     # Clean up apt cache to reduce image size
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean

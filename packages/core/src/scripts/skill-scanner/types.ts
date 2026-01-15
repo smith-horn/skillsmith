@@ -103,5 +103,51 @@ export interface FindingWithContext extends SecurityFinding {
   skillId: string
 }
 
+/**
+ * CLI options for the scanner
+ */
+export interface ScannerCliOptions {
+  /** Output JSON format for machine-readable output */
+  json: boolean
+  /** Show verbose output */
+  verbose: boolean
+  /** Quiet mode - minimal output */
+  quiet: boolean
+  /** Input file path */
+  inputPath: string
+}
+
+/**
+ * JSON output structure for --json flag
+ */
+export interface JsonOutput {
+  success: boolean
+  summary: {
+    totalScanned: number
+    passed: number
+    quarantined: number
+    bySeverity: Record<SeverityCategory, number>
+    averageRiskScore: number
+    maxRiskScore: number
+    duration: number
+    skillsPerSecond: number
+  }
+  quarantined: Array<{
+    skillId: string
+    riskScore: number
+    severity: SeverityCategory
+    topFinding: string
+  }>
+  safe: Array<{
+    skillId: string
+    riskScore: number
+  }>
+  outputFiles: {
+    report: string
+    quarantine: string
+    safe: string
+  }
+}
+
 // Re-export security types for convenience
 export type { ScanReport, SecurityFinding, SecuritySeverity }

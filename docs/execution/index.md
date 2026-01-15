@@ -16,6 +16,12 @@ Implementation plans, wave execution guides, and operational documentation for S
 
 - [Hive Mind Waves: Phases 5, 6, 7](hive-mind-waves-phase5-6-7.md) - Multi-phase execution plan
 
+## Phases 8-10: Skill Optimization
+
+- [MCP Decision Engine Implementation](mcp-decision-engine-implementation.md) - Phase 8: New skill for evaluating Skills vs MCP servers (SMI-1377)
+- [Subagent Pair Generation Implementation](subagent-pair-generation-implementation.md) - Phase 9: Auto-generate companion specialist agents (SMI-1378)
+- [Parallel Agent Execution Implementation](parallel-agent-execution-implementation.md) - Phase 10: Documentation and patterns for token efficiency (SMI-1379)
+
 ## Implementation Artifacts
 
 - [API Contracts](artifacts/api-contracts.md)

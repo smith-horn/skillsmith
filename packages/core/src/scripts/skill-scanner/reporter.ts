@@ -20,7 +20,45 @@ import {
 } from './trust-scorer.js'
 
 /**
- * Log summary statistics to console
+ * ANSI color codes for terminal output
+ */
+const COLORS = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  cyan: '\x1b[36m',
+  magenta: '\x1b[35m',
+}
+
+/**
+ * Check if colors should be used
+ */
+function useColors(): boolean {
+  return process.stdout.isTTY && !process.env.CI && !process.env.NO_COLOR
+}
+
+/**
+ * Apply color to text if colors are enabled
+ */
+function colorize(text: string, color: keyof typeof COLORS): string {
+  return useColors() ? `${COLORS[color]}${text}${COLORS.reset}` : text
+}
+
+/**
+ * Create a visual bar for statistics
+ */
+function createStatBar(value: number, total: number, width: number = 20): string {
+  const percentage = total > 0 ? value / total : 0
+  const filled = Math.round(width * percentage)
+  const bar = '█'.repeat(filled) + '░'.repeat(width - filled)
+  return bar
+}
+
+/**
+ * Log summary statistics to console with improved formatting
  *
  * @param results - Array of scan results
  */
@@ -31,24 +69,57 @@ export function logSummary(results: SkillScanResult[]): void {
   const avgRiskScore = calculateAverageRiskScore(results)
   const maxRiskScore = calculateMaxRiskScore(results)
 
-  console.log('\n' + '='.repeat(60))
-  console.log('                    SCAN SUMMARY')
-  console.log('='.repeat(60))
-  console.log(`  Total Skills Scanned:  ${total}`)
-  console.log(`  Passed (Safe):         ${passed} (${((passed / total) * 100).toFixed(1)}%)`)
+  const border = '═'.repeat(60)
+  const thinBorder = '─'.repeat(60)
+
+  console.log()
+  console.log(colorize(border, 'cyan'))
+  console.log(colorize('                    SCAN SUMMARY', 'bold'))
+  console.log(colorize(border, 'cyan'))
+  console.log()
+
+  // Main stats with visual bars
+  const passedPct = total > 0 ? ((passed / total) * 100).toFixed(1) : '0.0'
+  const quarantinedPct = total > 0 ? ((quarantined / total) * 100).toFixed(1) : '0.0'
+
+  console.log(`  ${colorize('Total Skills Scanned:', 'bold')}  ${total}`)
+  console.log()
   console.log(
-    `  Quarantined:           ${quarantined} (${((quarantined / total) * 100).toFixed(1)}%)`
+    `  ${colorize('Safe (Passed):', 'green')}         ${passed.toString().padStart(4)} ${createStatBar(passed, total)} ${passedPct}%`
+  )
+  console.log(
+    `  ${colorize('Quarantined:', 'red')}           ${quarantined.toString().padStart(4)} ${createStatBar(quarantined, total)} ${quarantinedPct}%`
   )
   console.log()
-  console.log('  By Severity:')
-  console.log(`    CRITICAL:            ${bySeverity.CRITICAL}`)
-  console.log(`    HIGH:                ${bySeverity.HIGH}`)
-  console.log(`    MEDIUM:              ${bySeverity.MEDIUM}`)
-  console.log(`    LOW:                 ${bySeverity.LOW}`)
+  console.log(colorize(thinBorder, 'dim'))
   console.log()
-  console.log(`  Average Risk Score:    ${avgRiskScore.toFixed(1)}`)
-  console.log(`  Maximum Risk Score:    ${maxRiskScore}`)
-  console.log('='.repeat(60) + '\n')
+
+  // Severity breakdown
+  console.log(`  ${colorize('By Severity:', 'bold')}`)
+  console.log()
+  console.log(
+    `    ${colorize('CRITICAL:', 'red')}  ${bySeverity.CRITICAL.toString().padStart(4)} ${createStatBar(bySeverity.CRITICAL, total, 15)}`
+  )
+  console.log(
+    `    ${colorize('HIGH:', 'magenta')}      ${bySeverity.HIGH.toString().padStart(4)} ${createStatBar(bySeverity.HIGH, total, 15)}`
+  )
+  console.log(
+    `    ${colorize('MEDIUM:', 'yellow')}    ${bySeverity.MEDIUM.toString().padStart(4)} ${createStatBar(bySeverity.MEDIUM, total, 15)}`
+  )
+  console.log(
+    `    ${colorize('LOW:', 'cyan')}       ${bySeverity.LOW.toString().padStart(4)} ${createStatBar(bySeverity.LOW, total, 15)}`
+  )
+  console.log()
+  console.log(colorize(thinBorder, 'dim'))
+  console.log()
+
+  // Risk score stats
+  console.log(`  ${colorize('Risk Scores:', 'bold')}`)
+  console.log(`    Average:             ${avgRiskScore.toFixed(1)}`)
+  console.log(`    Maximum:             ${maxRiskScore}`)
+  console.log()
+  console.log(colorize(border, 'cyan'))
+  console.log()
 }
 
 /**

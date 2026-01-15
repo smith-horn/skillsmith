@@ -1,0 +1,156 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="Getting Started" description="Quick start guide for setting up Skillsmith with Claude Code">
+  <h1>Getting Started</h1>
+
+  <p class="lead">
+    Get Skillsmith up and running in your Claude Code environment in just a few minutes.
+  </p>
+
+  <h2>Prerequisites</h2>
+
+  <p>Before you begin, ensure you have:</p>
+
+  <ul>
+    <li><strong>Claude Code</strong> installed and configured</li>
+    <li><strong>Node.js 18+</strong> (for npx commands)</li>
+    <li><strong>npm</strong> or a compatible package manager</li>
+  </ul>
+
+  <h2>Installation</h2>
+
+  <p>There are two ways to use Skillsmith: as an MCP server (recommended) or via the CLI.</p>
+
+  <h3>Option 1: MCP Server (Recommended)</h3>
+
+  <p>
+    The MCP server integrates directly with Claude Code, allowing you to search and
+    install skills through natural language.
+  </p>
+
+  <p>Add the following to your Claude settings file at <code>~/.claude/settings.json</code>:</p>
+
+  <pre><code>{`{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"]
+    }
+  }
+}`}</code></pre>
+
+  <p>After adding this configuration, restart Claude Code to load the Skillsmith server.</p>
+
+  <h3>Option 2: CLI Installation</h3>
+
+  <p>For command-line access, install the CLI globally:</p>
+
+  <pre><code>{`npm install -g @skillsmith/cli
+
+# Or use npx for one-off commands
+npx @skillsmith/cli search testing`}</code></pre>
+
+  <h2>Verify Installation</h2>
+
+  <h3>MCP Server Verification</h3>
+
+  <p>Ask Claude to verify the Skillsmith server is running:</p>
+
+  <pre><code>{`"List available MCP tools"
+# You should see skillsmith tools like search, install, recommend`}</code></pre>
+
+  <h3>CLI Verification</h3>
+
+  <p>Check the CLI is installed correctly:</p>
+
+  <pre><code>{`skillsmith --version
+# Output: @skillsmith/cli v1.x.x
+
+skillsmith --help
+# Shows available commands`}</code></pre>
+
+  <h2>Your First Skill Search</h2>
+
+  <h3>Using Claude (MCP)</h3>
+
+  <p>Simply ask Claude to search for skills:</p>
+
+  <pre><code>{`"Search for testing skills"
+"Find verified skills for git workflows"
+"Show me skills for React development"`}</code></pre>
+
+  <h3>Using the CLI</h3>
+
+  <p>Search for skills from the command line:</p>
+
+  <pre><code>{`# Search by keyword
+skillsmith search testing
+
+# Filter by trust tier
+skillsmith search git --tier verified
+
+# Filter by category
+skillsmith search --category devops`}</code></pre>
+
+  <h2>Installing Your First Skill</h2>
+
+  <h3>Using Claude (MCP)</h3>
+
+  <pre><code>{`"Install the jest-helper skill"
+"Install community/git-commit"`}</code></pre>
+
+  <h3>Using the CLI</h3>
+
+  <pre><code>{`# Install by name
+skillsmith install jest-helper
+
+# Install by full ID
+skillsmith install community/git-commit`}</code></pre>
+
+  <p>Skills are installed to <code>~/.claude/skills/</code> by default.</p>
+
+  <h2>Understanding Skill IDs</h2>
+
+  <p>Skills are identified by their full ID in the format <code>author/name</code>:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID Format</th>
+        <th>Example</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>author/name</code></td>
+        <td><code>community/jest-helper</code></td>
+        <td>Full skill identifier</td>
+      </tr>
+      <tr>
+        <td><code>name</code></td>
+        <td><code>jest-helper</code></td>
+        <td>Short form (searches all authors)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Next Steps</h2>
+
+  <ul>
+    <li><a href="/docs/cli">CLI Reference</a> - Learn all CLI commands</li>
+    <li><a href="/docs/mcp-server">MCP Server</a> - Configure advanced server options</li>
+    <li><a href="/docs/api">API Reference</a> - Build integrations with the Skillsmith API</li>
+  </ul>
+
+  <div class="callout">
+    <h4>Need Help?</h4>
+    <p>
+      If you encounter any issues during setup, check out our
+      <a href="https://github.com/smith-horn/skillsmith/issues">GitHub Issues</a>
+      or refer to the troubleshooting section in the CLI reference.
+    </p>
+  </div>
+</DocsLayout>

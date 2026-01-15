@@ -40,6 +40,7 @@ describe('API Response Validation Schemas', () => {
       trust_tier: 'verified',
       tags: ['testing', 'example'],
       stars: 100,
+      installable: true,
       created_at: '2024-01-01T00:00:00Z',
       updated_at: '2024-01-02T00:00:00Z',
     }
@@ -94,6 +95,7 @@ describe('API Response Validation Schemas', () => {
           trust_tier: 'community',
           tags: ['tag1'],
           stars: 50,
+          installable: false,
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-01T00:00:00Z',
         },
@@ -143,6 +145,7 @@ describe('API Response Validation Schemas', () => {
         trust_tier: 'verified',
         tags: ['production'],
         stars: 200,
+        installable: true,
         created_at: '2024-01-01T00:00:00Z',
         updated_at: '2024-01-01T00:00:00Z',
       },

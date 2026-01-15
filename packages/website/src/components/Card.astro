@@ -1,0 +1,45 @@
+---
+interface Props {
+  variant?: 'default' | 'elevated' | 'bordered' | 'gradient';
+  padding?: 'none' | 'sm' | 'md' | 'lg';
+  hover?: boolean;
+  class?: string;
+}
+
+const {
+  variant = 'default',
+  padding = 'md',
+  hover = false,
+  class: className = '',
+} = Astro.props;
+
+const baseStyles = 'rounded-xl';
+
+const variantStyles = {
+  default: 'bg-gray-800',
+  elevated: 'bg-gray-800 shadow-xl shadow-black/20',
+  bordered: 'bg-gray-800/50 border border-gray-700',
+  gradient: 'bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700/50',
+};
+
+const paddingStyles = {
+  none: '',
+  sm: 'p-4',
+  md: 'p-6',
+  lg: 'p-8',
+};
+
+const hoverStyles = hover ? 'hover:bg-gray-750 hover:border-gray-600 transition-colors cursor-pointer' : '';
+
+const classes = [
+  baseStyles,
+  variantStyles[variant],
+  paddingStyles[padding],
+  hoverStyles,
+  className,
+].filter(Boolean).join(' ');
+---
+
+<div class={classes}>
+  <slot />
+</div>

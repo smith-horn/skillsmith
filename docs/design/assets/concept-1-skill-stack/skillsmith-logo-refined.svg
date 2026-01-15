@@ -1,0 +1,22 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="512" height="512" fill="#0D0D0F"/>
+
+  <!-- Card Stack - Centered and proportionally balanced -->
+  <g transform="translate(256, 256)">
+    <!-- Back Card (Darkest, 20% opacity) -->
+    <rect x="-120" y="-80" width="160" height="200" rx="16" ry="16"
+          fill="#FFFFFF" fill-opacity="0.15"
+          transform="rotate(-6)"/>
+
+    <!-- Middle Card (Medium, 35% opacity) -->
+    <rect x="-100" y="-90" width="160" height="200" rx="16" ry="16"
+          fill="#FFFFFF" fill-opacity="0.3"
+          transform="rotate(-3)"/>
+
+    <!-- Front Card (Coral - Hero) -->
+    <rect x="-80" y="-100" width="160" height="200" rx="16" ry="16"
+          fill="#E07A5F"
+          transform="rotate(0)"/>
+  </g>
+</svg>

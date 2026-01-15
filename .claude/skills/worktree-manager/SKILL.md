@@ -117,7 +117,69 @@ git checkout main
 git add packages/core/src/index.ts
 git commit -m "chore: add export stubs for Phase X features"
 git push origin main
+
+# 4. Create worktree launch scripts (IMPORTANT: Do this during planning!)
+# See "Worktree Launch Script Template" below
 ```
+
+#### Worktree Launch Script Template
+
+**Create launch scripts during planning, not after.** Use this template for each worktree:
+
+```bash
+# scripts/start-phaseX-worktree.sh
+#!/bin/bash
+set -e
+
+WORKTREE_NAME="phaseX-feature-name"
+BRANCH_NAME="feature/phaseX-feature-name"
+WORKTREE_PATH="../worktrees/$WORKTREE_NAME"
+
+echo "Setting up $WORKTREE_NAME worktree..."
+
+# Create worktree if it doesn't exist
+if [ ! -d "$WORKTREE_PATH" ]; then
+    git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME"
+fi
+
+cd "$WORKTREE_PATH"
+
+# Sync with main
+git fetch origin main
+git rebase origin/main || true
+
+# Start Docker if needed (for projects using Docker)
+if command -v docker &> /dev/null && [ -f docker-compose.yml ]; then
+    docker compose --profile dev up -d 2>/dev/null || true
+fi
+
+# Create context file for Claude session continuity
+cat > .claude-context.md << 'CONTEXT'
+# Phase X: Feature Name
+
+## Objective
+[Brief description of what this worktree accomplishes]
+
+## Linear Issues
+- SMI-XXX: [Description]
+- SMI-XXX: [Description]
+
+## Key Files to Modify
+- path/to/file1.ts
+- path/to/file2.ts
+
+## Completion Criteria
+- [ ] Implementation complete
+- [ ] Tests passing
+- [ ] PR created and merged
+CONTEXT
+
+echo ""
+echo "Worktree ready at: $WORKTREE_PATH"
+echo "Run 'cd $WORKTREE_PATH && claude' to start"
+```
+
+Save scripts to `scripts/start-phaseX-*.sh` and make executable with `chmod +x`.
 
 ### Phase 2: Creating Worktrees
 

@@ -56,3 +56,29 @@ Multi-layer research methodology:
 
 ### Additional
 - [Substack Newsletter Research](layers/substack-newsletter-research.md)
+
+## Skill Optimization Research (Phases 8-10)
+
+Research from the skill optimization initiative:
+
+- [Skills vs MCP Research](../backlog/skill-optimizations/skills-vs-mcp-research.md) - When to use Skills vs MCP servers
+- [Parallel Agents Research](../backlog/skill-optimizations/parallel-agents-skills-research.md) - Token efficiency with subagent isolation
+- [Subagent Architecture](../backlog/skill-optimizations/subagent-architecture-research.md) - Subagent pair generation patterns
+- [MCP Builder Skill Prompt](../backlog/skill-optimizations/mcp-builder-skill-prompt.md) - 8-dimension scoring framework
+- [Skill Builder Upgrade](../backlog/skill-optimizations/skill-builder-upgrade-prompt.md) - Skill builder improvements
+
+---
+
+## Research Placement Guidelines
+
+**Use `docs/research/`** for:
+- Formal user research and market analysis
+- Technical feasibility studies (completed)
+- Cross-cutting research that informs multiple projects
+
+**Use `docs/backlog/`** for:
+- Investigation documents for upcoming work
+- Research tied to specific phase initiatives
+- Draft research that may be promoted later
+
+**After research is complete**: Consider moving validated research from `docs/backlog/` to `docs/research/` and adding it to this index.

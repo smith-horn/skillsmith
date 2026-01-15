@@ -1,0 +1,22 @@
+<svg width="400" height="80" viewBox="0 0 400 80" xmlns="http://www.w3.org/2000/svg">
+  <!-- Wordmark with chevron icon -->
+  <rect width="400" height="80" fill="#0D0D0F"/>
+
+  <!-- Chevron icon (small) -->
+  <g transform="translate(30, 40)">
+    <path d="M -10 -12 L 8 0 L -10 12"
+          stroke="#E07A5F"
+          stroke-width="5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          fill="none"/>
+  </g>
+
+  <!-- Text: skillsmith -->
+  <text x="60" y="52"
+        font-family="Satoshi, -apple-system, BlinkMacSystemFont, sans-serif"
+        font-size="32"
+        font-weight="700"
+        fill="#FAFAFA"
+        letter-spacing="-0.02em">skillsmith</text>
+</svg>
