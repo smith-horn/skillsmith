@@ -6,6 +6,48 @@
 import { CONFIG, SearchQuery, ImportedSkill } from './types.js'
 import { sleep, log, progressBar, isGitHubSearchResponse } from './utils.js'
 
+// ============================================================================
+// Rate Limit Monitoring (SMI-XXXX)
+// ============================================================================
+
+export interface RateLimitInfo {
+  remaining: number
+  limit: number
+  resetTime: Date
+  used: number
+}
+
+export interface RateLimitStatus {
+  core: RateLimitInfo | null
+  search: RateLimitInfo | null
+}
+
+// Track rate limit usage across the import session (reserved for future use)
+const _rateLimitTracker = {
+  startCore: 0,
+  startSearch: 0,
+  currentCore: 0,
+  currentSearch: 0,
+}
+
+// Forward declaration for getRateLimitStatus - assigned after getGitHubHeaders is defined
+let getRateLimitStatus: () => Promise<RateLimitStatus>
+
+/**
+ * Display rate limit status from response headers (lightweight, no API call).
+ */
+export function displayRateLimitFromHeaders(response: Response, label = 'Rate limit'): void {
+  const remaining = response.headers.get('X-RateLimit-Remaining')
+  const limit = response.headers.get('X-RateLimit-Limit')
+  const reset = response.headers.get('X-RateLimit-Reset')
+
+  if (remaining && limit && reset) {
+    const resetTime = new Date(parseInt(reset, 10) * 1000)
+    const timeUntilReset = Math.max(0, Math.round((resetTime.getTime() - Date.now()) / 1000 / 60))
+    log(`  ${label}: ${remaining}/${limit} remaining (resets in ${timeUntilReset}m)`)
+  }
+}
+
 // Cache for GitHub App installation token
 let cachedInstallationToken: { token: string; expiresAt: number } | null = null
 
@@ -318,6 +360,59 @@ export async function getGitHubHeaders(): Promise<Record<string, string>> {
   return headers
 }
 
+// ============================================================================
+// Rate Limit Status Functions
+// ============================================================================
+
+/**
+ * Get current rate limit status from GitHub API.
+ * Returns structured data for monitoring.
+ */
+getRateLimitStatus = async function (): Promise<RateLimitStatus> {
+  // eslint-disable-line prefer-const
+  try {
+    const response = await fetch(`${CONFIG.GITHUB_API_URL}/rate_limit`, {
+      headers: await getGitHubHeaders(),
+    })
+
+    if (!response.ok) {
+      return { core: null, search: null }
+    }
+
+    const data = (await response.json()) as {
+      resources?: { search?: { remaining: number; limit: number; reset: number; used: number } }
+      rate?: { remaining: number; limit: number; reset: number; used: number }
+    }
+
+    const search = data.resources?.search
+    const core = data.rate
+
+    return {
+      core: core
+        ? {
+            remaining: core.remaining,
+            limit: core.limit,
+            resetTime: new Date(core.reset * 1000),
+            used: core.used,
+          }
+        : null,
+      search: search
+        ? {
+            remaining: search.remaining,
+            limit: search.limit,
+            resetTime: new Date(search.reset * 1000),
+            used: search.used,
+          }
+        : null,
+    }
+  } catch {
+    return { core: null, search: null }
+  }
+}
+
+// Export the function
+export { getRateLimitStatus }
+
 /** Check and display GitHub rate limit status */
 export async function checkRateLimit(): Promise<void> {
   try {
@@ -442,6 +537,9 @@ export async function fetchGitHubSearch(
 
       const progress = progressBar(Math.min(page * CONFIG.PER_PAGE, totalCount), totalCount)
       log(`Page ${page}: ${data.items.length} repos ${progress}`)
+
+      // Display rate limit status from response headers (lightweight)
+      displayRateLimitFromHeaders(response, 'Search API')
 
       onProgress?.(skills.length, totalCount)
 

@@ -40,7 +40,7 @@ export * from './output.js'
  * Main import function.
  * Orchestrates the import process with support for resume.
  */
-async function main(): Promise<void> {
+async function _main(): Promise<void> {
   const startTime = Date.now()
   const shouldResume = process.argv.includes('--resume')
 
@@ -211,13 +211,5 @@ async function main(): Promise<void> {
   }
 }
 
-// Run the import
-const isMainModule =
-  process.argv[1]?.includes('import-github-skills') ||
-  process.argv[1]?.includes('github-import/index')
-if (isMainModule) {
-  main().catch((error) => {
-    log(`Fatal error: ${error}`, 'error')
-    process.exit(1)
-  })
-}
+// Note: This module is imported by import-github-skills.ts which has its own main().
+// Do not auto-execute here to avoid duplicate output.
