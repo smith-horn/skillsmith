@@ -1,0 +1,303 @@
+---
+/**
+ * Skillsmith Beta Landing Page
+ *
+ * Bold & Confident dark theme with Neural S branding
+ * Primary goal: Email capture for early access
+ */
+---
+
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Skillsmith - AI Skill Discovery for Claude Code</title>
+  <meta name="description" content="Find the right Claude Code skills for your stack. 46,000+ skills, finally searchable. Get early access." />
+
+  <!-- Fonts: Satoshi + JetBrains Mono -->
+  <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap" rel="stylesheet" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="Skillsmith - AI Skill Discovery for Claude Code" />
+  <meta property="og:description" content="Find the right Claude Code skills for your stack. 46,000+ skills, finally searchable." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://skillsmith.app" />
+</head>
+
+<body class="bg-[#0D0D0F] text-[#FAFAFA] font-sans antialiased">
+  <!-- Background atmosphere -->
+  <div class="fixed inset-0 overflow-hidden pointer-events-none">
+    <div class="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-[radial-gradient(circle,rgba(224,122,95,0.08)_0%,transparent_70%)] animate-float"></div>
+    <div class="absolute bottom-[-10%] right-[-10%] w-[400px] h-[400px] bg-[radial-gradient(circle,rgba(129,178,154,0.05)_0%,transparent_70%)] animate-float" style="animation-direction: reverse; animation-duration: 25s;"></div>
+  </div>
+
+  <!-- Navigation -->
+  <nav class="fixed top-0 left-0 right-0 z-50 h-[72px] bg-[#0D0D0F]/80 backdrop-blur-lg border-b border-white/[0.06]">
+    <div class="max-w-[1200px] mx-auto px-6 h-full flex items-center justify-between">
+      <!-- Logo -->
+      <a href="/" class="flex items-center gap-3">
+        <!-- Neural S Icon -->
+        <svg width="32" height="32" viewBox="0 0 64 64" class="flex-shrink-0">
+          <rect width="64" height="64" fill="transparent" rx="8"/>
+          <g transform="translate(32, 32)">
+            <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
+                  stroke="#FFFFFF" stroke-width="1.5" stroke-opacity="0.3" fill="none"/>
+            <circle cx="10" cy="-18" r="5" fill="#E07A5F"/>
+            <circle cx="-10" cy="-4" r="5" fill="#E07A5F"/>
+            <circle cx="10" cy="8" r="5" fill="#E07A5F"/>
+            <circle cx="-10" cy="20" r="5" fill="#E07A5F"/>
+          </g>
+        </svg>
+        <span class="text-xl font-bold tracking-tight">skillsmith</span>
+      </a>
+
+      <!-- Nav Links -->
+      <div class="flex items-center gap-6">
+        <a href="https://api.skillsmith.app" target="_blank" class="text-[#A1A1AA] hover:text-[#E07A5F] transition-colors text-sm font-medium">
+          API Docs
+        </a>
+        <a href="#signup" class="px-4 py-2 border border-white/10 rounded-xl text-sm font-medium hover:border-white/20 transition-colors">
+          Get Early Access
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <section class="relative min-h-screen flex items-center justify-center pt-[72px]">
+    <div class="max-w-[800px] mx-auto px-6 py-24 text-center">
+      <!-- Headline -->
+      <h1 class="text-5xl sm:text-6xl lg:text-7xl font-black tracking-tight leading-[1.1] mb-6 opacity-0 animate-fade-up" style="animation-delay: 0.1s;">
+        Save Hours Finding<br />the Right Skills.
+      </h1>
+
+      <!-- Subheadline -->
+      <p class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up" style="animation-delay: 0.2s;">
+        46,000+ Claude Code skills. Finally searchable.<br />
+        Get stack-aware recommendations before anyone else.
+      </p>
+
+      <!-- Email Capture Form -->
+      <form id="signup" class="max-w-[500px] mx-auto mb-6 opacity-0 animate-fade-up" style="animation-delay: 0.3s;">
+        <div class="flex flex-col sm:flex-row gap-3">
+          <input
+            type="email"
+            placeholder="Enter your email"
+            required
+            class="flex-1 px-5 py-4 bg-[#18181B] border border-white/10 rounded-xl text-base placeholder:text-[#71717A] focus:outline-none focus:border-[#E07A5F] focus:ring-1 focus:ring-[#E07A5F]/20 transition-colors"
+          />
+          <button
+            type="submit"
+            class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all"
+          >
+            Get Early Access →
+          </button>
+        </div>
+      </form>
+
+      <!-- Social Proof -->
+      <p class="text-sm text-[#71717A] opacity-0 animate-fade-up" style="animation-delay: 0.5s;">
+        <span class="inline-block w-2 h-2 bg-[#E07A5F] rounded-full mr-2"></span>
+        247 developers already signed up
+      </p>
+    </div>
+  </section>
+
+  <!-- Value Props Section -->
+  <section class="py-24 border-t border-white/[0.06]">
+    <div class="max-w-[1200px] mx-auto px-6">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+        <!-- Semantic Search -->
+        <div class="text-center">
+          <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M10 10l4 4" />
+            </svg>
+          </div>
+          <h3 class="text-lg font-bold mb-2">Semantic Search</h3>
+          <p class="text-sm text-[#A1A1AA]">Search by intent, not keywords. AI-powered skill discovery.</p>
+        </div>
+
+        <!-- Quality Scores -->
+        <div class="text-center">
+          <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+            </svg>
+          </div>
+          <h3 class="text-lg font-bold mb-2">Quality Scores</h3>
+          <p class="text-sm text-[#A1A1AA]">0-100 scores based on docs, tests, maintenance, security.</p>
+        </div>
+
+        <!-- Stack-Aware -->
+        <div class="text-center">
+          <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+            </svg>
+          </div>
+          <h3 class="text-lg font-bold mb-2">Stack-Aware</h3>
+          <p class="text-sm text-[#A1A1AA]">Recommendations tailored to your project's tech stack.</p>
+        </div>
+
+        <!-- One-Click Install -->
+        <div class="text-center">
+          <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+          </div>
+          <h3 class="text-lg font-bold mb-2">One-Click Install</h3>
+          <p class="text-sm text-[#A1A1AA]">Install directly to Claude Code. Uninstall just as fast.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Problem/Solution Section -->
+  <section class="py-24">
+    <div class="max-w-[1000px] mx-auto px-6">
+      <h2 class="text-3xl sm:text-4xl font-bold text-center mb-12">
+        The skill discovery problem
+      </h2>
+
+      <div class="grid md:grid-cols-2 gap-6">
+        <!-- Without Skillsmith -->
+        <div class="p-8 bg-[#18181B] border border-white/[0.06] rounded-2xl opacity-70">
+          <p class="text-xs font-medium uppercase tracking-wider text-[#71717A] mb-6">Without Skillsmith</p>
+          <ul class="space-y-4">
+            <li class="flex items-start gap-3">
+              <span class="text-[#71717A] mt-0.5">✕</span>
+              <span class="text-[#A1A1AA]">Manual searches across fragmented sources</span>
+            </li>
+            <li class="flex items-start gap-3">
+              <span class="text-[#71717A] mt-0.5">✕</span>
+              <span class="text-[#A1A1AA]">No quality signals or verification</span>
+            </li>
+            <li class="flex items-start gap-3">
+              <span class="text-[#71717A] mt-0.5">✕</span>
+              <span class="text-[#A1A1AA]">Trial and error installations</span>
+            </li>
+            <li class="flex items-start gap-3">
+              <span class="text-[#71717A] mt-0.5">✕</span>
+              <span class="text-[#A1A1AA]">Missing skills that would save time</span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- With Skillsmith -->
+        <div class="p-8 bg-[#18181B] border border-[#E07A5F]/20 rounded-2xl shadow-glow">
+          <p class="text-xs font-medium uppercase tracking-wider text-[#E07A5F] mb-6">With Skillsmith</p>
+          <ul class="space-y-4">
+            <li class="flex items-start gap-3">
+              <span class="text-[#81B29A] mt-0.5">✓</span>
+              <span class="text-[#FAFAFA]">Semantic search across 46K+ skills</span>
+            </li>
+            <li class="flex items-start gap-3">
+              <span class="text-[#81B29A] mt-0.5">✓</span>
+              <span class="text-[#FAFAFA]">Quality scores you can trust</span>
+            </li>
+            <li class="flex items-start gap-3">
+              <span class="text-[#81B29A] mt-0.5">✓</span>
+              <span class="text-[#FAFAFA]">Stack-aware recommendations</span>
+            </li>
+            <li class="flex items-start gap-3">
+              <span class="text-[#81B29A] mt-0.5">✓</span>
+              <span class="text-[#FAFAFA]">Discover skills before you need them</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Final CTA Section -->
+  <section class="py-24 relative">
+    <div class="absolute inset-0 bg-gradient-to-b from-transparent via-[#E07A5F]/[0.03] to-transparent"></div>
+    <div class="relative max-w-[600px] mx-auto px-6 text-center">
+      <h2 class="text-3xl sm:text-4xl font-bold mb-4">
+        Join 247 developers getting early access
+      </h2>
+      <p class="text-lg text-[#A1A1AA] mb-10">
+        Be first to discover skills that fit your workflow.
+      </p>
+
+      <!-- Email Capture (duplicate) -->
+      <form class="max-w-[500px] mx-auto">
+        <div class="flex flex-col sm:flex-row gap-3">
+          <input
+            type="email"
+            placeholder="Enter your email"
+            required
+            class="flex-1 px-5 py-4 bg-[#18181B] border border-white/10 rounded-xl text-base placeholder:text-[#71717A] focus:outline-none focus:border-[#E07A5F] focus:ring-1 focus:ring-[#E07A5F]/20 transition-colors"
+          />
+          <button
+            type="submit"
+            class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all"
+          >
+            Get Early Access →
+          </button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="py-12 border-t border-white/[0.06]">
+    <div class="max-w-[1200px] mx-auto px-6">
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-4 text-sm text-[#71717A]">
+        <span class="font-medium text-[#A1A1AA]">skillsmith</span>
+        <span class="hidden sm:inline">·</span>
+        <a href="https://api.skillsmith.app" target="_blank" class="hover:text-[#E07A5F] transition-colors">api.skillsmith.app</a>
+        <span class="hidden sm:inline">·</span>
+        <a href="https://github.com/skillsmith" target="_blank" class="hover:text-[#E07A5F] transition-colors">@skillsmith</a>
+      </div>
+    </div>
+  </footer>
+
+  <style>
+    /* Ensure animations play */
+    .animate-fade-up {
+      animation: fadeUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    }
+
+    @keyframes fadeUp {
+      from {
+        opacity: 0;
+        transform: translateY(24px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .animate-float {
+      animation: float 20s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translate(0, 0); }
+      50% { transform: translate(30px, -20px); }
+    }
+
+    /* CTA shadow */
+    .shadow-cta {
+      box-shadow: 0 8px 32px rgba(224, 122, 95, 0.25);
+    }
+
+    .shadow-glow {
+      box-shadow: 0 0 40px rgba(224, 122, 95, 0.08);
+    }
+  </style>
+</body>
+</html>

@@ -1,0 +1,20 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <!-- Favicon version - simplified -->
+  <rect width="64" height="64" fill="#0D0D0F" rx="8"/>
+
+  <!-- Neural S (proper S orientation) -->
+  <g transform="translate(32, 32)">
+    <!-- S path (flipped to correct orientation) -->
+    <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
+          stroke="#FFFFFF"
+          stroke-width="1.5"
+          stroke-opacity="0.3"
+          fill="none"/>
+
+    <!-- Key nodes only -->
+    <circle cx="10" cy="-18" r="5" fill="#E07A5F"/>
+    <circle cx="-10" cy="-4" r="5" fill="#E07A5F"/>
+    <circle cx="10" cy="8" r="5" fill="#E07A5F"/>
+    <circle cx="-10" cy="20" r="5" fill="#E07A5F"/>
+  </g>
+</svg>

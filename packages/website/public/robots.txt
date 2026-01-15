@@ -1,0 +1,7 @@
+# Skillsmith Website Robots.txt
+
+User-agent: *
+Allow: /
+
+# Sitemap location
+Sitemap: https://skillsmith.app/sitemap-index.xml
