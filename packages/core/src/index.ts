@@ -522,3 +522,24 @@ export {
   type AuditLoggerConfig,
   type AuditStats,
 } from './security/AuditLogger.js'
+
+// Registry Sync
+export {
+  SyncConfigRepository,
+  SyncHistoryRepository,
+  SyncEngine,
+  BackgroundSyncService,
+  createBackgroundSyncService,
+  FREQUENCY_INTERVALS,
+  type SyncConfig,
+  type SyncConfigUpdate,
+  type SyncFrequency,
+  type SyncHistoryEntry,
+  type SyncStatus,
+  type SyncRunResult,
+  type SyncOptions,
+  type SyncProgress,
+  type SyncResult,
+  type BackgroundSyncOptions,
+  type BackgroundSyncState,
+} from './sync/index.js'
