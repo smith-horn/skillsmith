@@ -1,6 +1,9 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 
+// Enable server-side rendering for dynamic routes
+export const prerender = false;
+
 // Get the skill ID from the URL
 const { id } = Astro.params;
 ---
@@ -163,7 +166,7 @@ const { id } = Astro.params;
     </div>
   </div>
 
-  <script define:vars={{ skillId: id }}>
+  <script is:inline define:vars={{ skillId: id }}>
     const API_BASE = 'https://api.skillsmith.app/functions/v1';
 
     // Trust tier badge colors
