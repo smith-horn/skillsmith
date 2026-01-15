@@ -1,0 +1,20 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <!-- Favicon/Icon version - simplified for small sizes -->
+  <rect width="64" height="64" fill="#0D0D0F" rx="8"/>
+
+  <g transform="translate(32, 32)">
+    <!-- Back Card -->
+    <rect x="-14" y="-10" width="20" height="26" rx="3"
+          fill="#FFFFFF" fill-opacity="0.15"
+          transform="rotate(-8)"/>
+
+    <!-- Middle Card -->
+    <rect x="-11" y="-12" width="20" height="26" rx="3"
+          fill="#FFFFFF" fill-opacity="0.3"
+          transform="rotate(-4)"/>
+
+    <!-- Front Card (Coral) -->
+    <rect x="-8" y="-14" width="20" height="26" rx="3"
+          fill="#E07A5F"/>
+  </g>
+</svg>

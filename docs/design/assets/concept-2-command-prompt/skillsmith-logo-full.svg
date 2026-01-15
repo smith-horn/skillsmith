@@ -1,0 +1,29 @@
+<svg width="600" height="200" viewBox="0 0 600 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="chevronGradientFull" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#E07A5F"/>
+      <stop offset="100%" stop-color="#D4694E"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Full Logo: Chevron + Wordmark -->
+  <rect width="600" height="200" fill="#0D0D0F"/>
+
+  <!-- Chevron Icon -->
+  <g transform="translate(80, 100)">
+    <path d="M -28 -36 L 28 0 L -28 36"
+          stroke="url(#chevronGradientFull)"
+          stroke-width="14"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          fill="none"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="150" y="115"
+        font-family="Satoshi, -apple-system, BlinkMacSystemFont, sans-serif"
+        font-size="56"
+        font-weight="700"
+        fill="#FAFAFA"
+        letter-spacing="-0.02em">skillsmith</text>
+</svg>
