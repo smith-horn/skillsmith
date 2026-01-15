@@ -1,5 +1,6 @@
 import { defineConfig } from 'astro/config';
 import sitemap from '@astrojs/sitemap';
+import vercel from '@astrojs/vercel';
 
 // https://astro.build/config
 export default defineConfig({
@@ -9,7 +10,10 @@ export default defineConfig({
     sitemap(),
   ],
 
-  // Build output configuration
+  // Vercel adapter for hybrid rendering
+  adapter: vercel(),
+
+  // Build output configuration - static with SSR adapter for dynamic routes
   output: 'static',
 
   // TypeScript configuration
