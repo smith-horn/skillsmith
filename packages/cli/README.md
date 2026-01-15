@@ -2,8 +2,10 @@
 
 Command-line interface for Skillsmith - discover, manage, and author Claude Code skills.
 
-## What's New in v0.2.3
+## What's New in v0.2.4
 
+- **MCP Server Scaffolding**: Generate TypeScript MCP servers with `author mcp-init`
+- **Decision Helper Integration**: Seamless flow from evaluation to scaffolding
 - **Subagent Generation**: Generate companion specialist agents for parallel execution (37-97% token savings)
 - **Skill Transform**: Upgrade existing skills with subagent configuration
 - **Tool Detection**: Automatic analysis of required tools from skill content
@@ -210,6 +212,63 @@ skillsmith author transform ~/.claude/skills --batch
 - `--tools <tools>` - Override detected tools
 - `--model <model>` - Model: sonnet, opus, haiku (default: sonnet)
 
+### author mcp-init
+
+Scaffold a new MCP server project with TypeScript and stdio transport.
+
+```bash
+# Interactive mode
+skillsmith author mcp-init
+
+# With name
+skillsmith author mcp-init my-mcp-server
+
+# With pre-defined tools
+skillsmith author mcp-init my-server --tools "greet,search,process"
+
+# Custom output directory
+skillsmith author mcp-init my-server --output ./servers
+```
+
+**Options:**
+- `-o, --output <path>` - Output directory (default: current directory)
+- `--tools <tools>` - Initial tool names (comma-separated)
+- `--force` - Overwrite existing directory
+
+**Generated Structure:**
+```
+my-mcp-server/
+├── package.json         # npm package with MCP SDK
+├── tsconfig.json        # TypeScript configuration
+├── src/
+│   ├── index.ts         # Entry point (npx-ready)
+│   ├── server.ts        # MCP server setup
+│   └── tools/
+│       ├── index.ts     # Tool definitions
+│       └── example.ts   # Example tool implementation
+├── README.md            # Usage documentation
+└── .gitignore
+```
+
+**After Generation:**
+```bash
+cd my-mcp-server
+npm install
+npm run dev  # Start in development mode
+```
+
+**Configure in Claude Code** (`~/.claude/settings.json`):
+```json
+{
+  "mcpServers": {
+    "my-mcp-server": {
+      "command": "npx",
+      "args": ["tsx", "/path/to/my-mcp-server/src/index.ts"]
+    }
+  }
+}
+```
+
 ### import
 
 Import skills from GitHub (for populating local database).
@@ -292,6 +351,23 @@ skillsmith author transform ~/.claude/skills/docker
 
 # Batch upgrade all skills
 skillsmith author transform ~/.claude/skills --batch --force
+```
+
+### Create an MCP Server
+
+```bash
+# Scaffold a new MCP server
+skillsmith author mcp-init my-slack-integration --tools "send_message,list_channels"
+
+# Navigate and install dependencies
+cd my-slack-integration
+npm install
+
+# Start development server
+npm run dev
+
+# Add to Claude Code settings
+# Edit ~/.claude/settings.json to include the server
 ```
 
 ### Manage Skills

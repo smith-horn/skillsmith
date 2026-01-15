@@ -12,3 +12,9 @@ export {
   renderSubagentTemplate,
   renderClaudeMdSnippet,
 } from './subagent.md.template.js'
+export {
+  renderMcpServerTemplates,
+  type McpServerTemplateData,
+  type McpToolDefinition,
+  type McpParameterDefinition,
+} from './mcp-server.template.js'

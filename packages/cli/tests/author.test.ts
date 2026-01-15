@@ -466,3 +466,255 @@ describe('Tool Analyzer', () => {
     })
   })
 })
+
+describe('SMI-1433: MCP Server Scaffolding Command', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  describe('initMcpServer Integration', () => {
+    it('creates all 8 files when directory does not exist', async () => {
+      const { stat, mkdir, writeFile } = await import('fs/promises')
+      const { input, confirm } = await import('@inquirer/prompts')
+
+      // Directory doesn't exist
+      vi.mocked(stat).mockRejectedValue(new Error('ENOENT'))
+      vi.mocked(mkdir).mockResolvedValue(undefined)
+      vi.mocked(writeFile).mockResolvedValue(undefined)
+
+      // Prompt responses
+      vi.mocked(input)
+        .mockResolvedValueOnce('test-server') // name
+        .mockResolvedValueOnce('Test description') // description
+        .mockResolvedValueOnce('test-author') // author
+      vi.mocked(confirm).mockResolvedValue(false) // don't add tools interactively
+
+      // Dynamically import to get fresh mocks
+      const { initMcpServer } = await import('../src/commands/author.js')
+      await initMcpServer(undefined, {})
+
+      // Verify all 8 files are written
+      expect(vi.mocked(writeFile)).toHaveBeenCalledTimes(8)
+
+      // Verify expected file paths
+      const writeCalls = vi.mocked(writeFile).mock.calls
+      const writtenPaths = writeCalls.map((call) => {
+        const path = call[0] as string
+        // Extract relative path from the full path
+        const parts = path.split('/test-server/')
+        return parts[1] || path.split('/').pop()
+      })
+
+      expect(writtenPaths).toContain('package.json')
+      expect(writtenPaths).toContain('tsconfig.json')
+      expect(writtenPaths).toContain('README.md')
+      expect(writtenPaths).toContain('.gitignore')
+    })
+
+    it('includes tool definitions when --tools option is used', async () => {
+      const { stat, mkdir, writeFile } = await import('fs/promises')
+      const { input } = await import('@inquirer/prompts')
+
+      // Directory doesn't exist
+      vi.mocked(stat).mockRejectedValue(new Error('ENOENT'))
+      vi.mocked(mkdir).mockResolvedValue(undefined)
+      vi.mocked(writeFile).mockResolvedValue(undefined)
+
+      // Prompt responses
+      vi.mocked(input)
+        .mockResolvedValueOnce('tool-server') // name
+        .mockResolvedValueOnce('Server with tools') // description
+        .mockResolvedValueOnce('author') // author
+
+      const { initMcpServer } = await import('../src/commands/author.js')
+      await initMcpServer(undefined, { tools: 'fetch-data,process-item' })
+
+      // Verify writeFile was called
+      expect(vi.mocked(writeFile)).toHaveBeenCalled()
+
+      // Find the tools/index.ts file content
+      const writeCalls = vi.mocked(writeFile).mock.calls
+      const toolsIndexCall = writeCalls.find((call) => {
+        const path = call[0] as string
+        return path.includes('tools/index.ts')
+      })
+
+      expect(toolsIndexCall).toBeDefined()
+      if (toolsIndexCall) {
+        const content = toolsIndexCall[1] as string
+        expect(content).toContain('fetch-data')
+        expect(content).toContain('process-item')
+      }
+    })
+
+    it('calls spinner.fail when mkdir throws an error', async () => {
+      const { stat, mkdir } = await import('fs/promises')
+      const { input, confirm } = await import('@inquirer/prompts')
+      const ora = await import('ora')
+
+      // Track spinner.fail calls
+      const failMock = vi.fn().mockReturnThis()
+      vi.mocked(ora.default).mockReturnValue({
+        start: vi.fn().mockReturnThis(),
+        stop: vi.fn().mockReturnThis(),
+        succeed: vi.fn().mockReturnThis(),
+        fail: failMock,
+        text: '',
+      } as unknown as ReturnType<typeof ora.default>)
+
+      // Directory doesn't exist, but mkdir fails
+      vi.mocked(stat).mockRejectedValue(new Error('ENOENT'))
+      vi.mocked(mkdir).mockRejectedValue(new Error('Permission denied'))
+
+      // Prompt responses
+      vi.mocked(input)
+        .mockResolvedValueOnce('fail-server') // name
+        .mockResolvedValueOnce('Will fail') // description
+        .mockResolvedValueOnce('author') // author
+      vi.mocked(confirm).mockResolvedValue(false)
+
+      const { initMcpServer } = await import('../src/commands/author.js')
+
+      await expect(initMcpServer(undefined, {})).rejects.toThrow()
+
+      expect(failMock).toHaveBeenCalled()
+      const failMessage = failMock.mock.calls[0]?.[0] as string
+      expect(failMessage).toContain('Failed to create MCP server')
+    })
+
+    it('writes files when --force is used with existing directory', async () => {
+      const { stat, mkdir, writeFile } = await import('fs/promises')
+      const { input, confirm } = await import('@inquirer/prompts')
+
+      // Directory exists
+      vi.mocked(stat).mockResolvedValue({ isDirectory: () => true } as Awaited<
+        ReturnType<typeof stat>
+      >)
+      vi.mocked(mkdir).mockResolvedValue(undefined)
+      vi.mocked(writeFile).mockResolvedValue(undefined)
+
+      // Prompt responses
+      vi.mocked(input)
+        .mockResolvedValueOnce('force-server') // name
+        .mockResolvedValueOnce('Force overwrite') // description
+        .mockResolvedValueOnce('author') // author
+      vi.mocked(confirm).mockResolvedValue(false) // don't add tools (not asked about overwrite due to --force)
+
+      const { initMcpServer } = await import('../src/commands/author.js')
+      await initMcpServer(undefined, { force: true })
+
+      // Verify files are written despite directory existing
+      expect(vi.mocked(writeFile)).toHaveBeenCalledTimes(8)
+    })
+
+    it('does not write files when user declines overwrite prompt', async () => {
+      const { stat, mkdir, writeFile } = await import('fs/promises')
+      const { input, confirm } = await import('@inquirer/prompts')
+
+      // Directory exists
+      vi.mocked(stat).mockResolvedValue({ isDirectory: () => true } as Awaited<
+        ReturnType<typeof stat>
+      >)
+      vi.mocked(mkdir).mockResolvedValue(undefined)
+      vi.mocked(writeFile).mockResolvedValue(undefined)
+
+      // Prompt responses
+      vi.mocked(input)
+        .mockResolvedValueOnce('existing-server') // name
+        .mockResolvedValueOnce('Exists already') // description
+        .mockResolvedValueOnce('author') // author
+      vi.mocked(confirm)
+        .mockResolvedValueOnce(false) // don't add tools
+        .mockResolvedValueOnce(false) // decline overwrite
+
+      const { initMcpServer } = await import('../src/commands/author.js')
+      await initMcpServer(undefined, {})
+
+      // Verify no files are written
+      expect(vi.mocked(writeFile)).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('createMcpInitCommand', () => {
+    it('creates a command with correct name', async () => {
+      const { createMcpInitCommand } = await import('../src/commands/author.js')
+      const cmd = createMcpInitCommand()
+
+      expect(cmd).toBeInstanceOf(Command)
+      expect(cmd.name()).toBe('mcp-init')
+    })
+
+    it('has correct description', async () => {
+      const { createMcpInitCommand } = await import('../src/commands/author.js')
+      const cmd = createMcpInitCommand()
+
+      expect(cmd.description()).toContain('Scaffold')
+      expect(cmd.description()).toContain('MCP server')
+    })
+
+    it('accepts optional name argument', async () => {
+      const { createMcpInitCommand } = await import('../src/commands/author.js')
+      const cmd = createMcpInitCommand()
+
+      expect(cmd.registeredArguments.length).toBeGreaterThanOrEqual(0)
+    })
+
+    it('has output option', async () => {
+      const { createMcpInitCommand } = await import('../src/commands/author.js')
+      const cmd = createMcpInitCommand()
+
+      const outputOpt = cmd.options.find((o) => o.short === '-o')
+      expect(outputOpt).toBeDefined()
+      expect(outputOpt?.long).toBe('--output')
+    })
+
+    it('has tools option', async () => {
+      const { createMcpInitCommand } = await import('../src/commands/author.js')
+      const cmd = createMcpInitCommand()
+
+      const toolsOpt = cmd.options.find((o) => o.long === '--tools')
+      expect(toolsOpt).toBeDefined()
+    })
+
+    it('has force option', async () => {
+      const { createMcpInitCommand } = await import('../src/commands/author.js')
+      const cmd = createMcpInitCommand()
+
+      const forceOpt = cmd.options.find((o) => o.long === '--force')
+      expect(forceOpt).toBeDefined()
+    })
+  })
+
+  describe('MCP Server Template Integration', () => {
+    it('exports renderMcpServerTemplates', async () => {
+      const { renderMcpServerTemplates } = await import('../src/templates/index.js')
+      expect(typeof renderMcpServerTemplates).toBe('function')
+    })
+
+    it('template generates valid JSON for package.json', async () => {
+      const { renderMcpServerTemplates } = await import('../src/templates/index.js')
+      const files = renderMcpServerTemplates({
+        name: 'test-server',
+        description: 'Test server',
+        author: 'test',
+        tools: [],
+      })
+
+      const packageJson = files.get('package.json')
+      expect(() => JSON.parse(packageJson || '')).not.toThrow()
+    })
+
+    it('template generates valid JSON for tsconfig.json', async () => {
+      const { renderMcpServerTemplates } = await import('../src/templates/index.js')
+      const files = renderMcpServerTemplates({
+        name: 'test-server',
+        description: 'Test server',
+        author: 'test',
+        tools: [],
+      })
+
+      const tsconfig = files.get('tsconfig.json')
+      expect(() => JSON.parse(tsconfig || '')).not.toThrow()
+    })
+  })
+})

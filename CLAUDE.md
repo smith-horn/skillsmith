@@ -479,14 +479,15 @@ packages/
 
 The CLI (`skillsmith` or `sklx`) provides commands for skill management and authoring.
 
-### Author Commands (SMI-1389, SMI-1390)
+### Author Commands (SMI-1389, SMI-1390, SMI-1433)
 
-Commands for skill authoring and subagent generation, enabling 37-97% token savings through context isolation.
+Commands for skill authoring, subagent generation, and MCP server scaffolding.
 
 | Command | Description | Example |
 |---------|-------------|---------|
 | `author subagent` | Generate companion subagent for a skill | `skillsmith author subagent ./my-skill` |
 | `author transform` | Upgrade existing skill with subagent | `skillsmith author transform ./my-skill` |
+| `author mcp-init` | Scaffold a new MCP server project | `skillsmith author mcp-init my-server` |
 
 **subagent options**:
 - `--output, -o <dir>`: Output directory (default: ~/.claude/agents)
@@ -501,6 +502,11 @@ Commands for skill authoring and subagent generation, enabling 37-97% token savi
 - `--tools <list>`: Override detected tools
 - `--model <model>`: Specify model
 - `--force`: Overwrite existing subagent
+
+**mcp-init options**:
+- `--output, -o <dir>`: Output directory (default: current directory)
+- `--tools <list>`: Initial tool names (comma-separated)
+- `--force`: Overwrite existing directory
 
 **Tool Detection**: The commands automatically analyze skill content to determine minimal required tools (Read, Write, Edit, Bash, Grep, Glob, WebFetch, WebSearch).
 

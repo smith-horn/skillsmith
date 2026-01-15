@@ -17,6 +17,7 @@ export {
   createPublishCommand,
   createSubagentCommand,
   createTransformCommand,
+  createMcpInitCommand,
 } from './author.js'
 
 // SMI-1283: Codebase Analysis
