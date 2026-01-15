@@ -31,6 +31,10 @@ import {
   initializePostHog,
   shutdownPostHog,
   generateAnonymousId,
+  SyncConfigRepository,
+  SyncHistoryRepository,
+  SyncEngine,
+  BackgroundSyncService,
   type ApiClientConfig,
 } from '@skillsmith/core'
 
@@ -50,6 +54,8 @@ export interface ToolContext {
   apiClient: SkillsmithApiClient
   /** Anonymous user ID for telemetry (undefined if telemetry disabled) */
   distinctId?: string
+  /** Background sync service (if enabled) */
+  backgroundSync?: BackgroundSyncService
 }
 
 /**
@@ -74,6 +80,22 @@ export interface TelemetryConfig {
 }
 
 /**
+ * Background sync configuration
+ */
+export interface BackgroundSyncConfig {
+  /**
+   * Enable background sync during MCP server sessions
+   * Can also be set via SKILLSMITH_BACKGROUND_SYNC env var
+   * Default: true (syncs if config.enabled is true)
+   */
+  enabled?: boolean
+  /**
+   * Enable debug logging for sync operations
+   */
+  debug?: boolean
+}
+
+/**
  * Options for creating tool context
  */
 export interface ToolContextOptions {
@@ -88,6 +110,11 @@ export interface ToolContextOptions {
    * Privacy-first: telemetry is OPT-IN and disabled by default
    */
   telemetryConfig?: TelemetryConfig
+  /**
+   * Background sync configuration
+   * Enables automatic registry sync during MCP server sessions
+   */
+  backgroundSyncConfig?: BackgroundSyncConfig
 }
 
 /**
@@ -227,12 +254,58 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
     })
   }
 
+  // Initialize background sync service if enabled
+  let backgroundSync: BackgroundSyncService | undefined
+
+  // Check env var first, then config option (default: true)
+  const backgroundSyncEnabled =
+    process.env.SKILLSMITH_BACKGROUND_SYNC !== 'false' &&
+    options.backgroundSyncConfig?.enabled !== false
+
+  if (backgroundSyncEnabled) {
+    const syncConfigRepo = new SyncConfigRepository(db)
+    const syncHistoryRepo = new SyncHistoryRepository(db)
+
+    // Only start if user has auto-sync enabled in their config
+    const syncConfig = syncConfigRepo.getConfig()
+    if (syncConfig.enabled) {
+      const syncEngine = new SyncEngine(apiClient, skillRepository, syncConfigRepo, syncHistoryRepo)
+
+      backgroundSync = new BackgroundSyncService(syncEngine, syncConfigRepo, {
+        syncOnStart: true,
+        debug: options.backgroundSyncConfig?.debug ?? false,
+        onSyncComplete: (result) => {
+          if (options.backgroundSyncConfig?.debug) {
+            console.log(
+              `[skillsmith] Background sync complete: ${result.skillsAdded} added, ${result.skillsUpdated} updated`
+            )
+          }
+        },
+        onSyncError: (error) => {
+          if (options.backgroundSyncConfig?.debug) {
+            console.error(`[skillsmith] Background sync error: ${error.message}`)
+          }
+        },
+      })
+
+      backgroundSync.start()
+
+      // Register cleanup handlers
+      const cleanup = () => {
+        backgroundSync?.stop()
+      }
+      process.on('SIGTERM', cleanup)
+      process.on('SIGINT', cleanup)
+    }
+  }
+
   return {
     db,
     searchService,
     skillRepository,
     apiClient,
     distinctId,
+    backgroundSync,
   }
 }
 
@@ -243,6 +316,11 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
  * @param context - Tool context to close
  */
 export async function closeToolContext(context: ToolContext): Promise<void> {
+  // Stop background sync service if running
+  if (context.backgroundSync) {
+    context.backgroundSync.stop()
+  }
+
   // Close database connection
   context.db.close()
 
