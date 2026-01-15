@@ -26,6 +26,7 @@ import {
   createPublishCommand,
   createSubagentCommand,
   createTransformCommand,
+  createMcpInitCommand,
   createAnalyzeCommand,
   createRecommendCommand,
 } from './commands/index.js'
@@ -89,6 +90,7 @@ const authorCommand = new Command('author')
   .addCommand(createPublishCommand())
   .addCommand(createSubagentCommand())
   .addCommand(createTransformCommand())
+  .addCommand(createMcpInitCommand())
 
 program.addCommand(authorCommand)
 
