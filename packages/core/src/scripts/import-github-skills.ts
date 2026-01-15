@@ -38,12 +38,16 @@ async function main(): Promise<void> {
   console.log('======================================================================')
   console.log()
 
-  if (CONFIG.GITHUB_TOKEN) {
-    log('GITHUB_TOKEN detected')
+  // Check for authentication (SMI-1445: Added GitHub App support)
+  if (CONFIG.GITHUB_APP_ID && CONFIG.GITHUB_APP_INSTALLATION_ID && CONFIG.GITHUB_APP_PRIVATE_KEY) {
+    log('GitHub App credentials detected (5K req/hr limit)')
+    await checkRateLimit()
+  } else if (CONFIG.GITHUB_TOKEN) {
+    log('GITHUB_TOKEN detected (5K req/hr limit)')
     await checkRateLimit()
   } else {
-    log('No GITHUB_TOKEN - limited to 60 requests/hour', 'warn')
-    log('Set GITHUB_TOKEN environment variable for higher limits', 'warn')
+    log('No GitHub authentication - limited to 60 requests/hour', 'warn')
+    log('Set GITHUB_TOKEN or GITHUB_APP_* environment variables for higher limits', 'warn')
   }
   console.log()
 
