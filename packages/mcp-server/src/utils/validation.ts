@@ -30,8 +30,9 @@ const VALID_CATEGORIES: readonly SkillCategory[] = [
 /**
  * Validate skill ID format.
  *
- * Accepts two formats:
+ * Accepts three formats:
  * - Author/name format: `anthropic/commit`, `community/jest-helper`
+ * - Source/author/name format: `github/cyanheads/git-mcp-server`, `claude-plugins/author/skill`
  * - UUID format: `550e8400-e29b-41d4-a716-446655440000`
  *
  * @param id - Skill ID to validate
@@ -39,32 +40,42 @@ const VALID_CATEGORIES: readonly SkillCategory[] = [
  *
  * @example
  * isValidSkillId('anthropic/commit') // true
+ * isValidSkillId('github/cyanheads/git-mcp-server') // true
  * isValidSkillId('invalid-format') // false
  */
 export function isValidSkillId(id: string): boolean {
-  // Format: author/skill-name or UUID
-  const authorSlashName = /^[a-z0-9-]+\/[a-z0-9-]+$/i
+  // Format: author/skill-name (2 parts)
+  const authorSlashName = /^[a-z0-9_-]+\/[a-z0-9_-]+$/i
+  // Format: source/author/skill-name (3 parts, e.g., github/author/repo)
+  const sourceAuthorName = /^[a-z0-9_-]+\/[a-z0-9_-]+\/[a-z0-9_.-]+$/i
+  // UUID format
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-  return authorSlashName.test(id) || uuid.test(id)
+  return authorSlashName.test(id) || sourceAuthorName.test(id) || uuid.test(id)
 }
 
 /**
- * Parse a skill ID into author and name components.
+ * Parse a skill ID into source, author, and name components.
  *
- * @param id - Skill ID in author/name format
- * @returns Object with author and name, or null if invalid format
+ * Handles both 2-part (author/name) and 3-part (source/author/name) formats.
+ *
+ * @param id - Skill ID in author/name or source/author/name format
+ * @returns Object with source (optional), author, and name, or null if invalid format
  *
  * @example
  * parseSkillId('anthropic/commit') // { author: 'anthropic', name: 'commit' }
+ * parseSkillId('github/cyanheads/git-mcp-server') // { source: 'github', author: 'cyanheads', name: 'git-mcp-server' }
  * parseSkillId('invalid') // null
  */
-export function parseSkillId(id: string): { author: string; name: string } | null {
+export function parseSkillId(id: string): { source?: string; author: string; name: string } | null {
   const parts = id.split('/')
-  if (parts.length !== 2) {
-    return null
+  if (parts.length === 2) {
+    return { author: parts[0], name: parts[1] }
   }
-  return { author: parts[0], name: parts[1] }
+  if (parts.length === 3) {
+    return { source: parts[0], author: parts[1], name: parts[2] }
+  }
+  return null
 }
 
 /**

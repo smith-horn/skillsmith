@@ -258,7 +258,15 @@ export async function installSkill(
         success: false,
         skillId: input.skillId,
         installPath,
-        error: 'Could not find SKILL.md at ' + skillMdPath + '. Skills must have a SKILL.md file.',
+        error:
+          'Could not find SKILL.md at repository root. ' +
+          'Skills must have a SKILL.md file with YAML frontmatter (name, description) to be installable. ' +
+          'See: https://github.com/wrsmith108/skillsmith/blob/main/docs/guides/skill-repository-structure.md',
+        tips: [
+          'This skill may be browse-only (no SKILL.md at root)',
+          'You can manually install by: 1) Clone the repo, 2) Create a SKILL.md, 3) Copy to ~/.claude/skills/',
+          'Check if the skill has a SKILL.md in a subdirectory and use the full path',
+        ],
       }
     }
 
@@ -270,6 +278,11 @@ export async function installSkill(
         skillId: input.skillId,
         installPath,
         error: 'Invalid SKILL.md: ' + validation.errors.join(', '),
+        tips: [
+          'SKILL.md must have YAML frontmatter with name and description fields',
+          'Content must be at least 100 characters',
+          'See template: https://github.com/wrsmith108/skillsmith/blob/main/docs/templates/skill-template.md',
+        ],
       }
     }
 

@@ -1,0 +1,86 @@
+---
+import Button from './Button.astro';
+import Card from './Card.astro';
+
+interface Props {
+  tier: 'community' | 'individual' | 'team' | 'enterprise';
+  price: string;
+  period?: string;
+  description: string;
+  features: string[];
+  apiCalls: string;
+  highlighted?: boolean;
+  ctaText?: string;
+  ctaHref?: string;
+  class?: string;
+}
+
+const {
+  tier,
+  price,
+  period = '/month',
+  description,
+  features,
+  apiCalls,
+  highlighted = false,
+  ctaText = 'Get Started',
+  ctaHref = '/docs/getting-started',
+  class: className = '',
+} = Astro.props;
+
+const tierLabels = {
+  community: 'Community',
+  individual: 'Individual',
+  team: 'Team',
+  enterprise: 'Enterprise',
+};
+---
+
+<div class={`relative ${className}`}>
+  {highlighted && (
+    <div class="absolute -top-4 left-1/2 -translate-x-1/2 px-3 py-1 bg-gradient-to-r from-purple-600 to-blue-600 text-white text-xs font-medium rounded-full">
+      Most Popular
+    </div>
+  )}
+
+  <Card
+    variant={highlighted ? 'gradient' : 'bordered'}
+    padding="lg"
+    class={highlighted ? 'ring-2 ring-purple-500/50' : ''}
+  >
+    <div class="text-center mb-6">
+      <h3 class="text-lg font-semibold text-white mb-2">{tierLabels[tier]}</h3>
+      <div class="flex items-baseline justify-center">
+        <span class="text-4xl font-bold text-white">{price}</span>
+        {price !== 'Free' && price !== 'Custom' && (
+          <span class="text-gray-400 ml-1">{period}</span>
+        )}
+      </div>
+      <p class="text-sm text-gray-400 mt-2">{description}</p>
+    </div>
+
+    <div class="mb-6 py-3 px-4 bg-gray-900/50 rounded-lg text-center">
+      <p class="text-sm text-gray-400">API Calls</p>
+      <p class="text-lg font-semibold text-white">{apiCalls}</p>
+    </div>
+
+    <ul class="space-y-3 mb-8">
+      {features.map((feature) => (
+        <li class="flex items-start">
+          <svg class="w-5 h-5 text-green-400 mr-2 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+          </svg>
+          <span class="text-gray-300 text-sm">{feature}</span>
+        </li>
+      ))}
+    </ul>
+
+    <Button
+      variant={highlighted ? 'primary' : 'outline'}
+      href={ctaHref}
+      fullWidth
+    >
+      {ctaText}
+    </Button>
+  </Card>
+</div>
