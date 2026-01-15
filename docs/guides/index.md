@@ -17,6 +17,7 @@ Practical guides and how-to documentation for Skillsmith.
 - [Git Hooks](git-hooks.md) - Pre-commit and pre-push hook configuration
 - [Swarm Recovery](swarm-recovery.md) - Recovering from swarm failures
 - [Migration v2](migration-v2.md) - Migrating to Skillsmith v2
+- [Skill Database Updates](skill-database-updates.md) - Manual and automated database updates
 
 ## Language Support
 
