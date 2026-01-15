@@ -1,0 +1,201 @@
+/**
+ * Global styles for Skillsmith website
+ *
+ * These styles complement Tailwind CSS and provide
+ * consistent base styling across all pages.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-white text-gray-900;
+  }
+
+  /* Heading styles */
+  h1 {
+    @apply text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl;
+  }
+
+  h2 {
+    @apply text-3xl font-bold tracking-tight sm:text-4xl;
+  }
+
+  h3 {
+    @apply text-2xl font-semibold tracking-tight;
+  }
+
+  h4 {
+    @apply text-xl font-semibold;
+  }
+
+  h5 {
+    @apply text-lg font-medium;
+  }
+
+  h6 {
+    @apply text-base font-medium;
+  }
+
+  /* Link base styles */
+  a {
+    @apply transition-colors duration-200;
+  }
+
+  /* Code block styles */
+  code {
+    @apply font-mono text-sm bg-gray-100 px-1.5 py-0.5 rounded;
+  }
+
+  pre {
+    @apply font-mono text-sm bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto;
+  }
+
+  pre code {
+    @apply bg-transparent p-0 rounded-none;
+  }
+}
+
+@layer components {
+  /* Button variants */
+  .btn {
+    @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn bg-primary-600 text-white hover:bg-primary-700;
+  }
+
+  .btn-secondary {
+    @apply btn bg-gray-100 text-gray-900 hover:bg-gray-200;
+  }
+
+  .btn-outline {
+    @apply btn border border-gray-300 bg-white text-gray-700 hover:bg-gray-50;
+  }
+
+  .btn-ghost {
+    @apply btn text-gray-600 hover:bg-gray-100 hover:text-gray-900;
+  }
+
+  .btn-lg {
+    @apply px-6 py-3 text-base;
+  }
+
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+
+  /* Card styles */
+  .card {
+    @apply rounded-xl border border-gray-200 bg-white shadow-soft;
+  }
+
+  .card-hover {
+    @apply card transition-shadow duration-200 hover:shadow-hover;
+  }
+
+  /* Badge styles */
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+
+  .badge-verified {
+    @apply badge bg-green-100 text-green-800;
+  }
+
+  .badge-community {
+    @apply badge bg-blue-100 text-blue-800;
+  }
+
+  .badge-experimental {
+    @apply badge bg-yellow-100 text-yellow-800;
+  }
+
+  /* Input styles */
+  .input {
+    @apply block w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-900 placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500;
+  }
+
+  .input-lg {
+    @apply input px-5 py-3 text-base;
+  }
+
+  /* Section styles */
+  .section {
+    @apply py-16 sm:py-24;
+  }
+
+  .section-dark {
+    @apply section bg-gray-900 text-white;
+  }
+
+  /* Container variants */
+  .container-narrow {
+    @apply mx-auto max-w-3xl px-4;
+  }
+
+  .container-wide {
+    @apply mx-auto max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+
+  /* Prose styles for documentation */
+  .prose-custom {
+    @apply prose prose-gray max-w-none prose-headings:font-semibold prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline prose-code:before:content-none prose-code:after:content-none;
+  }
+}
+
+@layer utilities {
+  /* Text gradient */
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary-600 to-secondary-600;
+  }
+
+  /* Backdrop blur support */
+  .backdrop-blur-safe {
+    @apply backdrop-blur supports-[backdrop-filter]:backdrop-blur-lg;
+  }
+
+  /* Animation utilities */
+  .animate-in {
+    animation: animate-in 0.3s ease-out;
+  }
+
+  @keyframes animate-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Hide scrollbar */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Aspect ratio utilities */
+  .aspect-hero {
+    aspect-ratio: 16 / 9;
+  }
+
+  .aspect-card {
+    aspect-ratio: 4 / 3;
+  }
+}

@@ -1,0 +1,386 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+const categories = [
+  { value: '', label: 'All Categories' },
+  { value: 'development', label: 'Development' },
+  { value: 'testing', label: 'Testing' },
+  { value: 'devops', label: 'DevOps' },
+  { value: 'documentation', label: 'Documentation' },
+  { value: 'productivity', label: 'Productivity' },
+  { value: 'security', label: 'Security' },
+];
+
+const trustTiers = [
+  { value: '', label: 'All Trust Tiers' },
+  { value: 'verified', label: 'Verified' },
+  { value: 'community', label: 'Community' },
+  { value: 'experimental', label: 'Experimental' },
+];
+---
+
+<BaseLayout title="Skills" description="Search and discover skills for Claude Code">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <!-- Header -->
+    <div class="text-center mb-12">
+      <h1 class="text-4xl md:text-5xl font-bold mb-4">
+        Discover <span class="gradient-text">Skills</span>
+      </h1>
+      <p class="text-dark-400 text-lg max-w-2xl mx-auto">
+        Search through our collection of verified skills to enhance your Claude Code experience.
+      </p>
+    </div>
+
+    <!-- Search and Filters -->
+    <div class="bg-dark-900 rounded-xl border border-dark-800 p-6 mb-8">
+      <div class="flex flex-col lg:flex-row gap-4">
+        <!-- Search Input -->
+        <div class="flex-1 relative">
+          <svg class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            type="text"
+            id="search-input"
+            placeholder="Search skills (e.g., testing, git, docker...)"
+            class="search-input w-full pl-12 pr-4 py-3 bg-dark-800 border border-dark-700 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-primary-500 transition-all"
+          />
+        </div>
+
+        <!-- Category Filter -->
+        <div class="w-full lg:w-48">
+          <select
+            id="category-filter"
+            class="w-full px-4 py-3 bg-dark-800 border border-dark-700 rounded-lg text-white focus:outline-none focus:border-primary-500 transition-all appearance-none cursor-pointer"
+          >
+            {categories.map(cat => (
+              <option value={cat.value}>{cat.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <!-- Trust Tier Filter -->
+        <div class="w-full lg:w-48">
+          <select
+            id="trust-filter"
+            class="w-full px-4 py-3 bg-dark-800 border border-dark-700 rounded-lg text-white focus:outline-none focus:border-primary-500 transition-all appearance-none cursor-pointer"
+          >
+            {trustTiers.map(tier => (
+              <option value={tier.value}>{tier.label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results Count -->
+    <div class="flex items-center justify-between mb-6">
+      <p id="results-count" class="text-dark-400">
+        Loading skills...
+      </p>
+      <div class="flex items-center space-x-2">
+        <span class="text-dark-500 text-sm">Sort by:</span>
+        <select
+          id="sort-select"
+          class="px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:border-primary-500 appearance-none cursor-pointer"
+        >
+          <option value="relevance">Relevance</option>
+          <option value="score">Quality Score</option>
+          <option value="name">Name</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Results Grid -->
+    <div id="results-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+      <!-- Skills will be inserted here via JavaScript -->
+    </div>
+
+    <!-- Loading State -->
+    <div id="loading-state" class="hidden text-center py-12">
+      <div class="inline-block animate-spin rounded-full h-8 w-8 border-2 border-primary-500 border-t-transparent"></div>
+      <p class="text-dark-400 mt-4">Searching skills...</p>
+    </div>
+
+    <!-- Empty State -->
+    <div id="empty-state" class="hidden text-center py-12">
+      <svg class="w-16 h-16 mx-auto text-dark-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <h3 class="text-xl font-semibold text-dark-300 mb-2">No skills found</h3>
+      <p class="text-dark-500">Try adjusting your search or filters</p>
+    </div>
+
+    <!-- Error State -->
+    <div id="error-state" class="hidden text-center py-12">
+      <svg class="w-16 h-16 mx-auto text-red-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      </svg>
+      <h3 class="text-xl font-semibold text-dark-300 mb-2">Error loading skills</h3>
+      <p id="error-message" class="text-dark-500 mb-4">Something went wrong</p>
+      <button id="retry-button" class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors">
+        Try Again
+      </button>
+    </div>
+
+    <!-- Pagination -->
+    <div id="pagination" class="hidden flex items-center justify-center space-x-2">
+      <button id="prev-page" class="px-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        Previous
+      </button>
+      <span id="page-info" class="text-dark-400 px-4">Page 1 of 1</span>
+      <button id="next-page" class="px-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+        Next
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = 'https://api.skillsmith.app/functions/v1';
+    const ITEMS_PER_PAGE = 12;
+
+    let currentPage = 1;
+    let totalPages = 1;
+    let allResults = [];
+    let debounceTimer = null;
+
+    // DOM Elements
+    const searchInput = document.getElementById('search-input');
+    const categoryFilter = document.getElementById('category-filter');
+    const trustFilter = document.getElementById('trust-filter');
+    const sortSelect = document.getElementById('sort-select');
+    const resultsGrid = document.getElementById('results-grid');
+    const resultsCount = document.getElementById('results-count');
+    const loadingState = document.getElementById('loading-state');
+    const emptyState = document.getElementById('empty-state');
+    const errorState = document.getElementById('error-state');
+    const errorMessage = document.getElementById('error-message');
+    const pagination = document.getElementById('pagination');
+    const prevPageBtn = document.getElementById('prev-page');
+    const nextPageBtn = document.getElementById('next-page');
+    const pageInfo = document.getElementById('page-info');
+    const retryButton = document.getElementById('retry-button');
+
+    // Trust tier badge colors
+    const trustBadgeClasses = {
+      verified: 'bg-green-500/10 text-green-400 border-green-500/20',
+      community: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+      experimental: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+      unknown: 'bg-dark-500/10 text-dark-400 border-dark-500/20',
+    };
+
+    // Create skill card HTML
+    function createSkillCard(skill) {
+      const trustClass = trustBadgeClasses[skill.trust_tier] || trustBadgeClasses.unknown;
+      const score = skill.quality_score ?? skill.score ?? 0;
+      const scoreColor = score >= 80 ? 'text-green-400' : score >= 60 ? 'text-yellow-400' : 'text-red-400';
+
+      return `
+        <a href="/skills/${encodeURIComponent(skill.id)}" class="card-hover block bg-dark-900 rounded-xl border border-dark-800 p-6 hover:border-primary-500/50">
+          <div class="flex items-start justify-between mb-4">
+            <div class="flex-1 min-w-0">
+              <h3 class="text-lg font-semibold text-white truncate">${escapeHtml(skill.name)}</h3>
+              <p class="text-dark-500 text-sm">${escapeHtml(skill.author || 'Unknown author')}</p>
+            </div>
+            <span class="ml-4 px-2.5 py-1 text-xs font-medium rounded-full border ${trustClass}">
+              ${escapeHtml(skill.trust_tier || 'unknown')}
+            </span>
+          </div>
+          <p class="text-dark-400 text-sm mb-4 line-clamp-2">${escapeHtml(skill.description || 'No description available')}</p>
+          <div class="flex items-center justify-between text-sm">
+            <div class="flex items-center space-x-4">
+              ${skill.category ? `
+                <span class="text-dark-500">
+                  <svg class="w-4 h-4 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                  </svg>
+                  ${escapeHtml(skill.category)}
+                </span>
+              ` : ''}
+              ${skill.version ? `<span class="text-dark-500">v${escapeHtml(skill.version)}</span>` : ''}
+            </div>
+            <span class="${scoreColor} font-medium">${Math.round(score)}%</span>
+          </div>
+        </a>
+      `;
+    }
+
+    // Escape HTML to prevent XSS
+    function escapeHtml(str) {
+      if (!str) return '';
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // Show/hide states
+    function showState(state) {
+      resultsGrid.classList.add('hidden');
+      loadingState.classList.add('hidden');
+      emptyState.classList.add('hidden');
+      errorState.classList.add('hidden');
+      pagination.classList.add('hidden');
+
+      switch (state) {
+        case 'loading':
+          loadingState.classList.remove('hidden');
+          break;
+        case 'empty':
+          emptyState.classList.remove('hidden');
+          break;
+        case 'error':
+          errorState.classList.remove('hidden');
+          break;
+        case 'results':
+          resultsGrid.classList.remove('hidden');
+          pagination.classList.remove('hidden');
+          break;
+      }
+    }
+
+    // Search skills
+    async function searchSkills() {
+      const query = searchInput.value.trim();
+      const category = categoryFilter.value;
+      const trustTier = trustFilter.value;
+
+      showState('loading');
+      resultsCount.textContent = 'Searching...';
+
+      try {
+        const response = await fetch(`${API_BASE}/skill-search`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            query: query || '*',
+            limit: 100,
+            category: category || undefined,
+            trust_tier: trustTier || undefined,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        allResults = data.skills || data.results || [];
+
+        // Apply client-side filtering for category and trust tier if API doesn't support them
+        if (category) {
+          allResults = allResults.filter(s => s.category === category);
+        }
+        if (trustTier) {
+          allResults = allResults.filter(s => s.trust_tier === trustTier);
+        }
+
+        // Sort results
+        sortResults();
+
+        currentPage = 1;
+        renderResults();
+      } catch (error) {
+        console.error('Search error:', error);
+        errorMessage.textContent = error.message;
+        showState('error');
+        resultsCount.textContent = 'Error';
+      }
+    }
+
+    // Sort results based on selected option
+    function sortResults() {
+      const sortBy = sortSelect.value;
+
+      switch (sortBy) {
+        case 'score':
+          allResults.sort((a, b) => (b.quality_score || b.score || 0) - (a.quality_score || a.score || 0));
+          break;
+        case 'name':
+          allResults.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+          break;
+        case 'relevance':
+        default:
+          // Keep original order (API relevance)
+          break;
+      }
+    }
+
+    // Render results for current page
+    function renderResults() {
+      if (allResults.length === 0) {
+        showState('empty');
+        resultsCount.textContent = 'No skills found';
+        return;
+      }
+
+      totalPages = Math.ceil(allResults.length / ITEMS_PER_PAGE);
+      const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
+      const endIdx = startIdx + ITEMS_PER_PAGE;
+      const pageResults = allResults.slice(startIdx, endIdx);
+
+      resultsGrid.innerHTML = pageResults.map(createSkillCard).join('');
+      resultsCount.textContent = `Showing ${startIdx + 1}-${Math.min(endIdx, allResults.length)} of ${allResults.length} skills`;
+
+      // Update pagination
+      pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
+      prevPageBtn.disabled = currentPage === 1;
+      nextPageBtn.disabled = currentPage === totalPages;
+
+      showState('results');
+    }
+
+    // Debounced search
+    function debouncedSearch() {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(searchSkills, 300);
+    }
+
+    // Event listeners
+    searchInput.addEventListener('input', debouncedSearch);
+    categoryFilter.addEventListener('change', searchSkills);
+    trustFilter.addEventListener('change', searchSkills);
+    sortSelect.addEventListener('change', () => {
+      sortResults();
+      renderResults();
+    });
+
+    prevPageBtn.addEventListener('click', () => {
+      if (currentPage > 1) {
+        currentPage--;
+        renderResults();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    });
+
+    nextPageBtn.addEventListener('click', () => {
+      if (currentPage < totalPages) {
+        currentPage++;
+        renderResults();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    });
+
+    retryButton.addEventListener('click', searchSkills);
+
+    // Initial load
+    searchSkills();
+  </script>
+
+  <style>
+    .line-clamp-2 {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    select {
+      background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+      background-position: right 0.5rem center;
+      background-repeat: no-repeat;
+      background-size: 1.5em 1.5em;
+      padding-right: 2.5rem;
+    }
+  </style>
+</BaseLayout>
