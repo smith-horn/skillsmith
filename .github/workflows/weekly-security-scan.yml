@@ -1,0 +1,239 @@
+# SMI-XXXX: Weekly Security Scan for Imported Skills
+# Runs the security scanner to identify vulnerabilities in skill definitions
+# Creates GitHub issues when critical findings are detected
+#
+# Output Files:
+# - data/security-report.json: Full security report with all findings
+# - data/quarantine-skills.json: Skills with HIGH/CRITICAL findings (blocked)
+# - data/safe-skills.json: Skills approved for import (passed security scan)
+
+name: Weekly Security Scan
+
+on:
+  schedule:
+    # Run weekly on Sunday at midnight UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+    inputs:
+      create_issue:
+        description: 'Create issue even if no critical findings'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  security-scan:
+    name: Scan Imported Skills
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Run security scan
+        id: scan
+        run: |
+          # Create data directory if it doesn't exist
+          mkdir -p data
+
+          # Run the security scanner
+          npx tsx packages/core/src/scripts/scan-imported-skills.ts
+
+          # Parse results for GitHub Actions outputs
+          if [ -f data/security-report.json ]; then
+            TOTAL=$(jq -r '.summary.totalScanned // 0' data/security-report.json)
+            PASSED=$(jq -r '.summary.passed // 0' data/security-report.json)
+            QUARANTINED=$(jq -r '.summary.quarantined // 0' data/security-report.json)
+            CRITICAL=$(jq -r '.summary.bySeverity.CRITICAL // 0' data/security-report.json)
+            HIGH=$(jq -r '.summary.bySeverity.HIGH // 0' data/security-report.json)
+            MEDIUM=$(jq -r '.summary.bySeverity.MEDIUM // 0' data/security-report.json)
+            LOW=$(jq -r '.summary.bySeverity.LOW // 0' data/security-report.json)
+            AVG_RISK=$(jq -r '.summary.averageRiskScore // 0' data/security-report.json)
+            MAX_RISK=$(jq -r '.summary.maxRiskScore // 0' data/security-report.json)
+
+            echo "total=$TOTAL" >> $GITHUB_OUTPUT
+            echo "passed=$PASSED" >> $GITHUB_OUTPUT
+            echo "quarantined=$QUARANTINED" >> $GITHUB_OUTPUT
+            echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+            echo "high=$HIGH" >> $GITHUB_OUTPUT
+            echo "medium=$MEDIUM" >> $GITHUB_OUTPUT
+            echo "low=$LOW" >> $GITHUB_OUTPUT
+            echo "avg_risk=$AVG_RISK" >> $GITHUB_OUTPUT
+            echo "max_risk=$MAX_RISK" >> $GITHUB_OUTPUT
+
+            # Determine if there are critical findings
+            if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+              echo "has_critical=true" >> $GITHUB_OUTPUT
+            else
+              echo "has_critical=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "::error::Security report not generated"
+            exit 1
+          fi
+
+      - name: Generate step summary
+        run: |
+          echo "## Weekly Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Scan Date:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Skills Scanned | ${{ steps.scan.outputs.total }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Passed (Safe) | ${{ steps.scan.outputs.passed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Quarantined | ${{ steps.scan.outputs.quarantined }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Findings by Severity" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| CRITICAL | ${{ steps.scan.outputs.critical }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| HIGH | ${{ steps.scan.outputs.high }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| MEDIUM | ${{ steps.scan.outputs.medium }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| LOW | ${{ steps.scan.outputs.low }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Risk Scores" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Average Risk Score | ${{ steps.scan.outputs.avg_risk }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Maximum Risk Score | ${{ steps.scan.outputs.max_risk }} |" >> $GITHUB_STEP_SUMMARY
+
+          # Add warning banner if critical findings
+          if [ "${{ steps.scan.outputs.has_critical }}" == "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "---" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> [!WARNING]" >> $GITHUB_STEP_SUMMARY
+            echo "> **Critical or high severity findings detected.** Review quarantine-skills.json for details." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload security report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: data/security-report.json
+          retention-days: 30
+
+      - name: Upload quarantine list
+        uses: actions/upload-artifact@v4
+        with:
+          name: quarantine-skills
+          path: data/quarantine-skills.json
+          retention-days: 30
+
+      - name: Upload safe skills list
+        uses: actions/upload-artifact@v4
+        with:
+          name: safe-skills
+          path: data/safe-skills.json
+          retention-days: 30
+
+      - name: Ensure security label exists
+        run: |
+          gh label create security --color "D73A4A" --description "Security-related issues and findings" 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create or update issue if critical findings
+        if: steps.scan.outputs.has_critical == 'true' || github.event.inputs.create_issue == 'true'
+        run: |
+          TITLE="Security Scan: ${{ steps.scan.outputs.critical }} critical, ${{ steps.scan.outputs.high }} high findings - $(date +%Y-%m-%d)"
+
+          # Check if an open security scan issue already exists
+          EXISTING=$(gh issue list --search "Security Scan: in:title" --state open --label security --limit 1 --json number | jq '.[0].number // 0')
+
+          BODY="## Weekly Security Scan Report
+
+          **Scan Date:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          **Workflow Run:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          ### Summary
+
+          | Metric | Value |
+          |--------|-------|
+          | Total Skills Scanned | ${{ steps.scan.outputs.total }} |
+          | Passed (Safe) | ${{ steps.scan.outputs.passed }} |
+          | Quarantined | ${{ steps.scan.outputs.quarantined }} |
+
+          ### Findings by Severity
+
+          | Severity | Count |
+          |----------|-------|
+          | CRITICAL | ${{ steps.scan.outputs.critical }} |
+          | HIGH | ${{ steps.scan.outputs.high }} |
+          | MEDIUM | ${{ steps.scan.outputs.medium }} |
+          | LOW | ${{ steps.scan.outputs.low }} |
+
+          ### Risk Scores
+
+          - **Average Risk Score:** ${{ steps.scan.outputs.avg_risk }}
+          - **Maximum Risk Score:** ${{ steps.scan.outputs.max_risk }}
+
+          ### Action Required
+
+          1. Download the \`quarantine-skills\` artifact from the workflow run
+          2. Review each quarantined skill for legitimate security concerns
+          3. Either fix the issues or add to the allowlist with justification
+
+          ### Artifacts
+
+          - [security-report.json](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) - Full scan results
+          - [quarantine-skills.json](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) - Skills requiring review
+          - [safe-skills.json](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) - Approved skills
+
+          ---
+          *Auto-generated by weekly-security-scan workflow*"
+
+          if [ "$EXISTING" -gt 0 ]; then
+            echo "Updating existing issue #$EXISTING"
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            echo "Creating new security issue"
+            gh issue create \
+              --title "$TITLE" \
+              --body "$BODY" \
+              --label "security"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fail if critical findings
+        if: steps.scan.outputs.has_critical == 'true'
+        run: |
+          echo "::error::Security scan found ${{ steps.scan.outputs.critical }} CRITICAL and ${{ steps.scan.outputs.high }} HIGH severity findings"
+          echo "Review the quarantine-skills artifact and created issue for details."
+          exit 1
+
+      - name: Report success
+        if: steps.scan.outputs.has_critical != 'true'
+        run: |
+          echo ""
+          echo "Security scan completed successfully"
+          echo "- Total scanned: ${{ steps.scan.outputs.total }}"
+          echo "- Passed: ${{ steps.scan.outputs.passed }}"
+          echo "- Quarantined: ${{ steps.scan.outputs.quarantined }}"
+          echo "- No critical or high severity findings"

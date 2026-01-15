@@ -2,7 +2,7 @@
 
 Core library for Skillsmith - provides database operations, search services, caching, security, analytics, and **multi-language codebase analysis** for Claude Code skill discovery.
 
-**v2.0.0** introduces multi-language support for analyzing TypeScript, JavaScript, Python, Go, Rust, and Java codebases.
+**v2.0.2** introduces multi-language support for analyzing TypeScript, JavaScript, Python, Go, Rust, and Java codebases, with improved dependency management.
 
 ## Installation
 
@@ -455,5 +455,5 @@ import {
 
 ## Links
 
-- [GitHub](https://github.com/smith-horn-group/skillsmith)
-- [Issues](https://github.com/smith-horn-group/skillsmith/issues)
+- [GitHub](https://github.com/smith-horn/skillsmith)
+- [Issues](https://github.com/smith-horn/skillsmith/issues)

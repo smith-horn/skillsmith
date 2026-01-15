@@ -10,7 +10,7 @@
 
 import type { Database as DatabaseType, Statement } from 'better-sqlite3'
 import { randomUUID } from 'crypto'
-import type { Skill, SkillCreateInput, TrustTier } from '../types/skill.js'
+import type { Skill, TrustTier } from '../types/skill.js'
 import type { SkillMetadata } from '../indexer/GitHubIndexer.js'
 
 /**
@@ -97,6 +97,7 @@ interface IndexedSkillRow {
   quality_score: number | null
   trust_tier: string
   tags: string
+  installable: boolean | null
   created_at: string
   updated_at: string
   last_indexed_at: string | null
@@ -236,6 +237,7 @@ export class IndexerRepository {
       qualityScore: row.quality_score,
       trustTier: row.trust_tier as TrustTier,
       tags: JSON.parse(row.tags || '[]'),
+      installable: row.installable ?? false,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       lastIndexedAt: row.last_indexed_at ?? row.updated_at,

@@ -475,6 +475,45 @@ packages/
 
 ---
 
+## Skillsmith CLI Commands
+
+The CLI (`skillsmith` or `sklx`) provides commands for skill management and authoring.
+
+### Author Commands (SMI-1389, SMI-1390, SMI-1433)
+
+Commands for skill authoring, subagent generation, and MCP server scaffolding.
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `author subagent` | Generate companion subagent for a skill | `skillsmith author subagent ./my-skill` |
+| `author transform` | Upgrade existing skill with subagent | `skillsmith author transform ./my-skill` |
+| `author mcp-init` | Scaffold a new MCP server project | `skillsmith author mcp-init my-server` |
+
+**subagent options**:
+- `--output, -o <dir>`: Output directory (default: ~/.claude/agents)
+- `--tools <list>`: Override detected tools (comma-separated)
+- `--model <model>`: Specify model (sonnet, opus, haiku)
+- `--skip-claude-md`: Skip CLAUDE.md delegation snippet
+- `--force`: Overwrite existing subagent definition
+
+**transform options**:
+- `--dry-run`: Preview changes without writing files
+- `--batch`: Process multiple skills (when given directory)
+- `--tools <list>`: Override detected tools
+- `--model <model>`: Specify model
+- `--force`: Overwrite existing subagent
+
+**mcp-init options**:
+- `--output, -o <dir>`: Output directory (default: current directory)
+- `--tools <list>`: Initial tool names (comma-separated)
+- `--force`: Overwrite existing directory
+
+**Tool Detection**: The commands automatically analyze skill content to determine minimal required tools (Read, Write, Edit, Bash, Grep, Glob, WebFetch, WebSearch).
+
+> **Architecture**: See [Subagent Pair Generation Architecture](docs/architecture/subagent-pair-generation-architecture.md)
+
+---
+
 ## Varlock Security (MANDATORY)
 
 **All secrets MUST be managed via Varlock. Never expose API keys in terminal output.**
@@ -556,6 +595,33 @@ Manages git worktrees for parallel development with conflict prevention.
 # Create worktree from main repository (run from project root)
 git worktree add ../worktrees/feature-name -b feature/feature-name
 ```
+
+### MCP Decision Helper (User-Level)
+
+> **Location**: `~/.claude/skills/mcp-decision-helper/SKILL.md`
+
+Helps decide whether to implement capabilities as Claude Code Skills vs MCP servers using an 8-dimension scoring framework.
+
+**Trigger Phrases**: "should I use MCP", "skill vs MCP", "MCP or skill", "MCP decision"
+
+**Key Features**:
+
+- 8-dimension scoring framework
+- Automatic disqualifiers for quick decisions
+- Interactive CLI evaluation script
+- Templates for Skill, MCP, and Hybrid implementations
+
+**Quick Evaluation**:
+
+```bash
+# Interactive evaluation
+npx tsx ~/.claude/skills/mcp-decision-helper/scripts/evaluate.ts
+
+# With pre-filled task
+npx tsx ~/.claude/skills/mcp-decision-helper/scripts/evaluate.ts --task "daily report generator"
+```
+
+**Decision Thresholds**: Score ≤ -6 → SKILL | Score -5 to +5 → HYBRID | Score ≥ +6 → MCP
 
 ### Linear Skill (User-Level)
 
@@ -659,12 +725,14 @@ docker exec skillsmith-dev-1 npm test
 
 Key architecture documents for this project:
 
-| Document                                                      | Purpose                                      |
-| ------------------------------------------------------------- | -------------------------------------------- |
-| [Skill Dependencies](docs/architecture/skill-dependencies.md) | Dependency graph showing skill relationships |
-| [System Overview](docs/architecture/system-overview.md)       | High-level system architecture               |
-| [Architecture Index](docs/architecture/index.md)              | Complete architecture documentation index    |
-| [Engineering Standards](docs/architecture/standards.md)       | Authoritative engineering policy             |
+| Document                                                                        | Purpose                                      |
+| ------------------------------------------------------------------------------- | -------------------------------------------- |
+| [Skill Dependencies](docs/architecture/skill-dependencies.md)                   | Dependency graph showing skill relationships |
+| [System Overview](docs/architecture/system-overview.md)                         | High-level system architecture               |
+| [Architecture Index](docs/architecture/index.md)                                | Complete architecture documentation index    |
+| [Engineering Standards](docs/architecture/standards.md)                         | Authoritative engineering policy             |
+| [MCP Decision Engine](docs/architecture/mcp-decision-engine-architecture.md)    | Skill vs MCP decision framework              |
+| [Indexer Infrastructure](docs/architecture/indexer-infrastructure.md)           | GitHub skill indexing with App authentication |
 
 ### Skill Dependency Quick Reference
 
@@ -675,6 +743,7 @@ Key architecture documents for this project:
 | vercel-github-actions | Vercel CLI, Git | VERCEL_TOKEN                   |
 | dev-browser           | Bun, Playwright | -                              |
 | doc-screenshots       | -               | - (requires dev-browser skill) |
+| mcp-decision-helper   | Node.js         | -                              |
 
 ---
 
