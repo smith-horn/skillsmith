@@ -2,12 +2,14 @@
 
 Command-line interface for Skillsmith - discover, manage, and author Claude Code skills.
 
-## What's New in v0.2.4
+## What's New in v0.2.7
 
 - **MCP Server Scaffolding**: Generate TypeScript MCP servers with `author mcp-init`
+- **Custom Tool Generation**: Auto-generates stub implementations for specified tools
 - **Decision Helper Integration**: Seamless flow from evaluation to scaffolding
 - **Subagent Generation**: Generate companion specialist agents for parallel execution (37-97% token savings)
 - **Skill Transform**: Upgrade existing skills with subagent configuration
+- **Dynamic Version**: Version now reads from package.json automatically
 - **Tool Detection**: Automatic analysis of required tools from skill content
 - **Live Skills**: Search and install from 9,717+ real skills
 - **Faster Search**: Full-text search with quality ranking
