@@ -11,6 +11,7 @@ vi.mock('fs/promises', () => ({
   writeFile: vi.fn(),
   readFile: vi.fn(),
   stat: vi.fn(),
+  access: vi.fn(),
 }))
 
 // Mock inquirer
@@ -27,6 +28,7 @@ vi.mock('ora', () => ({
     stop: vi.fn().mockReturnThis(),
     succeed: vi.fn().mockReturnThis(),
     fail: vi.fn().mockReturnThis(),
+    warn: vi.fn().mockReturnThis(),
     text: '',
   })),
 }))
@@ -130,6 +132,112 @@ describe('SMI-746: Skill Authoring Commands', () => {
     it('exports publishSkill function', async () => {
       const module = await import('../src/commands/author.js')
       expect(typeof module.publishSkill).toBe('function')
+    })
+
+    it('exports generateSubagent function', async () => {
+      const module = await import('../src/commands/author.js')
+      expect(typeof module.generateSubagent).toBe('function')
+    })
+
+    it('exports transformSkill function', async () => {
+      const module = await import('../src/commands/author.js')
+      expect(typeof module.transformSkill).toBe('function')
+    })
+  })
+
+  // SMI-1389: Subagent Command Tests
+  describe('createSubagentCommand', () => {
+    it('creates a command with correct name', async () => {
+      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const cmd = createSubagentCommand()
+
+      expect(cmd).toBeInstanceOf(Command)
+      expect(cmd.name()).toBe('subagent')
+    })
+
+    it('has output option with default', async () => {
+      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const cmd = createSubagentCommand()
+
+      const outputOpt = cmd.options.find((o) => o.short === '-o')
+      expect(outputOpt).toBeDefined()
+      expect(outputOpt?.defaultValue).toBe('~/.claude/agents')
+    })
+
+    it('has tools option', async () => {
+      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const cmd = createSubagentCommand()
+
+      const toolsOpt = cmd.options.find((o) => o.long === '--tools')
+      expect(toolsOpt).toBeDefined()
+    })
+
+    it('has model option with sonnet default', async () => {
+      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const cmd = createSubagentCommand()
+
+      const modelOpt = cmd.options.find((o) => o.long === '--model')
+      expect(modelOpt).toBeDefined()
+      expect(modelOpt?.defaultValue).toBe('sonnet')
+    })
+
+    it('has skip-claude-md option', async () => {
+      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const cmd = createSubagentCommand()
+
+      const skipOpt = cmd.options.find((o) => o.long === '--skip-claude-md')
+      expect(skipOpt).toBeDefined()
+    })
+
+    it('accepts optional path argument with default', async () => {
+      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const cmd = createSubagentCommand()
+
+      expect(cmd.registeredArguments.length).toBe(1)
+      expect(cmd.registeredArguments[0]?.defaultValue).toBe('.')
+    })
+  })
+
+  // SMI-1390: Transform Command Tests
+  describe('createTransformCommand', () => {
+    it('creates a command with correct name', async () => {
+      const { createTransformCommand } = await import('../src/commands/author.js')
+      const cmd = createTransformCommand()
+
+      expect(cmd).toBeInstanceOf(Command)
+      expect(cmd.name()).toBe('transform')
+    })
+
+    it('has dry-run option', async () => {
+      const { createTransformCommand } = await import('../src/commands/author.js')
+      const cmd = createTransformCommand()
+
+      const dryRunOpt = cmd.options.find((o) => o.long === '--dry-run')
+      expect(dryRunOpt).toBeDefined()
+    })
+
+    it('has force option', async () => {
+      const { createTransformCommand } = await import('../src/commands/author.js')
+      const cmd = createTransformCommand()
+
+      const forceOpt = cmd.options.find((o) => o.long === '--force')
+      expect(forceOpt).toBeDefined()
+    })
+
+    it('has batch option', async () => {
+      const { createTransformCommand } = await import('../src/commands/author.js')
+      const cmd = createTransformCommand()
+
+      const batchOpt = cmd.options.find((o) => o.long === '--batch')
+      expect(batchOpt).toBeDefined()
+    })
+
+    it('accepts optional path argument with default', async () => {
+      const { createTransformCommand } = await import('../src/commands/author.js')
+      const cmd = createTransformCommand()
+
+      expect(cmd.registeredArguments.length).toBe(1)
+      expect(cmd.registeredArguments[0]?.defaultValue).toBe('.')
     })
   })
 })
@@ -559,6 +667,7 @@ describe('SMI-1433: MCP Server Scaffolding Command', () => {
         stop: vi.fn().mockReturnThis(),
         succeed: vi.fn().mockReturnThis(),
         fail: failMock,
+        warn: vi.fn().mockReturnThis(),
         text: '',
       } as unknown as ReturnType<typeof ora.default>)
 

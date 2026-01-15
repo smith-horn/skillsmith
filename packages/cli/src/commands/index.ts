@@ -11,6 +11,8 @@ export { createSearchCommand } from './search.js'
 export { createListCommand, createUpdateCommand, createRemoveCommand } from './manage.js'
 
 // SMI-746: Skill Authoring
+// SMI-1389, SMI-1390: Subagent Generation
+// SMI-1433: MCP Server Scaffolding
 export {
   createInitCommand,
   createValidateCommand,
