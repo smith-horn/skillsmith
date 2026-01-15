@@ -33,8 +33,15 @@ import {
 import { DEFAULT_DB_PATH } from './config.js'
 import { sanitizeError } from './utils/sanitize.js'
 import { displayStartupHeader } from './utils/license.js'
+import { readFileSync } from 'fs'
+import { dirname, join } from 'path'
+import { fileURLToPath } from 'url'
 
-const CLI_VERSION = '0.2.3'
+// Read version from package.json dynamically
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const packageJsonPath = join(__dirname, '..', '..', 'package.json')
+const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'))
+const CLI_VERSION = packageJson.version
 
 const program = new Command()
 
