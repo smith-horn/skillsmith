@@ -148,11 +148,12 @@ export const INDEX_TS_TEMPLATE = `#!/usr/bin/env node
  * {{description}}
  */
 
-import { createServer } from './server.js'
+import { createServer, createTransport } from './server.js'
 
 async function main(): Promise<void> {
   const server = createServer()
-  await server.connect(process.stdin, process.stdout)
+  const transport = createTransport()
+  await server.connect(transport)
 }
 
 main().catch((error) => {
@@ -440,8 +441,9 @@ ${indent}},`
  */
 function generateToolCase(tool: McpToolDefinition): string {
   const handlerName = `handle${tool.name.charAt(0).toUpperCase()}${tool.name.slice(1).replace(/-/g, '')}Tool`
+  const argsType = `${tool.name.charAt(0).toUpperCase()}${tool.name.slice(1).replace(/-/g, '')}ToolArgs`
   return `    case '${tool.name}':
-      return ${handlerName}(args as ${tool.name.charAt(0).toUpperCase()}${tool.name.slice(1).replace(/-/g, '')}ToolArgs)`
+      return ${handlerName}(args as unknown as ${argsType})`
 }
 
 /**
@@ -450,6 +452,46 @@ function generateToolCase(tool: McpToolDefinition): string {
 function generateToolImport(tool: McpToolDefinition): string {
   const baseName = tool.name.charAt(0).toUpperCase() + tool.name.slice(1).replace(/-/g, '')
   return `import { handle${baseName}Tool, type ${baseName}ToolArgs } from './${tool.name}.js'`
+}
+
+/**
+ * Generate a stub implementation file for a custom tool
+ */
+function generateToolImplementation(tool: McpToolDefinition): string {
+  const baseName = tool.name.charAt(0).toUpperCase() + tool.name.slice(1).replace(/-/g, '')
+  const params = tool.parameters || []
+
+  // Generate TypeScript interface properties
+  const interfaceProps = params
+    .map((p) => {
+      const tsType =
+        p.type === 'array' ? 'unknown[]' : p.type === 'object' ? 'Record<string, unknown>' : p.type
+      return `  ${p.name}${p.required ? '' : '?'}: ${tsType}`
+    })
+    .join('\n')
+
+  // Generate implementation placeholder
+  const returnPlaceholder =
+    params.length > 0
+      ? `\`${tool.name} called with: \${JSON.stringify({ ${params.map((p) => `${p.name}: args.${p.name}`).join(', ')} })}\``
+      : `'${tool.name} called'`
+
+  return `/**
+ * ${baseName} Tool Implementation
+ *
+ * ${escapeQuotes(tool.description)}
+ * TODO: Implement your tool logic here.
+ */
+
+export interface ${baseName}ToolArgs {
+${interfaceProps || '  // No parameters'}
+}
+
+export async function handle${baseName}Tool(args: ${baseName}ToolArgs): Promise<string> {
+  // TODO: Implement ${tool.name} logic
+  return ${returnPlaceholder}
+}
+`
 }
 
 /**
@@ -530,8 +572,18 @@ export function renderMcpServerTemplates(data: McpServerTemplateData): Map<strin
       .replace(/\{\{toolCases\}\}/g, toolCases)
   )
 
-  // src/tools/example.ts (always include as reference)
-  files.set('src/tools/example.ts', EXAMPLE_TOOL_TS_TEMPLATE)
+  // Generate tool implementation files
+  if (data.tools.length > 0) {
+    // Generate stub implementations for custom tools
+    for (const tool of data.tools) {
+      files.set(`src/tools/${tool.name}.ts`, generateToolImplementation(tool))
+    }
+    // Include example.ts as reference
+    files.set('src/tools/example.ts', EXAMPLE_TOOL_TS_TEMPLATE)
+  } else {
+    // No custom tools - just use example tool (already imported in index.ts)
+    files.set('src/tools/example.ts', EXAMPLE_TOOL_TS_TEMPLATE)
+  }
 
   // README.md
   files.set(

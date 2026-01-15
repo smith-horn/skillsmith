@@ -146,11 +146,11 @@ describe('SMI-1436: MCP Server Template Generation', () => {
       expect(indexTs).toContain('test-mcp-server')
     })
 
-    it('imports createServer from server module', () => {
+    it('imports createServer and createTransport from server module', () => {
       const files = renderMcpServerTemplates(basicTemplateData)
       const indexTs = files.get('src/index.ts') || ''
 
-      expect(indexTs).toContain("import { createServer } from './server.js'")
+      expect(indexTs).toContain("import { createServer, createTransport } from './server.js'")
     })
   })
 
@@ -252,6 +252,53 @@ describe('SMI-1436: MCP Server Template Generation', () => {
 
       expect(toolsIndex).toContain("'query'")
       expect(toolsIndex).toContain('required:')
+    })
+
+    it('generates implementation files for custom tools', () => {
+      const dataWithTools: McpServerTemplateData = {
+        ...basicTemplateData,
+        tools: [
+          {
+            name: 'greet',
+            description: 'Greet a user',
+            parameters: [
+              {
+                name: 'name',
+                type: 'string',
+                description: 'Name to greet',
+                required: true,
+              },
+            ],
+          },
+        ],
+      }
+
+      const files = renderMcpServerTemplates(dataWithTools)
+
+      // Should generate the custom tool file
+      expect(files.has('src/tools/greet.ts')).toBe(true)
+
+      const greetTool = files.get('src/tools/greet.ts') || ''
+      expect(greetTool).toContain('export interface GreetToolArgs')
+      expect(greetTool).toContain('export async function handleGreetTool')
+      expect(greetTool).toContain('name: string')
+    })
+
+    it('generates correct file count with custom tools', () => {
+      const dataWithTools: McpServerTemplateData = {
+        ...basicTemplateData,
+        tools: [
+          { name: 'tool1', description: 'First tool' },
+          { name: 'tool2', description: 'Second tool' },
+        ],
+      }
+
+      const files = renderMcpServerTemplates(dataWithTools)
+
+      // 8 base files + 2 custom tool files = 10 files
+      expect(files.size).toBe(10)
+      expect(files.has('src/tools/tool1.ts')).toBe(true)
+      expect(files.has('src/tools/tool2.ts')).toBe(true)
     })
   })
 
