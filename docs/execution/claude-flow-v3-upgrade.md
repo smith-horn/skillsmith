@@ -1,0 +1,116 @@
+# Claude-Flow V3 Upgrade Status
+
+## Current State
+
+| Aspect | Status |
+|--------|--------|
+| Package Version | `3.0.0-alpha.83` (pre-release) |
+| Build | Passing |
+| Typecheck | Passing |
+| Stable Release | Not yet available |
+
+## Version History
+
+- **V2 (Previous)**: `2.7.47` - stable release
+- **V3 (Current)**: `3.0.0-alpha.83` - pre-release alpha
+
+## Breaking Changes Identified
+
+### 1. No Stable V3 Release
+
+The V3 release is currently only available as alpha versions (`3.0.0-alpha.44` through `3.0.0-alpha.83`). There is no stable `^3.0.0` release on npm yet.
+
+**Impact**: This migration uses pre-release software which may have breaking changes between alpha versions.
+
+**Mitigation**: Pin to specific alpha version (`3.0.0-alpha.83`) rather than using semver range.
+
+### 2. API Changes (Pending Verification)
+
+The following APIs need verification for V3 compatibility:
+
+| API | V2 Usage | V3 Status |
+|-----|----------|-----------|
+| `memory store --key X --value Y` | SessionManager.ts:415-423 | TBD |
+| `memory get --key X` | SessionManager.ts:447-455 | TBD |
+| `memory delete --key X` | SessionManager.ts:480-486 | TBD |
+| `hooks pre-task --description X` | SessionManager.ts:503-517 | TBD |
+| `hooks post-task --task-id X` | SessionManager.ts:531-537 | TBD |
+| `hooks post-edit --file X` | .claude/settings.json:51 | TBD |
+| `hooks session-end` | .claude/settings.json:110 | TBD |
+
+### 3. Package Tag Change
+
+V2 code references `claude-flow@alpha` tag. V3 may use different tagging:
+
+```bash
+# V2 pattern
+npx claude-flow@alpha memory store --key X --value Y
+
+# V3 pattern (TBD - may be different)
+npx claude-flow memory store --key X --value Y
+```
+
+## Migration Locations
+
+### High Priority (Code Changes Required)
+
+1. **SessionManager.ts** (lines 407-543)
+   - 6 spawn-based memory operations
+   - 4 spawn-based hooks operations
+   - Currently using `claude-flow@alpha` tag
+
+2. **SessionRecovery.ts** (lines 79, 289, 307)
+   - Uses string-based `execute()` instead of spawn
+   - Security concern: should migrate to spawn()
+   - 3 memory/hooks operations
+
+3. **.claude/settings.json** (lines 42-117)
+   - 5 hook command definitions
+   - 2 MCP server references
+
+### Medium Priority (Test Updates)
+
+4. **SessionManager.test.ts** - Mock command patterns
+5. **SessionManager.security.test.ts** - Mock command patterns
+
+### Low Priority (Documentation/Scripts)
+
+6. Shell scripts in `scripts/` directory (6 files)
+7. Prompt templates in `scripts/prompts/` (10 files)
+8. Agent definitions in `.claude/agents/` (2 files)
+9. Skill definitions in `.claude/skills/` (5 files)
+
+## Verification Checklist
+
+- [x] package.json updated to V3 alpha
+- [x] npm install succeeds
+- [x] npm run build succeeds
+- [x] npm run typecheck succeeds
+- [ ] Memory commands work with V3
+- [ ] Hooks commands work with V3
+- [ ] MCP server compatible with V3
+- [ ] All tests pass with V3
+
+## Next Steps
+
+1. **SMI-1518**: Migrate SessionManager from spawn to V3 Memory API
+2. **SMI-1519**: Implement HNSW + SQLite hybrid embedding storage
+3. Update tests to mock V3 API patterns
+4. Run full test suite to identify failures
+
+## Rollback Plan
+
+To rollback to V2:
+
+```bash
+# In package.json
+"claude-flow": "2.7.47"
+
+# Then reinstall
+npm install
+```
+
+---
+
+*Document created: January 16, 2026*
+*Issue: SMI-1517*
