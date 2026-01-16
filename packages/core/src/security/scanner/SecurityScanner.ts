@@ -18,6 +18,64 @@ import {
 import { SEVERITY_WEIGHTS, CATEGORY_WEIGHTS } from './weights.js'
 import { safeRegexTest, safeRegexCheck } from './regex-utils.js'
 
+/**
+ * Context information for each line in markdown content
+ * SMI-1513: Used to reduce false positives in documentation
+ */
+interface LineContext {
+  lineNumber: number
+  inCodeBlock: boolean
+  inTable: boolean
+  isIndentedCode: boolean
+}
+
+/**
+ * Analyze markdown content and return context for each line
+ * SMI-1513: Used to reduce false positives in documentation/examples
+ */
+function analyzeMarkdownContext(content: string): LineContext[] {
+  const lines = content.split('\n')
+  const contexts: LineContext[] = []
+  let inFencedCodeBlock = false
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const trimmedLine = line.trim()
+
+    // Check for fenced code block boundaries (``` or ~~~)
+    if (/^(`{3,}|~{3,})/.test(trimmedLine)) {
+      inFencedCodeBlock = !inFencedCodeBlock
+    }
+
+    // Check for table row (starts with |)
+    const inTable = trimmedLine.startsWith('|')
+
+    // Check for indented code block (4+ spaces or tab at start, not in list)
+    const isIndentedCode =
+      /^( {4,}|\t)/.test(line) &&
+      !inFencedCodeBlock &&
+      !trimmedLine.startsWith('-') &&
+      !trimmedLine.startsWith('*')
+
+    contexts.push({
+      lineNumber: i + 1,
+      inCodeBlock: inFencedCodeBlock,
+      inTable,
+      isIndentedCode,
+    })
+  }
+
+  return contexts
+}
+
+/**
+ * Check if a line is in a documentation context (code block, table, example)
+ * SMI-1513: These contexts typically show examples, not actual security issues
+ */
+function isDocumentationContext(ctx: LineContext): boolean {
+  return ctx.inCodeBlock || ctx.inTable || ctx.isIndentedCode
+}
+
 export class SecurityScanner {
   private allowedDomains: Set<string>
   private blockedPatterns: RegExp[]
@@ -91,12 +149,22 @@ export class SecurityScanner {
   /**
    * Scan for sensitive file path references
    * SMI-882: Uses safeRegexCheck to prevent ReDoS
+   * SMI-1513: Skip findings in markdown code blocks/tables (documentation context)
    */
-  private scanSensitivePaths(content: string): SecurityFinding[] {
+  private scanSensitivePaths(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
     const findings: SecurityFinding[] = []
     const lines = content.split('\n')
+    const contexts = lineContexts ?? analyzeMarkdownContext(content)
 
     lines.forEach((line, index) => {
+      const ctx = contexts[index]
+
+      // SMI-1513: Skip sensitive path checks in documentation context
+      // Code blocks and tables typically show examples, not actual security issues
+      if (ctx && isDocumentationContext(ctx)) {
+        return // Skip this line
+      }
+
       for (const pattern of SENSITIVE_PATH_PATTERNS) {
         // SMI-882: Use safe regex check with length limit
         if (safeRegexCheck(pattern, line)) {
@@ -393,10 +461,14 @@ export class SecurityScanner {
   /**
    * Perform full security scan
    * SMI-685: Enhanced with new pattern detection and risk scoring
+   * SMI-1513: Added markdown context awareness to reduce false positives
    */
   scan(skillId: string, content: string): ScanReport {
     const startTime = performance.now()
     const findings: SecurityFinding[] = []
+
+    // SMI-1513: Analyze markdown context once for context-aware scans
+    const lineContexts = analyzeMarkdownContext(content)
 
     // Check content length
     if (content.length > this.maxContentLength) {
@@ -409,7 +481,7 @@ export class SecurityScanner {
 
     // Run all scans (original)
     findings.push(...this.scanUrls(content))
-    findings.push(...this.scanSensitivePaths(content))
+    findings.push(...this.scanSensitivePaths(content, lineContexts))
     findings.push(...this.scanJailbreakPatterns(content))
     findings.push(...this.scanSuspiciousPatterns(content))
 
