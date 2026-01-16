@@ -37,8 +37,8 @@ const ApiSearchResultSchema = z.object({
   quality_score: z.number().nullable(),
   trust_tier: TrustTierSchema,
   tags: z.array(z.string()),
-  stars: z.number().nullable(),
-  installable: z.boolean().nullable(),
+  stars: z.number().nullable().optional(),
+  installable: z.boolean().nullable().optional(),
   created_at: z.string(),
   updated_at: z.string(),
 })
