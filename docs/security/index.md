@@ -9,6 +9,8 @@
 
 ## Overview
 
+> **Looking for user-focused security guidance?** See the [Skill Security Guide](./skill-security-guide.md) for information about trust tiers, safety when installing skills, and how Skillsmith protects you.
+
 This document is the **authoritative source of truth** for security standards in Skillsmith. It consolidates security patterns, checklists, and references for consistent security practices.
 
 ---
@@ -17,6 +19,7 @@ This document is the **authoritative source of truth** for security standards in
 
 | Topic | Location |
 |-------|----------|
+| **Skill Security Guide** | [skill-security-guide.md](./skill-security-guide.md) (user-facing) |
 | Security Standards | [standards.md §4](../architecture/standards.md#4-security-standards) |
 | Code Review Checklist | [checklists/code-review.md](checklists/code-review.md) |
 | SSRF Prevention | [§2.1 SSRF Prevention](#21-ssrf-prevention) |
