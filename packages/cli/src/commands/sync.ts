@@ -29,48 +29,7 @@ import {
 } from '@skillsmith/core'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
-
-/**
- * Format duration in human-readable form
- */
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
-  return `${(ms / 60000).toFixed(1)}m`
-}
-
-/**
- * Format date for display
- */
-function formatDate(isoString: string | null): string {
-  if (!isoString) return chalk.dim('Never')
-  const date = new Date(isoString)
-  return date.toLocaleString()
-}
-
-/**
- * Format time until next sync
- */
-function formatTimeUntil(isoString: string | null): string {
-  if (!isoString) return chalk.dim('N/A')
-  const target = new Date(isoString)
-  const now = new Date()
-  const diffMs = target.getTime() - now.getTime()
-
-  if (diffMs <= 0) return chalk.yellow('Due now')
-
-  const hours = Math.floor(diffMs / 3600000)
-  const minutes = Math.floor((diffMs % 3600000) / 60000)
-
-  if (hours > 24) {
-    const days = Math.floor(hours / 24)
-    return `${days}d ${hours % 24}h`
-  }
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`
-  }
-  return `${minutes}m`
-}
+import { formatDuration, formatDate, formatTimeUntil } from '../utils/formatters.js'
 
 /**
  * Run sync operation
