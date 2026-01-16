@@ -163,28 +163,28 @@ export class SyncEngine {
               }
             }
 
-          onProgress?.({
-            phase: 'fetching',
-            current: allSkills.length,
-            total: 0, // Unknown total
-            skillsProcessed: 0,
-            skillsChanged: 0,
-            message: `Fetched ${allSkills.length} skills...`,
-          })
+            onProgress?.({
+              phase: 'fetching',
+              current: allSkills.length,
+              total: 0, // Unknown total
+              skillsProcessed: 0,
+              skillsChanged: 0,
+              message: `Fetched ${allSkills.length} skills...`,
+            })
 
-          // Check if there are more results
-          hasMore = skills.length === pageSize
-          offset += pageSize
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          errors.push(`Fetch error at offset ${offset}: ${message}`)
-          // Continue with what we have if we got some results
-          if (allSkills.length > 0) {
-            hasMore = false
-          } else {
-            throw error
+            // Check if there are more results
+            hasMore = skills.length === pageSize
+            offset += pageSize
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            errors.push(`Fetch error at offset ${offset}: ${message}`)
+            // Continue with what we have if we got some results
+            if (allSkills.length > 0) {
+              hasMore = false
+            } else {
+              throw error
+            }
           }
-        }
         }
       }
 

@@ -288,8 +288,10 @@ describe('SyncEngine', () => {
       expect(result.success).toBe(true)
       expect(result.skillsAdded).toBe(150)
       expect(result.totalProcessed).toBe(150)
-      // Should have made 2 API calls (100 + 50)
-      expect(apiClient.search as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(2)
+      // SyncEngine uses 8 different search queries to cover more skills
+      // Each query paginates through results: 8 queries × 2 pages (100 + 50) = 16 calls
+      // Skills are deduplicated across queries
+      expect(apiClient.search as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(16)
     })
   })
 
