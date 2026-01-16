@@ -29,6 +29,12 @@ import {
 
 import { createSupabaseAdminClient, getRequestId, logInvocation } from '../_shared/supabase.ts'
 
+import {
+  HIGH_TRUST_AUTHORS,
+  shouldExcludeSkill,
+  type HighTrustAuthor,
+} from './high-trust-authors.ts'
+
 // Cache for GitHub App installation token
 let cachedInstallationToken: { token: string; expiresAt: number } | null = null
 
@@ -436,20 +442,32 @@ async function searchRepositories(
 /**
  * Convert repository to skill data
  */
-function repositoryToSkill(repo: GitHubRepository): Record<string, unknown> {
-  // Calculate quality score based on stars and activity
-  const starScore = Math.min(repo.stars / 10, 50)
-  const forkScore = Math.min(repo.forks / 5, 25)
-  const qualityScore = (starScore + forkScore + 25) / 100 // Normalize to 0-1
+function repositoryToSkill(
+  repo: GitHubRepository,
+  highTrustAuthor?: HighTrustAuthor
+): Record<string, unknown> {
+  let qualityScore: number
+  let trustTier: 'verified' | 'community' | 'experimental' | 'unknown'
 
-  // Determine trust tier
-  let trustTier: 'verified' | 'community' | 'experimental' | 'unknown' = 'unknown'
-  if (repo.topics.includes('claude-code-official')) {
+  if (highTrustAuthor) {
+    // High-trust authors get verified tier and configured quality score
+    qualityScore = highTrustAuthor.baseQualityScore
     trustTier = 'verified'
-  } else if (repo.stars >= 50) {
-    trustTier = 'community'
-  } else if (repo.stars >= 5) {
-    trustTier = 'experimental'
+  } else {
+    // Calculate quality score based on stars and activity
+    const starScore = Math.min(repo.stars / 10, 50)
+    const forkScore = Math.min(repo.forks / 5, 25)
+    qualityScore = (starScore + forkScore + 25) / 100 // Normalize to 0-1
+
+    // Determine trust tier
+    trustTier = 'unknown'
+    if (repo.topics.includes('claude-code-official')) {
+      trustTier = 'verified'
+    } else if (repo.stars >= 50) {
+      trustTier = 'community'
+    } else if (repo.stars >= 5) {
+      trustTier = 'experimental'
+    }
   }
 
   return {
@@ -464,6 +482,122 @@ function repositoryToSkill(repo: GitHubRepository): Record<string, unknown> {
     installable: repo.installable,
     indexed_at: new Date().toISOString(),
   }
+}
+
+/**
+ * Fetch skills from a high-trust author's repository
+ * Scans subdirectories for SKILL.md files
+ */
+async function indexHighTrustRepository(
+  author: HighTrustAuthor
+): Promise<{ skills: GitHubRepository[]; errors: string[] }> {
+  const skills: GitHubRepository[] = []
+  const errors: string[] = []
+
+  try {
+    // Get repository info
+    const repoUrl = `https://api.github.com/repos/${author.owner}/${author.repo}`
+    const repoResponse = await fetch(repoUrl, {
+      headers: await buildGitHubHeaders(),
+    })
+
+    if (!repoResponse.ok) {
+      errors.push(`Failed to fetch ${author.owner}/${author.repo}: ${repoResponse.status}`)
+      return { skills, errors }
+    }
+
+    const repoData = (await repoResponse.json()) as {
+      default_branch: string
+      stargazers_count: number
+      forks_count: number
+      description: string | null
+      topics: string[]
+    }
+
+    // Get repository contents to find skill directories
+    const contentsUrl = `https://api.github.com/repos/${author.owner}/${author.repo}/contents`
+    const contentsResponse = await fetch(contentsUrl, {
+      headers: await buildGitHubHeaders(),
+    })
+
+    if (!contentsResponse.ok) {
+      errors.push(
+        `Failed to fetch contents for ${author.owner}/${author.repo}: ${contentsResponse.status}`
+      )
+      return { skills, errors }
+    }
+
+    const contents = (await contentsResponse.json()) as Array<{
+      name: string
+      type: string
+      path: string
+    }>
+
+    // Check each directory for SKILL.md
+    for (const item of contents) {
+      if (item.type !== 'dir') continue
+
+      // Check if this skill should be excluded
+      if (shouldExcludeSkill(author, item.name)) {
+        console.log(`Skipping excluded skill: ${author.owner}/${author.repo}/${item.name}`)
+        continue
+      }
+
+      // Check if SKILL.md exists in this directory
+      const hasSkill = await checkSkillMdExists(
+        author.owner,
+        author.repo,
+        `${repoData.default_branch}/${item.name}`
+      )
+
+      if (hasSkill) {
+        skills.push({
+          owner: author.owner,
+          name: item.name,
+          fullName: `${author.owner}/${item.name}`,
+          description: `${item.name} skill from ${author.owner}`,
+          url: `https://github.com/${author.owner}/${author.repo}/tree/${repoData.default_branch}/${item.name}`,
+          stars: repoData.stargazers_count,
+          forks: repoData.forks_count,
+          topics: repoData.topics || [],
+          updatedAt: new Date().toISOString(),
+          defaultBranch: repoData.default_branch,
+          installable: true,
+        })
+      }
+
+      await delay(50) // Rate limiting
+    }
+
+    // Also check for root-level SKILL.md (single-skill repos)
+    const hasRootSkill = await checkSkillMdExists(
+      author.owner,
+      author.repo,
+      repoData.default_branch
+    )
+
+    if (hasRootSkill && !shouldExcludeSkill(author, author.repo)) {
+      skills.push({
+        owner: author.owner,
+        name: author.repo,
+        fullName: `${author.owner}/${author.repo}`,
+        description: repoData.description || `${author.repo} skill`,
+        url: `https://github.com/${author.owner}/${author.repo}`,
+        stars: repoData.stargazers_count,
+        forks: repoData.forks_count,
+        topics: repoData.topics || [],
+        updatedAt: new Date().toISOString(),
+        defaultBranch: repoData.default_branch,
+        installable: true,
+      })
+    }
+  } catch (error) {
+    errors.push(
+      `Error indexing ${author.owner}/${author.repo}: ${error instanceof Error ? error.message : 'Unknown'}`
+    )
+  }
+
+  return { skills, errors }
 }
 
 Deno.serve(async (req: Request) => {
@@ -509,8 +643,28 @@ Deno.serve(async (req: Request) => {
 
     const seenUrls = new Set<string>()
     const repositories: GitHubRepository[] = []
+    const highTrustSkillMap = new Map<string, HighTrustAuthor>() // Track which skills came from high-trust authors
 
-    // Fetch repositories from all topics
+    // Phase 1: Index high-trust authors first (verified tier)
+    console.log(`Indexing ${HIGH_TRUST_AUTHORS.length} high-trust authors...`)
+    for (const author of HIGH_TRUST_AUTHORS) {
+      const { skills, errors: authorErrors } = await indexHighTrustRepository(author)
+
+      for (const skill of skills) {
+        if (!seenUrls.has(skill.url)) {
+          seenUrls.add(skill.url)
+          repositories.push(skill)
+          highTrustSkillMap.set(skill.url, author)
+        }
+      }
+
+      result.errors.push(...authorErrors)
+      await delay(GITHUB_API_DELAY)
+    }
+
+    console.log(`Found ${highTrustSkillMap.size} skills from high-trust authors`)
+
+    // Phase 2: Fetch repositories from GitHub topic search
     for (const topic of topics) {
       for (let page = 1; page <= maxPages; page++) {
         const { repos, total, error } = await searchRepositories(topic, page)
@@ -548,7 +702,9 @@ Deno.serve(async (req: Request) => {
 
       for (const repo of repositories) {
         try {
-          const skillData = repositoryToSkill(repo)
+          // Check if this skill came from a high-trust author
+          const highTrustAuthor = highTrustSkillMap.get(repo.url)
+          const skillData = repositoryToSkill(repo, highTrustAuthor)
 
           // Upsert skill by repo_url
           const { error } = await supabase.from('skills').upsert(skillData, {

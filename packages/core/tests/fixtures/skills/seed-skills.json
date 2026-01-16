@@ -1,6 +1,7 @@
 {
   "description": "Seed skills for testing the Skillsmith MCP server",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "licenseNote": "All skills listed here have compatible open source licenses. Anthropic document skills (docx, pdf, pptx, xlsx) are excluded as they are source-available, not open source.",
   "skills": [
     {
       "id": "anthropic/commit",
