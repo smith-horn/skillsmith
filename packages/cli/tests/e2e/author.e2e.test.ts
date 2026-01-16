@@ -171,7 +171,8 @@ describe('E2E: skillsmith init', () => {
       assertNoHardcoded(result, 'skillsmith init --help', 'init: help', __filename)
     })
 
-    // Skip: The init command uses inquirer for interactive prompts which cannot be automated in E2E tests
+    // SMI-1473: Skip - vitest mocks don't work for subprocess E2E tests
+    // TODO: Add --description, --author, --category flags to init command for non-interactive mode
     it.skip('should create skill scaffold with name', async () => {
       const result = await runCommand(['init', 'my-new-skill'])
 
@@ -188,7 +189,7 @@ describe('E2E: skillsmith init', () => {
       assertNoHardcoded(result, 'skillsmith init name', 'init: create skill', __filename)
     })
 
-    // Skip: The init command uses inquirer for interactive prompts which cannot be automated in E2E tests
+    // SMI-1473: Skip - vitest mocks don't work for subprocess E2E tests
     it.skip('should create skill scaffold with custom path', async () => {
       const customPath = join(TEST_DIR, 'custom-skills')
       mkdirSync(customPath, { recursive: true })
@@ -203,7 +204,7 @@ describe('E2E: skillsmith init', () => {
       assertNoHardcoded(result, 'skillsmith init -p custom', 'init: custom path', __filename)
     })
 
-    // Skip: The init command uses inquirer for interactive prompts which cannot be automated in E2E tests
+    // SMI-1473: Skip - vitest mocks don't work for subprocess E2E tests
     it.skip('should create resources directory', async () => {
       const result = await runCommand(['init', 'resource-skill'])
 
@@ -215,7 +216,7 @@ describe('E2E: skillsmith init', () => {
       assertNoHardcoded(result, 'skillsmith init resources', 'init: resources dir', __filename)
     })
 
-    // Skip: The init command uses inquirer for interactive prompts which cannot be automated in E2E tests
+    // SMI-1473: Skip - vitest mocks don't work for subprocess E2E tests
     it.skip('should create scripts directory with example', async () => {
       const result = await runCommand(['init', 'script-skill'])
 
@@ -228,7 +229,7 @@ describe('E2E: skillsmith init', () => {
       assertNoHardcoded(result, 'skillsmith init scripts', 'init: scripts dir', __filename)
     })
 
-    // Skip: The init command uses inquirer for interactive prompts which cannot be automated in E2E tests
+    // SMI-1473: Skip - vitest mocks don't work for subprocess E2E tests
     it.skip('should handle existing directory gracefully', async () => {
       // Create skill first
       await runCommand(['init', 'existing-skill'])
@@ -240,7 +241,7 @@ describe('E2E: skillsmith init', () => {
       assertNoHardcoded(result, 'skillsmith init existing', 'init: existing dir', __filename)
     })
 
-    // Skip: The init command uses inquirer for interactive prompts which cannot be automated in E2E tests
+    // SMI-1473: Skip - vitest mocks don't work for subprocess E2E tests
     it.skip('should not contain hardcoded paths in generated files', async () => {
       const result = await runCommand(['init', 'path-check-skill'])
 
