@@ -10,6 +10,7 @@
  * - varlock (score: 95) - Security foundation
  * - commit (score: 92) - Git workflow
  * - governance (score: 88) - Code quality
+ * - skill-builder (score: 90) - Custom skill creation
  */
 
 import { existsSync, mkdirSync, writeFileSync } from 'fs'
@@ -47,6 +48,7 @@ export interface Tier1Skill {
 export const TIER1_SKILLS: readonly Tier1Skill[] = [
   { id: 'anthropic/varlock', name: 'varlock', score: 95 },
   { id: 'anthropic/commit', name: 'commit', score: 92 },
+  { id: 'anthropic/skill-builder', name: 'skill-builder', score: 90 },
   { id: 'anthropic/governance', name: 'governance', score: 88 },
 ] as const
 

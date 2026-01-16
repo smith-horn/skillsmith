@@ -3,8 +3,10 @@
  * Provides skill discovery, installation, and management tools
  *
  * @see SMI-792: Database initialization with tool context
+ * @see SMI-XXXX: First-run integration and documentation delivery
  */
 
+import { exec } from 'child_process'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
@@ -18,6 +20,17 @@ import { recommendToolSchema, recommendInputSchema, executeRecommend } from './t
 import { validateToolSchema, validateInputSchema, executeValidate } from './tools/validate.js'
 import { compareToolSchema, compareInputSchema, executeCompare } from './tools/compare.js'
 import { suggestToolSchema, suggestInputSchema, executeSuggest } from './tools/suggest.js'
+import {
+  isFirstRun,
+  markFirstRunComplete,
+  getWelcomeMessage,
+  TIER1_SKILLS,
+} from './onboarding/first-run.js'
+import {
+  installBundledSkills,
+  installUserDocs,
+  getUserGuidePath,
+} from './onboarding/install-assets.js'
 
 // Initialize tool context with database connection
 let toolContext: ToolContext
@@ -184,14 +197,81 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 })
 
+/**
+ * Handle --docs flag to open user documentation
+ */
+function handleDocsFlag(): void {
+  const userGuidePath = getUserGuidePath()
+  const onlineDocsUrl = 'https://skillsmith.app/docs'
+
+  if (userGuidePath) {
+    const cmd =
+      process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'
+    exec(`${cmd} "${userGuidePath}"`)
+    console.log(`Opening documentation: ${userGuidePath}`)
+  } else {
+    const cmd =
+      process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'
+    exec(`${cmd} "${onlineDocsUrl}"`)
+    console.log(`Opening online documentation: ${onlineDocsUrl}`)
+  }
+  process.exit(0)
+}
+
+/**
+ * Run first-time setup: install bundled skills and Tier 1 skills from registry
+ */
+async function runFirstTimeSetup(): Promise<void> {
+  console.error('[skillsmith] First run detected, installing essentials...')
+
+  // Install bundled skills (skillsmith documentation skill)
+  const bundledSkills = installBundledSkills()
+
+  // Install user documentation
+  installUserDocs()
+
+  // Install Tier 1 skills from registry
+  const registrySkills: string[] = []
+  for (const skill of TIER1_SKILLS) {
+    try {
+      await installSkill({ skillId: skill.id, force: false, skipScan: false }, toolContext)
+      registrySkills.push(skill.name)
+      console.error(`[skillsmith] Installed: ${skill.name}`)
+    } catch (error) {
+      console.error(
+        `[skillsmith] Failed to install ${skill.name}:`,
+        error instanceof Error ? error.message : 'Unknown error'
+      )
+    }
+  }
+
+  // Mark first run as complete
+  markFirstRunComplete()
+
+  // Show welcome message
+  const allSkills = [...bundledSkills, ...registrySkills]
+  console.error(getWelcomeMessage(allSkills))
+}
+
 // Start server
 async function main() {
+  // Handle --docs flag
+  if (process.argv.includes('--docs') || process.argv.includes('-d')) {
+    handleDocsFlag()
+    return
+  }
+
   // Initialize database and services
   toolContext = getToolContext()
   console.error(
     'Database initialized at:',
     process.env.SKILLSMITH_DB_PATH || '~/.skillsmith/skills.db'
   )
+
+  // Run first-time setup if needed
+  if (isFirstRun()) {
+    await runFirstTimeSetup()
+  }
 
   const transport = new StdioServerTransport()
   await server.connect(transport)
