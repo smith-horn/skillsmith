@@ -16,6 +16,7 @@ import { fileURLToPath } from 'url'
 import { scanCommandOutput } from './utils/hardcoded-detector.js'
 import { measureAsync, recordTiming } from './utils/baseline-collector.js'
 import { queueIssue, type TestFailure } from './utils/linear-reporter.js'
+import { setupMockGitHub, clearMockGitHub } from './utils/mock-github.js'
 
 // ESM compatibility for __dirname
 const __filename = fileURLToPath(import.meta.url)
@@ -123,6 +124,9 @@ describe('E2E: skillsmith import', () => {
       rmSync(TEST_DIR, { recursive: true, force: true })
     }
     mkdirSync(TEST_DIR, { recursive: true })
+
+    // SMI-1474: Setup mock GitHub API
+    setupMockGitHub()
   })
 
   afterAll(() => {
@@ -130,6 +134,9 @@ describe('E2E: skillsmith import', () => {
     if (existsSync(TEST_DIR)) {
       rmSync(TEST_DIR, { recursive: true, force: true })
     }
+
+    // SMI-1474: Clear mock GitHub API
+    clearMockGitHub()
   })
 
   beforeEach(() => {
@@ -159,8 +166,8 @@ describe('E2E: skillsmith import', () => {
       }
     })
 
-    // Skip: Requires GitHub API access which may not be available in all CI environments
-    it.skip('should import skills with default topic', async () => {
+    // SMI-1474: Enabled with mock GitHub API
+    it('should import skills with default topic', async () => {
       const result = await runCommand(['import', '-d', TEST_DB_PATH, '-m', '5', '-v'], 120000)
 
       // Record timing baseline
@@ -177,8 +184,8 @@ describe('E2E: skillsmith import', () => {
       )
     })
 
-    // Skip: Requires GitHub API access which may not be available in all CI environments
-    it.skip('should create database at specified path', async () => {
+    // SMI-1474: Enabled with mock GitHub API
+    it('should create database at specified path', async () => {
       const customDbPath = join(TEST_DIR, 'custom-db.db')
 
       const result = await runCommand(['import', '-d', customDbPath, '-m', '1'], 60000)
@@ -197,8 +204,8 @@ describe('E2E: skillsmith import', () => {
       )
     })
 
-    // Skip: Requires GitHub API access which may not be available in all CI environments
-    it.skip('should handle custom topic parameter', async () => {
+    // SMI-1474: Enabled with mock GitHub API
+    it('should handle custom topic parameter', async () => {
       const result = await runCommand(
         ['import', '-d', TEST_DB_PATH, '-t', 'claude-code', '-m', '3'],
         60000
@@ -216,8 +223,8 @@ describe('E2E: skillsmith import', () => {
   })
 
   describe('Verbose Output', () => {
-    // Skip: Requires GitHub API access and can timeout waiting for network response
-    it.skip('should show progress in verbose mode', async () => {
+    // SMI-1474: Enabled with mock GitHub API
+    it('should show progress in verbose mode', async () => {
       const result = await runCommand(['import', '-d', TEST_DB_PATH, '-m', '2', '-v'], 60000)
 
       // Should not contain hardcoded paths
@@ -255,8 +262,8 @@ describe('E2E: skillsmith import', () => {
   })
 
   describe('Performance Baseline', () => {
-    // Skip: Requires GitHub API access and network for importing skills
-    it.skip('should complete import of 10 skills within reasonable time', async () => {
+    // SMI-1474: Enabled with mock GitHub API
+    it('should complete import of 10 skills within reasonable time', async () => {
       const { durationMs } = await measureAsync(
         'import:10skills',
         'skillsmith import -m 10',
@@ -274,8 +281,8 @@ describe('E2E: skillsmith import', () => {
   })
 
   describe('Hardcoded Value Detection', () => {
-    // Skip: Requires GitHub API access and network for importing skills
-    it.skip('should not contain user-specific paths in output', async () => {
+    // SMI-1474: Enabled with mock GitHub API
+    it('should not contain user-specific paths in output', async () => {
       const result = await runCommand(['import', '-d', TEST_DB_PATH, '-m', '1', '-v'], 60000)
 
       // Explicit check for common hardcoded patterns
@@ -286,8 +293,8 @@ describe('E2E: skillsmith import', () => {
       expect(output).not.toMatch(/C:\\Users\\[a-zA-Z0-9_-]+\\/)
     })
 
-    // Skip: Requires GitHub API access and network for importing skills
-    it.skip('should not expose localhost URLs in output', async () => {
+    // SMI-1474: Enabled with mock GitHub API
+    it('should not expose localhost URLs in output', async () => {
       const result = await runCommand(['import', '-d', TEST_DB_PATH, '-m', '1'], 60000)
 
       const output = result.stdout + result.stderr
@@ -297,8 +304,8 @@ describe('E2E: skillsmith import', () => {
       expect(output).not.toMatch(/127\.0\.0\.1:\d+/)
     })
 
-    // Skip: Requires GitHub API access and network for importing skills
-    it.skip('should not expose API keys in output', async () => {
+    // SMI-1474: Enabled with mock GitHub API
+    it('should not expose API keys in output', async () => {
       const result = await runCommand(['import', '-d', TEST_DB_PATH, '-m', '1', '-v'], 60000)
 
       const output = result.stdout + result.stderr
