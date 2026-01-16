@@ -213,24 +213,26 @@ function validateIssue(issue: Issue): ValidationResult {
 }
 ```
 
-## Agent Self-Selection Reference
+## Agent Self-Selection by Domain Label
+
+Specialist agents self-select issues based on domain labels matching their capabilities:
 
 | Domain Label | Primary Agents | Secondary Agents |
 |--------------|----------------|------------------|
-| `security` | security-manager, byzantine-coordinator | reviewer, tester |
-| `performance` | performance-benchmarker, perf-analyzer | coder, reviewer |
-| `neural` | safla-neural, collective-intelligence-coordinator | researcher, coder |
-| `infrastructure` | swarm-init, mesh-coordinator | coder, planner |
-| `testing` | tester, tdd-london-swarm, production-validator | reviewer |
-| `core` | coder, sparc-coder | reviewer, tester |
-| `refactor` | coder, reviewer | architecture |
-| `reliability` | raft-manager, gossip-coordinator | tester |
-| `documentation` | researcher | reviewer |
-| `breaking-change` | planner, migration-planner | coder, tester |
-| `feature` | coder, sparc-coder | tester, reviewer |
+| `security` | `security-manager`, `byzantine-coordinator` | `reviewer`, `tester` |
+| `performance` | `performance-benchmarker`, `perf-analyzer` | `coder`, `reviewer` |
+| `neural` | `safla-neural`, `collective-intelligence-coordinator` | `researcher`, `coder` |
+| `infrastructure` | `swarm-init`, `mesh-coordinator` | `coder`, `planner` |
+| `testing` | `tester`, `tdd-london-swarm`, `production-validator` | `reviewer` |
+| `core` | `coder`, `sparc-coder` | `reviewer`, `tester` |
+| `refactor` | `coder`, `reviewer` | `architecture` |
+| `reliability` | `raft-manager`, `gossip-coordinator` | `tester` |
+| `documentation` | `researcher` | `reviewer` |
+| `breaking-change` | `planner`, `migration-planner` | `coder`, `tester` |
+| `feature` | `coder`, `sparc-coder` | `tester`, `reviewer` |
 
-**Selection Rules**:
+**Agent Selection Rules**:
 1. Primary agents have first priority for matching labels
 2. If primary agent unavailable, secondary agents execute
-3. Multi-label issues route to agent with combined capabilities
+3. Multi-label issues (e.g., `security` + `feature`) route to agent with both capabilities
 4. Phase labels determine execution order (phase-1 before phase-2)
