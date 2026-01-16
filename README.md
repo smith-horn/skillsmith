@@ -11,7 +11,7 @@ Skillsmith is a skill discovery, recommendation, and learning system for [Claude
 - **Recommend** - Get personalized skill suggestions based on context
 - **Install** - One-command installation to `~/.claude/skills/`
 - **Validate** - Quality scores and structure validation
-- **Trust** - Verified, community, and experimental trust tiers
+- **Trust** - Four trust tiers from Anthropic Official to Community ([Security Guide](docs/security/skill-security-guide.md))
 - **Compare** - Side-by-side skill comparison
 
 ### MCP Tools
@@ -105,10 +105,11 @@ node packages/cli/dist/index.js install community/jest-helper
 
 ## Documentation
 
+- [**Skill Security Guide**](docs/security/skill-security-guide.md) - Understanding skill trust, safety, and how Skillsmith protects you
 - [Getting Started](docs/GETTING_STARTED.md) - Complete setup and usage guide
 - [Engineering Standards](docs/architecture/standards.md) - Code quality policies
 - [ADR Index](docs/adr/index.md) - Architecture Decision Records
-- [Security Checklist](docs/security/checklists/code-review.md) - Security review guidelines
+- [Security Checklist](docs/security/checklists/code-review.md) - Security review guidelines (developers)
 - [Phase Retrospectives](docs/retros/) - Phase learnings and improvements
 
 ## Development
