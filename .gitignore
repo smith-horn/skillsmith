@@ -59,6 +59,28 @@ docs/IP/
 docs/licensing/
 docs/valuation/
 
+# Internal strategy and planning (not for public repository)
+# See: docs/reviews/2026-01-15-ip-sensitivity-review.md
+docs/strategy/
+docs/gtm/
+docs/research/
+docs/execution/
+docs/retros/
+docs/reviews/
+docs/backlog/
+docs/waves/
+scripts/prompts/
+scripts/phases/
+docs/archive/
+
+# ADRs with business strategy (licensing, pricing, quotas)
+docs/adr/013-open-core-licensing.md
+docs/adr/014-enterprise-package-architecture.md
+docs/adr/017-quota-enforcement-system.md
+
+# Enterprise package (split to private repo: skillsmith-enterprise)
+packages/enterprise/
+
 # Development artifacts (anchored to root level)
 /data/
 /output/
