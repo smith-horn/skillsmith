@@ -667,6 +667,7 @@ async function generateSubagent(skillPath: string, options: SubagentOptions): Pr
 
     // Show tool analysis
     console.log(chalk.bold('\nTool Analysis:'))
+    console.log(chalk.dim(`  Model: ${model}`))
     console.log(chalk.dim(`  Confidence: ${toolAnalysis.confidence}`))
     console.log(chalk.dim(`  Tools: ${formatToolList(tools)}`))
     if (toolAnalysis.detectedPatterns.length > 0) {
@@ -719,15 +720,18 @@ async function transformSkill(skillPath: string, options: TransformOptions): Pro
 
     // Check if batch mode
     if (options.batch) {
-      spinner.text = 'Scanning for skills...'
-      const entries = await readFile(dirPath, 'utf-8').catch(() => null)
+      spinner.text = 'Processing batch...'
 
-      if (entries === null) {
+      let skillDirs: string[] = []
+
+      // Support comma-separated paths
+      if (dirPath.includes(',')) {
+        skillDirs = dirPath.split(',').map((p) => resolve(p.trim()))
+      } else {
         // It's a directory, scan for subdirectories with SKILL.md
         const { readdir } = await import('fs/promises')
         const subdirs = await readdir(dirPath, { withFileTypes: true })
 
-        const skillDirs: string[] = []
         for (const entry of subdirs) {
           if (entry.isDirectory()) {
             const skillMdPath = join(dirPath, entry.name, 'SKILL.md')
@@ -736,24 +740,26 @@ async function transformSkill(skillPath: string, options: TransformOptions): Pro
             }
           }
         }
+      }
 
-        if (skillDirs.length === 0) {
-          spinner.warn('No skills found in directory')
-          return
-        }
-
-        spinner.succeed(`Found ${skillDirs.length} skills`)
-
-        // Process each skill
-        for (const skillDir of skillDirs) {
-          console.log(chalk.dim(`\nProcessing: ${skillDir}`))
-          await transformSkill(skillDir, {
-            ...options,
-            batch: false, // Don't recurse
-          })
-        }
+      if (skillDirs.length === 0) {
+        spinner.warn('No skills found')
         return
       }
+
+      spinner.succeed(`Batch processing ${skillDirs.length} skills`)
+      // Also output to stdout for test assertions (spinner goes to stderr)
+      console.log(chalk.green(`Batch processing ${skillDirs.length} skills`))
+
+      // Process each skill
+      for (const skillDir of skillDirs) {
+        console.log(chalk.dim(`\nProcessing: ${skillDir}`))
+        await transformSkill(skillDir, {
+          ...options,
+          batch: false, // Don't recurse
+        })
+      }
+      return
     }
 
     // Single skill transform
@@ -761,7 +767,7 @@ async function transformSkill(skillPath: string, options: TransformOptions): Pro
 
     if (!(await fileExists(skillMdPath))) {
       spinner.fail(`No SKILL.md found at: ${skillMdPath}`)
-      return
+      throw new Error(`No SKILL.md found at: ${skillMdPath}`)
     }
 
     // Read and parse
@@ -791,11 +797,14 @@ async function transformSkill(skillPath: string, options: TransformOptions): Pro
 
     if (options.dryRun) {
       spinner.succeed('Dry run - would generate:')
+      // Also output to stdout for test assertions (spinner goes to stderr)
+      console.log(chalk.green('Dry run - would generate:'))
       console.log(chalk.dim(`  Subagent: ${subagentPath}`))
+      console.log(chalk.dim(`  Skill: ${metadata.name}`))
 
       // Show tool analysis
       const toolAnalysis = analyzeToolRequirements(content)
-      console.log(chalk.dim(`  Tools: ${formatToolList(toolAnalysis.requiredTools)}`))
+      console.log(chalk.dim(`  Required Tools: ${formatToolList(toolAnalysis.requiredTools)}`))
       console.log(chalk.dim(`  Confidence: ${toolAnalysis.confidence}`))
       return
     }
