@@ -45,7 +45,8 @@ interface SeedSkill {
 interface SeedData {
   description: string
   version: string
-  skills: SeedSkill[]
+  realSkills: SeedSkill[]
+  testFixtures: SeedSkill[]
 }
 
 function parseArgs(): { dbPath: string; clear: boolean; verbose: boolean } {
@@ -90,9 +91,11 @@ async function main() {
     console.log(`Created directory: ${dbDir}`)
   }
 
-  // Load seed data
+  // Load seed data (only realSkills, not testFixtures)
   const seedData = loadSeedData()
-  console.log(`Loaded ${seedData.skills.length} skills from seed file (v${seedData.version})`)
+  const skills = seedData.realSkills
+  console.log(`Loaded ${skills.length} real skills from seed file (v${seedData.version})`)
+  console.log(`  (Skipping ${seedData.testFixtures.length} test fixtures)`)
   console.log('')
 
   // Initialize database
@@ -113,13 +116,13 @@ async function main() {
     console.log('')
   }
 
-  // Insert seed skills
+  // Insert seed skills (realSkills only)
   console.log('Inserting seed skills...')
   let inserted = 0
   let skipped = 0
   let errors = 0
 
-  for (const skill of seedData.skills) {
+  for (const skill of skills) {
     try {
       // Check if skill already exists
       const existing = skillRepository.findById(skill.id)
@@ -164,7 +167,7 @@ async function main() {
   console.log(`  Inserted: ${inserted}`)
   console.log(`  Skipped:  ${skipped}`)
   console.log(`  Errors:   ${errors}`)
-  console.log(`  Total:    ${seedData.skills.length}`)
+  console.log(`  Total:    ${skills.length}`)
   console.log('')
 
   // Verify by counting

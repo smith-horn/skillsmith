@@ -1,8 +1,8 @@
 {
-  "description": "Seed skills for testing the Skillsmith MCP server",
-  "version": "1.1.0",
+  "description": "Seed skills for Skillsmith. realSkills contain verified skills from real GitHub repositories suitable for production sync. testFixtures contain fake skills with fictional skillsmith-community/skillsmith-labs URLs for unit testing only - these should NOT be synced to production.",
+  "version": "1.2.0",
   "licenseNote": "All skills listed here have compatible open source licenses. Anthropic document skills (docx, pdf, pptx, xlsx) are excluded as they are source-available, not open source.",
-  "skills": [
+  "realSkills": [
     {
       "id": "anthropic/commit",
       "name": "commit",
@@ -149,7 +149,9 @@
       "qualityScore": 0.93,
       "trustTier": "verified",
       "tags": ["devops", "vercel", "deployment", "hosting", "ci-cd", "preview"]
-    },
+    }
+  ],
+  "testFixtures": [
     {
       "id": "community/jest-helper",
       "name": "jest-helper",
@@ -221,26 +223,6 @@
       "tags": ["devops", "github-actions", "ci-cd", "automation", "workflow"]
     },
     {
-      "id": "experimental/llm-prompt-tester",
-      "name": "llm-prompt-tester",
-      "description": "Test and iterate on LLM prompts with automated evaluation. Supports A/B testing and prompt versioning.",
-      "author": "experimental",
-      "repoUrl": "https://github.com/skillsmith-labs/llm-prompt-tester",
-      "qualityScore": 0.7,
-      "trustTier": "experimental",
-      "tags": ["ai-ml", "llm", "prompt-engineering", "testing", "evaluation"]
-    },
-    {
-      "id": "experimental/code-refactor",
-      "name": "code-refactor",
-      "description": "Suggest and apply code refactoring patterns. Detects code smells and proposes improvements.",
-      "author": "experimental",
-      "repoUrl": "https://github.com/skillsmith-labs/code-refactor",
-      "qualityScore": 0.68,
-      "trustTier": "experimental",
-      "tags": ["development", "refactoring", "code-quality", "patterns"]
-    },
-    {
       "id": "community/react-component",
       "name": "react-component",
       "description": "Generate React components with TypeScript, styling, and tests. Supports functional components and hooks.",
@@ -269,6 +251,26 @@
       "qualityScore": 0.78,
       "trustTier": "community",
       "tags": ["integration", "graphql", "api", "typescript", "backend"]
+    },
+    {
+      "id": "experimental/llm-prompt-tester",
+      "name": "llm-prompt-tester",
+      "description": "Test and iterate on LLM prompts with automated evaluation. Supports A/B testing and prompt versioning.",
+      "author": "experimental",
+      "repoUrl": "https://github.com/skillsmith-labs/llm-prompt-tester",
+      "qualityScore": 0.7,
+      "trustTier": "experimental",
+      "tags": ["ai-ml", "llm", "prompt-engineering", "testing", "evaluation"]
+    },
+    {
+      "id": "experimental/code-refactor",
+      "name": "code-refactor",
+      "description": "Suggest and apply code refactoring patterns. Detects code smells and proposes improvements.",
+      "author": "experimental",
+      "repoUrl": "https://github.com/skillsmith-labs/code-refactor",
+      "qualityScore": 0.68,
+      "trustTier": "experimental",
+      "tags": ["development", "refactoring", "code-quality", "patterns"]
     },
     {
       "id": "unknown/untested-tool",
