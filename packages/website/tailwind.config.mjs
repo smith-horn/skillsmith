@@ -32,14 +32,14 @@ export default {
 
       // Box shadows (warm glow aesthetic)
       boxShadow: {
-        'glow': '0 0 40px rgba(224, 122, 95, 0.15)',
-        'cta': '0 8px 32px rgba(224, 122, 95, 0.25)',
+        glow: '0 0 40px rgba(224, 122, 95, 0.15)',
+        cta: '0 8px 32px rgba(224, 122, 95, 0.25)',
       },
 
       // Animations
       animation: {
         'fade-up': 'fadeUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards',
-        'float': 'float 20s ease-in-out infinite',
+        float: 'float 20s ease-in-out infinite',
       },
       keyframes: {
         fadeUp: {
@@ -55,4 +55,4 @@ export default {
   },
 
   plugins: [],
-};
+}

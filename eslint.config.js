@@ -15,6 +15,8 @@ export default tseslint.config(
       '**/*.mjs',
       '!eslint.config.js',
       '**/vitest.config.integration.ts',
+      // Website uses Astro with its own ESLint config - lint separately
+      'packages/website/**',
     ],
   },
   eslint.configs.recommended,
@@ -22,12 +24,20 @@ export default tseslint.config(
   prettierConfig,
   {
     files: ['packages/**/*.ts', 'packages/**/*.tsx'],
+    ignores: ['packages/website/**'],
     languageOptions: {
       globals: {
         ...globals.node,
       },
       parserOptions: {
-        project: ['./packages/*/tsconfig.json'],
+        // Exclude website - it uses Astro's tsconfig which requires Astro installed
+        project: [
+          './packages/core/tsconfig.json',
+          './packages/mcp-server/tsconfig.json',
+          './packages/cli/tsconfig.json',
+          './packages/enterprise/tsconfig.json',
+          './packages/vscode-extension/tsconfig.json',
+        ],
         tsconfigRootDir: import.meta.dirname,
       },
     },

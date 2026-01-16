@@ -42,8 +42,8 @@ describe('First Run Detection (SMI-911)', () => {
   })
 
   describe('TIER1_SKILLS constant', () => {
-    it('should define exactly 3 Tier 1 skills', () => {
-      expect(TIER1_SKILLS).toHaveLength(3)
+    it('should define exactly 4 Tier 1 skills', () => {
+      expect(TIER1_SKILLS).toHaveLength(4)
     })
 
     it('should include varlock with score 95', () => {
@@ -58,6 +58,13 @@ describe('First Run Detection (SMI-911)', () => {
       expect(commit).toBeDefined()
       expect(commit?.id).toBe('anthropic/commit')
       expect(commit?.score).toBe(92)
+    })
+
+    it('should include skill-builder with score 90', () => {
+      const skillBuilder = TIER1_SKILLS.find((s) => s.name === 'skill-builder')
+      expect(skillBuilder).toBeDefined()
+      expect(skillBuilder?.id).toBe('anthropic/skill-builder')
+      expect(skillBuilder?.score).toBe(90)
     })
 
     it('should include governance with score 88', () => {
