@@ -27,3 +27,6 @@ export { createAnalyzeCommand } from './analyze.js'
 
 // SMI-1299: Recommendations
 export { createRecommendCommand } from './recommend.js'
+
+// Registry Sync
+export { createSyncCommand } from './sync.js'
