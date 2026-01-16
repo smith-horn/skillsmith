@@ -16,6 +16,24 @@ env:
   COMPOSE_DOCKER_CLI_BUILD: 1
 
 jobs:
+  # Secret scanning with gitleaks - runs first, fast, no dependencies
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for scanning all commits in PR
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
   # SMI-1300: Validate package configurations before expensive Docker build
   # Catches scope mismatches for GitHub Packages early
   # Only runs on upstream repo (smith-horn) - skipped on forks
@@ -95,9 +113,9 @@ jobs:
   # Build Docker image once, extract dependencies, use for all jobs
   # SMI-708: Optimized to extract node_modules once instead of running npm ci per job
   docker-build:
-    needs: package-validation
-    # Run if package-validation succeeded OR was skipped (on forks)
-    if: ${{ !cancelled() && (needs.package-validation.result == 'success' || needs.package-validation.result == 'skipped') }}
+    needs: [secret-scan, package-validation]
+    # Run if both jobs succeeded OR were skipped (package-validation skips on forks)
+    if: ${{ !cancelled() && needs.secret-scan.result == 'success' && (needs.package-validation.result == 'success' || needs.package-validation.result == 'skipped') }}
     name: Build Docker Image
     runs-on: ubuntu-latest
     timeout-minutes: 10
