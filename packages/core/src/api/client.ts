@@ -110,8 +110,8 @@ export interface ApiSearchResult {
   quality_score: number | null
   trust_tier: TrustTier
   tags: string[]
-  stars: number | null
-  installable: boolean | null
+  stars?: number | null
+  installable?: boolean | null
   created_at: string
   updated_at: string
 }
