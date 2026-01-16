@@ -76,6 +76,8 @@ regexes = [
   '''example\.com''',
   '''placeholder''',
   '''xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx''',
+  # RFC 4122 example UUID (used in documentation)
+  '''550e8400-e29b-41d4-a716-446655440000''',
   # Placeholder patterns in documentation
   '''sk_live_xxx''',
   '''sk_test_xxx''',
@@ -93,7 +95,10 @@ paths = [
   '''.*\.spec\.(ts|js)$''',
   '''.*fixtures.*''',
   '''.*__mocks__.*''',
+  '''tests/.*''',
+  '''scripts/.*''',
   '''docs/.*\.md$''',
+  '''docs/.*\.yaml$''',
   '''\.claude/skills/.*/SKILL\.md$''',
 ]
 
