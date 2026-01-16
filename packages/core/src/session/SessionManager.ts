@@ -1,6 +1,7 @@
 /**
  * Session Manager for Claude-Flow Memory Integration
  * SMI-641: Session ID Storage in Claude-Flow Memory
+ * SMI-1518: V3 API Migration - Use direct API calls instead of spawn
  *
  * Manages session lifecycle with persistent storage in claude-flow memory
  * to enable context restoration across sessions.
@@ -8,7 +9,16 @@
 
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import type { SessionContext, SessionData, Checkpoint } from './SessionContext.js'
+import type { SessionData, Checkpoint } from './SessionContext.js'
+
+// V3 API imports - SMI-1518
+// These provide direct TypeScript API access instead of spawning CLI commands
+// Note: claude-flow V3 alpha doesn't export all functions from root, use direct paths
+import {
+  storeEntry,
+  getEntry,
+} from 'claude-flow/v3/@claude-flow/cli/dist/src/memory/memory-initializer.js'
+import { callMCPTool, MCPClientError } from 'claude-flow/v3/@claude-flow/cli/dist/src/mcp-client.js'
 
 /**
  * Memory key patterns for session storage
@@ -18,6 +28,18 @@ const MEMORY_KEYS = {
   SESSION_PREFIX: 'session/',
   CHECKPOINT_PREFIX: 'checkpoint/',
 } as const
+
+/**
+ * SMI-1518: Feature flag to enable V3 direct API
+ * Set CLAUDE_FLOW_USE_V3_API=true to use direct API calls
+ * Falls back to spawn-based CLI if not set or if V3 API fails
+ */
+const USE_V3_API = process.env.CLAUDE_FLOW_USE_V3_API === 'true'
+
+/**
+ * Default namespace for session memory entries
+ */
+const MEMORY_NAMESPACE = 'skillsmith-sessions'
 
 /**
  * Validates a memory key to prevent injection attacks
@@ -402,6 +424,8 @@ export class SessionManager {
    * Store data in claude-flow memory
    *
    * SMI-674: Uses spawn() with argument array to prevent command injection
+   * SMI-1518: V3 API Migration - Use direct storeEntry() when available
+   *
    * Values are passed as separate arguments, never interpolated into shell commands
    */
   private async storeMemory(key: string, value: string): Promise<MemoryResult> {
@@ -409,10 +433,29 @@ export class SessionManager {
       return { success: false, error: 'Invalid memory key' }
     }
 
+    // SMI-1518: Try V3 direct API first if enabled
+    if (USE_V3_API) {
+      try {
+        const result = await storeEntry({
+          key,
+          value,
+          namespace: MEMORY_NAMESPACE,
+        })
+        if (result.success) {
+          return { success: true }
+        }
+        // Fall through to spawn if V3 API reports failure
+        console.warn(`V3 storeEntry failed: ${result.error}, falling back to spawn`)
+      } catch (error) {
+        // V3 API threw an exception, fall back to spawn
+        console.warn(`V3 storeEntry exception: ${error}, falling back to spawn`)
+      }
+    }
+
     try {
       // SMI-674 FIX: Use spawn with argument array instead of string interpolation
       // This prevents command injection attacks like $(whoami) or `id`
-      const args = ['claude-flow@alpha', 'memory', 'store', '--key', key, '--value', value]
+      const args = ['claude-flow', 'memory', 'store', '--key', key, '--value', value]
 
       if (this.executor.spawn) {
         await this.executor.spawn('npx', args)
@@ -420,7 +463,7 @@ export class SessionManager {
         // Fallback to execute for backwards compatibility (legacy executors)
         // Note: This path should not be used in production
         const escapedValue = value.replace(/'/g, "'\\''")
-        const command = `npx claude-flow@alpha memory store --key "${key}" --value '${escapedValue}'`
+        const command = `npx claude-flow memory store --key "${key}" --value '${escapedValue}'`
         await this.executor.execute(command)
       }
       return { success: true }
@@ -436,15 +479,37 @@ export class SessionManager {
    * Retrieve data from claude-flow memory
    *
    * SMI-674: Uses spawn() with argument array to prevent command injection
+   * SMI-1518: V3 API Migration - Use direct getEntry() when available
    */
   private async retrieveMemory(key: string): Promise<MemoryResult> {
     if (!validateMemoryKey(key)) {
       return { success: false, error: 'Invalid memory key' }
     }
 
+    // SMI-1518: Try V3 direct API first if enabled
+    if (USE_V3_API) {
+      try {
+        const result = await getEntry({
+          key,
+          namespace: MEMORY_NAMESPACE,
+        })
+        if (result.success && result.found && result.entry) {
+          return { success: true, data: result.entry.content }
+        }
+        if (result.success && !result.found) {
+          return { success: false, error: 'Key not found' }
+        }
+        // Fall through to spawn if V3 API reports failure
+        console.warn(`V3 getEntry failed: ${result.error}, falling back to spawn`)
+      } catch (error) {
+        // V3 API threw an exception, fall back to spawn
+        console.warn(`V3 getEntry exception: ${error}, falling back to spawn`)
+      }
+    }
+
     try {
       // SMI-674 FIX: Use spawn with argument array
-      const args = ['claude-flow@alpha', 'memory', 'get', '--key', key]
+      const args = ['claude-flow', 'memory', 'get', '--key', key]
 
       let stdout: string
       if (this.executor.spawn) {
@@ -452,7 +517,7 @@ export class SessionManager {
         stdout = result.stdout
       } else {
         // Fallback for backwards compatibility
-        const command = `npx claude-flow@alpha memory get --key "${key}"`
+        const command = `npx claude-flow memory get --key "${key}"`
         const result = await this.executor.execute(command)
         stdout = result.stdout
       }
@@ -469,21 +534,42 @@ export class SessionManager {
    * Delete data from claude-flow memory
    *
    * SMI-674: Uses spawn() with argument array to prevent command injection
+   * SMI-1518: V3 API Migration - Use callMCPTool('memory/delete') when available
    */
   private async deleteMemory(key: string): Promise<MemoryResult> {
     if (!validateMemoryKey(key)) {
       return { success: false, error: 'Invalid memory key' }
     }
 
+    // SMI-1518: Try V3 MCP API first if enabled
+    if (USE_V3_API) {
+      try {
+        const result = await callMCPTool<{ success: boolean; deleted: boolean }>('memory/delete', {
+          key,
+        })
+        if (result.success) {
+          return { success: true }
+        }
+        // Fall through to spawn if V3 API reports failure
+        console.warn(`V3 memory/delete failed, falling back to spawn`)
+      } catch (error) {
+        // V3 API threw an exception, fall back to spawn
+        // MCPClientError indicates the tool wasn't available
+        if (!(error instanceof MCPClientError)) {
+          console.warn(`V3 memory/delete exception: ${error}, falling back to spawn`)
+        }
+      }
+    }
+
     try {
       // SMI-674 FIX: Use spawn with argument array
-      const args = ['claude-flow@alpha', 'memory', 'delete', '--key', key]
+      const args = ['claude-flow', 'memory', 'delete', '--key', key]
 
       if (this.executor.spawn) {
         await this.executor.spawn('npx', args)
       } else {
         // Fallback for backwards compatibility
-        const command = `npx claude-flow@alpha memory delete --key "${key}"`
+        const command = `npx claude-flow memory delete --key "${key}"`
         await this.executor.execute(command)
       }
       return { success: true }
@@ -496,11 +582,25 @@ export class SessionManager {
   /**
    * Run pre-task hook
    * SMI-674: Uses spawn() with argument array to prevent command injection
+   * SMI-1518: V3 API Migration - Use callMCPTool('hooks/pre-task') when available
    */
   private async runPreTaskHook(description: string): Promise<void> {
+    // SMI-1518: Try V3 MCP API first if enabled
+    if (USE_V3_API) {
+      try {
+        await callMCPTool('hooks/pre-task', {
+          description,
+          memoryKey: 'session/current',
+        })
+        return // Success, no need to fall back
+      } catch {
+        // V3 API not available or failed, fall back to spawn
+      }
+    }
+
     try {
       const args = [
-        'claude-flow@alpha',
+        'claude-flow',
         'hooks',
         'pre-task',
         '--description',
@@ -514,7 +614,7 @@ export class SessionManager {
       } else {
         // Fallback for backwards compatibility
         const escapedDesc = description.replace(/'/g, "'\\''")
-        const command = `npx claude-flow@alpha hooks pre-task --description '${escapedDesc}' --memory-key "session/current"`
+        const command = `npx claude-flow hooks pre-task --description '${escapedDesc}' --memory-key "session/current"`
         await this.executor.execute(command)
       }
     } catch {
@@ -525,16 +625,29 @@ export class SessionManager {
   /**
    * Run post-task hook
    * SMI-674: Uses spawn() with argument array to prevent command injection
+   * SMI-1518: V3 API Migration - Use callMCPTool('hooks/post-task') when available
    */
   private async runPostTaskHook(taskId: string): Promise<void> {
+    // SMI-1518: Try V3 MCP API first if enabled
+    if (USE_V3_API) {
+      try {
+        await callMCPTool('hooks/post-task', {
+          taskId,
+        })
+        return // Success, no need to fall back
+      } catch {
+        // V3 API not available or failed, fall back to spawn
+      }
+    }
+
     try {
-      const args = ['claude-flow@alpha', 'hooks', 'post-task', '--task-id', taskId]
+      const args = ['claude-flow', 'hooks', 'post-task', '--task-id', taskId]
 
       if (this.executor.spawn) {
         await this.executor.spawn('npx', args)
       } else {
         // Fallback for backwards compatibility
-        const command = `npx claude-flow@alpha hooks post-task --task-id "${taskId}"`
+        const command = `npx claude-flow hooks post-task --task-id "${taskId}"`
         await this.executor.execute(command)
       }
     } catch {
