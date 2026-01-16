@@ -15,6 +15,7 @@ import type { SkillsmithApiClient, ApiSearchResult } from '../../src/api/client.
 
 /**
  * Create a mock skill for testing
+ * Note: quality_score must be between 0 and 1 (database constraint)
  */
 function createMockSkill(
   id: string,
@@ -26,7 +27,7 @@ function createMockSkill(
     description: `Description for ${id}`,
     author: 'test-author',
     repo_url: `https://github.com/test/${id}`,
-    quality_score: 85,
+    quality_score: 0.85, // Must be 0-1 range (database constraint)
     trust_tier: 'community',
     tags: ['test'],
     stars: 50,

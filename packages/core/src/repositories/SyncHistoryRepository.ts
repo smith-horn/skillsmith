@@ -353,8 +353,8 @@ export class SyncHistoryRepository {
 
     return {
       totalRuns: stats.total_runs,
-      successfulRuns: stats.successful_runs,
-      failedRuns: stats.failed_runs,
+      successfulRuns: stats.successful_runs ?? 0,
+      failedRuns: stats.failed_runs ?? 0,
       lastSuccessAt: stats.last_success_at,
       averageDurationMs: stats.avg_duration_ms ? Math.round(stats.avg_duration_ms) : null,
     }
