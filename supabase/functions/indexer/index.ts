@@ -514,59 +514,91 @@ async function indexHighTrustRepository(
       topics: string[]
     }
 
-    // Get repository contents to find skill directories
-    const contentsUrl = `https://api.github.com/repos/${author.owner}/${author.repo}/contents`
-    const contentsResponse = await fetch(contentsUrl, {
-      headers: await buildGitHubHeaders(),
-    })
+    // Get repository contents - check both root and skills/ subdirectory
+    // Most high-trust repos have skills in a 'skills/' subdirectory
+    const pathsToCheck = ['', 'skills']
 
-    if (!contentsResponse.ok) {
-      errors.push(
-        `Failed to fetch contents for ${author.owner}/${author.repo}: ${contentsResponse.status}`
-      )
-      return { skills, errors }
-    }
+    for (const basePath of pathsToCheck) {
+      const contentsUrl = basePath
+        ? `https://api.github.com/repos/${author.owner}/${author.repo}/contents/${basePath}`
+        : `https://api.github.com/repos/${author.owner}/${author.repo}/contents`
 
-    const contents = (await contentsResponse.json()) as Array<{
-      name: string
-      type: string
-      path: string
-    }>
+      const contentsResponse = await fetch(contentsUrl, {
+        headers: await buildGitHubHeaders(),
+      })
 
-    // Check each directory for SKILL.md
-    for (const item of contents) {
-      if (item.type !== 'dir') continue
-
-      // Check if this skill should be excluded
-      if (shouldExcludeSkill(author, item.name)) {
-        console.log(`Skipping excluded skill: ${author.owner}/${author.repo}/${item.name}`)
+      if (!contentsResponse.ok) {
+        // skills/ subdirectory might not exist, that's OK
+        if (basePath && contentsResponse.status === 404) {
+          continue
+        }
+        errors.push(
+          `Failed to fetch contents for ${author.owner}/${author.repo}/${basePath}: ${contentsResponse.status}`
+        )
         continue
       }
 
-      // Check if SKILL.md exists in this directory
-      const hasSkill = await checkSkillMdExists(
-        author.owner,
-        author.repo,
-        `${repoData.default_branch}/${item.name}`
-      )
+      const contents = (await contentsResponse.json()) as Array<{
+        name: string
+        type: string
+        path: string
+      }>
 
-      if (hasSkill) {
-        skills.push({
-          owner: author.owner,
-          name: item.name,
-          fullName: `${author.owner}/${item.name}`,
-          description: `${item.name} skill from ${author.owner}`,
-          url: `https://github.com/${author.owner}/${author.repo}/tree/${repoData.default_branch}/${item.name}`,
-          stars: repoData.stargazers_count,
-          forks: repoData.forks_count,
-          topics: repoData.topics || [],
-          updatedAt: new Date().toISOString(),
-          defaultBranch: repoData.default_branch,
-          installable: true,
-        })
+      // Check each directory for SKILL.md
+      for (const item of contents) {
+        if (item.type !== 'dir') continue
+
+        // Skip common non-skill directories
+        if (
+          [
+            '.github',
+            '.claude-plugin',
+            'scripts',
+            'assets',
+            'agents',
+            'apps',
+            'packages',
+            'spec',
+            'template',
+          ].includes(item.name)
+        ) {
+          continue
+        }
+
+        // Check if this skill should be excluded
+        if (shouldExcludeSkill(author, item.name)) {
+          console.log(`Skipping excluded skill: ${author.owner}/${author.repo}/${item.name}`)
+          continue
+        }
+
+        // Build the path to check for SKILL.md
+        const skillPath = basePath ? `${basePath}/${item.name}` : item.name
+
+        // Check if SKILL.md exists in this directory
+        const hasSkill = await checkSkillMdExists(
+          author.owner,
+          author.repo,
+          `${repoData.default_branch}/${skillPath}`
+        )
+
+        if (hasSkill) {
+          skills.push({
+            owner: author.owner,
+            name: item.name,
+            fullName: `${author.owner}/${item.name}`,
+            description: `${item.name} skill from ${author.owner}`,
+            url: `https://github.com/${author.owner}/${author.repo}/tree/${repoData.default_branch}/${skillPath}`,
+            stars: repoData.stargazers_count,
+            forks: repoData.forks_count,
+            topics: repoData.topics || [],
+            updatedAt: new Date().toISOString(),
+            defaultBranch: repoData.default_branch,
+            installable: true,
+          })
+        }
+
+        await delay(50) // Rate limiting
       }
-
-      await delay(50) // Rate limiting
     }
 
     // Also check for root-level SKILL.md (single-skill repos)
