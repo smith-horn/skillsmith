@@ -57,7 +57,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
 
   describe('createInitCommand', () => {
     it('creates a command with correct name', async () => {
-      const { createInitCommand } = await import('../src/commands/author.js')
+      const { createInitCommand } = await import('../src/commands/author/index.js')
       const cmd = createInitCommand()
 
       expect(cmd).toBeInstanceOf(Command)
@@ -65,7 +65,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
     })
 
     it('has path option with default', async () => {
-      const { createInitCommand } = await import('../src/commands/author.js')
+      const { createInitCommand } = await import('../src/commands/author/index.js')
       const cmd = createInitCommand()
 
       const pathOpt = cmd.options.find((o) => o.short === '-p')
@@ -74,7 +74,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
     })
 
     it('accepts optional name argument', async () => {
-      const { createInitCommand } = await import('../src/commands/author.js')
+      const { createInitCommand } = await import('../src/commands/author/index.js')
       const cmd = createInitCommand()
 
       // Has one optional argument for name
@@ -84,7 +84,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
 
   describe('createValidateCommand', () => {
     it('creates a command with correct name', async () => {
-      const { createValidateCommand } = await import('../src/commands/author.js')
+      const { createValidateCommand } = await import('../src/commands/author/index.js')
       const cmd = createValidateCommand()
 
       expect(cmd).toBeInstanceOf(Command)
@@ -92,7 +92,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
     })
 
     it('accepts optional path argument with default', async () => {
-      const { createValidateCommand } = await import('../src/commands/author.js')
+      const { createValidateCommand } = await import('../src/commands/author/index.js')
       const cmd = createValidateCommand()
 
       expect(cmd.registeredArguments.length).toBe(1)
@@ -102,7 +102,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
 
   describe('createPublishCommand', () => {
     it('creates a command with correct name', async () => {
-      const { createPublishCommand } = await import('../src/commands/author.js')
+      const { createPublishCommand } = await import('../src/commands/author/index.js')
       const cmd = createPublishCommand()
 
       expect(cmd).toBeInstanceOf(Command)
@@ -110,7 +110,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
     })
 
     it('accepts optional path argument with default', async () => {
-      const { createPublishCommand } = await import('../src/commands/author.js')
+      const { createPublishCommand } = await import('../src/commands/author/index.js')
       const cmd = createPublishCommand()
 
       expect(cmd.registeredArguments.length).toBe(1)
@@ -120,27 +120,27 @@ describe('SMI-746: Skill Authoring Commands', () => {
 
   describe('Exported Functions', () => {
     it('exports initSkill function', async () => {
-      const module = await import('../src/commands/author.js')
+      const module = await import('../src/commands/author/index.js')
       expect(typeof module.initSkill).toBe('function')
     })
 
     it('exports validateSkill function', async () => {
-      const module = await import('../src/commands/author.js')
+      const module = await import('../src/commands/author/index.js')
       expect(typeof module.validateSkill).toBe('function')
     })
 
     it('exports publishSkill function', async () => {
-      const module = await import('../src/commands/author.js')
+      const module = await import('../src/commands/author/index.js')
       expect(typeof module.publishSkill).toBe('function')
     })
 
     it('exports generateSubagent function', async () => {
-      const module = await import('../src/commands/author.js')
+      const module = await import('../src/commands/author/index.js')
       expect(typeof module.generateSubagent).toBe('function')
     })
 
     it('exports transformSkill function', async () => {
-      const module = await import('../src/commands/author.js')
+      const module = await import('../src/commands/author/index.js')
       expect(typeof module.transformSkill).toBe('function')
     })
   })
@@ -148,7 +148,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
   // SMI-1389: Subagent Command Tests
   describe('createSubagentCommand', () => {
     it('creates a command with correct name', async () => {
-      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const { createSubagentCommand } = await import('../src/commands/author/index.js')
       const cmd = createSubagentCommand()
 
       expect(cmd).toBeInstanceOf(Command)
@@ -156,7 +156,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
     })
 
     it('has output option with default', async () => {
-      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const { createSubagentCommand } = await import('../src/commands/author/index.js')
       const cmd = createSubagentCommand()
 
       const outputOpt = cmd.options.find((o) => o.short === '-o')
@@ -165,7 +165,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
     })
 
     it('has tools option', async () => {
-      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const { createSubagentCommand } = await import('../src/commands/author/index.js')
       const cmd = createSubagentCommand()
 
       const toolsOpt = cmd.options.find((o) => o.long === '--tools')
@@ -173,7 +173,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
     })
 
     it('has model option with sonnet default', async () => {
-      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const { createSubagentCommand } = await import('../src/commands/author/index.js')
       const cmd = createSubagentCommand()
 
       const modelOpt = cmd.options.find((o) => o.long === '--model')
@@ -182,7 +182,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
     })
 
     it('has skip-claude-md option', async () => {
-      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const { createSubagentCommand } = await import('../src/commands/author/index.js')
       const cmd = createSubagentCommand()
 
       const skipOpt = cmd.options.find((o) => o.long === '--skip-claude-md')
@@ -190,7 +190,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
     })
 
     it('accepts optional path argument with default', async () => {
-      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const { createSubagentCommand } = await import('../src/commands/author/index.js')
       const cmd = createSubagentCommand()
 
       expect(cmd.registeredArguments.length).toBe(1)
@@ -201,7 +201,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
   // SMI-1390: Transform Command Tests
   describe('createTransformCommand', () => {
     it('creates a command with correct name', async () => {
-      const { createTransformCommand } = await import('../src/commands/author.js')
+      const { createTransformCommand } = await import('../src/commands/author/index.js')
       const cmd = createTransformCommand()
 
       expect(cmd).toBeInstanceOf(Command)
@@ -209,7 +209,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
     })
 
     it('has dry-run option', async () => {
-      const { createTransformCommand } = await import('../src/commands/author.js')
+      const { createTransformCommand } = await import('../src/commands/author/index.js')
       const cmd = createTransformCommand()
 
       const dryRunOpt = cmd.options.find((o) => o.long === '--dry-run')
@@ -217,7 +217,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
     })
 
     it('has force option', async () => {
-      const { createTransformCommand } = await import('../src/commands/author.js')
+      const { createTransformCommand } = await import('../src/commands/author/index.js')
       const cmd = createTransformCommand()
 
       const forceOpt = cmd.options.find((o) => o.long === '--force')
@@ -225,7 +225,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
     })
 
     it('has batch option', async () => {
-      const { createTransformCommand } = await import('../src/commands/author.js')
+      const { createTransformCommand } = await import('../src/commands/author/index.js')
       const cmd = createTransformCommand()
 
       const batchOpt = cmd.options.find((o) => o.long === '--batch')
@@ -233,7 +233,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
     })
 
     it('accepts optional path argument with default', async () => {
-      const { createTransformCommand } = await import('../src/commands/author.js')
+      const { createTransformCommand } = await import('../src/commands/author/index.js')
       const cmd = createTransformCommand()
 
       expect(cmd.registeredArguments.length).toBe(1)
@@ -245,7 +245,7 @@ describe('SMI-746: Skill Authoring Commands', () => {
 describe('SMI-1389: Subagent Command', () => {
   describe('createSubagentCommand', () => {
     it('creates a command with correct name', async () => {
-      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const { createSubagentCommand } = await import('../src/commands/author/index.js')
       const cmd = createSubagentCommand()
 
       expect(cmd).toBeInstanceOf(Command)
@@ -253,7 +253,7 @@ describe('SMI-1389: Subagent Command', () => {
     })
 
     it('has output option with default', async () => {
-      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const { createSubagentCommand } = await import('../src/commands/author/index.js')
       const cmd = createSubagentCommand()
 
       const outputOpt = cmd.options.find((o) => o.short === '-o')
@@ -262,7 +262,7 @@ describe('SMI-1389: Subagent Command', () => {
     })
 
     it('has model option with default sonnet', async () => {
-      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const { createSubagentCommand } = await import('../src/commands/author/index.js')
       const cmd = createSubagentCommand()
 
       const modelOpt = cmd.options.find((o) => o.long === '--model')
@@ -271,7 +271,7 @@ describe('SMI-1389: Subagent Command', () => {
     })
 
     it('has force flag', async () => {
-      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const { createSubagentCommand } = await import('../src/commands/author/index.js')
       const cmd = createSubagentCommand()
 
       const forceOpt = cmd.options.find((o) => o.long === '--force')
@@ -279,7 +279,7 @@ describe('SMI-1389: Subagent Command', () => {
     })
 
     it('has skip-claude-md flag', async () => {
-      const { createSubagentCommand } = await import('../src/commands/author.js')
+      const { createSubagentCommand } = await import('../src/commands/author/index.js')
       const cmd = createSubagentCommand()
 
       const skipOpt = cmd.options.find((o) => o.long === '--skip-claude-md')
@@ -291,7 +291,7 @@ describe('SMI-1389: Subagent Command', () => {
 describe('SMI-1390: Transform Command', () => {
   describe('createTransformCommand', () => {
     it('creates a command with correct name', async () => {
-      const { createTransformCommand } = await import('../src/commands/author.js')
+      const { createTransformCommand } = await import('../src/commands/author/index.js')
       const cmd = createTransformCommand()
 
       expect(cmd).toBeInstanceOf(Command)
@@ -299,7 +299,7 @@ describe('SMI-1390: Transform Command', () => {
     })
 
     it('has dry-run flag', async () => {
-      const { createTransformCommand } = await import('../src/commands/author.js')
+      const { createTransformCommand } = await import('../src/commands/author/index.js')
       const cmd = createTransformCommand()
 
       const dryRunOpt = cmd.options.find((o) => o.long === '--dry-run')
@@ -307,7 +307,7 @@ describe('SMI-1390: Transform Command', () => {
     })
 
     it('has batch flag', async () => {
-      const { createTransformCommand } = await import('../src/commands/author.js')
+      const { createTransformCommand } = await import('../src/commands/author/index.js')
       const cmd = createTransformCommand()
 
       const batchOpt = cmd.options.find((o) => o.long === '--batch')
@@ -315,7 +315,7 @@ describe('SMI-1390: Transform Command', () => {
     })
 
     it('has force flag', async () => {
-      const { createTransformCommand } = await import('../src/commands/author.js')
+      const { createTransformCommand } = await import('../src/commands/author/index.js')
       const cmd = createTransformCommand()
 
       const forceOpt = cmd.options.find((o) => o.long === '--force')
@@ -325,12 +325,12 @@ describe('SMI-1390: Transform Command', () => {
 
   describe('Exported Functions', () => {
     it('exports generateSubagent function', async () => {
-      const module = await import('../src/commands/author.js')
+      const module = await import('../src/commands/author/index.js')
       expect(typeof module.generateSubagent).toBe('function')
     })
 
     it('exports transformSkill function', async () => {
-      const module = await import('../src/commands/author.js')
+      const module = await import('../src/commands/author/index.js')
       expect(typeof module.transformSkill).toBe('function')
     })
   })
@@ -598,7 +598,7 @@ describe('SMI-1433: MCP Server Scaffolding Command', () => {
       vi.mocked(confirm).mockResolvedValue(false) // don't add tools interactively
 
       // Dynamically import to get fresh mocks
-      const { initMcpServer } = await import('../src/commands/author.js')
+      const { initMcpServer } = await import('../src/commands/author/index.js')
       await initMcpServer(undefined, {})
 
       // Verify all 8 files are written
@@ -634,7 +634,7 @@ describe('SMI-1433: MCP Server Scaffolding Command', () => {
         .mockResolvedValueOnce('Server with tools') // description
         .mockResolvedValueOnce('author') // author
 
-      const { initMcpServer } = await import('../src/commands/author.js')
+      const { initMcpServer } = await import('../src/commands/author/index.js')
       await initMcpServer(undefined, { tools: 'fetch-data,process-item' })
 
       // Verify writeFile was called
@@ -682,7 +682,7 @@ describe('SMI-1433: MCP Server Scaffolding Command', () => {
         .mockResolvedValueOnce('author') // author
       vi.mocked(confirm).mockResolvedValue(false)
 
-      const { initMcpServer } = await import('../src/commands/author.js')
+      const { initMcpServer } = await import('../src/commands/author/index.js')
 
       await expect(initMcpServer(undefined, {})).rejects.toThrow()
 
@@ -709,7 +709,7 @@ describe('SMI-1433: MCP Server Scaffolding Command', () => {
         .mockResolvedValueOnce('author') // author
       vi.mocked(confirm).mockResolvedValue(false) // don't add tools (not asked about overwrite due to --force)
 
-      const { initMcpServer } = await import('../src/commands/author.js')
+      const { initMcpServer } = await import('../src/commands/author/index.js')
       await initMcpServer(undefined, { force: true })
 
       // Verify files are written despite directory existing
@@ -736,7 +736,7 @@ describe('SMI-1433: MCP Server Scaffolding Command', () => {
         .mockResolvedValueOnce(false) // don't add tools
         .mockResolvedValueOnce(false) // decline overwrite
 
-      const { initMcpServer } = await import('../src/commands/author.js')
+      const { initMcpServer } = await import('../src/commands/author/index.js')
       await initMcpServer(undefined, {})
 
       // Verify no files are written
@@ -746,7 +746,7 @@ describe('SMI-1433: MCP Server Scaffolding Command', () => {
 
   describe('createMcpInitCommand', () => {
     it('creates a command with correct name', async () => {
-      const { createMcpInitCommand } = await import('../src/commands/author.js')
+      const { createMcpInitCommand } = await import('../src/commands/author/index.js')
       const cmd = createMcpInitCommand()
 
       expect(cmd).toBeInstanceOf(Command)
@@ -754,7 +754,7 @@ describe('SMI-1433: MCP Server Scaffolding Command', () => {
     })
 
     it('has correct description', async () => {
-      const { createMcpInitCommand } = await import('../src/commands/author.js')
+      const { createMcpInitCommand } = await import('../src/commands/author/index.js')
       const cmd = createMcpInitCommand()
 
       expect(cmd.description()).toContain('Scaffold')
@@ -762,14 +762,14 @@ describe('SMI-1433: MCP Server Scaffolding Command', () => {
     })
 
     it('accepts optional name argument', async () => {
-      const { createMcpInitCommand } = await import('../src/commands/author.js')
+      const { createMcpInitCommand } = await import('../src/commands/author/index.js')
       const cmd = createMcpInitCommand()
 
       expect(cmd.registeredArguments.length).toBeGreaterThanOrEqual(0)
     })
 
     it('has output option', async () => {
-      const { createMcpInitCommand } = await import('../src/commands/author.js')
+      const { createMcpInitCommand } = await import('../src/commands/author/index.js')
       const cmd = createMcpInitCommand()
 
       const outputOpt = cmd.options.find((o) => o.short === '-o')
@@ -778,7 +778,7 @@ describe('SMI-1433: MCP Server Scaffolding Command', () => {
     })
 
     it('has tools option', async () => {
-      const { createMcpInitCommand } = await import('../src/commands/author.js')
+      const { createMcpInitCommand } = await import('../src/commands/author/index.js')
       const cmd = createMcpInitCommand()
 
       const toolsOpt = cmd.options.find((o) => o.long === '--tools')
@@ -786,7 +786,7 @@ describe('SMI-1433: MCP Server Scaffolding Command', () => {
     })
 
     it('has force option', async () => {
-      const { createMcpInitCommand } = await import('../src/commands/author.js')
+      const { createMcpInitCommand } = await import('../src/commands/author/index.js')
       const cmd = createMcpInitCommand()
 
       const forceOpt = cmd.options.find((o) => o.long === '--force')
