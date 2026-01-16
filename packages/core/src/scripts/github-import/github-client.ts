@@ -369,8 +369,8 @@ export async function getGitHubHeaders(): Promise<Record<string, string>> {
  * Get current rate limit status from GitHub API.
  * Returns structured data for monitoring.
  */
+// eslint-disable-next-line prefer-const
 getRateLimitStatus = async function (): Promise<RateLimitStatus> {
-  // eslint-disable-line prefer-const
   try {
     const response = await fetch(`${CONFIG.GITHUB_API_URL}/rate_limit`, {
       headers: await getGitHubHeaders(),
@@ -413,6 +413,46 @@ getRateLimitStatus = async function (): Promise<RateLimitStatus> {
 
 // Export the function
 export { getRateLimitStatus }
+
+/**
+ * Initialize rate limit tracking at the start of an import.
+ */
+export async function initRateLimitTracking(): Promise<void> {
+  const status = await getRateLimitStatus()
+  _rateLimitTracker.startCore = status.core?.remaining ?? 0
+  _rateLimitTracker.startSearch = status.search?.remaining ?? 0
+  _rateLimitTracker.currentCore = _rateLimitTracker.startCore
+  _rateLimitTracker.currentSearch = _rateLimitTracker.startSearch
+  log('Rate limit tracking initialized')
+}
+
+/**
+ * Display a summary of rate limit usage during the import session.
+ */
+export async function displayRateLimitSummary(): Promise<void> {
+  const status = await getRateLimitStatus()
+
+  log('')
+  log('=== Rate Limit Usage Summary ===')
+
+  if (status.search) {
+    const searchUsed = _rateLimitTracker.startSearch - status.search.remaining
+    log(`Search API:`)
+    log(`  Requests used this session: ${searchUsed}`)
+    log(`  Remaining: ${status.search.remaining}/${status.search.limit}`)
+    log(`  Resets at: ${status.search.resetTime.toISOString()}`)
+  }
+
+  if (status.core) {
+    const coreUsed = _rateLimitTracker.startCore - status.core.remaining
+    log(`Core API:`)
+    log(`  Requests used this session: ${coreUsed}`)
+    log(`  Remaining: ${status.core.remaining}/${status.core.limit}`)
+    log(`  Resets at: ${status.core.resetTime.toISOString()}`)
+  }
+
+  log('================================')
+}
 
 /** Check and display GitHub rate limit status */
 export async function checkRateLimit(): Promise<void> {
