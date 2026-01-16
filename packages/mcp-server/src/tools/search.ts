@@ -175,6 +175,7 @@ export async function executeSearch(
       const searchEnd = performance.now()
 
       // Convert API results to SkillSearchResult format
+      // SMI-1491: Added repository field for transparency
       const results: SkillSearchResult[] = apiResponse.data.map((item) => ({
         id: item.id,
         name: item.name,
@@ -183,6 +184,7 @@ export async function executeSearch(
         category: extractCategoryFromTags(item.tags),
         trustTier: mapTrustTierFromDb(item.trust_tier),
         score: Math.round((item.quality_score ?? 0) * 100),
+        repository: item.repo_url || undefined,
       }))
 
       const endTime = performance.now()
@@ -231,6 +233,7 @@ export async function executeSearch(
   const searchEnd = performance.now()
 
   // Convert SearchResult to SkillSearchResult format
+  // SMI-1491: Added repository field for transparency
   const results: SkillSearchResult[] = searchResults.items.map((item) => ({
     id: item.skill.id,
     name: item.skill.name,
@@ -239,6 +242,7 @@ export async function executeSearch(
     category: extractCategoryFromTags(item.skill.tags),
     trustTier: mapTrustTierFromDb(item.skill.trustTier),
     score: Math.round((item.skill.qualityScore ?? 0) * 100), // Convert 0-1 to 0-100
+    repository: item.skill.repoUrl || undefined,
   }))
 
   const endTime = performance.now()
