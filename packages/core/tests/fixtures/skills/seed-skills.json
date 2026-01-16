@@ -33,6 +33,123 @@
       "tags": ["development", "git", "pull-request", "documentation"]
     },
     {
+      "id": "huggingface/hugging-face-cli",
+      "name": "hugging-face-cli",
+      "description": "Execute Hugging Face Hub operations using the hf CLI. Download models/datasets, upload files, manage repos, and run cloud compute jobs.",
+      "author": "huggingface",
+      "repoUrl": "https://github.com/huggingface/skills/tree/main/hugging-face-cli",
+      "qualityScore": 0.94,
+      "trustTier": "verified",
+      "tags": ["ai-ml", "huggingface", "cli", "models", "datasets", "cloud"]
+    },
+    {
+      "id": "huggingface/hugging-face-datasets",
+      "name": "hugging-face-datasets",
+      "description": "Create and manage datasets on Hugging Face Hub with support for configs, streaming updates, and SQL-based transformations.",
+      "author": "huggingface",
+      "repoUrl": "https://github.com/huggingface/skills/tree/main/hugging-face-datasets",
+      "qualityScore": 0.93,
+      "trustTier": "verified",
+      "tags": ["ai-ml", "huggingface", "datasets", "data-management", "sql"]
+    },
+    {
+      "id": "huggingface/hugging-face-evaluation",
+      "name": "hugging-face-evaluation",
+      "description": "Add and manage evaluation results in Hugging Face model cards with imports from external APIs and custom evaluation runs.",
+      "author": "huggingface",
+      "repoUrl": "https://github.com/huggingface/skills/tree/main/hugging-face-evaluation",
+      "qualityScore": 0.92,
+      "trustTier": "verified",
+      "tags": ["ai-ml", "huggingface", "evaluation", "model-cards", "benchmarks"]
+    },
+    {
+      "id": "huggingface/hugging-face-jobs",
+      "name": "hugging-face-jobs",
+      "description": "Execute Python scripts and manage scheduled compute jobs on Hugging Face infrastructure.",
+      "author": "huggingface",
+      "repoUrl": "https://github.com/huggingface/skills/tree/main/hugging-face-jobs",
+      "qualityScore": 0.91,
+      "trustTier": "verified",
+      "tags": ["ai-ml", "huggingface", "compute", "jobs", "automation", "cloud"]
+    },
+    {
+      "id": "huggingface/hugging-face-model-trainer",
+      "name": "hugging-face-model-trainer",
+      "description": "Fine-tune language models using TRL on Hugging Face Jobs, covering SFT, DPO, GRPO methods plus GGUF conversion and cost estimation.",
+      "author": "huggingface",
+      "repoUrl": "https://github.com/huggingface/skills/tree/main/hugging-face-model-trainer",
+      "qualityScore": 0.94,
+      "trustTier": "verified",
+      "tags": ["ai-ml", "huggingface", "fine-tuning", "llm", "training", "trl"]
+    },
+    {
+      "id": "huggingface/hugging-face-paper-publisher",
+      "name": "hugging-face-paper-publisher",
+      "description": "Publish and manage research papers on Hugging Face Hub with authorship claims and markdown article generation.",
+      "author": "huggingface",
+      "repoUrl": "https://github.com/huggingface/skills/tree/main/hugging-face-paper-publisher",
+      "qualityScore": 0.9,
+      "trustTier": "verified",
+      "tags": ["ai-ml", "huggingface", "research", "papers", "publishing", "documentation"]
+    },
+    {
+      "id": "huggingface/hugging-face-tool-builder",
+      "name": "hugging-face-tool-builder",
+      "description": "Build reusable scripts for chaining Hugging Face API calls and automating repeated tasks.",
+      "author": "huggingface",
+      "repoUrl": "https://github.com/huggingface/skills/tree/main/hugging-face-tool-builder",
+      "qualityScore": 0.89,
+      "trustTier": "verified",
+      "tags": ["ai-ml", "huggingface", "automation", "scripting", "api"]
+    },
+    {
+      "id": "huggingface/hugging-face-trackio",
+      "name": "hugging-face-trackio",
+      "description": "Track ML experiments with metric logging via Python API and real-time dashboard syncing to HF Spaces.",
+      "author": "huggingface",
+      "repoUrl": "https://github.com/huggingface/skills/tree/main/hugging-face-trackio",
+      "qualityScore": 0.91,
+      "trustTier": "verified",
+      "tags": ["ai-ml", "huggingface", "experiment-tracking", "metrics", "dashboard"]
+    },
+    {
+      "id": "vercel/react-best-practices",
+      "name": "react-best-practices",
+      "description": "React and Next.js performance optimization guidelines from Vercel Engineering with over 40 rules across 8 categories for component optimization, data fetching, and bundle size reduction.",
+      "author": "vercel",
+      "repoUrl": "https://github.com/vercel-labs/agent-skills/tree/main/skills/react-best-practices",
+      "qualityScore": 0.95,
+      "trustTier": "verified",
+      "tags": ["development", "react", "nextjs", "performance", "optimization", "best-practices"]
+    },
+    {
+      "id": "vercel/web-design-guidelines",
+      "name": "web-design-guidelines",
+      "description": "UI code auditing against 100+ rules covering accessibility, performance, and UX across 11 categories including forms, animations, images, and internationalization.",
+      "author": "vercel",
+      "repoUrl": "https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines",
+      "qualityScore": 0.94,
+      "trustTier": "verified",
+      "tags": [
+        "development",
+        "ui-ux",
+        "accessibility",
+        "performance",
+        "design-system",
+        "best-practices"
+      ]
+    },
+    {
+      "id": "vercel/vercel-deploy-claimable",
+      "name": "vercel-deploy-claimable",
+      "description": "Deploy applications directly to Vercel with auto-detection of 40+ frameworks from package.json. Returns preview and claim URLs for ownership transfer.",
+      "author": "vercel",
+      "repoUrl": "https://github.com/vercel-labs/agent-skills/tree/main/skills/vercel-deploy-claimable",
+      "qualityScore": 0.93,
+      "trustTier": "verified",
+      "tags": ["devops", "vercel", "deployment", "hosting", "ci-cd", "preview"]
+    },
+    {
       "id": "community/jest-helper",
       "name": "jest-helper",
       "description": "Generate Jest test cases for React components and TypeScript functions. Supports mocking, snapshot testing, and coverage analysis.",
