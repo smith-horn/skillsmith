@@ -35,9 +35,35 @@ import {
 } from '../utils/tool-analyzer.js'
 
 /**
+ * SMI-1473: Options for non-interactive init command
+ */
+interface InitOptions {
+  description?: string | undefined
+  author?: string | undefined
+  category?: string | undefined
+  yes?: boolean | undefined
+}
+
+/**
+ * Valid categories for skill initialization
+ */
+const VALID_CATEGORIES = [
+  'development',
+  'productivity',
+  'communication',
+  'data',
+  'security',
+  'other',
+]
+
+/**
  * Initialize a new skill directory
  */
-async function initSkill(name: string | undefined, targetPath: string): Promise<void> {
+async function initSkill(
+  name: string | undefined,
+  targetPath: string,
+  options: InitOptions = {}
+): Promise<void> {
   // Interactive prompts if name not provided
   const skillName =
     name ||
@@ -52,40 +78,60 @@ async function initSkill(name: string | undefined, targetPath: string): Promise<
       },
     }))
 
-  const description = await input({
-    message: 'Description:',
-    default: `A Claude skill for ${skillName}`,
-  })
+  // Use provided options or prompt interactively
+  const description =
+    options.description ||
+    (await input({
+      message: 'Description:',
+      default: `A Claude skill for ${skillName}`,
+    }))
 
-  const author = await input({
-    message: 'Author:',
-    default: process.env['USER'] || 'author',
-  })
+  const author =
+    options.author ||
+    (await input({
+      message: 'Author:',
+      default: process.env['USER'] || 'author',
+    }))
 
-  const category = await select({
-    message: 'Category:',
-    choices: [
-      { name: 'Development', value: 'development' },
-      { name: 'Productivity', value: 'productivity' },
-      { name: 'Communication', value: 'communication' },
-      { name: 'Data', value: 'data' },
-      { name: 'Security', value: 'security' },
-      { name: 'Other', value: 'other' },
-    ],
-  })
+  // Validate category if provided via CLI
+  if (options.category && !VALID_CATEGORIES.includes(options.category)) {
+    console.error(
+      chalk.red(
+        `Invalid category: ${options.category}. Valid categories: ${VALID_CATEGORIES.join(', ')}`
+      )
+    )
+    process.exit(1)
+  }
+
+  const category =
+    options.category ||
+    (await select({
+      message: 'Category:',
+      choices: [
+        { name: 'Development', value: 'development' },
+        { name: 'Productivity', value: 'productivity' },
+        { name: 'Communication', value: 'communication' },
+        { name: 'Data', value: 'data' },
+        { name: 'Security', value: 'security' },
+        { name: 'Other', value: 'other' },
+      ],
+    }))
 
   const skillDir = resolve(targetPath, skillName)
 
   // Check if directory already exists
   try {
     await stat(skillDir)
-    const overwrite = await confirm({
-      message: `Directory ${skillDir} already exists. Overwrite?`,
-      default: false,
-    })
-    if (!overwrite) {
-      console.log(chalk.yellow('Initialization cancelled'))
-      return
+    // Skip confirmation if --yes flag is set
+    if (!options.yes) {
+      const overwrite = await confirm({
+        message: `Directory ${skillDir} already exists. Overwrite?`,
+        default: false,
+      })
+      if (!overwrite) {
+        console.log(chalk.yellow('Initialization cancelled'))
+        return
+      }
     }
   } catch {
     // Directory doesn't exist, continue
@@ -345,22 +391,37 @@ async function publishSkill(skillPath: string): Promise<boolean> {
 
 /**
  * Create init command
+ * SMI-1473: Added non-interactive flags for E2E testing
  */
 export function createInitCommand(): Command {
   return new Command('init')
     .description('Initialize a new skill directory')
     .argument('[name]', 'Skill name')
     .option('-p, --path <path>', 'Target directory', '.')
-    .action(async (name: string | undefined, opts: Record<string, string | undefined>) => {
-      const targetPath = opts['path'] || '.'
+    .option('-d, --description <description>', 'Skill description (non-interactive)')
+    .option('-a, --author <author>', 'Skill author (non-interactive)')
+    .option(
+      '-c, --category <category>',
+      'Skill category: development|productivity|communication|data|security|other (non-interactive)'
+    )
+    .option('-y, --yes', 'Auto-confirm overwrite (non-interactive)')
+    .action(
+      async (name: string | undefined, opts: Record<string, string | boolean | undefined>) => {
+        const targetPath = (opts['path'] as string) || '.'
 
-      try {
-        await initSkill(name, targetPath)
-      } catch (error) {
-        console.error(chalk.red('Error initializing skill:'), sanitizeError(error))
-        process.exit(1)
+        try {
+          await initSkill(name, targetPath, {
+            description: opts['description'] as string | undefined,
+            author: opts['author'] as string | undefined,
+            category: opts['category'] as string | undefined,
+            yes: opts['yes'] as boolean | undefined,
+          })
+        } catch (error) {
+          console.error(chalk.red('Error initializing skill:'), sanitizeError(error))
+          process.exit(1)
+        }
       }
-    })
+    )
 }
 
 /**
