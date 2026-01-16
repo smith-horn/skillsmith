@@ -69,6 +69,9 @@ interface SearchTool {
 > **SMI-1491 (January 2026)**: Search results now include a `repository` field showing the GitHub URL.
 > This helps users understand where skills come from. Skills without a `repository` are discovery-only (cannot be installed).
 
+> **SMI-1496 (January 2026)**: Skills now include an `installable` boolean field indicating whether the skill
+> has a valid SKILL.md file that passes quality validation. Only installable skills can be installed via `install_skill`.
+
 ---
 
 ### get_skill
@@ -106,6 +109,7 @@ interface SkillDetail {
   // Trust
   trust_tier: TrustTier;
   security_scan_status: string;
+  installable: boolean;        // SMI-1496: Whether skill has valid SKILL.md
 
   // Content
   readme_excerpt: string;
@@ -451,11 +455,46 @@ interface SyncStatus {
 
 ---
 
+## Trust Tiers
+
+> **SMI-1496 (January 2026)**: Trust tier criteria updated with SKILL.md validation.
+
+Skills are categorized into trust tiers based on their source and quality:
+
+| Tier | Criteria | Quality Score |
+|------|----------|---------------|
+| `verified` | Skills from high-trust authors (Anthropic, HuggingFace, Vercel) | 0.93 - 0.95 |
+| `community` | Passes quality gates, ≥50 GitHub stars | Calculated from stars/forks |
+| `experimental` | Passes basic validation, 5-49 stars | Lower calculated score |
+| `unknown` | New/unverified skills, <5 stars | 0.25 - 0.50 |
+
+### High-Trust Authors
+
+The following organizations are considered high-trust authors. Skills from these repositories are automatically assigned `verified` trust tier:
+
+- **anthropics** - Official Anthropic skills (github.com/anthropics/skills)
+- **huggingface** - HuggingFace ML skills (github.com/huggingface/skills)
+- **vercel-labs** - Vercel development skills (github.com/vercel-labs/agent-skills)
+
+### Installability
+
+A skill is marked as `installable: true` only if it has a valid SKILL.md file that passes validation:
+
+1. Content exists and is not empty
+2. Content is at least 100 characters
+3. Contains a markdown heading (`# Title`)
+4. (Strict mode) Has valid YAML frontmatter with `name` and `description`
+
+See [ADR-019: Indexer SKILL.md Validation](../../adr/019-indexer-skillmd-validation.md) for details.
+
+---
+
 ## Related Documentation
 
 - [Error Handling](./error-handling.md) - Error codes and recovery
 - [MCP Servers](../components/mcp-servers.md) - Server architecture
 - [Performance](../performance.md) - API latency requirements
+- [Indexer Infrastructure](../../architecture/indexer-infrastructure.md) - GitHub indexer details
 
 ---
 

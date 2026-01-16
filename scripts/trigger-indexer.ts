@@ -29,59 +29,17 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-
-// =============================================================================
-// Configuration
-// =============================================================================
-
-const DEFAULT_TOPICS = ['claude-code-skill', 'claude-code']
-const DEFAULT_MAX_PAGES = 5
-const DEFAULT_MIN_LENGTH = 100
-const DEFAULT_TIMEOUT_MS = 120000 // 2 minutes for indexer
-
-// =============================================================================
-// Types
-// =============================================================================
-
-interface CliOptions {
-  dryRun: boolean
-  topics: string[]
-  maxPages: number
-  strict: boolean
-  minLength: number
-  help: boolean
-}
-
-interface IndexerRequest {
-  dryRun?: boolean
-  topics?: string[]
-  maxPages?: number
-  strictValidation?: boolean
-  minContentLength?: number
-}
-
-interface IndexedSkill {
-  id: string
-  name: string
-  author: string
-  repo_url?: string
-  trust_tier?: string
-  quality_score?: number
-}
-
-interface IndexerResponse {
-  success: boolean
-  dryRun: boolean
-  summary: {
-    found: number
-    indexed: number
-    updated: number
-    failed: number
-  }
-  skills?: IndexedSkill[]
-  errors?: string[]
-  message?: string
-}
+import {
+  parseArgs,
+  validateEnv,
+  normalizeResponse,
+  buildRequest,
+  buildIndexerUrl,
+  DEFAULT_TIMEOUT_MS,
+  type CliOptions,
+  type EnvConfig,
+  type IndexerResponse,
+} from './lib/trigger-indexer-utils.js'
 
 // =============================================================================
 // Environment Loading
@@ -142,87 +100,16 @@ Examples:
 `)
 }
 
-function parseArgs(): CliOptions {
-  const args = process.argv.slice(2)
-
-  // Check for help first
-  if (args.includes('--help') || args.includes('-h')) {
-    return {
-      dryRun: false,
-      topics: DEFAULT_TOPICS,
-      maxPages: DEFAULT_MAX_PAGES,
-      strict: true,
-      minLength: DEFAULT_MIN_LENGTH,
-      help: true,
-    }
-  }
-
-  const options: CliOptions = {
-    dryRun: args.includes('--dry-run'),
-    topics: DEFAULT_TOPICS,
-    maxPages: DEFAULT_MAX_PAGES,
-    strict: true,
-    minLength: DEFAULT_MIN_LENGTH,
-    help: false,
-  }
-
-  // Parse --topics
-  const topicsIdx = args.indexOf('--topics')
-  if (topicsIdx !== -1 && args[topicsIdx + 1]) {
-    options.topics = args[topicsIdx + 1]
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean)
-  }
-
-  // Parse --max-pages
-  const maxPagesIdx = args.indexOf('--max-pages')
-  if (maxPagesIdx !== -1 && args[maxPagesIdx + 1]) {
-    const parsed = parseInt(args[maxPagesIdx + 1], 10)
-    if (!isNaN(parsed) && parsed > 0) {
-      options.maxPages = parsed
-    }
-  }
-
-  // Parse --strict / --no-strict
-  if (args.includes('--no-strict')) {
-    options.strict = false
-  } else if (args.includes('--strict')) {
-    options.strict = true
-  }
-
-  // Parse --min-length
-  const minLengthIdx = args.indexOf('--min-length')
-  if (minLengthIdx !== -1 && args[minLengthIdx + 1]) {
-    const parsed = parseInt(args[minLengthIdx + 1], 10)
-    if (!isNaN(parsed) && parsed >= 0) {
-      options.minLength = parsed
-    }
-  }
-
-  return options
-}
-
 // =============================================================================
-// Environment Validation
+// Environment Validation with Exit
 // =============================================================================
 
-interface EnvConfig {
-  projectRef: string
-  anonKey: string
-}
+function validateEnvOrExit(): EnvConfig {
+  const result = validateEnv(process.env as Record<string, string | undefined>)
 
-function validateEnv(): EnvConfig {
-  const projectRef = process.env.SUPABASE_PROJECT_REF
-  const anonKey = process.env.SUPABASE_ANON_KEY
-
-  const missing: string[] = []
-  if (!projectRef) missing.push('SUPABASE_PROJECT_REF')
-  if (!anonKey) missing.push('SUPABASE_ANON_KEY')
-
-  if (missing.length > 0) {
+  if (!result.valid) {
     console.error('\nError: Missing required environment variables:')
-    missing.forEach((v) => console.error(`  - ${v}`))
+    result.missingVars.forEach((v) => console.error(`  - ${v}`))
     console.error('\nMake sure to run with Varlock:')
     console.error('  varlock run -- npx tsx scripts/trigger-indexer.ts')
     console.error('\nOr set the variables in your shell:')
@@ -231,7 +118,7 @@ function validateEnv(): EnvConfig {
     process.exit(2)
   }
 
-  return { projectRef: projectRef!, anonKey: anonKey! }
+  return result.config!
 }
 
 // =============================================================================
@@ -262,15 +149,8 @@ async function fetchWithTimeout(
 // =============================================================================
 
 async function triggerIndexer(config: EnvConfig, options: CliOptions): Promise<IndexerResponse> {
-  const url = `https://${config.projectRef}.supabase.co/functions/v1/indexer`
-
-  const requestBody: IndexerRequest = {
-    dryRun: options.dryRun,
-    topics: options.topics,
-    maxPages: options.maxPages,
-    strictValidation: options.strict,
-    minContentLength: options.minLength,
-  }
+  const url = buildIndexerUrl(config.projectRef)
+  const requestBody = buildRequest(options)
 
   console.log('\nRequest Parameters:')
   console.log('-'.repeat(50))
@@ -306,99 +186,6 @@ async function triggerIndexer(config: EnvConfig, options: CliOptions): Promise<I
 
   // Normalize response to expected format
   return normalizeResponse(data, options.dryRun)
-}
-
-/**
- * Normalize various response formats to the expected IndexerResponse structure
- */
-function normalizeResponse(data: unknown, dryRun: boolean): IndexerResponse {
-  // Handle null or undefined
-  if (!data || typeof data !== 'object') {
-    return {
-      success: false,
-      dryRun,
-      summary: { found: 0, indexed: 0, updated: 0, failed: 0 },
-      errors: ['Invalid response from indexer: empty or non-object response'],
-    }
-  }
-
-  const raw = data as Record<string, unknown>
-
-  // Handle { data: {...}, meta: {...} } wrapper from Edge Function
-  if ('data' in raw && typeof raw.data === 'object' && raw.data !== null) {
-    const innerData = raw.data as Record<string, unknown>
-    // The data object contains: found, indexed, updated, failed, errors, dryRun, repositories_found
-    const summary = {
-      found: typeof innerData.found === 'number' ? innerData.found : 0,
-      indexed: typeof innerData.indexed === 'number' ? innerData.indexed : 0,
-      updated: typeof innerData.updated === 'number' ? innerData.updated : 0,
-      failed: typeof innerData.failed === 'number' ? innerData.failed : 0,
-    }
-
-    const errors = Array.isArray(innerData.errors)
-      ? innerData.errors.map((e: unknown) => String(e)).filter((e) => e.length > 0)
-      : undefined
-
-    return {
-      success: summary.failed === 0 && (!errors || errors.length === 0),
-      dryRun: typeof innerData.dryRun === 'boolean' ? innerData.dryRun : dryRun,
-      summary,
-      errors: errors && errors.length > 0 ? errors : undefined,
-    }
-  }
-
-  // Check if response has expected structure (legacy format)
-  const hasExpectedFields = 'summary' in raw || 'success' in raw || 'skills' in raw
-
-  if (!hasExpectedFields) {
-    // Return raw response as error details
-    return {
-      success: false,
-      dryRun,
-      summary: { found: 0, indexed: 0, updated: 0, failed: 0 },
-      errors: [`Unexpected response format: ${JSON.stringify(data).substring(0, 200)}`],
-    }
-  }
-
-  // Extract summary with defaults (legacy format)
-  const rawSummary = (raw.summary || {}) as Record<string, unknown>
-  const summary = {
-    found: typeof rawSummary.found === 'number' ? rawSummary.found : 0,
-    indexed: typeof rawSummary.indexed === 'number' ? rawSummary.indexed : 0,
-    updated: typeof rawSummary.updated === 'number' ? rawSummary.updated : 0,
-    failed: typeof rawSummary.failed === 'number' ? rawSummary.failed : 0,
-  }
-
-  // Extract skills array
-  let skills: IndexedSkill[] | undefined
-  if (Array.isArray(raw.skills)) {
-    skills = raw.skills.map((s: unknown) => {
-      const skill = s as Record<string, unknown>
-      return {
-        id: String(skill.id || 'unknown'),
-        name: String(skill.name || skill.id || 'unknown'),
-        author: String(skill.author || 'unknown'),
-        repo_url: skill.repo_url ? String(skill.repo_url) : undefined,
-        trust_tier: skill.trust_tier ? String(skill.trust_tier) : undefined,
-        quality_score: typeof skill.quality_score === 'number' ? skill.quality_score : undefined,
-      }
-    })
-  }
-
-  // Extract errors array
-  let errors: string[] | undefined
-  if (Array.isArray(raw.errors)) {
-    errors = raw.errors.map((e: unknown) => String(e))
-  }
-
-  return {
-    success: raw.success !== false, // Default to true unless explicitly false
-    dryRun: typeof raw.dryRun === 'boolean' ? raw.dryRun : dryRun,
-    summary,
-    skills,
-    errors,
-    message: typeof raw.message === 'string' ? raw.message : undefined,
-  }
 }
 
 // =============================================================================
@@ -460,7 +247,7 @@ async function main(): Promise<void> {
   // Load environment variables from .env (Varlock will override with real values)
   loadEnv()
 
-  const options = parseArgs()
+  const options = parseArgs(process.argv.slice(2))
 
   // Show help and exit
   if (options.help) {
@@ -469,7 +256,7 @@ async function main(): Promise<void> {
   }
 
   // Validate environment
-  const config = validateEnv()
+  const config = validateEnvOrExit()
 
   console.log('\n' + '='.repeat(60))
   console.log('Skillsmith Indexer Trigger')
