@@ -136,17 +136,32 @@ export class SyncEngine {
       let hasMore = true
       const allSkills: ApiSearchResult[] = []
 
-      while (hasMore) {
-        try {
-          // Use empty query to get all skills
-          const response = await this.apiClient.search({
-            query: '*',
-            limit: pageSize,
-            offset,
-          })
+      // API requires min 2 char query - use multiple broad queries to cover more skills
+      // These common terms appear in most skill names/descriptions
+      const searchQueries = ['git', 'code', 'dev', 'test', 'npm', 'api', 'cli', 'doc']
+      const seenIds = new Set<string>()
 
-          const skills = response.data
-          allSkills.push(...skills)
+      for (const searchQuery of searchQueries) {
+        offset = 0
+        hasMore = true
+
+        while (hasMore) {
+          try {
+            const response = await this.apiClient.search({
+              query: searchQuery,
+              limit: pageSize,
+              offset,
+            })
+
+            const skills = response.data
+
+            // Deduplicate skills across queries
+            for (const skill of skills) {
+              if (!seenIds.has(skill.id)) {
+                seenIds.add(skill.id)
+                allSkills.push(skill)
+              }
+            }
 
           onProgress?.({
             phase: 'fetching',
@@ -169,6 +184,7 @@ export class SyncEngine {
           } else {
             throw error
           }
+        }
         }
       }
 

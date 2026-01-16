@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Skillsmith MCP Server
  * Provides skill discovery, installation, and management tools
