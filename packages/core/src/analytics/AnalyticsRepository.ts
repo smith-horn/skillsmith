@@ -20,7 +20,7 @@ import type {
   ExperimentOutcome,
   OutcomeInput,
   ROIMetrics,
-  ValueAttribution,
+  ROIMetricType,
   ExperimentVariant,
   ExperimentStatus,
 } from './types.js'
@@ -38,6 +38,70 @@ interface UsageEventRow {
   context: string | null
   value_score: number | null
   timestamp: string
+  created_at: string
+}
+
+/**
+ * Raw database row type for experiments table
+ */
+interface ExperimentRow {
+  id: string
+  name: string
+  description: string | null
+  hypothesis: string | null
+  status: string
+  variant_a: string
+  variant_b: string
+  start_date: string | null
+  end_date: string | null
+  target_sample_size: number
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * Raw database row type for experiment_assignments table
+ */
+interface ExperimentAssignmentRow {
+  id: string
+  experiment_id: string
+  user_id: string
+  variant: string
+  assigned_at: string
+}
+
+/**
+ * Raw database row type for experiment_outcomes table
+ */
+interface ExperimentOutcomeRow {
+  id: string
+  experiment_id: string
+  assignment_id: string
+  outcome_type: string
+  outcome_value: number
+  metadata: string | null
+  measured_at: string
+  created_at: string
+}
+
+/**
+ * Raw database row type for roi_metrics table
+ */
+interface ROIMetricsRow {
+  id: string
+  metric_type: string
+  entity_id: string | null
+  period_start: string
+  period_end: string
+  total_activations: number
+  total_invocations: number
+  total_successes: number
+  total_failures: number
+  avg_value_score: number
+  estimated_time_saved: number
+  estimated_value_usd: number
+  metadata: string | null
+  computed_at: string
   created_at: string
 }
 
@@ -225,48 +289,26 @@ export class AnalyticsRepository {
    * Get an experiment by ID
    */
   getExperiment(id: string): Experiment | null {
-    const row = this.db.prepare('SELECT * FROM experiments WHERE id = ?').get(id) as any
+    const row = this.db.prepare('SELECT * FROM experiments WHERE id = ?').get(id) as
+      | ExperimentRow
+      | undefined
 
     if (!row) return null
 
-    return {
-      id: row.id,
-      name: row.name,
-      description: row.description,
-      hypothesis: row.hypothesis,
-      status: row.status,
-      variantA: JSON.parse(row.variant_a),
-      variantB: JSON.parse(row.variant_b),
-      startDate: row.start_date,
-      endDate: row.end_date,
-      targetSampleSize: row.target_sample_size,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }
+    return this.rowToExperiment(row)
   }
 
   /**
    * Get experiment by name
    */
   getExperimentByName(name: string): Experiment | null {
-    const row = this.db.prepare('SELECT * FROM experiments WHERE name = ?').get(name) as any
+    const row = this.db.prepare('SELECT * FROM experiments WHERE name = ?').get(name) as
+      | ExperimentRow
+      | undefined
 
     if (!row) return null
 
-    return {
-      id: row.id,
-      name: row.name,
-      description: row.description,
-      hypothesis: row.hypothesis,
-      status: row.status,
-      variantA: JSON.parse(row.variant_a),
-      variantB: JSON.parse(row.variant_b),
-      startDate: row.start_date,
-      endDate: row.end_date,
-      targetSampleSize: row.target_sample_size,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }
+    return this.rowToExperiment(row)
   }
 
   /**
@@ -286,22 +328,9 @@ export class AnalyticsRepository {
   getActiveExperiments(): Experiment[] {
     const rows = this.db
       .prepare("SELECT * FROM experiments WHERE status = 'active' ORDER BY created_at DESC")
-      .all() as any[]
+      .all() as ExperimentRow[]
 
-    return rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      description: row.description,
-      hypothesis: row.hypothesis,
-      status: row.status,
-      variantA: JSON.parse(row.variant_a),
-      variantB: JSON.parse(row.variant_b),
-      startDate: row.start_date,
-      endDate: row.end_date,
-      targetSampleSize: row.target_sample_size,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }))
+    return rows.map((row) => this.rowToExperiment(row))
   }
 
   // ==================== Experiment Assignments ====================
@@ -326,13 +355,13 @@ export class AnalyticsRepository {
 
     const row = this.db
       .prepare('SELECT * FROM experiment_assignments WHERE experiment_id = ? AND user_id = ?')
-      .get(experimentId, userId) as any
+      .get(experimentId, userId) as ExperimentAssignmentRow
 
     return {
       id: row.id,
       experimentId: row.experiment_id,
       userId: row.user_id,
-      variant: row.variant,
+      variant: row.variant as ExperimentVariant,
       assignedAt: row.assigned_at,
     }
   }
@@ -343,7 +372,7 @@ export class AnalyticsRepository {
   getUserAssignment(experimentId: string, userId: string): ExperimentAssignment | null {
     const row = this.db
       .prepare('SELECT * FROM experiment_assignments WHERE experiment_id = ? AND user_id = ?')
-      .get(experimentId, userId) as any
+      .get(experimentId, userId) as ExperimentAssignmentRow | undefined
 
     if (!row) return null
 
@@ -351,7 +380,7 @@ export class AnalyticsRepository {
       id: row.id,
       experimentId: row.experiment_id,
       userId: row.user_id,
-      variant: row.variant,
+      variant: row.variant as ExperimentVariant,
       assignedAt: row.assigned_at,
     }
   }
@@ -362,13 +391,13 @@ export class AnalyticsRepository {
   getExperimentAssignments(experimentId: string): ExperimentAssignment[] {
     const rows = this.db
       .prepare('SELECT * FROM experiment_assignments WHERE experiment_id = ?')
-      .all(experimentId) as any[]
+      .all(experimentId) as ExperimentAssignmentRow[]
 
     return rows.map((row) => ({
       id: row.id,
       experimentId: row.experiment_id,
       userId: row.user_id,
-      variant: row.variant,
+      variant: row.variant as ExperimentVariant,
       assignedAt: row.assigned_at,
     }))
   }
@@ -396,7 +425,9 @@ export class AnalyticsRepository {
       metadata
     )
 
-    const row = this.db.prepare('SELECT * FROM experiment_outcomes WHERE id = ?').get(id) as any
+    const row = this.db
+      .prepare('SELECT * FROM experiment_outcomes WHERE id = ?')
+      .get(id) as ExperimentOutcomeRow
 
     return {
       id: row.id,
@@ -418,7 +449,7 @@ export class AnalyticsRepository {
       .prepare(
         'SELECT * FROM experiment_outcomes WHERE experiment_id = ? ORDER BY measured_at DESC'
       )
-      .all(experimentId) as any[]
+      .all(experimentId) as ExperimentOutcomeRow[]
 
     return rows.map((row) => ({
       id: row.id,
@@ -466,7 +497,7 @@ export class AnalyticsRepository {
       metadata
     )
 
-    const row = this.db.prepare('SELECT * FROM roi_metrics WHERE id = ?').get(id) as any
+    const row = this.db.prepare('SELECT * FROM roi_metrics WHERE id = ?').get(id) as ROIMetricsRow
 
     return this.rowToROIMetrics(row)
   }
@@ -481,7 +512,7 @@ export class AnalyticsRepository {
          WHERE metric_type = ? AND period_start >= ? AND period_end <= ?
          ORDER BY period_start DESC`
       )
-      .all(metricType, startDate, endDate) as any[]
+      .all(metricType, startDate, endDate) as ROIMetricsRow[]
 
     return rows.map((row) => this.rowToROIMetrics(row))
   }
@@ -496,16 +527,16 @@ export class AnalyticsRepository {
          WHERE entity_id = ? AND period_start >= ? AND period_end <= ?
          ORDER BY period_start DESC`
       )
-      .all(entityId, startDate, endDate) as any[]
+      .all(entityId, startDate, endDate) as ROIMetricsRow[]
 
     return rows.map((row) => this.rowToROIMetrics(row))
   }
 
-  private rowToROIMetrics(row: any): ROIMetrics {
+  private rowToROIMetrics(row: ROIMetricsRow): ROIMetrics {
     return {
       id: row.id,
-      metricType: row.metric_type,
-      entityId: row.entity_id,
+      metricType: row.metric_type as ROIMetricType,
+      entityId: row.entity_id ?? undefined,
       periodStart: row.period_start,
       periodEnd: row.period_end,
       totalActivations: row.total_activations,
@@ -518,6 +549,26 @@ export class AnalyticsRepository {
       metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
       computedAt: row.computed_at,
       createdAt: row.created_at,
+    }
+  }
+
+  /**
+   * Convert a database row to an Experiment object
+   */
+  private rowToExperiment(row: ExperimentRow): Experiment {
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description ?? undefined,
+      hypothesis: row.hypothesis ?? undefined,
+      status: row.status as ExperimentStatus,
+      variantA: JSON.parse(row.variant_a),
+      variantB: JSON.parse(row.variant_b),
+      startDate: row.start_date ?? undefined,
+      endDate: row.end_date ?? undefined,
+      targetSampleSize: row.target_sample_size,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     }
   }
 }

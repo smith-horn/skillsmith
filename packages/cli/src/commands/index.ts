@@ -13,6 +13,7 @@ export { createListCommand, createUpdateCommand, createRemoveCommand } from './m
 // SMI-746: Skill Authoring
 // SMI-1389, SMI-1390: Subagent Generation
 // SMI-1433: MCP Server Scaffolding
+// SMI-1487: Refactored into modular structure
 export {
   createInitCommand,
   createValidateCommand,
@@ -20,7 +21,7 @@ export {
   createSubagentCommand,
   createTransformCommand,
   createMcpInitCommand,
-} from './author.js'
+} from './author/index.js'
 
 // SMI-1283: Codebase Analysis
 export { createAnalyzeCommand } from './analyze.js'
