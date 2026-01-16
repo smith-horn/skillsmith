@@ -10,6 +10,8 @@ export default defineConfig({
       'packages/*/tests/**/*.test.ts',
       'packages/*/tests/**/*.spec.ts',
       'tests/**/*.test.ts',
+      // Supabase Edge Functions tests
+      'supabase/functions/**/*.test.ts',
       // E2E tests excluded from main run - they run in dedicated e2e-tests.yml workflow
       // See SMI-1312: E2E tests require test repos and seeded DB not available in CI
     ],

@@ -11,6 +11,16 @@
  * - topics: Array of GitHub topics to search (default: claude-code related)
  * - maxPages: Max pages per topic (default: 5, max: 10, 7+ may timeout)
  * - dryRun: If true, don't write to database (default: false)
+ * - strictValidation: Require valid YAML frontmatter in SKILL.md (default: true)
+ * - minContentLength: Minimum SKILL.md content length (default: 100)
+ *
+ * SKILL.md Validation:
+ * - Content must exist and not be empty
+ * - Content must be >= minContentLength characters
+ * - Must contain a markdown heading (# Title)
+ * - If strictValidation is true, must have YAML frontmatter with:
+ *   - name: string (required)
+ *   - description: string >= 20 chars (required)
  *
  * Authentication:
  * - Supports GITHUB_TOKEN (PAT) or GitHub App authentication
@@ -83,6 +93,24 @@ interface IndexerRequest {
   topics?: string[]
   maxPages?: number
   dryRun?: boolean
+  /** Require valid YAML frontmatter (default: true) */
+  strictValidation?: boolean
+  /** Minimum SKILL.md content length (default: 100) */
+  minContentLength?: number
+}
+
+/**
+ * SKILL.md validation result
+ */
+interface SkillMdValidation {
+  valid: boolean
+  errors: string[]
+  metadata?: {
+    name?: string
+    description?: string
+    author?: string
+    triggers?: string[]
+  }
 }
 
 /**
@@ -101,20 +129,240 @@ const DEFAULT_TOPICS = ['claude-code-skill', 'claude-code', 'anthropic-claude', 
 
 const GITHUB_API_DELAY = 150 // ms between requests
 
+/** Default minimum content length for SKILL.md */
+const DEFAULT_MIN_CONTENT_LENGTH = 100
+
 /**
- * Check if repository has a SKILL.md file at root
+ * Parse YAML frontmatter from markdown content
+ * Returns null if no frontmatter is present
  */
-async function checkSkillMdExists(owner: string, repo: string, branch: string): Promise<boolean> {
+function parseFrontmatter(content: string): Record<string, unknown> | null {
+  const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!frontmatterMatch) {
+    return null
+  }
+
+  const yamlContent = frontmatterMatch[1]
+  const result: Record<string, unknown> = {}
+
+  // Simple YAML parser for common fields
+  const lines = yamlContent.split(/\r?\n/)
+  let currentKey: string | null = null
+
+  for (const line of lines) {
+    // Skip empty lines and comments
+    if (!line.trim() || line.trim().startsWith('#')) {
+      continue
+    }
+
+    // Check for array items (triggers, tags, etc.)
+    if (line.match(/^\s+-\s+/) && currentKey) {
+      const value = line
+        .replace(/^\s+-\s+/, '')
+        .trim()
+        .replace(/^["']|["']$/g, '')
+      if (!Array.isArray(result[currentKey])) {
+        result[currentKey] = []
+      }
+      ;(result[currentKey] as string[]).push(value)
+      continue
+    }
+
+    // Check for key: value pairs
+    const kvMatch = line.match(/^(\w+):\s*(.*)$/)
+    if (kvMatch) {
+      const [, key, rawValue] = kvMatch
+      currentKey = key
+
+      // Handle empty value (likely a list follows)
+      if (!rawValue.trim()) {
+        result[key] = []
+        continue
+      }
+
+      // Handle inline arrays [value1, value2]
+      const inlineArrayMatch = rawValue.match(/^\[(.*)\]$/)
+      if (inlineArrayMatch) {
+        result[key] = inlineArrayMatch[1]
+          .split(',')
+          .map((v) => v.trim().replace(/^["']|["']$/g, ''))
+        currentKey = null
+        continue
+      }
+
+      // Handle quoted or unquoted string values
+      const value = rawValue.trim().replace(/^["']|["']$/g, '')
+      result[key] = value
+      currentKey = null
+    }
+  }
+
+  return result
+}
+
+/**
+ * Validate SKILL.md content and extract metadata
+ */
+async function validateSkillMd(
+  owner: string,
+  repo: string,
+  branch: string,
+  skillPath?: string,
+  options: { strictValidation?: boolean; minContentLength?: number } = {}
+): Promise<SkillMdValidation> {
+  const strictValidation = options.strictValidation ?? true
+  const minContentLength = options.minContentLength ?? DEFAULT_MIN_CONTENT_LENGTH
+
+  const errors: string[] = []
+  let metadata: SkillMdValidation['metadata'] = undefined
+
   try {
-    const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/SKILL.md`
+    // Build the URL - skillPath is relative to branch
+    const path = skillPath ? `${branch}/${skillPath}/SKILL.md` : `${branch}/SKILL.md`
+    const url = `https://raw.githubusercontent.com/${owner}/${repo}/${path}`
+
     const response = await fetch(url, {
-      method: 'HEAD',
       headers: await buildGitHubHeaders(),
     })
-    return response.ok
-  } catch {
-    return false
+
+    if (!response.ok) {
+      return {
+        valid: false,
+        errors: [`SKILL.md not found (HTTP ${response.status})`],
+      }
+    }
+
+    const content = await response.text()
+
+    // Quality gate 1: Content exists (not empty)
+    if (!content || content.trim().length === 0) {
+      errors.push('SKILL.md is empty')
+      return { valid: false, errors }
+    }
+
+    // Quality gate 2: Minimum length
+    if (content.length < minContentLength) {
+      errors.push(`SKILL.md too short (${content.length} chars, minimum ${minContentLength})`)
+    }
+
+    // Quality gate 3: Has markdown heading
+    const hasHeading = /^#\s+.+/m.test(content)
+    if (!hasHeading) {
+      errors.push('SKILL.md must contain a markdown heading (# Title)')
+    }
+
+    // Quality gate 4: Frontmatter validation (if present or strict mode)
+    const frontmatter = parseFrontmatter(content)
+
+    if (frontmatter) {
+      metadata = {}
+
+      // Extract and validate name
+      if (typeof frontmatter.name === 'string' && frontmatter.name.trim()) {
+        metadata.name = frontmatter.name.trim()
+      } else if (strictValidation) {
+        errors.push('Frontmatter missing required "name" field')
+      }
+
+      // Extract and validate description
+      if (typeof frontmatter.description === 'string') {
+        const desc = frontmatter.description.trim()
+        if (desc.length >= 20) {
+          metadata.description = desc
+        } else if (strictValidation) {
+          errors.push(`Frontmatter "description" too short (${desc.length} chars, minimum 20)`)
+        }
+      } else if (strictValidation) {
+        errors.push('Frontmatter missing required "description" field')
+      }
+
+      // Extract optional author
+      if (typeof frontmatter.author === 'string' && frontmatter.author.trim()) {
+        metadata.author = frontmatter.author.trim()
+      }
+
+      // Extract triggers (may be under 'triggers' or 'trigger_phrases')
+      const triggersField = frontmatter.triggers || frontmatter.trigger_phrases
+      if (Array.isArray(triggersField)) {
+        metadata.triggers = triggersField.filter((t): t is string => typeof t === 'string')
+      }
+    } else if (strictValidation) {
+      errors.push('SKILL.md missing YAML frontmatter')
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors,
+      metadata,
+    }
+  } catch (error) {
+    return {
+      valid: false,
+      errors: [`Failed to fetch SKILL.md: ${error instanceof Error ? error.message : 'Unknown'}`],
+    }
   }
+}
+
+// Cache for validated SKILL.md results to avoid re-fetching
+const validationCache = new Map<string, SkillMdValidation>()
+
+/**
+ * Check if repository has a valid SKILL.md file
+ * Uses the new validation system and caches results
+ */
+async function checkSkillMdExists(
+  owner: string,
+  repo: string,
+  branch: string,
+  skillPath?: string,
+  options: { strictValidation?: boolean; minContentLength?: number } = {}
+): Promise<boolean> {
+  // Build cache key
+  const cacheKey = `${owner}/${repo}/${branch}${skillPath ? `/${skillPath}` : ''}`
+
+  // Check cache first
+  const cached = validationCache.get(cacheKey)
+  if (cached !== undefined) {
+    return cached.valid
+  }
+
+  // The branch parameter may include the path for backward compatibility
+  // e.g., "main/skills/my-skill" - need to parse this
+  let actualBranch = branch
+  let actualSkillPath = skillPath
+
+  // Check if branch contains a path (has / after the branch name)
+  // This handles the old calling convention where path was appended to branch
+  if (branch.includes('/') && !skillPath) {
+    const parts = branch.split('/')
+    actualBranch = parts[0]
+    actualSkillPath = parts.slice(1).join('/')
+  }
+
+  const validation = await validateSkillMd(owner, repo, actualBranch, actualSkillPath, options)
+
+  // Cache the result
+  validationCache.set(cacheKey, validation)
+
+  // Log validation errors for debugging
+  if (!validation.valid && validation.errors.length > 0) {
+    console.log(`SKILL.md validation failed for ${cacheKey}: ${validation.errors.join(', ')}`)
+  }
+
+  return validation.valid
+}
+
+/**
+ * Get cached validation result for a skill
+ */
+function getCachedValidation(
+  owner: string,
+  repo: string,
+  branch: string,
+  skillPath?: string
+): SkillMdValidation | undefined {
+  const cacheKey = `${owner}/${repo}/${branch}${skillPath ? `/${skillPath}` : ''}`
+  return validationCache.get(cacheKey)
 }
 
 /**
@@ -441,10 +689,12 @@ async function searchRepositories(
 
 /**
  * Convert repository to skill data
+ * Uses cached SKILL.md validation metadata if available
  */
 function repositoryToSkill(
   repo: GitHubRepository,
-  highTrustAuthor?: HighTrustAuthor
+  highTrustAuthor?: HighTrustAuthor,
+  validationMetadata?: SkillMdValidation['metadata']
 ): Record<string, unknown> {
   let qualityScore: number
   let trustTier: 'verified' | 'community' | 'experimental' | 'unknown'
@@ -470,14 +720,26 @@ function repositoryToSkill(
     }
   }
 
+  // Prefer frontmatter metadata over repository metadata
+  const name = validationMetadata?.name || repo.name
+  const description = validationMetadata?.description || repo.description
+
+  // Merge tags from repository topics and frontmatter triggers
+  let tags = [...repo.topics]
+  if (validationMetadata?.triggers && validationMetadata.triggers.length > 0) {
+    // Add triggers as tags, avoiding duplicates
+    const triggerTags = validationMetadata.triggers.map((t) => t.toLowerCase().replace(/\s+/g, '-'))
+    tags = [...new Set([...tags, ...triggerTags])]
+  }
+
   return {
-    name: repo.name,
-    description: repo.description,
-    author: repo.owner,
+    name,
+    description,
+    author: validationMetadata?.author || repo.owner,
     repo_url: repo.url,
     quality_score: qualityScore,
     trust_tier: trustTier,
-    tags: repo.topics,
+    tags,
     stars: repo.stars,
     installable: repo.installable,
     indexed_at: new Date().toISOString(),
@@ -489,7 +751,8 @@ function repositoryToSkill(
  * Scans subdirectories for SKILL.md files
  */
 async function indexHighTrustRepository(
-  author: HighTrustAuthor
+  author: HighTrustAuthor,
+  validationOptions: { strictValidation?: boolean; minContentLength?: number } = {}
 ): Promise<{ skills: GitHubRepository[]; errors: string[] }> {
   const skills: GitHubRepository[] = []
   const errors: string[] = []
@@ -574,19 +837,30 @@ async function indexHighTrustRepository(
         // Build the path to check for SKILL.md
         const skillPath = basePath ? `${basePath}/${item.name}` : item.name
 
-        // Check if SKILL.md exists in this directory
+        // Check if SKILL.md exists and is valid in this directory
         const hasSkill = await checkSkillMdExists(
           author.owner,
           author.repo,
-          `${repoData.default_branch}/${skillPath}`
+          repoData.default_branch,
+          skillPath,
+          validationOptions
         )
 
         if (hasSkill) {
+          // Get cached validation metadata for enhanced skill info
+          const validation = getCachedValidation(
+            author.owner,
+            author.repo,
+            repoData.default_branch,
+            skillPath
+          )
+          const metadata = validation?.metadata
+
           skills.push({
             owner: author.owner,
-            name: item.name,
-            fullName: `${author.owner}/${item.name}`,
-            description: `${item.name} skill from ${author.owner}`,
+            name: metadata?.name || item.name,
+            fullName: `${author.owner}/${metadata?.name || item.name}`,
+            description: metadata?.description || `${item.name} skill from ${author.owner}`,
             url: `https://github.com/${author.owner}/${author.repo}/tree/${repoData.default_branch}/${skillPath}`,
             stars: repoData.stargazers_count,
             forks: repoData.forks_count,
@@ -605,15 +879,21 @@ async function indexHighTrustRepository(
     const hasRootSkill = await checkSkillMdExists(
       author.owner,
       author.repo,
-      repoData.default_branch
+      repoData.default_branch,
+      undefined,
+      validationOptions
     )
 
     if (hasRootSkill && !shouldExcludeSkill(author, author.repo)) {
+      // Get cached validation metadata for enhanced skill info
+      const rootValidation = getCachedValidation(author.owner, author.repo, repoData.default_branch)
+      const rootMetadata = rootValidation?.metadata
+
       skills.push({
         owner: author.owner,
-        name: author.repo,
-        fullName: `${author.owner}/${author.repo}`,
-        description: repoData.description || `${author.repo} skill`,
+        name: rootMetadata?.name || author.repo,
+        fullName: `${author.owner}/${rootMetadata?.name || author.repo}`,
+        description: rootMetadata?.description || repoData.description || `${author.repo} skill`,
         url: `https://github.com/${author.owner}/${author.repo}`,
         stars: repoData.stargazers_count,
         forks: repoData.forks_count,
@@ -663,6 +943,14 @@ Deno.serve(async (req: Request) => {
     // 7+ pages causes timeout, see SMI-1413 for test results
     const maxPages = Math.min(body.maxPages || 5, 10)
     const dryRun = body.dryRun ?? false
+    const strictValidation = body.strictValidation ?? true
+    const minContentLength = body.minContentLength ?? DEFAULT_MIN_CONTENT_LENGTH
+
+    // Validation options to pass through
+    const validationOptions = { strictValidation, minContentLength }
+
+    // Clear validation cache at start of each run
+    validationCache.clear()
 
     const result: IndexerResult = {
       found: 0,
@@ -680,7 +968,10 @@ Deno.serve(async (req: Request) => {
     // Phase 1: Index high-trust authors first (verified tier)
     console.log(`Indexing ${HIGH_TRUST_AUTHORS.length} high-trust authors...`)
     for (const author of HIGH_TRUST_AUTHORS) {
-      const { skills, errors: authorErrors } = await indexHighTrustRepository(author)
+      const { skills, errors: authorErrors } = await indexHighTrustRepository(
+        author,
+        validationOptions
+      )
 
       for (const skill of skills) {
         if (!seenUrls.has(skill.url)) {
@@ -712,8 +1003,14 @@ Deno.serve(async (req: Request) => {
         for (const repo of repos) {
           if (!seenUrls.has(repo.url)) {
             seenUrls.add(repo.url)
-            // Check if SKILL.md exists (determines installability)
-            repo.installable = await checkSkillMdExists(repo.owner, repo.name, repo.defaultBranch)
+            // Check if SKILL.md exists and is valid (determines installability)
+            repo.installable = await checkSkillMdExists(
+              repo.owner,
+              repo.name,
+              repo.defaultBranch,
+              undefined,
+              validationOptions
+            )
             repositories.push(repo)
             await delay(50) // Small delay between SKILL.md checks
           }
@@ -736,7 +1033,10 @@ Deno.serve(async (req: Request) => {
         try {
           // Check if this skill came from a high-trust author
           const highTrustAuthor = highTrustSkillMap.get(repo.url)
-          const skillData = repositoryToSkill(repo, highTrustAuthor)
+
+          // Get cached validation metadata for this skill
+          const validation = getCachedValidation(repo.owner, repo.name, repo.defaultBranch)
+          const skillData = repositoryToSkill(repo, highTrustAuthor, validation?.metadata)
 
           // Upsert skill by repo_url
           const { error } = await supabase.from('skills').upsert(skillData, {
