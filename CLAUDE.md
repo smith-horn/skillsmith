@@ -512,6 +512,27 @@ Commands for skill authoring, subagent generation, and MCP server scaffolding.
 
 > **Architecture**: See [Subagent Pair Generation Architecture](docs/architecture/subagent-pair-generation-architecture.md)
 
+### Sync Commands (SMI-1467)
+
+Commands for synchronizing local skill database with live registry.
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `sync` | Sync skills from registry | `skillsmith sync` |
+| `sync --force` | Force full sync | `skillsmith sync --force` |
+| `sync --dry-run` | Preview changes | `skillsmith sync --dry-run` |
+| `sync status` | Show sync status | `skillsmith sync status` |
+| `sync history` | View sync history | `skillsmith sync history` |
+| `sync config` | Configure auto-sync | `skillsmith sync config --show` |
+
+**sync config options**:
+- `--show`: Display current configuration
+- `--enable`: Enable automatic background sync
+- `--disable`: Disable automatic sync
+- `--frequency <freq>`: Set frequency (`daily` or `weekly`)
+
+> **Architecture**: See [ADR-018: Registry Sync System](docs/adr/018-registry-sync-system.md)
+
 ---
 
 ## Varlock Security (MANDATORY)
