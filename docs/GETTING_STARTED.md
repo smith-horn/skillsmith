@@ -262,15 +262,29 @@ npm run build
 npm test
 ```
 
-### Load Seed Data
+### Load Seed Data (Development Only)
 
-For development, load sample skills:
+> ⚠️ **Important**: Seed data is for **local development and testing only**. It is NOT the production registry. Production users connecting via `npx @skillsmith/mcp-server` use the live Supabase registry automatically.
+
+For development, load sample skills to your local SQLite database:
 
 ```bash
 npm run seed
 ```
 
-This loads 15 sample skills covering different categories and trust tiers.
+This loads ~27 sample skills covering different categories and trust tiers, including:
+- **Verified**: Anthropic, Hugging Face, Vercel official skills
+- **Community**: Popular community-contributed skills
+- **Experimental**: Beta/testing skills
+
+**Production vs Development Data Sources:**
+
+| Environment | Data Source | Skills |
+|-------------|-------------|--------|
+| Production (npx) | Supabase Registry | Live indexed skills |
+| Development | Local SQLite | Seed data only |
+
+See [ADR-018: Registry Sync System](adr/018-registry-sync-system.md) for details on how the live registry is populated.
 
 ## Troubleshooting
 

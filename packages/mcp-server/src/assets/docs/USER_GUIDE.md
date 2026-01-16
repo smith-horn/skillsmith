@@ -125,6 +125,34 @@ Upgrade at: https://skillsmith.app/upgrade
 4. **Check the quality score** - aim for 70+
 5. **Report suspicious skills** to security@skillsmith.app
 
+## Data Sources
+
+Skillsmith uses different data sources depending on context:
+
+| Context | Data Source | Description |
+|---------|-------------|-------------|
+| **Production** | Supabase Registry | Live database with indexed skills from GitHub |
+| **Development** | Local SQLite + Seed Data | Sample skills for testing |
+
+### Live Registry (Production)
+
+When you install `@skillsmith/mcp-server` via npx, it connects to the **live Supabase registry**. This registry is populated by:
+
+1. **GitHub Indexer** - Automatically discovers skills with topics like `claude-code-skill`
+2. **High-Trust Authors** - Pre-indexed skills from verified publishers (Anthropic, Hugging Face, Vercel)
+3. **Community Submissions** - Skills submitted via the registry API
+
+### Seed Data (Development Only)
+
+The seed data in `packages/core/tests/fixtures/skills/seed-skills.json` is **only for local development and testing**. It is NOT the production registry.
+
+```bash
+# Development only - loads sample skills to local SQLite
+npm run seed
+```
+
+> **Note**: If you're using Skillsmith normally (via npx), you don't need seed data. The MCP server connects directly to the live registry.
+
 ## Where Skills Are Installed
 
 Skills install to: `~/.claude/skills/<skill-name>/`
