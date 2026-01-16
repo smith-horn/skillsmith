@@ -171,10 +171,18 @@ describe('E2E: skillsmith init', () => {
       assertNoHardcoded(result, 'skillsmith init --help', 'init: help', __filename)
     })
 
-    // SMI-1473: Skip - vitest mocks don't work for subprocess E2E tests
-    // TODO: Add --description, --author, --category flags to init command for non-interactive mode
-    it.skip('should create skill scaffold with name', async () => {
-      const result = await runCommand(['init', 'my-new-skill'])
+    // SMI-1473: Using non-interactive flags for E2E testing
+    it('should create skill scaffold with name', async () => {
+      const result = await runCommand([
+        'init',
+        'my-new-skill',
+        '-d',
+        'Test skill description',
+        '-a',
+        'test-author',
+        '-c',
+        'development',
+      ])
 
       recordTiming('init:named', 'skillsmith init name', result.durationMs)
 
@@ -189,12 +197,23 @@ describe('E2E: skillsmith init', () => {
       assertNoHardcoded(result, 'skillsmith init name', 'init: create skill', __filename)
     })
 
-    // SMI-1473: Skip - vitest mocks don't work for subprocess E2E tests
-    it.skip('should create skill scaffold with custom path', async () => {
+    // SMI-1473: Using non-interactive flags for E2E testing
+    it('should create skill scaffold with custom path', async () => {
       const customPath = join(TEST_DIR, 'custom-skills')
       mkdirSync(customPath, { recursive: true })
 
-      const result = await runCommand(['init', 'path-skill', '-p', customPath])
+      const result = await runCommand([
+        'init',
+        'path-skill',
+        '-p',
+        customPath,
+        '-d',
+        'Test skill',
+        '-a',
+        'test',
+        '-c',
+        'development',
+      ])
 
       expect(result.exitCode).toBe(0)
 
@@ -204,9 +223,18 @@ describe('E2E: skillsmith init', () => {
       assertNoHardcoded(result, 'skillsmith init -p custom', 'init: custom path', __filename)
     })
 
-    // SMI-1473: Skip - vitest mocks don't work for subprocess E2E tests
-    it.skip('should create resources directory', async () => {
-      const result = await runCommand(['init', 'resource-skill'])
+    // SMI-1473: Using non-interactive flags for E2E testing
+    it('should create resources directory', async () => {
+      const result = await runCommand([
+        'init',
+        'resource-skill',
+        '-d',
+        'Test skill',
+        '-a',
+        'test',
+        '-c',
+        'development',
+      ])
 
       expect(result.exitCode).toBe(0)
 
@@ -216,9 +244,18 @@ describe('E2E: skillsmith init', () => {
       assertNoHardcoded(result, 'skillsmith init resources', 'init: resources dir', __filename)
     })
 
-    // SMI-1473: Skip - vitest mocks don't work for subprocess E2E tests
-    it.skip('should create scripts directory with example', async () => {
-      const result = await runCommand(['init', 'script-skill'])
+    // SMI-1473: Using non-interactive flags for E2E testing
+    it('should create scripts directory with example', async () => {
+      const result = await runCommand([
+        'init',
+        'script-skill',
+        '-d',
+        'Test skill',
+        '-a',
+        'test',
+        '-c',
+        'development',
+      ])
 
       expect(result.exitCode).toBe(0)
 
@@ -229,21 +266,50 @@ describe('E2E: skillsmith init', () => {
       assertNoHardcoded(result, 'skillsmith init scripts', 'init: scripts dir', __filename)
     })
 
-    // SMI-1473: Skip - vitest mocks don't work for subprocess E2E tests
-    it.skip('should handle existing directory gracefully', async () => {
+    // SMI-1473: Using non-interactive flags for E2E testing
+    it('should handle existing directory gracefully', async () => {
       // Create skill first
-      await runCommand(['init', 'existing-skill'])
+      await runCommand([
+        'init',
+        'existing-skill',
+        '-d',
+        'Test skill',
+        '-a',
+        'test',
+        '-c',
+        'development',
+      ])
 
-      // Try to create again
-      const result = await runCommand(['init', 'existing-skill'])
+      // Try to create again with --yes to auto-confirm overwrite
+      const result = await runCommand([
+        'init',
+        'existing-skill',
+        '-d',
+        'Test skill updated',
+        '-a',
+        'test',
+        '-c',
+        'development',
+        '-y',
+      ])
 
-      // Should fail or warn
+      // Should succeed with --yes flag
+      expect(result.exitCode).toBe(0)
       assertNoHardcoded(result, 'skillsmith init existing', 'init: existing dir', __filename)
     })
 
-    // SMI-1473: Skip - vitest mocks don't work for subprocess E2E tests
-    it.skip('should not contain hardcoded paths in generated files', async () => {
-      const result = await runCommand(['init', 'path-check-skill'])
+    // SMI-1473: Using non-interactive flags for E2E testing
+    it('should not contain hardcoded paths in generated files', async () => {
+      const result = await runCommand([
+        'init',
+        'path-check-skill',
+        '-d',
+        'Test skill',
+        '-a',
+        'test',
+        '-c',
+        'development',
+      ])
 
       expect(result.exitCode).toBe(0)
 
