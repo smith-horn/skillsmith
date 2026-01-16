@@ -70,6 +70,7 @@ export interface Skill {
 
 /**
  * Skill search result (subset of full skill)
+ * SMI-1491: Added repository field for transparency about installation source
  */
 export interface SkillSearchResult {
   id: string
@@ -79,6 +80,8 @@ export interface SkillSearchResult {
   category: SkillCategory
   trustTier: TrustTier
   score: number
+  /** GitHub repository URL (may be undefined for seed data/metadata-only skills) */
+  repository?: string
 }
 
 /**

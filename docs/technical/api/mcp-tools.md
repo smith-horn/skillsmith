@@ -52,12 +52,12 @@ interface SearchTool {
   "data": {
     "results": [
       {
-        "id": "anthropic/skills/react-testing",
+        "id": "anthropic/react-testing",
         "name": "react-testing",
         "description": "Best practices for testing React components",
         "trust_tier": "official",
-        "final_score": 0.92,
-        "stars": 1234
+        "score": 92,
+        "repository": "https://github.com/anthropic/claude-skills/tree/main/react-testing"
       }
     ],
     "total": 45,
@@ -65,6 +65,9 @@ interface SearchTool {
   }
 }
 ```
+
+> **SMI-1491 (January 2026)**: Search results now include a `repository` field showing the GitHub URL.
+> This helps users understand where skills come from. Skills without a `repository` are discovery-only (cannot be installed).
 
 ---
 
@@ -199,16 +202,19 @@ interface Recommendation {
 
 ### install_skill
 
-Install a skill from the index.
+Install a skill from the index or GitHub.
+
+> **SMI-1491 (January 2026)**: This tool now supports registry skill IDs in `author/skill-name` format.
+> It automatically looks up the actual repository URL from the registry before fetching.
 
 ```typescript
 interface InstallSkillTool {
   name: 'install_skill';
-  description: 'Install a skill from the index';
+  description: 'Install a skill from the index or GitHub';
   parameters: {
-    skill_id: string;
-    skip_conflict_check?: boolean;  // Default: false
-    skip_security_scan?: boolean;   // Default: false
+    skill_id: string;             // Registry ID, GitHub URL, or owner/repo/path
+    force?: boolean;              // Force reinstall if exists (default: false)
+    skip_scan?: boolean;          // Skip security scan (default: false, not recommended)
   };
   returns: InstallResult;
 }
@@ -218,14 +224,33 @@ interface InstallResult {
   skill_id: string;
   installed_path: string;
 
+  // Security
+  security_report?: ScanReport;
+
   // Warnings
   conflicts?: Conflict[];
   security_warnings?: SecurityWarning[];
 
   // Post-install
-  activation_tips?: string[];
+  tips?: string[];
+  error?: string;
 }
 ```
+
+#### Supported Input Formats
+
+| Format | Example | Behavior |
+|--------|---------|----------|
+| Registry ID | `anthropic/commit` | Looks up `repo_url` from registry, then fetches |
+| GitHub URL | `https://github.com/owner/repo` | Fetches directly from URL |
+| GitHub URL with path | `https://github.com/owner/repo/tree/main/skills/name` | Fetches from specified path |
+| Direct path | `owner/repo/skill-path` | Fetches directly (3+ parts) |
+
+#### Error Cases
+
+- **Seed data**: Returns error if skill has no `repo_url` (indexed for discovery only)
+- **No SKILL.md**: Returns error with repository URL for manual verification
+- **Security failure**: Returns error with scan report showing findings
 
 ---
 
