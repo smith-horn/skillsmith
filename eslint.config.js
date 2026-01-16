@@ -1,7 +1,6 @@
 import eslint from '@eslint/js'
 import tseslint from 'typescript-eslint'
 import prettierConfig from 'eslint-config-prettier'
-import eslintPluginAstro from 'eslint-plugin-astro'
 import globals from 'globals'
 
 export default tseslint.config(
@@ -12,23 +11,17 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/coverage/**',
       '**/*.d.ts',
-      // Ignore .js files except in website package (Astro needs them)
-      'packages/core/**/*.js',
-      'packages/mcp-server/**/*.js',
-      'packages/cli/**/*.js',
-      'packages/enterprise/**/*.js',
-      '.claude/**/*.js',
-      'tests/**/*.js',
+      '**/*.js',
       '**/*.mjs',
       '!eslint.config.js',
       '**/vitest.config.integration.ts',
+      // Website uses Astro with its own ESLint config - lint separately
+      'packages/website/**',
     ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   prettierConfig,
-  // Astro recommended config
-  ...eslintPluginAstro.configs.recommended,
   {
     files: ['packages/**/*.ts', 'packages/**/*.tsx'],
     ignores: ['packages/website/**'],
@@ -56,17 +49,6 @@ export default tseslint.config(
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-explicit-any': 'warn',
-    },
-  },
-  // Astro files in website package
-  {
-    files: ['packages/website/**/*.astro'],
-    languageOptions: {
-      parser: eslintPluginAstro.parser,
-      parserOptions: {
-        parser: tseslint.parser,
-        extraFileExtensions: ['.astro'],
-      },
     },
   }
 )
