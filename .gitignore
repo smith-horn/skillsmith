@@ -59,6 +59,10 @@ docs/IP/
 docs/licensing/
 docs/valuation/
 
+# Internal planning and strategy (not public)
+docs/backlog/
+docs/strategy/
+
 # Development artifacts (anchored to root level)
 /data/
 /output/
