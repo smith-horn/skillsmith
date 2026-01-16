@@ -2,6 +2,12 @@
 
 Command-line interface for Skillsmith - discover, manage, and author Claude Code skills.
 
+## What's New in v0.3.0
+
+- **Registry Sync**: Keep your local skill database up-to-date with `sync` command
+- **Auto-Sync**: Configurable daily/weekly background sync during MCP sessions
+- **Sync History**: Track sync operations with `sync history`
+
 ## What's New in v0.2.7
 
 - **MCP Server Scaffolding**: Generate TypeScript MCP servers with `author mcp-init`
@@ -289,6 +295,85 @@ skillsmith import --topic claude-skill --max 500
 - `-d, --db <path>` - Database path
 - `-v, --verbose` - Verbose output
 
+### sync
+
+Synchronize your local skill database with the live Skillsmith registry.
+
+```bash
+# Sync skills from registry (differential - only changes)
+skillsmith sync
+
+# Force full sync (ignore last sync time)
+skillsmith sync --force
+
+# Preview what would be synced
+skillsmith sync --dry-run
+```
+
+**Options:**
+- `-f, --force` - Force full sync, ignore last sync timestamp
+- `--dry-run` - Preview changes without writing to database
+- `-d, --db <path>` - Database path
+- `--json` - Output results as JSON
+
+#### sync status
+
+Show sync status and statistics.
+
+```bash
+skillsmith sync status
+```
+
+**Output includes:**
+- Auto-sync enabled/disabled
+- Sync frequency (daily/weekly)
+- Last sync time
+- Next scheduled sync
+- Last run statistics
+
+#### sync history
+
+View sync operation history.
+
+```bash
+# Show recent sync history
+skillsmith sync history
+
+# Show more entries
+skillsmith sync history --limit 20
+```
+
+**Options:**
+- `-l, --limit <n>` - Number of history entries (default: 10)
+
+#### sync config
+
+Configure automatic sync settings.
+
+```bash
+# Show current configuration
+skillsmith sync config --show
+
+# Enable automatic background sync
+skillsmith sync config --enable
+
+# Disable automatic sync
+skillsmith sync config --disable
+
+# Set sync frequency
+skillsmith sync config --frequency daily
+skillsmith sync config --frequency weekly
+
+# Combine options
+skillsmith sync config --enable --frequency weekly
+```
+
+**Options:**
+- `--show` - Display current configuration
+- `--enable` - Enable automatic background sync
+- `--disable` - Disable automatic sync
+- `--frequency <freq>` - Set frequency: `daily` or `weekly`
+
 ## Configuration
 
 ### Environment Variables
@@ -383,6 +468,22 @@ skillsmith remove community/old-skill
 
 # Interactive search and install
 skillsmith search --interactive
+```
+
+### Keep Skills Up-to-Date
+
+```bash
+# Sync with the live registry
+skillsmith sync
+
+# Check sync status
+skillsmith sync status
+
+# Enable daily auto-sync
+skillsmith sync config --enable --frequency daily
+
+# View sync history
+skillsmith sync history
 ```
 
 ## License
