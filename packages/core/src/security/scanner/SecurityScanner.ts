@@ -4,7 +4,13 @@
  * Security scanning for skill content with advanced pattern detection.
  */
 
-import type { SecurityFinding, ScanReport, ScannerOptions, RiskScoreBreakdown } from './types.js'
+import type {
+  SecurityFinding,
+  ScanReport,
+  ScannerOptions,
+  RiskScoreBreakdown,
+  FindingConfidence,
+} from './types.js'
 import {
   DEFAULT_ALLOWED_DOMAINS,
   SENSITIVE_PATH_PATTERNS,
@@ -20,18 +26,18 @@ import { safeRegexTest, safeRegexCheck } from './regex-utils.js'
 
 /**
  * Context information for each line in markdown content
- * SMI-1513: Used to reduce false positives in documentation
  */
 interface LineContext {
   lineNumber: number
   inCodeBlock: boolean
   inTable: boolean
   isIndentedCode: boolean
+  isInlineCode: boolean
 }
 
 /**
  * Analyze markdown content and return context for each line
- * SMI-1513: Used to reduce false positives in documentation/examples
+ * Used to reduce false positives in documentation/examples
  */
 function analyzeMarkdownContext(content: string): LineContext[] {
   const lines = content.split('\n')
@@ -57,11 +63,15 @@ function analyzeMarkdownContext(content: string): LineContext[] {
       !trimmedLine.startsWith('-') &&
       !trimmedLine.startsWith('*')
 
+    // Check for inline code (content between backticks on same line)
+    const isInlineCode = /`[^`]+`/.test(line) && !inFencedCodeBlock
+
     contexts.push({
       lineNumber: i + 1,
       inCodeBlock: inFencedCodeBlock,
       inTable,
       isIndentedCode,
+      isInlineCode,
     })
   }
 
@@ -70,7 +80,6 @@ function analyzeMarkdownContext(content: string): LineContext[] {
 
 /**
  * Check if a line is in a documentation context (code block, table, example)
- * SMI-1513: These contexts typically show examples, not actual security issues
  */
 function isDocumentationContext(ctx: LineContext): boolean {
   return ctx.inCodeBlock || ctx.inTable || ctx.isIndentedCode
@@ -149,7 +158,7 @@ export class SecurityScanner {
   /**
    * Scan for sensitive file path references
    * SMI-882: Uses safeRegexCheck to prevent ReDoS
-   * SMI-1513: Skip findings in markdown code blocks/tables (documentation context)
+   * SMI-1513: Mark findings in documentation context with lower confidence
    */
   private scanSensitivePaths(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
     const findings: SecurityFinding[] = []
@@ -158,22 +167,23 @@ export class SecurityScanner {
 
     lines.forEach((line, index) => {
       const ctx = contexts[index]
-
-      // SMI-1513: Skip sensitive path checks in documentation context
-      // Code blocks and tables typically show examples, not actual security issues
-      if (ctx && isDocumentationContext(ctx)) {
-        return // Skip this line
-      }
+      const inDocContext = ctx ? isDocumentationContext(ctx) : false
 
       for (const pattern of SENSITIVE_PATH_PATTERNS) {
         // SMI-882: Use safe regex check with length limit
         if (safeRegexCheck(pattern, line)) {
+          // SMI-1513: Still report findings in documentation context but with lower confidence
+          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
+          const severity = inDocContext ? 'medium' : 'high' // Reduce severity for examples
+
           findings.push({
             type: 'sensitive_path',
-            severity: 'high',
+            severity,
             message: `Reference to potentially sensitive path: ${pattern.source}`,
             location: line.trim().slice(0, 100),
             lineNumber: index + 1,
+            inDocumentationContext: inDocContext,
+            confidence,
           })
           break // One finding per line
         }
@@ -186,22 +196,33 @@ export class SecurityScanner {
   /**
    * Scan for jailbreak attempts
    * SMI-882: Uses safeRegexTest to prevent ReDoS
+   * SMI-1513: Mark findings in documentation context with lower confidence
    */
-  private scanJailbreakPatterns(content: string): SecurityFinding[] {
+  private scanJailbreakPatterns(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
     const findings: SecurityFinding[] = []
     const lines = content.split('\n')
+    const contexts = lineContexts ?? analyzeMarkdownContext(content)
 
     lines.forEach((line, index) => {
+      const ctx = contexts[index]
+      const inDocContext = ctx ? isDocumentationContext(ctx) : false
+
       for (const pattern of JAILBREAK_PATTERNS) {
         // SMI-882: Use safe regex test with length limit
         const match = safeRegexTest(pattern, line)
         if (match) {
+          // SMI-1513: Documentation examples get reduced severity/confidence
+          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
+          const severity = inDocContext ? 'high' : 'critical' // Still high even in docs
+
           findings.push({
             type: 'jailbreak',
-            severity: 'critical',
+            severity,
             message: `Potential jailbreak pattern detected: "${match[0]}"`,
             location: line.trim().slice(0, 100),
             lineNumber: index + 1,
+            inDocumentationContext: inDocContext,
+            confidence,
           })
           break // One finding per line
         }
@@ -258,24 +279,34 @@ export class SecurityScanner {
   /**
    * SMI-685: Scan for social engineering attempts
    * SMI-882: Uses safeRegexTest to prevent ReDoS
+   * SMI-1513: Mark findings in documentation context with lower confidence
    * Detects patterns like "pretend to be", "roleplay as", "you are now"
    */
-  private scanSocialEngineering(content: string): SecurityFinding[] {
+  private scanSocialEngineering(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
     const findings: SecurityFinding[] = []
     const lines = content.split('\n')
+    const contexts = lineContexts ?? analyzeMarkdownContext(content)
 
     lines.forEach((line, index) => {
+      const ctx = contexts[index]
+      const inDocContext = ctx ? isDocumentationContext(ctx) : false
+
       for (const pattern of SOCIAL_ENGINEERING_PATTERNS) {
         // SMI-882: Use safe regex test with length limit
         const match = safeRegexTest(pattern, line)
         if (match) {
+          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
+          const severity = inDocContext ? 'medium' : 'high'
+
           findings.push({
             type: 'social_engineering',
-            severity: 'high',
+            severity,
             message: `Social engineering attempt detected: "${match[0]}"`,
             location: line.trim().slice(0, 100),
             lineNumber: index + 1,
             category: 'social_engineering',
+            inDocumentationContext: inDocContext,
+            confidence,
           })
           break // One finding per line
         }
@@ -288,24 +319,34 @@ export class SecurityScanner {
   /**
    * SMI-685: Scan for prompt leaking attempts
    * SMI-882: Uses safeRegexTest to prevent ReDoS
+   * SMI-1513: Mark findings in documentation context with lower confidence
    * Detects patterns like "show me your instructions", "what are your rules"
    */
-  private scanPromptLeaking(content: string): SecurityFinding[] {
+  private scanPromptLeaking(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
     const findings: SecurityFinding[] = []
     const lines = content.split('\n')
+    const contexts = lineContexts ?? analyzeMarkdownContext(content)
 
     lines.forEach((line, index) => {
+      const ctx = contexts[index]
+      const inDocContext = ctx ? isDocumentationContext(ctx) : false
+
       for (const pattern of PROMPT_LEAKING_PATTERNS) {
         // SMI-882: Use safe regex test with length limit
         const match = safeRegexTest(pattern, line)
         if (match) {
+          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
+          const severity = inDocContext ? 'high' : 'critical'
+
           findings.push({
             type: 'prompt_leaking',
-            severity: 'critical',
+            severity,
             message: `Prompt leaking attempt detected: "${match[0]}"`,
             location: line.trim().slice(0, 100),
             lineNumber: index + 1,
             category: 'prompt_leaking',
+            inDocumentationContext: inDocContext,
+            confidence,
           })
           break // One finding per line
         }
@@ -318,24 +359,34 @@ export class SecurityScanner {
   /**
    * SMI-685: Scan for data exfiltration patterns
    * SMI-882: Uses safeRegexTest to prevent ReDoS
+   * SMI-1513: Mark findings in documentation context with lower confidence
    * Detects encoding to external URLs, file upload patterns
    */
-  private scanDataExfiltration(content: string): SecurityFinding[] {
+  private scanDataExfiltration(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
     const findings: SecurityFinding[] = []
     const lines = content.split('\n')
+    const contexts = lineContexts ?? analyzeMarkdownContext(content)
 
     lines.forEach((line, index) => {
+      const ctx = contexts[index]
+      const inDocContext = ctx ? isDocumentationContext(ctx) : false
+
       for (const pattern of DATA_EXFILTRATION_PATTERNS) {
         // SMI-882: Use safe regex test with length limit
         const match = safeRegexTest(pattern, line)
         if (match) {
+          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
+          const severity = inDocContext ? 'medium' : 'high'
+
           findings.push({
             type: 'data_exfiltration',
-            severity: 'high',
+            severity,
             message: `Potential data exfiltration pattern: "${match[0]}"`,
             location: line.trim().slice(0, 100),
             lineNumber: index + 1,
             category: 'data_exfiltration',
+            inDocumentationContext: inDocContext,
+            confidence,
           })
           break // One finding per line
         }
@@ -348,24 +399,38 @@ export class SecurityScanner {
   /**
    * SMI-685: Scan for privilege escalation patterns
    * SMI-882: Uses safeRegexTest to prevent ReDoS
+   * SMI-1513: Mark findings in documentation context with lower confidence
    * Detects sudo with passwords, chmod patterns, root access attempts
    */
-  private scanPrivilegeEscalation(content: string): SecurityFinding[] {
+  private scanPrivilegeEscalation(
+    content: string,
+    lineContexts?: LineContext[]
+  ): SecurityFinding[] {
     const findings: SecurityFinding[] = []
     const lines = content.split('\n')
+    const contexts = lineContexts ?? analyzeMarkdownContext(content)
 
     lines.forEach((line, index) => {
+      const ctx = contexts[index]
+      const inDocContext = ctx ? isDocumentationContext(ctx) : false
+
       for (const pattern of PRIVILEGE_ESCALATION_PATTERNS) {
         // SMI-882: Use safe regex test with length limit
         const match = safeRegexTest(pattern, line)
         if (match) {
+          // SMI-1513: Tutorials often show sudo examples - reduce severity in docs
+          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
+          const severity = inDocContext ? 'high' : 'critical'
+
           findings.push({
             type: 'privilege_escalation',
-            severity: 'critical',
+            severity,
             message: `Privilege escalation pattern detected: "${match[0]}"`,
             location: line.trim().slice(0, 100),
             lineNumber: index + 1,
             category: 'privilege_escalation',
+            inDocumentationContext: inDocContext,
+            confidence,
           })
           break // One finding per line
         }
@@ -377,6 +442,7 @@ export class SecurityScanner {
 
   /**
    * SMI-685: Calculate risk score from findings
+   * SMI-1513: Accounts for confidence levels (low confidence = reduced weight)
    * Aggregates multiple findings into a risk score from 0-100
    * @param findings - Array of security findings
    * @returns Risk score breakdown and total
@@ -396,11 +462,19 @@ export class SecurityScanner {
       externalUrls: 0,
     }
 
+    // Confidence weights - low confidence findings contribute less to risk
+    const confidenceWeights: Record<FindingConfidence, number> = {
+      high: 1.0,
+      medium: 0.7,
+      low: 0.3, // Documentation context findings have reduced impact
+    }
+
     // Calculate raw scores by category
     for (const finding of findings) {
       const severityWeight = SEVERITY_WEIGHTS[finding.severity]
       const categoryWeight = CATEGORY_WEIGHTS[finding.type] ?? 1.0
-      const score = severityWeight * categoryWeight
+      const confidenceWeight = confidenceWeights[finding.confidence ?? 'high']
+      const score = severityWeight * categoryWeight * confidenceWeight
 
       switch (finding.type) {
         case 'jailbreak':
@@ -467,7 +541,7 @@ export class SecurityScanner {
     const startTime = performance.now()
     const findings: SecurityFinding[] = []
 
-    // SMI-1513: Analyze markdown context once for context-aware scans
+    // SMI-1513: Analyze markdown context once for all scans
     const lineContexts = analyzeMarkdownContext(content)
 
     // Check content length
@@ -482,14 +556,14 @@ export class SecurityScanner {
     // Run all scans (original)
     findings.push(...this.scanUrls(content))
     findings.push(...this.scanSensitivePaths(content, lineContexts))
-    findings.push(...this.scanJailbreakPatterns(content))
+    findings.push(...this.scanJailbreakPatterns(content, lineContexts))
     findings.push(...this.scanSuspiciousPatterns(content))
 
-    // SMI-685: Run new scans
-    findings.push(...this.scanSocialEngineering(content))
-    findings.push(...this.scanPromptLeaking(content))
-    findings.push(...this.scanDataExfiltration(content))
-    findings.push(...this.scanPrivilegeEscalation(content))
+    // SMI-685: Run new scans with context awareness
+    findings.push(...this.scanSocialEngineering(content, lineContexts))
+    findings.push(...this.scanPromptLeaking(content, lineContexts))
+    findings.push(...this.scanDataExfiltration(content, lineContexts))
+    findings.push(...this.scanPrivilegeEscalation(content, lineContexts))
 
     const endTime = performance.now()
 

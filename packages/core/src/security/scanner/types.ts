@@ -23,6 +23,14 @@ export type SecurityFindingType =
 export type SecuritySeverity = 'low' | 'medium' | 'high' | 'critical'
 
 /**
+ * Confidence level for a finding
+ * - high: Strong indicator of malicious intent
+ * - medium: Possible issue, context suggests caution
+ * - low: Likely false positive (e.g., in documentation/examples)
+ */
+export type FindingConfidence = 'high' | 'medium' | 'low'
+
+/**
  * Individual security finding from a scan
  */
 export interface SecurityFinding {
@@ -33,6 +41,10 @@ export interface SecurityFinding {
   lineNumber?: number
   /** Category for grouping related findings */
   category?: string
+  /** Whether finding is in a documentation context (code block, table, example) */
+  inDocumentationContext?: boolean
+  /** Confidence level - lower for findings in documentation context */
+  confidence?: FindingConfidence
 }
 
 /**
