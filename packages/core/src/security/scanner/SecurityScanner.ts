@@ -79,10 +79,12 @@ function analyzeMarkdownContext(content: string): LineContext[] {
 }
 
 /**
- * Check if a line is in a documentation context (code block, table, example)
+ * Check if a line is in a documentation context (code block, table)
+ * Note: isIndentedCode excluded as it causes too many false positives
+ * (simple indentation is often not a markdown code block)
  */
 function isDocumentationContext(ctx: LineContext): boolean {
-  return ctx.inCodeBlock || ctx.inTable || ctx.isIndentedCode
+  return ctx.inCodeBlock || ctx.inTable
 }
 
 export class SecurityScanner {
