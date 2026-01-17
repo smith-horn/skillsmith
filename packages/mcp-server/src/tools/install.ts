@@ -32,12 +32,73 @@
  */
 
 import { z } from 'zod'
-import { SecurityScanner, type ScanReport } from '@skillsmith/core'
+import { SecurityScanner, type ScanReport, type ScannerOptions } from '@skillsmith/core'
+import type { TrustTier } from '@skillsmith/core'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import type { ToolContext } from '../context.js'
 import { getToolContext } from '../context.js'
+
+/**
+ * SMI-1533: Valid trust tier values
+ */
+const VALID_TRUST_TIERS: readonly TrustTier[] = ['verified', 'community', 'experimental', 'unknown']
+
+/**
+ * SMI-1533: Validate and normalize trust tier value
+ * Returns 'unknown' for invalid or missing values to ensure strictest scanning
+ *
+ * NOTE: 'verified' tier currently relies on registry data without cryptographic
+ * verification. Future enhancement: implement signature verification for
+ * Anthropic-verified skills using PKI.
+ */
+export function validateTrustTier(value: string | null | undefined): TrustTier {
+  if (!value) return 'unknown'
+  const normalized = value.toLowerCase() as TrustTier
+  if (!VALID_TRUST_TIERS.includes(normalized)) return 'unknown'
+
+  // SMI-1533: Log warning for 'verified' tier until PKI is implemented
+  if (normalized === 'verified') {
+    console.debug(
+      '[install] Trust tier "verified" accepted from registry. ' +
+        'Note: Cryptographic signature verification not yet implemented.'
+    )
+  }
+
+  return normalized
+}
+
+/**
+ * SMI-1533: Security scan configuration per trust tier
+ *
+ * - verified: Minimal scanning (trust Anthropic-verified skills)
+ * - community: Standard scanning (balanced security)
+ * - experimental: Aggressive scanning (highest scrutiny for new/beta skills)
+ * - unknown: Most aggressive scanning
+ */
+const TRUST_TIER_SCANNER_OPTIONS: Record<TrustTier, ScannerOptions> = {
+  verified: {
+    // Anthropic-verified skills get minimal scanning
+    riskThreshold: 70, // Higher threshold - more tolerant
+    maxContentLength: 2_000_000, // Allow larger skills
+  },
+  community: {
+    // Standard scanning for community-reviewed skills
+    riskThreshold: 40, // Default threshold
+    maxContentLength: 1_000_000,
+  },
+  experimental: {
+    // Aggressive scanning for new/beta skills
+    riskThreshold: 25, // Lower threshold - less tolerant
+    maxContentLength: 500_000, // Limit skill size
+  },
+  unknown: {
+    // Most aggressive scanning for unknown origins
+    riskThreshold: 20, // Very strict
+    maxContentLength: 250_000, // Very limited size
+  },
+}
 
 // Input schema
 export const installInputSchema = z.object({
@@ -56,6 +117,8 @@ export interface InstallResult {
   securityReport?: ScanReport
   tips?: string[]
   error?: string
+  /** SMI-1533: Trust tier used for security scanning */
+  trustTier?: TrustTier
 }
 
 // Paths
@@ -82,6 +145,62 @@ interface SkillManifest {
 /**
  * Load or create manifest
  */
+/**
+ * SMI-1533: Lock file path for manifest operations
+ */
+const MANIFEST_LOCK_PATH = MANIFEST_PATH + '.lock'
+const LOCK_TIMEOUT_MS = 30000 // 30 seconds max wait for lock
+const LOCK_RETRY_INTERVAL_MS = 100
+
+/**
+ * Acquire a file lock for manifest operations
+ * SMI-1533: Prevents race conditions during concurrent installs
+ */
+async function acquireManifestLock(): Promise<void> {
+  const startTime = Date.now()
+
+  while (Date.now() - startTime < LOCK_TIMEOUT_MS) {
+    try {
+      // Try to create lock file exclusively
+      await fs.writeFile(MANIFEST_LOCK_PATH, String(process.pid), { flag: 'wx' })
+      return // Lock acquired
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        // Lock exists, check if it's stale (older than timeout)
+        try {
+          const stats = await fs.stat(MANIFEST_LOCK_PATH)
+          const lockAge = Date.now() - stats.mtimeMs
+          if (lockAge > LOCK_TIMEOUT_MS) {
+            // Stale lock, remove it and retry
+            await fs.unlink(MANIFEST_LOCK_PATH).catch(() => {})
+            continue
+          }
+        } catch {
+          // Lock file disappeared, retry
+          continue
+        }
+        // Wait before retrying
+        await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_INTERVAL_MS))
+      } else {
+        throw error
+      }
+    }
+  }
+
+  throw new Error('Failed to acquire manifest lock after ' + LOCK_TIMEOUT_MS + 'ms')
+}
+
+/**
+ * Release the manifest lock
+ */
+async function releaseManifestLock(): Promise<void> {
+  try {
+    await fs.unlink(MANIFEST_LOCK_PATH)
+  } catch {
+    // Ignore errors - lock may already be released
+  }
+}
+
 async function loadManifest(): Promise<SkillManifest> {
   try {
     const content = await fs.readFile(MANIFEST_PATH, 'utf-8')
@@ -96,10 +215,31 @@ async function loadManifest(): Promise<SkillManifest> {
 
 /**
  * Save manifest
+ * SMI-1533: Uses atomic write pattern with lock
  */
 async function saveManifest(manifest: SkillManifest): Promise<void> {
   await fs.mkdir(path.dirname(MANIFEST_PATH), { recursive: true })
-  await fs.writeFile(MANIFEST_PATH, JSON.stringify(manifest, null, 2))
+  // Write to temp file first, then rename for atomic operation
+  const tempPath = MANIFEST_PATH + '.tmp.' + process.pid
+  await fs.writeFile(tempPath, JSON.stringify(manifest, null, 2))
+  await fs.rename(tempPath, MANIFEST_PATH)
+}
+
+/**
+ * SMI-1533: Safely update manifest with locking
+ * Prevents race conditions during concurrent install operations
+ */
+async function updateManifestSafely(
+  updateFn: (manifest: SkillManifest) => SkillManifest
+): Promise<void> {
+  await acquireManifestLock()
+  try {
+    const manifest = await loadManifest()
+    const updatedManifest = updateFn(manifest)
+    await saveManifest(updatedManifest)
+  } finally {
+    await releaseManifestLock()
+  }
 }
 
 /**
@@ -165,6 +305,12 @@ function parseSkillId(input: string): {
  * parseRepoUrl('https://github.com/owner/repo/tree/main/skills/commit')
  * // => { owner: 'owner', repo: 'repo', path: 'skills/commit', branch: 'main' }
  */
+/**
+ * Allowed hostnames for skill installation
+ * SMI-1533: Restrict to trusted code hosting platforms
+ */
+const ALLOWED_HOSTS = ['github.com', 'www.github.com']
+
 function parseRepoUrl(repoUrl: string): {
   owner: string
   repo: string
@@ -172,6 +318,15 @@ function parseRepoUrl(repoUrl: string): {
   branch: string
 } {
   const url = new URL(repoUrl)
+
+  // SMI-1533: Validate hostname to prevent fetching from malicious sources
+  if (!ALLOWED_HOSTS.includes(url.hostname.toLowerCase())) {
+    throw new Error(
+      `Invalid repository host: ${url.hostname}. ` +
+        `Only GitHub repositories are supported (${ALLOWED_HOSTS.join(', ')})`
+    )
+  }
+
   const parts = url.pathname.split('/').filter(Boolean)
 
   const owner = parts[0]
@@ -209,7 +364,7 @@ function parseRepoUrl(repoUrl: string): {
 async function lookupSkillFromRegistry(
   skillId: string,
   context: ToolContext
-): Promise<{ repoUrl: string; name: string } | null> {
+): Promise<{ repoUrl: string; name: string; trustTier: TrustTier } | null> {
   // Try API first (primary data source)
   if (!context.apiClient.isOffline()) {
     try {
@@ -218,6 +373,8 @@ async function lookupSkillFromRegistry(
         return {
           repoUrl: response.data.repo_url,
           name: response.data.name,
+          // SMI-1533: Validate trust tier for security scan configuration
+          trustTier: validateTrustTier(response.data.trust_tier),
         }
       }
       // API found skill but no repo_url - it's seed data
@@ -233,6 +390,8 @@ async function lookupSkillFromRegistry(
     return {
       repoUrl: dbSkill.repoUrl,
       name: dbSkill.name,
+      // SMI-1533: Validate trust tier for security scan configuration
+      trustTier: validateTrustTier(dbSkill.trustTier),
     }
   }
 
@@ -348,9 +507,11 @@ export async function installSkill(
   input: InstallInput,
   _context?: ToolContext
 ): Promise<InstallResult> {
-  const scanner = new SecurityScanner()
   // SMI-1491: Get context for registry lookup (use provided or fallback to singleton)
   const context = _context ?? getToolContext()
+
+  // SMI-1533: Trust tier for security scan configuration (default to unknown for direct paths)
+  let trustTier: TrustTier = 'unknown'
 
   try {
     // Parse skill ID
@@ -395,6 +556,8 @@ export async function installSkill(
       basePath = repoInfo.path ? repoInfo.path + '/' : ''
       branch = repoInfo.branch
       skillName = registrySkill.name
+      // SMI-1533: Use trust tier from registry for security scan configuration
+      trustTier = registrySkill.trustTier
     } else {
       // DIRECT PATH (existing behavior)
       // Full GitHub URLs or owner/repo/path format
@@ -463,24 +626,48 @@ export async function installSkill(
       }
     }
 
-    // Security scan
+    // SMI-1533: Security scan with trust-tier sensitive configuration
     let securityReport: ScanReport | undefined
     if (!input.skipScan) {
+      // Get scanner options based on trust tier
+      const scannerOptions = TRUST_TIER_SCANNER_OPTIONS[trustTier]
+      const scanner = new SecurityScanner(scannerOptions)
+
       securityReport = scanner.scan(input.skillId, skillMdContent)
 
       if (!securityReport.passed) {
         const criticalFindings = securityReport.findings.filter(
           (f) => f.severity === 'critical' || f.severity === 'high'
         )
+
+        // SMI-1533: Include trust tier context in error message
+        const tierContext =
+          trustTier === 'unknown'
+            ? ' (Direct GitHub install - strictest scanning applied)'
+            : trustTier === 'experimental'
+              ? ' (Experimental skill - aggressive scanning applied)'
+              : ''
+
         return {
           success: false,
           skillId: input.skillId,
           installPath,
           securityReport,
+          trustTier,
           error:
             'Security scan failed with ' +
             criticalFindings.length +
-            ' critical/high findings. Use skipScan=true to override (not recommended).',
+            ' critical/high findings' +
+            tierContext +
+            '. Use skipScan=true to override (not recommended).',
+          tips: [
+            'Trust tier: ' + trustTier + ' (threshold: ' + scannerOptions.riskThreshold + ')',
+            'Risk score: ' + securityReport.riskScore,
+            'Consider reviewing the skill content for the flagged issues',
+            trustTier === 'unknown'
+              ? 'Skills from the registry have more lenient scanning thresholds'
+              : undefined,
+          ].filter(Boolean) as string[],
         }
       }
     }
@@ -492,14 +679,18 @@ export async function installSkill(
     await fs.writeFile(path.join(installPath, 'SKILL.md'), skillMdContent)
 
     // Try to fetch optional files
+    // SMI-1533: Use same trust-tier scanner for optional files
+    const optionalFileScanner = input.skipScan
+      ? null
+      : new SecurityScanner(TRUST_TIER_SCANNER_OPTIONS[trustTier])
     const optionalFiles = ['README.md', 'examples.md', 'config.json']
     for (const file of optionalFiles) {
       try {
         const content = await fetchFromGitHub(owner, repo, basePath + file, branch)
 
         // Scan optional files too
-        if (!input.skipScan) {
-          const fileScan = scanner.scan(input.skillId + '/' + file, content)
+        if (optionalFileScanner) {
+          const fileScan = optionalFileScanner.scan(input.skillId + '/' + file, content)
           if (!fileScan.passed) {
             console.warn('Skipping ' + file + ' due to security findings')
             continue
@@ -512,23 +703,29 @@ export async function installSkill(
       }
     }
 
-    // Update manifest
-    manifest.installedSkills[skillName] = {
-      id: input.skillId,
-      name: skillName,
-      version: '1.0.0',
-      source: 'github:' + owner + '/' + repo,
-      installPath,
-      installedAt: new Date().toISOString(),
-      lastUpdated: new Date().toISOString(),
-    }
-    await saveManifest(manifest)
+    // Update manifest with locking to prevent race conditions
+    await updateManifestSafely((currentManifest) => ({
+      ...currentManifest,
+      installedSkills: {
+        ...currentManifest.installedSkills,
+        [skillName]: {
+          id: input.skillId,
+          name: skillName,
+          version: '1.0.0',
+          source: 'github:' + owner + '/' + repo,
+          installPath,
+          installedAt: new Date().toISOString(),
+          lastUpdated: new Date().toISOString(),
+        },
+      },
+    }))
 
     return {
       success: true,
       skillId: input.skillId,
       installPath,
       securityReport,
+      trustTier, // SMI-1533: Include trust tier in result
       tips: generateTips(skillName),
     }
   } catch (error) {
