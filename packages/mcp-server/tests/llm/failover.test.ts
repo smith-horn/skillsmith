@@ -16,7 +16,7 @@ import {
   createLLMFailoverChain,
   DEFAULT_LLM_FAILOVER_CONFIG,
   type LLMFailoverConfig,
-} from '../../llm/failover.js'
+} from '../../src/llm/failover.js'
 
 describe('LLMFailoverChain', () => {
   let chain: LLMFailoverChain
