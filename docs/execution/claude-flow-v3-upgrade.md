@@ -89,7 +89,7 @@ npx claude-flow memory store --key X --value Y
 - [x] Memory commands work with V3 (SMI-1518: feature flag `CLAUDE_FLOW_USE_V3_API`)
 - [x] Hooks commands work with V3 (SMI-1518: V3 MCP tool API with spawn fallback)
 - [ ] MCP server compatible with V3
-- [x] All tests pass with V3 (58 SessionManager tests, 28 HNSW tests, 36 ReasoningBank tests, 56 SONA tests, 44 PatternStore tests, 46 MultiLLMProvider tests)
+- [x] All tests pass with V3 (58 SessionManager tests, 28 HNSW tests, 36 ReasoningBank tests, 56 SONA tests, 44 PatternStore tests, 46 MultiLLMProvider tests, 33 LLMFailoverChain tests)
 
 ## Completed Tasks
 
@@ -172,10 +172,31 @@ npx claude-flow memory store --key X --value Y
 - Factory function `createMultiLLMProvider()` for easy initialization
 - 46 tests pass
 
+### SMI-1524: Implement LLM failover with circuit breaker (Done)
+- Created `packages/mcp-server/src/llm/failover.ts` - MCP server wrapper
+- Implements LLMFailoverChain class that wraps MultiLLMProvider for MCP tool handlers
+- Key features:
+  - Compliant with SMI-1524 acceptance criteria:
+    - Failover triggers within 3 seconds (`failoverTimeoutMs: 3000`)
+    - Circuit breaker opens after 5 failures (`circuitOpenThreshold: 5`)
+    - Circuit resets after 60 seconds (`circuitResetTimeoutMs: 60000`)
+  - Health check endpoint via `getHealthStatus()` for monitoring
+  - Per-provider health and circuit state reporting
+  - Environment variable control (`SKILLSMITH_LLM_FAILOVER_ENABLED`)
+  - Debug mode for troubleshooting
+- Updated `packages/mcp-server/src/context.ts`:
+  - Added `llmFailover` to `ToolContext` interface
+  - Added `llmFailoverConfig` to `ToolContextOptions`
+  - Background initialization with cleanup handlers
+- Added exports in `packages/core/package.json`:
+  - `./testing` - MultiLLMProvider and types
+  - `./learning` - ReasoningBank and PatternStore
+- 33 tests pass
+
 ## Next Steps
 
-1. **SMI-1524**: Implement LLM failover with circuit breaker (extends SMI-1523)
-2. Update tests to mock V3 API patterns
+1. Update tests to mock V3 API patterns
+2. Phase 4: Security Hardening (SMI-1608, SMI-1609, SMI-1610)
 
 ## Rollback Plan
 
