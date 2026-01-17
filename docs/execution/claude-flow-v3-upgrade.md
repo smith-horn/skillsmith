@@ -89,7 +89,7 @@ npx claude-flow memory store --key X --value Y
 - [x] Memory commands work with V3 (SMI-1518: feature flag `CLAUDE_FLOW_USE_V3_API`)
 - [x] Hooks commands work with V3 (SMI-1518: V3 MCP tool API with spawn fallback)
 - [ ] MCP server compatible with V3
-- [x] All tests pass with V3 (58 SessionManager tests, 28 HNSW tests, 36 ReasoningBank tests, 56 SONA tests)
+- [x] All tests pass with V3 (58 SessionManager tests, 28 HNSW tests, 36 ReasoningBank tests, 56 SONA tests, 44 PatternStore tests)
 
 ## Completed Tasks
 
@@ -137,11 +137,26 @@ npx claude-flow memory store --key X --value Y
 - Architecture document: `docs/architecture/sona-router-architecture.md`
 - 56 tests pass
 
+### SMI-1522: Add EWC++ pattern storage for successful matches (Done)
+- Created `packages/core/src/learning/PatternStore.ts`
+- Implements Elastic Weight Consolidation++ for catastrophic forgetting prevention
+- Key features:
+  - `storePattern()`: Encodes successful matches with Fisher Information tracking
+  - `findSimilarPatterns()`: Importance-weighted similarity search
+  - `consolidate()`: Prunes low-importance patterns while preserving 95%+ of important ones
+  - `FisherInformationMatrix`: Tracks dimension importance with decay and serialization
+- Pattern outcome types aligned with ReasoningBankIntegration rewards
+- SQLite persistence for patterns, Fisher matrix, and consolidation history
+- V3 ReasoningBank integration with standalone fallback
+- EWC++ hyperparameters: lambda=5.0, fisherDecay=0.95, importanceThreshold=0.01
+- Architecture document: `docs/architecture/pattern-store-ewc-architecture.md`
+- 44 tests pass including catastrophic forgetting prevention tests
+
 ## Next Steps
 
-1. **SMI-1522**: Add EWC++ pattern storage for successful matches
-2. Update tests to mock V3 API patterns
-3. Run full test suite to identify failures
+1. **SMI-1523**: Configure multi-LLM provider chain
+2. **SMI-1524**: Implement LLM failover with circuit breaker
+3. Update tests to mock V3 API patterns
 
 ## Rollback Plan
 
