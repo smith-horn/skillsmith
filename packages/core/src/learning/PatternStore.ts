@@ -495,6 +495,13 @@ export class FisherInformationMatrix implements IFisherInformationMatrix {
   }
 
   deserialize(buffer: Buffer): void {
+    const expectedSize = 4 + 4 * this.dimensions * 2
+    if (buffer.length < expectedSize) {
+      throw new Error(
+        `Invalid Fisher matrix buffer: expected ${expectedSize} bytes, got ${buffer.length}`
+      )
+    }
+
     this.updateCount = buffer.readUInt32LE(0)
 
     const importanceOffset = 4
@@ -626,9 +633,6 @@ export class PatternStore {
   private queryLatencies: number[] = []
   private maxQuerySamples = 100
 
-  // V3 integration
-  private v3ReasoningBank: unknown = null
-
   constructor(config: PatternStoreConfig = {}) {
     this.config = {
       ...DEFAULT_PATTERN_STORE_CONFIG,
@@ -658,7 +662,7 @@ export class PatternStore {
     this.fisherMatrix = new FisherInformationMatrix(this.config.dimensions)
 
     // Load persisted Fisher matrix if exists
-    await this.loadFisherMatrix()
+    this.loadFisherMatrix()
 
     // Initialize embedding service (fallback mode for context encoding)
     this.embeddingService = new EmbeddingService({ useFallback: true })
@@ -675,15 +679,22 @@ export class PatternStore {
   }
 
   /**
+   * Check if PatternStore is initialized
+   */
+  isInitialized(): boolean {
+    return this.initialized
+  }
+
+  /**
    * Attempt to initialize V3 ReasoningBank integration
    */
   private async initializeV3Integration(): Promise<void> {
     try {
-      const { getReasoningBank } = await import(
+      // Attempt to import V3 ReasoningBank for future integration
+      await import(
         // @ts-expect-error - V3 types not available at compile time
         'claude-flow/v3/@claude-flow/cli/dist/src/intelligence/index.js'
       )
-      this.v3ReasoningBank = await getReasoningBank()
       console.log('[PatternStore] V3 ReasoningBank integration enabled')
     } catch {
       console.log('[PatternStore] V3 not available, using standalone mode')
@@ -778,7 +789,7 @@ export class PatternStore {
     }
 
     // Persist Fisher matrix
-    await this.saveFisherMatrix()
+    this.saveFisherMatrix()
 
     return patternId
   }
@@ -1019,7 +1030,7 @@ export class PatternStore {
     )
 
     // Persist Fisher matrix
-    await this.saveFisherMatrix()
+    this.saveFisherMatrix()
 
     return {
       consolidated: true,
@@ -1276,14 +1287,18 @@ export class PatternStore {
     const recencyFactor = Math.exp(-ageInDays / 30)
     const accessFactor = 1 + Math.log(1 + pattern.accessCount)
 
-    // Fisher dimension importance
+    // Fisher dimension importance (EWC++ core)
+    // Lambda scales how much we weight Fisher importance in preservation
     let dimensionImportance = 0
     for (let i = 0; i < this.config.dimensions; i++) {
       dimensionImportance += (importanceVector[i] ?? 0) * Math.abs(pattern.contextEmbedding[i] ?? 0)
     }
     dimensionImportance /= this.config.dimensions
 
-    return baseImportance * recencyFactor * accessFactor * (1 + dimensionImportance)
+    // Apply lambda regularization: higher lambda = stronger importance preservation
+    const lambdaScaled = 1 + (this.ewcConfig.lambda * dimensionImportance) / 10
+
+    return baseImportance * recencyFactor * accessFactor * lambdaScaled
   }
 
   private shouldConsolidate(): boolean {
@@ -1436,16 +1451,22 @@ export class PatternStore {
     return result?.size ?? 0
   }
 
-  private async loadFisherMatrix(): Promise<void> {
+  private loadFisherMatrix(): void {
     const stmt = this.db.prepare('SELECT matrix_data FROM fisher_info WHERE id = 1')
     const result = stmt.get() as { matrix_data: Buffer } | undefined
 
     if (result?.matrix_data) {
-      this.fisherMatrix.deserialize(result.matrix_data)
+      try {
+        this.fisherMatrix.deserialize(result.matrix_data)
+      } catch {
+        // Corrupted matrix data - reset to fresh state
+        console.warn('[PatternStore] Fisher matrix data corrupted, resetting')
+        this.fisherMatrix.reset()
+      }
     }
   }
 
-  private async saveFisherMatrix(): Promise<void> {
+  private saveFisherMatrix(): void {
     const matrixData = this.fisherMatrix.serialize()
 
     const stmt = this.db.prepare(`
