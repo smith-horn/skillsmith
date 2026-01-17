@@ -111,10 +111,21 @@ npx claude-flow memory store --key X --value Y
 - Presets for different dataset sizes (small, medium, large, xlarge)
 - 28 tests pass
 
+### SMI-1520: Integrate ReasoningBank for skill recommendation learning (Done)
+- Created `packages/core/src/learning/ReasoningBankIntegration.ts`
+- Implements `ISignalCollector` interface for drop-in replacement
+- Converts user signals to trajectories with reward values:
+  - Accept: +1.0, Dismiss: -0.5, Usage: +0.3, Abandonment: -0.3, Uninstall: -0.7
+- `getVerdict()` method for querying learned confidence
+- Batch verdict queries and top skills by confidence
+- Dual-write mode for backwards compatibility with legacy storage
+- Stub ReasoningBank for testing without V3 dependencies
+- 36 tests pass
+
 ## Next Steps
 
-1. **SMI-1520**: Integrate ReasoningBank for skill recommendation learning
-2. **SMI-1521**: Implement SONA routing for MCP tool optimization
+1. **SMI-1521**: Implement SONA routing for MCP tool optimization
+2. **SMI-1522**: Add EWC++ pattern storage for successful matches
 3. Update tests to mock V3 API patterns
 4. Run full test suite to identify failures
 
