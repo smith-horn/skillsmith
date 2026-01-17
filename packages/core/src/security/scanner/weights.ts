@@ -28,4 +28,5 @@ export const CATEGORY_WEIGHTS: Record<string, number> = {
   suspicious_pattern: 1.3,
   sensitive_path: 1.2,
   url: 0.8,
+  ai_defence: 1.9, // SMI-1532: High weight for AI injection attacks
 }

@@ -63,3 +63,7 @@ export type {
   RateLimitStorage,
   RateLimitMetrics,
 } from './rate-limiter/index.js'
+
+// SMI-1534: E2B Sandbox for skill testing
+export { SkillSandbox, SandboxUnavailableError, withSandbox } from './SkillSandbox.js'
+export type { SandboxOptions, ExecutionResult, SandboxFile, SandboxStatus } from './SkillSandbox.js'

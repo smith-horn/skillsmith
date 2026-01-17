@@ -20,9 +20,22 @@ import {
   PROMPT_LEAKING_PATTERNS,
   DATA_EXFILTRATION_PATTERNS,
   PRIVILEGE_ESCALATION_PATTERNS,
+  AI_DEFENCE_PATTERNS,
 } from './patterns.js'
 import { SEVERITY_WEIGHTS, CATEGORY_WEIGHTS } from './weights.js'
 import { safeRegexTest, safeRegexCheck } from './regex-utils.js'
+
+/**
+ * SMI-1532: Check if a regex pattern requires multi-line matching
+ * Patterns that contain newline/carriage-return characters or start with
+ * multi-line anchors need to be tested against full content, not line-by-line.
+ */
+function isMultilinePattern(pattern: RegExp): boolean {
+  const patternStr = pattern.source
+  return (
+    patternStr.includes('\\r') || patternStr.includes('\\n') || patternStr.startsWith('(?:^|\\n)')
+  )
+}
 
 /**
  * Context information for each line in markdown content
@@ -79,12 +92,10 @@ function analyzeMarkdownContext(content: string): LineContext[] {
 }
 
 /**
- * Check if a line is in a documentation context (code block, table)
- * Note: isIndentedCode excluded as it causes too many false positives
- * (simple indentation is often not a markdown code block)
+ * Check if a line is in a documentation context (code block, table, example)
  */
 function isDocumentationContext(ctx: LineContext): boolean {
-  return ctx.inCodeBlock || ctx.inTable
+  return ctx.inCodeBlock || ctx.inTable || ctx.isIndentedCode
 }
 
 export class SecurityScanner {
@@ -443,6 +454,104 @@ export class SecurityScanner {
   }
 
   /**
+   * SMI-1532: Scan for AI injection vulnerabilities (CVE-hardened)
+   * Optimized for sub-10ms scan time with compiled regex
+   * SMI-1513: Mark findings in documentation context with lower confidence
+   *
+   * Detects:
+   * - Role injection (system:/assistant:/user:)
+   * - Hidden instruction brackets [[...]]
+   * - HTML comment injection
+   * - Unicode homograph attacks
+   * - Prompt structure manipulation
+   * - Base64 encoded instructions
+   * - And more...
+   */
+  private scanAIDefenceVulnerabilities(
+    content: string,
+    lineContexts?: LineContext[]
+  ): SecurityFinding[] {
+    const findings: SecurityFinding[] = []
+    const lines = content.split('\n')
+    const contexts = lineContexts ?? analyzeMarkdownContext(content)
+
+    // Track which line ranges have been flagged to avoid duplicates
+    const flaggedLines = new Set<number>()
+
+    // First pass: scan full content for multi-line patterns
+    // Patterns that require seeing multiple lines together (CRLF, delimiter injection)
+    for (const pattern of AI_DEFENCE_PATTERNS) {
+      if (isMultilinePattern(pattern)) {
+        const match = safeRegexTest(pattern, content)
+        if (match) {
+          // Find which line the match starts on
+          const matchIndex = content.indexOf(match[0])
+          const lineNumber = content.slice(0, matchIndex).split('\n').length
+          const lineIndex = lineNumber - 1
+
+          // Check documentation context for this line
+          const ctx = contexts[lineIndex]
+          const inDocContext = ctx ? isDocumentationContext(ctx) : false
+
+          // SMI-1513: Reduce severity/confidence for doc context
+          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
+          const severity = inDocContext ? 'high' : 'critical'
+
+          findings.push({
+            type: 'ai_defence',
+            severity,
+            message: `AI injection pattern detected: "${match[0].slice(0, 50)}${match[0].length > 50 ? '...' : ''}"`,
+            location: match[0].trim().slice(0, 100),
+            lineNumber,
+            category: 'ai_defence',
+            inDocumentationContext: inDocContext,
+            confidence,
+          })
+          flaggedLines.add(lineNumber)
+        }
+      }
+    }
+
+    // Second pass: line-by-line scanning for single-line patterns
+    lines.forEach((line, index) => {
+      if (flaggedLines.has(index + 1)) {
+        return // Skip lines already flagged by multi-line scan
+      }
+
+      const ctx = contexts[index]
+      const inDocContext = ctx ? isDocumentationContext(ctx) : false
+
+      for (const pattern of AI_DEFENCE_PATTERNS) {
+        // Skip multi-line patterns in line-by-line scan
+        if (isMultilinePattern(pattern)) continue
+
+        // SMI-882: Use safe regex test with length limit
+        const match = safeRegexTest(pattern, line)
+        if (match) {
+          // SMI-1513: Documentation examples get reduced severity/confidence
+          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
+          // AI injection is always critical, but reduce to high in docs
+          const severity = inDocContext ? 'high' : 'critical'
+
+          findings.push({
+            type: 'ai_defence',
+            severity,
+            message: `AI injection pattern detected: "${match[0].slice(0, 50)}${match[0].length > 50 ? '...' : ''}"`,
+            location: line.trim().slice(0, 100),
+            lineNumber: index + 1,
+            category: 'ai_defence',
+            inDocumentationContext: inDocContext,
+            confidence,
+          })
+          break // One finding per line for performance
+        }
+      }
+    })
+
+    return findings
+  }
+
+  /**
    * SMI-685: Calculate risk score from findings
    * SMI-1513: Accounts for confidence levels (low confidence = reduced weight)
    * Aggregates multiple findings into a risk score from 0-100
@@ -462,6 +571,7 @@ export class SecurityScanner {
       suspiciousCode: 0,
       sensitivePaths: 0,
       externalUrls: 0,
+      aiDefence: 0, // SMI-1532: AI injection detection score
     }
 
     // Confidence weights - low confidence findings contribute less to risk
@@ -503,6 +613,9 @@ export class SecurityScanner {
         case 'url':
           breakdown.externalUrls += score
           break
+        case 'ai_defence':
+          breakdown.aiDefence += score
+          break
       }
     }
 
@@ -515,19 +628,22 @@ export class SecurityScanner {
     breakdown.suspiciousCode = Math.min(100, breakdown.suspiciousCode)
     breakdown.sensitivePaths = Math.min(100, breakdown.sensitivePaths)
     breakdown.externalUrls = Math.min(100, breakdown.externalUrls)
+    breakdown.aiDefence = Math.min(100, breakdown.aiDefence) // SMI-1532
 
     // Calculate total as weighted average, capped at 100
+    // SMI-1532: Added aiDefence with 0.15 weight (redistributed from others)
     const total = Math.min(
       100,
       Math.round(
-        breakdown.jailbreak * 0.25 +
-          breakdown.socialEngineering * 0.15 +
-          breakdown.promptLeaking * 0.15 +
-          breakdown.dataExfiltration * 0.12 +
-          breakdown.privilegeEscalation * 0.13 +
-          breakdown.suspiciousCode * 0.1 +
+        breakdown.jailbreak * 0.22 +
+          breakdown.socialEngineering * 0.12 +
+          breakdown.promptLeaking * 0.12 +
+          breakdown.dataExfiltration * 0.1 +
+          breakdown.privilegeEscalation * 0.11 +
+          breakdown.suspiciousCode * 0.08 +
           breakdown.sensitivePaths * 0.05 +
-          breakdown.externalUrls * 0.05
+          breakdown.externalUrls * 0.05 +
+          breakdown.aiDefence * 0.15
       )
     )
 
@@ -566,6 +682,9 @@ export class SecurityScanner {
     findings.push(...this.scanPromptLeaking(content, lineContexts))
     findings.push(...this.scanDataExfiltration(content, lineContexts))
     findings.push(...this.scanPrivilegeEscalation(content, lineContexts))
+
+    // SMI-1532: Run AI Defence CVE-hardened scanning
+    findings.push(...this.scanAIDefenceVulnerabilities(content, lineContexts))
 
     const endTime = performance.now()
 

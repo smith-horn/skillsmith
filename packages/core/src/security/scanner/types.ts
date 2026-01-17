@@ -16,6 +16,7 @@ export type SecurityFindingType =
   | 'prompt_leaking'
   | 'data_exfiltration'
   | 'privilege_escalation'
+  | 'ai_defence' // SMI-1532: CVE-hardened AI injection detection
 
 /**
  * Severity levels for security findings
@@ -59,6 +60,7 @@ export interface RiskScoreBreakdown {
   suspiciousCode: number
   sensitivePaths: number
   externalUrls: number
+  aiDefence: number // SMI-1532: AI injection detection score
 }
 
 /**

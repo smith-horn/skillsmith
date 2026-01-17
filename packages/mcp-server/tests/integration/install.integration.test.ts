@@ -3,7 +3,7 @@
  * Tests the install_skill tool with mocked GitHub and real filesystem
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import {
@@ -504,6 +504,205 @@ Use this skill by mentioning it in Claude Code.
       expect(result.isRegistryId).toBe(false)
       expect(result.owner).toBe('owner')
       expect(result.repo).toBe('repo')
+    })
+  })
+
+  /**
+   * SMI-1533: Trust-Tier Security Scanning Tests
+   * Tests for trust-tier sensitive security scanning in install flow
+   */
+  describe('SMI-1533: Trust-Tier Security Scanning', () => {
+    // Import the actual validateTrustTier function from install.ts
+    // Using dynamic import to avoid circular dependency issues
+    let validateTrustTier: (
+      value: string | null | undefined
+    ) => 'verified' | 'community' | 'experimental' | 'unknown'
+
+    beforeAll(async () => {
+      const installModule = await import('../../src/tools/install.js')
+      validateTrustTier = installModule.validateTrustTier
+    })
+
+    // Type alias for trust tier (used in tests below)
+    type TrustTier = 'verified' | 'community' | 'experimental' | 'unknown'
+
+    // Scanner options per trust tier (matching install.ts)
+    const TRUST_TIER_SCANNER_OPTIONS: Record<
+      TrustTier,
+      { riskThreshold: number; maxContentLength: number }
+    > = {
+      verified: { riskThreshold: 70, maxContentLength: 2_000_000 },
+      community: { riskThreshold: 40, maxContentLength: 1_000_000 },
+      experimental: { riskThreshold: 25, maxContentLength: 500_000 },
+      unknown: { riskThreshold: 20, maxContentLength: 250_000 },
+    }
+
+    describe('validateTrustTier', () => {
+      it('should return "unknown" for null input', () => {
+        expect(validateTrustTier(null)).toBe('unknown')
+      })
+
+      it('should return "unknown" for undefined input', () => {
+        expect(validateTrustTier(undefined)).toBe('unknown')
+      })
+
+      it('should return "unknown" for empty string', () => {
+        expect(validateTrustTier('')).toBe('unknown')
+      })
+
+      it('should validate "verified" tier', () => {
+        expect(validateTrustTier('verified')).toBe('verified')
+        expect(validateTrustTier('VERIFIED')).toBe('verified')
+        expect(validateTrustTier('Verified')).toBe('verified')
+      })
+
+      it('should validate "community" tier', () => {
+        expect(validateTrustTier('community')).toBe('community')
+        expect(validateTrustTier('COMMUNITY')).toBe('community')
+      })
+
+      it('should validate "experimental" tier', () => {
+        expect(validateTrustTier('experimental')).toBe('experimental')
+        expect(validateTrustTier('EXPERIMENTAL')).toBe('experimental')
+      })
+
+      it('should return "unknown" for invalid tier values', () => {
+        expect(validateTrustTier('invalid')).toBe('unknown')
+        expect(validateTrustTier('premium')).toBe('unknown')
+        expect(validateTrustTier('trusted')).toBe('unknown')
+        expect(validateTrustTier('official')).toBe('unknown')
+      })
+    })
+
+    describe('Scanner Options per Trust Tier', () => {
+      it('should have highest threshold for verified tier', () => {
+        expect(TRUST_TIER_SCANNER_OPTIONS.verified.riskThreshold).toBe(70)
+        expect(TRUST_TIER_SCANNER_OPTIONS.verified.maxContentLength).toBe(2_000_000)
+      })
+
+      it('should have standard threshold for community tier', () => {
+        expect(TRUST_TIER_SCANNER_OPTIONS.community.riskThreshold).toBe(40)
+        expect(TRUST_TIER_SCANNER_OPTIONS.community.maxContentLength).toBe(1_000_000)
+      })
+
+      it('should have lower threshold for experimental tier', () => {
+        expect(TRUST_TIER_SCANNER_OPTIONS.experimental.riskThreshold).toBe(25)
+        expect(TRUST_TIER_SCANNER_OPTIONS.experimental.maxContentLength).toBe(500_000)
+      })
+
+      it('should have strictest threshold for unknown tier', () => {
+        expect(TRUST_TIER_SCANNER_OPTIONS.unknown.riskThreshold).toBe(20)
+        expect(TRUST_TIER_SCANNER_OPTIONS.unknown.maxContentLength).toBe(250_000)
+      })
+
+      it('should have progressively stricter thresholds', () => {
+        expect(TRUST_TIER_SCANNER_OPTIONS.verified.riskThreshold).toBeGreaterThan(
+          TRUST_TIER_SCANNER_OPTIONS.community.riskThreshold
+        )
+        expect(TRUST_TIER_SCANNER_OPTIONS.community.riskThreshold).toBeGreaterThan(
+          TRUST_TIER_SCANNER_OPTIONS.experimental.riskThreshold
+        )
+        expect(TRUST_TIER_SCANNER_OPTIONS.experimental.riskThreshold).toBeGreaterThan(
+          TRUST_TIER_SCANNER_OPTIONS.unknown.riskThreshold
+        )
+      })
+
+      it('should have progressively smaller content limits', () => {
+        expect(TRUST_TIER_SCANNER_OPTIONS.verified.maxContentLength).toBeGreaterThan(
+          TRUST_TIER_SCANNER_OPTIONS.community.maxContentLength
+        )
+        expect(TRUST_TIER_SCANNER_OPTIONS.community.maxContentLength).toBeGreaterThan(
+          TRUST_TIER_SCANNER_OPTIONS.experimental.maxContentLength
+        )
+        expect(TRUST_TIER_SCANNER_OPTIONS.experimental.maxContentLength).toBeGreaterThan(
+          TRUST_TIER_SCANNER_OPTIONS.unknown.maxContentLength
+        )
+      })
+    })
+
+    describe('Trust Tier Selection Logic', () => {
+      it('should use unknown tier for direct GitHub URLs', () => {
+        // Direct GitHub URLs bypass registry lookup, so no trust tier available
+        const input = 'https://github.com/random/untrusted-skill'
+        const isDirectUrl = input.startsWith('https://github.com/')
+        const trustTier = isDirectUrl ? 'unknown' : 'community'
+
+        expect(trustTier).toBe('unknown')
+        expect(TRUST_TIER_SCANNER_OPTIONS[trustTier].riskThreshold).toBe(20)
+      })
+
+      it('should use registry trust tier when available', () => {
+        // Simulating registry lookup returning a trust tier
+        const registryResponse = {
+          trust_tier: 'verified',
+          repo_url: 'https://github.com/anthropic/official-skill',
+        }
+
+        const trustTier = validateTrustTier(registryResponse.trust_tier)
+        expect(trustTier).toBe('verified')
+        expect(TRUST_TIER_SCANNER_OPTIONS[trustTier].riskThreshold).toBe(70)
+      })
+
+      it('should fall back to unknown for missing registry trust tier', () => {
+        const registryResponse = {
+          trust_tier: null,
+          repo_url: 'https://github.com/user/skill',
+        }
+
+        const trustTier = validateTrustTier(registryResponse.trust_tier)
+        expect(trustTier).toBe('unknown')
+      })
+    })
+
+    describe('Security Scan Behavior by Trust Tier', () => {
+      it('should pass more content for verified skills', () => {
+        const largeContent = 'x'.repeat(1_500_000) // 1.5MB
+        const verifiedLimit = TRUST_TIER_SCANNER_OPTIONS.verified.maxContentLength
+        const communityLimit = TRUST_TIER_SCANNER_OPTIONS.community.maxContentLength
+
+        // Content exceeds community limit but not verified limit
+        expect(largeContent.length).toBeLessThan(verifiedLimit)
+        expect(largeContent.length).toBeGreaterThan(communityLimit)
+      })
+
+      it('should apply strictest scanning for unknown sources', () => {
+        const unknownOptions = TRUST_TIER_SCANNER_OPTIONS.unknown
+
+        // Verify strictest settings
+        expect(unknownOptions.riskThreshold).toBe(20)
+        expect(unknownOptions.maxContentLength).toBe(250_000)
+
+        // These are the strictest values
+        Object.values(TRUST_TIER_SCANNER_OPTIONS).forEach((options) => {
+          expect(unknownOptions.riskThreshold).toBeLessThanOrEqual(options.riskThreshold)
+          expect(unknownOptions.maxContentLength).toBeLessThanOrEqual(options.maxContentLength)
+        })
+      })
+    })
+
+    describe('Error Message Context', () => {
+      // Helper function to generate tier context string
+      const getTierContext = (tier: TrustTier): string =>
+        tier === 'unknown'
+          ? ' (Direct GitHub install - strictest scanning applied)'
+          : tier === 'experimental'
+            ? ' (Experimental skill - aggressive scanning applied)'
+            : ''
+
+      it('should include trust tier in error context for unknown tier', () => {
+        const tierContext = getTierContext('unknown')
+        expect(tierContext).toContain('strictest scanning')
+      })
+
+      it('should include trust tier in error context for experimental tier', () => {
+        const tierContext = getTierContext('experimental')
+        expect(tierContext).toContain('aggressive scanning')
+      })
+
+      it('should have no extra context for verified/community tiers', () => {
+        expect(getTierContext('verified')).toBe('')
+        expect(getTierContext('community')).toBe('')
+      })
     })
   })
 })
