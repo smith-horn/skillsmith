@@ -193,6 +193,17 @@ npx claude-flow memory store --key X --value Y
   - `./learning` - ReasoningBank and PatternStore
 - 33 tests pass
 
+### Code Review Fixes (SMI-1523, SMI-1524)
+Post-implementation code review identified and resolved critical issues:
+
+1. **Race Condition Fix**: Added initialization promise pattern to prevent concurrent access before async initialization completes. Methods calling `ensureInitialized()` now properly await it.
+
+2. **Memory Leak Fix**: Signal handlers (SIGTERM, SIGINT) are now stored in `_signalHandlers` array and properly removed in `closeToolContext()` to prevent listener accumulation.
+
+3. **Silent Error Fix**: LLM failover initialization errors are now always logged to stderr, not just in debug mode.
+
+4. **Test Organization**: Moved `failover.test.ts` from `src/__tests__/llm/` to `tests/llm/` to match vitest include patterns.
+
 ## Next Steps
 
 1. Update tests to mock V3 API patterns
