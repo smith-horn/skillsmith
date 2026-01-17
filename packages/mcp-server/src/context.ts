@@ -60,6 +60,8 @@ export interface ToolContext {
   backgroundSync?: BackgroundSyncService
   /** LLM failover chain for multi-provider support (SMI-1524) */
   llmFailover?: LLMFailoverChain
+  /** Internal: Signal handlers for cleanup (prevents memory leaks) */
+  _signalHandlers?: Array<{ signal: NodeJS.Signals; handler: () => void }>
 }
 
 /**
@@ -299,13 +301,6 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
       })
 
       backgroundSync.start()
-
-      // Register cleanup handlers
-      const cleanup = () => {
-        backgroundSync?.stop()
-      }
-      process.on('SIGTERM', cleanup)
-      process.on('SIGINT', cleanup)
     }
   }
 
@@ -325,22 +320,35 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
     })
 
     // Initialize in background (non-blocking)
+    // Always log errors to prevent silent failures
     llmFailover.initialize().catch((error) => {
-      if (options.llmFailoverConfig?.debug) {
-        console.error(`[skillsmith] LLM failover initialization error: ${error.message}`)
-      }
+      console.error(`[skillsmith] LLM failover initialization error: ${error.message}`)
     })
-
-    // Register cleanup handler
-    const llmCleanup = () => {
-      llmFailover?.close()
-    }
-    process.on('SIGTERM', llmCleanup)
-    process.on('SIGINT', llmCleanup)
 
     if (options.llmFailoverConfig?.debug) {
       console.log('[skillsmith] LLM failover chain initialized')
     }
+  }
+
+  // Create signal handlers for cleanup (stored for removal to prevent memory leaks)
+  const signalHandlers: Array<{ signal: NodeJS.Signals; handler: () => void }> = []
+
+  if (backgroundSync || llmFailover) {
+    const cleanup = () => {
+      backgroundSync?.stop()
+      llmFailover?.close()
+    }
+
+    const sigTermHandler = () => cleanup()
+    const sigIntHandler = () => cleanup()
+
+    process.on('SIGTERM', sigTermHandler)
+    process.on('SIGINT', sigIntHandler)
+
+    signalHandlers.push(
+      { signal: 'SIGTERM', handler: sigTermHandler },
+      { signal: 'SIGINT', handler: sigIntHandler }
+    )
   }
 
   return {
@@ -351,6 +359,7 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
     distinctId,
     backgroundSync,
     llmFailover,
+    _signalHandlers: signalHandlers.length > 0 ? signalHandlers : undefined,
   }
 }
 
@@ -362,6 +371,13 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
  * @param context - Tool context to close
  */
 export async function closeToolContext(context: ToolContext): Promise<void> {
+  // Remove signal handlers to prevent memory leaks
+  if (context._signalHandlers) {
+    for (const { signal, handler } of context._signalHandlers) {
+      process.removeListener(signal, handler)
+    }
+  }
+
   // Stop background sync service if running
   if (context.backgroundSync) {
     context.backgroundSync.stop()

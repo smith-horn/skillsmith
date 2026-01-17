@@ -160,6 +160,7 @@ export class LLMFailoverChain {
     MultiLLMProviderConfig
   private initialized = false
   private enabled: boolean
+  private initializationPromise: Promise<void> | null = null
 
   constructor(config: LLMFailoverConfig = {}) {
     // Check environment variable for enable/disable
@@ -196,10 +197,22 @@ export class LLMFailoverChain {
    * Initialize the failover chain
    *
    * Must be called before using complete() or other methods.
+   * Safe to call multiple times - will return existing promise if initialization is in progress.
    */
   async initialize(): Promise<void> {
     if (this.initialized) return
 
+    // Return existing initialization promise if already in progress
+    if (this.initializationPromise) {
+      return this.initializationPromise
+    }
+
+    // Create and store the initialization promise
+    this.initializationPromise = this.doInitialize()
+    return this.initializationPromise
+  }
+
+  private async doInitialize(): Promise<void> {
     if (!this.enabled) {
       if (this.config.debug) {
         console.log('[LLMFailoverChain] Disabled - skipping initialization')
@@ -254,7 +267,7 @@ export class LLMFailoverChain {
    * @throws Error if not initialized or all providers fail
    */
   async complete(request: LLMRequest): Promise<LLMResponse> {
-    this.ensureInitialized()
+    await this.ensureInitialized()
 
     if (!this.enabled || !this.provider) {
       throw new Error('LLM failover chain is disabled')
@@ -270,7 +283,7 @@ export class LLMFailoverChain {
    * @returns Compatibility results for each provider
    */
   async testSkillCompatibility(skillId: string): Promise<SkillCompatibilityResult> {
-    this.ensureInitialized()
+    await this.ensureInitialized()
 
     if (!this.enabled || !this.provider) {
       throw new Error('LLM failover chain is disabled')
@@ -286,7 +299,7 @@ export class LLMFailoverChain {
    * @returns Health check result
    */
   async healthCheck(provider: LLMProviderType): Promise<HealthCheckResult> {
-    this.ensureInitialized()
+    await this.ensureInitialized()
 
     if (!this.enabled || !this.provider) {
       return {
@@ -425,10 +438,22 @@ export class LLMFailoverChain {
     this.initialized = false
   }
 
-  private ensureInitialized(): void {
-    if (!this.initialized) {
-      throw new Error('LLMFailoverChain not initialized. Call initialize() first.')
+  /**
+   * Ensure the failover chain is initialized, waiting if initialization is in progress.
+   * This handles the race condition where complete() is called while initialize() is running.
+   */
+  private async ensureInitialized(): Promise<void> {
+    // If initialized, return immediately
+    if (this.initialized) return
+
+    // If initialization is in progress, wait for it
+    if (this.initializationPromise) {
+      await this.initializationPromise
+      return
     }
+
+    // Not initialized and no initialization in progress
+    throw new Error('LLMFailoverChain not initialized. Call initialize() first.')
   }
 }
 
