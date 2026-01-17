@@ -506,3 +506,24 @@ export const testUtils = {
 }
 
 export default EmbeddingService
+
+// HNSW Store (SMI-1519)
+export {
+  HNSWEmbeddingStore,
+  createHNSWStore,
+  isHNSWAvailable,
+  loadHNSWLib,
+  DEFAULT_HNSW_CONFIG,
+  HNSW_PRESETS,
+} from './hnsw-store.js'
+
+export type {
+  IEmbeddingStore,
+  HNSWConfig,
+  HNSWEmbeddingStoreOptions,
+  HNSWIndexStats,
+  BatchInsertResult,
+  HierarchicalNSW,
+  HierarchicalNSWConstructor,
+  HNSWSearchResult,
+} from './hnsw-store.js'
