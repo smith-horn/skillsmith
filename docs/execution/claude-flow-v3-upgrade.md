@@ -89,7 +89,7 @@ npx claude-flow memory store --key X --value Y
 - [x] Memory commands work with V3 (SMI-1518: feature flag `CLAUDE_FLOW_USE_V3_API`)
 - [x] Hooks commands work with V3 (SMI-1518: V3 MCP tool API with spawn fallback)
 - [ ] MCP server compatible with V3
-- [x] All tests pass with V3 (58 SessionManager tests, 28 HNSW tests)
+- [x] All tests pass with V3 (58 SessionManager tests, 28 HNSW tests, 36 ReasoningBank tests, 56 SONA tests)
 
 ## Completed Tasks
 
@@ -122,12 +122,26 @@ npx claude-flow memory store --key X --value Y
 - Stub ReasoningBank for testing without V3 dependencies
 - 36 tests pass
 
+### SMI-1521: Implement SONA routing for MCP tool optimization (Done)
+- Created `packages/core/src/routing/SONARouter.ts`
+- 8-expert MoE (Mixture of Experts) network:
+  - 2 accuracy experts (semantic search, validation)
+  - 2 latency experts (cache-first, index lookup)
+  - 2 balanced experts (default, reliability)
+  - 2 specialized experts (recommend, compare)
+- Tool weight profiles: search (accuracy), get_skill (latency), install (reliability)
+- LRU cache for routing decisions with configurable TTL
+- V3 MoERouter and SONAOptimizer integration with fallback
+- Feature flags for gradual rollout (`sona.enabled`, `sona.tools.*`, `sona.tiers.*`)
+- Metrics collection for observability
+- Architecture document: `docs/architecture/sona-router-architecture.md`
+- 56 tests pass
+
 ## Next Steps
 
-1. **SMI-1521**: Implement SONA routing for MCP tool optimization
-2. **SMI-1522**: Add EWC++ pattern storage for successful matches
-3. Update tests to mock V3 API patterns
-4. Run full test suite to identify failures
+1. **SMI-1522**: Add EWC++ pattern storage for successful matches
+2. Update tests to mock V3 API patterns
+3. Run full test suite to identify failures
 
 ## Rollback Plan
 
