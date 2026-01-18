@@ -26,7 +26,9 @@ ADRs document significant architectural decisions made during the project. They 
 | [ADR-015](015-immutable-audit-log-storage.md) | Immutable Audit Log Storage with SHA-256 Hash Chains | Accepted | 2026-01-04 |
 | [ADR-016](016-vercel-api-proxy.md) | Vercel API Proxy for Custom Domain | Accepted | 2026-01-08 |
 | [ADR-017](017-quota-enforcement-system.md) | Quota Enforcement System | Accepted | 2026-01-11 |
-| [ADR-018](018-registry-sync-system.md) | Registry Sync System | **New** | 2026-01-15 |
+| [ADR-018](018-registry-sync-system.md) | Registry Sync System | Accepted | 2026-01-15 |
+| [ADR-019](019-indexer-skillmd-validation.md) | Indexer SKILL.md Validation | Accepted | 2026-01-16 |
+| [ADR-020](020-phase4-security-hardening.md) | Phase 4 Security Hardening (AIDefence, Trust-Tier, E2B) | **New** | 2026-01-17 |
 
 ### Legacy ADRs (Pre-Implementation Design Phase)
 
