@@ -1,0 +1,356 @@
+---
+/**
+ * Skillsmith Signup Success Page
+ *
+ * SMI-1071: Post-checkout success handling
+ *
+ * Displays after successful Stripe checkout.
+ * Query parameters:
+ * - session_id: Stripe checkout session ID
+ */
+---
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Welcome to Skillsmith! Your subscription is now active." />
+    <title>Welcome to Skillsmith!</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <header class="header">
+      <nav class="nav">
+        <a href="/" class="logo">
+          <span class="logo-icon">S</span>
+          <span class="logo-text">Skillsmith</span>
+        </a>
+      </nav>
+    </header>
+
+    <main class="success-container">
+      <div class="success-content">
+        <div class="success-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" stroke-linecap="round" stroke-linejoin="round"/>
+            <polyline points="22 4 12 14.01 9 11.01" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <h1>Welcome to Skillsmith!</h1>
+        <p class="success-message">
+          Your subscription is now active. You're all set to start discovering skills for Claude Code.
+        </p>
+
+        <div class="next-steps">
+          <h2>Get Started</h2>
+          <div class="steps-grid">
+            <div class="step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h3>Configure MCP Server</h3>
+                <p>Add Skillsmith to your Claude Code settings</p>
+                <a href="/docs/quickstart" class="step-link">View setup guide</a>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h3>Search for Skills</h3>
+                <p>Find skills tailored to your tech stack</p>
+                <a href="/docs/search" class="step-link">Learn about search</a>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h3>Install and Use</h3>
+                <p>One-click installation to Claude Code</p>
+                <a href="/docs/installation" class="step-link">Installation docs</a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cta-buttons">
+          <a href="/docs/quickstart" class="btn btn-primary">Get Started</a>
+          <a href="/dashboard" class="btn btn-secondary">Go to Dashboard</a>
+        </div>
+
+        <p class="receipt-note">
+          A receipt has been sent to your email. You can manage your subscription in the
+          <a href="/dashboard/billing">billing settings</a>.
+        </p>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-content">
+        <p>&copy; 2026 Smith Horn Group Ltd. All rights reserved.</p>
+      </div>
+    </footer>
+  </body>
+</html>
+
+<style>
+  /* Reset and base styles */
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    font-size: 16px;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.6;
+    color: #1a1a2e;
+    background: #fafbfc;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Header */
+  .header {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .nav {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 1rem 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 1.25rem;
+    color: #1a1a2e;
+  }
+
+  .logo-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
+    border-radius: 0.5rem;
+    font-weight: 700;
+  }
+
+  /* Success Container */
+  .success-container {
+    flex: 1;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 4rem 2rem;
+  }
+
+  .success-content {
+    text-align: center;
+  }
+
+  .success-icon {
+    width: 5rem;
+    height: 5rem;
+    margin: 0 auto 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #dcfce7;
+    border-radius: 50%;
+  }
+
+  .success-icon svg {
+    width: 3rem;
+    height: 3rem;
+    color: #10b981;
+  }
+
+  .success-content h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    background: linear-gradient(135deg, #1a1a2e 0%, #6366f1 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .success-message {
+    font-size: 1.25rem;
+    color: #6b7280;
+    margin-bottom: 3rem;
+  }
+
+  /* Next Steps */
+  .next-steps {
+    margin-bottom: 3rem;
+  }
+
+  .next-steps h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+  }
+
+  .steps-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+    text-align: left;
+  }
+
+  .step {
+    display: flex;
+    gap: 1rem;
+    padding: 1.5rem;
+    background: white;
+    border-radius: 1rem;
+    border: 1px solid #e5e7eb;
+  }
+
+  .step-number {
+    flex-shrink: 0;
+    width: 2rem;
+    height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
+    border-radius: 50%;
+    font-weight: 700;
+    font-size: 0.875rem;
+  }
+
+  .step-content h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+  }
+
+  .step-content p {
+    font-size: 0.875rem;
+    color: #6b7280;
+    margin-bottom: 0.5rem;
+  }
+
+  .step-link {
+    font-size: 0.875rem;
+    color: #6366f1;
+    text-decoration: none;
+    font-weight: 500;
+  }
+
+  .step-link:hover {
+    text-decoration: underline;
+  }
+
+  /* Buttons */
+  .cta-buttons {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    margin-bottom: 2rem;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.875rem 2rem;
+    font-size: 1rem;
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    cursor: pointer;
+    border: none;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+  }
+
+  .btn-secondary {
+    background: white;
+    color: #1a1a2e;
+    border: 1px solid #e5e7eb;
+  }
+
+  .btn-secondary:hover {
+    border-color: #6366f1;
+    color: #6366f1;
+  }
+
+  .receipt-note {
+    font-size: 0.875rem;
+    color: #6b7280;
+  }
+
+  .receipt-note a {
+    color: #6366f1;
+    text-decoration: none;
+  }
+
+  .receipt-note a:hover {
+    text-decoration: underline;
+  }
+
+  /* Footer */
+  .footer {
+    margin-top: auto;
+    background: #1a1a2e;
+    color: white;
+    padding: 2rem;
+  }
+
+  .footer-content {
+    max-width: 1280px;
+    margin: 0 auto;
+    text-align: center;
+    font-size: 0.875rem;
+    color: #9ca3af;
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .steps-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .success-content h1 {
+      font-size: 2rem;
+    }
+
+    .cta-buttons {
+      flex-direction: column;
+    }
+  }
+</style>

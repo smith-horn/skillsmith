@@ -13,6 +13,15 @@ const { title, description = "Skillsmith - AI-powered skill discovery and manage
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
+
+    <!-- Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
+    <script is:inline>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-GGZQZM1Y1L');
+    </script>
     <meta name="generator" content={Astro.generator} />
 
     <!-- Open Graph -->

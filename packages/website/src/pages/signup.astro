@@ -1,0 +1,825 @@
+---
+/**
+ * Skillsmith Signup Page
+ *
+ * SMI-1071: Website Integration - Signup Page with Stripe Checkout
+ *
+ * Reads query parameters:
+ * - tier: 'community' | 'individual' | 'team' | 'enterprise'
+ * - period: 'monthly' | 'annual' (default: 'monthly')
+ *
+ * For paid tiers, initiates Stripe checkout.
+ * For community tier, shows free signup form.
+ */
+
+import { PRICING_TIERS } from '../lib/pricing.ts';
+
+// Read query parameters
+const url = new URL(Astro.request.url);
+const tier = url.searchParams.get('tier') || 'community';
+const period = url.searchParams.get('period') || 'monthly';
+
+// Get tier details
+const tierData = PRICING_TIERS.find(t => t.id === tier);
+const isValidTier = tierData !== undefined;
+const isPaidTier = tier !== 'community';
+
+// Calculate annual discount (20% off, pay for 10 months)
+const monthlyPrice = tierData?.price ?? 0;
+const annualPrice = monthlyPrice * 10; // 10 months for the price of 12
+const displayPrice = period === 'annual' ? annualPrice : monthlyPrice;
+const savingsPercent = period === 'annual' ? 17 : 0; // ~17% savings
+
+// API base URL for checkout
+const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app';
+---
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content={`Sign up for Skillsmith ${tierData?.name || ''} plan. ${tierData?.features[0] || 'AI-powered skill discovery for Claude Code.'}`} />
+    <title>Sign Up{tierData ? ` - ${tierData.name}` : ''} | Skillsmith</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <header class="header">
+      <nav class="nav">
+        <a href="/" class="logo">
+          <span class="logo-icon">S</span>
+          <span class="logo-text">Skillsmith</span>
+        </a>
+        <div class="nav-links">
+          <a href="/features">Features</a>
+          <a href="/pricing">Pricing</a>
+          <a href="/docs">Docs</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="signup-container">
+      {!isValidTier ? (
+        <div class="error-state">
+          <h1>Invalid Plan</h1>
+          <p>The selected plan is not available. Please choose from our available plans.</p>
+          <a href="/pricing" class="btn btn-primary">View Pricing</a>
+        </div>
+      ) : isPaidTier ? (
+        <!-- Paid tier signup -->
+        <div class="signup-content">
+          <div class="signup-header">
+            <h1>Complete Your Subscription</h1>
+            <p>You're signing up for <strong>{tierData?.name}</strong></p>
+          </div>
+
+          <div class="order-summary">
+            <h2>Order Summary</h2>
+
+            <div class="plan-card">
+              <div class="plan-header">
+                <span class="plan-name">{tierData?.name}</span>
+                <span class="plan-badge">{tier === 'team' ? 'Most Popular' : ''}</span>
+              </div>
+
+              <div class="plan-price">
+                <span class="price">${displayPrice}</span>
+                <span class="price-period">/{period === 'annual' ? 'year' : 'month'}</span>
+                {tierData?.priceUnit === 'user/month' && (
+                  <span class="per-user"> per user</span>
+                )}
+              </div>
+
+              {period === 'annual' && savingsPercent > 0 && (
+                <div class="savings-badge">
+                  Save {savingsPercent}% with annual billing
+                </div>
+              )}
+
+              <div class="billing-toggle">
+                <label class="toggle-option">
+                  <input
+                    type="radio"
+                    name="billing-period"
+                    value="monthly"
+                    checked={period === 'monthly'}
+                    data-tier={tier}
+                  />
+                  <span>Monthly</span>
+                </label>
+                <label class="toggle-option">
+                  <input
+                    type="radio"
+                    name="billing-period"
+                    value="annual"
+                    checked={period === 'annual'}
+                    data-tier={tier}
+                  />
+                  <span>Annual (save 17%)</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="features-included">
+              <h3>What's Included</h3>
+              <ul>
+                {tierData?.features.map((feature) => (
+                  <li>
+                    <svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>{feature}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <form id="checkout-form" class="checkout-form">
+              <input type="hidden" name="tier" value={tier} />
+              <input type="hidden" name="period" id="period-input" value={period} />
+
+              {(tier === 'team' || tier === 'enterprise') && (
+                <div class="seat-selector">
+                  <label for="seat-count">Number of seats</label>
+                  <div class="seat-input-wrapper">
+                    <button type="button" class="seat-btn" data-action="decrease">-</button>
+                    <input
+                      type="number"
+                      id="seat-count"
+                      name="seatCount"
+                      value="1"
+                      min="1"
+                      max="1000"
+                      class="seat-input"
+                    />
+                    <button type="button" class="seat-btn" data-action="increase">+</button>
+                  </div>
+                  <p class="seat-hint">You can adjust this during checkout</p>
+                </div>
+              )}
+
+              <button type="submit" class="btn btn-primary btn-checkout" id="checkout-btn">
+                <span class="btn-text">Continue to Payment</span>
+                <span class="btn-loading" style="display: none;">
+                  <svg class="spinner" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" opacity="0.25"/>
+                    <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"/>
+                  </svg>
+                  Processing...
+                </span>
+              </button>
+
+              <p class="checkout-note">
+                You will be redirected to Stripe for secure payment.
+                <br />
+                <a href="/terms">Terms of Service</a> &middot; <a href="/privacy">Privacy Policy</a>
+              </p>
+            </form>
+
+            <div id="error-message" class="error-message" style="display: none;"></div>
+          </div>
+
+          <div class="security-badges">
+            <div class="badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+              <span>Secure checkout</span>
+            </div>
+            <div class="badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              <span>Stripe encrypted</span>
+            </div>
+            <div class="badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              <span>Cancel anytime</span>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <!-- Community tier (free) signup -->
+        <div class="signup-content">
+          <div class="signup-header">
+            <h1>Get Started for Free</h1>
+            <p>Start discovering skills with the Community plan</p>
+          </div>
+
+          <div class="order-summary">
+            <div class="plan-card">
+              <div class="plan-header">
+                <span class="plan-name">Community</span>
+                <span class="plan-badge free">Free Forever</span>
+              </div>
+
+              <div class="plan-price">
+                <span class="price">$0</span>
+                <span class="price-period">/month</span>
+              </div>
+            </div>
+
+            <div class="features-included">
+              <h3>What's Included</h3>
+              <ul>
+                {tierData?.features.map((feature) => (
+                  <li>
+                    <svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    <span>{feature}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <a href="/docs/quickstart" class="btn btn-primary btn-checkout">
+              Get Started with Docs
+            </a>
+
+            <p class="checkout-note">
+              No credit card required. Set up the MCP server and start exploring.
+            </p>
+          </div>
+        </div>
+      )}
+    </main>
+
+    <footer class="footer">
+      <div class="footer-content">
+        <p>&copy; 2026 Smith Horn Group Ltd. All rights reserved.</p>
+        <p class="license-note">Licensed under <a href="https://www.elastic.co/licensing/elastic-license">Elastic License 2.0</a></p>
+      </div>
+    </footer>
+  </body>
+</html>
+
+<style>
+  /* Reset and base styles */
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    font-size: 16px;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.6;
+    color: #1a1a2e;
+    background: #fafbfc;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Header */
+  .header {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .nav {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 1rem 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 2rem;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 1.25rem;
+    color: #1a1a2e;
+  }
+
+  .logo-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
+    border-radius: 0.5rem;
+    font-weight: 700;
+  }
+
+  .nav-links {
+    display: flex;
+    gap: 2rem;
+  }
+
+  .nav-links a {
+    text-decoration: none;
+    color: #4b5563;
+    font-weight: 500;
+    transition: color 0.2s;
+  }
+
+  .nav-links a:hover {
+    color: #6366f1;
+  }
+
+  /* Signup Container */
+  .signup-container {
+    flex: 1;
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 3rem 2rem;
+  }
+
+  .signup-content {
+    background: white;
+    border-radius: 1rem;
+    padding: 2rem;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+  }
+
+  .signup-header {
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+
+  .signup-header h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+  }
+
+  .signup-header p {
+    color: #6b7280;
+  }
+
+  /* Order Summary */
+  .order-summary h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #4b5563;
+    margin-bottom: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .plan-card {
+    background: #f9fafb;
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .plan-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+  }
+
+  .plan-name {
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+
+  .plan-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.25rem 0.75rem;
+    border-radius: 1rem;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
+  }
+
+  .plan-badge.free {
+    background: #10b981;
+  }
+
+  .plan-price {
+    display: flex;
+    align-items: baseline;
+    gap: 0.25rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .price {
+    font-size: 2rem;
+    font-weight: 700;
+  }
+
+  .price-period {
+    color: #6b7280;
+  }
+
+  .per-user {
+    color: #6b7280;
+    font-size: 0.875rem;
+  }
+
+  .savings-badge {
+    display: inline-block;
+    background: #dcfce7;
+    color: #166534;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.25rem 0.75rem;
+    border-radius: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  /* Billing Toggle */
+  .billing-toggle {
+    display: flex;
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+
+  .toggle-option {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border: 2px solid #e5e7eb;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+
+  .toggle-option:has(input:checked) {
+    border-color: #6366f1;
+    background: rgba(99, 102, 241, 0.05);
+  }
+
+  .toggle-option input {
+    display: none;
+  }
+
+  /* Features */
+  .features-included {
+    margin-bottom: 1.5rem;
+  }
+
+  .features-included h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #4b5563;
+    margin-bottom: 0.75rem;
+  }
+
+  .features-included ul {
+    list-style: none;
+  }
+
+  .features-included li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.375rem 0;
+    font-size: 0.875rem;
+    color: #4b5563;
+  }
+
+  .check-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+    color: #10b981;
+    flex-shrink: 0;
+  }
+
+  /* Seat Selector */
+  .seat-selector {
+    margin-bottom: 1.5rem;
+  }
+
+  .seat-selector label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+  }
+
+  .seat-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .seat-btn {
+    width: 2.5rem;
+    height: 2.5rem;
+    border: 1px solid #e5e7eb;
+    background: white;
+    border-radius: 0.5rem;
+    font-size: 1.25rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .seat-btn:hover {
+    border-color: #6366f1;
+    color: #6366f1;
+  }
+
+  .seat-input {
+    width: 5rem;
+    height: 2.5rem;
+    text-align: center;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+  }
+
+  .seat-hint {
+    font-size: 0.75rem;
+    color: #6b7280;
+    margin-top: 0.5rem;
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    cursor: pointer;
+    border: none;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .btn-checkout {
+    width: 100%;
+    padding: 1rem;
+    font-size: 1.125rem;
+  }
+
+  .checkout-note {
+    text-align: center;
+    font-size: 0.75rem;
+    color: #6b7280;
+    margin-top: 1rem;
+    line-height: 1.6;
+  }
+
+  .checkout-note a {
+    color: #6366f1;
+    text-decoration: none;
+  }
+
+  .checkout-note a:hover {
+    text-decoration: underline;
+  }
+
+  /* Loading Spinner */
+  .spinner {
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-right: 0.5rem;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  /* Error Message */
+  .error-message {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #dc2626;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    margin-top: 1rem;
+    font-size: 0.875rem;
+  }
+
+  .error-state {
+    text-align: center;
+    padding: 3rem 2rem;
+  }
+
+  .error-state h1 {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .error-state p {
+    color: #6b7280;
+    margin-bottom: 1.5rem;
+  }
+
+  /* Security Badges */
+  .security-badges {
+    display: flex;
+    justify-content: center;
+    gap: 1.5rem;
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  .badge {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+
+  .badge svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  /* Footer */
+  .footer {
+    margin-top: auto;
+    background: #1a1a2e;
+    color: white;
+    padding: 2rem;
+  }
+
+  .footer-content {
+    max-width: 1280px;
+    margin: 0 auto;
+    text-align: center;
+    font-size: 0.875rem;
+    color: #9ca3af;
+  }
+
+  .license-note a {
+    color: #9ca3af;
+    text-decoration: underline;
+  }
+
+  .license-note a:hover {
+    color: white;
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .nav-links {
+      display: none;
+    }
+
+    .signup-container {
+      padding: 1.5rem 1rem;
+    }
+
+    .billing-toggle {
+      flex-direction: column;
+    }
+
+    .security-badges {
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+    }
+  }
+</style>
+
+<script define:vars={{ apiBaseUrl, tier, period }}>
+  // Initialize checkout form handling
+  document.addEventListener('DOMContentLoaded', () => {
+    const form = document.getElementById('checkout-form');
+    const checkoutBtn = document.getElementById('checkout-btn');
+    const errorMessage = document.getElementById('error-message');
+    const periodInput = document.getElementById('period-input');
+
+    // Handle billing period toggle
+    const billingRadios = document.querySelectorAll('input[name="billing-period"]');
+    billingRadios.forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        const newPeriod = e.target.value;
+        periodInput.value = newPeriod;
+
+        // Update URL without reload
+        const url = new URL(window.location.href);
+        url.searchParams.set('period', newPeriod);
+        window.history.replaceState({}, '', url.toString());
+
+        // Reload to update prices (simple approach)
+        window.location.href = url.toString();
+      });
+    });
+
+    // Handle seat count buttons
+    const seatInput = document.getElementById('seat-count');
+    const seatBtns = document.querySelectorAll('.seat-btn');
+
+    seatBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.action;
+        let value = parseInt(seatInput.value) || 1;
+
+        if (action === 'increase' && value < 1000) {
+          seatInput.value = value + 1;
+        } else if (action === 'decrease' && value > 1) {
+          seatInput.value = value - 1;
+        }
+      });
+    });
+
+    // Handle form submission
+    if (form) {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        // Show loading state
+        const btnText = checkoutBtn.querySelector('.btn-text');
+        const btnLoading = checkoutBtn.querySelector('.btn-loading');
+        btnText.style.display = 'none';
+        btnLoading.style.display = 'inline-flex';
+        checkoutBtn.disabled = true;
+        errorMessage.style.display = 'none';
+
+        try {
+          const formData = new FormData(form);
+          const payload = {
+            tier: formData.get('tier'),
+            period: formData.get('period'),
+            seatCount: parseInt(formData.get('seatCount')) || 1,
+            successUrl: `${window.location.origin}/signup/success?session_id={CHECKOUT_SESSION_ID}`,
+            cancelUrl: `${window.location.origin}/pricing`,
+          };
+
+          const response = await fetch(`${apiBaseUrl}/functions/v1/checkout`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(data.error || 'Failed to create checkout session');
+          }
+
+          // Redirect to Stripe checkout
+          if (data.url) {
+            window.location.href = data.url;
+          } else {
+            throw new Error('No checkout URL returned');
+          }
+        } catch (error) {
+          console.error('Checkout error:', error);
+          errorMessage.textContent = error.message || 'An error occurred. Please try again.';
+          errorMessage.style.display = 'block';
+
+          // Reset button
+          btnText.style.display = 'inline';
+          btnLoading.style.display = 'none';
+          checkoutBtn.disabled = false;
+        }
+      });
+    }
+  });
+</script>

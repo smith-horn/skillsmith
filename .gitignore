@@ -59,6 +59,13 @@ docs/IP/
 docs/licensing/
 docs/valuation/
 
+# Sensitive configuration documentation (contains IDs, secrets)
+docs/config/
+*-secrets.md
+*-credentials.md
+stripe-config*.md
+.stripe-*
+
 # Internal planning and strategy (not public)
 docs/backlog/
 docs/strategy/
