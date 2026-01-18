@@ -5,11 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [CLI 0.3.1] - 2026-01-18
+> **Note**: This project is in alpha (0.x). All packages use 0.x versioning.
+
+## [0.3.6] - 2026-01-18
 
 ### CLI Hotfix Release (SMI-1575)
 
 Critical bug fixes for CLI v0.3.0 that was non-functional for new users.
+
+**Packages**: @skillsmith/cli@0.3.1, @skillsmith/core@0.4.0
 
 #### Bug Fixes
 
@@ -39,16 +43,9 @@ Critical bug fixes for CLI v0.3.0 that was non-functional for new users.
 - Added `--version` usage documentation
 - Updated environment variables table
 
-#### Package Versions
-
-| Package | Version |
-|---------|---------|
-| @skillsmith/cli | 0.3.1 |
-| @skillsmith/core | 2.1.2 |
-
 ---
 
-## [2.3.1] - 2026-01-17
+## [0.3.5] - 2026-01-17
 
 ### Website Integration: Stripe Checkout Flow
 
@@ -95,9 +92,9 @@ This release completes the frontend integration for Stripe billing, enabling use
 
 ---
 
-## [2.3.0] - 2026-01-17
+## [0.3.4] - 2026-01-17
 
-### 🎉 Milestone: Phase 6 Billing Backend Complete
+### Milestone: Phase 6 Billing Backend Complete
 
 This release implements the complete Stripe billing backend for subscription management, automatic license key delivery, and customer self-service billing.
 
@@ -183,9 +180,9 @@ This release implements the complete Stripe billing backend for subscription man
 
 ---
 
-## [2.2.0] - 2026-01-17
+## [0.3.3] - 2026-01-17
 
-### 🎉 Milestone: Claude-Flow V3 Migration Complete
+### Milestone: Claude-Flow V3 Migration Complete
 
 This release completes the migration from Claude-Flow V2 to V3, bringing significant performance improvements and new neural learning capabilities.
 
@@ -271,9 +268,15 @@ This release completes the migration from Claude-Flow V2 to V3, bringing signifi
 - [Phase 5 Neural Testing Guide](docs/execution/phase5-neural-testing.md)
 - [V3 Migration Status](docs/execution/v3-migration-status.md)
 
-## [2.0.0] - 2026-01-09
+---
 
-### Added
+## [0.3.0] - 2026-01-09
+
+### Multi-Language Codebase Analysis
+
+**Packages**: @skillsmith/core
+
+#### Added
 
 - **Multi-Language Codebase Analysis** (SMI-776)
   - Support for TypeScript, JavaScript, Python, Go, Rust, and Java
@@ -323,27 +326,33 @@ This release completes the migration from Claude-Flow V2 to V3, bringing signifi
   - Extended `CodebaseContext.stats` with `filesByLanguage`
   - Extended `CodebaseContext.metadata` with `languages` and `cacheHitRate`
 
-### Changed
+#### Changed
 
 - `CodebaseAnalyzer` now supports multi-language analysis while maintaining backward compatibility
 - Default exclude directories extended: `__pycache__`, `.pytest_cache`, `target`, `vendor`, `venv`
 
-### Documentation
+#### Documentation
 
 - **Migration Guide** - `docs/guides/migration-v2.md` for upgrading from v1.x
 - **API Reference** - `docs/api/analysis.md` with complete type and class documentation
 - **Architecture Document** - `docs/architecture/multi-language-analysis.md`
 
-### Performance
+#### Performance
 
 - 10k file analysis: <5 seconds (3x improvement)
 - Incremental parse: <100ms
 - Cache hit rate target: >80%
 - Memory efficiency: ~30% reduction with LRU caching
 
+---
+
 ## [0.2.0] - 2026-01-08
 
-### Added
+### API Client & Analytics
+
+**Packages**: @skillsmith/core
+
+#### Added
 
 - **API Client Module** (SMI-1244)
   - `SkillsmithApiClient` class with retry logic and exponential backoff
@@ -380,14 +389,14 @@ This release completes the migration from Claude-Flow V2 to V3, bringing signifi
   - Custom metrics: latency, error rate, rate limit hits
   - Threshold-based pass/fail criteria
 
-### Changed
+#### Changed
 
 - **CORS Cleanup** (SMI-1236)
   - Removed deprecated wildcard `corsHeaders` export
   - Updated `jsonResponse()` and `errorResponse()` to accept origin parameter
   - Dynamic CORS headers based on request origin
 
-### Infrastructure
+#### Infrastructure
 
 - **Upstash Redis** (SMI-1234)
   - Rate limiting for Edge Functions
@@ -397,15 +406,28 @@ This release completes the migration from Claude-Flow V2 to V3, bringing signifi
 - **Supabase CLI** (SMI-1249)
   - Updated from v2.33.9 to v2.67.1
 
+---
+
 ## [0.1.2] - 2026-01-07
 
-### Added
+### Initial Release
+
+**Packages**: All packages at 0.1.x
+
+#### Added
+
 - Initial public release
 - Core skill discovery functionality
 - MCP server integration
 - CLI tool
 - VS Code extension
 
-[2.0.0]: https://github.com/smith-horn-group/skillsmith/compare/v0.2.0...v2.0.0
-[0.2.0]: https://github.com/smith-horn-group/skillsmith/compare/v0.1.2...v0.2.0
-[0.1.2]: https://github.com/smith-horn-group/skillsmith/releases/tag/v0.1.2
+---
+
+[0.3.6]: https://github.com/smith-horn/skillsmith/compare/v0.3.5...v0.3.6
+[0.3.5]: https://github.com/smith-horn/skillsmith/compare/v0.3.4...v0.3.5
+[0.3.4]: https://github.com/smith-horn/skillsmith/compare/v0.3.3...v0.3.4
+[0.3.3]: https://github.com/smith-horn/skillsmith/compare/v0.3.0...v0.3.3
+[0.3.0]: https://github.com/smith-horn/skillsmith/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/smith-horn/skillsmith/compare/v0.1.2...v0.2.0
+[0.1.2]: https://github.com/smith-horn/skillsmith/releases/tag/v0.1.2
