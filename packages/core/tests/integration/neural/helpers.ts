@@ -236,23 +236,53 @@ export function generateDismissSignals(count: number, category?: SkillCategory):
 }
 
 /**
- * Create a timestamp offset by a number of days from now
+ * Create a timestamp offset by a number of days from now.
+ * Returns a Unix timestamp (milliseconds) representing a point in the past.
+ *
+ * @param days - Number of days in the past (must be non-negative)
+ * @returns Unix timestamp in milliseconds
+ * @throws {RangeError} If days is negative
+ * @example
+ * const thirtyDaysAgo = daysAgo(30) // timestamp 30 days before now
  */
 export function daysAgo(days: number): number {
+  if (days < 0) {
+    throw new RangeError(`daysAgo() requires a non-negative value, got ${days}`)
+  }
   return Date.now() - days * 24 * 60 * 60 * 1000
 }
 
 /**
- * Create a timestamp offset by a number of hours from now
+ * Create a timestamp offset by a number of hours from now.
+ * Returns a Unix timestamp (milliseconds) representing a point in the past.
+ *
+ * @param hours - Number of hours in the past (must be non-negative)
+ * @returns Unix timestamp in milliseconds
+ * @throws {RangeError} If hours is negative
+ * @example
+ * const twoHoursAgo = hoursAgo(2) // timestamp 2 hours before now
  */
 export function hoursAgo(hours: number): number {
+  if (hours < 0) {
+    throw new RangeError(`hoursAgo() requires a non-negative value, got ${hours}`)
+  }
   return Date.now() - hours * 60 * 60 * 1000
 }
 
 /**
- * Create a timestamp offset by a number of minutes from now
+ * Create a timestamp offset by a number of minutes from now.
+ * Returns a Unix timestamp (milliseconds) representing a point in the past.
+ *
+ * @param minutes - Number of minutes in the past (must be non-negative)
+ * @returns Unix timestamp in milliseconds
+ * @throws {RangeError} If minutes is negative
+ * @example
+ * const fiveMinutesAgo = minutesAgo(5) // timestamp 5 minutes before now
  */
 export function minutesAgo(minutes: number): number {
+  if (minutes < 0) {
+    throw new RangeError(`minutesAgo() requires a non-negative value, got ${minutes}`)
+  }
   return Date.now() - minutes * 60 * 1000
 }
 

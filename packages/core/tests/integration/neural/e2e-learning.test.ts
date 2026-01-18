@@ -59,10 +59,6 @@ describe('E2E Learning Loop Integration', () => {
       profile = await ctx.preferenceLearner.batchUpdateProfile(profile, signals)
       await ctx.profileRepository.saveProfile(profile)
 
-      // Get personalized recommendations
-      const _testingSkills = skills.filter((s) => s.skill_data.category === SkillCategory.TESTING)
-      const _otherSkills = skills.filter((s) => s.skill_data.category !== SkillCategory.TESTING)
-
       // Create a new skill set with same base scores
       const uniformSkills = [
         {
@@ -89,7 +85,6 @@ describe('E2E Learning Loop Integration', () => {
 
       // Testing skill should rank higher after learning
       const testingRec = learnedRecs.find((r) => r.skill_id === 'testing-new')!
-      const _devopsRec = learnedRecs.find((r) => r.skill_id === 'devops-new')!
 
       // Testing should have higher personalized score due to positive signals
       expect(testingRec.personalized_score).toBeGreaterThan(testingRec.base_score)
@@ -296,7 +291,6 @@ describe('E2E Learning Loop Integration', () => {
 
       // Abandoned journey (accept + abandoned) has net negative effect
       // ACCEPT weight (0.5) + ABANDONED weight (-0.7) = -0.2 net
-      const _originalWeight = COLD_START_WEIGHTS.category_weights[SkillCategory.DEVOPS] ?? 0
       // The net effect should be slightly negative due to ABANDONED signal
       // But we also added 5 filler accepts, so the overall effect depends on implementation
       // Verify profile was updated

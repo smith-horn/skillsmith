@@ -75,17 +75,37 @@ export async function cleanupNeuralTestContext(ctx: NeuralTestContext): Promise<
   // Clear all stored data
   ctx.signalCollector.clear()
   ctx.profileRepository.clear()
+  ctx.privacyManager.clearAuditLog()
 }
 
 /**
  * Create a default empty user preference profile
+ *
+ * Note: COLD_START_WEIGHTS only defines weights for a subset of SkillCategory values
+ * (TESTING, GIT, DEVOPS, DOCUMENTATION, FRONTEND, BACKEND). Categories not in
+ * COLD_START_WEIGHTS (DATABASE, SECURITY, PRODUCTIVITY, ANALYSIS) will have
+ * undefined weights, which is handled gracefully by the learning algorithm
+ * by defaulting to 0 when accessing missing keys.
  */
 export function createDefaultProfile(): UserPreferenceProfile {
+  // Start with cold start weights and ensure all categories have explicit defaults
+  const categoryWeights: Partial<Record<SkillCategory, number>> = {
+    ...COLD_START_WEIGHTS.category_weights,
+  }
+
+  // Add missing categories with neutral (0) weights for completeness
+  const allCategories = Object.values(SkillCategory)
+  for (const category of allCategories) {
+    if (categoryWeights[category] === undefined) {
+      categoryWeights[category] = 0
+    }
+  }
+
   return {
     version: 1,
     last_updated: Date.now(),
     signal_count: 0,
-    category_weights: { ...COLD_START_WEIGHTS.category_weights },
+    category_weights: categoryWeights,
     trust_tier_weights: { ...COLD_START_WEIGHTS.trust_tier_weights },
     keyword_weights: {},
     negative_patterns: {
@@ -430,6 +450,26 @@ export class MockPersonalizationEngine implements IPersonalizationEngine {
     return results.sort((a, b) => b.personalized_score - a.personalized_score)
   }
 
+  /**
+   * Determine if personalization should be applied.
+   *
+   * IMPORTANT: Mock Implementation Limitation
+   * -----------------------------------------
+   * This mock checks the GLOBAL signal count across all users, not the
+   * per-user signal count. This is a simplification for testing purposes.
+   *
+   * In a real implementation, shouldPersonalize should:
+   * 1. Look up the user's profile by userId
+   * 2. Check that user's individual signal_count against the threshold
+   * 3. Return true only if that specific user has enough signals
+   *
+   * The mock behavior works for single-user test scenarios but does not
+   * accurately model multi-user environments where each user has their
+   * own signal history and personalization threshold.
+   *
+   * @param _userId - User ID (ignored in mock - uses global count)
+   * @returns Promise<boolean> - True if global signal count meets threshold
+   */
   async shouldPersonalize(_userId?: string): Promise<boolean> {
     const count = await this.signalCollector.getSignalCount()
     return count >= this.learner.getConfig().min_signals_threshold
@@ -535,14 +575,41 @@ export class MockPrivacyManager implements IPrivacyManager {
     return JSON.stringify(signals).length // Approximate size in bytes
   }
 
+  /**
+   * Verify that no PII (Personally Identifiable Information) is stored.
+   *
+   * Mock Implementation Details
+   * ---------------------------
+   * This mock always returns true because the test environment uses
+   * controlled, synthetic data that never contains real PII.
+   *
+   * A real implementation should:
+   * 1. Scan signal events for PII patterns (emails, names, IPs, etc.)
+   * 2. Check that skill_id values don't contain user identifiers
+   * 3. Verify context fields don't leak sensitive project paths
+   * 4. Ensure keyword_weights don't contain personal identifiers
+   * 5. Validate that exported data is properly anonymized
+   *
+   * The mock skips these checks since test data is constructed with
+   * known-safe values (UUIDs, generic skill names, etc.).
+   *
+   * @returns Promise<boolean> - Always true in mock (no real PII checks)
+   */
   async verifyPrivacy(): Promise<boolean> {
-    // For mock, always return true (no PII leakage in test context)
     return true
   }
 
   // Test helper to get audit log
   getAuditLog(): Array<{ operation: string; timestamp: number; details?: string }> {
     return [...this.auditLog]
+  }
+
+  /**
+   * Clear the audit log.
+   * Used in test cleanup to reset state between tests.
+   */
+  clearAuditLog(): void {
+    this.auditLog = []
   }
 }
 
