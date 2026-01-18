@@ -17,6 +17,14 @@
     "./embeddings": {
       "types": "./dist/src/embeddings/index.d.ts",
       "import": "./dist/src/embeddings/index.js"
+    },
+    "./testing": {
+      "types": "./dist/src/testing/index.d.ts",
+      "import": "./dist/src/testing/index.js"
+    },
+    "./learning": {
+      "types": "./dist/src/learning/index.d.ts",
+      "import": "./dist/src/learning/index.js"
     }
   },
   "scripts": {
