@@ -61,7 +61,7 @@ const { title, description = "Skillsmith - AI-powered skill discovery and manage
                 900: '#7a3829',
               },
               dark: {
-                50: '#f8fafc',
+                50: '#FAFAFA',
                 100: '#f1f5f9',
                 200: '#e2e8f0',
                 300: '#cbd5e1',
@@ -69,9 +69,9 @@ const { title, description = "Skillsmith - AI-powered skill discovery and manage
                 500: '#64748b',
                 600: '#475569',
                 700: '#334155',
-                800: '#1e293b',
-                900: '#0f172a',
-                950: '#020617',
+                800: '#1f1f23',
+                900: '#121214',
+                950: '#0D0D0F',
               }
             }
           }
@@ -143,6 +143,18 @@ const { title, description = "Skillsmith - AI-powered skill discovery and manage
 <style is:global>
   @import url('https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap');
 
+  :root {
+    /* Brand Colors - CSS Custom Properties */
+    --color-coral-primary: #E07A5F;
+    --color-coral-secondary: #D4694E;
+    --color-coral-shadow: rgba(224, 122, 95, 0.25);
+    --color-background: #0D0D0F;
+    --color-surface: #121214;
+    --color-text-primary: #FAFAFA;
+    --color-text-secondary: #94a3b8;
+    --color-border: #1f1f23;
+  }
+
   html {
     font-family: 'Satoshi', system-ui, sans-serif;
     scroll-behavior: smooth;
@@ -157,6 +169,15 @@ const { title, description = "Skillsmith - AI-powered skill discovery and manage
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+  }
+
+  .gradient-coral {
+    background: linear-gradient(135deg, var(--color-coral-primary) 0%, var(--color-coral-secondary) 100%);
+    box-shadow: 0 4px 14px var(--color-coral-shadow);
+  }
+
+  .gradient-coral-subtle {
+    background: linear-gradient(135deg, var(--color-coral-primary) 0%, var(--color-coral-secondary) 100%);
   }
 
   .card-hover {
