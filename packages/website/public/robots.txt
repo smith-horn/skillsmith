@@ -1,7 +1,60 @@
 # Skillsmith Website Robots.txt
 
+# Default: Allow all crawlers
 User-agent: *
 Allow: /
 
-# Sitemap location
+# AI Crawlers - Explicitly Allowed
+# These crawlers power AI search and answer engines
+
+# OpenAI (ChatGPT, GPT-4)
+User-agent: GPTBot
+Allow: /
+
+# OpenAI ChatGPT plugins
+User-agent: ChatGPT-User
+Allow: /
+
+# Anthropic (Claude)
+User-agent: ClaudeBot
+Allow: /
+User-agent: Claude-Web
+Allow: /
+
+# Google AI (Gemini, Bard)
+User-agent: Google-Extended
+Allow: /
+
+# Perplexity AI
+User-agent: PerplexityBot
+Allow: /
+
+# Cohere
+User-agent: cohere-ai
+Allow: /
+
+# Meta AI
+User-agent: FacebookBot
+Allow: /
+
+# Common Crawl (used by many AI training datasets)
+User-agent: CCBot
+Allow: /
+
+# Microsoft/Bing AI (Copilot)
+User-agent: bingbot
+Allow: /
+
+# Apple (Siri, Spotlight)
+User-agent: Applebot
+Allow: /
+
+# You.com AI
+User-agent: YouBot
+Allow: /
+
+# Sitemap
 Sitemap: https://skillsmith.app/sitemap-index.xml
+
+# LLMs.txt - AI-specific site information
+# See: https://skillsmith.app/llms.txt

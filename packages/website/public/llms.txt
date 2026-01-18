@@ -1,0 +1,110 @@
+# Skillsmith - AI Skill Discovery for Claude Code
+> Skillsmith helps developers discover, install, and manage skills for Claude Code. Skills are reusable prompts and workflows that extend Claude's capabilities.
+
+## Quick Start
+Install Skillsmith MCP server to enable natural language skill discovery:
+
+```json
+// Add to ~/.claude/settings.json
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"]
+    }
+  }
+}
+```
+
+Then ask Claude: "Find skills for this project" or "Install the commit helper skill"
+
+## CLI Alternative
+```bash
+npm install -g @skillsmith/cli
+skillsmith search testing
+skillsmith install jest-helper
+skillsmith list
+```
+
+## Key Pages
+
+- [Home](https://skillsmith.app/): Product overview and features
+- [Quickstart](https://skillsmith.app/docs/quickstart): First-time setup guide with two paths (Claude Code + MCP recommended, CLI alternative)
+- [Skills Browser](https://skillsmith.app/skills): Browse and search available skills
+- [Pricing](https://skillsmith.app/pricing): Four tiers - Community (free, 1k API calls), Individual ($9.99, 10k), Team ($25/user, 100k), Enterprise ($55/user, unlimited)
+- [CLI Reference](https://skillsmith.app/docs/cli): Complete CLI command documentation
+- [MCP Server](https://skillsmith.app/docs/mcp-server): MCP integration configuration
+- [API Reference](https://skillsmith.app/docs/api): REST API documentation
+
+## What Are Skills?
+
+Skills are YAML files installed to `~/.claude/skills/` that provide Claude Code with:
+- Domain-specific knowledge and best practices
+- Reusable workflows and templates
+- Tool configurations and integrations
+- Project-type-specific guidance
+
+## Trust Tiers
+
+| Tier | Description |
+|------|-------------|
+| verified | Official Anthropic-reviewed skills |
+| community | Community-reviewed and tested |
+| experimental | New or beta skills |
+
+## Common Tasks
+
+### Search for skills
+Ask Claude: "What skills would help with this React project?"
+Or CLI: `skillsmith search react --category development`
+
+### Install a skill
+Ask Claude: "Install the jest-helper skill"
+Or CLI: `skillsmith install community/jest-helper`
+
+### Get recommendations
+Ask Claude: "Recommend skills for my current project"
+Or CLI: `skillsmith recommend`
+
+### Compare skills
+Ask Claude: "Compare jest-helper and vitest-helper"
+Or CLI: `skillsmith compare jest-helper vitest-helper`
+
+## MCP Tools Available
+
+When using Claude Code with Skillsmith MCP server:
+- `search`: Search skills by query, category, trust tier
+- `get_skill`: Get detailed skill information
+- `install_skill`: Install a skill to ~/.claude/skills
+- `uninstall_skill`: Remove an installed skill
+- `recommend`: Get project-based skill recommendations
+- `validate`: Validate a skill's structure
+- `compare`: Compare multiple skills side-by-side
+
+## Packages
+
+| Package | npm | Description |
+|---------|-----|-------------|
+| @skillsmith/mcp-server | `npx -y @skillsmith/mcp-server` | MCP server for Claude Code |
+| @skillsmith/cli | `npm i -g @skillsmith/cli` | Command-line interface |
+| @skillsmith/core | - | Core library (internal) |
+
+## License
+
+Elastic License 2.0 (ELv2)
+- Self-hosting permitted
+- Modification for own use permitted
+- Cannot offer as managed service to third parties
+
+## Contact
+
+- Website: https://skillsmith.app
+- GitHub: https://github.com/smith-horn/skillsmith
+- Contact: https://skillsmith.app/contact
+
+## Optional
+
+- Logo: https://skillsmith.app/logo-icon.svg
+- Changelog: https://skillsmith.app/changelog
+- Terms: https://skillsmith.app/terms
+- Privacy: https://skillsmith.app/privacy
