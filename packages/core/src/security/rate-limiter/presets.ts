@@ -46,6 +46,18 @@ export const RATE_LIMIT_PRESETS = {
     windowMs: 60000,
     failMode: 'open' as const,
   },
+  /**
+   * Stripe Webhook: Optimized for Stripe's webhook delivery patterns
+   * SMI-1062: Stripe sends bursts during subscription lifecycle events
+   * - 100 requests per minute (sufficient for webhook retries)
+   * - Fail-closed to prevent replay attacks
+   */
+  STRIPE_WEBHOOK: {
+    maxTokens: 100,
+    refillRate: 100 / 60, // ~1.67 tokens/sec
+    windowMs: 60000,
+    failMode: 'closed' as const,
+  },
 } as const
 
 /**
