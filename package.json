@@ -63,7 +63,7 @@
     "@typescript-eslint/eslint-plugin": "^8.18.0",
     "@typescript-eslint/parser": "^8.18.0",
     "@vitest/coverage-v8": "4.0.16",
-    "claude-flow": "2.7.47",
+    "claude-flow": "3.0.0-alpha.83",
     "eslint": "^9.17.0",
     "eslint-config-prettier": "^9.1.0",
     "globals": "^15.14.0",

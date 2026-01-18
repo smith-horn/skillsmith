@@ -37,11 +37,13 @@ import {
   BackgroundSyncService,
   type ApiClientConfig,
 } from '@skillsmith/core'
+import { LLMFailoverChain, type LLMFailoverConfig } from './llm/failover.js'
 
 /**
  * Shared context for MCP tool handlers
  * SMI-1183: Added apiClient for live API access with local fallback
  * SMI-1184: Added distinctId for telemetry tracking
+ * SMI-1524: Added llmFailover for multi-LLM support with circuit breaker
  */
 export interface ToolContext {
   /** SQLite database connection */
@@ -56,6 +58,10 @@ export interface ToolContext {
   distinctId?: string
   /** Background sync service (if enabled) */
   backgroundSync?: BackgroundSyncService
+  /** LLM failover chain for multi-provider support (SMI-1524) */
+  llmFailover?: LLMFailoverChain
+  /** Internal: Signal handlers for cleanup (prevents memory leaks) */
+  _signalHandlers?: Array<{ signal: NodeJS.Signals; handler: () => void }>
 }
 
 /**
@@ -115,6 +121,12 @@ export interface ToolContextOptions {
    * Enables automatic registry sync during MCP server sessions
    */
   backgroundSyncConfig?: BackgroundSyncConfig
+  /**
+   * LLM failover chain configuration (SMI-1524)
+   * Enables multi-provider LLM support with automatic failover
+   * Disabled by default - set enabled: true to activate
+   */
+  llmFailoverConfig?: LLMFailoverConfig
 }
 
 /**
@@ -289,14 +301,54 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
       })
 
       backgroundSync.start()
-
-      // Register cleanup handlers
-      const cleanup = () => {
-        backgroundSync?.stop()
-      }
-      process.on('SIGTERM', cleanup)
-      process.on('SIGINT', cleanup)
     }
+  }
+
+  // SMI-1524: Initialize LLM failover chain if enabled
+  let llmFailover: LLMFailoverChain | undefined
+
+  // Check env var first (SKILLSMITH_LLM_FAILOVER_ENABLED), then config
+  const llmFailoverEnabled =
+    process.env.SKILLSMITH_LLM_FAILOVER_ENABLED === 'true' ||
+    options.llmFailoverConfig?.enabled === true
+
+  if (llmFailoverEnabled) {
+    llmFailover = new LLMFailoverChain({
+      ...options.llmFailoverConfig,
+      enabled: true,
+      debug: options.llmFailoverConfig?.debug ?? false,
+    })
+
+    // Initialize in background (non-blocking)
+    // Always log errors to prevent silent failures
+    llmFailover.initialize().catch((error) => {
+      console.error(`[skillsmith] LLM failover initialization error: ${error.message}`)
+    })
+
+    if (options.llmFailoverConfig?.debug) {
+      console.log('[skillsmith] LLM failover chain initialized')
+    }
+  }
+
+  // Create signal handlers for cleanup (stored for removal to prevent memory leaks)
+  const signalHandlers: Array<{ signal: NodeJS.Signals; handler: () => void }> = []
+
+  if (backgroundSync || llmFailover) {
+    const cleanup = () => {
+      backgroundSync?.stop()
+      llmFailover?.close()
+    }
+
+    const sigTermHandler = () => cleanup()
+    const sigIntHandler = () => cleanup()
+
+    process.on('SIGTERM', sigTermHandler)
+    process.on('SIGINT', sigIntHandler)
+
+    signalHandlers.push(
+      { signal: 'SIGTERM', handler: sigTermHandler },
+      { signal: 'SIGINT', handler: sigIntHandler }
+    )
   }
 
   return {
@@ -306,19 +358,34 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
     apiClient,
     distinctId,
     backgroundSync,
+    llmFailover,
+    _signalHandlers: signalHandlers.length > 0 ? signalHandlers : undefined,
   }
 }
 
 /**
  * Close the tool context and release resources
  * SMI-1184: Also shuts down PostHog telemetry if initialized
+ * SMI-1524: Also closes LLM failover chain
  *
  * @param context - Tool context to close
  */
 export async function closeToolContext(context: ToolContext): Promise<void> {
+  // Remove signal handlers to prevent memory leaks
+  if (context._signalHandlers) {
+    for (const { signal, handler } of context._signalHandlers) {
+      process.removeListener(signal, handler)
+    }
+  }
+
   // Stop background sync service if running
   if (context.backgroundSync) {
     context.backgroundSync.stop()
+  }
+
+  // SMI-1524: Close LLM failover chain if initialized
+  if (context.llmFailover) {
+    context.llmFailover.close()
   }
 
   // Close database connection
