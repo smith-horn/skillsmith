@@ -1,0 +1,318 @@
+---
+/**
+ * Skillsmith Privacy Policy Page
+ * Last updated: January 17, 2026
+ */
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+const lastUpdated = 'January 17, 2026';
+---
+
+<BaseLayout title="Privacy Policy | Skillsmith" description="Privacy Policy for Skillsmith - Learn how we collect, use, and protect your data.">
+  <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+    <!-- Header -->
+    <div class="mb-12">
+      <h1 class="text-4xl font-bold text-white mb-4">Privacy Policy</h1>
+      <p class="text-dark-400">Last updated: {lastUpdated}</p>
+    </div>
+
+    <!-- Introduction -->
+    <section class="prose-section">
+      <p class="text-dark-300 text-lg leading-relaxed mb-8">
+        Smith Horn Group Ltd. ("we", "us", or "our") operates Skillsmith, an MCP server for Claude Code
+        skill discovery, installation, and management. This Privacy Policy explains how we collect, use,
+        disclose, and safeguard your information when you use our service.
+      </p>
+      <p class="text-dark-300 leading-relaxed mb-8">
+        Please read this Privacy Policy carefully. By using Skillsmith, you agree to the collection and
+        use of information in accordance with this policy.
+      </p>
+    </section>
+
+    <!-- Table of Contents -->
+    <nav class="bg-dark-900 border border-dark-700 rounded-lg p-6 mb-12">
+      <h2 class="text-lg font-semibold text-white mb-4">Contents</h2>
+      <ol class="list-decimal list-inside space-y-2 text-primary-400">
+        <li><a href="#information-we-collect" class="hover:text-primary-300 transition-colors">Information We Collect</a></li>
+        <li><a href="#how-we-use-information" class="hover:text-primary-300 transition-colors">How We Use Your Information</a></li>
+        <li><a href="#data-storage" class="hover:text-primary-300 transition-colors">Data Storage and Security</a></li>
+        <li><a href="#third-party-services" class="hover:text-primary-300 transition-colors">Third-Party Services</a></li>
+        <li><a href="#your-rights" class="hover:text-primary-300 transition-colors">Your Rights</a></li>
+        <li><a href="#cookies" class="hover:text-primary-300 transition-colors">Cookies and Tracking</a></li>
+        <li><a href="#data-retention" class="hover:text-primary-300 transition-colors">Data Retention</a></li>
+        <li><a href="#children" class="hover:text-primary-300 transition-colors">Children's Privacy</a></li>
+        <li><a href="#changes" class="hover:text-primary-300 transition-colors">Changes to This Policy</a></li>
+        <li><a href="#contact" class="hover:text-primary-300 transition-colors">Contact Us</a></li>
+      </ol>
+    </nav>
+
+    <!-- Section 1: Information We Collect -->
+    <section id="information-we-collect" class="mb-12">
+      <h2 class="text-2xl font-bold text-white mb-6">1. Information We Collect</h2>
+
+      <h3 class="text-xl font-semibold text-white mb-4">Information You Provide</h3>
+      <ul class="list-disc list-inside text-dark-300 space-y-2 mb-6 ml-4">
+        <li><strong class="text-white">Account Information:</strong> Email address, username, and authentication credentials when you create an account</li>
+        <li><strong class="text-white">GitHub Information:</strong> If you connect your GitHub account, we may access your public profile information and repository metadata</li>
+        <li><strong class="text-white">Payment Information:</strong> For paid plans, billing details are processed by our payment provider (Stripe)</li>
+        <li><strong class="text-white">Support Communications:</strong> Information you provide when contacting our support team</li>
+      </ul>
+
+      <h3 class="text-xl font-semibold text-white mb-4">Information Collected Automatically</h3>
+      <ul class="list-disc list-inside text-dark-300 space-y-2 mb-6 ml-4">
+        <li><strong class="text-white">Usage Data:</strong> API calls, search queries, skill installations, and feature usage</li>
+        <li><strong class="text-white">Technical Data:</strong> IP address, browser type, operating system, and device information</li>
+        <li><strong class="text-white">Log Data:</strong> Server logs including access times, pages viewed, and error reports</li>
+        <li><strong class="text-white">Analytics Data:</strong> Anonymized usage patterns to improve our service</li>
+      </ul>
+
+      <h3 class="text-xl font-semibold text-white mb-4">Information from Third Parties</h3>
+      <ul class="list-disc list-inside text-dark-300 space-y-2 ml-4">
+        <li><strong class="text-white">OAuth Providers:</strong> Profile information from GitHub or Google when you use social login</li>
+        <li><strong class="text-white">Public Sources:</strong> Information about skills from public GitHub repositories</li>
+      </ul>
+    </section>
+
+    <!-- Section 2: How We Use Information -->
+    <section id="how-we-use-information" class="mb-12">
+      <h2 class="text-2xl font-bold text-white mb-6">2. How We Use Your Information</h2>
+      <p class="text-dark-300 mb-4">We use the information we collect to:</p>
+      <ul class="list-disc list-inside text-dark-300 space-y-2 ml-4">
+        <li>Provide, maintain, and improve Skillsmith services</li>
+        <li>Process transactions and manage your account</li>
+        <li>Personalize skill recommendations based on your usage patterns</li>
+        <li>Send important service updates and notifications</li>
+        <li>Respond to your support requests and communications</li>
+        <li>Enforce our Terms of Service and prevent abuse</li>
+        <li>Analyze usage trends to improve user experience</li>
+        <li>Comply with legal obligations</li>
+      </ul>
+    </section>
+
+    <!-- Section 3: Data Storage and Security -->
+    <section id="data-storage" class="mb-12">
+      <h2 class="text-2xl font-bold text-white mb-6">3. Data Storage and Security</h2>
+
+      <h3 class="text-xl font-semibold text-white mb-4">Where We Store Your Data</h3>
+      <p class="text-dark-300 mb-6">
+        Your data is stored on servers provided by our infrastructure partners, primarily located in the
+        United States. We use Supabase for database hosting and Vercel for application hosting.
+      </p>
+
+      <h3 class="text-xl font-semibold text-white mb-4">Security Measures</h3>
+      <p class="text-dark-300 mb-4">We implement industry-standard security measures including:</p>
+      <ul class="list-disc list-inside text-dark-300 space-y-2 ml-4">
+        <li>Encryption of data in transit (TLS 1.3) and at rest (AES-256)</li>
+        <li>Regular security audits and vulnerability assessments</li>
+        <li>Access controls and authentication for internal systems</li>
+        <li>Secure API key management and rotation policies</li>
+        <li>Incident response procedures for security events</li>
+      </ul>
+    </section>
+
+    <!-- Section 4: Third-Party Services -->
+    <section id="third-party-services" class="mb-12">
+      <h2 class="text-2xl font-bold text-white mb-6">4. Third-Party Services</h2>
+      <p class="text-dark-300 mb-6">We use the following third-party services that may collect information:</p>
+
+      <div class="space-y-4">
+        <div class="bg-dark-900 border border-dark-700 rounded-lg p-4">
+          <h4 class="font-semibold text-white">Supabase</h4>
+          <p class="text-dark-400 text-sm">Database and authentication services</p>
+          <a href="https://supabase.com/privacy" class="text-primary-400 text-sm hover:text-primary-300" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+        </div>
+
+        <div class="bg-dark-900 border border-dark-700 rounded-lg p-4">
+          <h4 class="font-semibold text-white">PostHog</h4>
+          <p class="text-dark-400 text-sm">Product analytics (anonymized)</p>
+          <a href="https://posthog.com/privacy" class="text-primary-400 text-sm hover:text-primary-300" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+        </div>
+
+        <div class="bg-dark-900 border border-dark-700 rounded-lg p-4">
+          <h4 class="font-semibold text-white">Vercel</h4>
+          <p class="text-dark-400 text-sm">Application hosting and edge functions</p>
+          <a href="https://vercel.com/legal/privacy-policy" class="text-primary-400 text-sm hover:text-primary-300" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+        </div>
+
+        <div class="bg-dark-900 border border-dark-700 rounded-lg p-4">
+          <h4 class="font-semibold text-white">Stripe</h4>
+          <p class="text-dark-400 text-sm">Payment processing (paid plans only)</p>
+          <a href="https://stripe.com/privacy" class="text-primary-400 text-sm hover:text-primary-300" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 5: Your Rights -->
+    <section id="your-rights" class="mb-12">
+      <h2 class="text-2xl font-bold text-white mb-6">5. Your Rights</h2>
+      <p class="text-dark-300 mb-4">Depending on your location, you may have the following rights:</p>
+
+      <div class="space-y-4">
+        <div class="border-l-4 border-primary-500 pl-4">
+          <h4 class="font-semibold text-white">Right to Access</h4>
+          <p class="text-dark-400 text-sm">Request a copy of the personal data we hold about you</p>
+        </div>
+
+        <div class="border-l-4 border-primary-500 pl-4">
+          <h4 class="font-semibold text-white">Right to Rectification</h4>
+          <p class="text-dark-400 text-sm">Request correction of inaccurate personal data</p>
+        </div>
+
+        <div class="border-l-4 border-primary-500 pl-4">
+          <h4 class="font-semibold text-white">Right to Erasure</h4>
+          <p class="text-dark-400 text-sm">Request deletion of your personal data (subject to legal retention requirements)</p>
+        </div>
+
+        <div class="border-l-4 border-primary-500 pl-4">
+          <h4 class="font-semibold text-white">Right to Portability</h4>
+          <p class="text-dark-400 text-sm">Request your data in a machine-readable format</p>
+        </div>
+
+        <div class="border-l-4 border-primary-500 pl-4">
+          <h4 class="font-semibold text-white">Right to Object</h4>
+          <p class="text-dark-400 text-sm">Object to processing of your data for marketing purposes</p>
+        </div>
+      </div>
+
+      <p class="text-dark-300 mt-6">
+        To exercise any of these rights, please contact us using the information in the Contact section below.
+      </p>
+    </section>
+
+    <!-- Section 6: Cookies and Tracking -->
+    <section id="cookies" class="mb-12">
+      <h2 class="text-2xl font-bold text-white mb-6">6. Cookies and Tracking</h2>
+      <p class="text-dark-300 mb-4">We use the following types of cookies:</p>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="border-b border-dark-700">
+              <th class="py-3 pr-4 text-white font-semibold">Type</th>
+              <th class="py-3 pr-4 text-white font-semibold">Purpose</th>
+              <th class="py-3 text-white font-semibold">Duration</th>
+            </tr>
+          </thead>
+          <tbody class="text-dark-300">
+            <tr class="border-b border-dark-800">
+              <td class="py-3 pr-4">Essential</td>
+              <td class="py-3 pr-4">Authentication and security</td>
+              <td class="py-3">Session</td>
+            </tr>
+            <tr class="border-b border-dark-800">
+              <td class="py-3 pr-4">Functional</td>
+              <td class="py-3 pr-4">Remember preferences</td>
+              <td class="py-3">1 year</td>
+            </tr>
+            <tr class="border-b border-dark-800">
+              <td class="py-3 pr-4">Analytics</td>
+              <td class="py-3 pr-4">Usage statistics (anonymized)</td>
+              <td class="py-3">1 year</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="text-dark-300 mt-4">
+        You can control cookies through your browser settings. Note that disabling certain cookies may
+        affect the functionality of our service.
+      </p>
+    </section>
+
+    <!-- Section 7: Data Retention -->
+    <section id="data-retention" class="mb-12">
+      <h2 class="text-2xl font-bold text-white mb-6">7. Data Retention</h2>
+      <p class="text-dark-300 mb-4">We retain your data for the following periods:</p>
+      <ul class="list-disc list-inside text-dark-300 space-y-2 ml-4">
+        <li><strong class="text-white">Account data:</strong> Until you delete your account, plus 30 days for backup recovery</li>
+        <li><strong class="text-white">Usage logs:</strong> 90 days for operational purposes</li>
+        <li><strong class="text-white">Analytics data:</strong> Aggregated and anonymized, retained indefinitely</li>
+        <li><strong class="text-white">Billing records:</strong> 7 years for legal and tax compliance</li>
+        <li><strong class="text-white">Inactive accounts:</strong> May be deleted after 2 years of inactivity (with prior notice)</li>
+      </ul>
+    </section>
+
+    <!-- Section 8: Children's Privacy -->
+    <section id="children" class="mb-12">
+      <h2 class="text-2xl font-bold text-white mb-6">8. Children's Privacy</h2>
+      <p class="text-dark-300">
+        Skillsmith is not intended for use by children under the age of 13 (or 16 in the European Economic Area).
+        We do not knowingly collect personal information from children. If you believe we have collected
+        information from a child, please contact us immediately and we will take steps to delete such information.
+      </p>
+    </section>
+
+    <!-- Section 9: Changes -->
+    <section id="changes" class="mb-12">
+      <h2 class="text-2xl font-bold text-white mb-6">9. Changes to This Policy</h2>
+      <p class="text-dark-300">
+        We may update this Privacy Policy from time to time. We will notify you of any material changes by
+        posting the new Privacy Policy on this page and updating the "Last updated" date. For significant
+        changes, we will send an email notification to registered users. Your continued use of Skillsmith
+        after any changes constitutes acceptance of the updated policy.
+      </p>
+    </section>
+
+    <!-- Section 10: Contact -->
+    <section id="contact" class="mb-12">
+      <h2 class="text-2xl font-bold text-white mb-6">10. Contact Us</h2>
+      <p class="text-dark-300 mb-6">
+        If you have questions about this Privacy Policy or our data practices, please contact us:
+      </p>
+
+      <div class="bg-dark-900 border border-dark-700 rounded-lg p-6">
+        <p class="text-white font-semibold mb-2">Smith Horn Group Ltd.</p>
+        <p class="text-dark-300 mb-4">Skillsmith Privacy Inquiries</p>
+
+        <div class="space-y-2">
+          <p class="text-dark-300">
+            <span class="text-dark-400">General Inquiries:</span>
+            <button
+              class="text-primary-400 hover:text-primary-300 ml-2 email-reveal"
+              data-user="info"
+              data-domain="smithhorn.ca"
+              onclick="revealEmail(this)"
+            >
+              Click to reveal email
+            </button>
+          </p>
+          <p class="text-dark-300">
+            <span class="text-dark-400">Support:</span>
+            <button
+              class="text-primary-400 hover:text-primary-300 ml-2 email-reveal"
+              data-user="support"
+              data-domain="smithhorn.ca"
+              onclick="revealEmail(this)"
+            >
+              Click to reveal email
+            </button>
+          </p>
+        </div>
+
+        <p class="text-dark-400 text-sm mt-4">
+          We aim to respond to all inquiries within 5 business days.
+        </p>
+      </div>
+    </section>
+
+    <!-- Back to top -->
+    <div class="text-center pt-8 border-t border-dark-800">
+      <a href="#" class="text-primary-400 hover:text-primary-300 transition-colors">
+        Back to top
+      </a>
+    </div>
+  </div>
+
+  <script is:inline>
+    function revealEmail(button) {
+      const user = button.getAttribute('data-user');
+      const domain = button.getAttribute('data-domain');
+      const email = user + '@' + domain;
+      const link = document.createElement('a');
+      link.href = 'mailto:' + email;
+      link.className = 'text-primary-400 hover:text-primary-300';
+      link.textContent = email;
+      button.replaceWith(link);
+    }
+  </script>
+</BaseLayout>

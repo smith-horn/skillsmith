@@ -20,6 +20,67 @@ const trustTiers = [
 ---
 
 <BaseLayout title="Skills" description="Search and discover skills for Claude Code">
+  <!-- JSON-LD Schema -->
+  <script type="application/ld+json" slot="head">
+  {
+    "@context": "https://schema.org",
+    "@type": "CollectionPage",
+    "name": "Skillsmith Skills Browser",
+    "description": "Search and discover skills for Claude Code. Browse by category and trust tier.",
+    "url": "https://skillsmith.app/skills",
+    "isPartOf": {
+      "@id": "https://skillsmith.app/#website"
+    },
+    "about": {
+      "@type": "SoftwareApplication",
+      "name": "Claude Code Skills",
+      "applicationCategory": "DeveloperApplication"
+    },
+    "mainEntity": {
+      "@type": "ItemList",
+      "name": "Skill Categories",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Development",
+          "description": "Skills for software development workflows"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Testing",
+          "description": "Testing frameworks and utilities"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "DevOps",
+          "description": "CI/CD, deployment, and infrastructure skills"
+        },
+        {
+          "@type": "ListItem",
+          "position": 4,
+          "name": "Documentation",
+          "description": "Documentation generation and management"
+        },
+        {
+          "@type": "ListItem",
+          "position": 5,
+          "name": "Productivity",
+          "description": "Workflow automation and productivity tools"
+        },
+        {
+          "@type": "ListItem",
+          "position": 6,
+          "name": "Security",
+          "description": "Security scanning and best practices"
+        }
+      ]
+    }
+  }
+  </script>
+
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
     <!-- Header -->
     <div class="text-center mb-12">
