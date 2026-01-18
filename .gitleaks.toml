@@ -100,6 +100,12 @@ paths = [
   '''docs/.*\.md$''',
   '''docs/.*\.yaml$''',
   '''\.claude/skills/.*/SKILL\.md$''',
+  # Lock files contain integrity hashes, not secrets
+  '''deno\.lock$''',
+  '''package-lock\.json$''',
+  '''pnpm-lock\.yaml$''',
+  '''yarn\.lock$''',
+  '''bun\.lockb$''',
 ]
 
 # Allow commits that are known to be safe

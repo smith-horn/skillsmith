@@ -61,7 +61,8 @@ function getPriceIds(): Record<PaidTier, Record<BillingPeriod, string>> {
 }
 
 // Default URLs
-const DEFAULT_SUCCESS_URL = Deno.env.get('APP_URL') + '/signup/success?session_id={CHECKOUT_SESSION_ID}'
+const DEFAULT_SUCCESS_URL =
+  Deno.env.get('APP_URL') + '/signup/success?session_id={CHECKOUT_SESSION_ID}'
 const DEFAULT_CANCEL_URL = Deno.env.get('APP_URL') + '/pricing'
 
 Deno.serve(async (req: Request) => {

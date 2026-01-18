@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 2026-01-17
+
+### Website Integration: Stripe Checkout Flow
+
+This release completes the frontend integration for Stripe billing, enabling users to sign up for paid tiers directly from the website.
+
+#### Checkout Flow (SMI-1071)
+
+- **Checkout Edge Function** (`supabase/functions/checkout`)
+  - Creates Stripe checkout sessions for Individual, Team, Enterprise tiers
+  - Supports monthly and annual billing periods
+  - Seat count selection for Team/Enterprise (1-1000 seats)
+  - Returns Stripe-hosted checkout URL
+
+- **Signup Page** (`/signup`)
+  - Tier selection with order summary
+  - Billing period toggle (monthly/annual with 17% savings)
+  - Seat count selector for team plans
+  - Stripe checkout redirect
+
+- **Success Page** (`/signup/success`)
+  - Post-payment confirmation
+  - Getting started guide with next steps
+  - Links to documentation
+
+#### Pricing Page Enhancements
+
+- Added billing period toggle (monthly/annual)
+- Dynamic price display based on selected period
+- Standardized query parameters (`?tier=` instead of `?plan=`)
+
+#### API Configuration
+
+- Added `API_PATHS` constants for REST vs Edge Function URLs
+- Removed hardcoded API URLs across website
+- Environment variable support via `PUBLIC_API_BASE_URL`
+
+#### Stripe Products Created
+
+| Tier | Monthly | Annual |
+|------|---------|--------|
+| Individual | $9.99 | $99.90 |
+| Team | $25/user | $250/user |
+| Enterprise | $55/user | $550/user |
+
+---
+
 ## [2.3.0] - 2026-01-17
 
 ### 🎉 Milestone: Phase 6 Billing Backend Complete
