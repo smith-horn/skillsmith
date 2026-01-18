@@ -343,7 +343,8 @@ const trustTiers = [
         currentPage = 1;
         renderResults();
       } catch (error) {
-        console.error('Search error:', error);
+        // Log errors only in development (errorMessage shown to user)
+        if (import.meta.env?.DEV) console.error('Search error:', error);
         errorMessage.textContent = error.message;
         showState('error');
         resultsCount.textContent = 'Error';
