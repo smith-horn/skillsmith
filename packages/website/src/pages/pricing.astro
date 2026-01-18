@@ -1168,10 +1168,7 @@ const faqs = [
     const toggleBtns = document.querySelectorAll('.toggle-btn');
     const pricingCards = document.querySelectorAll('.pricing-card');
 
-    let currentPeriod = 'monthly';
-
     function updatePrices(period: string) {
-      currentPeriod = period;
 
       // Update toggle button states
       toggleBtns.forEach(btn => {

@@ -2,11 +2,55 @@
  * API client for Skillsmith backend
  *
  * Integrates with api.skillsmith.app for skill data retrieval.
+ *
+ * SMI-1071: Path configuration for different API types
  */
 
 import type { Skill, SkillSearchParams, SkillSearchResult, ApiResponse } from '../types/index'
 
+// Base URLs for different environments
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'
+
+/**
+ * API path prefixes for different endpoint types
+ *
+ * - REST: Standard REST API endpoints (skills, users, etc.)
+ * - EDGE: Supabase Edge Functions (stats, checkout, etc.)
+ *
+ * @example
+ * // REST API: /v1/skills/search
+ * const searchUrl = `${API_BASE_URL}${API_PATHS.rest}/skills/search`
+ *
+ * // Edge Function: /functions/v1/stats
+ * const statsUrl = `${API_BASE_URL}${API_PATHS.edge}/stats`
+ */
+export const API_PATHS = {
+  /** REST API prefix - e.g., /v1/skills/search */
+  rest: '/v1',
+  /** Supabase Edge Functions prefix - e.g., /functions/v1/checkout */
+  edge: '/functions/v1',
+} as const
+
+/**
+ * Get the full URL for a REST API endpoint
+ */
+export function getRestUrl(path: string): string {
+  return `${API_BASE_URL}${API_PATHS.rest}${path}`
+}
+
+/**
+ * Get the full URL for a Supabase Edge Function
+ */
+export function getEdgeFunctionUrl(functionName: string): string {
+  return `${API_BASE_URL}${API_PATHS.edge}/${functionName}`
+}
+
+/**
+ * Get the base API URL (for client-side use)
+ */
+export function getApiBaseUrl(): string {
+  return API_BASE_URL
+}
 
 /**
  * Generic fetch wrapper with error handling

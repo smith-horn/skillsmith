@@ -390,9 +390,9 @@
   </style>
 
   <!-- Fetch live skill count -->
-  <script is:inline>
+  <script define:vars={{ statsApiUrl: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1/stats` }}>
     (function() {
-      const API_URL = 'https://api.skillsmith.app/functions/v1/stats';
+      const API_URL = statsApiUrl;
       const CACHE_KEY = 'skillsmith_skill_count';
       const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
