@@ -5,7 +5,7 @@ interface Props {
   title: string;
   description: string;
   icon?: string;
-  iconColor?: 'purple' | 'blue' | 'green' | 'yellow' | 'red';
+  iconColor?: 'coral' | 'accent' | 'green' | 'yellow' | 'red';
   href?: string;
   class?: string;
 }
@@ -14,14 +14,14 @@ const {
   title,
   description,
   icon,
-  iconColor = 'purple',
+  iconColor = 'coral',
   href,
   class: className = '',
 } = Astro.props;
 
 const iconColorStyles = {
-  purple: 'from-[#E07A5F] to-[#D4694E]',
-  blue: 'from-[#E07A5F] to-[#D4694E]',
+  coral: 'from-[#E07A5F] to-[#D4694E]',
+  accent: 'from-[#E07A5F] to-[#D4694E]',
   green: 'from-green-500 to-green-600',
   yellow: 'from-yellow-500 to-yellow-600',
   red: 'from-red-500 to-red-600',
