@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-01-17
+
+### 🎉 Milestone: Phase 6 Billing Backend Complete
+
+This release implements the complete Stripe billing backend for subscription management, automatic license key delivery, and customer self-service billing.
+
+#### Stripe Integration (SMI-1062 to SMI-1070)
+
+- **StripeClient Wrapper** (SMI-1062)
+  - Type-safe Stripe SDK wrapper for customers, subscriptions, checkout
+  - Checkout session creation with tier-based pricing
+  - Customer portal session management
+  - Invoice listing and retrieval
+
+- **Subscription API** (SMI-1063)
+  - `BillingService` for database operations
+  - Subscription upsert with conflict resolution
+  - Status tracking and period management
+  - Seat count updates with proration
+
+- **Team & Enterprise Flows** (SMI-1064, SMI-1065)
+  - Checkout flows for team and enterprise tiers
+  - Adjustable seat quantities (1-1000 seats)
+  - Tier-specific metadata and pricing
+
+- **License Key Delivery** (SMI-1066)
+  - Automatic JWT license generation on subscription creation
+  - License key storage with hash indexing
+  - Revocation on subscription cancellation or tier change
+
+- **Seat-Based Billing** (SMI-1067)
+  - Seat count management with Stripe sync
+  - Proration support for mid-cycle changes
+  - Audit logging for seat updates
+
+- **Customer Portal** (SMI-1068)
+  - Stripe Customer Portal session creation
+  - Self-service subscription management
+  - Invoice history access
+
+- **Invoice Management** (SMI-1069)
+  - Invoice storage with PDF URLs
+  - Payment status tracking
+  - Period-based invoice retrieval
+
+- **Webhook Handlers** (SMI-1070)
+  - Idempotent webhook processing with event deduplication
+  - Signature verification with rate limiting
+  - Event routing for subscription and invoice lifecycle
+
+#### GDPR Compliance
+
+- **Data Export** (Article 20)
+  - Complete customer data export in JSON format
+  - Subscriptions, invoices, license keys, webhook events
+  - Excludes sensitive JWT tokens from export
+
+- **Data Deletion** (Article 17)
+  - Cascading deletion of all customer data
+  - Stripe customer deletion integration
+  - Dry-run mode for deletion preview
+
+#### Reconciliation
+
+- **StripeReconciliationJob**
+  - Periodic sync between local DB and Stripe
+  - Discrepancy detection for status, tier, seat count
+  - Auto-fix mode for automatic corrections
+
+#### Database Schema (ADR-021)
+
+- Extended `user_subscriptions` with `stripe_price_id`, `seat_count`, `canceled_at`
+- Added `stripe_webhook_events` table for idempotent processing
+- Added `license_keys` table for subscription-linked JWT storage
+- Added `invoices` table for payment history
+
+#### Security
+
+- Stripe ID validators and sanitizers in `sanitization.ts`
+- `STRIPE_WEBHOOK` rate limiter preset (100 req/min, fail-closed)
+- Webhook signature verification with timing-safe comparison
+
+### Documentation
+
+- [ADR-021: Billing Schema Approach](docs/adr/021-billing-schema-approach.md)
+
+---
+
 ## [2.2.0] - 2026-01-17
 
 ### 🎉 Milestone: Claude-Flow V3 Migration Complete
