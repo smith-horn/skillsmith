@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [CLI 0.3.1] - 2026-01-18
+
+### CLI Hotfix Release (SMI-1575)
+
+Critical bug fixes for CLI v0.3.0 that was non-functional for new users.
+
+#### Bug Fixes
+
+- **Database Initialization** (SMI-1576)
+  - Fixed "no such table: skills" error on fresh installations
+  - Changed `openDatabase()` to `createDatabase()` in sync command
+  - Ensures tables are created when database doesn't exist
+
+- **API Schema Validation** (SMI-1577)
+  - Fixed Zod validation failures on partial API responses
+  - Added `.optional()` and `.default()` to handle missing fields
+  - Uses epoch timestamp sentinel for missing date fields
+
+- **Import Rate Limiting** (SMI-1578)
+  - Increased default delay from 100ms to 150ms
+  - Added `SKILLSMITH_IMPORT_DELAY_MS` environment variable
+  - Added verbose logging for SKILL.md fetch failures
+  - Improved failure statistics reporting
+
+- **Python Language Detection** (SMI-1579)
+  - Added `.py`, `.pyi`, `.pyw` to `SUPPORTED_EXTENSIONS`
+  - `analyze` command now detects Python files in codebases
+
+#### Documentation
+
+- Added "Updating the CLI" section to README
+- Added `--version` usage documentation
+- Updated environment variables table
+
+#### Package Versions
+
+| Package | Version |
+|---------|---------|
+| @skillsmith/cli | 0.3.1 |
+| @skillsmith/core | 2.1.2 |
+
+---
+
 ## [2.3.1] - 2026-01-17
 
 ### Website Integration: Stripe Checkout Flow
