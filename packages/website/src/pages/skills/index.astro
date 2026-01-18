@@ -196,8 +196,8 @@ const trustTiers = [
     </div>
   </div>
 
-  <script is:inline>
-    const API_BASE = 'https://api.skillsmith.app/functions/v1';
+  <script define:vars={{ apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1` }}>
+    const API_BASE = apiBase;
     const ITEMS_PER_PAGE = 12;
 
     let currentPage = 1;
@@ -309,7 +309,7 @@ const trustTiers = [
       resultsCount.textContent = 'Searching...';
 
       try {
-        const response = await fetch(`${API_BASE}/skill-search`, {
+        const response = await fetch(`${API_BASE}/skills-search`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

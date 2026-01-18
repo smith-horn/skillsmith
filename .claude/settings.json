@@ -2,7 +2,7 @@
   "env": {
     "CLAUDE_FLOW_AUTO_COMMIT": "false",
     "CLAUDE_FLOW_AUTO_PUSH": "false",
-    "CLAUDE_FLOW_HOOKS_ENABLED": "false",
+    "CLAUDE_FLOW_HOOKS_ENABLED": "true",
     "CLAUDE_FLOW_TELEMETRY_ENABLED": "true",
     "CLAUDE_FLOW_REMOTE_EXECUTION": "true",
     "CLAUDE_FLOW_CHECKPOINTS_ENABLED": "true"
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.command // empty' | tr '\\n' '\\0' | xargs -0 -I {} npx claude-flow@alpha hooks pre-command --command '{}' --validate-safety true --prepare-resources true"
+            "command": "cat | jq -r '.tool_input.command // empty' | tr '\\n' '\\0' | xargs -0 -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then npx claude-flow@alpha hooks pre-command --command \"$CMD\" --validate-safety true --prepare-resources true 2>/dev/null || true; fi'"
           }
         ]
       },
@@ -59,7 +59,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.command // empty' | tr '\\n' '\\0' | xargs -0 -I {} npx claude-flow@alpha hooks post-command --command '{}' --track-metrics true --store-results true"
+            "command": "cat | jq -r '.tool_input.command // empty' | tr '\\n' '\\0' | xargs -0 -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then npx claude-flow@alpha hooks post-command --command \"$CMD\" --success true --track-metrics true --store-results true 2>/dev/null || true; fi'"
           }
         ]
       },
@@ -68,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.file_path // .tool_input.path // empty' | tr '\\n' '\\0' | xargs -0 -I {} npx claude-flow@alpha hooks post-edit --file '{}' --format true --update-memory true"
+            "command": "cat | jq -r '.tool_input.file_path // .tool_input.path // empty' | tr '\\n' '\\0' | xargs -0 -I {} sh -c 'FILE=\"{}\"; if [ -n \"$FILE\" ]; then npx claude-flow@alpha hooks post-edit --file \"$FILE\" --success true --format true --update-memory true 2>/dev/null || true; fi'"
           }
         ]
       },
