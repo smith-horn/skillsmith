@@ -24,6 +24,9 @@ const ALLOWED_ORIGINS: string[] = (() => {
   }
   // Default production allowed origins
   return [
+    // Production domains
+    'https://skillsmith.app',
+    'https://www.skillsmith.app',
     'https://skillsmith.dev',
     'https://www.skillsmith.dev',
     'https://app.skillsmith.dev',
