@@ -456,10 +456,11 @@ jobs:
               body: body
             });
 
-      - name: Check benchmark pass/fail
+      - name: Fail on benchmark regression
         if: steps.benchmarks.outcome == 'failure'
         run: |
-          echo "::warning::Some benchmark targets were not met. Review the benchmark results comment on the PR."
+          echo "::error::Benchmark regression detected. Review the benchmark results comment on the PR."
+          exit 1
 
   compliance:
     name: Standards Compliance

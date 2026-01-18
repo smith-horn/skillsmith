@@ -16,14 +16,14 @@ Phase 5 implements comprehensive integration tests for the V3 Migration neural f
 packages/core/tests/integration/neural/
 ├── setup.ts              # Test context factory and mock implementations
 ├── helpers.ts            # Signal generation utilities
-├── signal-collection.test.ts   # 11 tests
-├── preference-learner.test.ts  # 14 tests
+├── signal-collection.test.ts   # 12 tests
+├── preference-learner.test.ts  # 15 tests
 ├── personalization.test.ts     # 13 tests
-├── privacy.test.ts             # 13 tests
+├── privacy.test.ts             # 14 tests
 └── e2e-learning.test.ts        # 7 tests
 ```
 
-**Total Tests:** 58
+**Total Tests:** 61
 
 ### Mock Implementations
 
@@ -171,9 +171,9 @@ Results are posted as comments on PRs.
 
 | Wave | Agents | Tests Created | Status |
 |------|--------|---------------|--------|
-| 1 | tester, coder | 11 (signal collection) | ✅ Complete |
-| 2 | tester, coder | 27 (preference + personalization) | ✅ Complete |
-| 3 | security-manager, tester | 20 (privacy + e2e) | ✅ Complete |
+| 1 | tester, coder | 12 (signal collection) | ✅ Complete |
+| 2 | tester, coder | 28 (preference + personalization) | ✅ Complete |
+| 3 | security-manager, tester | 21 (privacy + e2e) | ✅ Complete |
 | 4 | performance-benchmarker, coder | Benchmark script + CI | ✅ Complete |
 | 5 | researcher | Documentation | ✅ Complete |
 
