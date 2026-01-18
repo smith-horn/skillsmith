@@ -46,12 +46,18 @@ interface ImportResult {
   skipped: number
   errors: number
   duration: number
+  // SMI-1578: Additional statistics for better visibility
+  skillMdFetchFailed: number
 }
 
 const DEFAULT_TOPIC = 'claude-skill'
 const GITHUB_API = 'https://api.github.com'
 const MAX_PER_PAGE = 100
 const RATE_LIMIT_DELAY = 60000 // 1 minute
+// SMI-1578: Configurable delay between API calls (default 150ms)
+const DEFAULT_IMPORT_DELAY_MS = 150
+const IMPORT_DELAY_MS =
+  parseInt(process.env['SKILLSMITH_IMPORT_DELAY_MS'] || '', 10) || DEFAULT_IMPORT_DELAY_MS
 
 /**
  * Sleep for a specified duration
@@ -116,8 +122,13 @@ async function fetchGitHub<T>(url: string, token?: string, retries: number = 3):
 
 /**
  * Fetch SKILL.md content from a repository
+ * SMI-1578: Added verbose logging for fetch failures
  */
-async function fetchSkillMd(repo: GitHubRepo, token?: string): Promise<string | null> {
+async function fetchSkillMd(
+  repo: GitHubRepo,
+  token?: string,
+  verbose?: boolean
+): Promise<string | null> {
   const url = `${GITHUB_API}/repos/${repo.full_name}/contents/SKILL.md`
 
   try {
@@ -126,7 +137,12 @@ async function fetchSkillMd(repo: GitHubRepo, token?: string): Promise<string | 
       return Buffer.from(response.content, 'base64').toString('utf-8')
     }
     return response.content
-  } catch {
+  } catch (error) {
+    if (verbose) {
+      console.log(
+        `  [WARN] Failed to fetch SKILL.md from ${repo.full_name}: ${error instanceof Error ? error.message : 'Unknown error'}`
+      )
+    }
     return null
   }
 }
@@ -246,6 +262,7 @@ export async function importSkills(options: ImportOptions = {}): Promise<ImportR
     skipped: 0,
     errors: 0,
     duration: 0,
+    skillMdFetchFailed: 0,
   }
 
   // Initialize database
@@ -272,7 +289,10 @@ export async function importSkills(options: ImportOptions = {}): Promise<ImportR
         }
 
         // Try to fetch SKILL.md
-        const skillMd = await fetchSkillMd(repo, token)
+        const skillMd = await fetchSkillMd(repo, token, verbose)
+        if (!skillMd) {
+          result.skillMdFetchFailed++
+        }
         const skillMdMeta = skillMd ? parseSkillMd(skillMd) : {}
 
         // Build skill data
@@ -292,8 +312,8 @@ export async function importSkills(options: ImportOptions = {}): Promise<ImportR
           console.log(`Prepared: ${skill.name} (${repo.full_name})`)
         }
 
-        // Rate limit protection
-        await sleep(100)
+        // Rate limit protection - SMI-1578: Increased default delay
+        await sleep(IMPORT_DELAY_MS)
       } catch (error) {
         result.errors++
         console.error(`Error processing ${repo.full_name}:`, error)
@@ -317,6 +337,10 @@ export async function importSkills(options: ImportOptions = {}): Promise<ImportR
   console.log(`Imported: ${result.imported}`)
   console.log(`Skipped: ${result.skipped}`)
   console.log(`Errors: ${result.errors}`)
+  // SMI-1578: Show additional statistics
+  if (result.skillMdFetchFailed > 0) {
+    console.log(`SKILL.md fetch failed: ${result.skillMdFetchFailed}`)
+  }
   console.log(`Duration: ${(result.duration / 1000).toFixed(1)}s`)
 
   return result

@@ -17,8 +17,20 @@ export type SupportedLanguage = 'typescript' | 'javascript' | 'python' | 'go' | 
 
 /**
  * Supported file extensions for analysis (legacy, for backwards compatibility)
+ * SMI-1579: Added Python extensions for multi-language analysis
+ * Includes .pyw for Windows GUI Python scripts
  */
-export const SUPPORTED_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
+export const SUPPORTED_EXTENSIONS = [
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.py',
+  '.pyi',
+  '.pyw',
+]
 
 /**
  * Multi-language file extensions mapping
