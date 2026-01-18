@@ -99,7 +99,7 @@ Elastic License 2.0 (ELv2)
 ## Contact
 
 - Website: https://skillsmith.app
-- GitHub: https://github.com/smith-horn/skillsmith
+- GitHub: https://github.com/Smith-Horn-Group/skillsmith
 - Contact: https://skillsmith.app/contact
 
 ## Optional
