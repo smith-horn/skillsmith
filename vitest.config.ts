@@ -66,6 +66,9 @@ export default defineConfig({
         'scripts/**',
         '.claude/**',
 
+        // Supabase Edge Functions (Deno runtime, requires deno test)
+        'supabase/**',
+
         // MCP server utilities (shims, loggers)
         '**/core-shim.ts',
         '**/logger.ts',
