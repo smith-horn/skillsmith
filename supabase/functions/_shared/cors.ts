@@ -33,6 +33,7 @@ const ALLOWED_ORIGINS: string[] = (() => {
     'https://api.skillsmith.dev',
     // Vercel preview deployments
     'https://website-2j3tsgc7x-smithhorngroup.vercel.app',
+    'https://website-g4l4zfaag-smithhorngroup.vercel.app',
     // Localhost for development
     'http://localhost:3000',
     'http://localhost:5173',
