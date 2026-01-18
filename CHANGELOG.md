@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-01-17
+
+### 🎉 Milestone: Claude-Flow V3 Migration Complete
+
+This release completes the migration from Claude-Flow V2 to V3, bringing significant performance improvements and new neural learning capabilities.
+
+#### Core Migration (SMI-1517 to SMI-1524)
+
+- **V3 Alpha Upgrade** (SMI-1517)
+  - Upgraded claude-flow from 2.7.x to 3.0.0-alpha.83
+  - Updated all imports to V3 module paths
+  - Backward-compatible wrapper for V2 API consumers
+
+- **SessionManager V3 Memory API** (SMI-1518)
+  - Migrated to V3's `MemoryInitializer` and `MCPClient`
+  - Persistent session context with automatic recovery
+  - Session metrics and telemetry integration
+
+- **HNSW + SQLite Hybrid Storage** (SMI-1519)
+  - Hierarchical Navigable Small World graph for vector search
+  - SQLite backing store for persistence and ACID compliance
+  - **150x faster** embedding search (from 500ms to ~3ms for 10K vectors)
+
+- **ReasoningBank Integration** (SMI-1520)
+  - Trajectory-based learning for skill recommendations
+  - Installation/dismissal signal recording
+  - Verdict judgment system for recommendation quality
+
+- **SONA Routing** (SMI-1521)
+  - Self-Organizing Neural Architecture for MCP tool optimization
+  - Mixture-of-Experts routing for tool selection
+  - Adaptive load balancing across tool providers
+
+- **EWC++ PatternStore** (SMI-1522)
+  - Elastic Weight Consolidation for catastrophic forgetting prevention
+  - Fisher information matrix computation
+  - Pattern importance weighting and decay
+
+- **Multi-LLM Provider** (SMI-1523, SMI-1524)
+  - Support for OpenAI, Anthropic, Gemini, and Ollama backends
+  - Automatic failover with circuit breaker pattern
+  - Health monitoring and provider selection
+
+#### Security Hardening (Phase 4: SMI-1532 to SMI-1534)
+
+- **AI Defence Patterns** (SMI-1532)
+  - 16 CVE-hardened patterns for prompt injection protection
+  - Content policy enforcement
+  - Token limit validation
+
+- **Trust-Tier Sensitive Scanning** (SMI-1533)
+  - Differentiated scanning by skill trust level
+  - Enhanced scrutiny for experimental/unknown skills
+  - Automatic quarantine for policy violations
+
+- **E2B Sandbox Execution** (SMI-1534)
+  - Isolated code execution for untrusted skills
+  - Network isolation and resource limits
+  - Timeout enforcement and graceful cleanup
+
+#### Testing & Performance (Phase 5: SMI-1535 to SMI-1537)
+
+- **V3 Unit Tests** (SMI-1535)
+  - Updated test mocks for V3 API
+  - Session lifecycle tests
+  - Memory persistence validation
+
+- **Neural Integration Tests** (SMI-1536)
+  - 61 new tests across 5 test suites
+  - Signal collection, preference learning, personalization
+  - GDPR compliance and data wipe verification
+
+- **V3 Performance Benchmarks** (SMI-1537)
+  - Memory operations: **40x faster** (200ms → 5ms)
+  - Embedding search: **150x faster** (500ms → 3ms)
+  - Recommendation pipeline: **4x faster** (800ms → 200ms)
+  - CI benchmark integration for regression detection
+
+### Security
+
+- Fixed high-severity vulnerability in `tar` package (GHSA-8qq5-rm4j-mr97)
+
+### Documentation
+
+- [ADR-020: Phase 4 Security Hardening](docs/adr/020-phase4-security-hardening.md)
+- [Phase 5 Neural Testing Guide](docs/execution/phase5-neural-testing.md)
+- [V3 Migration Status](docs/execution/v3-migration-status.md)
+
 ## [2.0.0] - 2026-01-09
 
 ### Added
