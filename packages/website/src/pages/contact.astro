@@ -114,7 +114,7 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
             <div>
               <button
                 type="submit"
-                class="w-full md:w-auto px-8 py-3 bg-gradient-to-r from-primary-500 to-purple-500 text-white font-semibold rounded-lg hover:from-primary-600 hover:to-purple-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 focus:ring-offset-dark-900 transition-all"
+                class="w-full md:w-auto px-8 py-3 gradient-coral text-white font-semibold rounded-lg hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[#E07A5F] focus:ring-offset-2 focus:ring-offset-dark-900 transition-all"
               >
                 Send Message
               </button>
@@ -201,7 +201,7 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
                 <p class="text-sm text-dark-400">Enterprise Sales</p>
                 <button
                   class="text-primary-400 hover:text-primary-300 text-sm email-reveal"
-                  data-user="enterprise"
+                  data-user="support"
                   data-domain="smithhorn.ca"
                   onclick="revealEmail(this)"
                 >
@@ -324,6 +324,8 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
   </div>
 
   <script is:inline>
+    const API_BASE = 'https://api.skillsmith.app/functions/v1';
+
     function revealEmail(button) {
       const user = button.getAttribute('data-user');
       const domain = button.getAttribute('data-domain');
@@ -335,8 +337,8 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
       button.replaceWith(link);
     }
 
-    // Handle form submission (demo - would connect to backend)
-    document.getElementById('contact-form').addEventListener('submit', function(e) {
+    // Handle form submission
+    document.getElementById('contact-form').addEventListener('submit', async function(e) {
       e.preventDefault();
 
       const form = this;
@@ -349,24 +351,56 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
       submitBtn.disabled = true;
       submitBtn.textContent = 'Sending...';
 
-      // Simulate form submission (replace with actual API call)
-      setTimeout(() => {
-        // Show success (in production, this would be based on API response)
+      // Collect form data
+      const formData = {
+        name: form.name.value,
+        email: form.email.value,
+        company: form.company.value || undefined,
+        topic: form.topic.value,
+        message: form.message.value,
+      };
+
+      try {
+        const response = await fetch(`${API_BASE}/contact-submit`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(formData),
+        });
+
+        const result = await response.json();
+
+        if (response.ok && result.success) {
+          // Show success
+          statusDiv.classList.remove('hidden');
+          successDiv.classList.remove('hidden');
+          errorDiv.classList.add('hidden');
+          form.reset();
+
+          // Hide success message after 5 seconds
+          setTimeout(() => {
+            statusDiv.classList.add('hidden');
+            successDiv.classList.add('hidden');
+          }, 5000);
+        } else {
+          throw new Error(result.error || 'Failed to send message');
+        }
+      } catch (err) {
+        console.error('Contact form error:', err);
         statusDiv.classList.remove('hidden');
-        successDiv.classList.remove('hidden');
-        errorDiv.classList.add('hidden');
+        successDiv.classList.add('hidden');
+        errorDiv.classList.remove('hidden');
 
-        // Reset form
-        form.reset();
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Send Message';
-
-        // Hide success message after 5 seconds
+        // Hide error after 5 seconds
         setTimeout(() => {
           statusDiv.classList.add('hidden');
-          successDiv.classList.add('hidden');
+          errorDiv.classList.add('hidden');
         }, 5000);
-      }, 1000);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Send Message';
+      }
     });
 
     // Pre-select topic based on URL param
