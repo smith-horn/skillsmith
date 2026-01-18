@@ -76,8 +76,10 @@ describe('PreferenceLearner Integration', () => {
         profile.trust_tier_weights['verified'] ?? 0
       )
 
-      // Timestamp should be updated
-      expect(updated.last_updated).toBeGreaterThanOrEqual(profile.last_updated)
+      // Timestamp should be updated (allow 1 second tolerance for timing)
+      const timeDiff = updated.last_updated - profile.last_updated
+      expect(timeDiff).toBeGreaterThanOrEqual(0)
+      expect(timeDiff).toBeLessThan(1000)
     })
 
     it('should update profile from single DISMISS signal', async () => {
@@ -137,7 +139,7 @@ describe('PreferenceLearner Integration', () => {
       // Signal count should be 100
       expect(updated.signal_count).toBe(100)
 
-      // Should complete quickly (< 100ms for mock implementation)
+      // Should complete quickly (< 1000ms including test overhead)
       expect(duration).toBeLessThan(1000)
 
       // Should have updated multiple category weights
