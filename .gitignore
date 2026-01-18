@@ -96,3 +96,4 @@ docs/site/
 .env.registry
 .migration-checkpoint.json
 .hive-mind/
+.vercel
