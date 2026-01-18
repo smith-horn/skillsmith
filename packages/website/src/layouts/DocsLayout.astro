@@ -74,117 +74,208 @@ const currentPath = Astro.url.pathname;
 </BaseLayout>
 
 <style is:global>
-  /* Documentation Content Styles */
+  /* Documentation Content Styles - Plain CSS for Tailwind CDN compatibility */
   .docs-content h1 {
-    @apply text-3xl lg:text-4xl font-bold text-white mb-4;
+    font-size: 1.875rem;
+    font-weight: 700;
+    color: white;
+    margin-bottom: 1rem;
+  }
+  @media (min-width: 1024px) {
+    .docs-content h1 {
+      font-size: 2.25rem;
+    }
   }
 
   .docs-content .lead {
-    @apply text-lg text-dark-300 mb-8;
+    font-size: 1.125rem;
+    color: #cbd5e1;
+    margin-bottom: 2rem;
   }
 
   .docs-content h2 {
-    @apply text-xl lg:text-2xl font-semibold text-white mt-10 mb-4 pt-6 border-t border-dark-800;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: white;
+    margin-top: 2.5rem;
+    margin-bottom: 1rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #1e293b;
+  }
+  @media (min-width: 1024px) {
+    .docs-content h2 {
+      font-size: 1.5rem;
+    }
   }
 
   .docs-content h2:first-of-type {
-    @apply border-t-0 pt-0;
+    border-top: none;
+    padding-top: 0;
   }
 
   .docs-content h3 {
-    @apply text-lg font-semibold text-white mt-6 mb-3;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: white;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
   }
 
   .docs-content h4 {
-    @apply text-base font-semibold text-dark-200 mt-4 mb-2;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #e2e8f0;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
   }
 
   .docs-content p {
-    @apply text-dark-300 leading-relaxed mb-4;
+    color: #cbd5e1;
+    line-height: 1.625;
+    margin-bottom: 1rem;
   }
 
   .docs-content ul,
   .docs-content ol {
-    @apply text-dark-300 mb-4 pl-6 space-y-2;
+    color: #cbd5e1;
+    margin-bottom: 1rem;
+    padding-left: 1.5rem;
   }
 
   .docs-content ul {
-    @apply list-disc;
+    list-style-type: disc;
   }
 
   .docs-content ol {
-    @apply list-decimal;
+    list-style-type: decimal;
   }
 
   .docs-content li {
-    @apply leading-relaxed;
+    line-height: 1.625;
+    margin-bottom: 0.5rem;
   }
 
   .docs-content a {
-    @apply text-primary-400 hover:text-primary-300 underline underline-offset-2;
+    color: #38bdf8;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .docs-content a:hover {
+    color: #7dd3fc;
   }
 
   .docs-content code {
-    @apply font-mono text-sm bg-dark-800 text-primary-300 px-1.5 py-0.5 rounded;
+    font-family: ui-monospace, monospace;
+    font-size: 0.875rem;
+    background-color: #1e293b;
+    color: #7dd3fc;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
   }
 
   .docs-content pre {
-    @apply bg-dark-900 border border-dark-800 rounded-lg p-4 mb-4 overflow-x-auto;
+    background-color: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    overflow-x: auto;
   }
 
   .docs-content pre code {
-    @apply bg-transparent px-0 py-0 text-dark-200;
+    background-color: transparent;
+    padding: 0;
+    color: #e2e8f0;
   }
 
   .docs-content strong {
-    @apply text-dark-100 font-semibold;
+    color: #f1f5f9;
+    font-weight: 600;
   }
 
   .docs-content table {
-    @apply w-full text-sm mb-6 border-collapse;
+    width: 100%;
+    font-size: 0.875rem;
+    margin-bottom: 1.5rem;
+    border-collapse: collapse;
   }
 
   .docs-content th {
-    @apply text-left font-semibold text-dark-200 bg-dark-900 px-4 py-3 border border-dark-800;
+    text-align: left;
+    font-weight: 600;
+    color: #e2e8f0;
+    background-color: #0f172a;
+    padding: 0.75rem 1rem;
+    border: 1px solid #1e293b;
   }
 
   .docs-content td {
-    @apply text-dark-300 px-4 py-3 border border-dark-800;
+    color: #cbd5e1;
+    padding: 0.75rem 1rem;
+    border: 1px solid #1e293b;
   }
 
   .docs-content .callout {
-    @apply bg-dark-900 border-l-4 border-primary-500 px-5 py-4 rounded-r-lg mb-6;
+    background-color: #0f172a;
+    border-left: 4px solid #0ea5e9;
+    padding: 1rem 1.25rem;
+    border-radius: 0 0.5rem 0.5rem 0;
+    margin-bottom: 1.5rem;
   }
 
   .docs-content .callout.warning {
-    @apply border-amber-500;
+    border-left-color: #f59e0b;
   }
 
   .docs-content .callout h4 {
-    @apply text-primary-400 mt-0 mb-2;
+    color: #38bdf8;
+    margin-top: 0;
+    margin-bottom: 0.5rem;
   }
 
   .docs-content .callout.warning h4 {
-    @apply text-amber-400;
+    color: #fbbf24;
   }
 
   .docs-content .callout p {
-    @apply mb-0;
+    margin-bottom: 0;
   }
 
   .docs-content .card-grid {
-    @apply grid grid-cols-1 md:grid-cols-2 gap-4 my-6;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  @media (min-width: 768px) {
+    .docs-content .card-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
   }
 
   .docs-content .doc-card {
-    @apply block p-5 bg-dark-900 border border-dark-800 rounded-lg no-underline transition-all hover:border-primary-500/50 hover:shadow-lg hover:shadow-primary-500/10;
+    display: block;
+    padding: 1.25rem;
+    background-color: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 0.5rem;
+    text-decoration: none;
+    transition: all 0.2s;
+  }
+  .docs-content .doc-card:hover {
+    border-color: rgba(14, 165, 233, 0.5);
+    box-shadow: 0 10px 15px -3px rgba(14, 165, 233, 0.1);
   }
 
   .docs-content .doc-card h3 {
-    @apply text-white mt-0 mb-2;
+    color: white;
+    margin-top: 0;
+    margin-bottom: 0.5rem;
   }
 
   .docs-content .doc-card p {
-    @apply text-dark-400 mb-0 text-sm;
+    color: #94a3b8;
+    margin-bottom: 0;
+    font-size: 0.875rem;
   }
 </style>
