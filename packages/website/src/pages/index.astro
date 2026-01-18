@@ -25,11 +25,100 @@
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
 
+  <!-- Tailwind CSS -->
+  <script is:inline src="https://cdn.tailwindcss.com"></script>
+
   <!-- Open Graph -->
   <meta property="og:title" content="Skillsmith - AI Skill Discovery for Claude Code" />
   <meta property="og:description" content="Find the right Claude Code skills for your stack. 46,000+ skills, finally searchable." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://skillsmith.app" />
+
+  <!-- JSON-LD Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://skillsmith.app/#organization",
+        "name": "Smith Horn Group",
+        "url": "https://skillsmith.app",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://skillsmith.app/logo-icon.svg"
+        },
+        "sameAs": [
+          "https://github.com/Smith-Horn-Group/skillsmith",
+          "https://twitter.com/skillsmith"
+        ]
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://skillsmith.app/#website",
+        "url": "https://skillsmith.app",
+        "name": "Skillsmith",
+        "description": "AI-powered skill discovery and management for Claude Code",
+        "publisher": {
+          "@id": "https://skillsmith.app/#organization"
+        }
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://skillsmith.app/#software",
+        "name": "Skillsmith",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Cross-platform",
+        "description": "Discover, install, and manage skills for Claude Code. 46,000+ skills with semantic search, quality scores, and stack-aware recommendations.",
+        "url": "https://skillsmith.app",
+        "author": {
+          "@id": "https://skillsmith.app/#organization"
+        },
+        "offers": [
+          {
+            "@type": "Offer",
+            "name": "Community",
+            "price": "0",
+            "priceCurrency": "USD",
+            "description": "Free tier with 1,000 API calls/month"
+          },
+          {
+            "@type": "Offer",
+            "name": "Individual",
+            "price": "9.99",
+            "priceCurrency": "USD",
+            "billingDuration": "P1M",
+            "description": "10,000 API calls/month with analytics"
+          },
+          {
+            "@type": "Offer",
+            "name": "Team",
+            "price": "25",
+            "priceCurrency": "USD",
+            "billingDuration": "P1M",
+            "description": "100,000 API calls/month with team workspaces"
+          },
+          {
+            "@type": "Offer",
+            "name": "Enterprise",
+            "price": "55",
+            "priceCurrency": "USD",
+            "billingDuration": "P1M",
+            "description": "Unlimited API calls with SSO, RBAC, and audit logging"
+          }
+        ],
+        "featureList": [
+          "Semantic skill search",
+          "Quality scores (0-100)",
+          "Stack-aware recommendations",
+          "One-click installation",
+          "MCP server integration",
+          "CLI tool"
+        ]
+      }
+    ]
+  }
+  </script>
 </head>
 
 <body class="bg-[#0D0D0F] text-[#FAFAFA] font-sans antialiased">
@@ -61,7 +150,7 @@
 
       <!-- Nav Links -->
       <div class="flex items-center gap-6">
-        <a href="https://api.skillsmith.app" target="_blank" class="text-[#A1A1AA] hover:text-[#E07A5F] transition-colors text-sm font-medium">
+        <a href="/docs/api" class="text-[#A1A1AA] hover:text-[#E07A5F] transition-colors text-sm font-medium">
           API Docs
         </a>
         <a href="#signup" class="px-4 py-2 border border-white/10 rounded-xl text-sm font-medium hover:border-white/20 transition-colors">
@@ -106,7 +195,7 @@
       <!-- Social Proof -->
       <p class="text-sm text-[#71717A] opacity-0 animate-fade-up" style="animation-delay: 0.5s;">
         <span class="inline-block w-2 h-2 bg-[#E07A5F] rounded-full mr-2"></span>
-        247 developers already signed up
+        Early access now open
       </p>
     </div>
   </section>
@@ -225,7 +314,7 @@
     <div class="absolute inset-0 bg-gradient-to-b from-transparent via-[#E07A5F]/[0.03] to-transparent"></div>
     <div class="relative max-w-[600px] mx-auto px-6 text-center">
       <h2 class="text-3xl sm:text-4xl font-bold mb-4">
-        Join 247 developers getting early access
+        Get early access now
       </h2>
       <p class="text-lg text-[#A1A1AA] mb-10">
         Be first to discover skills that fit your workflow.
@@ -257,9 +346,9 @@
       <div class="flex flex-col sm:flex-row items-center justify-center gap-4 text-sm text-[#71717A]">
         <span class="font-medium text-[#A1A1AA]">skillsmith</span>
         <span class="hidden sm:inline">·</span>
-        <a href="https://api.skillsmith.app" target="_blank" class="hover:text-[#E07A5F] transition-colors">api.skillsmith.app</a>
+        <a href="/docs/api" class="hover:text-[#E07A5F] transition-colors">API Reference</a>
         <span class="hidden sm:inline">·</span>
-        <a href="https://github.com/skillsmith" target="_blank" class="hover:text-[#E07A5F] transition-colors">@skillsmith</a>
+        <a href="https://github.com/Smith-Horn-Group/skillsmith" target="_blank" class="hover:text-[#E07A5F] transition-colors">GitHub</a>
       </div>
     </div>
   </footer>

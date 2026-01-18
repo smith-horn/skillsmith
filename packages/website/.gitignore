@@ -27,3 +27,4 @@ npm-debug.log*
 # Cache
 .cache/
 .parcel-cache/
+.vercel
