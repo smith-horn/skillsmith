@@ -77,7 +77,7 @@ Reply directly to this email to respond to ${submission.name}.
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'Skillsmith <noreply@skillsmith.app>',
+        from: 'Skillsmith Contact <contact@skillsmith.app>',
         to: ['support@smithhorn.ca'],
         reply_to: submission.email,
         subject: `[Skillsmith] ${topicLabel}: ${submission.name}`,
