@@ -2,10 +2,11 @@
 // Skillsmith Pricing Page
 // Pricing tiers from ADR-013 (Open Core Licensing) and ADR-017 (Quota Enforcement)
 // License: Elastic License 2.0
+// SMI-1071: Annual billing toggle support
 
 interface PricingTier {
   name: string;
-  price: string;
+  monthlyPrice: number;  // Price in dollars (0 for free)
   period?: string;
   description: string;
   apiCalls: string;
@@ -15,10 +16,22 @@ interface PricingTier {
   highlighted?: boolean;
 }
 
+// Annual pricing: Pay for 10 months, get 12 (17% savings)
+const ANNUAL_DISCOUNT_MONTHS = 10;
+
+function formatPrice(price: number): string {
+  if (price === 0) return "Free";
+  return `$${price}`;
+}
+
+function getAnnualPrice(monthlyPrice: number): number {
+  return monthlyPrice * ANNUAL_DISCOUNT_MONTHS;
+}
+
 const tiers: PricingTier[] = [
   {
     name: "Community",
-    price: "Free",
+    monthlyPrice: 0,
     description: "Perfect for exploring Skillsmith and personal projects.",
     apiCalls: "1,000 API calls/month",
     features: [
@@ -33,7 +46,7 @@ const tiers: PricingTier[] = [
   },
   {
     name: "Individual",
-    price: "$9.99",
+    monthlyPrice: 9.99,
     period: "/month",
     description: "For developers who want deeper insights into their skill usage.",
     apiCalls: "10,000 API calls/month",
@@ -45,11 +58,11 @@ const tiers: PricingTier[] = [
       "Priority skill indexing",
     ],
     cta: "Start Trial",
-    ctaHref: "/signup?plan=individual",
+    ctaHref: "/signup?tier=individual",
   },
   {
     name: "Team",
-    price: "$25",
+    monthlyPrice: 25,
     period: "/user/month",
     description: "Collaborate on skills with your entire team.",
     apiCalls: "100,000 API calls/month",
@@ -62,12 +75,12 @@ const tiers: PricingTier[] = [
       "Priority support",
     ],
     cta: "Start Trial",
-    ctaHref: "/signup?plan=team",
+    ctaHref: "/signup?tier=team",
     highlighted: true,
   },
   {
     name: "Enterprise",
-    price: "$55",
+    monthlyPrice: 55,
     period: "/user/month",
     description: "Advanced security, compliance, and dedicated support for organizations.",
     apiCalls: "Unlimited API calls",
@@ -81,7 +94,7 @@ const tiers: PricingTier[] = [
       "Custom integrations",
     ],
     cta: "Contact Sales",
-    ctaHref: "/contact?plan=enterprise",
+    ctaHref: "/contact?tier=enterprise",
   },
 ];
 
@@ -110,7 +123,7 @@ const faqs = [
 ---
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -119,6 +132,35 @@ const faqs = [
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+    <!-- Tailwind CSS -->
+    <script is:inline src="https://cdn.tailwindcss.com"></script>
+    <script is:inline>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                400: '#38bdf8',
+                500: '#0ea5e9',
+                600: '#0284c7',
+              },
+              dark: {
+                100: '#f1f5f9',
+                300: '#cbd5e1',
+                400: '#94a3b8',
+                500: '#64748b',
+                700: '#334155',
+                800: '#1e293b',
+                900: '#0f172a',
+                950: '#020617',
+              }
+            }
+          }
+        }
+      }
+    </script>
 
     <!-- JSON-LD Structured Data -->
     <script type="application/ld+json">
@@ -161,7 +203,7 @@ const faqs = [
               "billingDuration": "P1M",
               "description": "10,000 API calls/month. Everything in Community plus analytics dashboard, usage statistics, email support.",
               "availability": "https://schema.org/InStock",
-              "url": "https://skillsmith.app/signup?plan=individual"
+              "url": "https://skillsmith.app/signup?tier=individual"
             },
             {
               "@type": "Offer",
@@ -178,7 +220,7 @@ const faqs = [
               },
               "description": "100,000 API calls/month. Team workspaces, private skills, team dashboard, skill sharing controls, priority support.",
               "availability": "https://schema.org/InStock",
-              "url": "https://skillsmith.app/signup?plan=team"
+              "url": "https://skillsmith.app/signup?tier=team"
             },
             {
               "@type": "Offer",
@@ -195,7 +237,7 @@ const faqs = [
               },
               "description": "Unlimited API calls. SSO/SAML, role-based access control, audit logging, 99.9% SLA, dedicated support, custom integrations.",
               "availability": "https://schema.org/InStock",
-              "url": "https://skillsmith.app/contact?plan=enterprise"
+              "url": "https://skillsmith.app/contact?tier=enterprise"
             }
           ]
         },
@@ -256,7 +298,7 @@ const faqs = [
           <span class="logo-text">Skillsmith</span>
         </a>
         <div class="nav-links">
-          <a href="/features">Features</a>
+          <a href="/docs">Features</a>
           <a href="/pricing" class="active">Pricing</a>
           <a href="/docs">Docs</a>
           <a href="/blog">Blog</a>
@@ -274,17 +316,31 @@ const faqs = [
         <p class="hero-subtitle">
           Start free and scale as you grow. No hidden fees, no surprises.
         </p>
+
+        <!-- Billing Period Toggle -->
+        <div class="billing-toggle" id="billing-toggle">
+          <button type="button" class="toggle-btn active" data-period="monthly">Monthly</button>
+          <button type="button" class="toggle-btn" data-period="annual">
+            Annual
+            <span class="savings-badge">Save 17%</span>
+          </button>
+        </div>
       </section>
 
       <section class="pricing-grid">
         {tiers.map((tier) => (
-          <div class:list={["pricing-card", { highlighted: tier.highlighted }]}>
+          <div
+            class:list={["pricing-card", { highlighted: tier.highlighted }]}
+            data-tier={tier.name.toLowerCase()}
+            data-monthly-price={tier.monthlyPrice}
+            data-annual-price={getAnnualPrice(tier.monthlyPrice)}
+          >
             {tier.highlighted && <div class="badge">Recommended</div>}
             <div class="card-header">
               <h2 class="tier-name">{tier.name}</h2>
               <div class="price-container">
-                <span class="price">{tier.price}</span>
-                {tier.period && <span class="period">{tier.period}</span>}
+                <span class="price" data-price-display>{formatPrice(tier.monthlyPrice)}</span>
+                <span class="period" data-period-display>{tier.monthlyPrice === 0 ? '' : tier.period || '/month'}</span>
               </div>
               <p class="tier-description">{tier.description}</p>
             </div>
@@ -307,6 +363,8 @@ const faqs = [
             <a
               href={tier.ctaHref}
               class:list={["btn", "btn-cta", { "btn-primary": tier.highlighted, "btn-secondary": !tier.highlighted }]}
+              data-cta-link
+              data-base-href={tier.ctaHref}
             >
               {tier.cta}
             </a>
@@ -451,7 +509,7 @@ const faqs = [
         <div class="footer-links">
           <div class="footer-column">
             <h4>Product</h4>
-            <a href="/features">Features</a>
+            <a href="/docs">Features</a>
             <a href="/pricing">Pricing</a>
             <a href="/changelog">Changelog</a>
           </div>
@@ -649,6 +707,51 @@ const faqs = [
     color: #6b7280;
     max-width: 600px;
     margin: 0 auto;
+  }
+
+  /* Billing Toggle */
+  .billing-toggle {
+    display: inline-flex;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    background: #f3f4f6;
+    border-radius: 0.75rem;
+    margin-top: 1.5rem;
+  }
+
+  .toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    background: transparent;
+    border: none;
+    border-radius: 0.5rem;
+    color: #6b7280;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .toggle-btn:hover {
+    color: #1a1a2e;
+  }
+
+  .toggle-btn.active {
+    background: white;
+    color: #1a1a2e;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  }
+
+  .savings-badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: white;
+    border-radius: 1rem;
   }
 
   /* Pricing Grid */
@@ -1058,3 +1161,68 @@ const faqs = [
     }
   }
 </style>
+
+<script>
+  // Billing period toggle functionality
+  document.addEventListener('DOMContentLoaded', () => {
+    const toggleBtns = document.querySelectorAll('.toggle-btn');
+    const pricingCards = document.querySelectorAll('.pricing-card');
+
+    let currentPeriod = 'monthly';
+
+    function updatePrices(period: string) {
+      currentPeriod = period;
+
+      // Update toggle button states
+      toggleBtns.forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-period') === period);
+      });
+
+      // Update each pricing card
+      pricingCards.forEach(card => {
+        const tier = card.getAttribute('data-tier');
+        const monthlyPrice = parseFloat(card.getAttribute('data-monthly-price') || '0');
+        const annualPrice = parseFloat(card.getAttribute('data-annual-price') || '0');
+
+        const priceDisplay = card.querySelector('[data-price-display]');
+        const periodDisplay = card.querySelector('[data-period-display]');
+        const ctaLink = card.querySelector('[data-cta-link]') as HTMLAnchorElement;
+
+        if (priceDisplay) {
+          if (monthlyPrice === 0) {
+            priceDisplay.textContent = 'Free';
+          } else if (period === 'annual') {
+            priceDisplay.textContent = `$${annualPrice}`;
+          } else {
+            priceDisplay.textContent = `$${monthlyPrice}`;
+          }
+        }
+
+        if (periodDisplay && monthlyPrice > 0) {
+          if (tier === 'team' || tier === 'enterprise') {
+            periodDisplay.textContent = period === 'annual' ? '/user/year' : '/user/month';
+          } else {
+            periodDisplay.textContent = period === 'annual' ? '/year' : '/month';
+          }
+        }
+
+        // Update CTA links to include period
+        if (ctaLink) {
+          const baseHref = ctaLink.getAttribute('data-base-href') || '';
+          if (baseHref.includes('/signup')) {
+            const separator = baseHref.includes('?') ? '&' : '?';
+            ctaLink.href = `${baseHref}${separator}period=${period}`;
+          }
+        }
+      });
+    }
+
+    // Add click handlers to toggle buttons
+    toggleBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const period = btn.getAttribute('data-period') || 'monthly';
+        updatePrices(period);
+      });
+    });
+  });
+</script>
