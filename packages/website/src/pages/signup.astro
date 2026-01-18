@@ -39,6 +39,16 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmit
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
+    <script is:inline>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-GGZQZM1Y1L');
+    </script>
+
     <meta name="description" content={`Sign up for Skillsmith ${tierData?.name || ''} plan. ${tierData?.features[0] || 'AI-powered skill discovery for Claude Code.'}`} />
     <title>Sign Up{tierData ? ` - ${tierData.name}` : ''} | Skillsmith</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
