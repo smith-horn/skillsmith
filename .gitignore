@@ -62,6 +62,7 @@ docs/valuation/
 # Internal planning and strategy (not public)
 docs/backlog/
 docs/strategy/
+docs/research/
 
 # Development artifacts (anchored to root level)
 /data/
