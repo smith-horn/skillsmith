@@ -13,7 +13,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Skillsmith - AI Skill Discovery for Claude Code</title>
-  <meta name="description" content="Find the right Claude Code skills for your stack. 46,000+ skills, finally searchable. Get early access." />
+  <meta name="description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get early access." />
 
   <!-- Fonts: Satoshi + JetBrains Mono -->
   <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
@@ -30,7 +30,7 @@
 
   <!-- Open Graph -->
   <meta property="og:title" content="Skillsmith - AI Skill Discovery for Claude Code" />
-  <meta property="og:description" content="Find the right Claude Code skills for your stack. 46,000+ skills, finally searchable." />
+  <meta property="og:description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://skillsmith.app" />
 
@@ -69,7 +69,7 @@
         "name": "Skillsmith",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "Cross-platform",
-        "description": "Discover, install, and manage skills for Claude Code. 46,000+ skills with semantic search, quality scores, and stack-aware recommendations.",
+        "description": "Discover, install, and manage skills for Claude Code. 14,000+ curated skills with semantic search, quality scores, and stack-aware recommendations.",
         "url": "https://skillsmith.app",
         "author": {
           "@id": "https://skillsmith.app/#organization"
@@ -170,7 +170,7 @@
 
       <!-- Subheadline -->
       <p class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up" style="animation-delay: 0.2s;">
-        <span id="skill-count">46,000+</span> Claude Code skills. Finally searchable.<br />
+        <span id="skill-count">14,000+</span> curated Claude Code skills. Finally searchable.<br />
         Get stack-aware recommendations before anyone else.
       </p>
 
@@ -289,7 +289,7 @@
           <ul class="space-y-4">
             <li class="flex items-start gap-3">
               <span class="text-[#81B29A] mt-0.5">✓</span>
-              <span class="text-[#FAFAFA]">Semantic search across 46K+ skills</span>
+              <span class="text-[#FAFAFA]">Semantic search across <span id="skill-count-feature">14,000+</span> curated skills</span>
             </li>
             <li class="flex items-start gap-3">
               <span class="text-[#81B29A] mt-0.5">✓</span>
@@ -402,8 +402,11 @@
 
       function updateCount(count) {
         const el = document.getElementById('skill-count');
-        if (el && count > 0) {
-          el.textContent = formatNumber(count) + '+';
+        const elFeature = document.getElementById('skill-count-feature');
+        if (count > 0) {
+          const formattedCount = formatNumber(count) + '+';
+          if (el) el.textContent = formattedCount;
+          if (elFeature) elFeature.textContent = formattedCount;
         }
       }
 

@@ -28,3 +28,4 @@ npm-debug.log*
 .cache/
 .parcel-cache/
 .vercel
+.env*.local
