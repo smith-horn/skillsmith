@@ -170,7 +170,7 @@
 
       <!-- Subheadline -->
       <p class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up" style="animation-delay: 0.2s;">
-        46,000+ Claude Code skills. Finally searchable.<br />
+        <span id="skill-count">46,000+</span> Claude Code skills. Finally searchable.<br />
         Get stack-aware recommendations before anyone else.
       </p>
 
@@ -388,5 +388,56 @@
       box-shadow: 0 0 40px rgba(224, 122, 95, 0.08);
     }
   </style>
+
+  <!-- Fetch live skill count -->
+  <script is:inline>
+    (function() {
+      const API_URL = 'https://api.skillsmith.app/functions/v1/stats';
+      const CACHE_KEY = 'skillsmith_skill_count';
+      const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+      function formatNumber(num) {
+        return num.toLocaleString('en-US');
+      }
+
+      function updateCount(count) {
+        const el = document.getElementById('skill-count');
+        if (el && count > 0) {
+          el.textContent = formatNumber(count) + '+';
+        }
+      }
+
+      // Check localStorage cache first
+      try {
+        const cached = localStorage.getItem(CACHE_KEY);
+        if (cached) {
+          const { count, timestamp } = JSON.parse(cached);
+          if (Date.now() - timestamp < CACHE_TTL) {
+            updateCount(count);
+          }
+        }
+      } catch (e) {}
+
+      // Fetch fresh count
+      fetch(API_URL)
+        .then(res => res.json())
+        .then(data => {
+          if (data.data && data.data.skillCount) {
+            const count = data.data.skillCount;
+            updateCount(count);
+            // Cache for next visit
+            try {
+              localStorage.setItem(CACHE_KEY, JSON.stringify({
+                count,
+                timestamp: Date.now()
+              }));
+            } catch (e) {}
+          }
+        })
+        .catch(() => {
+          // Keep default value on error
+        });
+    })();
+  </script>
 </body>
 </html>
