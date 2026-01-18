@@ -12,8 +12,9 @@ Implementation plans, wave execution guides, and operational documentation for S
 - [Wave 5 Prompt](wave-5-prompt.md) - Observability
 - [Wave 6 Prompt](wave-6-prompt.md) - Release
 
-## Phases 5-7 Overview
+## Phase 5: Neural Testing & Documentation (V3 Migration)
 
+- [Phase 5: Neural Testing](phase5-neural-testing.md) - Integration tests for Recommendation Learning Loop (SMI-1535, SMI-1536, SMI-1537)
 - [Hive Mind Waves: Phases 5, 6, 7](hive-mind-waves-phase5-6-7.md) - Multi-phase execution plan
 
 ## Phases 8-10: Skill Optimization

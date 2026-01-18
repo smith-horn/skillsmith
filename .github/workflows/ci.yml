@@ -388,6 +388,79 @@ jobs:
       # SMI-1250: Removed coverage step - global thresholds don't apply to subset tests
       # Security tests run above without coverage; full coverage in main test job
 
+  # SMI-1537: V3 Migration Performance Benchmarks
+  # Runs on PRs to catch performance regressions before merge
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: docker-build
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Download node_modules
+        uses: actions/download-artifact@v4
+        with:
+          name: node-modules
+          path: /tmp
+
+      - name: Load Docker image
+        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+
+      - name: Extract node_modules
+        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+
+      - name: Build project
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run build
+
+      - name: Run V3 Migration Benchmarks
+        id: benchmarks
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npx tsx scripts/benchmark-v3-migration.ts --iterations 50 > benchmark-results.md
+
+      - name: Add benchmark results to PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = '## Performance Benchmark Results\n\n';
+            try {
+              body += fs.readFileSync('benchmark-results.md', 'utf8');
+            } catch (e) {
+              body += '⚠️ Benchmark results not available\n';
+            }
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Check benchmark pass/fail
+        if: steps.benchmarks.outcome == 'failure'
+        run: |
+          echo "::warning::Some benchmark targets were not met. Review the benchmark results comment on the PR."
+
   compliance:
     name: Standards Compliance
     runs-on: ubuntu-latest
