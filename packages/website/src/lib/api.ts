@@ -52,15 +52,27 @@ export function getApiBaseUrl(): string {
   return API_BASE_URL
 }
 
+/** Default request timeout in milliseconds */
+const DEFAULT_TIMEOUT_MS = 10000
+
 /**
- * Generic fetch wrapper with error handling
+ * Generic fetch wrapper with error handling and timeout
  */
-async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
+async function apiFetch<T>(
+  endpoint: string,
+  options: RequestInit = {},
+  timeoutMs = DEFAULT_TIMEOUT_MS
+): Promise<ApiResponse<T>> {
   const url = `${API_BASE_URL}${endpoint}`
+
+  // Create abort controller for timeout
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
     const response = await fetch(url, {
       ...options,
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
@@ -78,10 +90,19 @@ async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise
     const data = await response.json()
     return { data }
   } catch (error) {
+    // Handle abort (timeout) specifically
+    if (error instanceof Error && error.name === 'AbortError') {
+      return {
+        data: null as T,
+        error: 'Request timed out. Please try again.',
+      }
+    }
     return {
       data: null as T,
       error: error instanceof Error ? error.message : 'Unknown error occurred',
     }
+  } finally {
+    clearTimeout(timeoutId)
   }
 }
 
