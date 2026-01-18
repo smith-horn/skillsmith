@@ -9,6 +9,126 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 ---
 
 <BaseLayout title="Quickstart | Skillsmith" description="Get started with Skillsmith in 5 minutes. Two ways to discover and install Claude Code skills.">
+  <!-- JSON-LD HowTo Schema -->
+  <script type="application/ld+json" slot="head">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "HowTo",
+        "name": "How to Set Up Skillsmith with Claude Code (Recommended)",
+        "description": "Install Skillsmith MCP server to discover and install Claude Code skills using natural language",
+        "totalTime": "PT5M",
+        "tool": [
+          {
+            "@type": "HowToTool",
+            "name": "Node.js 18+"
+          },
+          {
+            "@type": "HowToTool",
+            "name": "npm"
+          },
+          {
+            "@type": "HowToTool",
+            "name": "Claude Code"
+          }
+        ],
+        "step": [
+          {
+            "@type": "HowToStep",
+            "position": 1,
+            "name": "Install Claude Code",
+            "text": "Install Claude Code globally using npm: npm install -g @anthropic-ai/claude-code"
+          },
+          {
+            "@type": "HowToStep",
+            "position": 2,
+            "name": "Configure Skillsmith MCP Server",
+            "text": "Add Skillsmith to ~/.claude/settings.json: {\"mcpServers\": {\"skillsmith\": {\"command\": \"npx\", \"args\": [\"-y\", \"@skillsmith/mcp-server\"]}}}"
+          },
+          {
+            "@type": "HowToStep",
+            "position": 3,
+            "name": "Discover Skills",
+            "text": "Navigate to your project directory, start Claude Code with 'claude', and ask: 'What skills would be helpful for this project?'"
+          }
+        ]
+      },
+      {
+        "@type": "HowTo",
+        "name": "How to Use Skillsmith CLI Directly",
+        "description": "Install and use the Skillsmith CLI for skill discovery and installation from any terminal",
+        "totalTime": "PT5M",
+        "tool": [
+          {
+            "@type": "HowToTool",
+            "name": "Node.js 18+"
+          },
+          {
+            "@type": "HowToTool",
+            "name": "npm"
+          }
+        ],
+        "step": [
+          {
+            "@type": "HowToStep",
+            "position": 1,
+            "name": "Install Skillsmith CLI",
+            "text": "Install globally: npm install -g @skillsmith/cli. Or use npx: npx @skillsmith/cli search testing"
+          },
+          {
+            "@type": "HowToStep",
+            "position": 2,
+            "name": "Navigate to Project",
+            "text": "Open terminal and navigate to your project directory where package.json is located"
+          },
+          {
+            "@type": "HowToStep",
+            "position": 3,
+            "name": "Search for Skills",
+            "text": "Search by keyword: skillsmith search testing. Or get recommendations: skillsmith recommend"
+          },
+          {
+            "@type": "HowToStep",
+            "position": 4,
+            "name": "Install Skills",
+            "text": "Install a skill: skillsmith install jest-helper. Skills are installed to ~/.claude/skills/"
+          }
+        ]
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "What is the recommended way to use Skillsmith?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "The recommended way is to use Claude Code with the Skillsmith MCP server. This allows you to discover and install skills using natural language, like asking 'Find skills for this React project' or 'Install the commit helper skill'."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Where are skills installed?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Skills are installed to ~/.claude/skills/ and are automatically available in all your Claude Code sessions."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I use Skillsmith without Claude Code?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes, you can use the Skillsmith CLI directly in any terminal. Install with 'npm install -g @skillsmith/cli' or use npx without installing."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+
   <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
     <!-- Header -->
     <div class="mb-12">

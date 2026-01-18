@@ -3,6 +3,67 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 ---
 
 <DocsLayout title="Documentation" description="Learn how to use Skillsmith for Claude Code skill discovery and management">
+  <!-- JSON-LD Schema -->
+  <script type="application/ld+json" slot="head">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Skillsmith Documentation",
+    "description": "Complete documentation for Skillsmith - AI-powered skill discovery and management for Claude Code",
+    "url": "https://skillsmith.app/docs",
+    "author": {
+      "@type": "Organization",
+      "name": "Smith Horn Group"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "Skillsmith",
+      "url": "https://skillsmith.app"
+    },
+    "about": {
+      "@type": "SoftwareApplication",
+      "name": "Skillsmith",
+      "applicationCategory": "DeveloperApplication"
+    },
+    "mainEntity": {
+      "@type": "ItemList",
+      "name": "Documentation Sections",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Quickstart Guide",
+          "url": "https://skillsmith.app/docs/quickstart"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Getting Started",
+          "url": "https://skillsmith.app/docs/getting-started"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "CLI Reference",
+          "url": "https://skillsmith.app/docs/cli"
+        },
+        {
+          "@type": "ListItem",
+          "position": 4,
+          "name": "MCP Server",
+          "url": "https://skillsmith.app/docs/mcp-server"
+        },
+        {
+          "@type": "ListItem",
+          "position": 5,
+          "name": "API Reference",
+          "url": "https://skillsmith.app/docs/api"
+        }
+      ]
+    }
+  }
+  </script>
+
   <h1>Skillsmith Documentation</h1>
 
   <p class="lead">

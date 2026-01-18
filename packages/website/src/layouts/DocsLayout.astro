@@ -12,6 +12,9 @@ const currentPath = Astro.url.pathname;
 ---
 
 <BaseLayout title={`${title} | Skillsmith Docs`} description={description}>
+  <!-- Pass through head slot content -->
+  <slot name="head" slot="head" />
+
   <div class="flex min-h-[calc(100vh-4rem)]">
     <!-- Sidebar -->
     <DocsSidebar currentPath={currentPath} />
