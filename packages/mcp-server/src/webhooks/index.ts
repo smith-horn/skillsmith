@@ -26,3 +26,12 @@ export {
   type WebhookQueueItem,
   type QueueStats,
 } from '@skillsmith/core'
+
+// SMI-1070: Stripe webhook endpoint
+export {
+  createStripeWebhookServer,
+  startStripeWebhookServer,
+  type StripeWebhookServerConfig,
+  type StripeWebhookServerOptions,
+  type StripeWebhookServer,
+} from './stripe-webhook-endpoint.js'

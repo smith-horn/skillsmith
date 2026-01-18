@@ -26,6 +26,13 @@ export {
   sanitizePath,
   sanitizeUrl,
   sanitizeText,
+  // SMI-1062: Stripe ID validators
+  isValidStripeId,
+  sanitizeStripeCustomerId,
+  sanitizeStripeSubscriptionId,
+  sanitizeStripePriceId,
+  sanitizeStripeInvoiceId,
+  sanitizeStripeEventId,
 } from './sanitization.js'
 
 // Path validation

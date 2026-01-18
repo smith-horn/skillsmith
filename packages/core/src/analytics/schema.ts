@@ -177,9 +177,12 @@ CREATE TABLE IF NOT EXISTS user_subscriptions (
   tier TEXT NOT NULL CHECK(tier IN ('community', 'individual', 'team', 'enterprise')),
   stripe_customer_id TEXT,
   stripe_subscription_id TEXT,
+  stripe_price_id TEXT,  -- SMI-1062: Stripe price ID for current plan
   status TEXT NOT NULL CHECK(status IN ('active', 'past_due', 'canceled', 'trialing', 'paused')),
+  seat_count INTEGER DEFAULT 1,  -- SMI-1067: For team/enterprise seat-based billing
   current_period_start TEXT,
   current_period_end TEXT,
+  canceled_at TEXT,  -- SMI-1062: When subscription was canceled
   last_active_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -191,6 +194,71 @@ CREATE INDEX IF NOT EXISTS idx_subs_stripe ON user_subscriptions(stripe_customer
 CREATE INDEX IF NOT EXISTS idx_subs_status ON user_subscriptions(status);
 CREATE INDEX IF NOT EXISTS idx_subs_tier ON user_subscriptions(tier);
 CREATE INDEX IF NOT EXISTS idx_subs_last_active ON user_subscriptions(last_active_at);
+
+-- ============================================================================
+-- Billing Tables (SMI-1062 to SMI-1070 - Phase 6)
+-- ============================================================================
+
+-- Stripe webhook events for idempotent processing
+-- Prevents replay attacks and duplicate event handling
+CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+  id TEXT PRIMARY KEY,
+  stripe_event_id TEXT UNIQUE NOT NULL,
+  event_type TEXT NOT NULL,
+  processed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  payload TEXT,  -- Store full event for debugging/reconciliation
+  success INTEGER DEFAULT 1,  -- 1 for success, 0 for failure
+  error_message TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_events_stripe_id ON stripe_webhook_events(stripe_event_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_type ON stripe_webhook_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_processed ON stripe_webhook_events(processed_at);
+
+-- License keys linking subscriptions to JWT tokens
+-- Supports key rotation and revocation
+CREATE TABLE IF NOT EXISTS license_keys (
+  id TEXT PRIMARY KEY,
+  subscription_id TEXT NOT NULL,  -- References user_subscriptions.id
+  organization_id TEXT NOT NULL,
+  key_jwt TEXT NOT NULL,
+  key_hash TEXT NOT NULL,  -- SHA256 hash for lookup without exposing key
+  key_expiry TEXT NOT NULL,
+  is_active INTEGER DEFAULT 1,
+  generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  revoked_at TEXT,
+  revocation_reason TEXT,
+  UNIQUE(key_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_license_keys_subscription ON license_keys(subscription_id);
+CREATE INDEX IF NOT EXISTS idx_license_keys_org ON license_keys(organization_id);
+CREATE INDEX IF NOT EXISTS idx_license_keys_active ON license_keys(is_active);
+CREATE INDEX IF NOT EXISTS idx_license_keys_hash ON license_keys(key_hash);
+
+-- Invoices for customer self-service and billing history
+CREATE TABLE IF NOT EXISTS invoices (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL,  -- References user_subscriptions.customer_id
+  stripe_invoice_id TEXT UNIQUE NOT NULL,
+  subscription_id TEXT,  -- References user_subscriptions.id
+  amount_cents INTEGER NOT NULL,
+  currency TEXT DEFAULT 'usd',
+  status TEXT NOT NULL CHECK(status IN ('draft', 'open', 'paid', 'void', 'uncollectible')),
+  pdf_url TEXT,
+  hosted_invoice_url TEXT,
+  invoice_number TEXT,
+  paid_at TEXT,
+  period_start TEXT,
+  period_end TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_customer ON invoices(customer_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_stripe ON invoices(stripe_invoice_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+CREATE INDEX IF NOT EXISTS idx_invoices_subscription ON invoices(subscription_id);
 `
 
 /**
