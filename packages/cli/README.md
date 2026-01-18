@@ -2,6 +2,13 @@
 
 Command-line interface for Skillsmith - discover, manage, and author Claude Code skills.
 
+## What's New in v0.3.1
+
+- **Database Fix**: Fixed "no such table: skills" error on fresh installations
+- **API Resilience**: Improved handling of partial API responses
+- **Import Improvements**: Better rate limiting (150ms default, configurable via `SKILLSMITH_IMPORT_DELAY_MS`)
+- **Python Support**: Added Python file detection (`.py`, `.pyi`, `.pyw`) to `analyze` command
+
 ## What's New in v0.3.0
 
 - **Registry Sync**: Keep your local skill database up-to-date with `sync` command
@@ -31,6 +38,27 @@ Or use directly with npx:
 
 ```bash
 npx @skillsmith/cli search "testing"
+```
+
+## Updating the CLI
+
+Check your current version:
+
+```bash
+skillsmith --version
+```
+
+Update to the latest version:
+
+```bash
+# If installed globally
+npm update -g @skillsmith/cli
+
+# Or reinstall to specific version
+npm install -g @skillsmith/cli@latest
+
+# Using npx always gets the latest
+npx @skillsmith/cli@latest sync
 ```
 
 ## Command Alias
@@ -381,6 +409,7 @@ skillsmith sync config --enable --frequency weekly
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SKILLSMITH_DB_PATH` | Database file location | `~/.skillsmith/skills.db` |
+| `SKILLSMITH_IMPORT_DELAY_MS` | Delay between GitHub API calls during import | `150` |
 | `GITHUB_TOKEN` | GitHub token for imports | - |
 
 ### Database Location
