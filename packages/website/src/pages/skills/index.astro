@@ -309,25 +309,21 @@ const trustTiers = [
       resultsCount.textContent = 'Searching...';
 
       try {
-        const response = await fetch(`${API_BASE}/skills-search`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            query: query || '*',
-            limit: 100,
-            category: category || undefined,
-            trust_tier: trustTier || undefined,
-          }),
-        });
+        // Build query parameters for GET request
+        const params = new URLSearchParams();
+        params.set('query', query || '*');
+        params.set('limit', '100');
+        if (category) params.set('category', category);
+        if (trustTier) params.set('trust_tier', trustTier);
+
+        const response = await fetch(`${API_BASE}/skills-search?${params.toString()}`);
 
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
         const data = await response.json();
-        allResults = data.skills || data.results || [];
+        allResults = data.data || data.skills || data.results || [];
 
         // Apply client-side filtering for category and trust tier if API doesn't support them
         if (category) {

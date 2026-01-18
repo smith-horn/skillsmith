@@ -68,12 +68,17 @@ Deno.serve(async (req: Request) => {
       url.searchParams.get('offset')
     )
 
-    // Validate required query parameter
-    if (!query || query.trim().length < 2) {
-      return errorResponse('Query parameter required (minimum 2 characters)', 400, {
-        parameter: 'query',
-        received: query,
-      })
+    // Validate required query parameter (allow '*' as wildcard for all skills)
+    const isWildcard = query?.trim() === '*'
+    if (!isWildcard && (!query || query.trim().length < 2)) {
+      return errorResponse(
+        'Query parameter required (minimum 2 characters, or use * for all)',
+        400,
+        {
+          parameter: 'query',
+          received: query,
+        }
+      )
     }
 
     // Validate trust_tier if provided
@@ -105,19 +110,35 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createSupabaseClient(req.headers.get('authorization') ?? undefined)
 
-    // Use the search_skills function for full-text search
-    const { data: searchResults, error: searchError } = await supabase.rpc('search_skills', {
-      search_query: query.trim(),
-      limit_count: limit,
-      offset_count: offset,
-    })
+    let results: SearchResult[]
 
-    if (searchError) {
-      console.error('Search error:', searchError)
-      return errorResponse('Search failed', 500, { code: searchError.code })
+    if (isWildcard) {
+      // List all skills when query is '*'
+      const { data: allSkills, error: listError } = await supabase
+        .from('skills')
+        .select('id, name, author, description, trust_tier, quality_score, version')
+        .order('quality_score', { ascending: false, nullsFirst: false })
+        .range(offset, offset + limit - 1)
+
+      if (listError) {
+        console.error('List error:', listError)
+        return errorResponse('Failed to list skills', 500, { code: listError.code })
+      }
+      results = allSkills || []
+    } else {
+      // Use the search_skills function for full-text search
+      const { data: searchResults, error: searchError } = await supabase.rpc('search_skills', {
+        search_query: query!.trim(),
+        limit_count: limit,
+        offset_count: offset,
+      })
+
+      if (searchError) {
+        console.error('Search error:', searchError)
+        return errorResponse('Search failed', 500, { code: searchError.code })
+      }
+      results = searchResults || []
     }
-
-    let results: SearchResult[] = searchResults || []
 
     // Apply additional filters in-memory (could be optimized with a custom RPC)
     if (trustTier) {

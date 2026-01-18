@@ -20,8 +20,10 @@ Skillsmith uses Resend for all email operations:
 
 | Name | Content | Priority | Purpose |
 |------|---------|----------|---------|
-| `@` | `inbound-smtp.resend.com` | 10 | Inbound email receiving |
-| `send` | `feedback-smtp.us-east-1.amazonses.com` | 10 | Outbound email (Resend/SES) |
+| `@` | `inbound-smtp.us-east-1.amazonaws.com` | 10 | Inbound email receiving (Resend via SES) |
+| `send` | `feedback-smtp.us-east-1.amazonses.com` | 10 | Outbound bounce handling (Resend/SES) |
+
+> **Note:** Resend uses Amazon SES infrastructure. The MX record was auto-configured via Resend's Cloudflare integration.
 
 ### TXT Records
 
@@ -70,11 +72,32 @@ Receives inbound email webhooks from Resend and forwards to support.
 **Endpoint:** `POST /functions/v1/email-inbound`
 
 **Flow:**
-1. Verifies webhook signature using `RESEND_WEBHOOK_SECRET`
-2. Fetches full email content from Resend API
+1. Receives `email.received` webhook from Resend
+2. Extracts email content directly from webhook payload (no separate API fetch needed)
 3. Forwards to `support@smithhorn.ca` with original sender as reply-to
 
 **From Address:** `Skillsmith Inbound <inbound@skillsmith.app>`
+
+**Webhook Payload Structure:**
+```typescript
+interface ResendInboundPayload {
+  type: 'email.received'
+  created_at: string
+  data: {
+    id: string           // Unique email ID
+    from: string         // Sender address
+    to: string[]         // Recipient addresses
+    subject: string      // Email subject
+    text?: string        // Plain text body
+    html?: string        // HTML body
+    date: string         // Email date
+    thread_id?: string   // Threading ID
+    in_reply_to?: string // Reply reference
+  }
+}
+```
+
+> **Important:** Resend sends the full email content in the webhook payload. Earlier versions incorrectly tried to fetch content via API.
 
 ---
 
@@ -132,10 +155,11 @@ dig +short TXT resend._domainkey.skillsmith.app
 3. Check function logs in Supabase dashboard
 
 ### Inbound emails not forwarding
-1. Verify MX record points to `inbound-smtp.resend.com`
-2. Check webhook is registered in Resend
-3. Verify `RESEND_WEBHOOK_SECRET` matches webhook signing secret
-4. Check function logs for errors
+1. Verify MX record points to `inbound-smtp.us-east-1.amazonaws.com` (use Google DNS: `dig +short MX skillsmith.app @8.8.8.8`)
+2. Check webhook is registered in Resend Dashboard → Webhooks
+3. Verify `email.received` event is selected for the webhook
+4. Check Resend Dashboard → Emails → Inbound to see if email was received
+5. Check function logs in Supabase Dashboard → Functions → email-inbound → Logs
 
 ### DMARC Reports
 View in Cloudflare Dashboard → skillsmith.app → Email → DMARC Management
