@@ -28,6 +28,9 @@ const { title, description = "Skillsmith - AI-powered skill discovery and manage
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>{title}</title>
 
+    <!-- Slot for page-specific head content (JSON-LD, etc.) -->
+    <slot name="head" />
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script is:inline>
       // @ts-ignore - tailwind is loaded from CDN

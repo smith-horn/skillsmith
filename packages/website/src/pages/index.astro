@@ -30,6 +30,92 @@
   <meta property="og:description" content="Find the right Claude Code skills for your stack. 46,000+ skills, finally searchable." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://skillsmith.app" />
+
+  <!-- JSON-LD Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://skillsmith.app/#organization",
+        "name": "Smith Horn Group",
+        "url": "https://skillsmith.app",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://skillsmith.app/logo-icon.svg"
+        },
+        "sameAs": [
+          "https://github.com/smith-horn/skillsmith",
+          "https://twitter.com/skillsmith"
+        ]
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://skillsmith.app/#website",
+        "url": "https://skillsmith.app",
+        "name": "Skillsmith",
+        "description": "AI-powered skill discovery and management for Claude Code",
+        "publisher": {
+          "@id": "https://skillsmith.app/#organization"
+        }
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://skillsmith.app/#software",
+        "name": "Skillsmith",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Cross-platform",
+        "description": "Discover, install, and manage skills for Claude Code. 46,000+ skills with semantic search, quality scores, and stack-aware recommendations.",
+        "url": "https://skillsmith.app",
+        "author": {
+          "@id": "https://skillsmith.app/#organization"
+        },
+        "offers": [
+          {
+            "@type": "Offer",
+            "name": "Community",
+            "price": "0",
+            "priceCurrency": "USD",
+            "description": "Free tier with 1,000 API calls/month"
+          },
+          {
+            "@type": "Offer",
+            "name": "Individual",
+            "price": "9.99",
+            "priceCurrency": "USD",
+            "billingDuration": "P1M",
+            "description": "10,000 API calls/month with analytics"
+          },
+          {
+            "@type": "Offer",
+            "name": "Team",
+            "price": "25",
+            "priceCurrency": "USD",
+            "billingDuration": "P1M",
+            "description": "100,000 API calls/month with team workspaces"
+          },
+          {
+            "@type": "Offer",
+            "name": "Enterprise",
+            "price": "55",
+            "priceCurrency": "USD",
+            "billingDuration": "P1M",
+            "description": "Unlimited API calls with SSO, RBAC, and audit logging"
+          }
+        ],
+        "featureList": [
+          "Semantic skill search",
+          "Quality scores (0-100)",
+          "Stack-aware recommendations",
+          "One-click installation",
+          "MCP server integration",
+          "CLI tool"
+        ]
+      }
+    ]
+  }
+  </script>
 </head>
 
 <body class="bg-[#0D0D0F] text-[#FAFAFA] font-sans antialiased">

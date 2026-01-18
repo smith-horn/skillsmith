@@ -1,0 +1,14 @@
+---
+/**
+ * JSON-LD Structured Data Component
+ * Renders schema.org structured data for SEO and AEO
+ */
+interface Props {
+  schema: Record<string, unknown> | Record<string, unknown>[];
+}
+
+const { schema } = Astro.props;
+const jsonLd = JSON.stringify(schema);
+---
+
+<script type="application/ld+json" set:html={jsonLd} />

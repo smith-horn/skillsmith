@@ -119,6 +119,134 @@ const faqs = [
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+    <!-- JSON-LD Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebPage",
+          "@id": "https://skillsmith.app/pricing",
+          "url": "https://skillsmith.app/pricing",
+          "name": "Skillsmith Pricing - Plans for Individuals and Teams",
+          "description": "Choose the Skillsmith plan that fits your needs. From free community access to enterprise-grade features.",
+          "isPartOf": {
+            "@id": "https://skillsmith.app/#website"
+          }
+        },
+        {
+          "@type": "Product",
+          "name": "Skillsmith",
+          "description": "AI-powered skill discovery and management for Claude Code",
+          "brand": {
+            "@type": "Brand",
+            "name": "Skillsmith"
+          },
+          "offers": [
+            {
+              "@type": "Offer",
+              "name": "Community",
+              "price": "0",
+              "priceCurrency": "USD",
+              "description": "Free tier - 1,000 API calls/month. Skill search, installation, basic recommendations, community support.",
+              "availability": "https://schema.org/InStock",
+              "url": "https://skillsmith.app/docs/quickstart"
+            },
+            {
+              "@type": "Offer",
+              "name": "Individual",
+              "price": "9.99",
+              "priceCurrency": "USD",
+              "billingDuration": "P1M",
+              "description": "10,000 API calls/month. Everything in Community plus analytics dashboard, usage statistics, email support.",
+              "availability": "https://schema.org/InStock",
+              "url": "https://skillsmith.app/signup?plan=individual"
+            },
+            {
+              "@type": "Offer",
+              "name": "Team",
+              "price": "25",
+              "priceCurrency": "USD",
+              "billingDuration": "P1M",
+              "priceSpecification": {
+                "@type": "UnitPriceSpecification",
+                "price": "25",
+                "priceCurrency": "USD",
+                "billingDuration": "P1M",
+                "unitText": "user"
+              },
+              "description": "100,000 API calls/month. Team workspaces, private skills, team dashboard, skill sharing controls, priority support.",
+              "availability": "https://schema.org/InStock",
+              "url": "https://skillsmith.app/signup?plan=team"
+            },
+            {
+              "@type": "Offer",
+              "name": "Enterprise",
+              "price": "55",
+              "priceCurrency": "USD",
+              "billingDuration": "P1M",
+              "priceSpecification": {
+                "@type": "UnitPriceSpecification",
+                "price": "55",
+                "priceCurrency": "USD",
+                "billingDuration": "P1M",
+                "unitText": "user"
+              },
+              "description": "Unlimited API calls. SSO/SAML, role-based access control, audit logging, 99.9% SLA, dedicated support, custom integrations.",
+              "availability": "https://schema.org/InStock",
+              "url": "https://skillsmith.app/contact?plan=enterprise"
+            }
+          ]
+        },
+        {
+          "@type": "FAQPage",
+          "mainEntity": [
+            {
+              "@type": "Question",
+              "name": "What counts as an API call?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Each skill search, recommendation request, or skill installation counts as one API call. Viewing cached results does not count against your quota."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Can I change plans at any time?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Yes, you can upgrade or downgrade your plan at any time. Changes take effect at the start of your next billing cycle."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "What happens if I exceed my API limit?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "You'll receive a notification when approaching your limit. Once exceeded, API calls will be rate-limited until the next billing cycle or until you upgrade."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Is there a free trial for paid plans?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Yes, Individual and Team plans include a 14-day free trial. Enterprise trials are available upon request."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "What's included in the SLA?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Enterprise customers receive a 99.9% uptime guarantee with service credits if we fail to meet this commitment."
+              }
+            }
+          ]
+        }
+      ]
+    }
+    </script>
   </head>
   <body>
     <header class="header">
