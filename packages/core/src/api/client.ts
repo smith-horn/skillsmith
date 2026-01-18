@@ -27,20 +27,21 @@ const TrustTierSchema = z.enum(['verified', 'community', 'experimental', 'unknow
 
 /**
  * Schema for individual search result from API
+ * SMI-1577: Added .optional() and .default() to handle partial API responses
  */
 const ApiSearchResultSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string().nullable(),
   author: z.string().nullable(),
-  repo_url: z.string().nullable(),
+  repo_url: z.string().nullable().optional(),
   quality_score: z.number().nullable(),
-  trust_tier: TrustTierSchema,
-  tags: z.array(z.string()),
+  trust_tier: TrustTierSchema.default('unknown'),
+  tags: z.array(z.string()).default([]),
   stars: z.number().nullable().optional(),
   installable: z.boolean().nullable().optional(),
-  created_at: z.string(),
-  updated_at: z.string(),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
 })
 
 /**
@@ -100,20 +101,21 @@ export class ApiClientError extends Error {
 
 /**
  * Search result from API
+ * SMI-1577: Made repo_url, created_at, updated_at optional to match schema
  */
 export interface ApiSearchResult {
   id: string
   name: string
   description: string | null
   author: string | null
-  repo_url: string | null
+  repo_url?: string | null
   quality_score: number | null
   trust_tier: TrustTier
   tags: string[]
   stars?: number | null
   installable?: boolean | null
-  created_at: string
-  updated_at: string
+  created_at?: string
+  updated_at?: string
 }
 
 /**
@@ -550,20 +552,24 @@ export class SkillsmithApiClient {
 
   /**
    * Convert API result to Skill type
+   * SMI-1577: Handle optional fields with sensible defaults
+   * Uses epoch timestamp as sentinel for missing dates to avoid data integrity issues
    */
   static toSkill(result: ApiSearchResult): Skill {
+    // Sentinel value for missing timestamps - clearly indicates unknown date
+    const UNKNOWN_DATE = '1970-01-01T00:00:00.000Z'
     return {
       id: result.id,
       name: result.name,
       description: result.description,
       author: result.author,
-      repoUrl: result.repo_url,
+      repoUrl: result.repo_url ?? null,
       qualityScore: result.quality_score,
       trustTier: result.trust_tier,
       tags: result.tags || [],
       installable: result.installable ?? false,
-      createdAt: result.created_at,
-      updatedAt: result.updated_at,
+      createdAt: result.created_at ?? UNKNOWN_DATE,
+      updatedAt: result.updated_at ?? UNKNOWN_DATE,
     }
   }
 }

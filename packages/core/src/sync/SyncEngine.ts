@@ -198,8 +198,16 @@ export class SyncEngine {
       })
 
       // Filter for changed skills if doing differential sync
+      // SMI-1577: Handle optional updated_at field
+      // Skills without timestamps are skipped in differential sync (caught by full sync)
       const skillsToProcess = lastSyncAt
-        ? allSkills.filter((skill) => new Date(skill.updated_at) > new Date(lastSyncAt))
+        ? allSkills.filter((skill) => {
+            if (!skill.updated_at) {
+              // Skip skills without timestamps in differential sync
+              return false
+            }
+            return new Date(skill.updated_at) > new Date(lastSyncAt)
+          })
         : allSkills
 
       totalProcessed = allSkills.length

@@ -138,8 +138,9 @@ export async function executeGetSkill(
         scoreBreakdown: undefined,
         tags: apiSkill.tags || [],
         installCommand: 'claude skill add ' + apiSkill.id,
-        createdAt: apiSkill.created_at,
-        updatedAt: apiSkill.updated_at,
+        // SMI-1577: Handle optional date fields with sentinel value
+        createdAt: apiSkill.created_at ?? '1970-01-01T00:00:00.000Z',
+        updatedAt: apiSkill.updated_at ?? '1970-01-01T00:00:00.000Z',
       }
 
       const endTime = performance.now()
