@@ -1,0 +1,79 @@
+---
+// Blog Page - Placeholder
+// SMI-1558: Fix /blog 404
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="Blog | Skillsmith" description="Latest updates, tutorials, and insights from the Skillsmith team.">
+  <div class="min-h-[60vh] flex flex-col items-center justify-center px-4 py-20">
+    <div class="text-center max-w-2xl">
+      <!-- Coming Soon Badge -->
+      <span class="inline-flex items-center px-4 py-1.5 rounded-full text-sm font-medium bg-gradient-to-r from-[#E07A5F] to-[#D4694E] text-white mb-6">
+        Coming Soon
+      </span>
+
+      <h1 class="text-4xl md:text-5xl font-bold text-white mb-4">
+        Skillsmith Blog
+      </h1>
+
+      <p class="text-lg text-dark-400 mb-8">
+        We're working on tutorials, case studies, and insights about skill development for Claude Code. Subscribe to be notified when we launch.
+      </p>
+
+      <!-- Email Signup Form -->
+      <form class="flex flex-col sm:flex-row gap-3 max-w-md mx-auto mb-8">
+        <input
+          type="email"
+          placeholder="Enter your email"
+          class="flex-1 px-4 py-3 rounded-lg bg-dark-800 border border-dark-700 text-white placeholder-dark-500 focus:outline-none focus:border-[#E07A5F] focus:ring-1 focus:ring-[#E07A5F]"
+          required
+        />
+        <button
+          type="submit"
+          class="px-6 py-3 rounded-lg bg-gradient-to-r from-[#E07A5F] to-[#D4694E] text-white font-medium hover:opacity-90 transition-opacity"
+        >
+          Notify Me
+        </button>
+      </form>
+
+      <!-- Planned Topics -->
+      <div class="text-left bg-dark-900 border border-dark-800 rounded-xl p-6 mt-8">
+        <h2 class="text-lg font-semibold text-white mb-4">Planned Topics</h2>
+        <ul class="space-y-3 text-dark-300">
+          <li class="flex items-start gap-3">
+            <svg class="w-5 h-5 text-[#E07A5F] mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>Building Your First Claude Code Skill</span>
+          </li>
+          <li class="flex items-start gap-3">
+            <svg class="w-5 h-5 text-[#E07A5F] mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>Skill Discovery Best Practices</span>
+          </li>
+          <li class="flex items-start gap-3">
+            <svg class="w-5 h-5 text-[#E07A5F] mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>Case Studies: Real-World Skill Usage</span>
+          </li>
+          <li class="flex items-start gap-3">
+            <svg class="w-5 h-5 text-[#E07A5F] mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>Enterprise Skill Management</span>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Back Link -->
+      <a href="/" class="inline-flex items-center gap-2 text-dark-400 hover:text-white mt-8 transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+        </svg>
+        Back to Home
+      </a>
+    </div>
+  </div>
+</BaseLayout>

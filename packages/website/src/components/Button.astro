@@ -22,7 +22,7 @@ const {
 const baseStyles = 'inline-flex items-center justify-center font-medium rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed';
 
 const variantStyles = {
-  primary: 'text-white bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 shadow-lg shadow-purple-500/25 focus:ring-purple-500',
+  primary: 'text-white shadow-lg focus:ring-[#E07A5F]',
   secondary: 'text-white bg-gray-700 hover:bg-gray-600 focus:ring-gray-500',
   outline: 'text-white border-2 border-gray-600 hover:border-gray-500 hover:bg-gray-800 focus:ring-gray-500',
   ghost: 'text-gray-300 hover:text-white hover:bg-gray-800 focus:ring-gray-500',
@@ -42,14 +42,19 @@ const classes = [
   className,
 ].filter(Boolean).join(' ');
 
+// Coral gradient for primary variant
+const primaryStyle = variant === 'primary'
+  ? 'background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%); box-shadow: 0 4px 14px rgba(224, 122, 95, 0.25);'
+  : '';
+
 ---
 
 {href ? (
-  <a href={href} class={classes}>
+  <a href={href} class={classes} style={primaryStyle}>
     <slot />
   </a>
 ) : (
-  <button type={type} disabled={disabled} class={classes}>
+  <button type={type} disabled={disabled} class={classes} style={primaryStyle}>
     <slot />
   </button>
 )}

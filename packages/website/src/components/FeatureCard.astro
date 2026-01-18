@@ -20,8 +20,8 @@ const {
 } = Astro.props;
 
 const iconColorStyles = {
-  purple: 'from-purple-500 to-purple-600',
-  blue: 'from-blue-500 to-blue-600',
+  purple: 'from-[#E07A5F] to-[#D4694E]',
+  blue: 'from-[#E07A5F] to-[#D4694E]',
   green: 'from-green-500 to-green-600',
   yellow: 'from-yellow-500 to-yellow-600',
   red: 'from-red-500 to-red-600',
@@ -53,7 +53,7 @@ const iconPath = icon || defaultIcons.search;
       <h3 class="text-lg font-semibold text-white mb-2">{title}</h3>
       <p class="text-gray-400 text-sm">{description}</p>
 
-      <div class="mt-4 inline-flex items-center text-purple-400 text-sm font-medium">
+      <div class="mt-4 inline-flex items-center text-[#E07A5F] text-sm font-medium">
         Learn more
         <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
