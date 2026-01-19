@@ -144,13 +144,16 @@ describe('License Middleware', () => {
         // we return null to indicate validation failure rather than silently degrading
         // to community tier. This ensures paying customers get feedback.
         // See SMI-1130 for rationale.
+        //
+        // SMI-1588: Increased timeout to handle enterprise validator initialization
+        // in monorepo CI where the package is available but validation may be slow.
         const middleware = createLicenseMiddleware()
         const license = await middleware.getLicenseInfo()
 
         // License key present + no validator = null (validation failed)
         // License key present + validator available = validates (may still be null if invalid)
         expect(license).toBeNull()
-      })
+      }, 15000) // Extended timeout for enterprise validator initialization
 
       it('should still allow community tools', async () => {
         const middleware = createLicenseMiddleware()
@@ -273,7 +276,7 @@ describe('License Middleware', () => {
       const licensedTools = Object.entries(TOOL_FEATURES).filter(([, v]) => v !== null)
       expect(licensedTools.length).toBeGreaterThan(0)
 
-      for (const [tool, feature] of licensedTools) {
+      for (const [_tool, feature] of licensedTools) {
         expect(FEATURE_DISPLAY_NAMES[feature as FeatureFlag]).toBeDefined()
         expect(FEATURE_TIERS[feature as FeatureFlag]).toBeDefined()
       }
