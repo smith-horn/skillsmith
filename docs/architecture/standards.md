@@ -1,6 +1,6 @@
 # Engineering Standards - Skillsmith
 
-**Version**: 1.9
+**Version**: 2.0
 **Status**: Active
 **Owner**: Skillsmith Team
 
@@ -1184,10 +1184,146 @@ async function verifySkillPackage(
 
 ---
 
+## 8. Astro Script Patterns (SMI-1596)
+
+Astro pages can include client-side JavaScript using `<script>` tags. Understanding the different script types and how to pass data from server to client is essential for building interactive pages.
+
+### 8.1 Module Scripts vs Inline Scripts
+
+**Module Scripts** (default): Scripts with `import` statements are processed by Vite and bundled.
+
+```astro
+<!-- Module script - bundled by Vite, supports imports -->
+<script>
+  import { createClient } from '@supabase/supabase-js'
+
+  const supabase = createClient(
+    import.meta.env.PUBLIC_SUPABASE_URL,
+    import.meta.env.PUBLIC_SUPABASE_ANON_KEY
+  )
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    const { data } = await supabase.from('profiles').select('*')
+    console.log(data)
+  })
+</script>
+```
+
+**Inline Scripts**: Scripts with `is:inline` directive are not processed and appear as-is in HTML.
+
+```astro
+<!-- Inline script - rendered as-is, no bundling -->
+<script is:inline>
+  // Cannot use imports here
+  console.log('Page loaded')
+</script>
+```
+
+### 8.2 Passing Server Data to Client Scripts
+
+**Using `define:vars`** (for inline scripts only):
+
+```astro
+---
+const serverData = {
+  userId: user.id,
+  tier: user.tier,
+}
+---
+
+<!-- define:vars injects server values as script variables -->
+<script define:vars={{ serverData }}>
+  console.log('User ID:', serverData.userId)
+  // Note: define:vars makes this an inline script
+</script>
+```
+
+**Using data attributes** (for module scripts):
+
+```astro
+---
+const tier = user.tier
+---
+
+<div id="subscription-data" data-tier={tier}></div>
+
+<script>
+  // Read from data attributes in module scripts
+  const dataEl = document.getElementById('subscription-data') as HTMLDivElement
+  const tier = dataEl?.dataset.tier || 'community'
+</script>
+```
+
+**Using `import.meta.env`** (for environment variables):
+
+```astro
+<script>
+  // Only PUBLIC_ prefixed env vars are available in client scripts
+  const apiUrl = import.meta.env.PUBLIC_SUPABASE_URL
+  const anonKey = import.meta.env.PUBLIC_SUPABASE_ANON_KEY
+
+  // ❌ WRONG: Non-public env vars are undefined in client
+  const secretKey = import.meta.env.STRIPE_SECRET_KEY // undefined
+</script>
+```
+
+### 8.3 Correct vs Incorrect Patterns
+
+| Pattern | Correct | Incorrect |
+|---------|---------|-----------|
+| Environment variables | `import.meta.env.PUBLIC_*` | `process.env.*` |
+| DOM type assertions | `as HTMLDivElement` | `as any` or no type |
+| Module imports | Inside `<script>` tag | Outside or with `is:inline` |
+| Server data to client | `define:vars` or data attributes | Direct variable reference |
+| Async initialization | Inside `DOMContentLoaded` | At module top level |
+
+**Common Mistakes:**
+
+```astro
+---
+// Server-side code
+const secretApiKey = import.meta.env.STRIPE_SECRET_KEY
+const user = await getUser()
+---
+
+<!-- ❌ WRONG: Trying to use server variables in client script -->
+<script>
+  console.log(user.id) // Error: user is not defined
+  console.log(secretApiKey) // Error: secretApiKey is not defined
+</script>
+
+<!-- ✅ CORRECT: Pass through define:vars or data attributes -->
+<div id="user-data" data-user-id={user.id}></div>
+<script>
+  const userId = document.getElementById('user-data')?.dataset.userId
+</script>
+```
+
+### 8.4 Script Loading Behavior
+
+| Attribute | Behavior |
+|-----------|----------|
+| (none) | Module script, deferred by default |
+| `is:inline` | Rendered as-is, no bundling |
+| `define:vars` | Inline script with injected variables |
+| `type="module"` | Explicit module (redundant in Astro) |
+
+**Performance Considerations:**
+
+- Module scripts are deduped and bundled for production
+- Inline scripts appear in every page that uses them
+- Use module scripts for reusable logic, inline for page-specific one-offs
+- Wrap DOM manipulation in `DOMContentLoaded` to ensure elements exist
+
+> **Reference**: See [Astro Scripts and Event Handling](https://docs.astro.build/en/guides/client-side-scripts/) for official documentation.
+
+---
+
 ## Changelog
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.0 | 2026-01-18 | Added §8 Astro Script Patterns (SMI-1596) |
 | 1.9 | 2026-01-11 | Added §1.7 TypeScript Record<K,V> Exhaustiveness, enhanced §3.2 with Linear auto-close patterns (SMI-1372) |
 | 1.8 | 2026-01-09 | Added §4.10 Third-Party Type Extraction (SMI-1275), §3.3 Security Audit Configuration (SMI-1276) |
 | 1.7 | 2026-01-04 | Added §4.9 Dynamic Import Safety, §4.10 Lazy Loading, updated §1.5 Code Review, enhanced §7.1 License Validation (Phase 7a retro) |

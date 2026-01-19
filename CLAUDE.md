@@ -293,6 +293,7 @@ Set `SKILLSMITH_USE_MOCK_EMBEDDINGS=true` to force fallback mode globally.
 | [Engineering Standards](docs/architecture/standards.md) | Authoritative engineering policy |
 | [MCP Decision Engine](docs/architecture/mcp-decision-engine-architecture.md) | Skill vs MCP decision framework |
 | [Indexer Infrastructure](docs/architecture/indexer-infrastructure.md) | GitHub skill indexing with App authentication |
+| [Astro Script Patterns](docs/architecture/standards.md#8-astro-script-patterns-smi-1596) | Module vs inline scripts, server-to-client data passing |
 
 ---
 
