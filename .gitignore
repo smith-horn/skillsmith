@@ -122,3 +122,7 @@ wrangler.toml.local
 
 # Claude Code runtime files
 .claude/memory.db
+
+# Logarithmic quality score recalculation (internal tooling)
+supabase/migrations/015_recalculate_quality_scores.sql
+scripts/trigger-quality-recalculation.sh
