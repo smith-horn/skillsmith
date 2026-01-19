@@ -3,7 +3,7 @@
 **Date**: January 18, 2026
 **Project**: Live Services (19fbb52a-73f4-49dc-8016-5f705529302e)
 **Target Date**: January 24, 2026
-**Issues**: 18 backlog items (3 completed)
+**Issues**: 20 backlog items (3 completed)
 
 ---
 
@@ -32,8 +32,8 @@ This plan orchestrates parallel execution of Live Services issues using git work
 │                                                                              │
 │  ┌─────────────┐  ┌─────────────┐                                           │
 │  │ WORKTREE 5  │  │ WORKTREE 6  │     Shared: packages/core/src/index.ts   │
-│  │ API/Monitor │  │    Docs     │     Shared: package.json                  │
-│  │ (2 issues)  │  │ (2 issues)  │     Shared: CHANGELOG.md                  │
+│  │ API/Monitor │  │  Docs/DX    │     Shared: package.json                  │
+│  │ (2 issues)  │  │ (4 issues)  │     Shared: CHANGELOG.md                  │
 │  │             │  │             │                                           │
 │  │ Worker:     │  │ Worker:     │                                           │
 │  │ Backend     │  │ Documenter  │                                           │
@@ -144,22 +144,26 @@ This plan orchestrates parallel execution of Live Services issues using git work
 
 ---
 
-### Workstream 6: Documentation
+### Workstream 6: Documentation & DX
 
 | Issue | Title | Priority | Dependencies |
 |-------|-------|----------|--------------|
 | SMI-1451 | Document GitHub App authentication flow | Medium | None |
 | SMI-1585 | Document version governance policy | P2 | None |
+| SMI-1588 | Investigate Supabase Edge Function log API access | Low | None |
+| SMI-1589 | Add is:inline directive to Astro scripts | Low | None |
 
 **Branch**: `feature/live-services-docs`
-**Worker Type**: Documenter
-**Estimated Duration**: 2-3 hours
+**Worker Type**: Documenter + DX Specialist
+**Estimated Duration**: 3-4 hours
 
 **Files Modified**:
 - `docs/architecture/github-app-auth.md` (new)
 - `docs/architecture/versioning-policy.md` (new)
 - `docs/adr/index.md`
 - `CONTRIBUTING.md`
+- `packages/website/src/**/*.astro` (inline directive updates)
+- `docs/infrastructure/supabase-logs.md` (new, if API available)
 
 ---
 
@@ -287,7 +291,7 @@ mcp__claude-flow__memory_store({
       { id: "ws3", name: "Database", issues: ["SMI-1446", "SMI-1448", "SMI-1452"], status: "pending" },
       { id: "ws4", name: "CLI/DevOps", issues: ["SMI-1449", "SMI-1450", "SMI-1455", "SMI-1556"], status: "pending" },
       { id: "ws5", name: "API/Monitoring", issues: ["SMI-1447", "SMI-1453"], status: "pending" },
-      { id: "ws6", name: "Documentation", issues: ["SMI-1451", "SMI-1585"], status: "pending" }
+      { id: "ws6", name: "Documentation & DX", issues: ["SMI-1451", "SMI-1585", "SMI-1588", "SMI-1589"], status: "pending" }
     ],
     dependencies: {
       "SMI-1456": ["SMI-1454"],
@@ -376,7 +380,7 @@ Each worktree session follows this protocol:
 
 ```
 Round 1 (No Dependencies):
-  ├── WS6: Documentation (SMI-1451, SMI-1585)
+  ├── WS6: Documentation & DX (SMI-1451, SMI-1585, SMI-1588, SMI-1589)
   ├── WS1: CI/Testing - SMI-1582 only
   └── WS2: Security - SMI-1454 only
 
@@ -581,7 +585,7 @@ done
 ### Global Checklist
 
 - [ ] All 6 worktrees merged
-- [ ] All 15 issues marked Done in Linear
+- [ ] All 20 issues marked Done in Linear
 - [ ] Collective memory updated with learnings
 - [ ] CHANGELOG.md updated
 - [ ] Hive mind session closed
@@ -604,7 +608,7 @@ git worktree prune
 
 | Metric | Target | Measurement |
 |--------|--------|-------------|
-| Issues Completed | 15/15 | Linear Done status |
+| Issues Completed | 20/20 | Linear Done status |
 | Parallel Efficiency | >80% | Time saved vs sequential |
 | Merge Conflicts | <3 | Git conflict count |
 | CI Pass Rate | 100% | GitHub Actions |
@@ -646,5 +650,7 @@ gh pr create --title "fix: address regression from <original-PR>"
 ---
 
 **Created**: January 18, 2026
+**Updated**: January 18, 2026
 **Author**: Claude Code
 **Status**: Ready for Execution
+**Linear Project**: Updated with DoD, target date Jan 24, all issues labeled
