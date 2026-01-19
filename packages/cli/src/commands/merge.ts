@@ -147,12 +147,12 @@ export function createMergeCommand(): Command {
           strategy: strategy as MergeStrategy,
           dryRun,
           skipInvalid: true,
-          onConflict: verbose
-            ? (conflict) => {
-                console.log(`  Conflict: ${conflict.skillId} (${conflict.reason})`)
-                return strategy as MergeStrategy
-              }
-            : undefined,
+          ...(verbose && {
+            onConflict: (conflict: MergeConflict) => {
+              console.log(`  Conflict: ${conflict.skillId} (${conflict.reason})`)
+              return strategy as MergeStrategy
+            },
+          }),
         }
 
         // Perform merge
