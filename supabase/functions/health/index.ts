@@ -80,7 +80,9 @@ async function checkDatabase(supabase: ReturnType<typeof createClient>): Promise
 async function checkSkillsData(supabase: ReturnType<typeof createClient>): Promise<HealthCheck> {
   const start = Date.now()
   try {
-    const { count, error } = await supabase.from('skills').select('*', { count: 'exact', head: true })
+    const { count, error } = await supabase
+      .from('skills')
+      .select('*', { count: 'exact', head: true })
 
     if (error) {
       return {
@@ -115,7 +117,7 @@ async function checkSkillsData(supabase: ReturnType<typeof createClient>): Promi
 async function checkSearch(supabase: ReturnType<typeof createClient>): Promise<HealthCheck> {
   const start = Date.now()
   try {
-    const { data, error } = await supabase.rpc('search_skills', { search_query: 'test', page_size: 1 })
+    const { error } = await supabase.rpc('search_skills', { search_query: 'test', page_size: 1 })
 
     if (error) {
       return {
@@ -207,7 +209,9 @@ Deno.serve(async (req: Request) => {
       version: VERSION,
       timestamp: new Date().toISOString(),
       uptime: Math.floor((Date.now() - startTime) / 1000),
-      checks: verbose ? checks : checks.map(({ name, status, latencyMs }) => ({ name, status, latencyMs })),
+      checks: verbose
+        ? checks
+        : checks.map(({ name, status, latencyMs }) => ({ name, status, latencyMs })),
       summary,
     }
 
