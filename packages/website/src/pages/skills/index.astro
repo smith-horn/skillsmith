@@ -134,6 +134,43 @@ const trustTiers = [
       </div>
     </div>
 
+    <!-- Quality Score Explanation -->
+    <details class="bg-dark-900 rounded-xl border border-dark-800 p-4 mb-8">
+      <summary class="cursor-pointer text-dark-300 hover:text-white font-medium flex items-center gap-2">
+        <svg class="w-5 h-5 text-primary-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        How Quality Scores Work
+      </summary>
+      <div class="mt-4 text-sm text-dark-400 space-y-3">
+        <p>Quality scores (0-100%) reflect a skill's repository health using a logarithmic formula that fairly weights both small and large projects:</p>
+        <div class="bg-dark-800 rounded-lg p-4 font-mono text-xs">
+          <div class="text-primary-400">Stars: log₁₀(stars + 1) × 15 <span class="text-dark-500">(max 50 pts)</span></div>
+          <div class="text-primary-400">Forks: log₁₀(forks + 1) × 10 <span class="text-dark-500">(max 25 pts)</span></div>
+          <div class="text-primary-400">Base: 25 pts <span class="text-dark-500">(baseline)</span></div>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+          <div class="bg-dark-800 rounded-lg p-3">
+            <div class="text-red-400 font-semibold">~48%</div>
+            <div class="text-dark-500 text-xs">10 stars</div>
+          </div>
+          <div class="bg-dark-800 rounded-lg p-3">
+            <div class="text-yellow-400 font-semibold">~68%</div>
+            <div class="text-dark-500 text-xs">100 stars</div>
+          </div>
+          <div class="bg-dark-800 rounded-lg p-3">
+            <div class="text-green-400 font-semibold">~86%</div>
+            <div class="text-dark-500 text-xs">500 stars</div>
+          </div>
+          <div class="bg-dark-800 rounded-lg p-3">
+            <div class="text-green-400 font-semibold">100%</div>
+            <div class="text-dark-500 text-xs">10,000+ stars</div>
+          </div>
+        </div>
+        <p class="text-dark-500 text-xs">Verified skills from high-trust authors may have manually assigned quality scores.</p>
+      </div>
+    </details>
+
     <!-- Results Count -->
     <div class="flex items-center justify-between mb-6">
       <p id="results-count" class="text-dark-400">
