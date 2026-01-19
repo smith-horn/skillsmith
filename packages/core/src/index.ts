@@ -613,7 +613,7 @@ export type {
   MergeConflict,
   MergeStrategy,
   MergeOptions,
-  SyncStatus,
+  SyncStatus as MigrationSyncStatus,
   SupabaseSyncConfig,
 } from './db/migration.js'
 
