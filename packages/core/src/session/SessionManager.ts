@@ -11,14 +11,45 @@ import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import type { SessionData, Checkpoint } from './SessionContext.js'
 
-// V3 API imports - SMI-1518
+// V3 API imports - SMI-1518, SMI-1609
 // These provide direct TypeScript API access instead of spawning CLI commands
-// Note: claude-flow V3 alpha doesn't export all functions from root, use direct paths
-import {
-  storeEntry,
-  getEntry,
-} from 'claude-flow/v3/@claude-flow/cli/dist/src/memory/memory-initializer.js'
-import { callMCPTool, MCPClientError } from 'claude-flow/v3/@claude-flow/cli/dist/src/mcp-client.js'
+// Note: claude-flow is an optional dependency - imports are dynamic to avoid
+// breaking Fresh Install Test when claude-flow is not installed
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let claudeFlowMemory: any = null
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let claudeFlowMcp: any = null
+
+/**
+ * Lazily load claude-flow memory module
+ * Returns null if claude-flow is not installed
+ */
+async function getClaudeFlowMemory() {
+  if (claudeFlowMemory === null) {
+    try {
+      claudeFlowMemory =
+        await import('claude-flow/v3/@claude-flow/cli/dist/src/memory/memory-initializer.js')
+    } catch {
+      claudeFlowMemory = undefined // Mark as attempted but failed
+    }
+  }
+  return claudeFlowMemory
+}
+
+/**
+ * Lazily load claude-flow MCP module
+ * Returns null if claude-flow is not installed
+ */
+async function getClaudeFlowMcp() {
+  if (claudeFlowMcp === null) {
+    try {
+      claudeFlowMcp = await import('claude-flow/v3/@claude-flow/cli/dist/src/mcp-client.js')
+    } catch {
+      claudeFlowMcp = undefined // Mark as attempted but failed
+    }
+  }
+  return claudeFlowMcp
+}
 
 /**
  * Memory key patterns for session storage
@@ -433,19 +464,22 @@ export class SessionManager {
       return { success: false, error: 'Invalid memory key' }
     }
 
-    // SMI-1518: Try V3 direct API first if enabled
+    // SMI-1518, SMI-1609: Try V3 direct API first if enabled
     if (USE_V3_API) {
       try {
-        const result = await storeEntry({
-          key,
-          value,
-          namespace: MEMORY_NAMESPACE,
-        })
-        if (result.success) {
-          return { success: true }
+        const memoryModule = await getClaudeFlowMemory()
+        if (memoryModule?.storeEntry) {
+          const result = await memoryModule.storeEntry({
+            key,
+            value,
+            namespace: MEMORY_NAMESPACE,
+          })
+          if (result.success) {
+            return { success: true }
+          }
+          // Fall through to spawn if V3 API reports failure
+          console.warn(`V3 storeEntry failed: ${result.error}, falling back to spawn`)
         }
-        // Fall through to spawn if V3 API reports failure
-        console.warn(`V3 storeEntry failed: ${result.error}, falling back to spawn`)
       } catch (error) {
         // V3 API threw an exception, fall back to spawn
         console.warn(`V3 storeEntry exception: ${error}, falling back to spawn`)
@@ -486,21 +520,24 @@ export class SessionManager {
       return { success: false, error: 'Invalid memory key' }
     }
 
-    // SMI-1518: Try V3 direct API first if enabled
+    // SMI-1518, SMI-1609: Try V3 direct API first if enabled
     if (USE_V3_API) {
       try {
-        const result = await getEntry({
-          key,
-          namespace: MEMORY_NAMESPACE,
-        })
-        if (result.success && result.found && result.entry) {
-          return { success: true, data: result.entry.content }
+        const memoryModule = await getClaudeFlowMemory()
+        if (memoryModule?.getEntry) {
+          const result = await memoryModule.getEntry({
+            key,
+            namespace: MEMORY_NAMESPACE,
+          })
+          if (result.success && result.found && result.entry) {
+            return { success: true, data: result.entry.content }
+          }
+          if (result.success && !result.found) {
+            return { success: false, error: 'Key not found' }
+          }
+          // Fall through to spawn if V3 API reports failure
+          console.warn(`V3 getEntry failed: ${result.error}, falling back to spawn`)
         }
-        if (result.success && !result.found) {
-          return { success: false, error: 'Key not found' }
-        }
-        // Fall through to spawn if V3 API reports failure
-        console.warn(`V3 getEntry failed: ${result.error}, falling back to spawn`)
       } catch (error) {
         // V3 API threw an exception, fall back to spawn
         console.warn(`V3 getEntry exception: ${error}, falling back to spawn`)
@@ -541,21 +578,26 @@ export class SessionManager {
       return { success: false, error: 'Invalid memory key' }
     }
 
-    // SMI-1518: Try V3 MCP API first if enabled
+    // SMI-1518, SMI-1609: Try V3 MCP API first if enabled
     if (USE_V3_API) {
       try {
-        const result = await callMCPTool<{ success: boolean; deleted: boolean }>('memory/delete', {
-          key,
-        })
-        if (result.success) {
-          return { success: true }
+        const mcpModule = await getClaudeFlowMcp()
+        if (mcpModule?.callMCPTool) {
+          const result = (await mcpModule.callMCPTool('memory/delete', { key })) as {
+            success: boolean
+            deleted: boolean
+          }
+          if (result.success) {
+            return { success: true }
+          }
+          // Fall through to spawn if V3 API reports failure
+          console.warn(`V3 memory/delete failed, falling back to spawn`)
         }
-        // Fall through to spawn if V3 API reports failure
-        console.warn(`V3 memory/delete failed, falling back to spawn`)
       } catch (error) {
         // V3 API threw an exception, fall back to spawn
-        // MCPClientError indicates the tool wasn't available
-        if (!(error instanceof MCPClientError)) {
+        const mcpModule = await getClaudeFlowMcp()
+        const MCPClientError = mcpModule?.MCPClientError
+        if (!MCPClientError || !(error instanceof MCPClientError)) {
           console.warn(`V3 memory/delete exception: ${error}, falling back to spawn`)
         }
       }
@@ -585,14 +627,17 @@ export class SessionManager {
    * SMI-1518: V3 API Migration - Use callMCPTool('hooks/pre-task') when available
    */
   private async runPreTaskHook(description: string): Promise<void> {
-    // SMI-1518: Try V3 MCP API first if enabled
+    // SMI-1518, SMI-1609: Try V3 MCP API first if enabled
     if (USE_V3_API) {
       try {
-        await callMCPTool('hooks/pre-task', {
-          description,
-          memoryKey: 'session/current',
-        })
-        return // Success, no need to fall back
+        const mcpModule = await getClaudeFlowMcp()
+        if (mcpModule?.callMCPTool) {
+          await mcpModule.callMCPTool('hooks/pre-task', {
+            description,
+            memoryKey: 'session/current',
+          })
+          return // Success, no need to fall back
+        }
       } catch {
         // V3 API not available or failed, fall back to spawn
       }
@@ -628,13 +673,16 @@ export class SessionManager {
    * SMI-1518: V3 API Migration - Use callMCPTool('hooks/post-task') when available
    */
   private async runPostTaskHook(taskId: string): Promise<void> {
-    // SMI-1518: Try V3 MCP API first if enabled
+    // SMI-1518, SMI-1609: Try V3 MCP API first if enabled
     if (USE_V3_API) {
       try {
-        await callMCPTool('hooks/post-task', {
-          taskId,
-        })
-        return // Success, no need to fall back
+        const mcpModule = await getClaudeFlowMcp()
+        if (mcpModule?.callMCPTool) {
+          await mcpModule.callMCPTool('hooks/post-task', {
+            taskId,
+          })
+          return // Success, no need to fall back
+        }
       } catch {
         // V3 API not available or failed, fall back to spawn
       }
