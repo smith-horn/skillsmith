@@ -22,3 +22,11 @@ export const DEFAULT_SKILLS_DIR = join(homedir(), '.claude', 'skills')
  * Default manifest path: ~/.skillsmith/manifest.json
  */
 export const DEFAULT_MANIFEST_PATH = join(homedir(), '.skillsmith', 'manifest.json')
+
+/**
+ * Get the default database path.
+ * Returns ~/.skillsmith/skills.db
+ */
+export function getDefaultDbPath(): string {
+  return DEFAULT_DB_PATH
+}
