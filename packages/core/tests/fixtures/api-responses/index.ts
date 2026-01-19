@@ -3,6 +3,8 @@
  *
  * SMI-1583: Partial and edge-case API response fixtures for comprehensive testing.
  *
+ * IMPORTANT: These mocks match the actual API types from packages/core/src/api/types.ts
+ *
  * These mocks cover:
  * - Successful responses
  * - Partial/incomplete data
@@ -13,12 +15,16 @@
 
 import type {
   SearchResponse,
+  SearchResponseMeta,
   RecommendResponse,
+  RecommendResponseMeta,
   SkillResponse,
   HealthStatus,
   ApiErrorResponse,
   RateLimitInfo,
   ApiSkill,
+  ApiSearchResult,
+  RecommendedSkill,
 } from '../../../src/api/types.js'
 
 // ============================================================================
@@ -40,15 +46,31 @@ export const MOCK_SKILL: ApiSkill = {
   name: 'test-skill',
   description: 'A test skill for unit testing purposes',
   author: 'test-author',
-  version: '1.0.0',
-  trust_tier: 'community',
-  quality_score: 0.85,
-  category: 'development',
-  tags: ['testing', 'mock', 'fixture'],
   repo_url: 'https://github.com/test-author/test-skill',
-  install_count: 100,
+  quality_score: 0.85,
+  trust_tier: 'community',
+  tags: ['testing', 'mock', 'fixture'],
+  stars: 100,
   created_at: '2025-01-01T00:00:00Z',
   updated_at: '2025-01-15T00:00:00Z',
+  categories: ['Development'],
+}
+
+export const MOCK_SEARCH_RESULT: ApiSearchResult = {
+  ...MOCK_SKILL,
+  rank: 1,
+}
+
+export const MOCK_SEARCH_META: SearchResponseMeta = {
+  query: 'test',
+  total: 1,
+  limit: 20,
+  offset: 0,
+  filters: {
+    category: null,
+    trust_tier: null,
+    min_score: null,
+  },
 }
 
 export const MOCK_SEARCH_SUCCESS: MockResponse<SearchResponse> = {
@@ -60,16 +82,21 @@ export const MOCK_SEARCH_SUCCESS: MockResponse<SearchResponse> = {
     'x-ratelimit-reset': String(Date.now() + 60000),
   },
   body: {
-    skills: [MOCK_SKILL],
-    meta: {
-      total: 1,
-      page: 1,
-      per_page: 20,
-      total_pages: 1,
-      query: 'test',
-      filters: {},
-    },
+    data: [MOCK_SEARCH_RESULT],
+    meta: MOCK_SEARCH_META,
   },
+}
+
+export const MOCK_RECOMMENDED_SKILL: RecommendedSkill = {
+  ...MOCK_SKILL,
+  relevance_score: 0.95,
+}
+
+export const MOCK_RECOMMEND_META: RecommendResponseMeta = {
+  stack: ['typescript', 'react'],
+  project_type: 'web',
+  total: 1,
+  limit: 10,
 }
 
 export const MOCK_RECOMMEND_SUCCESS: MockResponse<RecommendResponse> = {
@@ -78,18 +105,8 @@ export const MOCK_RECOMMEND_SUCCESS: MockResponse<RecommendResponse> = {
     'content-type': 'application/json',
   },
   body: {
-    recommendations: [
-      {
-        skill: MOCK_SKILL,
-        score: 0.95,
-        reason: 'Matches project context',
-      },
-    ],
-    meta: {
-      total: 1,
-      context_analyzed: true,
-      project_type: 'typescript',
-    },
+    data: [MOCK_RECOMMENDED_SKILL],
+    meta: MOCK_RECOMMEND_META,
   },
 }
 
@@ -99,7 +116,7 @@ export const MOCK_SKILL_RESPONSE: MockResponse<SkillResponse> = {
     'content-type': 'application/json',
   },
   body: {
-    skill: MOCK_SKILL,
+    data: MOCK_SKILL,
   },
 }
 
@@ -125,17 +142,15 @@ export const MOCK_HEALTH_SUCCESS: MockResponse<HealthStatus> = {
 export const MOCK_SKILL_MINIMAL: ApiSkill = {
   id: 'minimal/skill',
   name: 'minimal-skill',
-  description: '',
-  author: 'minimal',
-  version: '0.0.1',
+  description: null,
+  author: null,
+  repo_url: null,
+  quality_score: null,
   trust_tier: 'experimental',
-  quality_score: 0,
-  category: 'other',
   tags: [],
-  repo_url: '',
-  install_count: 0,
-  created_at: '',
-  updated_at: '',
+  stars: null,
+  created_at: '2025-01-01T00:00:00Z',
+  updated_at: '2025-01-01T00:00:00Z',
 }
 
 /**
@@ -147,14 +162,17 @@ export const MOCK_SEARCH_EMPTY: MockResponse<SearchResponse> = {
     'content-type': 'application/json',
   },
   body: {
-    skills: [],
+    data: [],
     meta: {
-      total: 0,
-      page: 1,
-      per_page: 20,
-      total_pages: 0,
       query: 'nonexistent-skill-xyz',
-      filters: {},
+      total: 0,
+      limit: 20,
+      offset: 0,
+      filters: {
+        category: null,
+        trust_tier: null,
+        min_score: null,
+      },
     },
   },
 }
@@ -168,14 +186,17 @@ export const MOCK_SEARCH_PARTIAL: MockResponse<SearchResponse> = {
     'content-type': 'application/json',
   },
   body: {
-    skills: [MOCK_SKILL_MINIMAL],
+    data: [{ ...MOCK_SKILL_MINIMAL, rank: 1 }],
     meta: {
-      total: 1,
-      page: 1,
-      per_page: 20,
-      total_pages: 1,
       query: 'minimal',
-      filters: {},
+      total: 1,
+      limit: 20,
+      offset: 0,
+      filters: {
+        category: null,
+        trust_tier: null,
+        min_score: null,
+      },
     },
   },
 }
@@ -189,33 +210,37 @@ export const MOCK_RECOMMEND_EMPTY: MockResponse<RecommendResponse> = {
     'content-type': 'application/json',
   },
   body: {
-    recommendations: [],
+    data: [],
     meta: {
+      stack: ['obscure-tech'],
+      project_type: null,
       total: 0,
-      context_analyzed: true,
-      project_type: 'unknown',
+      limit: 10,
     },
   },
 }
 
 /**
- * Paginated response (page 2 of 3)
+ * Paginated response (offset 20 of 50 total)
  */
 export const MOCK_SEARCH_PAGINATED: MockResponse<SearchResponse> = {
   status: 200,
   headers: {
     'content-type': 'application/json',
-    link: '</api/v1/skills/search?page=1>; rel="first", </api/v1/skills/search?page=3>; rel="last", </api/v1/skills/search?page=3>; rel="next", </api/v1/skills/search?page=1>; rel="prev"',
+    link: '</api/v1/skills/search?offset=0>; rel="first", </api/v1/skills/search?offset=40>; rel="last", </api/v1/skills/search?offset=40>; rel="next", </api/v1/skills/search?offset=0>; rel="prev"',
   },
   body: {
-    skills: [MOCK_SKILL],
+    data: [MOCK_SEARCH_RESULT],
     meta: {
-      total: 50,
-      page: 2,
-      per_page: 20,
-      total_pages: 3,
       query: 'development',
-      filters: { trust_tier: 'community' },
+      total: 50,
+      limit: 20,
+      offset: 20,
+      filters: {
+        category: null,
+        trust_tier: 'community',
+        min_score: null,
+      },
     },
   },
 }
@@ -230,12 +255,9 @@ export const MOCK_ERROR_NOT_FOUND: MockResponse<ApiErrorResponse> = {
     'content-type': 'application/json',
   },
   body: {
-    error: {
-      code: 'SKILL_NOT_FOUND',
-      message: 'Skill not found',
-      details: {
-        skill_id: 'nonexistent/skill',
-      },
+    error: 'Skill not found',
+    details: {
+      skill_id: 'nonexistent/skill',
     },
   },
 }
@@ -246,13 +268,10 @@ export const MOCK_ERROR_VALIDATION: MockResponse<ApiErrorResponse> = {
     'content-type': 'application/json',
   },
   body: {
-    error: {
-      code: 'VALIDATION_ERROR',
-      message: 'Invalid request parameters',
-      details: {
-        field: 'query',
-        reason: 'Query must be at least 2 characters',
-      },
+    error: 'Query must be at least 2 characters',
+    details: {
+      field: 'query',
+      provided: 'x',
     },
   },
 }
@@ -263,10 +282,7 @@ export const MOCK_ERROR_UNAUTHORIZED: MockResponse<ApiErrorResponse> = {
     'content-type': 'application/json',
   },
   body: {
-    error: {
-      code: 'UNAUTHORIZED',
-      message: 'Invalid or missing API key',
-    },
+    error: 'Invalid or missing API key',
   },
 }
 
@@ -276,13 +292,10 @@ export const MOCK_ERROR_FORBIDDEN: MockResponse<ApiErrorResponse> = {
     'content-type': 'application/json',
   },
   body: {
-    error: {
-      code: 'FORBIDDEN',
-      message: 'Insufficient permissions for this operation',
-      details: {
-        required_tier: 'team',
-        current_tier: 'community',
-      },
+    error: 'Insufficient permissions for this operation',
+    details: {
+      required_tier: 'team',
+      current_tier: 'community',
     },
   },
 }
@@ -293,10 +306,7 @@ export const MOCK_ERROR_SERVER: MockResponse<ApiErrorResponse> = {
     'content-type': 'application/json',
   },
   body: {
-    error: {
-      code: 'INTERNAL_SERVER_ERROR',
-      message: 'An unexpected error occurred',
-    },
+    error: 'An unexpected error occurred',
   },
 }
 
@@ -307,12 +317,9 @@ export const MOCK_ERROR_SERVICE_UNAVAILABLE: MockResponse<ApiErrorResponse> = {
     'retry-after': '30',
   },
   body: {
-    error: {
-      code: 'SERVICE_UNAVAILABLE',
-      message: 'Service temporarily unavailable',
-      details: {
-        retry_after: 30,
-      },
+    error: 'Service temporarily unavailable',
+    details: {
+      retry_after: 30,
     },
   },
 }
@@ -337,14 +344,11 @@ export const MOCK_ERROR_RATE_LIMITED: MockResponse<ApiErrorResponse> = {
     'retry-after': '60',
   },
   body: {
-    error: {
-      code: 'RATE_LIMITED',
-      message: 'Too many requests',
-      details: {
-        limit: 100,
-        remaining: 0,
-        reset_at: new Date(Date.now() + 60000).toISOString(),
-      },
+    error: 'Too many requests',
+    details: {
+      limit: 100,
+      remaining: 0,
+      reset_at: new Date(Date.now() + 60000).toISOString(),
     },
   },
 }
@@ -372,12 +376,12 @@ export const MOCK_SLOW_RESPONSE_DELAY_MS = 5000
 /**
  * Simulates a partial response (connection closed mid-stream)
  */
-export const MOCK_PARTIAL_JSON = '{"skills": [{"id": "partial/skill"'
+export const MOCK_PARTIAL_JSON = '{"data": [{"id": "partial/skill"'
 
 /**
  * Simulates malformed JSON response
  */
-export const MOCK_MALFORMED_JSON = '{"skills": [invalid json here]}'
+export const MOCK_MALFORMED_JSON = '{"data": [invalid json here]}'
 
 /**
  * Simulates HTML error page (proxy/server misconfiguration)
