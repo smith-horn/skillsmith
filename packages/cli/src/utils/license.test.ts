@@ -118,6 +118,9 @@ describe('license utilities', () => {
       // Due to dynamic import mocking limitations in vitest, the enterprise package
       // cannot be properly mocked to return validated results. This test confirms
       // the graceful fallback to community tier when validation cannot complete.
+      //
+      // SMI-1588: Increased timeout to handle enterprise validator initialization
+      // in monorepo CI where the package is available but validation may be slow.
 
       process.env['SKILLSMITH_LICENSE_KEY'] = 'valid-jwt-token'
 
@@ -126,8 +129,10 @@ describe('license utilities', () => {
       const status = await getLicenseStatus()
 
       // Without actual enterprise package validation, falls back to community
+      // In CI with enterprise available, the key is validated and rejected (invalid format)
+      // Both outcomes result in community tier, which is correct behavior
       expect(status.tier).toBe('community')
-    })
+    }, 15000) // Extended timeout for enterprise validator initialization
 
     it('returns community tier for invalid license', async () => {
       // When enterprise package IS available but no public key is configured,

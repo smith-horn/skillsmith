@@ -119,3 +119,6 @@ wrangler.toml.local
 
 # Resend webhook secrets (beyond .env)
 .resend-*
+
+# Claude Code runtime files
+.claude/memory.db
