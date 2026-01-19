@@ -16,6 +16,7 @@
 import Stripe from 'https://esm.sh/stripe@14.5.0'
 import { createSupabaseAdminClient, logInvocation, getRequestId } from '../_shared/supabase.ts'
 import { generateLicenseKey, hashLicenseKey, getRateLimitForTier } from '../_shared/license.ts'
+import { sendWelcomeEmail, sendPaymentFailedEmail } from '../_shared/email.ts'
 
 // Stripe webhook secret for signature verification
 const STRIPE_WEBHOOK_SECRET = Deno.env.get('STRIPE_WEBHOOK_SECRET')
@@ -106,7 +107,9 @@ Deno.serve(async (req: Request) => {
           console.log('User not found, storing pending checkout for later association')
 
           // Store in pending_checkouts for when user signs up
-          const { error: pendingError } = await supabase.from('pending_checkouts').insert({
+          // The pending_checkouts table has a 7-day TTL and a trigger that processes
+          // the checkout when the user eventually signs up (see migration 012)
+          const { error: pendingError } = await supabase.from('pending_checkouts').upsert({
             email: customerEmail,
             stripe_customer_id: customerId,
             stripe_subscription_id: subscriptionId,
@@ -115,12 +118,14 @@ Deno.serve(async (req: Request) => {
             seat_count: seatCount,
             checkout_session_id: session.id,
             metadata: session.metadata,
-            created_at: new Date().toISOString(),
-          }).onConflict('email').merge()
+          }, { onConflict: 'email' })
 
-          // If table doesn't exist, just log and continue
-          if (pendingError && !pendingError.message.includes('does not exist')) {
+          if (pendingError) {
             console.error('Failed to store pending checkout:', pendingError)
+            // Don't throw - return success to Stripe since payment was received
+            // The user can contact support if their subscription isn't set up
+          } else {
+            console.log('Stored pending checkout for later association', { email: customerEmail })
           }
 
           // Still return success - Stripe expects 200
@@ -200,15 +205,24 @@ Deno.serve(async (req: Request) => {
           keyPrefix,
         })
 
-        // TODO: Send welcome email with license key using an email service
-        // The license key should be included in this email since it's only shown once
-        // For now, we log it (in production, integrate with email service)
-        console.log('LICENSE KEY GENERATED (send via email):', {
-          email: customerEmail,
-          keyPrefix,
-          // In production: integrate with email service to send the actual key
-          // Do NOT log the actual key in production!
+        // Send welcome email with license key
+        // The license key is included in this email since it's only shown once
+        // Email failures are logged but don't fail the webhook
+        const emailSent = await sendWelcomeEmail({
+          to: customerEmail,
+          licenseKey,
+          tier,
+          customerName: session.customer_details?.name || undefined,
+          billingPeriod,
+          seatCount,
         })
+
+        if (emailSent) {
+          console.log('Welcome email sent successfully', { email: customerEmail, keyPrefix })
+        } else {
+          // Email failed but don't fail the webhook - user can retrieve key from dashboard
+          console.warn('Failed to send welcome email (non-fatal)', { email: customerEmail, keyPrefix })
+        }
 
         break
       }
@@ -360,7 +374,15 @@ Deno.serve(async (req: Request) => {
           // Ignore if table doesn't exist
         })
 
-        // TODO: Send payment failed notification email
+        // Send payment failed notification email
+        const customerEmail = invoice.customer_email
+        if (customerEmail) {
+          const emailSent = await sendPaymentFailedEmail(customerEmail, invoice.attempt_count || 1)
+          if (!emailSent) {
+            console.warn('Failed to send payment failed email (non-fatal)', { email: customerEmail })
+          }
+        }
+
         break
       }
 
