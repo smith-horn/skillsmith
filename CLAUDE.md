@@ -280,6 +280,46 @@ Set `SKILLSMITH_USE_MOCK_EMBEDDINGS=true` to force fallback mode globally.
 
 - **Neural Integration Tests**: See [docs/development/neural-testing.md](docs/development/neural-testing.md)
 - **V3 Migration Benchmarks**: See [docs/development/benchmarks.md](docs/development/benchmarks.md)
+- **Stripe CLI Testing**: See [docs/development/stripe-testing.md](docs/development/stripe-testing.md)
+
+---
+
+## Hive Mind Orchestration
+
+Hive mind configs enable multi-agent task orchestration with coordinated memory and quality gates.
+
+### Configuration Location
+
+```
+.claude/hive-mind/
+├── README.md              # Usage documentation
+└── *.yaml                 # Task configurations
+```
+
+### Quick Start
+
+```bash
+# Run a hive mind configuration
+./start-hive-mind.sh
+
+# Or use claude-flow directly
+npx claude-flow swarm --config .claude/hive-mind/your-config.yaml
+```
+
+### Resource Profiles
+
+| Profile | Max Agents | Use Case |
+|---------|------------|----------|
+| `laptop` | 2 | M1/M4 MacBook development |
+| `workstation` | 4 | Desktop with more resources |
+| `server` | 8+ | CI/CD or cloud execution |
+
+### When to Version Configs
+
+- **Version**: Reusable templates, team workflows, release processes
+- **Gitignore**: One-time tasks, personal preferences, experiments
+
+> See [.claude/hive-mind/README.md](.claude/hive-mind/README.md) for full documentation
 
 ---
 

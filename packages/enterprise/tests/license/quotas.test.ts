@@ -81,29 +81,29 @@ describe('Quota System', () => {
 
     it('should have correct 80% threshold config', () => {
       const config = WARNING_CONFIG[0]
-      expect(config).toBeDefined()
-      expect(config!.threshold).toBe(80)
-      expect(config!.severity).toBe('info')
-      expect(config!.message).toBe('Approaching quota limit')
-      expect(config!.sendEmail).toBe(false)
+      if (!config) throw new Error('Expected config at index 0')
+      expect(config.threshold).toBe(80)
+      expect(config.severity).toBe('info')
+      expect(config.message).toBe('Approaching quota limit')
+      expect(config.sendEmail).toBe(false)
     })
 
     it('should have correct 90% threshold config', () => {
       const config = WARNING_CONFIG[1]
-      expect(config).toBeDefined()
-      expect(config!.threshold).toBe(90)
-      expect(config!.severity).toBe('warning')
-      expect(config!.message).toBe('Quota nearly exhausted')
-      expect(config!.sendEmail).toBe(true)
+      if (!config) throw new Error('Expected config at index 1')
+      expect(config.threshold).toBe(90)
+      expect(config.severity).toBe('warning')
+      expect(config.message).toBe('Quota nearly exhausted')
+      expect(config.sendEmail).toBe(true)
     })
 
     it('should have correct 100% threshold config', () => {
       const config = WARNING_CONFIG[2]
-      expect(config).toBeDefined()
-      expect(config!.threshold).toBe(100)
-      expect(config!.severity).toBe('error')
-      expect(config!.message).toBe('Quota exceeded')
-      expect(config!.sendEmail).toBe(true)
+      if (!config) throw new Error('Expected config at index 2')
+      expect(config.threshold).toBe(100)
+      expect(config.severity).toBe('error')
+      expect(config.message).toBe('Quota exceeded')
+      expect(config.sendEmail).toBe(true)
     })
   })
 
