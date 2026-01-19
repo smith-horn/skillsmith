@@ -24,64 +24,12 @@ import {
   errorResponse,
   buildCorsHeaders,
 } from '../_shared/cors.ts'
-
-// License key prefix
-const LICENSE_KEY_PREFIX = 'sk_live_'
-
-// Max keys per user by tier
-const MAX_KEYS_BY_TIER: Record<string, number> = {
-  community: 1,
-  individual: 3,
-  team: 10,
-  enterprise: 50,
-}
-
-/**
- * Generate a secure license key
- */
-function generateLicenseKey(): { key: string; prefix: string } {
-  // Generate 32 random bytes for the key
-  const bytes = new Uint8Array(32)
-  crypto.getRandomValues(bytes)
-
-  // Convert to base64url (URL-safe)
-  const keyBody = btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '')
-
-  const key = `${LICENSE_KEY_PREFIX}${keyBody}`
-  const prefix = key.substring(0, 16) + '...'
-
-  return { key, prefix }
-}
-
-/**
- * Compute SHA-256 hash of a string
- */
-async function hashKey(key: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(key)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-/**
- * Get rate limit based on tier
- */
-function getRateLimitForTier(tier: string): number {
-  switch (tier) {
-    case 'individual':
-      return 60
-    case 'team':
-      return 120
-    case 'enterprise':
-      return 300
-    default:
-      return 30
-  }
-}
+import {
+  generateLicenseKey,
+  hashLicenseKey,
+  getRateLimitForTier,
+  getMaxKeysForTier,
+} from '../_shared/license.ts'
 
 interface GenerateKeyRequest {
   name?: string
@@ -131,7 +79,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const tier = profile.tier || 'community'
-    const maxKeys = MAX_KEYS_BY_TIER[tier] || 1
+    const maxKeys = getMaxKeysForTier(tier)
 
     // Count existing active keys
     const { count, error: countError } = await adminClient
@@ -157,16 +105,20 @@ Deno.serve(async (req: Request) => {
     // Parse request body
     let body: GenerateKeyRequest = {}
     try {
-      body = await req.json()
-    } catch {
-      // Empty body is fine
+      const text = await req.text()
+      if (text) {
+        body = JSON.parse(text)
+      }
+    } catch (parseError) {
+      // Log parse error for debugging, but empty body is fine
+      console.debug('Request body parse skipped (empty or invalid):', parseError)
     }
 
     const keyName = body.name?.trim().slice(0, 100) || 'API Key'
 
     // Generate the key
     const { key, prefix } = generateLicenseKey()
-    const keyHash = await hashKey(key)
+    const keyHash = await hashLicenseKey(key)
 
     // Store the key
     const { data: newKey, error: insertError } = await adminClient

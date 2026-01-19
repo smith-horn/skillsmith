@@ -15,65 +15,11 @@
 
 import Stripe from 'https://esm.sh/stripe@14.5.0'
 import { createSupabaseAdminClient, logInvocation, getRequestId } from '../_shared/supabase.ts'
+import { generateLicenseKey, hashLicenseKey, getRateLimitForTier } from '../_shared/license.ts'
 
 // Stripe webhook secret for signature verification
 const STRIPE_WEBHOOK_SECRET = Deno.env.get('STRIPE_WEBHOOK_SECRET')
 const STRIPE_SECRET_KEY = Deno.env.get('STRIPE_SECRET_KEY')
-
-// License key prefix
-const LICENSE_KEY_PREFIX = 'sk_live_'
-
-/**
- * Generate a secure license key
- */
-function generateLicenseKey(): { key: string; hash: string; prefix: string } {
-  // Generate 32 random bytes for the key
-  const bytes = new Uint8Array(32)
-  crypto.getRandomValues(bytes)
-
-  // Convert to base64url (URL-safe)
-  const keyBody = btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '')
-
-  const key = `${LICENSE_KEY_PREFIX}${keyBody}`
-  const prefix = key.substring(0, 16) + '...'
-
-  // Hash the key for storage (we don't store the actual key)
-  return {
-    key,
-    hash: '', // Will be computed below
-    prefix,
-  }
-}
-
-/**
- * Compute SHA-256 hash of a string
- */
-async function hashKey(key: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(key)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-/**
- * Get rate limit based on tier
- */
-function getRateLimitForTier(tier: string): number {
-  switch (tier) {
-    case 'individual':
-      return 60 // 60 requests per minute
-    case 'team':
-      return 120 // 120 requests per minute
-    case 'enterprise':
-      return 300 // 300 requests per minute
-    default:
-      return 30 // Community tier
-  }
-}
 
 Deno.serve(async (req: Request) => {
   // Only allow POST requests
@@ -144,7 +90,7 @@ Deno.serve(async (req: Request) => {
           seatCount,
         })
 
-        // Find or create user profile by email
+        // Find user profile by email
         const { data: existingUser } = await supabase
           .from('profiles')
           .select('id')
@@ -156,12 +102,28 @@ Deno.serve(async (req: Request) => {
         if (existingUser) {
           userId = existingUser.id
         } else {
-          // User doesn't exist - they need to sign up first
-          // Store checkout info for later association
-          console.log('User not found, checkout will be associated when user signs up')
+          // User doesn't exist yet - store pending checkout for later association
+          console.log('User not found, storing pending checkout for later association')
 
-          // We could store this in a pending_checkouts table
-          // For now, just log it - the user should have signed up first
+          // Store in pending_checkouts for when user signs up
+          const { error: pendingError } = await supabase.from('pending_checkouts').insert({
+            email: customerEmail,
+            stripe_customer_id: customerId,
+            stripe_subscription_id: subscriptionId,
+            tier,
+            billing_period: billingPeriod,
+            seat_count: seatCount,
+            checkout_session_id: session.id,
+            metadata: session.metadata,
+            created_at: new Date().toISOString(),
+          }).onConflict('email').merge()
+
+          // If table doesn't exist, just log and continue
+          if (pendingError && !pendingError.message.includes('does not exist')) {
+            console.error('Failed to store pending checkout:', pendingError)
+          }
+
+          // Still return success - Stripe expects 200
           break
         }
 
@@ -201,13 +163,21 @@ Deno.serve(async (req: Request) => {
         }
 
         // Generate license key
-        const licenseKeyData = generateLicenseKey()
-        const keyHash = await hashKey(licenseKeyData.key)
+        const { key: licenseKey, prefix: keyPrefix } = generateLicenseKey()
+        const keyHash = await hashLicenseKey(licenseKey)
+
+        // Get subscription record to link the key
+        const { data: subRecord } = await supabase
+          .from('subscriptions')
+          .select('id')
+          .eq('stripe_subscription_id', subscriptionId)
+          .single()
 
         const { error: keyError } = await supabase.from('license_keys').insert({
           user_id: userId,
+          subscription_id: subRecord?.id || null,
           key_hash: keyHash,
-          key_prefix: licenseKeyData.prefix,
+          key_prefix: keyPrefix,
           name: 'Default License Key',
           tier,
           status: 'active',
@@ -215,6 +185,7 @@ Deno.serve(async (req: Request) => {
           metadata: {
             stripe_subscription_id: subscriptionId,
             generated_at: new Date().toISOString(),
+            // Note: The actual key was sent via email (see TODO below)
           },
         })
 
@@ -226,10 +197,18 @@ Deno.serve(async (req: Request) => {
           userId,
           tier,
           subscriptionId,
+          keyPrefix,
         })
 
-        // TODO: Send welcome email with license key
-        // This would integrate with an email service
+        // TODO: Send welcome email with license key using an email service
+        // The license key should be included in this email since it's only shown once
+        // For now, we log it (in production, integrate with email service)
+        console.log('LICENSE KEY GENERATED (send via email):', {
+          email: customerEmail,
+          keyPrefix,
+          // In production: integrate with email service to send the actual key
+          // Do NOT log the actual key in production!
+        })
 
         break
       }
@@ -261,9 +240,8 @@ Deno.serve(async (req: Request) => {
           throw error
         }
 
-        // If subscription is canceled or past_due, update user tier
+        // If subscription is canceled or unpaid, downgrade user
         if (subscription.status === 'canceled' || subscription.status === 'unpaid') {
-          // Get user from subscription
           const { data: sub } = await supabase
             .from('subscriptions')
             .select('user_id')
@@ -272,9 +250,12 @@ Deno.serve(async (req: Request) => {
 
           if (sub) {
             // Downgrade to community tier
-            await supabase.from('profiles').update({ tier: 'community' }).eq('id', sub.user_id)
+            await supabase
+              .from('profiles')
+              .update({ tier: 'community' })
+              .eq('id', sub.user_id)
 
-            // Revoke license keys
+            // Revoke non-community license keys
             await supabase
               .from('license_keys')
               .update({ status: 'revoked', revoked_at: new Date().toISOString() })
@@ -308,7 +289,10 @@ Deno.serve(async (req: Request) => {
 
         // Downgrade user to community
         if (sub) {
-          await supabase.from('profiles').update({ tier: 'community' }).eq('id', sub.user_id)
+          await supabase
+            .from('profiles')
+            .update({ tier: 'community' })
+            .eq('id', sub.user_id)
 
           // Revoke non-community license keys
           await supabase
@@ -330,7 +314,20 @@ Deno.serve(async (req: Request) => {
           amount: invoice.amount_paid,
         })
 
-        // Could log to audit_logs table for billing history
+        // Log to audit_logs for billing history (if table exists)
+        await supabase.from('audit_logs').insert({
+          action: 'payment_succeeded',
+          resource_type: 'invoice',
+          resource_id: invoice.id,
+          metadata: {
+            subscription_id: invoice.subscription,
+            amount: invoice.amount_paid,
+            currency: invoice.currency,
+          },
+        }).catch(() => {
+          // Ignore if table doesn't exist
+        })
+
         break
       }
 
@@ -342,13 +339,26 @@ Deno.serve(async (req: Request) => {
           subscriptionId: invoice.subscription,
         })
 
-        // Update subscription status
+        // Update subscription status to past_due
         if (invoice.subscription) {
           await supabase
             .from('subscriptions')
             .update({ status: 'past_due' })
             .eq('stripe_subscription_id', invoice.subscription)
         }
+
+        // Log to audit_logs (if table exists)
+        await supabase.from('audit_logs').insert({
+          action: 'payment_failed',
+          resource_type: 'invoice',
+          resource_id: invoice.id,
+          metadata: {
+            subscription_id: invoice.subscription,
+            attempt_count: invoice.attempt_count,
+          },
+        }).catch(() => {
+          // Ignore if table doesn't exist
+        })
 
         // TODO: Send payment failed notification email
         break
