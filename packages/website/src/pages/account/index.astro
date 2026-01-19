@@ -1,0 +1,897 @@
+---
+/**
+ * Account Dashboard
+ *
+ * SMI-1163: Account dashboard
+ *
+ * Shows user profile, subscription status, and license keys.
+ * Requires authentication - redirects to login if not authenticated.
+ */
+---
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+
+    <meta name="description" content="Manage your Skillsmith account, subscription, and license keys" />
+    <title>Account Dashboard | Skillsmith</title>
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <header class="header">
+      <nav class="nav">
+        <a href="/" class="logo">
+          <svg width="32" height="32" viewBox="0 0 64 64" class="logo-icon-svg">
+            <rect width="64" height="64" fill="transparent" rx="8"/>
+            <g transform="translate(32, 32)">
+              <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
+                    stroke="currentColor" stroke-width="1.5" stroke-opacity="0.3" fill="none"/>
+              <circle cx="10" cy="-18" r="5" fill="#E07A5F"/>
+              <circle cx="-10" cy="-4" r="5" fill="#E07A5F"/>
+              <circle cx="10" cy="8" r="5" fill="#E07A5F"/>
+              <circle cx="-10" cy="20" r="5" fill="#E07A5F"/>
+            </g>
+          </svg>
+          <span class="logo-text">Skillsmith</span>
+        </a>
+        <div class="nav-links">
+          <a href="/docs">Docs</a>
+          <a href="/pricing">Pricing</a>
+          <button id="logout-btn" class="btn btn-secondary btn-sm">Sign Out</button>
+        </div>
+      </nav>
+    </header>
+
+    <main class="dashboard-container">
+      <!-- Loading State -->
+      <div id="loading-state" class="loading-state">
+        <div class="spinner-container">
+          <svg class="spinner" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" opacity="0.25"/>
+            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"/>
+          </svg>
+        </div>
+        <p>Loading your account...</p>
+      </div>
+
+      <!-- Dashboard Content (hidden until loaded) -->
+      <div id="dashboard-content" style="display: none;">
+        <!-- Welcome Section -->
+        <div class="welcome-section">
+          <h1>Welcome back, <span id="user-name">User</span></h1>
+          <p class="user-email" id="user-email">user@example.com</p>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Current Plan</div>
+            <div class="stat-value" id="current-tier">Community</div>
+            <a href="/account/subscription" class="stat-link">Manage subscription</a>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-label">API Usage</div>
+            <div class="stat-value" id="api-usage">0 / 1,000</div>
+            <span class="stat-subtext">calls this month</span>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-label">License Keys</div>
+            <div class="stat-value" id="key-count">0 / 1</div>
+            <span class="stat-subtext">active keys</span>
+          </div>
+        </div>
+
+        <!-- Subscription Section -->
+        <section class="dashboard-section">
+          <div class="section-header">
+            <h2>Subscription</h2>
+            <a href="/account/subscription" class="btn btn-secondary btn-sm">Manage</a>
+          </div>
+
+          <div class="subscription-card" id="subscription-card">
+            <div class="subscription-info">
+              <div class="subscription-tier">
+                <span class="tier-badge community" id="tier-badge">Community</span>
+                <span class="tier-price" id="tier-price">Free</span>
+              </div>
+              <div class="subscription-details" id="subscription-details">
+                <p>Free forever with 1,000 API calls per month</p>
+              </div>
+            </div>
+            <div class="subscription-actions" id="subscription-actions">
+              <a href="/pricing" class="btn btn-primary">Upgrade Plan</a>
+            </div>
+          </div>
+        </section>
+
+        <!-- License Keys Section -->
+        <section class="dashboard-section">
+          <div class="section-header">
+            <h2>License Keys</h2>
+            <button id="generate-key-btn" class="btn btn-primary btn-sm">Generate New Key</button>
+          </div>
+
+          <div id="keys-list" class="keys-list">
+            <div class="empty-state">
+              <p>No license keys yet.</p>
+              <p class="text-muted">Generate a key to authenticate your CLI or MCP server.</p>
+            </div>
+          </div>
+
+          <!-- New Key Modal -->
+          <div id="new-key-modal" class="modal" style="display: none;">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h3>New License Key Generated</h3>
+                <button class="modal-close" id="close-modal">&times;</button>
+              </div>
+              <div class="modal-body">
+                <p class="warning-text">
+                  <strong>Important:</strong> Copy this key now. It will not be shown again.
+                </p>
+                <div class="key-display">
+                  <code id="new-key-value">sk_live_...</code>
+                  <button id="copy-key-btn" class="btn btn-secondary btn-sm">Copy</button>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button id="done-btn" class="btn btn-primary">Done</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Quick Links Section -->
+        <section class="dashboard-section">
+          <h2>Quick Links</h2>
+          <div class="quick-links">
+            <a href="/docs/quickstart" class="quick-link">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+              </svg>
+              <span>Getting Started</span>
+            </a>
+            <a href="/docs/api" class="quick-link">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="16" y1="13" x2="8" y2="13"/>
+                <line x1="16" y1="17" x2="8" y2="17"/>
+              </svg>
+              <span>API Documentation</span>
+            </a>
+            <a href="/account/billing" class="quick-link">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+                <line x1="1" y1="10" x2="23" y2="10"/>
+              </svg>
+              <span>Billing History</span>
+            </a>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-content">
+        <p>&copy; 2026 Smith Horn Group Ltd. All rights reserved.</p>
+      </div>
+    </footer>
+  </body>
+</html>
+
+<style>
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.6;
+    color: #FAFAFA;
+    background: #0D0D0F;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Header */
+  .header {
+    background: rgba(13, 13, 15, 0.95);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid #1f1f23;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .nav {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 1rem 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 1.25rem;
+    color: #FAFAFA;
+  }
+
+  .nav-links {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+  }
+
+  .nav-links a {
+    text-decoration: none;
+    color: #9ca3af;
+    font-weight: 500;
+    transition: color 0.2s;
+  }
+
+  .nav-links a:hover {
+    color: #E07A5F;
+  }
+
+  /* Dashboard Container */
+  .dashboard-container {
+    flex: 1;
+    max-width: 1024px;
+    margin: 0 auto;
+    padding: 2rem;
+    width: 100%;
+  }
+
+  /* Loading State */
+  .loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 4rem 2rem;
+    color: #9ca3af;
+  }
+
+  .spinner-container {
+    margin-bottom: 1rem;
+  }
+
+  .spinner {
+    width: 2.5rem;
+    height: 2.5rem;
+    color: #E07A5F;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  /* Welcome Section */
+  .welcome-section {
+    margin-bottom: 2rem;
+  }
+
+  .welcome-section h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin-bottom: 0.25rem;
+  }
+
+  .user-email {
+    color: #9ca3af;
+  }
+
+  /* Stats Grid */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+
+  .stat-card {
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 1.25rem;
+  }
+
+  .stat-label {
+    font-size: 0.875rem;
+    color: #9ca3af;
+    margin-bottom: 0.5rem;
+  }
+
+  .stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 0.25rem;
+  }
+
+  .stat-subtext {
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+
+  .stat-link {
+    font-size: 0.75rem;
+    color: #E07A5F;
+    text-decoration: none;
+  }
+
+  .stat-link:hover {
+    text-decoration: underline;
+  }
+
+  /* Sections */
+  .dashboard-section {
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+
+  .section-header h2 {
+    font-size: 1.125rem;
+    font-weight: 600;
+  }
+
+  /* Subscription Card */
+  .subscription-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .subscription-tier {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .tier-badge {
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .tier-badge.community {
+    background: rgba(107, 114, 128, 0.2);
+    color: #9ca3af;
+  }
+
+  .tier-badge.individual {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+  }
+
+  .tier-badge.team {
+    background: rgba(139, 92, 246, 0.2);
+    color: #a78bfa;
+  }
+
+  .tier-badge.enterprise {
+    background: rgba(224, 122, 95, 0.2);
+    color: #E07A5F;
+  }
+
+  .tier-price {
+    font-weight: 600;
+  }
+
+  .subscription-details {
+    color: #9ca3af;
+    font-size: 0.875rem;
+  }
+
+  /* Keys List */
+  .keys-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .key-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    background: #1a1a1f;
+    border-radius: 0.5rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .key-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .key-name {
+    font-weight: 500;
+  }
+
+  .key-prefix {
+    font-family: monospace;
+    font-size: 0.875rem;
+    color: #9ca3af;
+  }
+
+  .key-meta {
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+
+  .key-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 2rem;
+    color: #9ca3af;
+  }
+
+  .text-muted {
+    color: #6b7280;
+    font-size: 0.875rem;
+  }
+
+  /* Quick Links */
+  .quick-links {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+
+  .quick-link {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem;
+    background: #1a1a1f;
+    border-radius: 0.5rem;
+    text-decoration: none;
+    color: #FAFAFA;
+    transition: background 0.2s;
+  }
+
+  .quick-link:hover {
+    background: #2a2a2f;
+  }
+
+  .quick-link svg {
+    width: 1.25rem;
+    height: 1.25rem;
+    color: #E07A5F;
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    cursor: pointer;
+    border: none;
+  }
+
+  .btn-sm {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.8125rem;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(224, 122, 95, 0.4);
+  }
+
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid #2a2a2f;
+    color: #FAFAFA;
+  }
+
+  .btn-secondary:hover {
+    border-color: #E07A5F;
+    color: #E07A5F;
+  }
+
+  .btn-danger {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #f87171;
+  }
+
+  .btn-danger:hover {
+    background: rgba(239, 68, 68, 0.2);
+  }
+
+  /* Modal */
+  .modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 1rem;
+  }
+
+  .modal-content {
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    width: 100%;
+    max-width: 480px;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid #2a2a2f;
+  }
+
+  .modal-header h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+  }
+
+  .modal-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    color: #9ca3af;
+    cursor: pointer;
+  }
+
+  .modal-close:hover {
+    color: #FAFAFA;
+  }
+
+  .modal-body {
+    padding: 1.5rem;
+  }
+
+  .warning-text {
+    background: rgba(251, 191, 36, 0.1);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    color: #fbbf24;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+  }
+
+  .key-display {
+    display: flex;
+    gap: 0.5rem;
+    background: #1a1a1f;
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+  }
+
+  .key-display code {
+    flex: 1;
+    font-family: monospace;
+    font-size: 0.875rem;
+    word-break: break-all;
+  }
+
+  .modal-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid #2a2a2f;
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  /* Footer */
+  .footer {
+    margin-top: auto;
+    background: #1a1a2e;
+    padding: 1.5rem 2rem;
+  }
+
+  .footer-content {
+    max-width: 1280px;
+    margin: 0 auto;
+    text-align: center;
+    font-size: 0.875rem;
+    color: #9ca3af;
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .nav-links {
+      gap: 1rem;
+    }
+
+    .dashboard-container {
+      padding: 1.5rem 1rem;
+    }
+
+    .subscription-card {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
+</style>
+
+<script>
+  import { createClient } from '@supabase/supabase-js'
+
+  const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = import.meta.env.PUBLIC_SUPABASE_ANON_KEY
+
+  // Escape HTML to prevent XSS
+  function escapeHtml(text: string): string {
+    const div = document.createElement('div')
+    div.textContent = text
+    return div.innerHTML
+  }
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    const loadingState = document.getElementById('loading-state') as HTMLDivElement
+    const dashboardContent = document.getElementById('dashboard-content') as HTMLDivElement
+    const logoutBtn = document.getElementById('logout-btn') as HTMLButtonElement
+    const generateKeyBtn = document.getElementById('generate-key-btn') as HTMLButtonElement
+    const newKeyModal = document.getElementById('new-key-modal') as HTMLDivElement
+    const closeModalBtn = document.getElementById('close-modal') as HTMLButtonElement
+    const doneBtn = document.getElementById('done-btn') as HTMLButtonElement
+    const copyKeyBtn = document.getElementById('copy-key-btn') as HTMLButtonElement
+    const newKeyValue = document.getElementById('new-key-value') as HTMLElement
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      loadingState.innerHTML = '<p>Configuration error. Please try again later.</p>'
+      return
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+    // Check authentication
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+
+    if (!session || sessionError) {
+      window.location.href = '/login?redirect=/account'
+      return
+    }
+
+    const user = session.user
+
+    // Load user data
+    try {
+      // Get profile
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('tier, full_name')
+        .eq('id', user.id)
+        .single()
+
+      // Get subscription
+      const { data: subscriptions } = await supabase
+        .rpc('get_user_subscription', { user_uuid: user.id })
+
+      // Get license keys
+      const { data: licenseKeys } = await supabase
+        .from('license_keys')
+        .select('id, key_prefix, name, tier, status, created_at, last_used_at')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+
+      // Update UI
+      const tier = profile?.tier || 'community'
+      const fullName = profile?.full_name || user.email?.split('@')[0] || 'User'
+
+      // User info
+      const userNameEl = document.getElementById('user-name')
+      const userEmailEl = document.getElementById('user-email')
+      if (userNameEl) userNameEl.textContent = fullName
+      if (userEmailEl) userEmailEl.textContent = user.email || ''
+
+      // Current tier
+      const currentTierEl = document.getElementById('current-tier')
+      if (currentTierEl) currentTierEl.textContent = tier.charAt(0).toUpperCase() + tier.slice(1)
+
+      // Key count
+      const activeKeys = licenseKeys?.filter(k => k.status === 'active') || []
+      const maxKeys = tier === 'community' ? 1 : tier === 'individual' ? 3 : tier === 'team' ? 10 : 50
+      const keyCountEl = document.getElementById('key-count')
+      if (keyCountEl) keyCountEl.textContent = `${activeKeys.length} / ${maxKeys}`
+
+      // Tier badge
+      const tierBadge = document.getElementById('tier-badge')
+      if (tierBadge) {
+        tierBadge.textContent = tier.charAt(0).toUpperCase() + tier.slice(1)
+        tierBadge.className = `tier-badge ${tier}`
+      }
+
+      // Tier price and details
+      const tierPriceEl = document.getElementById('tier-price')
+      const subscriptionDetails = document.getElementById('subscription-details')
+      const subscriptionActions = document.getElementById('subscription-actions')
+
+      const subscription = subscriptions?.[0]
+
+      if (subscription) {
+        const prices: Record<string, string> = {
+          individual: '$9.99/mo',
+          team: '$25/user/mo',
+          enterprise: '$55/user/mo'
+        }
+        if (tierPriceEl) tierPriceEl.textContent = prices[tier] || 'Free'
+
+        const periodEnd = new Date(subscription.current_period_end)
+        if (subscriptionDetails) {
+          subscriptionDetails.innerHTML = `
+            <p>Next billing date: ${periodEnd.toLocaleDateString()}</p>
+            ${subscription.cancel_at_period_end ? '<p class="text-danger">Cancels at end of period</p>' : ''}
+          `
+        }
+
+        if (subscriptionActions) {
+          subscriptionActions.innerHTML = `
+            <a href="/account/subscription" class="btn btn-secondary">Manage Subscription</a>
+          `
+        }
+      } else {
+        if (tierPriceEl) tierPriceEl.textContent = 'Free'
+        if (subscriptionDetails) {
+          subscriptionDetails.innerHTML = '<p>Free forever with 1,000 API calls per month</p>'
+        }
+      }
+
+      // License keys list
+      const keysList = document.getElementById('keys-list')
+      if (keysList && licenseKeys && licenseKeys.length > 0) {
+        keysList.innerHTML = licenseKeys.map(key => `
+          <div class="key-item" data-key-id="${escapeHtml(key.id)}">
+            <div class="key-info">
+              <div class="key-name">${escapeHtml(key.name)}</div>
+              <div class="key-prefix">${escapeHtml(key.key_prefix)}</div>
+              <div class="key-meta">
+                Created ${new Date(key.created_at).toLocaleDateString()}
+                ${key.last_used_at ? ` • Last used ${new Date(key.last_used_at).toLocaleDateString()}` : ''}
+              </div>
+            </div>
+            <div class="key-actions">
+              <span class="tier-badge ${escapeHtml(key.tier)}">${escapeHtml(key.tier)}</span>
+              ${key.status === 'active'
+                ? `<button class="btn btn-danger btn-sm revoke-btn" data-key-id="${escapeHtml(key.id)}">Revoke</button>`
+                : `<span class="text-muted">Revoked</span>`
+              }
+            </div>
+          </div>
+        `).join('')
+
+        // Add revoke handlers
+        document.querySelectorAll('.revoke-btn').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            const keyId = (e.target as HTMLButtonElement).dataset.keyId
+            if (!keyId || !confirm('Are you sure you want to revoke this key? This cannot be undone.')) return
+
+            const { error } = await supabase
+              .from('license_keys')
+              .update({ status: 'revoked', revoked_at: new Date().toISOString() })
+              .eq('id', keyId)
+
+            if (!error) {
+              location.reload()
+            }
+          })
+        })
+      }
+
+      // Show dashboard
+      loadingState.style.display = 'none'
+      dashboardContent.style.display = 'block'
+
+    } catch (error) {
+      console.error('Failed to load account data:', error)
+      loadingState.innerHTML = '<p>Failed to load account data. Please refresh.</p>'
+    }
+
+    // Logout handler
+    logoutBtn.addEventListener('click', async () => {
+      await supabase.auth.signOut()
+      window.location.href = '/login'
+    })
+
+    // Generate key handler
+    generateKeyBtn.addEventListener('click', async () => {
+      generateKeyBtn.disabled = true
+      generateKeyBtn.textContent = 'Generating...'
+
+      try {
+        const response = await fetch(`${supabaseUrl}/functions/v1/generate-license`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ name: 'API Key' }),
+        })
+
+        const data = await response.json()
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to generate key')
+        }
+
+        // Show the new key in modal
+        newKeyValue.textContent = data.key
+        newKeyModal.style.display = 'flex'
+
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Failed to generate key')
+      } finally {
+        generateKeyBtn.disabled = false
+        generateKeyBtn.textContent = 'Generate New Key'
+      }
+    })
+
+    // Modal handlers
+    const closeModal = () => {
+      newKeyModal.style.display = 'none'
+      location.reload() // Refresh to show new key in list
+    }
+
+    closeModalBtn.addEventListener('click', closeModal)
+    doneBtn.addEventListener('click', closeModal)
+
+    copyKeyBtn.addEventListener('click', async () => {
+      const key = newKeyValue.textContent || ''
+      await navigator.clipboard.writeText(key)
+      copyKeyBtn.textContent = 'Copied!'
+      setTimeout(() => { copyKeyBtn.textContent = 'Copy' }, 2000)
+    })
+  })
+</script>

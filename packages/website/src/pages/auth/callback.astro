@@ -1,0 +1,315 @@
+---
+/**
+ * Auth Callback Page
+ *
+ * SMI-1169: Email verification flow
+ *
+ * Handles OAuth callbacks and email verification links.
+ * Supabase Auth redirects here after email verification.
+ */
+---
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+
+    <meta name="description" content="Verifying your Skillsmith account..." />
+    <title>Verifying... | Skillsmith</title>
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <main class="callback-container">
+      <div class="callback-card">
+        <div id="loading-state" class="state-content">
+          <div class="spinner-container">
+            <svg class="spinner" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" opacity="0.25"/>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"/>
+            </svg>
+          </div>
+          <h1>Verifying your account...</h1>
+          <p>Please wait while we complete the verification.</p>
+        </div>
+
+        <div id="success-state" class="state-content" style="display: none;">
+          <div class="icon-container success">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </div>
+          <h1>Email Verified!</h1>
+          <p>Your account has been verified. Redirecting to your dashboard...</p>
+          <a href="/account" class="btn btn-primary">Go to Dashboard</a>
+        </div>
+
+        <div id="error-state" class="state-content" style="display: none;">
+          <div class="icon-container error">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="15" y1="9" x2="9" y2="15" />
+              <line x1="9" y1="9" x2="15" y2="15" />
+            </svg>
+          </div>
+          <h1>Verification Failed</h1>
+          <p id="error-message">The verification link may have expired or is invalid.</p>
+          <div class="error-actions">
+            <a href="/login" class="btn btn-primary">Go to Login</a>
+            <a href="/signup" class="btn btn-secondary">Create New Account</a>
+          </div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>
+
+<style>
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.6;
+    color: #FAFAFA;
+    background: #0D0D0F;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .callback-container {
+    padding: 2rem;
+    width: 100%;
+    max-width: 400px;
+  }
+
+  .callback-card {
+    background: #121214;
+    border-radius: 1rem;
+    padding: 2.5rem 2rem;
+    border: 1px solid #2a2a2f;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+  }
+
+  .state-content {
+    text-align: center;
+  }
+
+  .state-content h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+  }
+
+  .state-content p {
+    color: #9ca3af;
+    margin-bottom: 1.5rem;
+  }
+
+  .spinner-container {
+    margin-bottom: 1.5rem;
+  }
+
+  .spinner {
+    width: 3rem;
+    height: 3rem;
+    color: #E07A5F;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  .icon-container {
+    width: 4rem;
+    height: 4rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 1.5rem;
+  }
+
+  .icon-container svg {
+    width: 2rem;
+    height: 2rem;
+  }
+
+  .icon-container.success {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+  }
+
+  .icon-container.error {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    cursor: pointer;
+    border: none;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(224, 122, 95, 0.4);
+  }
+
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid #2a2a2f;
+    color: #FAFAFA;
+  }
+
+  .btn-secondary:hover {
+    border-color: #E07A5F;
+    color: #E07A5F;
+  }
+
+  .error-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+</style>
+
+<script>
+  import { createClient } from '@supabase/supabase-js'
+
+  const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = import.meta.env.PUBLIC_SUPABASE_ANON_KEY
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    const loadingState = document.getElementById('loading-state') as HTMLDivElement | null
+    const successState = document.getElementById('success-state') as HTMLDivElement | null
+    const errorState = document.getElementById('error-state') as HTMLDivElement | null
+    const errorMessageEl = document.getElementById('error-message') as HTMLParagraphElement | null
+
+    function showSuccess() {
+      if (loadingState) loadingState.style.display = 'none'
+      if (successState) successState.style.display = 'block'
+      // Auto-redirect after 2 seconds
+      setTimeout(() => {
+        window.location.href = '/account'
+      }, 2000)
+    }
+
+    function showError(message?: string) {
+      if (loadingState) loadingState.style.display = 'none'
+      if (errorState) errorState.style.display = 'block'
+      if (message && errorMessageEl) {
+        errorMessageEl.textContent = message
+      }
+    }
+
+    try {
+      if (!supabaseUrl || !supabaseAnonKey) {
+        showError('Authentication service not configured')
+        return
+      }
+
+      const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+      // Get the hash fragment from URL (Supabase Auth uses hash-based routing)
+      const hashParams = new URLSearchParams(window.location.hash.substring(1))
+      const accessToken = hashParams.get('access_token')
+      const refreshToken = hashParams.get('refresh_token')
+      const type = hashParams.get('type')
+      const errorCode = hashParams.get('error')
+      const errorDescription = hashParams.get('error_description')
+
+      // Check for errors first
+      if (errorCode) {
+        showError(errorDescription || 'Authentication failed')
+        return
+      }
+
+      // Handle different auth flows
+      if (type === 'signup' || type === 'email') {
+        // Email verification callback
+        if (accessToken && refreshToken) {
+          const { error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          })
+
+          if (error) {
+            showError(error.message)
+          } else {
+            showSuccess()
+          }
+        } else {
+          // Try to exchange code for session (PKCE flow)
+          const { error } = await supabase.auth.exchangeCodeForSession(window.location.href)
+          if (error) {
+            showError(error.message)
+          } else {
+            showSuccess()
+          }
+        }
+      } else if (type === 'recovery') {
+        // Password reset callback - redirect to reset password page
+        window.location.href = `/auth/reset-password${window.location.hash}`
+      } else if (accessToken) {
+        // Generic OAuth callback
+        const { error } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken || '',
+        })
+
+        if (error) {
+          showError(error.message)
+        } else {
+          showSuccess()
+        }
+      } else {
+        // Check if already logged in
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session) {
+          showSuccess()
+        } else {
+          // No tokens found, try PKCE exchange
+          try {
+            const { error } = await supabase.auth.exchangeCodeForSession(window.location.href)
+            if (error) {
+              showError('Invalid or expired verification link. Please request a new one.')
+            } else {
+              showSuccess()
+            }
+          } catch (pkceError) {
+            console.error('PKCE exchange error:', pkceError)
+            showError('Invalid or expired verification link. Please request a new one.')
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Auth callback error:', error)
+      showError('An unexpected error occurred. Please try again.')
+    }
+  })
+</script>

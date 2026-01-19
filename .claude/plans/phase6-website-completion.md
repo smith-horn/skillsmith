@@ -26,64 +26,65 @@ All brand compliance and dark theme issues verified done in codebase:
 
 ---
 
-## Remaining Work (13 Issues)
+## Remaining Work (10 Issues)
 
-### Wave 3: Database & Auth (3 issues)
-
-| Issue | Title | Status |
-|-------|-------|--------|
-| SMI-1178 | Database schema and setup (Supabase) | Partial - needs users/subscriptions tables |
-| SMI-1168 | User registration and login | Not started - login.astro exists but no auth |
-| SMI-1169 | Email verification flow | Not started |
-
-**Files to create:**
-- `supabase/migrations/011_users_subscriptions.sql`
-- `supabase/functions/auth-register/index.ts`
-- `supabase/functions/auth-login/index.ts`
-- `supabase/functions/auth-verify/index.ts`
-- `packages/website/src/lib/auth.ts`
-
-### Wave 4: Stripe Integration (4 issues)
+### Wave 3: Database & Auth (3 issues) ✅ COMPLETE
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| SMI-1177 | Stripe webhook handlers | Not started |
-| SMI-1161 | Stripe Checkout for Team tier | Partial - checkout function exists |
-| SMI-1162 | Stripe Checkout for Enterprise tier | Partial - checkout function exists |
-| SMI-1164 | License key delivery after payment | Not started |
+| SMI-1178 | Database schema and setup (Supabase) | ✅ Done - migration 011_users_subscriptions.sql |
+| SMI-1168 | User registration and login | ✅ Done - login.astro, signup.astro, auth.ts |
+| SMI-1169 | Email verification flow | ✅ Done - auth/callback.astro, auth/reset-password.astro |
 
-**Files to create:**
-- `supabase/functions/stripe-webhook/index.ts`
-- `supabase/functions/generate-license/index.ts`
+**Files created:**
+- `supabase/migrations/011_users_subscriptions.sql` - profiles, subscriptions, license_keys, teams tables
+- `packages/website/src/lib/auth.ts` - Supabase Auth client helper
+- `packages/website/src/types/auth.ts` - Auth type definitions
+- `packages/website/src/pages/login.astro` - Updated with Supabase Auth login
+- `packages/website/src/pages/signup.astro` - Updated with registration form
+- `packages/website/src/pages/auth/callback.astro` - Email verification handler
+- `packages/website/src/pages/auth/forgot-password.astro` - Password reset request
+- `packages/website/src/pages/auth/reset-password.astro` - New password form
 
-**Existing:** `supabase/functions/checkout/index.ts` ✓
-
-### Wave 5: Account Features (3 issues)
-
-| Issue | Title | Status |
-|-------|-------|--------|
-| SMI-1163 | Account dashboard with subscription status | Not started |
-| SMI-1165 | Subscription upgrade/downgrade flow | Not started |
-| SMI-1167 | Seat management for team admins | Not started |
-
-**Files to create:**
-- `packages/website/src/pages/account/index.astro`
-- `packages/website/src/pages/account/subscription.astro`
-- `packages/website/src/pages/account/team.astro`
-- `supabase/functions/manage-subscription/index.ts`
-
-### Wave 6: Content & Polish (3 issues)
+### Wave 4: Stripe Integration (4 issues) ✅ COMPLETE
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| SMI-1158 | Feature comparison table component | Not started |
-| SMI-1160 | FAQ page for common questions | Not started |
-| SMI-1166 | Billing history and invoice download | Not started |
+| SMI-1177 | Stripe webhook handlers | ✅ Done - stripe-webhook/index.ts |
+| SMI-1161 | Stripe Checkout for Team tier | ✅ Done - checkout already supports |
+| SMI-1162 | Stripe Checkout for Enterprise tier | ✅ Done - checkout already supports |
+| SMI-1164 | License key delivery after payment | ✅ Done - generate-license/index.ts |
 
-**Files to create:**
-- `packages/website/src/components/ComparisonTable.astro`
-- `packages/website/src/pages/faq.astro`
-- `packages/website/src/pages/account/billing.astro`
+**Files created:**
+- `supabase/functions/stripe-webhook/index.ts` - Handles checkout.session.completed, subscription lifecycle
+- `supabase/functions/generate-license/index.ts` - Authenticated license key generation API
+
+**Existing:** `supabase/functions/checkout/index.ts` ✓ - Already supports all tiers
+
+### Wave 5: Account Features (3 issues) ✅ COMPLETE
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| SMI-1163 | Account dashboard with subscription status | ✅ Done - account/index.astro |
+| SMI-1165 | Subscription upgrade/downgrade flow | ✅ Done - account/subscription.astro |
+| SMI-1167 | Seat management for team admins | ✅ Done - integrated in subscription.astro |
+
+**Files created:**
+- `packages/website/src/pages/account/index.astro` - Dashboard with profile, subscription status, license keys
+- `packages/website/src/pages/account/subscription.astro` - Plan management, upgrade/downgrade, seat management
+
+### Wave 6: Content & Polish (3 issues) ✅ COMPLETE
+
+| Issue | Title | Status |
+|-------|-------|--------|
+| SMI-1158 | Feature comparison table component | ✅ Done - ComparisonTable.astro |
+| SMI-1160 | FAQ page for common questions | ✅ Done - faq.astro |
+| SMI-1166 | Billing history and invoice download | ✅ Done - account/billing.astro |
+
+**Files created:**
+- `packages/website/src/components/ComparisonTable.astro` - Reusable comparison table with tier highlighting
+- `packages/website/src/pages/faq.astro` - Comprehensive FAQ with categories and structured data
+- `packages/website/src/pages/account/billing.astro` - Billing history, invoices, payment method
 
 ---
 
@@ -93,10 +94,10 @@ All brand compliance and dark theme issues verified done in codebase:
 |------|-------|--------|----------|-------------|
 | ~~1~~ | ~~Brand Compliance~~ | ~~5~~ | ~~P1~~ | ✅ DONE |
 | ~~2~~ | ~~Dark Theme~~ | ~~6~~ | ~~P2~~ | ✅ DONE |
-| 3 | Database & Auth | 3 | P1 | High |
-| 4 | Stripe Integration | 4 | P1 | High |
-| 5 | Account Features | 3 | P2 | Medium |
-| 6 | Content & Polish | 3 | P3 | Low |
+| ~~3~~ | ~~Database & Auth~~ | ~~3~~ | ~~P1~~ | ✅ DONE |
+| ~~4~~ | ~~Stripe Integration~~ | ~~4~~ | ~~P1~~ | ✅ DONE |
+| ~~5~~ | ~~Account Features~~ | ~~3~~ | ~~P2~~ | ✅ DONE |
+| ~~6~~ | ~~Content & Polish~~ | ~~3~~ | ~~P3~~ | ✅ DONE |
 
 ---
 
@@ -196,9 +197,9 @@ cd ../skillsmith-phase6
 
 - [x] Wave 1: Brand Compliance (5 issues) - **DONE**
 - [x] Wave 2: Dark Theme (6 issues) - **DONE**
-- [ ] Wave 3: Database & Auth (3 issues)
-- [ ] Wave 4: Stripe Integration (4 issues)
-- [ ] Wave 5: Account Features (3 issues)
-- [ ] Wave 6: Content & Polish (3 issues)
+- [x] Wave 3: Database & Auth (3 issues) - **DONE**
+- [x] Wave 4: Stripe Integration (4 issues) - **DONE**
+- [x] Wave 5: Account Features (3 issues) - **DONE**
+- [x] Wave 6: Content & Polish (3 issues) - **DONE**
 
-**Total Remaining:** 13 issues
+**Total Remaining:** 0 issues - PHASE 6 COMPLETE! 🎉
