@@ -46,20 +46,20 @@ All brand compliance and dark theme issues verified done in codebase:
 - `packages/website/src/pages/auth/forgot-password.astro` - Password reset request
 - `packages/website/src/pages/auth/reset-password.astro` - New password form
 
-### Wave 4: Stripe Integration (4 issues)
+### Wave 4: Stripe Integration (4 issues) ✅ COMPLETE
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| SMI-1177 | Stripe webhook handlers | Not started |
-| SMI-1161 | Stripe Checkout for Team tier | Partial - checkout function exists |
-| SMI-1162 | Stripe Checkout for Enterprise tier | Partial - checkout function exists |
-| SMI-1164 | License key delivery after payment | Not started |
+| SMI-1177 | Stripe webhook handlers | ✅ Done - stripe-webhook/index.ts |
+| SMI-1161 | Stripe Checkout for Team tier | ✅ Done - checkout already supports |
+| SMI-1162 | Stripe Checkout for Enterprise tier | ✅ Done - checkout already supports |
+| SMI-1164 | License key delivery after payment | ✅ Done - generate-license/index.ts |
 
-**Files to create:**
-- `supabase/functions/stripe-webhook/index.ts`
-- `supabase/functions/generate-license/index.ts`
+**Files created:**
+- `supabase/functions/stripe-webhook/index.ts` - Handles checkout.session.completed, subscription lifecycle
+- `supabase/functions/generate-license/index.ts` - Authenticated license key generation API
 
-**Existing:** `supabase/functions/checkout/index.ts` ✓
+**Existing:** `supabase/functions/checkout/index.ts` ✓ - Already supports all tiers
 
 ### Wave 5: Account Features (3 issues)
 
@@ -200,8 +200,8 @@ cd ../skillsmith-phase6
 - [x] Wave 1: Brand Compliance (5 issues) - **DONE**
 - [x] Wave 2: Dark Theme (6 issues) - **DONE**
 - [x] Wave 3: Database & Auth (3 issues) - **DONE**
-- [ ] Wave 4: Stripe Integration (4 issues)
+- [x] Wave 4: Stripe Integration (4 issues) - **DONE**
 - [ ] Wave 5: Account Features (3 issues)
 - [ ] Wave 6: Content & Polish (3 issues)
 
-**Total Remaining:** 10 issues
+**Total Remaining:** 6 issues
