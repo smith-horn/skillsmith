@@ -7,8 +7,8 @@
  * TDD London School approach - tests written FIRST
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { SessionManager, type CommandExecutor, type MemoryResult } from '../src/session/index.js'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { SessionManager, type CommandExecutor } from '../src/session/index.js'
 
 /**
  * Mock command executor that supports spawn() interface and tracks all calls
@@ -272,7 +272,7 @@ describe('SMI-675: Race Condition Prevention', () => {
       manager.createCheckpoint('Checkpoint 5'),
     ])
 
-    const checkpoints = await concurrentCheckpoints
+    await concurrentCheckpoints
 
     // All 5 checkpoints should exist
     const session = manager.getCurrentSession()

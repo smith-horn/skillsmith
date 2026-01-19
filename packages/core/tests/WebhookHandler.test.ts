@@ -7,7 +7,7 @@
  * - WebhookQueue: Priority queue with debouncing and retry
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createHmac } from 'crypto'
 import {
   isSkillFile,

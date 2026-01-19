@@ -101,7 +101,10 @@ Deno.serve(async (req: Request) => {
     const supabase = createSupabaseClient(authHeader)
 
     // Get current user
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser()
     if (authError || !user) {
       console.error('Auth error:', authError)
       return errorResponse('Unauthorized', 401, undefined, origin)
@@ -147,7 +150,9 @@ Deno.serve(async (req: Request) => {
     })
 
     // Retrieve the subscription to get the subscription item
-    const stripeSubscription = await stripe.subscriptions.retrieve(subscription.stripe_subscription_id)
+    const stripeSubscription = await stripe.subscriptions.retrieve(
+      subscription.stripe_subscription_id
+    )
 
     if (!stripeSubscription.items.data.length) {
       console.error('No subscription items found')
@@ -185,7 +190,7 @@ Deno.serve(async (req: Request) => {
 
       // Calculate proration amount (difference from current)
       const currentPeriodAmount = stripeSubscription.items.data[0].price.unit_amount || 0
-      const prorationAmount = preview.amount_due - (currentPeriodAmount * currentQuantity)
+      const prorationAmount = preview.amount_due - currentPeriodAmount * currentQuantity
 
       const pricePerSeat = stripeSubscription.items.data[0].price.unit_amount || 0
       const newMonthlyAmount = (pricePerSeat * newSeatCount) / 100

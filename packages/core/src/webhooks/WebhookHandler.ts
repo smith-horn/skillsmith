@@ -15,7 +15,6 @@ import type {
   RepositoryEventPayload,
   SignatureVerificationResult,
   SkillFileChange,
-  WebhookPayload,
 } from './WebhookPayload.js'
 import { extractSkillChanges, parseWebhookPayload } from './WebhookPayload.js'
 import type { WebhookQueue, WebhookQueueItem } from './WebhookQueue.js'

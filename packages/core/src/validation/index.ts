@@ -211,7 +211,7 @@ function validateIPv6(hostname: string, url: string): void {
         const hexMatch = ipv4Part.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i)
         if (hexMatch) {
           const high = parseInt(hexMatch[1]!, 16)
-          const low = parseInt(hexMatch[2]!, 16)
+          const _low = parseInt(hexMatch[2]!, 16)
           const a = (high >> 8) & 0xff
           const b = high & 0xff
           // Apply same private IP checks as IPv4
@@ -533,7 +533,7 @@ export function validatePatterns(patterns: string[]): string[] {
     // Try to compile as regex to check validity
     try {
       new RegExp(pattern)
-    } catch (error) {
+    } catch {
       warnings.push(`Invalid regex pattern: ${pattern}`)
     }
   }

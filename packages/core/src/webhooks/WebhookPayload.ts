@@ -341,7 +341,7 @@ export function extractSkillChanges(payload: PushEventPayload): SkillFileChange[
 /**
  * Git user schema (author/committer)
  */
-const GitUserSchema = z
+const _GitUserSchema = z
   .object({
     name: z.string(),
     email: z.string(),

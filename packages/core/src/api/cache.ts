@@ -8,7 +8,8 @@
  * Uses a simple LRU-like eviction strategy.
  */
 
-import type { ApiResponse, ApiSearchResult } from './client.js'
+// Types imported for potential future use
+import type {} from './client.js'
 
 /**
  * Escape special RegExp characters in a string.

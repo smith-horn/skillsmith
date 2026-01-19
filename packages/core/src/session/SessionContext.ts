@@ -211,7 +211,7 @@ export function getLatestCheckpoint(session: SessionData): Checkpoint | null {
     return null
   }
 
-  return session.checkpoints.reduce((latest, current, index, array) => {
+  return session.checkpoints.reduce((latest, current, _index, _array) => {
     const latestTime = new Date(latest.timestamp).getTime()
     const currentTime = new Date(current.timestamp).getTime()
     // Prefer current if time is greater OR equal (later in array = more recent)

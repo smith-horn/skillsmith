@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { CodebaseAnalyzer, type CodebaseContext } from '../src/analysis/index.js'
+import { CodebaseAnalyzer } from '../src/analysis/index.js'
 
 describe('CodebaseAnalyzer', () => {
   let analyzer: CodebaseAnalyzer

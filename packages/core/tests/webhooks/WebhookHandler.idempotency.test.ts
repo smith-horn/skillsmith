@@ -5,13 +5,9 @@
  * and handled idempotently using the X-GitHub-Delivery header.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import {
-  WebhookHandler,
-  type WebhookHandlerOptions,
-  type WebhookHandleResult,
-} from '../../src/webhooks/WebhookHandler.js'
-import { WebhookQueue, type WebhookQueueOptions } from '../../src/webhooks/WebhookQueue.js'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { WebhookHandler } from '../../src/webhooks/WebhookHandler.js'
+import { WebhookQueue } from '../../src/webhooks/WebhookQueue.js'
 import { createHmac } from 'crypto'
 
 describe('WebhookHandler Idempotency', () => {

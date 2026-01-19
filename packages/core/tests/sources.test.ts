@@ -8,7 +8,6 @@ import {
   SourceAdapterRegistry,
   SourceIndexer,
   isSourceAdapter,
-  type ISourceAdapter,
   type SourceConfig,
   type SourceLocation,
   type SourceRepository,

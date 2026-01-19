@@ -13,7 +13,6 @@
 import type {
   SignalEvent,
   SignalFilter,
-  SignalType,
   RecommendationContext,
   SignalMetadata,
   DismissReason,

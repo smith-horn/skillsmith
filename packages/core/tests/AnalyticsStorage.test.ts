@@ -5,10 +5,10 @@
  * Uses fake timers for deterministic date testing (SMI-992)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { AnalyticsStorage } from '../src/analytics/storage.js'
 import type { SkillUsageEvent } from '../src/analytics/types.js'
-import { existsSync, unlinkSync, mkdirSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { FIXED_TIMESTAMP, ONE_DAY_MS, setupFakeTimers, cleanupFakeTimers } from './test-utils.js'

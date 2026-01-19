@@ -208,7 +208,7 @@ export class SourceAdapterRegistry {
    * Initialize all registered adapters
    */
   async initializeAll(): Promise<void> {
-    const promises = Array.from(this.adapters.entries()).map(async ([id, entry]) => {
+    const promises = Array.from(this.adapters.entries()).map(async ([_id, entry]) => {
       if (!entry.initialized) {
         await entry.adapter.initialize()
         entry.initialized = true

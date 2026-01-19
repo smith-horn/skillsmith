@@ -109,16 +109,19 @@ Deno.serve(async (req: Request) => {
           // Store in pending_checkouts for when user signs up
           // The pending_checkouts table has a 7-day TTL and a trigger that processes
           // the checkout when the user eventually signs up (see migration 012)
-          const { error: pendingError } = await supabase.from('pending_checkouts').upsert({
-            email: customerEmail,
-            stripe_customer_id: customerId,
-            stripe_subscription_id: subscriptionId,
-            tier,
-            billing_period: billingPeriod,
-            seat_count: seatCount,
-            checkout_session_id: session.id,
-            metadata: session.metadata,
-          }, { onConflict: 'email' })
+          const { error: pendingError } = await supabase.from('pending_checkouts').upsert(
+            {
+              email: customerEmail,
+              stripe_customer_id: customerId,
+              stripe_subscription_id: subscriptionId,
+              tier,
+              billing_period: billingPeriod,
+              seat_count: seatCount,
+              checkout_session_id: session.id,
+              metadata: session.metadata,
+            },
+            { onConflict: 'email' }
+          )
 
           if (pendingError) {
             console.error('Failed to store pending checkout:', pendingError)
@@ -221,7 +224,10 @@ Deno.serve(async (req: Request) => {
           console.log('Welcome email sent successfully', { email: customerEmail, keyPrefix })
         } else {
           // Email failed but don't fail the webhook - user can retrieve key from dashboard
-          console.warn('Failed to send welcome email (non-fatal)', { email: customerEmail, keyPrefix })
+          console.warn('Failed to send welcome email (non-fatal)', {
+            email: customerEmail,
+            keyPrefix,
+          })
         }
 
         break
@@ -264,10 +270,7 @@ Deno.serve(async (req: Request) => {
 
           if (sub) {
             // Downgrade to community tier
-            await supabase
-              .from('profiles')
-              .update({ tier: 'community' })
-              .eq('id', sub.user_id)
+            await supabase.from('profiles').update({ tier: 'community' }).eq('id', sub.user_id)
 
             // Revoke non-community license keys
             await supabase
@@ -303,10 +306,7 @@ Deno.serve(async (req: Request) => {
 
         // Downgrade user to community
         if (sub) {
-          await supabase
-            .from('profiles')
-            .update({ tier: 'community' })
-            .eq('id', sub.user_id)
+          await supabase.from('profiles').update({ tier: 'community' }).eq('id', sub.user_id)
 
           // Revoke non-community license keys
           await supabase
@@ -329,19 +329,22 @@ Deno.serve(async (req: Request) => {
         })
 
         // Log to audit_logs for billing history (if table exists)
-        await supabase.from('audit_logs').insert({
-          action: 'payment_succeeded',
-          resource_type: 'invoice',
-          resource_id: invoice.id,
-          metadata: {
-            subscription_id: invoice.subscription,
-            amount: invoice.amount_paid,
-            currency: invoice.currency,
-          },
-        }).catch((err) => {
-          // Log but don't fail - table may not exist in all environments
-          console.debug('Audit log insert skipped:', err.message || 'table may not exist')
-        })
+        await supabase
+          .from('audit_logs')
+          .insert({
+            action: 'payment_succeeded',
+            resource_type: 'invoice',
+            resource_id: invoice.id,
+            metadata: {
+              subscription_id: invoice.subscription,
+              amount: invoice.amount_paid,
+              currency: invoice.currency,
+            },
+          })
+          .catch((err) => {
+            // Log but don't fail - table may not exist in all environments
+            console.debug('Audit log insert skipped:', err.message || 'table may not exist')
+          })
 
         break
       }
@@ -363,25 +366,30 @@ Deno.serve(async (req: Request) => {
         }
 
         // Log to audit_logs (if table exists)
-        await supabase.from('audit_logs').insert({
-          action: 'payment_failed',
-          resource_type: 'invoice',
-          resource_id: invoice.id,
-          metadata: {
-            subscription_id: invoice.subscription,
-            attempt_count: invoice.attempt_count,
-          },
-        }).catch((err) => {
-          // Log but don't fail - table may not exist in all environments
-          console.debug('Audit log insert skipped:', err.message || 'table may not exist')
-        })
+        await supabase
+          .from('audit_logs')
+          .insert({
+            action: 'payment_failed',
+            resource_type: 'invoice',
+            resource_id: invoice.id,
+            metadata: {
+              subscription_id: invoice.subscription,
+              attempt_count: invoice.attempt_count,
+            },
+          })
+          .catch((err) => {
+            // Log but don't fail - table may not exist in all environments
+            console.debug('Audit log insert skipped:', err.message || 'table may not exist')
+          })
 
         // Send payment failed notification email
         const customerEmail = invoice.customer_email
         if (customerEmail) {
           const emailSent = await sendPaymentFailedEmail(customerEmail, invoice.attempt_count || 1)
           if (!emailSent) {
-            console.warn('Failed to send payment failed email (non-fatal)', { email: customerEmail })
+            console.warn('Failed to send payment failed email (non-fatal)', {
+              email: customerEmail,
+            })
           }
         }
 
@@ -398,12 +406,9 @@ Deno.serve(async (req: Request) => {
     })
   } catch (error) {
     console.error('Webhook processing error:', error)
-    return new Response(
-      JSON.stringify({ error: 'Webhook processing failed' }),
-      {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    )
+    return new Response(JSON.stringify({ error: 'Webhook processing failed' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    })
   }
 })

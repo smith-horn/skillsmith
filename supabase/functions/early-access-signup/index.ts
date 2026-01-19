@@ -259,7 +259,7 @@ Deno.serve(async (req) => {
     }
 
     // Try to insert first - if duplicate, we'll get a unique constraint error
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('early_access_signups')
       .insert(signupData)
       .select('id')

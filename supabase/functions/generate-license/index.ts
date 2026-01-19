@@ -17,7 +17,12 @@
  * - tier: string - User's current tier
  */
 
-import { createSupabaseClient, createSupabaseAdminClient, logInvocation, getRequestId } from '../_shared/supabase.ts'
+import {
+  createSupabaseClient,
+  createSupabaseAdminClient,
+  logInvocation,
+  getRequestId,
+} from '../_shared/supabase.ts'
 import {
   handleCorsPreflightRequest,
   jsonResponse,
@@ -60,7 +65,10 @@ Deno.serve(async (req: Request) => {
   try {
     // Get user from auth token
     const supabase = createSupabaseClient(authHeader)
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser()
 
     if (authError || !user) {
       return errorResponse('Invalid or expired token', 401, undefined, origin)

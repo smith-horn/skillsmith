@@ -28,7 +28,6 @@ import {
   type BenchmarkReport,
   type BenchmarkDefinition,
   type EnvironmentInfo,
-  type MemoryStats,
   type DetailedMemoryStats,
 } from './types.js'
 
@@ -144,7 +143,7 @@ export class BenchmarkRunner {
     for (let i = 0; i < warmupIterations; i++) {
       try {
         await definition.fn()
-      } catch (_err) {
+      } catch {
         // Ignore warmup errors, just continue
       }
     }

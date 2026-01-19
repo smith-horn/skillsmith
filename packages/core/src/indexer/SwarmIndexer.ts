@@ -9,12 +9,7 @@
  * - Rate limit coordination across workers
  */
 
-import {
-  GitHubIndexer,
-  type GitHubIndexerOptions,
-  type IndexResult,
-  type GitHubRepository,
-} from './GitHubIndexer.js'
+import { GitHubIndexer, type GitHubIndexerOptions, type IndexResult } from './GitHubIndexer.js'
 import {
   PartitionStrategy,
   type Partition,

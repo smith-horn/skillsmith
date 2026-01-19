@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { RawUrlSourceAdapter, type SkillUrlEntry } from '../src/sources/RawUrlSourceAdapter.js'
+import { RawUrlSourceAdapter } from '../src/sources/RawUrlSourceAdapter.js'
 import { LocalFilesystemAdapter } from '../src/sources/LocalFilesystemAdapter.js'
 import { GitLabSourceAdapter } from '../src/sources/GitLabSourceAdapter.js'
 import { promises as fs } from 'fs'

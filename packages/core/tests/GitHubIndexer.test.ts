@@ -7,7 +7,7 @@
  * - IndexerRepository: Database operations
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { SkillParser } from '../src/indexer/SkillParser.js'
 import { GitHubIndexer } from '../src/indexer/GitHubIndexer.js'
 import { IndexerRepository } from '../src/repositories/IndexerRepository.js'
@@ -430,7 +430,8 @@ describe('IndexerRepository', () => {
     closeDatabase(db)
   })
 
-  const createTestMetadata = (overrides = {}): any => ({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const createTestMetadata = (overrides: Record<string, unknown> = {}): any => ({
     name: 'test-skill',
     description: 'A test skill',
     author: 'test-author',
@@ -525,7 +526,7 @@ describe('IndexerRepository', () => {
       repository.upsertFromMetadata(initial)
 
       // Batch with: existing unchanged, existing updated, new
-      const metadataList = [
+      const _metadataList = [
         createTestMetadata({ repoUrl: 'https://github.com/existing/repo' }), // unchanged
         createTestMetadata({
           repoUrl: 'https://github.com/existing/repo',

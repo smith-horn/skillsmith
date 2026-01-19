@@ -26,9 +26,7 @@ const API_BASE = process.env.SKILLSMITH_API_URL || 'https://api.skillsmith.app/f
 function generateFakeStripeSignature(payload: string, timestamp: number): string {
   const fakeSecret = 'whsec_test_fake_secret_for_testing_only'
   const signedPayload = `${timestamp}.${payload}`
-  const signature = createHmac('sha256', fakeSecret)
-    .update(signedPayload)
-    .digest('hex')
+  const signature = createHmac('sha256', fakeSecret).update(signedPayload).digest('hex')
   return `t=${timestamp},v1=${signature}`
 }
 
@@ -256,23 +254,27 @@ describe('Webhook Handling E2E Tests', () => {
     // These tests verify the endpoint exists and handles repeated calls
 
     it('should handle rapid repeated requests gracefully', async () => {
-      const payload = JSON.stringify(createMockCheckoutEvent({
-        customerId: 'cus_idempotency_test',
-      }))
+      const payload = JSON.stringify(
+        createMockCheckoutEvent({
+          customerId: 'cus_idempotency_test',
+        })
+      )
       const timestamp = Math.floor(Date.now() / 1000)
       const signature = generateFakeStripeSignature(payload, timestamp)
 
       // Send multiple rapid requests
-      const requests = Array(3).fill(null).map(() =>
-        fetch(`${API_BASE}/stripe-webhook`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'stripe-signature': signature,
-          },
-          body: payload,
-        })
-      )
+      const requests = Array(3)
+        .fill(null)
+        .map(() =>
+          fetch(`${API_BASE}/stripe-webhook`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'stripe-signature': signature,
+            },
+            body: payload,
+          })
+        )
 
       const responses = await Promise.all(requests)
 

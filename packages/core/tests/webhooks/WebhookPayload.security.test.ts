@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { parseWebhookPayload, type ParsedWebhookEvent } from '../../src/webhooks/WebhookPayload.js'
+import { parseWebhookPayload } from '../../src/webhooks/WebhookPayload.js'
 
 describe('parseWebhookPayload Security (SMI-680)', () => {
   describe('push event validation', () => {
