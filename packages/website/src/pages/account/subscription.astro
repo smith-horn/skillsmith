@@ -11,8 +11,6 @@
  * - Manage team seats (for team/enterprise tiers)
  * - Cancel subscription
  */
-
-const apiBaseUrl = import.meta.env.PUBLIC_SUPABASE_URL || ''
 ---
 
 <!DOCTYPE html>
@@ -203,8 +201,6 @@ const apiBaseUrl = import.meta.env.PUBLIC_SUPABASE_URL || ''
       </div>
     </footer>
 
-    <!-- Store API base URL for script -->
-    <div id="config" data-api-base-url={apiBaseUrl} style="display: none;"></div>
   </body>
 </html>
 
@@ -608,8 +604,6 @@ const apiBaseUrl = import.meta.env.PUBLIC_SUPABASE_URL || ''
 
   const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL
   const supabaseAnonKey = import.meta.env.PUBLIC_SUPABASE_ANON_KEY
-  const configEl = document.getElementById('config')
-  const apiBaseUrl = configEl?.dataset.apiBaseUrl || ''
 
   document.addEventListener('DOMContentLoaded', async () => {
     const loadingState = document.getElementById('loading-state') as HTMLDivElement
