@@ -105,3 +105,17 @@ docs/site/
 .migration-checkpoint.json
 .hive-mind/
 .vercel
+
+# DNS and Email Provider Exports
+*.zone
+*-dns-export.txt
+skillsmith.app.txt
+cloudflare-*.json
+resend-*.json
+
+# Cloudflare configuration
+.cloudflare/
+wrangler.toml.local
+
+# Resend webhook secrets (beyond .env)
+.resend-*
