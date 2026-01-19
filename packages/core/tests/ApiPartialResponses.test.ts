@@ -39,7 +39,7 @@ describe('SMI-1583: Partial API Response Handling', () => {
       const data = await response.json()
 
       expect(response.ok).toBe(true)
-      expect(data.skills).toEqual([])
+      expect(data.data).toEqual([])
       expect(data.meta.total).toBe(0)
     })
 
@@ -50,7 +50,7 @@ describe('SMI-1583: Partial API Response Handling', () => {
       const data = await response.json()
 
       expect(response.ok).toBe(true)
-      expect(data.recommendations).toEqual([])
+      expect(data.data).toEqual([])
       expect(data.meta.total).toBe(0)
     })
   })
@@ -63,24 +63,24 @@ describe('SMI-1583: Partial API Response Handling', () => {
       const data = await response.json()
 
       expect(response.ok).toBe(true)
-      expect(data.skills).toHaveLength(1)
+      expect(data.data).toHaveLength(1)
 
-      const skill = data.skills[0]
+      const skill = data.data[0]
       expect(skill.id).toBe('minimal/skill')
-      expect(skill.description).toBe('')
+      expect(skill.description).toBeNull()
       expect(skill.tags).toEqual([])
-      expect(skill.quality_score).toBe(0)
+      expect(skill.quality_score).toBeNull()
     })
 
     it('should handle pagination metadata', async () => {
       global.fetch = createMockFetch(API_MOCKS.searchPaginated)
 
-      const response = await fetch('/api/v1/skills/search?q=development&page=2')
+      const response = await fetch('/api/v1/skills/search?q=development&offset=20')
       const data = await response.json()
 
       expect(response.ok).toBe(true)
-      expect(data.meta.page).toBe(2)
-      expect(data.meta.total_pages).toBe(3)
+      expect(data.meta.offset).toBe(20)
+      expect(data.meta.limit).toBe(20)
       expect(data.meta.total).toBe(50)
 
       // Check Link header for pagination
@@ -100,7 +100,7 @@ describe('SMI-1583: Partial API Response Handling', () => {
       expect(response.status).toBe(404)
 
       const data = await response.json()
-      expect(data.error.code).toBe('SKILL_NOT_FOUND')
+      expect(data.error).toBe('Skill not found')
     })
 
     it('should handle 400 validation error', async () => {
@@ -112,8 +112,8 @@ describe('SMI-1583: Partial API Response Handling', () => {
       expect(response.status).toBe(400)
 
       const data = await response.json()
-      expect(data.error.code).toBe('VALIDATION_ERROR')
-      expect(data.error.details.field).toBe('query')
+      expect(data.error).toContain('2 characters')
+      expect(data.details.field).toBe('query')
     })
 
     it('should handle 401 unauthorized', async () => {
@@ -125,7 +125,7 @@ describe('SMI-1583: Partial API Response Handling', () => {
       expect(response.status).toBe(401)
 
       const data = await response.json()
-      expect(data.error.code).toBe('UNAUTHORIZED')
+      expect(data.error).toContain('API key')
     })
 
     it('should handle 403 forbidden', async () => {
@@ -137,8 +137,8 @@ describe('SMI-1583: Partial API Response Handling', () => {
       expect(response.status).toBe(403)
 
       const data = await response.json()
-      expect(data.error.code).toBe('FORBIDDEN')
-      expect(data.error.details.required_tier).toBe('team')
+      expect(data.error).toContain('permissions')
+      expect(data.details.required_tier).toBe('team')
     })
 
     it('should handle 500 server error', async () => {
@@ -150,7 +150,7 @@ describe('SMI-1583: Partial API Response Handling', () => {
       expect(response.status).toBe(500)
 
       const data = await response.json()
-      expect(data.error.code).toBe('INTERNAL_SERVER_ERROR')
+      expect(data.error).toContain('unexpected error')
     })
 
     it('should handle 503 service unavailable with retry-after', async () => {
@@ -163,7 +163,7 @@ describe('SMI-1583: Partial API Response Handling', () => {
       expect(response.headers.get('retry-after')).toBe('30')
 
       const data = await response.json()
-      expect(data.error.code).toBe('SERVICE_UNAVAILABLE')
+      expect(data.error).toContain('unavailable')
     })
   })
 
