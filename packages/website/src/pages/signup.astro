@@ -231,7 +231,7 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmit
         <div class="signup-content">
           <div class="signup-header">
             <h1>Get Started for Free</h1>
-            <p>Start discovering skills with the Community plan</p>
+            <p>Create your Skillsmith account</p>
           </div>
 
           <div class="order-summary">
@@ -247,6 +247,59 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmit
               </div>
             </div>
 
+            <form id="register-form" class="auth-form">
+              <div class="form-group">
+                <label for="full-name">Full Name (optional)</label>
+                <input
+                  type="text"
+                  id="full-name"
+                  name="fullName"
+                  placeholder="John Doe"
+                  autocomplete="name"
+                />
+              </div>
+
+              <div class="form-group">
+                <label for="email">Email</label>
+                <input
+                  type="email"
+                  id="email"
+                  name="email"
+                  placeholder="you@example.com"
+                  required
+                  autocomplete="email"
+                />
+              </div>
+
+              <div class="form-group">
+                <label for="password">Password</label>
+                <input
+                  type="password"
+                  id="password"
+                  name="password"
+                  placeholder="Min. 8 characters"
+                  required
+                  autocomplete="new-password"
+                  minlength="8"
+                />
+                <p class="input-hint">At least 8 characters</p>
+              </div>
+
+              <div id="register-error" class="error-message" style="display: none;"></div>
+              <div id="register-success" class="success-message" style="display: none;"></div>
+
+              <button type="submit" class="btn btn-primary btn-checkout" id="register-btn">
+                <span class="btn-text">Create Account</span>
+                <span class="btn-loading" style="display: none;">
+                  <svg class="spinner" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" opacity="0.25"/>
+                    <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"/>
+                  </svg>
+                  Creating account...
+                </span>
+              </button>
+            </form>
+
             <div class="features-included">
               <h3>What's Included</h3>
               <ul>
@@ -261,12 +314,8 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmit
               </ul>
             </div>
 
-            <a href="/docs/quickstart" class="btn btn-primary btn-checkout">
-              Get Started with Docs
-            </a>
-
             <p class="checkout-note">
-              No credit card required. Set up the MCP server and start exploring.
+              No credit card required. Already have an account? <a href="/login">Sign in</a>
             </p>
           </div>
         </div>
@@ -652,14 +701,66 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmit
     to { transform: rotate(360deg); }
   }
 
-  /* Error Message */
-  .error-message {
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    color: #dc2626;
-    padding: 1rem;
+  /* Auth Form Styles */
+  .auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .form-group label {
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+
+  .form-group input {
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    border: 1px solid #2a2a2f;
     border-radius: 0.5rem;
-    margin-top: 1rem;
+    background: #1a1a1f;
+    color: #FAFAFA;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+
+  .form-group input::placeholder {
+    color: #6b7280;
+  }
+
+  .form-group input:focus {
+    outline: none;
+    border-color: #E07A5F;
+    box-shadow: 0 0 0 3px rgba(224, 122, 95, 0.1);
+  }
+
+  .input-hint {
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+
+  /* Error/Success Messages */
+  .error-message {
+    background: rgba(220, 38, 38, 0.1);
+    border: 1px solid rgba(220, 38, 38, 0.3);
+    color: #f87171;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .success-message {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #34d399;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
     font-size: 0.875rem;
   }
 
@@ -749,9 +850,18 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmit
 </style>
 
 <script define:vars={{ apiBaseUrl, tier, period }}>
+  import { createClient } from '@supabase/supabase-js'
+
+  // Supabase configuration
+  const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = import.meta.env.PUBLIC_SUPABASE_ANON_KEY
+
   // Initialize checkout form handling
   document.addEventListener('DOMContentLoaded', () => {
-    const form = document.getElementById('checkout-form');
+    // ============================================
+    // PAID TIER: Stripe Checkout Form Handling
+    // ============================================
+    const checkoutForm = document.getElementById('checkout-form');
     const checkoutBtn = document.getElementById('checkout-btn');
     const errorMessage = document.getElementById('error-message');
     const periodInput = document.getElementById('period-input');
@@ -761,7 +871,7 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmit
     billingRadios.forEach(radio => {
       radio.addEventListener('change', (e) => {
         const newPeriod = e.target.value;
-        periodInput.value = newPeriod;
+        if (periodInput) periodInput.value = newPeriod;
 
         // Update URL without reload
         const url = new URL(window.location.href);
@@ -780,7 +890,7 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmit
     seatBtns.forEach(btn => {
       btn.addEventListener('click', () => {
         const action = btn.dataset.action;
-        let value = parseInt(seatInput.value) || 1;
+        let value = parseInt(seatInput?.value) || 1;
 
         if (action === 'increase' && value < 1000) {
           seatInput.value = value + 1;
@@ -790,9 +900,9 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmit
       });
     });
 
-    // Handle form submission
-    if (form) {
-      form.addEventListener('submit', async (e) => {
+    // Handle checkout form submission
+    if (checkoutForm && checkoutBtn) {
+      checkoutForm.addEventListener('submit', async (e) => {
         e.preventDefault();
 
         // Show loading state
@@ -801,10 +911,10 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmit
         btnText.style.display = 'none';
         btnLoading.style.display = 'inline-flex';
         checkoutBtn.disabled = true;
-        errorMessage.style.display = 'none';
+        if (errorMessage) errorMessage.style.display = 'none';
 
         try {
-          const formData = new FormData(form);
+          const formData = new FormData(checkoutForm);
           const payload = {
             tier: formData.get('tier'),
             period: formData.get('period'),
@@ -835,13 +945,103 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmit
           }
         } catch (error) {
           console.error('Checkout error:', error);
-          errorMessage.textContent = error.message || 'An error occurred. Please try again.';
-          errorMessage.style.display = 'block';
+          if (errorMessage) {
+            errorMessage.textContent = error.message || 'An error occurred. Please try again.';
+            errorMessage.style.display = 'block';
+          }
 
           // Reset button
           btnText.style.display = 'inline';
           btnLoading.style.display = 'none';
           checkoutBtn.disabled = false;
+        }
+      });
+    }
+
+    // ============================================
+    // COMMUNITY TIER: Registration Form Handling
+    // ============================================
+    const registerForm = document.getElementById('register-form');
+    const registerBtn = document.getElementById('register-btn');
+    const registerError = document.getElementById('register-error');
+    const registerSuccess = document.getElementById('register-success');
+
+    if (registerForm && registerBtn) {
+      registerForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        // Reset messages
+        if (registerError) registerError.style.display = 'none';
+        if (registerSuccess) registerSuccess.style.display = 'none';
+
+        // Show loading state
+        const btnText = registerBtn.querySelector('.btn-text');
+        const btnLoading = registerBtn.querySelector('.btn-loading');
+        btnText.style.display = 'none';
+        btnLoading.style.display = 'inline-flex';
+        registerBtn.disabled = true;
+
+        try {
+          if (!supabaseUrl || !supabaseAnonKey) {
+            throw new Error('Authentication service not configured');
+          }
+
+          const supabase = createClient(supabaseUrl, supabaseAnonKey);
+          const formData = new FormData(registerForm);
+          const email = formData.get('email');
+          const password = formData.get('password');
+          const fullName = formData.get('fullName') || '';
+
+          const { data, error } = await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+              data: {
+                full_name: fullName,
+              },
+              emailRedirectTo: `${window.location.origin}/auth/callback`,
+            },
+          });
+
+          if (error) {
+            throw new Error(error.message);
+          }
+
+          // Check if email confirmation is required
+          if (data.user && !data.user.email_confirmed_at) {
+            registerSuccess.innerHTML = `
+              <strong>Check your email!</strong><br>
+              We've sent a verification link to <strong>${email}</strong>.<br>
+              Please verify your email to complete registration.
+            `;
+            registerSuccess.style.display = 'block';
+            registerForm.reset();
+          } else if (data.session) {
+            // Logged in directly (email confirmation disabled)
+            registerSuccess.textContent = 'Account created! Redirecting to your dashboard...';
+            registerSuccess.style.display = 'block';
+            setTimeout(() => {
+              window.location.href = '/account';
+            }, 1000);
+          }
+        } catch (error) {
+          console.error('Registration error:', error);
+          let errorMsg = error.message || 'An error occurred. Please try again.';
+
+          // Handle specific Supabase errors
+          if (errorMsg.includes('already registered')) {
+            errorMsg = 'This email is already registered. Try signing in instead.';
+          } else if (errorMsg.includes('Password should be')) {
+            errorMsg = 'Password must be at least 8 characters.';
+          }
+
+          registerError.textContent = errorMsg;
+          registerError.style.display = 'block';
+        } finally {
+          // Reset button state
+          btnText.style.display = 'inline';
+          btnLoading.style.display = 'none';
+          registerBtn.disabled = false;
         }
       });
     }
