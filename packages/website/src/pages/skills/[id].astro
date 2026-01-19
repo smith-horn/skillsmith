@@ -311,7 +311,9 @@ const { id } = Astro.params;
     // Fetch skill details
     async function fetchSkill() {
       try {
-        const response = await fetch(`${API_BASE}/skills-get/${encodeURIComponent(skillId)}`);
+        // Decode first to normalize (Astro params may already be URL-encoded), then re-encode
+        const decodedSkillId = decodeURIComponent(skillId);
+        const response = await fetch(`${API_BASE}/skills-get/${encodeURIComponent(decodedSkillId)}`);
 
         if (!response.ok) {
           if (response.status === 404) {
