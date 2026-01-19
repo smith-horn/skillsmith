@@ -589,3 +589,19 @@ export {
   type BillingErrorCode,
   type LicenseTier,
 } from './billing/index.js'
+
+// =============================================================================
+// LIVE SERVICES WORKTREE STUBS (Phase 0 - Conflict Prevention)
+// =============================================================================
+// These stubs are added BEFORE worktree creation to prevent merge conflicts.
+// Each workstream will uncomment ONLY their export line when implementing.
+// =============================================================================
+
+// Database Migration (WS3: SMI-1446, SMI-1448, SMI-1452) - to be implemented
+// export * from './database/migration.js'
+
+// Security Scanner Enhancement (WS2: SMI-1454, SMI-1456) - to be implemented
+// export * from './security/scanner-enhanced.js'
+
+// Monitoring & Health (WS5: SMI-1447, SMI-1453) - to be implemented
+// export * from './monitoring/index.js'
