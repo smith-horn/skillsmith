@@ -116,8 +116,8 @@ Deno.serve(async (req: Request) => {
       // List all skills when query is '*'
       const { data: allSkills, error: listError } = await supabase
         .from('skills')
-        .select('id, name, author, description, trust_tier, quality_score, version')
-        .order('quality_score', { ascending: false, nullsFirst: false })
+        .select('id, name, author, description, trust_tier, quality_score')
+        .order('quality_score', { ascending: false })
         .range(offset, offset + limit - 1)
 
       if (listError) {
