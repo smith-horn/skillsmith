@@ -359,8 +359,8 @@ describe('GitHubIndexer', () => {
 
       const input = indexer.repositoryToSkill(repo)
 
-      // Quality score: min(500/10, 50) + min(100/5, 25) + 25 = 50 + 20 + 25 = 95
-      expect(input.qualityScore).toBe(95)
+      // Quality score: (min(500/10, 50) + min(100/5, 25) + 25) / 100 = (50 + 20 + 25) / 100 = 0.95
+      expect(input.qualityScore).toBe(0.95)
     })
 
     it('should assign trust tier based on stars', () => {
