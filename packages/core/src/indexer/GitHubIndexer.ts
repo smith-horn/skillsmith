@@ -306,7 +306,9 @@ export class GitHubIndexer {
    */
   repositoryToSkill(repo: GitHubRepository): SkillCreateInput {
     // Feature flag: SKILLSMITH_LOG_QUALITY_SCORE controls formula
-    const useLogScale = process.env.SKILLSMITH_LOG_QUALITY_SCORE === 'true'
+    // Robust comparison: trim whitespace and lowercase
+    const flagRaw = process.env.SKILLSMITH_LOG_QUALITY_SCORE
+    const useLogScale = flagRaw?.trim().toLowerCase() === 'true'
 
     let starScore: number
     let forkScore: number
