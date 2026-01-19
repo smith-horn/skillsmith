@@ -10,6 +10,7 @@
  * Request Body (optional):
  * - topics: Array of GitHub topics to search (default: claude-code related)
  * - maxPages: Max pages per topic (default: 5, max: 10, 7+ may timeout)
+ * - maxRepos: Max repos to process per invocation (default: 50, prevents WORKER_LIMIT)
  * - dryRun: If true, don't write to database (default: false)
  * - strictValidation: Require valid YAML frontmatter in SKILL.md (default: true)
  * - minContentLength: Minimum SKILL.md content length (default: 100)
@@ -97,6 +98,8 @@ interface IndexerRequest {
   strictValidation?: boolean
   /** Minimum SKILL.md content length (default: 100) */
   minContentLength?: number
+  /** Maximum repos to process per invocation (default: 50, for batching) */
+  maxRepos?: number
 }
 
 /**
@@ -703,23 +706,34 @@ function repositoryToSkill(
     // High-trust authors get verified tier and configured quality score
     qualityScore = highTrustAuthor.baseQualityScore
     trustTier = 'verified'
+    console.log(
+      `[QualityScore] HIGH-TRUST: ${repo.fullName} author=${highTrustAuthor.owner} → score=${qualityScore}`
+    )
   } else {
     // Feature flag: SKILLSMITH_LOG_QUALITY_SCORE controls formula
-    const useLogScale = Deno.env.get('SKILLSMITH_LOG_QUALITY_SCORE') === 'true'
+    // Robust comparison: trim whitespace and lowercase
+    const flagRaw = Deno.env.get('SKILLSMITH_LOG_QUALITY_SCORE')
+    const useLogScale = flagRaw?.trim().toLowerCase() === 'true'
+    console.log(`[QualityScore] Flag raw="${flagRaw}" parsed=${useLogScale}`)
 
     let starScore: number
     let forkScore: number
 
     if (useLogScale) {
       // Logarithmic scale for better distribution across wide star/fork ranges
+      console.log(`[QualityScore] Using LOGARITHMIC formula for ${repo.fullName}`)
       starScore = Math.min(Math.log10(repo.stars + 1) * 15, 50)
       forkScore = Math.min(Math.log10(repo.forks + 1) * 10, 25)
     } else {
       // Linear scale (default) - saturates at 500 stars / 125 forks
+      console.log(`[QualityScore] Using LINEAR formula for ${repo.fullName}`)
       starScore = Math.min(repo.stars / 10, 50)
       forkScore = Math.min(repo.forks / 5, 25)
     }
     qualityScore = (starScore + forkScore + 25) / 100 // Normalize to 0-1
+    console.log(
+      `[QualityScore] COMMUNITY: ${repo.fullName} stars=${repo.stars} forks=${repo.forks} → score=${qualityScore.toFixed(4)}`
+    )
 
     // Determine trust tier
     trustTier = 'unknown'
@@ -957,6 +971,8 @@ Deno.serve(async (req: Request) => {
     const dryRun = body.dryRun ?? false
     const strictValidation = body.strictValidation ?? true
     const minContentLength = body.minContentLength ?? DEFAULT_MIN_CONTENT_LENGTH
+    // Batch size limit to prevent WORKER_LIMIT errors (default: 50)
+    const maxRepos = body.maxRepos ?? 50
 
     // Validation options to pass through
     const validationOptions = { strictValidation, minContentLength }
@@ -1000,8 +1016,17 @@ Deno.serve(async (req: Request) => {
     console.log(`Found ${highTrustSkillMap.size} skills from high-trust authors`)
 
     // Phase 2: Fetch repositories from GitHub topic search
+    let reachedLimit = false
     for (const topic of topics) {
+      if (reachedLimit) break
+
       for (let page = 1; page <= maxPages; page++) {
+        if (repositories.length >= maxRepos) {
+          console.log(`Reached maxRepos limit (${maxRepos}), stopping collection`)
+          reachedLimit = true
+          break
+        }
+
         const { repos, total, error } = await searchRepositories(topic, page)
 
         if (error) {
@@ -1013,6 +1038,10 @@ Deno.serve(async (req: Request) => {
         result.found = Math.max(result.found, total)
 
         for (const repo of repos) {
+          if (repositories.length >= maxRepos) {
+            reachedLimit = true
+            break
+          }
           if (!seenUrls.has(repo.url)) {
             seenUrls.add(repo.url)
             // Check if SKILL.md exists and is valid (determines installability)
@@ -1041,6 +1070,21 @@ Deno.serve(async (req: Request) => {
     if (!dryRun && repositories.length > 0) {
       const supabase = createSupabaseAdminClient()
 
+      // Track score distribution for summary logging
+      const scoreDistribution = {
+        highTrust: 0,
+        community: 0,
+        scores: [] as number[],
+      }
+
+      // Get existing skills to track inserts vs updates
+      const repoUrls = repositories.map((r) => r.url)
+      const { data: existingSkills } = await supabase
+        .from('skills')
+        .select('repo_url')
+        .in('repo_url', repoUrls)
+      const existingUrls = new Set(existingSkills?.map((s) => s.repo_url) || [])
+
       for (const repo of repositories) {
         try {
           // Check if this skill came from a high-trust author
@@ -1049,6 +1093,14 @@ Deno.serve(async (req: Request) => {
           // Get cached validation metadata for this skill
           const validation = getCachedValidation(repo.owner, repo.name, repo.defaultBranch)
           const skillData = repositoryToSkill(repo, highTrustAuthor, validation?.metadata)
+
+          // Track score distribution
+          if (highTrustAuthor) {
+            scoreDistribution.highTrust++
+          } else {
+            scoreDistribution.community++
+            scoreDistribution.scores.push(skillData.quality_score as number)
+          }
 
           // Upsert skill by repo_url
           const { error } = await supabase.from('skills').upsert(skillData, {
@@ -1060,7 +1112,12 @@ Deno.serve(async (req: Request) => {
             result.errors.push(`Failed to upsert ${repo.fullName}: ${error.message}`)
             result.failed++
           } else {
-            result.indexed++
+            // Track insert vs update
+            if (existingUrls.has(repo.url)) {
+              result.updated++
+            } else {
+              result.indexed++
+            }
           }
         } catch (error) {
           result.errors.push(
@@ -1069,6 +1126,23 @@ Deno.serve(async (req: Request) => {
           result.failed++
         }
       }
+
+      // Log score distribution summary
+      console.log(`[QualityScore] === SUMMARY ===`)
+      console.log(
+        `[QualityScore] High-trust skills (bypassed formula): ${scoreDistribution.highTrust}`
+      )
+      console.log(`[QualityScore] Community skills (used formula): ${scoreDistribution.community}`)
+      if (scoreDistribution.scores.length > 0) {
+        const minScore = Math.min(...scoreDistribution.scores)
+        const maxScore = Math.max(...scoreDistribution.scores)
+        const avgScore =
+          scoreDistribution.scores.reduce((a, b) => a + b, 0) / scoreDistribution.scores.length
+        console.log(
+          `[QualityScore] Community score range: ${minScore.toFixed(4)} - ${maxScore.toFixed(4)} (avg: ${avgScore.toFixed(4)})`
+        )
+      }
+      console.log(`[QualityScore] Inserts: ${result.indexed}, Updates: ${result.updated}`)
 
       // Log to audit_logs
       await supabase.from('audit_logs').insert({
@@ -1081,8 +1155,13 @@ Deno.serve(async (req: Request) => {
           topics,
           found: result.found,
           indexed: result.indexed,
+          updated: result.updated,
           failed: result.failed,
           dry_run: dryRun,
+          score_distribution: {
+            high_trust: scoreDistribution.highTrust,
+            community: scoreDistribution.community,
+          },
         },
       })
     } else if (dryRun) {
