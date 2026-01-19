@@ -569,50 +569,74 @@
 
         // Show payment method if we have one stored
         const paymentMethod = document.getElementById('payment-method') as HTMLDivElement
-        // Note: In production, fetch card details from Stripe
-        // For now, show placeholder if subscription exists
+        // Note: Card details are managed via Stripe portal
         paymentMethod.innerHTML = `
           <div class="card-info">
             <div class="card-icon">CARD</div>
             <div class="card-details">
               <div class="card-number">•••• •••• •••• ••••</div>
-              <div class="card-expiry">Managed via Stripe</div>
+              <div class="card-expiry">Click "Manage" to update payment method</div>
             </div>
           </div>
         `
 
-        // Fetch invoices from audit_logs (simplified - in production use Stripe API)
+        // Fetch invoices from Stripe via Edge Function
         const invoicesList = document.getElementById('invoices-list') as HTMLDivElement
-        const { data: payments } = await supabase
-          .from('audit_logs')
-          .select('created_at, metadata')
-          .eq('action', 'payment_succeeded')
-          .order('created_at', { ascending: false })
-          .limit(10)
+        try {
+          const invoicesRes = await fetch(
+            `${supabaseUrl}/functions/v1/list-invoices?limit=12`,
+            {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${session.access_token}`,
+              },
+            }
+          )
 
-        if (payments && payments.length > 0) {
-          invoicesList.innerHTML = payments.map(payment => {
-            const date = new Date(payment.created_at).toLocaleDateString('en-US', {
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric'
-            })
-            const amount = payment.metadata?.amount
-              ? `$${(payment.metadata.amount / 100).toFixed(2)}`
-              : '-'
-            return `
-              <div class="invoice-item">
-                <div class="invoice-info">
-                  <span class="invoice-date">${escapeHtml(date)}</span>
-                  <span class="invoice-amount">${escapeHtml(amount)} ${escapeHtml(payment.metadata?.currency?.toUpperCase() || 'USD')}</span>
-                </div>
-                <div class="invoice-actions">
-                  <span class="invoice-status paid">Paid</span>
-                  <button class="btn btn-ghost btn-sm">Download</button>
-                </div>
-              </div>
-            `
-          }).join('')
+          if (invoicesRes.ok) {
+            const { invoices } = await invoicesRes.json()
+
+            if (invoices && invoices.length > 0) {
+              invoicesList.innerHTML = invoices.map((invoice: {
+                id: string
+                number: string | null
+                status: string
+                amount: number
+                currency: string
+                date: string
+                pdfUrl: string | null
+              }) => {
+                const date = new Date(invoice.date).toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
+                })
+                const amount = `$${invoice.amount.toFixed(2)}`
+                const statusClass = invoice.status === 'paid' ? 'paid' : ''
+                const statusText = invoice.status.charAt(0).toUpperCase() + invoice.status.slice(1)
+                const invoiceNumber = invoice.number || invoice.id.slice(-8).toUpperCase()
+                const downloadButton = invoice.pdfUrl
+                  ? `<a href="${escapeHtml(invoice.pdfUrl)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">Download</a>`
+                  : `<span class="btn btn-ghost btn-sm" style="opacity: 0.5; cursor: not-allowed;">Generating...</span>`
+
+                return `
+                  <div class="invoice-item">
+                    <div class="invoice-info">
+                      <span class="invoice-date">${escapeHtml(date)} <span class="text-muted">(#${escapeHtml(invoiceNumber)})</span></span>
+                      <span class="invoice-amount">${escapeHtml(amount)} ${escapeHtml(invoice.currency)}</span>
+                    </div>
+                    <div class="invoice-actions">
+                      <span class="invoice-status ${statusClass}">${escapeHtml(statusText)}</span>
+                      ${downloadButton}
+                    </div>
+                  </div>
+                `
+              }).join('')
+            }
+          }
+        } catch (invoiceErr) {
+          console.error('Failed to fetch invoices:', invoiceErr)
+          // Keep the empty state if invoices fail to load
         }
       } else {
         subscriptionStatus.textContent = 'Free'
@@ -624,8 +648,35 @@
       // Manage payment button - redirect to Stripe portal
       const managePaymentBtn = document.getElementById('manage-payment-btn') as HTMLButtonElement
       managePaymentBtn.addEventListener('click', async () => {
-        // In production, create Stripe billing portal session
-        alert('Payment management is handled via Stripe. Contact support for payment changes.')
+        managePaymentBtn.disabled = true
+        managePaymentBtn.textContent = 'Loading...'
+
+        try {
+          const res = await fetch(
+            `${supabaseUrl}/functions/v1/create-portal-session`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${session.access_token}`,
+              },
+              body: JSON.stringify({ returnUrl: window.location.href }),
+            }
+          )
+
+          if (!res.ok) {
+            const err = await res.json()
+            throw new Error(err.error || 'Failed to create portal session')
+          }
+
+          const { url } = await res.json()
+          window.location.href = url
+        } catch (error) {
+          console.error('Portal error:', error)
+          alert(error instanceof Error ? error.message : 'Failed to open billing portal')
+          managePaymentBtn.disabled = false
+          managePaymentBtn.textContent = 'Manage'
+        }
       })
 
       // Show content

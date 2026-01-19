@@ -737,20 +737,114 @@
           newSeatCount.addEventListener('input', updateButtonState)
 
           updateSeatsBtn.addEventListener('click', async () => {
-            // TODO: Implement seat update via Stripe
-            alert('Seat management coming soon. Contact support for seat changes.')
+            const newSeats = parseInt(newSeatCount.value)
+            if (newSeats === subscription.seat_count) return
+
+            // First preview the proration
+            updateSeatsBtn.disabled = true
+            updateSeatsBtn.textContent = 'Calculating...'
+
+            try {
+              const previewRes = await fetch(
+                `${supabaseUrl}/functions/v1/update-seat-count`,
+                {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${session.access_token}`,
+                  },
+                  body: JSON.stringify({ newSeatCount: newSeats, preview: true }),
+                }
+              )
+
+              if (!previewRes.ok) {
+                const err = await previewRes.json()
+                throw new Error(err.error || 'Failed to preview seat change')
+              }
+
+              const preview = await previewRes.json()
+              const prorationText = preview.prorationAmount >= 0
+                ? `You will be charged $${preview.prorationAmount.toFixed(2)} (prorated).`
+                : `You will receive a credit of $${Math.abs(preview.prorationAmount).toFixed(2)}.`
+
+              const confirmMsg = `Changing from ${preview.currentSeatCount} to ${preview.newSeatCount} seats.\n\n` +
+                `${prorationText}\n` +
+                `New monthly total: $${preview.newMonthlyAmount.toFixed(2)}\n\n` +
+                `Continue?`
+
+              if (!confirm(confirmMsg)) {
+                updateSeatsBtn.disabled = false
+                updateSeatsBtn.textContent = 'Update Seats'
+                return
+              }
+
+              // Apply the change
+              updateSeatsBtn.textContent = 'Updating...'
+              const updateRes = await fetch(
+                `${supabaseUrl}/functions/v1/update-seat-count`,
+                {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${session.access_token}`,
+                  },
+                  body: JSON.stringify({ newSeatCount: newSeats }),
+                }
+              )
+
+              if (!updateRes.ok) {
+                const err = await updateRes.json()
+                throw new Error(err.error || 'Failed to update seat count')
+              }
+
+              const result = await updateRes.json()
+              alert(`Seats updated successfully! New seat count: ${result.newSeatCount}`)
+              window.location.reload()
+            } catch (error) {
+              console.error('Seat update error:', error)
+              alert(error instanceof Error ? error.message : 'Failed to update seats')
+              updateSeatsBtn.disabled = false
+              updateSeatsBtn.textContent = 'Update Seats'
+            }
           })
         }
 
-        // Cancel subscription handler
+        // Cancel subscription handler - redirects to Stripe Billing Portal
         const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement
         cancelBtn.addEventListener('click', async () => {
-          if (!confirm('Are you sure you want to cancel your subscription? You will retain access until the end of your billing period.')) {
+          if (!confirm('Are you sure you want to manage your subscription? You will be redirected to the Stripe billing portal where you can cancel or update your subscription.')) {
             return
           }
 
-          // TODO: Implement via Stripe portal or custom endpoint
-          alert('To cancel your subscription, please contact support@skillsmith.app')
+          cancelBtn.disabled = true
+          cancelBtn.textContent = 'Redirecting...'
+
+          try {
+            const res = await fetch(
+              `${supabaseUrl}/functions/v1/create-portal-session`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${session.access_token}`,
+                },
+                body: JSON.stringify({ returnUrl: window.location.href }),
+              }
+            )
+
+            if (!res.ok) {
+              const err = await res.json()
+              throw new Error(err.error || 'Failed to create portal session')
+            }
+
+            const { url } = await res.json()
+            window.location.href = url
+          } catch (error) {
+            console.error('Portal error:', error)
+            alert(error instanceof Error ? error.message : 'Failed to open billing portal')
+            cancelBtn.disabled = false
+            cancelBtn.textContent = 'Cancel Subscription'
+          }
         })
       }
 
