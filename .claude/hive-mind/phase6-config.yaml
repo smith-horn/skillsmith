@@ -1,0 +1,178 @@
+# Phase 6 Website Completion - Hive Mind Configuration (Updated)
+# Optimized for MacBook Pro M4 with user keyboard responsiveness
+# Updated: 2026-01-18 after codebase audit
+
+name: phase6-website-completion
+description: Complete remaining Phase 6 website issues (13 remaining)
+
+# Resource-conscious settings for M4 MacBook
+topology: hierarchical
+queen_model: sonnet
+worker_model: haiku
+max_concurrent_agents: 2
+resource_profile: laptop
+
+# Memory coordination
+memory:
+  backend: sqlite
+  persistence: true
+  namespace: phase6-website
+
+# Wave definitions (Waves 1 & 2 already complete)
+waves:
+  # Wave 3: Database & Auth (MUST BE FIRST)
+  - name: database-auth
+    description: 'Set up users/subscriptions schema and auth flow'
+    priority: 1
+    max_agents: 2
+    sequential: true # Must run in order due to dependencies
+    issues:
+      - id: SMI-1178
+        title: 'Database schema - users and subscriptions tables'
+        files:
+          - supabase/migrations/011_users_subscriptions.sql
+        tasks:
+          - Create users table with Supabase Auth integration
+          - Create subscriptions table linked to users
+          - Create license_keys table
+          - Add RLS policies for all tables
+      - id: SMI-1168
+        title: 'User registration and login'
+        files:
+          - supabase/functions/auth-register/index.ts
+          - supabase/functions/auth-login/index.ts
+          - packages/website/src/lib/auth.ts
+          - packages/website/src/pages/login.astro
+          - packages/website/src/pages/signup.astro
+        tasks:
+          - Create registration endpoint using Supabase Auth
+          - Create login endpoint
+          - Update login.astro with auth form
+          - Update signup.astro to call registration
+      - id: SMI-1169
+        title: 'Email verification flow'
+        files:
+          - supabase/functions/auth-verify/index.ts
+        tasks:
+          - Create email verification endpoint
+          - Configure Supabase email templates
+          - Handle verification callback
+
+  # Wave 4: Stripe Integration
+  - name: stripe-integration
+    description: 'Complete Stripe webhook and license delivery'
+    priority: 1
+    max_agents: 2
+    depends_on: [database-auth]
+    issues:
+      - id: SMI-1177
+        title: 'Stripe webhook handlers'
+        files:
+          - supabase/functions/stripe-webhook/index.ts
+        tasks:
+          - Handle checkout.session.completed
+          - Handle customer.subscription.updated
+          - Handle customer.subscription.deleted
+          - Update subscriptions table on events
+      - id: SMI-1161
+        title: 'Stripe Checkout for Team tier'
+        files:
+          - supabase/functions/checkout/index.ts
+        tasks:
+          - Verify Team tier checkout works
+          - Test with Stripe test mode
+          - Link to webhook handling
+      - id: SMI-1162
+        title: 'Stripe Checkout for Enterprise tier'
+        files:
+          - supabase/functions/checkout/index.ts
+        tasks:
+          - Verify Enterprise tier checkout works
+          - Test seat-based pricing
+      - id: SMI-1164
+        title: 'License key delivery after payment'
+        files:
+          - supabase/functions/generate-license/index.ts
+        tasks:
+          - Generate unique license keys
+          - Store in license_keys table
+          - Send license via email (Resend)
+
+  # Wave 5: Account Features
+  - name: account-features
+    description: 'Build account management pages'
+    priority: 2
+    max_agents: 2
+    depends_on: [stripe-integration]
+    issues:
+      - id: SMI-1163
+        title: 'Account dashboard with subscription status'
+        files:
+          - packages/website/src/pages/account/index.astro
+        tasks:
+          - Create account layout with navigation
+          - Display current plan and status
+          - Show API usage statistics
+          - Display license key
+      - id: SMI-1165
+        title: 'Subscription upgrade/downgrade flow'
+        files:
+          - packages/website/src/pages/account/subscription.astro
+          - supabase/functions/manage-subscription/index.ts
+        tasks:
+          - Create subscription management page
+          - Integrate Stripe Customer Portal
+          - Handle plan changes
+      - id: SMI-1167
+        title: 'Seat management for team admins'
+        files:
+          - packages/website/src/pages/account/team.astro
+        tasks:
+          - Create team management page
+          - Add/remove team members
+          - Adjust seat count
+
+  # Wave 6: Content & Polish
+  - name: content-polish
+    description: 'Final content pages'
+    priority: 3
+    max_agents: 2
+    issues:
+      - id: SMI-1158
+        title: 'Feature comparison table component'
+        files:
+          - packages/website/src/components/ComparisonTable.astro
+        tasks:
+          - Create responsive comparison table
+          - Show all tier features
+          - Highlight differences
+      - id: SMI-1160
+        title: 'FAQ page for common questions'
+        files:
+          - packages/website/src/pages/faq.astro
+        tasks:
+          - Create FAQ page with accordion
+          - Add common questions about pricing, features, support
+      - id: SMI-1166
+        title: 'Billing history and invoice download'
+        files:
+          - packages/website/src/pages/account/billing.astro
+        tasks:
+          - Create billing history page
+          - Fetch invoices from Stripe
+          - Provide download links
+
+# Hooks for Linear integration
+hooks:
+  on_issue_start:
+    - linear issues update ${issue_id} -s "In Progress"
+  on_issue_complete:
+    - linear issues update ${issue_id} -s "Done"
+  on_wave_complete:
+    - echo "Wave ${wave_name} completed"
+
+# Quality gates
+quality:
+  require_typecheck: true
+  require_lint: true
+  run_tests: false # Skip tests for speed
