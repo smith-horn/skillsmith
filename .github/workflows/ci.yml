@@ -550,22 +550,62 @@ jobs:
           path: build-output/
           retention-days: 7
 
-  # SMI-1582: Fresh Install CI Test
-  # Tests that the CLI works correctly when installed fresh via npx
+  # SMI-1582, SMI-1609: Fresh Install CI Test
+  # Tests that the CLI works correctly when installed fresh
   # This catches packaging issues, missing dependencies, and native module problems
+  # Uses local build artifacts (npm pack) to test the current commit, not npm registry
   fresh-install-test:
     name: Fresh Install Test
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: build
-    # Only run on main branch and releases to avoid excessive npm fetches
+    # Only run on main branch and releases
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Download node_modules
+        uses: actions/download-artifact@v4
+        with:
+          name: node-modules
+          path: /tmp
+
+      - name: Load Docker image
+        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+
+      - name: Extract node_modules
+        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+
+      - name: Build packages in Docker
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run build
+
+      - name: Create package tarballs
+        run: |
+          mkdir -p /tmp/packages
+          # Create tarballs for each package
+          cd packages/core && npm pack --pack-destination /tmp/packages
+          cd ../mcp-server && npm pack --pack-destination /tmp/packages
+          cd ../cli && npm pack --pack-destination /tmp/packages
+          cd ../..
+          ls -la /tmp/packages
 
       - name: Create clean test directory
         run: |
@@ -573,21 +613,32 @@ jobs:
           cd /tmp/fresh-install-test
           npm init -y
 
-      - name: Test CLI fresh install
+      - name: Test CLI fresh install from local tarballs
         working-directory: /tmp/fresh-install-test
         run: |
-          echo "Testing fresh install of @skillsmith/cli..."
+          echo "Testing fresh install from local build..."
 
-          # Install the CLI package
-          npm install @skillsmith/cli@latest --save-dev
+          # Install packages in dependency order from local tarballs
+          CORE_TAR=$(ls /tmp/packages/skillsmith-core-*.tgz)
+          MCP_TAR=$(ls /tmp/packages/skillsmith-mcp-server-*.tgz)
+          CLI_TAR=$(ls /tmp/packages/skillsmith-cli-*.tgz)
 
-          # Verify the package installed correctly
+          echo "Installing core: $CORE_TAR"
+          npm install "$CORE_TAR" --save
+
+          echo "Installing mcp-server: $MCP_TAR"
+          npm install "$MCP_TAR" --save
+
+          echo "Installing cli: $CLI_TAR"
+          npm install "$CLI_TAR" --save-dev
+
+          # Verify the packages installed correctly
           if [ ! -d "node_modules/@skillsmith/cli" ]; then
             echo "::error::CLI package not found in node_modules"
             exit 1
           fi
 
-          echo "✓ Package installed successfully"
+          echo "✓ Packages installed successfully"
 
       - name: Test CLI commands
         working-directory: /tmp/fresh-install-test
@@ -637,7 +688,8 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| npm install | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| npm pack | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| npm install (local) | ✅ |" >> $GITHUB_STEP_SUMMARY
           echo "| CLI --help | ✅ |" >> $GITHUB_STEP_SUMMARY
           echo "| CLI --version | ✅ |" >> $GITHUB_STEP_SUMMARY
           echo "| Native modules | ✅ |" >> $GITHUB_STEP_SUMMARY
