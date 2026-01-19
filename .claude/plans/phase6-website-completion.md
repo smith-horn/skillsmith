@@ -73,18 +73,18 @@ All brand compliance and dark theme issues verified done in codebase:
 - `packages/website/src/pages/account/index.astro` - Dashboard with profile, subscription status, license keys
 - `packages/website/src/pages/account/subscription.astro` - Plan management, upgrade/downgrade, seat management
 
-### Wave 6: Content & Polish (3 issues)
+### Wave 6: Content & Polish (3 issues) ✅ COMPLETE
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| SMI-1158 | Feature comparison table component | Not started |
-| SMI-1160 | FAQ page for common questions | Not started |
-| SMI-1166 | Billing history and invoice download | Not started |
+| SMI-1158 | Feature comparison table component | ✅ Done - ComparisonTable.astro |
+| SMI-1160 | FAQ page for common questions | ✅ Done - faq.astro |
+| SMI-1166 | Billing history and invoice download | ✅ Done - account/billing.astro |
 
-**Files to create:**
-- `packages/website/src/components/ComparisonTable.astro`
-- `packages/website/src/pages/faq.astro`
-- `packages/website/src/pages/account/billing.astro`
+**Files created:**
+- `packages/website/src/components/ComparisonTable.astro` - Reusable comparison table with tier highlighting
+- `packages/website/src/pages/faq.astro` - Comprehensive FAQ with categories and structured data
+- `packages/website/src/pages/account/billing.astro` - Billing history, invoices, payment method
 
 ---
 
@@ -97,7 +97,7 @@ All brand compliance and dark theme issues verified done in codebase:
 | ~~3~~ | ~~Database & Auth~~ | ~~3~~ | ~~P1~~ | ✅ DONE |
 | ~~4~~ | ~~Stripe Integration~~ | ~~4~~ | ~~P1~~ | ✅ DONE |
 | ~~5~~ | ~~Account Features~~ | ~~3~~ | ~~P2~~ | ✅ DONE |
-| 6 | Content & Polish | 3 | P3 | Low |
+| ~~6~~ | ~~Content & Polish~~ | ~~3~~ | ~~P3~~ | ✅ DONE |
 
 ---
 
@@ -200,6 +200,6 @@ cd ../skillsmith-phase6
 - [x] Wave 3: Database & Auth (3 issues) - **DONE**
 - [x] Wave 4: Stripe Integration (4 issues) - **DONE**
 - [x] Wave 5: Account Features (3 issues) - **DONE**
-- [ ] Wave 6: Content & Polish (3 issues)
+- [x] Wave 6: Content & Polish (3 issues) - **DONE**
 
-**Total Remaining:** 3 issues
+**Total Remaining:** 0 issues - PHASE 6 COMPLETE! 🎉
