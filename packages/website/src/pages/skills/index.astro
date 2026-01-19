@@ -233,7 +233,7 @@ const trustTiers = [
     // Create skill card HTML
     function createSkillCard(skill) {
       const trustClass = trustBadgeClasses[skill.trust_tier] || trustBadgeClasses.unknown;
-      const score = skill.quality_score ?? skill.score ?? 0;
+      const score = (skill.quality_score ?? skill.score ?? 0) * 100;
       const scoreColor = score >= 80 ? 'text-green-400' : score >= 60 ? 'text-yellow-400' : 'text-red-400';
 
       return `
