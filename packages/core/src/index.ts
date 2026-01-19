@@ -597,8 +597,25 @@ export {
 // Each workstream will uncomment ONLY their export line when implementing.
 // =============================================================================
 
-// Database Migration (WS3: SMI-1446, SMI-1448, SMI-1452) - to be implemented
-// export * from './database/migration.js'
+// Database Migration (WS3: SMI-1446, SMI-1448, SMI-1452) - IMPLEMENTED
+export {
+  checkSchemaCompatibility,
+  ensureSchemaCompatibility,
+  mergeSkillDatabases,
+  getSyncStatus,
+  updateSyncStatus,
+  recordSyncRun,
+  getSyncHistory,
+} from './db/migration.js'
+export type {
+  SchemaCompatibility,
+  MergeResult,
+  MergeConflict,
+  MergeStrategy,
+  MergeOptions,
+  SyncStatus as MigrationSyncStatus,
+  SupabaseSyncConfig,
+} from './db/migration.js'
 
 // Security Scanner Enhancement (WS2: SMI-1454, SMI-1456) - to be implemented
 // export * from './security/scanner-enhanced.js'
