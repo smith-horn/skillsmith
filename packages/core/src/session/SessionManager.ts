@@ -13,22 +13,32 @@ import type { SessionData, Checkpoint } from './SessionContext.js'
 
 // V3 API imports - SMI-1518, SMI-1609
 // These provide direct TypeScript API access instead of spawning CLI commands
-// Note: claude-flow is an optional dependency - imports are dynamic to avoid
-// breaking Fresh Install Test when claude-flow is not installed
+// Note: claude-flow is an optional dependency - imports are FULLY dynamic to avoid
+// Node.js ESM static analysis which would fail at module load time.
+// We use string concatenation to prevent static analysis of the import specifier.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let claudeFlowMemory: any = null
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let claudeFlowMcp: any = null
 
+// Module paths are constructed dynamically to prevent ESM static analysis
+const CLAUDE_FLOW_BASE = 'claude-flow'
+const MEMORY_MODULE_PATH = '/v3/@claude-flow/cli/dist/src/memory/memory-initializer.js'
+const MCP_MODULE_PATH = '/v3/@claude-flow/cli/dist/src/mcp-client.js'
+
 /**
  * Lazily load claude-flow memory module
- * Returns null if claude-flow is not installed
+ * Returns undefined if claude-flow is not installed
+ *
+ * Uses string concatenation for the import path to prevent Node.js
+ * ESM static analysis from resolving the module at parse time.
  */
 async function getClaudeFlowMemory() {
   if (claudeFlowMemory === null) {
     try {
-      claudeFlowMemory =
-        await import('claude-flow/v3/@claude-flow/cli/dist/src/memory/memory-initializer.js')
+      // String concatenation prevents static analysis
+      const modulePath = CLAUDE_FLOW_BASE + MEMORY_MODULE_PATH
+      claudeFlowMemory = await import(/* webpackIgnore: true */ modulePath)
     } catch {
       claudeFlowMemory = undefined // Mark as attempted but failed
     }
@@ -38,12 +48,17 @@ async function getClaudeFlowMemory() {
 
 /**
  * Lazily load claude-flow MCP module
- * Returns null if claude-flow is not installed
+ * Returns undefined if claude-flow is not installed
+ *
+ * Uses string concatenation for the import path to prevent Node.js
+ * ESM static analysis from resolving the module at parse time.
  */
 async function getClaudeFlowMcp() {
   if (claudeFlowMcp === null) {
     try {
-      claudeFlowMcp = await import('claude-flow/v3/@claude-flow/cli/dist/src/mcp-client.js')
+      // String concatenation prevents static analysis
+      const modulePath = CLAUDE_FLOW_BASE + MCP_MODULE_PATH
+      claudeFlowMcp = await import(/* webpackIgnore: true */ modulePath)
     } catch {
       claudeFlowMcp = undefined // Mark as attempted but failed
     }
