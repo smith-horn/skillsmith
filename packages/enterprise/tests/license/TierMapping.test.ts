@@ -61,6 +61,11 @@ describe('TierMapping', () => {
   })
 
   describe('getRequiredTier', () => {
+    it('should return individual for individual-tier features', () => {
+      expect(getRequiredTier('basic_analytics')).toBe('individual')
+      expect(getRequiredTier('email_support')).toBe('individual')
+    })
+
     it('should return team for team-tier features', () => {
       expect(getRequiredTier('team_workspaces')).toBe('team')
       expect(getRequiredTier('private_skills')).toBe('team')
@@ -182,7 +187,24 @@ describe('TierMapping', () => {
       })
     })
 
+    describe('individual tier', () => {
+      it('should include individual features', () => {
+        expect(tierIncludes('individual', 'basic_analytics')).toBe(true)
+        expect(tierIncludes('individual', 'email_support')).toBe(true)
+      })
+
+      it('should not include team or enterprise features', () => {
+        expect(tierIncludes('individual', 'team_workspaces')).toBe(false)
+        expect(tierIncludes('individual', 'sso_saml')).toBe(false)
+      })
+    })
+
     describe('team tier', () => {
+      it('should include individual features (inherited)', () => {
+        expect(tierIncludes('team', 'basic_analytics')).toBe(true)
+        expect(tierIncludes('team', 'email_support')).toBe(true)
+      })
+
       it('should include team features', () => {
         expect(tierIncludes('team', 'team_workspaces')).toBe(true)
         expect(tierIncludes('team', 'private_skills')).toBe(true)
@@ -207,6 +229,11 @@ describe('TierMapping', () => {
         for (const feature of ALL_FEATURE_FLAGS) {
           expect(tierIncludes('enterprise', feature)).toBe(true)
         }
+      })
+
+      it('should include individual features (inherited)', () => {
+        expect(tierIncludes('enterprise', 'basic_analytics')).toBe(true)
+        expect(tierIncludes('enterprise', 'email_support')).toBe(true)
       })
 
       it('should include team features', () => {
