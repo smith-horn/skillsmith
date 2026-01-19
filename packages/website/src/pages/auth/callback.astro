@@ -205,25 +205,25 @@
   const supabaseAnonKey = import.meta.env.PUBLIC_SUPABASE_ANON_KEY
 
   document.addEventListener('DOMContentLoaded', async () => {
-    const loadingState = document.getElementById('loading-state')
-    const successState = document.getElementById('success-state')
-    const errorState = document.getElementById('error-state')
-    const errorMessage = document.getElementById('error-message')
+    const loadingState = document.getElementById('loading-state') as HTMLDivElement | null
+    const successState = document.getElementById('success-state') as HTMLDivElement | null
+    const errorState = document.getElementById('error-state') as HTMLDivElement | null
+    const errorMessageEl = document.getElementById('error-message') as HTMLParagraphElement | null
 
     function showSuccess() {
-      loadingState.style.display = 'none'
-      successState.style.display = 'block'
+      if (loadingState) loadingState.style.display = 'none'
+      if (successState) successState.style.display = 'block'
       // Auto-redirect after 2 seconds
       setTimeout(() => {
         window.location.href = '/account'
       }, 2000)
     }
 
-    function showError(message) {
-      loadingState.style.display = 'none'
-      errorState.style.display = 'block'
-      if (message) {
-        errorMessage.textContent = message
+    function showError(message?: string) {
+      if (loadingState) loadingState.style.display = 'none'
+      if (errorState) errorState.style.display = 'block'
+      if (message && errorMessageEl) {
+        errorMessageEl.textContent = message
       }
     }
 
@@ -301,7 +301,8 @@
             } else {
               showSuccess()
             }
-          } catch {
+          } catch (pkceError) {
+            console.error('PKCE exchange error:', pkceError)
             showError('Invalid or expired verification link. Please request a new one.')
           }
         }
