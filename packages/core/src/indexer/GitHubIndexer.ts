@@ -305,10 +305,22 @@ export class GitHubIndexer {
    * Convert GitHub repository to SkillCreateInput
    */
   repositoryToSkill(repo: GitHubRepository): SkillCreateInput {
-    // Calculate quality score based on stars and activity
-    const starScore = Math.min(repo.stars / 10, 50) // Max 50 from stars
-    const forkScore = Math.min(repo.forks / 5, 25) // Max 25 from forks
-    const qualityScore = Math.round(starScore + forkScore + 25) // Base 25 points
+    // Feature flag: SKILLSMITH_LOG_QUALITY_SCORE controls formula
+    const useLogScale = process.env.SKILLSMITH_LOG_QUALITY_SCORE === 'true'
+
+    let starScore: number
+    let forkScore: number
+
+    if (useLogScale) {
+      // Logarithmic scale for better distribution across wide star/fork ranges
+      starScore = Math.min(Math.log10(repo.stars + 1) * 15, 50)
+      forkScore = Math.min(Math.log10(repo.forks + 1) * 10, 25)
+    } else {
+      // Linear scale (default) - saturates at 500 stars / 125 forks
+      starScore = Math.min(repo.stars / 10, 50)
+      forkScore = Math.min(repo.forks / 5, 25)
+    }
+    const qualityScore = (starScore + forkScore + 25) / 100 // Normalize to 0-1
 
     // Determine trust tier based on indicators
     let trustTier: 'verified' | 'community' | 'experimental' | 'unknown' = 'unknown'

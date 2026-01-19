@@ -337,7 +337,23 @@ async function runSearch(
  */
 export function createSearchCommand(): Command {
   const cmd = new Command('search')
-    .description('Search for skills')
+    .description(
+      `Search for skills
+
+Quality Score Formula:
+  Quality scores (0-100%) reflect repository health using logarithmic scaling:
+    Stars: log₁₀(stars + 1) × 15  (max 50 pts)
+    Forks: log₁₀(forks + 1) × 10  (max 25 pts)
+    Base:  25 pts (baseline)
+
+  Example scores:
+    ~48%  - 10 stars, 5 forks
+    ~68%  - 100 stars, 20 forks
+    ~86%  - 500 stars, 100 forks
+    100%  - 10,000+ stars
+
+  Verified skills from high-trust authors may have manually assigned scores.`
+    )
     .argument('[query]', 'Search query')
     .option('-i, --interactive', 'Launch interactive search mode')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
@@ -346,7 +362,7 @@ export function createSearchCommand(): Command {
       '-t, --tier <tier>',
       'Filter by trust tier (verified, community, experimental, unknown)'
     )
-    .option('-s, --min-score <number>', 'Minimum quality score (0-100)')
+    .option('-s, --min-score <number>', 'Minimum quality score (0-100, see above for formula)')
     .action(
       async (query: string | undefined, opts: Record<string, string | boolean | undefined>) => {
         try {

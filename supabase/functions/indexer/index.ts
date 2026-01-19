@@ -704,9 +704,21 @@ function repositoryToSkill(
     qualityScore = highTrustAuthor.baseQualityScore
     trustTier = 'verified'
   } else {
-    // Calculate quality score based on stars and activity
-    const starScore = Math.min(repo.stars / 10, 50)
-    const forkScore = Math.min(repo.forks / 5, 25)
+    // Feature flag: SKILLSMITH_LOG_QUALITY_SCORE controls formula
+    const useLogScale = Deno.env.get('SKILLSMITH_LOG_QUALITY_SCORE') === 'true'
+
+    let starScore: number
+    let forkScore: number
+
+    if (useLogScale) {
+      // Logarithmic scale for better distribution across wide star/fork ranges
+      starScore = Math.min(Math.log10(repo.stars + 1) * 15, 50)
+      forkScore = Math.min(Math.log10(repo.forks + 1) * 10, 25)
+    } else {
+      // Linear scale (default) - saturates at 500 stars / 125 forks
+      starScore = Math.min(repo.stars / 10, 50)
+      forkScore = Math.min(repo.forks / 5, 25)
+    }
     qualityScore = (starScore + forkScore + 25) / 100 // Normalize to 0-1
 
     // Determine trust tier
