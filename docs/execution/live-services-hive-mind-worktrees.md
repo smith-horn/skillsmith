@@ -38,7 +38,62 @@
 | SMI-1598 | Verify CI workflows pass after Live Services merge | Backlog |
 | SMI-1599 | Test and validate health endpoint in staging | Backlog |
 | SMI-1600 | Test merge CLI command with real databases | Backlog |
-| SMI-1601 | Update Live Services execution plan - mark phase complete | Backlog |
+| SMI-1601 | Update Live Services execution plan - mark phase complete | ✅ Done |
+
+---
+
+## Workstream 7: CI Coverage Fix (SMI-1602)
+
+**Status**: 🔄 Ready for Execution
+**Priority**: P1 (CI Blocking)
+**Branch**: `feature/live-services-ci-coverage`
+
+### Issue
+
+| Issue | Title | Priority | Status |
+|-------|-------|----------|--------|
+| SMI-1602 | CI coverage threshold failure: branch coverage 66.8% < 67% | P1 | Backlog |
+
+### Problem
+
+CI is failing due to branch coverage (66.8%) dropping below the 67% threshold after PR #17 merged.
+
+### Solution
+
+Add tests to low-coverage files to restore branch coverage above 67%.
+
+### Target Files
+
+| File | Current Coverage | Target | Action |
+|------|-----------------|--------|--------|
+| `packages/enterprise/src/license/quotas.ts` | 0% | >70% | Create `quotas.test.ts` |
+| `packages/mcp-server/src/context.ts` | 46% | >60% | Add edge case tests |
+| `packages/mcp-server/src/middleware/license.ts` | 54% | >65% | Add validation tests |
+
+### Acceptance Criteria
+
+- [ ] Branch coverage ≥ 67%
+- [ ] CI workflow passes (all jobs green)
+- [ ] No test regressions (4,610+ tests pass)
+- [ ] New tests are meaningful (not coverage padding)
+- [ ] `quotas.ts` has >70% branch coverage
+
+### Execution Plan
+
+Detailed plan: [ci-coverage-fix-plan.md](./ci-coverage-fix-plan.md)
+
+### Worktree Setup
+
+```bash
+# Create worktree
+git worktree add ../worktrees/live-svc-ci-coverage -b feature/live-services-ci-coverage
+
+# Navigate
+cd ../worktrees/live-svc-ci-coverage
+
+# Install dependencies (if needed)
+docker exec skillsmith-dev-1 npm install
+```
 
 ### Lessons Learned
 
