@@ -180,13 +180,13 @@ export async function withRetry<T>(fn: () => Promise<T>, config: RetryConfig = {
     onRetry,
   } = config
 
-  let lastError: unknown
+  let _lastError: unknown
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       return await fn()
     } catch (error) {
-      lastError = error
+      _lastError = error
 
       // Check if we should retry
       if (attempt >= maxRetries || !isRetryable(error)) {

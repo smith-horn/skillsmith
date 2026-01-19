@@ -4,7 +4,7 @@
  * Uses fake timers for deterministic date testing (SMI-992)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
   QualityScorer,
   quickScore,
@@ -15,7 +15,6 @@ import {
   FIXED_DATE_ISO,
   FIXED_TIMESTAMP,
   ONE_YEAR_MS,
-  ONE_DAY_MS,
   setupFakeTimers,
   cleanupFakeTimers,
 } from './test-utils.js'

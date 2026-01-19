@@ -4,13 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
-import {
-  TriggerDetector,
-  DEFAULT_FILE_TRIGGERS,
-  DEFAULT_COMMAND_TRIGGERS,
-  DEFAULT_ERROR_TRIGGERS,
-  DEFAULT_PROJECT_TRIGGERS,
-} from '../TriggerDetector.js'
+import { TriggerDetector } from '../TriggerDetector.js'
 import type { CodebaseContext } from '../../analysis/CodebaseAnalyzer.js'
 
 describe('TriggerDetector', () => {

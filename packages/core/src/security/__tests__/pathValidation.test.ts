@@ -5,7 +5,7 @@
  * Tests various path traversal attack vectors and ensures proper rejection.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { resolve } from 'path'
 import { homedir } from 'os'
 import { validateDbPath, validateDbPathOrThrow, isPathSafe } from '../pathValidation.js'

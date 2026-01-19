@@ -15,7 +15,6 @@ import {
   formatReportAsText,
   compareReports,
   type BenchmarkReport,
-  type BenchmarkStats,
 } from '../src/benchmarks/BenchmarkRunner.js'
 
 describe('BenchmarkRunner', () => {
@@ -31,8 +30,8 @@ describe('BenchmarkRunner', () => {
         name: 'test_benchmark',
         fn: () => {
           // Simple operation
-          let sum = 0
-          for (let i = 0; i < 100; i++) sum += i
+          let _sum = 0
+          for (let i = 0; i < 100; i++) _sum += i
         },
       })
 
@@ -63,8 +62,8 @@ describe('BenchmarkRunner', () => {
           name: 'slower_benchmark',
           fn: () => {
             // Slightly slower
-            let sum = 0
-            for (let i = 0; i < 1000; i++) sum += i
+            let _sum = 0
+            for (let i = 0; i < 1000; i++) _sum += i
           },
         })
 
@@ -203,8 +202,8 @@ describe('BenchmarkRunner', () => {
         name: 'consistent',
         fn: () => {
           // Consistent operation
-          let sum = 0
-          for (let i = 0; i < 100; i++) sum += i
+          let _sum = 0
+          for (let i = 0; i < 100; i++) _sum += i
         },
       })
 

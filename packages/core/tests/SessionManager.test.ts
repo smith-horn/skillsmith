@@ -5,7 +5,7 @@
  * Tests session management with mocked claude-flow commands
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import {
   SessionManager,
   SessionRecovery,
@@ -170,7 +170,7 @@ describe('SessionManager', () => {
     })
 
     it('should add checkpoint to session', async () => {
-      const session = await manager.startSession()
+      await manager.startSession()
       await manager.createCheckpoint('First checkpoint')
       await manager.createCheckpoint('Second checkpoint')
 
@@ -370,7 +370,7 @@ describe('SessionRecovery', () => {
 
   describe('resumeFromCheckpoint', () => {
     it('should resume from latest checkpoint', async () => {
-      const session = await manager.startSession()
+      await manager.startSession()
       await manager.createCheckpoint('First checkpoint')
       const lastCheckpoint = await manager.createCheckpoint('Last checkpoint')
 
@@ -382,7 +382,7 @@ describe('SessionRecovery', () => {
     })
 
     it('should resume from specific checkpoint', async () => {
-      const session = await manager.startSession()
+      await manager.startSession()
       const firstCheckpoint = await manager.createCheckpoint('First checkpoint')
       await manager.createCheckpoint('Last checkpoint')
 
@@ -394,7 +394,7 @@ describe('SessionRecovery', () => {
     })
 
     it('should return not_found when no checkpoints exist', async () => {
-      const session = await manager.startSession()
+      await manager.startSession()
       const currentSession = manager.getCurrentSession()!
 
       const result = await recovery.resumeFromCheckpoint(currentSession)

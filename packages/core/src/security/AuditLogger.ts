@@ -501,7 +501,7 @@ export class AuditLogger {
     this.validateRetentionDays(retentionDays)
 
     const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000)
-    const originalError: Error | null = null
+    const _originalError: Error | null = null
 
     try {
       // Use internal cleanup to skip double meta-logging

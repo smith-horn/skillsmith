@@ -10,14 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import {
-  MemoryProfiler,
-  type MemorySnapshot,
-  type MemoryStats,
-  type MemoryBaseline,
-  type LeakDetectionResult,
-  type MemoryRegressionResult,
-} from '../src/benchmarks/MemoryProfiler.js'
+import { MemoryProfiler, type MemoryBaseline } from '../src/benchmarks/MemoryProfiler.js'
 
 describe('MemoryProfiler', () => {
   let profiler: MemoryProfiler
@@ -70,9 +63,9 @@ describe('MemoryProfiler', () => {
       profiler.trackMemory('peak_test')
 
       // Allocate and release memory to create a peak
-      let temp: number[] | null = new Array(100000).fill(0)
+      let _temp: number[] | null = new Array(100000).fill(0)
       await new Promise((resolve) => setTimeout(resolve, 60))
-      temp = null // Allow GC
+      _temp = null // Allow GC
 
       const stats = profiler.stopTracking('peak_test')
 

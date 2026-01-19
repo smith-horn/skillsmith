@@ -4,7 +4,7 @@
  *
  * @see ADR-009: Embedding Service Fallback Strategy
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
   EmbeddingService,
   testUtils,

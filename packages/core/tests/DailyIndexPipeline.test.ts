@@ -9,12 +9,10 @@ import {
   DailyIndexPipeline,
   createScheduledPipeline,
   runDailyIndex,
-  type PipelineSourceConfig,
   type PipelineProgress,
 } from '../src/pipeline/index.js'
 import { BaseSourceAdapter } from '../src/sources/BaseSourceAdapter.js'
 import type {
-  SourceConfig,
   SourceLocation,
   SourceRepository,
   SourceSearchOptions,

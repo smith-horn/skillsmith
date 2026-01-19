@@ -17,7 +17,6 @@ import {
   type ImportInfo,
   type ExportInfo,
   type FunctionInfo,
-  type FrameworkInfo,
   type DependencyInfo,
   type CodebaseContext,
   type AnalyzeOptions,

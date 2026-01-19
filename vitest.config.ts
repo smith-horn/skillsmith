@@ -87,12 +87,11 @@ export default defineConfig({
         '**/setup.ts',
       ],
       thresholds: {
-        // SMI-718: Realistic thresholds for well-tested core code
-        // Branch coverage lowered from 70% to 68% after adding Supabase Edge Functions
-        // (Deno runtime code excluded from coverage but affects codebase metrics)
+        // SMI-1602 follow-up: Incremental coverage increase (Wave 1: 67% → 72%)
+        // Branch coverage increased as part of CI improvement plan
         lines: 75,
         functions: 75,
-        branches: 67,
+        branches: 72,
         statements: 75,
       },
     },

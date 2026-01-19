@@ -13,7 +13,6 @@ import {
   PartitionStrategy,
   createDefaultStrategy,
   createCustomStrategy,
-  DEFAULT_PARTITION_RANGES,
   type Partition,
 } from '../src/indexer/PartitionStrategy.js'
 import {
@@ -23,11 +22,7 @@ import {
   type WorkerState,
   type SwarmProgress,
 } from '../src/indexer/SwarmIndexer.js'
-import {
-  GitHubIndexer,
-  type GitHubRepository,
-  type IndexResult,
-} from '../src/indexer/GitHubIndexer.js'
+import { GitHubIndexer, type GitHubRepository } from '../src/indexer/GitHubIndexer.js'
 
 // Mock fetch for GitHub API calls
 const mockFetch = vi.fn()

@@ -5,7 +5,7 @@
  * Comprehensive test suite for input sanitization functions
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   sanitizeHtml,
   sanitizeFileName,

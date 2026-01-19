@@ -34,3 +34,32 @@ fi
 
 # Phase 2: Run security checks (SMI-727)
 bash "$(dirname "$0")/../scripts/pre-push-check.sh"
+SECURITY_STATUS=$?
+
+if [ $SECURITY_STATUS -ne 0 ]; then
+  exit 1
+fi
+
+# Phase 3: Coverage validation (SMI-1602 follow-up)
+# Catches coverage issues before code leaves local machine
+echo "🔍 Running pre-push coverage check..."
+
+# Check if Docker is available
+if ! docker exec skillsmith-dev-1 echo "ok" > /dev/null 2>&1; then
+  echo "⚠️  Docker not running - skipping coverage check"
+  echo "   Run: docker compose --profile dev up -d"
+  exit 0  # Don't block push, just warn
+fi
+
+# Run coverage check (uses existing test:coverage script)
+if docker exec skillsmith-dev-1 npm run test:coverage > /dev/null 2>&1; then
+  echo "✅ Coverage check passed"
+else
+  echo ""
+  echo "❌ Coverage threshold not met!"
+  echo "   Run: docker exec skillsmith-dev-1 npm run test:coverage"
+  echo "   to see detailed report"
+  echo ""
+  echo "   Bypass: git push --no-verify"
+  exit 1
+fi

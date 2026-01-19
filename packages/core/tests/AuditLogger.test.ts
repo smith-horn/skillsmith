@@ -5,7 +5,7 @@
  * Uses fake timers for deterministic date testing (SMI-992)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { AuditLogger } from '../src/security/AuditLogger.js'
 import { createDatabase, closeDatabase } from '../src/db/schema.js'
 import type { Database as DatabaseType } from 'better-sqlite3'

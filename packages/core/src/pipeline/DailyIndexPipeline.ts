@@ -347,7 +347,7 @@ export class DailyIndexPipeline {
       // Create indexer for this source
       const indexer = new SourceIndexer(adapter, pipelineConfig.parser, pipelineConfig.repository, {
         skipUnchanged: sourceConfig.incremental ?? true,
-        onProgress: (current, total, repo) => {
+        onProgress: (_current, _total, _repo) => {
           // Could emit granular progress here
         },
       })

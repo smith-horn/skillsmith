@@ -18,7 +18,7 @@ import type {
 import { createHash } from 'crypto'
 import { createLogger } from '../utils/logger.js'
 import { validateUrl } from '../validation/index.js'
-import { ApiError, NetworkError, wrapError } from '../errors/SkillsmithError.js'
+import { ApiError, wrapError } from '../errors/SkillsmithError.js'
 
 const log = createLogger('RawUrlAdapter')
 

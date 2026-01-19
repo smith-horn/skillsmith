@@ -5,14 +5,13 @@
  * Uses fake timers for deterministic date testing (SMI-992)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import type { Database as DatabaseType } from 'better-sqlite3'
 import { initializeAnalyticsSchema } from '../src/analytics/schema.js'
 import { AnalyticsRepository } from '../src/analytics/AnalyticsRepository.js'
 import type { UsageEventInput, ExperimentInput, OutcomeInput } from '../src/analytics/types.js'
 import {
-  FIXED_DATE,
   FIXED_DATE_ISO,
   FIXED_TIMESTAMP,
   ONE_DAY_MS,
@@ -89,7 +88,6 @@ describe('AnalyticsRepository', () => {
     })
 
     it('should get usage events for a skill', () => {
-      const now = FIXED_DATE
       const yesterday = new Date(FIXED_TIMESTAMP - ONE_DAY_MS)
       const tomorrow = new Date(FIXED_TIMESTAMP + ONE_DAY_MS)
 
@@ -124,7 +122,6 @@ describe('AnalyticsRepository', () => {
     })
 
     it('should get usage events for a user', () => {
-      const now = FIXED_DATE
       const yesterday = new Date(FIXED_TIMESTAMP - ONE_DAY_MS)
       const tomorrow = new Date(FIXED_TIMESTAMP + ONE_DAY_MS)
 
@@ -309,8 +306,8 @@ describe('AnalyticsRepository', () => {
     })
 
     it('should handle duplicate assignments (upsert)', () => {
-      const first = repo.assignUserToExperiment(experimentId, 'user-1', 'control')
-      const second = repo.assignUserToExperiment(experimentId, 'user-1', 'treatment')
+      repo.assignUserToExperiment(experimentId, 'user-1', 'control')
+      repo.assignUserToExperiment(experimentId, 'user-1', 'treatment')
 
       // Should update the variant
       const retrieved = repo.getUserAssignment(experimentId, 'user-1')

@@ -31,7 +31,7 @@ const _rateLimitTracker = {
 }
 
 // Forward declaration for getRateLimitStatus - assigned after getGitHubHeaders is defined
-// eslint-disable-next-line prefer-const
+
 let getRateLimitStatus: () => Promise<RateLimitStatus>
 
 /**
