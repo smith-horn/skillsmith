@@ -49,13 +49,51 @@ const DETECTION_PATTERNS = {
   ],
 
   // Hardcoded credentials (critical severity)
+  // SMI-1584: Synced with mcp-server/tests/e2e/utils/hardcoded-detector.ts
   credentials: [
-    { pattern: /sk-[a-zA-Z0-9]{32,}/g, name: 'OpenAI API key' },
+    // AI & LLM Services
+    { pattern: /sk-[a-zA-Z0-9]{32,}(?![a-zA-Z0-9])/g, name: 'OpenAI API key' },
+    { pattern: /sk-ant-[a-zA-Z0-9-]+/g, name: 'Anthropic API key' },
+
+    // Version Control & Collaboration
     { pattern: /ghp_[a-zA-Z0-9]{36}/g, name: 'GitHub personal token' },
     { pattern: /gho_[a-zA-Z0-9]{36}/g, name: 'GitHub OAuth token' },
+    { pattern: /ghu_[a-zA-Z0-9]{36}/g, name: 'GitHub user-to-server token' },
+    { pattern: /ghs_[a-zA-Z0-9]{36}/g, name: 'GitHub server-to-server token' },
     { pattern: /lin_api_[a-zA-Z0-9]+/g, name: 'Linear API key' },
-    { pattern: /sk-ant-[a-zA-Z0-9-]+/g, name: 'Anthropic API key' },
+
+    // Communication Platforms
     { pattern: /xoxb-[a-zA-Z0-9-]+/g, name: 'Slack bot token' },
+    { pattern: /xoxp-[a-zA-Z0-9-]+/g, name: 'Slack user token' },
+    { pattern: /xoxa-[a-zA-Z0-9-]+/g, name: 'Slack app token' },
+
+    // Payment Processing
+    { pattern: /sk_live_[a-zA-Z0-9]{24,}/g, name: 'Stripe secret key (live)' },
+    { pattern: /sk_test_[a-zA-Z0-9]{24,}/g, name: 'Stripe secret key (test)' },
+    { pattern: /pk_live_[a-zA-Z0-9]{24,}/g, name: 'Stripe publishable key (live)' },
+    { pattern: /pk_test_[a-zA-Z0-9]{24,}/g, name: 'Stripe publishable key (test)' },
+
+    // Cloud Platforms
+    { pattern: /AKIA[0-9A-Z]{16}/g, name: 'AWS access key ID' },
+
+    // Email & Communication Services
+    { pattern: /SG\.[a-zA-Z0-9_-]{60,}/g, name: 'SendGrid API key' },
+
+    // Authentication & Tokens
+    {
+      pattern: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
+      name: 'JWT token',
+    },
+
+    // Database Connection Strings with Passwords
+    {
+      pattern: /(?:postgres|postgresql):\/\/[^@]+:[^@]+@[^\s'"`]+/g,
+      name: 'PostgreSQL connection string with password',
+    },
+    {
+      pattern: /(?:mongodb|mongodb\+srv):\/\/[^@]+:[^@]+@[^\s'"`]+/g,
+      name: 'MongoDB connection string with password',
+    },
   ],
 
   // Environment assumptions (medium severity)
@@ -65,12 +103,22 @@ const DETECTION_PATTERNS = {
   ],
 }
 
-// Allowlist for known safe patterns (e.g., in security tests)
+// Allowlist for known safe patterns (e.g., in security tests, documentation, examples)
+// SMI-1584: Synced with mcp-server/tests/e2e/utils/hardcoded-detector.ts
 const ALLOWLIST_CONTEXTS = [
   'security.test',
   'validation.test',
   '.security.test',
   'RawUrlSourceAdapter',
+  'example',
+  'mock',
+  'stub',
+  'fixture',
+  'README',
+  'EXAMPLE',
+  'documentation',
+  'docs',
+  '.md',
 ]
 
 /**
