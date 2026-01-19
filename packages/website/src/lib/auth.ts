@@ -8,7 +8,13 @@
  */
 
 import { createClient, type SupabaseClient, type User, type Session } from '@supabase/supabase-js'
-import type { AuthUser, AuthSession, LoginCredentials, RegisterCredentials, AuthResult } from '../types/auth'
+import type {
+  AuthUser,
+  AuthSession,
+  LoginCredentials,
+  RegisterCredentials,
+  AuthResult,
+} from '../types/auth'
 
 // Environment variables (set in Astro config or .env)
 const SUPABASE_URL = import.meta.env.PUBLIC_SUPABASE_URL || ''
@@ -230,7 +236,9 @@ export async function refreshSession(): Promise<AuthSession | null> {
  *
  * @param email - User's email address
  */
-export async function requestPasswordReset(email: string): Promise<{ success: boolean; error?: string }> {
+export async function requestPasswordReset(
+  email: string
+): Promise<{ success: boolean; error?: string }> {
   const client = getSupabaseClient()
 
   const { error } = await client.auth.resetPasswordForEmail(email, {
@@ -252,7 +260,9 @@ export async function requestPasswordReset(email: string): Promise<{ success: bo
  *
  * @param newPassword - New password
  */
-export async function updatePassword(newPassword: string): Promise<{ success: boolean; error?: string }> {
+export async function updatePassword(
+  newPassword: string
+): Promise<{ success: boolean; error?: string }> {
   const client = getSupabaseClient()
 
   const { error } = await client.auth.updateUser({
@@ -274,7 +284,9 @@ export async function updatePassword(newPassword: string): Promise<{ success: bo
  *
  * @param email - User's email address
  */
-export async function resendVerificationEmail(email: string): Promise<{ success: boolean; error?: string }> {
+export async function resendVerificationEmail(
+  email: string
+): Promise<{ success: boolean; error?: string }> {
   const client = getSupabaseClient()
 
   const { error } = await client.auth.resend({
@@ -301,12 +313,14 @@ export async function resendVerificationEmail(email: string): Promise<{ success:
  * @param callback - Function called when auth state changes
  * @returns Unsubscribe function
  */
-export function onAuthStateChange(
-  callback: (session: AuthSession | null) => void
-): { unsubscribe: () => void } {
+export function onAuthStateChange(callback: (session: AuthSession | null) => void): {
+  unsubscribe: () => void
+} {
   const client = getSupabaseClient()
 
-  const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
+  const {
+    data: { subscription },
+  } = client.auth.onAuthStateChange((_event, session) => {
     callback(transformSession(session))
   })
 
@@ -336,28 +350,27 @@ export async function getUserProfile(): Promise<{
 } | null> {
   const client = getSupabaseClient()
 
-  const { data: { user } } = await client.auth.getUser()
+  const {
+    data: { user },
+  } = await client.auth.getUser()
   if (!user) return null
 
   // Get profile with subscription
-  const { data: profile } = await client
-    .from('profiles')
-    .select('tier')
-    .eq('id', user.id)
-    .single()
+  const { data: profile } = await client.from('profiles').select('tier').eq('id', user.id).single()
 
   if (!profile) return null
 
   // Get active subscription
-  const { data: subscription } = await client
-    .rpc('get_user_subscription', { user_uuid: user.id })
+  const { data: subscription } = await client.rpc('get_user_subscription', { user_uuid: user.id })
 
   return {
     tier: profile.tier,
-    subscription: subscription?.[0] ? {
-      id: subscription[0].subscription_id,
-      status: subscription[0].status,
-      currentPeriodEnd: subscription[0].current_period_end,
-    } : null,
+    subscription: subscription?.[0]
+      ? {
+          id: subscription[0].subscription_id,
+          status: subscription[0].status,
+          currentPeriodEnd: subscription[0].current_period_end,
+        }
+      : null,
   }
 }
