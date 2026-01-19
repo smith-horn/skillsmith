@@ -101,13 +101,14 @@ export function ensureSchemaCompatibility(db: DatabaseType): void {
       // Already compatible
       break
 
-    case 'upgrade':
+    case 'upgrade': {
       // Run migrations
       const migrationsRun = runMigrationsSafe(db)
       if (migrationsRun > 0) {
         console.log(`Upgraded database schema: ${migrationsRun} migration(s) applied`)
       }
       break
+    }
 
     case 'downgrade_warning':
       console.warn(compatibility.message)
@@ -290,7 +291,7 @@ export function mergeSkillDatabases(
             result.skillsUpdated++
             break
 
-          case 'keep_newer':
+          case 'keep_newer': {
             const sourceDate = new Date(skill.updated_at).getTime()
             const targetDate = new Date(existing.updated_at).getTime()
 
@@ -317,8 +318,9 @@ export function mergeSkillDatabases(
               result.skillsSkipped++
             }
             break
+          }
 
-          case 'merge_fields':
+          case 'merge_fields': {
             // Merge non-null fields from source into target
             const merged = {
               name: skill.name || existing.name,
@@ -355,6 +357,7 @@ export function mergeSkillDatabases(
             conflict.resolution = 'updated'
             result.skillsUpdated++
             break
+          }
         }
 
         result.conflicts.push(conflict)
@@ -447,7 +450,14 @@ export function updateSyncStatus(
       updated_at = ?
     WHERE id = ?
   `
-  ).run(now, nextSync, result.skillsAdded + result.skillsUpdated, result.error || null, now, 'default')
+  ).run(
+    now,
+    nextSync,
+    result.skillsAdded + result.skillsUpdated,
+    result.error || null,
+    now,
+    'default'
+  )
 }
 
 /**
