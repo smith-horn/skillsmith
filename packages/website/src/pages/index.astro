@@ -163,7 +163,7 @@
         <a href="/docs/api" class="text-[#A1A1AA] hover:text-[#E07A5F] transition-colors text-sm font-medium">
           API Docs
         </a>
-        <a href="#signup" class="px-4 py-2 border border-white/10 rounded-xl text-sm font-medium hover:border-white/20 transition-colors">
+        <a href="#early-access-hero" class="px-4 py-2 border border-white/10 rounded-xl text-sm font-medium hover:border-white/20 transition-colors">
           Get Early Access
         </a>
       </div>
@@ -185,22 +185,28 @@
       </p>
 
       <!-- Email Capture Form -->
-      <form id="signup" class="max-w-[500px] mx-auto mb-6 opacity-0 animate-fade-up" style="animation-delay: 0.3s;">
+      <form id="early-access-hero" class="max-w-[500px] mx-auto mb-4 opacity-0 animate-fade-up" style="animation-delay: 0.3s;">
+        <!-- Honeypot field for bot detection (hidden from humans) -->
+        <input type="text" name="website" autocomplete="off" tabindex="-1" class="absolute -left-[9999px] opacity-0 h-0 w-0" aria-hidden="true" />
         <div class="flex flex-col sm:flex-row gap-3">
           <input
             type="email"
+            name="email"
             placeholder="Enter your email"
             required
+            aria-label="Email address for early access"
             class="flex-1 px-5 py-4 bg-[#18181B] border border-white/10 rounded-xl text-base placeholder:text-[#71717A] focus:outline-none focus:border-[#E07A5F] focus:ring-1 focus:ring-[#E07A5F]/20 transition-colors"
           />
           <button
             type="submit"
-            class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all"
+            class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Get Early Access →
           </button>
         </div>
       </form>
+      <!-- Status message for hero form -->
+      <div id="early-access-hero-status" class="max-w-[500px] mx-auto mb-2 text-sm opacity-0 animate-fade-up" style="animation-delay: 0.4s;" aria-live="polite"></div>
 
       <!-- Social Proof -->
       <p class="text-sm text-[#71717A] opacity-0 animate-fade-up" style="animation-delay: 0.5s;">
@@ -330,23 +336,29 @@
         Be first to discover skills that fit your workflow.
       </p>
 
-      <!-- Email Capture (duplicate) -->
-      <form class="max-w-[500px] mx-auto">
+      <!-- Email Capture (CTA) -->
+      <form id="early-access-cta" class="max-w-[500px] mx-auto mb-4">
+        <!-- Honeypot field for bot detection (hidden from humans) -->
+        <input type="text" name="website" autocomplete="off" tabindex="-1" class="absolute -left-[9999px] opacity-0 h-0 w-0" aria-hidden="true" />
         <div class="flex flex-col sm:flex-row gap-3">
           <input
             type="email"
+            name="email"
             placeholder="Enter your email"
             required
+            aria-label="Email address for early access"
             class="flex-1 px-5 py-4 bg-[#18181B] border border-white/10 rounded-xl text-base placeholder:text-[#71717A] focus:outline-none focus:border-[#E07A5F] focus:ring-1 focus:ring-[#E07A5F]/20 transition-colors"
           />
           <button
             type="submit"
-            class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all"
+            class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Get Early Access →
           </button>
         </div>
       </form>
+      <!-- Status message for CTA form -->
+      <div id="early-access-cta-status" class="max-w-[500px] mx-auto text-sm" aria-live="polite"></div>
     </div>
   </section>
 
@@ -450,6 +462,108 @@
         .catch(() => {
           // Keep default value on error
         });
+    })();
+  </script>
+
+  <!-- Early Access Form Handler -->
+  <script define:vars={{ signupApiUrl: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1/early-access-signup` }}>
+    (function() {
+      const API_URL = signupApiUrl;
+
+      // Get UTM parameters from URL
+      function getUtmParams() {
+        const params = new URLSearchParams(window.location.search);
+        return {
+          utm_source: params.get('utm_source') || undefined,
+          utm_medium: params.get('utm_medium') || undefined,
+          utm_campaign: params.get('utm_campaign') || undefined,
+        };
+      }
+
+      // Show status message
+      function showStatus(statusEl, message, isError) {
+        statusEl.textContent = message;
+        statusEl.className = statusEl.className.replace(/text-\[\#[A-Fa-f0-9]+\]/g, '');
+        statusEl.classList.add(isError ? 'text-[#EF4444]' : 'text-[#81B29A]');
+        statusEl.style.opacity = '1';
+      }
+
+      // Handle form submission
+      async function handleSubmit(e, source) {
+        e.preventDefault();
+
+        const form = e.target;
+        const button = form.querySelector('button[type="submit"]');
+        const emailInput = form.querySelector('input[name="email"]');
+        const honeypotInput = form.querySelector('input[name="website"]');
+        const statusEl = document.getElementById(form.id + '-status');
+
+        // Honeypot check - if filled, silently "succeed" (bot detected)
+        if (honeypotInput && honeypotInput.value) {
+          showStatus(statusEl, "You're on the list! Check your email for confirmation.", false);
+          emailInput.value = '';
+          return;
+        }
+
+        const email = emailInput.value.trim();
+        if (!email) return;
+
+        // Disable button and show loading state
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = 'Joining...';
+        statusEl.textContent = '';
+        statusEl.style.opacity = '0';
+
+        try {
+          const utmParams = getUtmParams();
+
+          const response = await fetch(API_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              email,
+              source,
+              ...utmParams,
+            }),
+          });
+
+          const data = await response.json();
+
+          if (response.ok && data.success) {
+            showStatus(statusEl, data.message, false);
+            emailInput.value = '';
+            // Track conversion in GA
+            if (typeof gtag === 'function') {
+              gtag('event', 'sign_up', {
+                method: 'early_access',
+                source: source,
+              });
+            }
+          } else {
+            showStatus(statusEl, data.error || 'Something went wrong. Please try again.', true);
+          }
+        } catch (err) {
+          console.error('Signup error:', err);
+          showStatus(statusEl, 'Network error. Please try again.', true);
+        } finally {
+          button.disabled = false;
+          button.textContent = originalText;
+        }
+      }
+
+      // Attach event listeners
+      const heroForm = document.getElementById('early-access-hero');
+      const ctaForm = document.getElementById('early-access-cta');
+
+      if (heroForm) {
+        heroForm.addEventListener('submit', (e) => handleSubmit(e, 'homepage_hero'));
+      }
+      if (ctaForm) {
+        ctaForm.addEventListener('submit', (e) => handleSubmit(e, 'homepage_cta'));
+      }
     })();
   </script>
 </body>
