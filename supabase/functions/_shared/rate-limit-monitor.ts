@@ -11,7 +11,7 @@
  * - Support for multiple rate limit tiers
  */
 
-import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 // ============================================================================
 // Types
@@ -66,6 +66,12 @@ const TIER_LIMITS: Record<string, number> = {
 // ============================================================================
 
 /**
+ * Valid tier names for rate limiting
+ */
+const VALID_TIERS = ['community', 'individual', 'team', 'enterprise'] as const
+type ValidTier = (typeof VALID_TIERS)[number]
+
+/**
  * Track rate limit metrics for a client
  */
 export function trackRateLimitUsage(
@@ -75,14 +81,19 @@ export function trackRateLimitUsage(
   remaining: number,
   reset: number
 ): RateLimitMetrics {
-  const limit = TIER_LIMITS[tier] || TIER_LIMITS.community
+  // Validate tier, default to community if invalid
+  const validTier: ValidTier = VALID_TIERS.includes(tier as ValidTier)
+    ? (tier as ValidTier)
+    : 'community'
+  const limit = TIER_LIMITS[validTier]
   const used = limit - remaining
-  const usagePercent = Math.round((used / limit) * 100)
+  // Clamp usagePercent between 0 and 100
+  const usagePercent = Math.max(0, Math.min(100, Math.round((used / limit) * 100)))
 
   return {
     clientId,
     endpoint,
-    tier: tier as RateLimitMetrics['tier'],
+    tier: validTier,
     limit,
     remaining,
     reset,
