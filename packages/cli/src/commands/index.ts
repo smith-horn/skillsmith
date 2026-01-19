@@ -31,3 +31,6 @@ export { createRecommendCommand } from './recommend.js'
 
 // Registry Sync
 export { createSyncCommand } from './sync.js'
+
+// SMI-1455: Database Merge Command
+export { createMergeCommand } from './merge.js'
