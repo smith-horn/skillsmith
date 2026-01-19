@@ -34,6 +34,11 @@ jobs:
     name: Skill Security Scan
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      total_skills: ${{ steps.scan.outputs.total_skills }}
+      total_findings: ${{ steps.scan.outputs.total_findings }}
+      failed_scans: ${{ steps.scan.outputs.failed_scans }}
+      avg_risk_score: ${{ steps.scan.outputs.avg_risk_score }}
     permissions:
       contents: read
       security-events: write
@@ -164,11 +169,14 @@ jobs:
               console.log(\`  Medium: \${summary.bySeverity.medium}\`);
               console.log(\`  Low: \${summary.bySeverity.low}\`);
 
-              // Set outputs
-              console.log(\`::set-output name=total_skills::\${summary.totalSkills}\`);
-              console.log(\`::set-output name=total_findings::\${summary.totalFindings}\`);
-              console.log(\`::set-output name=failed_scans::\${summary.failedScans}\`);
-              console.log(\`::set-output name=avg_risk_score::\${summary.avgRiskScore}\`);
+              // Set outputs using GITHUB_OUTPUT file (new syntax since 2022)
+              const outputFile = process.env.GITHUB_OUTPUT;
+              if (outputFile) {
+                fs.appendFileSync(outputFile, \`total_skills=\${summary.totalSkills}\\n\`);
+                fs.appendFileSync(outputFile, \`total_findings=\${summary.totalFindings}\\n\`);
+                fs.appendFileSync(outputFile, \`failed_scans=\${summary.failedScans}\\n\`);
+                fs.appendFileSync(outputFile, \`avg_risk_score=\${summary.avgRiskScore}\\n\`);
+              }
 
               // Exit with error if critical findings
               if (summary.bySeverity.critical > 0) {
