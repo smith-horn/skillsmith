@@ -1299,6 +1299,36 @@ const user = await getUser()
 </script>
 ```
 
+**⚠️ CRITICAL: `import.meta` is NOT available in `define:vars` scripts (SMI-1607)**
+
+Scripts using `define:vars` become inline scripts (not ES modules), so `import.meta` syntax will cause a runtime error:
+
+```astro
+<!-- ❌ WRONG: import.meta in define:vars script causes runtime error -->
+<script define:vars={{ skillId: id }}>
+  // This FAILS: "Cannot use 'import.meta' outside a module"
+  if (import.meta.env?.DEV) console.error('Debug:', error);
+</script>
+
+<!-- ✅ CORRECT: Don't use import.meta in define:vars scripts -->
+<script define:vars={{ skillId: id }}>
+  // Either remove dev-only logging entirely, or use a different check
+  // The script runs in the browser where import.meta.env is undefined anyway
+</script>
+
+<!-- ✅ CORRECT: Use import.meta only in module scripts (no define:vars) -->
+<script>
+  // This works because it's a module script
+  const isDev = import.meta.env?.DEV;
+</script>
+```
+
+| Script Type | `import.meta` Works? | Reason |
+|-------------|---------------------|--------|
+| `<script>` with imports | ✅ Yes | Processed as ES module by Vite |
+| `<script define:vars>` | ❌ No | Becomes inline script, not a module |
+| `<script is:inline>` | ❌ No | Inline script, not a module |
+
 ### 8.4 Script Loading Behavior
 
 | Attribute | Behavior |
@@ -1323,6 +1353,7 @@ const user = await getUser()
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.1 | 2026-01-19 | Added §8.3 `import.meta` warning for `define:vars` scripts (SMI-1607) |
 | 2.0 | 2026-01-18 | Added §8 Astro Script Patterns (SMI-1596) |
 | 1.9 | 2026-01-11 | Added §1.7 TypeScript Record<K,V> Exhaustiveness, enhanced §3.2 with Linear auto-close patterns (SMI-1372) |
 | 1.8 | 2026-01-09 | Added §4.10 Third-Party Type Extraction (SMI-1275), §3.3 Security Audit Configuration (SMI-1276) |
