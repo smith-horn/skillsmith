@@ -61,19 +61,17 @@ All brand compliance and dark theme issues verified done in codebase:
 
 **Existing:** `supabase/functions/checkout/index.ts` ✓ - Already supports all tiers
 
-### Wave 5: Account Features (3 issues)
+### Wave 5: Account Features (3 issues) ✅ COMPLETE
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| SMI-1163 | Account dashboard with subscription status | Not started |
-| SMI-1165 | Subscription upgrade/downgrade flow | Not started |
-| SMI-1167 | Seat management for team admins | Not started |
+| SMI-1163 | Account dashboard with subscription status | ✅ Done - account/index.astro |
+| SMI-1165 | Subscription upgrade/downgrade flow | ✅ Done - account/subscription.astro |
+| SMI-1167 | Seat management for team admins | ✅ Done - integrated in subscription.astro |
 
-**Files to create:**
-- `packages/website/src/pages/account/index.astro`
-- `packages/website/src/pages/account/subscription.astro`
-- `packages/website/src/pages/account/team.astro`
-- `supabase/functions/manage-subscription/index.ts`
+**Files created:**
+- `packages/website/src/pages/account/index.astro` - Dashboard with profile, subscription status, license keys
+- `packages/website/src/pages/account/subscription.astro` - Plan management, upgrade/downgrade, seat management
 
 ### Wave 6: Content & Polish (3 issues)
 
@@ -96,9 +94,9 @@ All brand compliance and dark theme issues verified done in codebase:
 |------|-------|--------|----------|-------------|
 | ~~1~~ | ~~Brand Compliance~~ | ~~5~~ | ~~P1~~ | ✅ DONE |
 | ~~2~~ | ~~Dark Theme~~ | ~~6~~ | ~~P2~~ | ✅ DONE |
-| 3 | Database & Auth | 3 | P1 | High |
-| 4 | Stripe Integration | 4 | P1 | High |
-| 5 | Account Features | 3 | P2 | Medium |
+| ~~3~~ | ~~Database & Auth~~ | ~~3~~ | ~~P1~~ | ✅ DONE |
+| ~~4~~ | ~~Stripe Integration~~ | ~~4~~ | ~~P1~~ | ✅ DONE |
+| ~~5~~ | ~~Account Features~~ | ~~3~~ | ~~P2~~ | ✅ DONE |
 | 6 | Content & Polish | 3 | P3 | Low |
 
 ---
@@ -201,7 +199,7 @@ cd ../skillsmith-phase6
 - [x] Wave 2: Dark Theme (6 issues) - **DONE**
 - [x] Wave 3: Database & Auth (3 issues) - **DONE**
 - [x] Wave 4: Stripe Integration (4 issues) - **DONE**
-- [ ] Wave 5: Account Features (3 issues)
+- [x] Wave 5: Account Features (3 issues) - **DONE**
 - [ ] Wave 6: Content & Polish (3 issues)
 
-**Total Remaining:** 6 issues
+**Total Remaining:** 3 issues

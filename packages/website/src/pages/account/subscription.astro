@@ -1,0 +1,785 @@
+---
+/**
+ * Subscription Management Page
+ *
+ * SMI-1165: Subscription upgrade/downgrade
+ * SMI-1167: Seat management for teams
+ *
+ * Allows users to:
+ * - View current subscription details
+ * - Upgrade or downgrade their plan
+ * - Manage team seats (for team/enterprise tiers)
+ * - Cancel subscription
+ */
+
+const apiBaseUrl = import.meta.env.PUBLIC_SUPABASE_URL || ''
+---
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+
+    <meta name="description" content="Manage your Skillsmith subscription" />
+    <title>Subscription | Skillsmith</title>
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <header class="header">
+      <nav class="nav">
+        <a href="/" class="logo">
+          <svg width="32" height="32" viewBox="0 0 64 64" class="logo-icon-svg">
+            <rect width="64" height="64" fill="transparent" rx="8"/>
+            <g transform="translate(32, 32)">
+              <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
+                    stroke="currentColor" stroke-width="1.5" stroke-opacity="0.3" fill="none"/>
+              <circle cx="10" cy="-18" r="5" fill="#E07A5F"/>
+              <circle cx="-10" cy="-4" r="5" fill="#E07A5F"/>
+              <circle cx="10" cy="8" r="5" fill="#E07A5F"/>
+              <circle cx="-10" cy="20" r="5" fill="#E07A5F"/>
+            </g>
+          </svg>
+          <span class="logo-text">Skillsmith</span>
+        </a>
+        <div class="nav-links">
+          <a href="/account">&larr; Back to Dashboard</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="subscription-container">
+      <!-- Loading State -->
+      <div id="loading-state" class="loading-state">
+        <div class="spinner-container">
+          <svg class="spinner" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" opacity="0.25"/>
+            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"/>
+          </svg>
+        </div>
+        <p>Loading subscription details...</p>
+      </div>
+
+      <!-- Content -->
+      <div id="subscription-content" style="display: none;">
+        <h1>Manage Subscription</h1>
+
+        <!-- Current Plan Section -->
+        <section class="section">
+          <h2>Current Plan</h2>
+          <div class="current-plan-card">
+            <div class="plan-info">
+              <span class="tier-badge" id="current-tier-badge">Community</span>
+              <div class="plan-details">
+                <div class="plan-name" id="plan-name">Community Plan</div>
+                <div class="plan-price" id="plan-price">Free</div>
+              </div>
+            </div>
+            <div class="plan-meta" id="plan-meta">
+              <p>1,000 API calls per month</p>
+            </div>
+          </div>
+
+          <!-- Subscription Details (for paid tiers) -->
+          <div id="subscription-details" style="display: none;">
+            <div class="detail-row">
+              <span>Billing Period</span>
+              <span id="billing-period">Monthly</span>
+            </div>
+            <div class="detail-row">
+              <span>Next Billing Date</span>
+              <span id="next-billing">-</span>
+            </div>
+            <div class="detail-row" id="seat-count-row" style="display: none;">
+              <span>Team Seats</span>
+              <span id="seat-count">1</span>
+            </div>
+            <div class="detail-row">
+              <span>Status</span>
+              <span id="subscription-status" class="status-badge">Active</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Seat Management Section (for team/enterprise) -->
+        <section class="section" id="seat-management-section" style="display: none;">
+          <h2>Team Seats</h2>
+          <div class="seat-management">
+            <div class="seat-info">
+              <p>Current seats: <strong id="current-seats">1</strong></p>
+              <p class="text-muted">Each additional seat is billed at your plan rate.</p>
+            </div>
+            <div class="seat-controls">
+              <button class="btn btn-secondary" id="decrease-seats">-</button>
+              <input type="number" id="new-seat-count" min="1" max="1000" value="1" />
+              <button class="btn btn-secondary" id="increase-seats">+</button>
+            </div>
+            <button class="btn btn-primary" id="update-seats-btn" disabled>Update Seats</button>
+          </div>
+        </section>
+
+        <!-- Upgrade/Downgrade Section -->
+        <section class="section">
+          <h2>Change Plan</h2>
+          <div class="plans-grid">
+            <div class="plan-option" data-tier="individual">
+              <div class="plan-header">
+                <span class="plan-tier">Individual</span>
+                <div class="plan-pricing">
+                  <span class="price">$9.99</span>
+                  <span class="period">/month</span>
+                </div>
+              </div>
+              <ul class="plan-features">
+                <li>10,000 API calls/month</li>
+                <li>3 license keys</li>
+                <li>Email support</li>
+              </ul>
+              <button class="btn btn-primary btn-full select-plan-btn" data-tier="individual">
+                Select Individual
+              </button>
+            </div>
+
+            <div class="plan-option featured" data-tier="team">
+              <div class="featured-badge">Most Popular</div>
+              <div class="plan-header">
+                <span class="plan-tier">Team</span>
+                <div class="plan-pricing">
+                  <span class="price">$25</span>
+                  <span class="period">/user/month</span>
+                </div>
+              </div>
+              <ul class="plan-features">
+                <li>100,000 API calls/month</li>
+                <li>10 license keys</li>
+                <li>Team workspaces</li>
+                <li>Private skills</li>
+                <li>Priority support</li>
+              </ul>
+              <button class="btn btn-primary btn-full select-plan-btn" data-tier="team">
+                Select Team
+              </button>
+            </div>
+
+            <div class="plan-option" data-tier="enterprise">
+              <div class="plan-header">
+                <span class="plan-tier">Enterprise</span>
+                <div class="plan-pricing">
+                  <span class="price">$55</span>
+                  <span class="period">/user/month</span>
+                </div>
+              </div>
+              <ul class="plan-features">
+                <li>Unlimited API calls</li>
+                <li>50 license keys</li>
+                <li>SSO & RBAC</li>
+                <li>Audit logging</li>
+                <li>Dedicated support</li>
+              </ul>
+              <button class="btn btn-primary btn-full select-plan-btn" data-tier="enterprise">
+                Select Enterprise
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Cancel Section -->
+        <section class="section" id="cancel-section" style="display: none;">
+          <h2>Cancel Subscription</h2>
+          <div class="cancel-info">
+            <p>If you cancel, your subscription will remain active until the end of your current billing period.</p>
+            <p class="text-muted">After cancellation, you'll be downgraded to the free Community plan.</p>
+            <button class="btn btn-danger" id="cancel-btn">Cancel Subscription</button>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-content">
+        <p>&copy; 2026 Smith Horn Group Ltd. All rights reserved.</p>
+      </div>
+    </footer>
+
+    <!-- Store API base URL for script -->
+    <div id="config" data-api-base-url={apiBaseUrl} style="display: none;"></div>
+  </body>
+</html>
+
+<style>
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.6;
+    color: #FAFAFA;
+    background: #0D0D0F;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .header {
+    background: rgba(13, 13, 15, 0.95);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid #1f1f23;
+  }
+
+  .nav {
+    max-width: 1024px;
+    margin: 0 auto;
+    padding: 1rem 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 1.25rem;
+    color: #FAFAFA;
+  }
+
+  .nav-links a {
+    text-decoration: none;
+    color: #9ca3af;
+    font-weight: 500;
+  }
+
+  .nav-links a:hover {
+    color: #E07A5F;
+  }
+
+  .subscription-container {
+    flex: 1;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem;
+    width: 100%;
+  }
+
+  .subscription-container h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin-bottom: 2rem;
+  }
+
+  .loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 4rem 2rem;
+    color: #9ca3af;
+  }
+
+  .spinner-container {
+    margin-bottom: 1rem;
+  }
+
+  .spinner {
+    width: 2.5rem;
+    height: 2.5rem;
+    color: #E07A5F;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  .section {
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .section h2 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+  }
+
+  .current-plan-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    padding: 1rem;
+    background: #1a1a1f;
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .plan-info {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .tier-badge {
+    padding: 0.375rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    background: rgba(107, 114, 128, 0.2);
+    color: #9ca3af;
+  }
+
+  .tier-badge.individual { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+  .tier-badge.team { background: rgba(139, 92, 246, 0.2); color: #a78bfa; }
+  .tier-badge.enterprise { background: rgba(224, 122, 95, 0.2); color: #E07A5F; }
+
+  .plan-name {
+    font-weight: 600;
+  }
+
+  .plan-price {
+    font-size: 1.25rem;
+    font-weight: 700;
+  }
+
+  .plan-meta {
+    color: #9ca3af;
+    font-size: 0.875rem;
+  }
+
+  .detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #2a2a2f;
+  }
+
+  .detail-row:last-child {
+    border-bottom: none;
+  }
+
+  .status-badge {
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .status-badge.active {
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
+  }
+
+  .status-badge.past_due {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+  }
+
+  .status-badge.canceled {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+  }
+
+  /* Seat Management */
+  .seat-management {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .seat-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .seat-controls input {
+    width: 60px;
+    text-align: center;
+    padding: 0.5rem;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.5rem;
+    background: #1a1a1f;
+    color: #FAFAFA;
+    font-size: 1rem;
+  }
+
+  .text-muted {
+    color: #6b7280;
+    font-size: 0.875rem;
+  }
+
+  /* Plans Grid */
+  .plans-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+  }
+
+  .plan-option {
+    background: #1a1a1f;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    position: relative;
+  }
+
+  .plan-option.featured {
+    border-color: #E07A5F;
+  }
+
+  .plan-option.current {
+    border-color: #10b981;
+  }
+
+  .featured-badge {
+    position: absolute;
+    top: -0.75rem;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #E07A5F;
+    color: white;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+  }
+
+  .plan-header {
+    text-align: center;
+    margin-bottom: 1rem;
+    padding-top: 0.5rem;
+  }
+
+  .plan-tier {
+    font-weight: 600;
+    display: block;
+    margin-bottom: 0.5rem;
+  }
+
+  .plan-pricing .price {
+    font-size: 1.5rem;
+    font-weight: 700;
+  }
+
+  .plan-pricing .period {
+    color: #9ca3af;
+    font-size: 0.875rem;
+  }
+
+  .plan-features {
+    list-style: none;
+    margin-bottom: 1.5rem;
+  }
+
+  .plan-features li {
+    padding: 0.5rem 0;
+    font-size: 0.875rem;
+    color: #9ca3af;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .plan-features li::before {
+    content: '✓';
+    color: #10b981;
+  }
+
+  /* Cancel Section */
+  .cancel-info {
+    padding: 1rem;
+    background: rgba(239, 68, 68, 0.05);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 0.5rem;
+  }
+
+  .cancel-info p {
+    margin-bottom: 0.5rem;
+  }
+
+  .cancel-info .btn-danger {
+    margin-top: 1rem;
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    cursor: pointer;
+    border: none;
+  }
+
+  .btn-full {
+    width: 100%;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
+    color: white;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(224, 122, 95, 0.4);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid #2a2a2f;
+    color: #FAFAFA;
+  }
+
+  .btn-secondary:hover {
+    border-color: #E07A5F;
+    color: #E07A5F;
+  }
+
+  .btn-danger {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #f87171;
+  }
+
+  .btn-danger:hover {
+    background: rgba(239, 68, 68, 0.2);
+  }
+
+  .footer {
+    margin-top: auto;
+    background: #1a1a2e;
+    padding: 1.5rem 2rem;
+  }
+
+  .footer-content {
+    max-width: 1024px;
+    margin: 0 auto;
+    text-align: center;
+    font-size: 0.875rem;
+    color: #9ca3af;
+  }
+
+  @media (max-width: 768px) {
+    .subscription-container {
+      padding: 1.5rem 1rem;
+    }
+
+    .current-plan-card {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .seat-management {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
+</style>
+
+<script>
+  import { createClient } from '@supabase/supabase-js'
+
+  const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = import.meta.env.PUBLIC_SUPABASE_ANON_KEY
+  const configEl = document.getElementById('config')
+  const apiBaseUrl = configEl?.dataset.apiBaseUrl || ''
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    const loadingState = document.getElementById('loading-state') as HTMLDivElement
+    const content = document.getElementById('subscription-content') as HTMLDivElement
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      loadingState.innerHTML = '<p>Configuration error.</p>'
+      return
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+    // Check auth
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      window.location.href = '/login?redirect=/account/subscription'
+      return
+    }
+
+    try {
+      // Get profile and subscription
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('tier')
+        .eq('id', session.user.id)
+        .single()
+
+      const { data: subscriptions } = await supabase
+        .rpc('get_user_subscription', { user_uuid: session.user.id })
+
+      const tier = profile?.tier || 'community'
+      const subscription = subscriptions?.[0]
+
+      // Update UI elements
+      const tierBadge = document.getElementById('current-tier-badge') as HTMLSpanElement
+      const planName = document.getElementById('plan-name') as HTMLDivElement
+      const planPrice = document.getElementById('plan-price') as HTMLDivElement
+      const planMeta = document.getElementById('plan-meta') as HTMLDivElement
+      const subscriptionDetails = document.getElementById('subscription-details') as HTMLDivElement
+      const cancelSection = document.getElementById('cancel-section') as HTMLElement
+      const seatManagementSection = document.getElementById('seat-management-section') as HTMLElement
+
+      const tierNames: Record<string, string> = {
+        community: 'Community Plan',
+        individual: 'Individual Plan',
+        team: 'Team Plan',
+        enterprise: 'Enterprise Plan'
+      }
+
+      const tierPrices: Record<string, string> = {
+        community: 'Free',
+        individual: '$9.99/month',
+        team: '$25/user/month',
+        enterprise: '$55/user/month'
+      }
+
+      const apiLimits: Record<string, string> = {
+        community: '1,000 API calls per month',
+        individual: '10,000 API calls per month',
+        team: '100,000 API calls per month',
+        enterprise: 'Unlimited API calls'
+      }
+
+      tierBadge.textContent = tier.charAt(0).toUpperCase() + tier.slice(1)
+      tierBadge.className = `tier-badge ${tier}`
+      planName.textContent = tierNames[tier] || 'Community Plan'
+      planPrice.textContent = tierPrices[tier] || 'Free'
+      planMeta.innerHTML = `<p>${apiLimits[tier] || '1,000 API calls per month'}</p>`
+
+      // Mark current plan
+      document.querySelectorAll('.plan-option').forEach(el => {
+        const planTier = el.getAttribute('data-tier')
+        if (planTier === tier) {
+          el.classList.add('current')
+          const btn = el.querySelector('.select-plan-btn') as HTMLButtonElement
+          if (btn) {
+            btn.textContent = 'Current Plan'
+            btn.disabled = true
+          }
+        }
+      })
+
+      // Show subscription details for paid tiers
+      if (subscription) {
+        subscriptionDetails.style.display = 'block'
+        cancelSection.style.display = 'block'
+
+        const billingPeriod = document.getElementById('billing-period') as HTMLSpanElement
+        const nextBilling = document.getElementById('next-billing') as HTMLSpanElement
+        const subscriptionStatus = document.getElementById('subscription-status') as HTMLSpanElement
+        const seatCountRow = document.getElementById('seat-count-row') as HTMLDivElement
+        const seatCount = document.getElementById('seat-count') as HTMLSpanElement
+
+        billingPeriod.textContent = subscription.billing_period === 'annual' ? 'Annual' : 'Monthly'
+        nextBilling.textContent = new Date(subscription.current_period_end).toLocaleDateString()
+        subscriptionStatus.textContent = subscription.status.charAt(0).toUpperCase() + subscription.status.slice(1)
+        subscriptionStatus.className = `status-badge ${subscription.status}`
+
+        if (subscription.seat_count > 1 || tier === 'team' || tier === 'enterprise') {
+          seatCountRow.style.display = 'flex'
+          seatCount.textContent = String(subscription.seat_count)
+
+          // Show seat management for team/enterprise
+          seatManagementSection.style.display = 'block'
+          const currentSeats = document.getElementById('current-seats') as HTMLSpanElement
+          const newSeatCount = document.getElementById('new-seat-count') as HTMLInputElement
+          const updateSeatsBtn = document.getElementById('update-seats-btn') as HTMLButtonElement
+          const decreaseSeatsBtn = document.getElementById('decrease-seats') as HTMLButtonElement
+          const increaseSeatsBtn = document.getElementById('increase-seats') as HTMLButtonElement
+
+          currentSeats.textContent = String(subscription.seat_count)
+          newSeatCount.value = String(subscription.seat_count)
+
+          const updateButtonState = () => {
+            const newVal = parseInt(newSeatCount.value)
+            updateSeatsBtn.disabled = newVal === subscription.seat_count || newVal < 1
+          }
+
+          decreaseSeatsBtn.addEventListener('click', () => {
+            const val = parseInt(newSeatCount.value)
+            if (val > 1) newSeatCount.value = String(val - 1)
+            updateButtonState()
+          })
+
+          increaseSeatsBtn.addEventListener('click', () => {
+            const val = parseInt(newSeatCount.value)
+            if (val < 1000) newSeatCount.value = String(val + 1)
+            updateButtonState()
+          })
+
+          newSeatCount.addEventListener('input', updateButtonState)
+
+          updateSeatsBtn.addEventListener('click', async () => {
+            // TODO: Implement seat update via Stripe
+            alert('Seat management coming soon. Contact support for seat changes.')
+          })
+        }
+
+        // Cancel subscription handler
+        const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement
+        cancelBtn.addEventListener('click', async () => {
+          if (!confirm('Are you sure you want to cancel your subscription? You will retain access until the end of your billing period.')) {
+            return
+          }
+
+          // TODO: Implement via Stripe portal or custom endpoint
+          alert('To cancel your subscription, please contact support@skillsmith.app')
+        })
+      }
+
+      // Plan selection handlers
+      document.querySelectorAll('.select-plan-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const target = e.target as HTMLButtonElement
+          const selectedTier = target.dataset.tier
+
+          if (!selectedTier || target.disabled) return
+
+          // Redirect to checkout
+          window.location.href = `/signup?tier=${selectedTier}&period=monthly`
+        })
+      })
+
+      // Show content
+      loadingState.style.display = 'none'
+      content.style.display = 'block'
+
+    } catch (error) {
+      console.error('Failed to load subscription:', error)
+      loadingState.innerHTML = '<p>Failed to load subscription data.</p>'
+    }
+  })
+</script>
