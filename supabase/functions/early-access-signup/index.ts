@@ -256,20 +256,39 @@ Deno.serve(async (req) => {
       utm_campaign: body.utm_campaign?.slice(0, 100) || null,
       metadata: sanitizeMetadata(body.metadata),
       status: 'pending',
-      updated_at: new Date().toISOString(),
     }
 
-    // Upsert to handle duplicates gracefully
+    // Try to insert first - if duplicate, we'll get a unique constraint error
     const { data, error } = await supabase
       .from('early_access_signups')
-      .upsert(signupData, {
-        onConflict: 'email',
-        ignoreDuplicates: false, // Update the record on conflict
-      })
-      .select('id, created_at, updated_at')
+      .insert(signupData)
+      .select('id')
       .single()
 
     if (error) {
+      // Check for unique constraint violation (duplicate email)
+      if (error.code === '23505') {
+        // Update the existing record's metadata
+        await supabase
+          .from('early_access_signups')
+          .update({
+            ip_address: ipAddress,
+            user_agent: userAgent,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('email', signupData.email)
+
+        return jsonResponse(
+          {
+            success: true,
+            message: "You're already on the list! We'll notify you when it's your turn.",
+            isNew: false,
+          },
+          200,
+          origin
+        )
+      }
+
       console.error('Database error:', error)
 
       // Check if table doesn't exist yet
@@ -281,36 +300,20 @@ Deno.serve(async (req) => {
       return errorResponse('Failed to process signup', 500, undefined, origin)
     }
 
-    // Determine if this is a new signup or existing
-    const isNewSignup = data.created_at === data.updated_at
+    // New signup - send confirmation email (non-blocking)
+    sendConfirmationEmail(body.email.trim().toLowerCase()).catch((err) => {
+      console.error('Background email send failed:', err)
+    })
 
-    if (isNewSignup) {
-      // Send confirmation email for new signups (non-blocking)
-      sendConfirmationEmail(body.email.trim().toLowerCase()).catch((err) => {
-        console.error('Background email send failed:', err)
-      })
-
-      return jsonResponse(
-        {
-          success: true,
-          message: "You're on the list! Check your email for confirmation.",
-          isNew: true,
-        },
-        200,
-        origin
-      )
-    } else {
-      // Existing signup
-      return jsonResponse(
-        {
-          success: true,
-          message: "You're already on the list! We'll notify you when it's your turn.",
-          isNew: false,
-        },
-        200,
-        origin
-      )
-    }
+    return jsonResponse(
+      {
+        success: true,
+        message: "You're on the list! Check your email for confirmation.",
+        isNew: true,
+      },
+      200,
+      origin
+    )
   } catch (err) {
     console.error('Early access signup error:', err)
     return errorResponse('Invalid request', 400, undefined, origin)
