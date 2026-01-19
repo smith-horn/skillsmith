@@ -229,8 +229,8 @@ describe('Webhook Handling E2E Tests', () => {
         body: malformedJson,
       })
 
-      // Should reject - either 400 for bad JSON or 400 for bad signature
-      expect([400, 500]).toContain(response.status)
+      // Should reject with 400 for malformed JSON
+      expect(response.status).toBe(400)
     })
 
     it('should reject empty body', async () => {
@@ -246,8 +246,8 @@ describe('Webhook Handling E2E Tests', () => {
         body: '',
       })
 
-      // Should reject empty body
-      expect([400, 500]).toContain(response.status)
+      // Should reject with 400 for empty body
+      expect(response.status).toBe(400)
     })
   })
 
