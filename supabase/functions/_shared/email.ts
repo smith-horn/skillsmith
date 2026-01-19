@@ -60,37 +60,59 @@ export const TIER_INFO: Record<string, { name: string; features: string[] }> = {
 }
 
 /**
+ * Validate email format
+ */
+function isValidEmail(email: string): boolean {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  return emailRegex.test(email)
+}
+
+/**
  * Send an email via Resend
  *
  * @param to - Recipient email address
  * @param subject - Email subject
  * @param html - HTML content
+ * @param text - Plain text content (optional, recommended for deliverability)
  * @returns True if email was sent successfully
  */
 export async function sendEmail(
   to: string,
   subject: string,
-  html: string
+  html: string,
+  text?: string
 ): Promise<boolean> {
   if (!RESEND_API_KEY) {
     console.warn('RESEND_API_KEY not configured, skipping email send')
     return false
   }
 
+  if (!isValidEmail(to)) {
+    console.error('Invalid email address:', to)
+    return false
+  }
+
   try {
+    const emailPayload: Record<string, unknown> = {
+      from: FROM_EMAIL,
+      to: [to],
+      reply_to: REPLY_TO_EMAIL,
+      subject,
+      html,
+    }
+
+    // Add plain text version if provided (improves deliverability)
+    if (text) {
+      emailPayload.text = text
+    }
+
     const response = await fetch(RESEND_API_URL, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${RESEND_API_KEY}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        from: FROM_EMAIL,
-        to: [to],
-        reply_to: REPLY_TO_EMAIL,
-        subject,
-        html,
-      }),
+      body: JSON.stringify(emailPayload),
     })
 
     if (!response.ok) {
@@ -242,6 +264,71 @@ export function generateWelcomeEmailHtml(params: {
 }
 
 /**
+ * Generate plain text welcome email
+ */
+export function generateWelcomeEmailText(params: {
+  licenseKey: string
+  tier: string
+  customerName?: string
+  billingPeriod?: string
+  seatCount?: number
+}): string {
+  const { licenseKey, tier, customerName, billingPeriod = 'monthly', seatCount = 1 } = params
+  const tierInfo = TIER_INFO[tier] || TIER_INFO.individual
+
+  const greeting = customerName ? `Hi ${customerName},` : 'Hi there,'
+  const seatText = seatCount > 1 ? ` (${seatCount} seats)` : ''
+  const periodText = billingPeriod === 'annual' ? 'annual' : 'monthly'
+
+  const features = tierInfo.features.map((f) => `  - ${f}`).join('\n')
+
+  return `${greeting}
+
+Thank you for subscribing to Skillsmith ${tierInfo.name}${seatText} (${periodText} billing).
+Your account is now active and ready to use!
+
+YOUR LICENSE KEY
+================
+Save this key securely. It will only be shown once.
+
+${licenseKey}
+
+QUICK SETUP
+===========
+Add to your ~/.claude/settings.json:
+
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_LICENSE_KEY": "your-key-here"
+      }
+    }
+  }
+}
+
+YOUR ${tierInfo.name.toUpperCase()} PLAN INCLUDES
+${'='.repeat(tierInfo.name.length + 20)}
+${features}
+
+USEFUL LINKS
+============
+Dashboard: ${DASHBOARD_URL}
+Quick Start Guide: ${QUICKSTART_URL}
+Documentation: ${DOCS_URL}
+
+Need help? Check our documentation or reply to this email.
+
+Thanks for choosing Skillsmith!
+
+--
+Skillsmith, Inc.
+`
+}
+
+/**
  * Send welcome email with license key
  *
  * @param params - Email parameters
@@ -256,12 +343,14 @@ export async function sendWelcomeEmail(params: {
   seatCount?: number
 }): Promise<boolean> {
   const html = generateWelcomeEmailHtml(params)
+  const text = generateWelcomeEmailText(params)
   const tierName = TIER_INFO[params.tier]?.name || 'Individual'
 
   return sendEmail(
     params.to,
     `Welcome to Skillsmith ${tierName}! Your License Key Inside`,
-    html
+    html,
+    text
   )
 }
 
@@ -315,5 +404,19 @@ export async function sendPaymentFailedEmail(
 </html>
 `
 
-  return sendEmail(to, 'Action Required: Payment Failed - Skillsmith', html)
+  const text = `PAYMENT FAILED
+
+We were unable to process your payment (attempt ${attemptCount}).
+
+Please update your payment method to continue your subscription.
+
+Update Payment Method: ${DASHBOARD_URL}/billing
+
+Questions? Reply to this email or contact support.
+
+--
+Skillsmith, Inc.
+`
+
+  return sendEmail(to, 'Action Required: Payment Failed - Skillsmith', html, text)
 }

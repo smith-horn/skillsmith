@@ -338,8 +338,9 @@ Deno.serve(async (req: Request) => {
             amount: invoice.amount_paid,
             currency: invoice.currency,
           },
-        }).catch(() => {
-          // Ignore if table doesn't exist
+        }).catch((err) => {
+          // Log but don't fail - table may not exist in all environments
+          console.debug('Audit log insert skipped:', err.message || 'table may not exist')
         })
 
         break
@@ -370,8 +371,9 @@ Deno.serve(async (req: Request) => {
             subscription_id: invoice.subscription,
             attempt_count: invoice.attempt_count,
           },
-        }).catch(() => {
-          // Ignore if table doesn't exist
+        }).catch((err) => {
+          // Log but don't fail - table may not exist in all environments
+          console.debug('Audit log insert skipped:', err.message || 'table may not exist')
         })
 
         // Send payment failed notification email

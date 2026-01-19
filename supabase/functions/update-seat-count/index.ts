@@ -245,7 +245,6 @@ Deno.serve(async (req: Request) => {
       .update({
         seat_count: newSeatCount,
         metadata: {
-          ...subscription,
           seat_count_updated_at: new Date().toISOString(),
           previous_seat_count: currentQuantity,
         },

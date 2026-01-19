@@ -37,6 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_pending_checkouts_email ON pending_checkouts(emai
 CREATE INDEX IF NOT EXISTS idx_pending_checkouts_expires_at ON pending_checkouts(expires_at);
 CREATE INDEX IF NOT EXISTS idx_pending_checkouts_stripe_customer ON pending_checkouts(stripe_customer_id);
 CREATE INDEX IF NOT EXISTS idx_pending_checkouts_processed ON pending_checkouts(processed_at) WHERE processed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pending_checkouts_session ON pending_checkouts(checkout_session_id);
 
 -- ============================================================================
 -- CLEANUP FUNCTION - Remove expired pending checkouts

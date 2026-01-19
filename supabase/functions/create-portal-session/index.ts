@@ -27,8 +27,9 @@ import {
 } from '../_shared/cors.ts'
 import { createSupabaseClient, getRequestId, logInvocation } from '../_shared/supabase.ts'
 
-// Default return URL
-const DEFAULT_RETURN_URL = Deno.env.get('APP_URL') + '/account/subscription'
+// Default return URL - handle undefined APP_URL gracefully
+const APP_URL = Deno.env.get('APP_URL') || 'https://skillsmith.dev'
+const DEFAULT_RETURN_URL = `${APP_URL}/account/subscription`
 
 interface PortalRequest {
   returnUrl?: string
