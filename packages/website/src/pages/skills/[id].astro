@@ -304,7 +304,6 @@ const { id } = Astro.params;
         relatedSection.classList.remove('hidden');
       } catch (error) {
         // Silent fail for related skills (non-critical feature)
-        if (import.meta.env?.DEV) console.error('Failed to load related skills:', error);
       }
     }
 
@@ -328,8 +327,6 @@ const { id } = Astro.params;
         }
         renderSkill(result.data);
       } catch (error) {
-        // Log in dev only, user sees error via showError()
-        if (import.meta.env?.DEV) console.error('Fetch error:', error);
         showError(error.message);
       }
     }
@@ -356,8 +353,7 @@ const { id } = Astro.params;
             button.innerHTML = originalHTML;
           }, 2000);
         } catch (error) {
-          // Silent fail for clipboard (user sees no visual feedback as indication)
-          if (import.meta.env?.DEV) console.error('Copy failed:', error);
+          // Silent fail for clipboard
         }
       });
     });
