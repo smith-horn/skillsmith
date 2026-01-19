@@ -222,7 +222,8 @@ export async function sendRateLimitAlert(
   // Send to Slack
   if (config.slackWebhook) {
     try {
-      const color = alert.type === 'exceeded' ? '#FF0000' : alert.type === 'critical' ? '#FF8C00' : '#FFD700'
+      const color =
+        alert.type === 'exceeded' ? '#FF0000' : alert.type === 'critical' ? '#FF8C00' : '#FFD700'
       await fetch(config.slackWebhook, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -264,12 +265,6 @@ export async function getRateLimitSummary(
   alertsTriggered: number
   topClients: Array<{ clientId: string; requests: number }>
 }> {
-  const intervals: Record<string, string> = {
-    '1h': '1 hour',
-    '24h': '1 day',
-    '7d': '7 days',
-  }
-
   try {
     // Get metrics summary
     const { data: metricsData } = await supabase
