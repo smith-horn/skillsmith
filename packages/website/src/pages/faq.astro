@@ -215,7 +215,7 @@ const faqCategories: FAQCategory[] = [
             <div class="faq-category" id={`category-${catIndex}`}>
               <h2>{category.name}</h2>
               <div class="faq-items">
-                {category.items.map((item, itemIndex) => (
+                {category.items.map((item, _itemIndex) => (
                   <details class="faq-item">
                     <summary>
                       <span class="question">{item.question}</span>
