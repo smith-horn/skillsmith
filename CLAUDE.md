@@ -323,6 +323,27 @@ npx claude-flow swarm --config .claude/hive-mind/your-config.yaml
 
 ---
 
+## Supabase Edge Functions
+
+| Function | Purpose | Auth |
+|----------|---------|------|
+| `early-access-signup` | Email waitlist signup with rate limiting, honeypot, Resend emails | Anonymous |
+| `contact-submit` | Contact form submissions with email notifications | Anonymous |
+| `checkout` | Stripe checkout session creation | Authenticated |
+| `stats` | Public stats (skill count) for homepage | Anonymous |
+| `skills-search` | Skill search API | API Key |
+| `skills-get` | Get skill details | API Key |
+| `skills-recommend` | Skill recommendations | API Key |
+| `indexer` | GitHub skill indexing (scheduled) | Service Role |
+
+**Deploy a function:**
+```bash
+npx supabase functions deploy <function-name> --no-verify-jwt  # Anonymous access
+npx supabase functions deploy <function-name>                   # Requires auth
+```
+
+---
+
 ## Architecture Documentation
 
 | Document | Purpose |
