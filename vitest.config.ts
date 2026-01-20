@@ -25,6 +25,9 @@ export default defineConfig({
       'tests/e2e/**',
       'tests/api/**',
       '**/*.e2e.test.ts',
+      // Website tests require Astro tsconfig which isn't resolvable from root
+      // These should run via `npm test -w packages/website` if needed
+      'packages/website/**',
     ],
     coverage: {
       provider: 'v8',
