@@ -1,0 +1,129 @@
+# SMI-1618: GitHub Actions workflow for scheduled skill metadata refresh
+# Refreshes metadata (stars, quality_score) for existing skills in the database
+#
+# Runs 2 hours after the indexer to avoid overlap
+# The indexer adds new skills; this job keeps existing skills up-to-date
+
+name: Skill Metadata Refresh
+
+on:
+  schedule:
+    # Run daily at 4:00 AM UTC (2 hours after indexer at 2:00 AM)
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: 'Number of skills to refresh (default: 100, max: 500)'
+        required: false
+        default: '100'
+        type: string
+      stale_days:
+        description: 'Only refresh skills older than N days (default: 1)'
+        required: false
+        default: '1'
+        type: string
+      dry_run:
+        description: 'Dry run (no database writes)'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+jobs:
+  refresh:
+    name: Refresh Skill Metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Validate Secrets
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::Required secrets not configured. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to repository secrets."
+            exit 1
+          fi
+          echo "✓ Secrets validated"
+
+      - name: Trigger Metadata Refresh
+        id: refresh
+        run: |
+          # Build request body
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+          BATCH_SIZE="${{ github.event.inputs.batch_size || '100' }}"
+          STALE_DAYS="${{ github.event.inputs.stale_days || '1' }}"
+
+          BODY=$(cat <<EOF
+          {
+            "batchSize": $BATCH_SIZE,
+            "staleDays": $STALE_DAYS,
+            "dryRun": $DRY_RUN
+          }
+          EOF
+          )
+
+          echo "Triggering metadata refresh with: $BODY"
+
+          # Call the Edge Function
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
+            "$SUPABASE_URL/functions/v1/skills-refresh-metadata")
+
+          # Extract status code and body
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "Response code: $HTTP_CODE"
+          echo "Response body: $BODY"
+
+          # Set outputs
+          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+          echo "response=$BODY" >> $GITHUB_OUTPUT
+
+          # Check for success
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "::error::Metadata refresh failed with status $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: Parse Results
+        if: success()
+        run: |
+          RESPONSE='${{ steps.refresh.outputs.response }}'
+
+          # Extract metrics using jq
+          PROCESSED=$(echo "$RESPONSE" | jq -r '.data.processed // 0')
+          UPDATED=$(echo "$RESPONSE" | jq -r '.data.updated // 0')
+          FAILED=$(echo "$RESPONSE" | jq -r '.data.failed // 0')
+          SKIPPED=$(echo "$RESPONSE" | jq -r '.data.skipped // 0')
+          DRY_RUN=$(echo "$RESPONSE" | jq -r '.meta.dry_run // false')
+
+          echo "### Metadata Refresh Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Processed | $PROCESSED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Updated | $UPDATED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Skipped | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dry Run | $DRY_RUN |" >> $GITHUB_STEP_SUMMARY
+
+          # Warn if there were failures
+          if [ "$FAILED" -gt 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ Some skills failed to refresh. Check the errors in the response." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Report Failure
+        if: failure()
+        run: |
+          echo "### ❌ Metadata Refresh Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "HTTP Code: ${{ steps.refresh.outputs.http_code }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Response: \`${{ steps.refresh.outputs.response }}\`" >> $GITHUB_STEP_SUMMARY
