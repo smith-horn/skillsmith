@@ -378,14 +378,9 @@ or indirect.
         <p class="text-dark-400 text-sm mb-4">
           For custom licensing arrangements, volume discounts, or partnership opportunities:
         </p>
-        <button
-          class="text-primary-400 hover:text-primary-300 email-reveal"
-          data-user="enterprise"
-          data-domain="smithhorn.ca"
-          onclick="revealEmail(this)"
-        >
-          Click to reveal enterprise email
-        </button>
+        <a href="/contact?topic=enterprise" class="text-primary-400 hover:text-primary-300">
+          Contact Enterprise Sales
+        </a>
       </div>
     </section>
 
@@ -452,25 +447,11 @@ or indirect.
         <div class="space-y-2">
           <p class="text-dark-300">
             <span class="text-dark-400">General Inquiries:</span>
-            <button
-              class="text-primary-400 hover:text-primary-300 ml-2 email-reveal"
-              data-user="info"
-              data-domain="smithhorn.ca"
-              onclick="revealEmail(this)"
-            >
-              Click to reveal email
-            </button>
+            <a href="/contact?topic=general" class="text-primary-400 hover:text-primary-300 ml-2">Contact Form</a>
           </p>
           <p class="text-dark-300">
             <span class="text-dark-400">Enterprise Licensing:</span>
-            <button
-              class="text-primary-400 hover:text-primary-300 ml-2 email-reveal"
-              data-user="enterprise"
-              data-domain="smithhorn.ca"
-              onclick="revealEmail(this)"
-            >
-              Click to reveal email
-            </button>
+            <a href="/contact?topic=enterprise" class="text-primary-400 hover:text-primary-300 ml-2">Contact Form</a>
           </p>
         </div>
       </div>
@@ -483,17 +464,4 @@ or indirect.
       </a>
     </div>
   </div>
-
-  <script is:inline>
-    function revealEmail(button) {
-      const user = button.getAttribute('data-user');
-      const domain = button.getAttribute('data-domain');
-      const email = user + '@' + domain;
-      const link = document.createElement('a');
-      link.href = 'mailto:' + email;
-      link.className = 'text-primary-400 hover:text-primary-300';
-      link.textContent = email;
-      button.replaceWith(link);
-    }
-  </script>
 </BaseLayout>
