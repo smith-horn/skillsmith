@@ -137,6 +137,6 @@ The `get_skill` tool returns trust information:
 
 ## Questions?
 
-- How do I get verified? See skillsmith.app/verify
-- Report a suspicious skill: security@skillsmith.app
-- Request tier review: support@skillsmith.app
+- How do I get verified? Submit request at https://skillsmith.app/contact?topic=verification
+- Report a suspicious skill: https://skillsmith.app/contact?topic=security
+- Request tier review: https://skillsmith.app/contact?topic=support

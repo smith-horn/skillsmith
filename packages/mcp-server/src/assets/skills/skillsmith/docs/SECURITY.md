@@ -121,7 +121,7 @@ localhost, 127.0.0.x
 
 4. **Report suspicious skills**
    - GitHub: https://github.com/smith-horn/skillsmith/security/advisories
-   - Email: security@skillsmith.app
+   - Contact form: https://skillsmith.app/contact?topic=security
 
 5. **Keep Skillsmith updated**
    - New security patterns added regularly
@@ -143,7 +143,7 @@ localhost, 127.0.0.x
 
 4. **Submit for verification**
    - Verified skills get more installs
-   - Process documented at skillsmith.app/verify
+   - Submit request at https://skillsmith.app/contact?topic=verification
 
 ## Privacy Considerations
 
@@ -165,10 +165,11 @@ Skillsmith respects your privacy:
 ## Reporting Security Issues
 
 **For vulnerabilities in Skillsmith itself:**
-- Email: security@skillsmith.app
+- Contact form: https://skillsmith.app/contact?topic=security
 - GitHub Security Advisories: https://github.com/smith-horn/skillsmith/security/advisories
 
 **For malicious skills:**
-- Report via GitHub Issues
+- Submit a security report: https://skillsmith.app/contact?topic=security
+- Or report via GitHub Issues
 - Include skill ID and specific concern
 - We investigate and blocklist within 24 hours
