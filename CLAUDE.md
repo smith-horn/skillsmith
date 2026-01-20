@@ -335,6 +335,7 @@ npx claude-flow swarm --config .claude/hive-mind/your-config.yaml
 | `skills-get` | Get skill details | API Key |
 | `skills-recommend` | Skill recommendations | API Key |
 | `indexer` | GitHub skill indexing (scheduled) | Service Role |
+| `skills-refresh-metadata` | Refresh metadata for existing skills (scheduled) | Service Role |
 
 **Deploy a function:**
 ```bash
