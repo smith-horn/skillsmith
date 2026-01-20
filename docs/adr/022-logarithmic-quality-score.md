@@ -92,11 +92,36 @@ The `+1` prevents log(0) errors for zero-star repositories.
 - Cons: Requires additional API calls; increases indexing time
 - Why rejected: Scope creep; can add later if needed
 
+## UI Presentation
+
+**Update (2025-01-19)**: The UI no longer displays numeric quality score percentages. Instead, a star-based color indicator system provides visual feedback:
+
+| Stars | Color | Label | CSS Class |
+|-------|-------|-------|-----------|
+| 10,000+ | Blue | Elite | `text-blue-400` |
+| 500-9,999 | Green | High Quality | `text-green-400` |
+| 50-499 | Yellow | Growing | `text-yellow-400` |
+| <50 | Red | New | `text-red-400` |
+
+### Display Format
+
+- **Skill cards** (`/skills`): Colored dot (●) with star count on hover
+- **Detail page** (`/skills/[id]`): Tier label + formatted star count
+
+This change was made because:
+1. Users found percentages confusing (what does "54%" mean?)
+2. Star count is a universally understood metric
+3. The blue tier differentiates elite skills (10,000+ stars) from merely popular ones
+
+The backend quality score calculation remains unchanged for internal ranking and search purposes.
+
 ## Implementation
 
 Files modified:
 - `supabase/functions/indexer/index.ts:707-722`
 - `packages/core/src/indexer/GitHubIndexer.ts:308-323`
+- `packages/website/src/pages/skills/index.astro` (UI change)
+- `packages/website/src/pages/skills/[id].astro` (UI change)
 
 ## Feature Flag
 

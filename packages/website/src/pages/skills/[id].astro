@@ -57,8 +57,9 @@ const { id } = Astro.params;
           </div>
           <div class="flex flex-col items-end gap-4">
             <div class="text-right">
-              <p class="text-dark-500 text-sm mb-1">Quality Score</p>
-              <p id="skill-score" class="text-4xl font-bold"></p>
+              <p class="text-dark-500 text-sm mb-1">Quality</p>
+              <p id="skill-tier" class="text-2xl font-bold"></p>
+              <p id="skill-stars" class="text-dark-500 text-sm"></p>
             </div>
           </div>
         </div>
@@ -177,6 +178,18 @@ const { id } = Astro.params;
       unknown: 'bg-dark-500/10 text-dark-400 border-dark-500/20',
     };
 
+    // Quality tier thresholds (matches packages/website/src/utils/quality-tiers.ts)
+    const TIER_THRESHOLDS = { ELITE: 10000, HIGH_QUALITY: 500, GROWING: 50 };
+
+    // Get quality tier info from star count
+    function getQualityTier(stars) {
+      const count = stars ?? 0;
+      if (count >= TIER_THRESHOLDS.ELITE) return { color: 'text-blue-400', label: 'Elite' };
+      if (count >= TIER_THRESHOLDS.HIGH_QUALITY) return { color: 'text-green-400', label: 'High Quality' };
+      if (count >= TIER_THRESHOLDS.GROWING) return { color: 'text-yellow-400', label: 'Growing' };
+      return { color: 'text-red-400', label: 'New' };
+    }
+
     // DOM Elements
     const loadingState = document.getElementById('loading-state');
     const errorState = document.getElementById('error-state');
@@ -231,12 +244,13 @@ const { id } = Astro.params;
       trustBadge.textContent = trustTier;
       trustBadge.className = `px-3 py-1 text-sm font-medium rounded-full border ${trustBadgeClasses[trustTier] || trustBadgeClasses.unknown}`;
 
-      // Quality score
-      const score = (skill.quality_score ?? skill.score ?? 0) * 100;
-      const scoreColor = score >= 80 ? 'text-green-400' : score >= 60 ? 'text-yellow-400' : 'text-red-400';
-      const scoreEl = document.getElementById('skill-score');
-      scoreEl.textContent = `${Math.round(score)}%`;
-      scoreEl.className = `text-4xl font-bold ${scoreColor}`;
+      // Quality tier based on stars
+      const stars = skill.stars ?? 0;
+      const tier = getQualityTier(stars);
+      const tierEl = document.getElementById('skill-tier');
+      tierEl.textContent = tier.label;
+      tierEl.className = `text-2xl font-bold ${tier.color}`;
+      document.getElementById('skill-stars').textContent = `${formatNumber(stars)} ★`;
 
       // Description
       document.getElementById('skill-description').textContent = skill.description || 'No description available.';

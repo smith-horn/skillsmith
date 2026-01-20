@@ -134,40 +134,39 @@ const trustTiers = [
       </div>
     </div>
 
-    <!-- Quality Score Explanation -->
+    <!-- Quality Indicator Explanation -->
     <details class="bg-dark-900 rounded-xl border border-dark-800 p-4 mb-8">
       <summary class="cursor-pointer text-dark-300 hover:text-white font-medium flex items-center gap-2">
         <svg class="w-5 h-5 text-primary-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
-        How Quality Scores Work
+        How Quality Indicators Work
       </summary>
       <div class="mt-4 text-sm text-dark-400 space-y-3">
-        <p>Quality scores (0-100%) reflect a skill's repository health using a logarithmic formula that fairly weights both small and large projects:</p>
-        <div class="bg-dark-800 rounded-lg p-4 font-mono text-xs">
-          <div class="text-primary-400">Stars: log₁₀(stars + 1) × 15 <span class="text-dark-500">(max 50 pts)</span></div>
-          <div class="text-primary-400">Forks: log₁₀(forks + 1) × 10 <span class="text-dark-500">(max 25 pts)</span></div>
-          <div class="text-primary-400">Base: 25 pts <span class="text-dark-500">(baseline)</span></div>
-        </div>
+        <p>Quality indicators reflect a skill's GitHub popularity based on star count. The colored dot shows the tier at a glance:</p>
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
           <div class="bg-dark-800 rounded-lg p-3">
-            <div class="text-red-400 font-semibold">~48%</div>
-            <div class="text-dark-500 text-xs">10 stars</div>
+            <div class="text-blue-400 font-semibold text-lg">●</div>
+            <div class="text-blue-400 font-medium text-sm">Elite</div>
+            <div class="text-dark-500 text-xs">10,000+ ★</div>
           </div>
           <div class="bg-dark-800 rounded-lg p-3">
-            <div class="text-yellow-400 font-semibold">~68%</div>
-            <div class="text-dark-500 text-xs">100 stars</div>
+            <div class="text-green-400 font-semibold text-lg">●</div>
+            <div class="text-green-400 font-medium text-sm">High Quality</div>
+            <div class="text-dark-500 text-xs">500-9,999 ★</div>
           </div>
           <div class="bg-dark-800 rounded-lg p-3">
-            <div class="text-green-400 font-semibold">~86%</div>
-            <div class="text-dark-500 text-xs">500 stars</div>
+            <div class="text-yellow-400 font-semibold text-lg">●</div>
+            <div class="text-yellow-400 font-medium text-sm">Growing</div>
+            <div class="text-dark-500 text-xs">50-499 ★</div>
           </div>
           <div class="bg-dark-800 rounded-lg p-3">
-            <div class="text-green-400 font-semibold">100%</div>
-            <div class="text-dark-500 text-xs">10,000+ stars</div>
+            <div class="text-red-400 font-semibold text-lg">●</div>
+            <div class="text-red-400 font-medium text-sm">New</div>
+            <div class="text-dark-500 text-xs">&lt;50 ★</div>
           </div>
         </div>
-        <p class="text-dark-500 text-xs">Verified skills from high-trust authors may have manually assigned quality scores.</p>
+        <p class="text-dark-500 text-xs">Hover over the indicator to see the exact star count. Verified skills from high-trust authors receive additional vetting.</p>
       </div>
     </details>
 
@@ -183,7 +182,7 @@ const trustTiers = [
           class="px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:border-primary-500 appearance-none cursor-pointer"
         >
           <option value="relevance">Relevance</option>
-          <option value="score">Quality Score</option>
+          <option value="stars">Popularity (Stars)</option>
           <option value="name">Name</option>
         </select>
       </div>
@@ -207,6 +206,23 @@ const trustTiers = [
       </svg>
       <h3 class="text-xl font-semibold text-dark-300 mb-2">No skills found</h3>
       <p class="text-dark-500">Try adjusting your search or filters</p>
+    </div>
+
+    <!-- Search Prompt State (shown when no query entered) -->
+    <div id="search-prompt-state" class="hidden text-center py-12">
+      <svg class="w-16 h-16 mx-auto text-primary-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+      </svg>
+      <h3 class="text-xl font-semibold text-dark-300 mb-2">Start Searching</h3>
+      <p class="text-dark-500 mb-4">Enter at least 3 characters to search for skills</p>
+      <div class="flex flex-wrap justify-center gap-2 max-w-md mx-auto">
+        <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="testing">testing</button>
+        <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="git">git</button>
+        <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="docker">docker</button>
+        <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="commit">commit</button>
+        <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="security">security</button>
+        <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="workflow">workflow</button>
+      </div>
     </div>
 
     <!-- Error State -->
@@ -242,6 +258,8 @@ const trustTiers = [
     let allResults = [];
     let debounceTimer = null;
 
+    const MIN_QUERY_LENGTH = 3; // SMI-1608: Minimum characters for search
+
     // DOM Elements
     const searchInput = document.getElementById('search-input');
     const categoryFilter = document.getElementById('category-filter');
@@ -258,6 +276,8 @@ const trustTiers = [
     const nextPageBtn = document.getElementById('next-page');
     const pageInfo = document.getElementById('page-info');
     const retryButton = document.getElementById('retry-button');
+    const searchPromptState = document.getElementById('search-prompt-state');
+    const searchSuggestions = document.querySelectorAll('.search-suggestion');
 
     // Trust tier badge colors
     const trustBadgeClasses = {
@@ -267,11 +287,24 @@ const trustTiers = [
       unknown: 'bg-dark-500/10 text-dark-400 border-dark-500/20',
     };
 
+    // Quality tier thresholds (matches packages/website/src/utils/quality-tiers.ts)
+    const TIER_THRESHOLDS = { ELITE: 10000, HIGH_QUALITY: 500, GROWING: 50 };
+
+    // Get quality tier info from star count
+    function getQualityTier(stars) {
+      const count = stars ?? 0;
+      if (count >= TIER_THRESHOLDS.ELITE) return { color: 'text-blue-400', label: 'Elite' };
+      if (count >= TIER_THRESHOLDS.HIGH_QUALITY) return { color: 'text-green-400', label: 'High Quality' };
+      if (count >= TIER_THRESHOLDS.GROWING) return { color: 'text-yellow-400', label: 'Growing' };
+      return { color: 'text-red-400', label: 'New' };
+    }
+
     // Create skill card HTML
     function createSkillCard(skill) {
       const trustClass = trustBadgeClasses[skill.trust_tier] || trustBadgeClasses.unknown;
-      const score = (skill.quality_score ?? skill.score ?? 0) * 100;
-      const scoreColor = score >= 80 ? 'text-green-400' : score >= 60 ? 'text-yellow-400' : 'text-red-400';
+      const stars = skill.stars ?? 0;
+      const tier = getQualityTier(stars);
+      const ariaLabel = `${tier.label}: ${formatNumber(stars)} stars`;
 
       return `
         <a href="/skills/${encodeURIComponent(skill.id)}" class="card-hover block bg-dark-900 rounded-xl border border-dark-800 p-6 hover:border-primary-500/50">
@@ -297,10 +330,15 @@ const trustTiers = [
               ` : ''}
               ${skill.version ? `<span class="text-dark-500">v${escapeHtml(skill.version)}</span>` : ''}
             </div>
-            <span class="${scoreColor} font-medium">${Math.round(score)}%</span>
+            <span class="${tier.color} text-lg" role="img" aria-label="${ariaLabel}" title="${ariaLabel}">●<span class="sr-only">${ariaLabel}</span></span>
           </div>
         </a>
       `;
+    }
+
+    // Format number with locale formatting
+    function formatNumber(num) {
+      return new Intl.NumberFormat().format(num);
     }
 
     // Escape HTML to prevent XSS
@@ -318,6 +356,7 @@ const trustTiers = [
       emptyState.classList.add('hidden');
       errorState.classList.add('hidden');
       pagination.classList.add('hidden');
+      searchPromptState.classList.add('hidden');
 
       switch (state) {
         case 'loading':
@@ -333,6 +372,9 @@ const trustTiers = [
           resultsGrid.classList.remove('hidden');
           pagination.classList.remove('hidden');
           break;
+        case 'search-prompt':
+          searchPromptState.classList.remove('hidden');
+          break;
       }
     }
 
@@ -342,18 +384,33 @@ const trustTiers = [
       const category = categoryFilter.value;
       const trustTier = trustFilter.value;
 
+      // SMI-1608: Require minimum query length to prevent enumeration
+      if (query.length < MIN_QUERY_LENGTH) {
+        showState('search-prompt');
+        resultsCount.textContent = `Enter at least ${MIN_QUERY_LENGTH} characters to search`;
+        allResults = [];
+        return;
+      }
+
       showState('loading');
       resultsCount.textContent = 'Searching...';
+
+      // SMI-1608: Add timeout to prevent indefinite loading
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
       try {
         // Build query parameters for GET request
         const params = new URLSearchParams();
-        params.set('query', query || '*');
+        params.set('query', query);
         params.set('limit', '100');
         if (category) params.set('category', category);
         if (trustTier) params.set('trust_tier', trustTier);
 
-        const response = await fetch(`${API_BASE}/skills-search?${params.toString()}`);
+        const response = await fetch(`${API_BASE}/skills-search?${params.toString()}`, {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
 
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -362,7 +419,7 @@ const trustTiers = [
         const data = await response.json();
         allResults = data.data || data.skills || data.results || [];
 
-        // Apply client-side filtering for category and trust tier if API doesn't support them
+        // Defensive client-side filtering (API already filters, but ensure consistency)
         if (category) {
           allResults = allResults.filter(s => s.category === category);
         }
@@ -376,8 +433,10 @@ const trustTiers = [
         currentPage = 1;
         renderResults();
       } catch (error) {
+        clearTimeout(timeoutId);
         console.error('Search error:', error);
-        errorMessage.textContent = error.message;
+        const isTimeout = error.name === 'AbortError';
+        errorMessage.textContent = isTimeout ? 'Request timed out. Please try again.' : error.message;
         showState('error');
         resultsCount.textContent = 'Error';
       }
@@ -388,8 +447,8 @@ const trustTiers = [
       const sortBy = sortSelect.value;
 
       switch (sortBy) {
-        case 'score':
-          allResults.sort((a, b) => (b.quality_score || b.score || 0) - (a.quality_score || a.score || 0));
+        case 'stars':
+          allResults.sort((a, b) => (b.stars ?? 0) - (a.stars ?? 0));
           break;
         case 'name':
           allResults.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -458,8 +517,17 @@ const trustTiers = [
 
     retryButton.addEventListener('click', searchSkills);
 
-    // Initial load
-    searchSkills();
+    // Search suggestion buttons
+    searchSuggestions.forEach(btn => {
+      btn.addEventListener('click', () => {
+        searchInput.value = btn.dataset.query;
+        searchSkills();
+      });
+    });
+
+    // Initial load - show search prompt instead of calling API
+    showState('search-prompt');
+    resultsCount.textContent = `Enter at least ${MIN_QUERY_LENGTH} characters to search`;
   </script>
 
   <style>
@@ -475,6 +543,18 @@ const trustTiers = [
       background-repeat: no-repeat;
       background-size: 1.5em 1.5em;
       padding-right: 2.5rem;
+    }
+    /* Screen reader only - visually hidden but accessible */
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
   </style>
 </BaseLayout>
