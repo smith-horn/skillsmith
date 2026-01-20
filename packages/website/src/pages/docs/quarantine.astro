@@ -1,0 +1,400 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="Quarantine System" description="Learn how Skillsmith's quarantine system protects you from potentially harmful skills">
+  <h1>Quarantine System</h1>
+
+  <p class="lead">
+    When Skillsmith detects potential security issues in a skill, it places the skill in quarantine
+    to protect your environment. This page explains how the quarantine system works and what to do
+    if you encounter a quarantined skill.
+  </p>
+
+  <h2>What is Quarantine?</h2>
+
+  <p>
+    Quarantine is a protective system that isolates skills with potential security issues.
+    When a skill is quarantined, it cannot be installed until it has been reviewed or the
+    issues have been resolved.
+  </p>
+
+  <p>
+    The quarantine system exists to protect you from:
+  </p>
+
+  <ul>
+    <li>Malicious code that could harm your system</li>
+    <li>Prompt injection attacks that could manipulate Claude</li>
+    <li>Skills that access sensitive files without authorization</li>
+    <li>Low-quality skills that may cause unexpected behavior</li>
+  </ul>
+
+  <h2>Quarantine Severity Levels</h2>
+
+  <p>
+    Quarantined skills are assigned one of four severity levels, each with different implications:
+  </p>
+
+  <div class="severity-levels">
+    <div class="severity severity-malicious">
+      <div class="severity-header">
+        <span class="severity-badge">MALICIOUS</span>
+        <span class="severity-level">Level 4</span>
+      </div>
+      <p class="severity-description">Permanent quarantine &mdash; security threat detected</p>
+      <ul>
+        <li>Cannot be installed under any circumstances</li>
+        <li>Requires security team review</li>
+        <li>Author may be banned from the registry</li>
+      </ul>
+      <p class="severity-example"><strong>Example:</strong> Skill contains jailbreak patterns or known malicious code</p>
+    </div>
+
+    <div class="severity severity-suspicious">
+      <div class="severity-header">
+        <span class="severity-badge">SUSPICIOUS</span>
+        <span class="severity-level">Level 3</span>
+      </div>
+      <p class="severity-description">Manual review required before import allowed</p>
+      <ul>
+        <li>Installation blocked until review completes</li>
+        <li>Security team evaluates within 24-48 hours</li>
+        <li>May be approved, rejected, or downgraded</li>
+      </ul>
+      <p class="severity-example"><strong>Example:</strong> Skill accesses sensitive files without clear justification</p>
+    </div>
+
+    <div class="severity severity-risky">
+      <div class="severity-header">
+        <span class="severity-badge">RISKY</span>
+        <span class="severity-level">Level 2</span>
+      </div>
+      <p class="severity-description">Can import with warnings displayed</p>
+      <ul>
+        <li>Installation allowed with explicit confirmation</li>
+        <li>Warning message explains detected risks</li>
+        <li>User assumes responsibility</li>
+      </ul>
+      <p class="severity-example"><strong>Example:</strong> Skill references external URLs not on the allowlist</p>
+    </div>
+
+    <div class="severity severity-low-quality">
+      <div class="severity-header">
+        <span class="severity-badge">LOW_QUALITY</span>
+        <span class="severity-level">Level 1</span>
+      </div>
+      <p class="severity-description">Can import with reduced quality score</p>
+      <ul>
+        <li>Installation allowed normally</li>
+        <li>Quality score is reduced in search results</li>
+        <li>May indicate incomplete or outdated skill</li>
+      </ul>
+      <p class="severity-example"><strong>Example:</strong> Skill missing required metadata or documentation</p>
+    </div>
+  </div>
+
+  <h2>What Triggers Quarantine</h2>
+
+  <p>Skills can be quarantined for several reasons:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Trigger</th>
+        <th>Typical Severity</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Failed security scan</td>
+        <td>SUSPICIOUS or MALICIOUS</td>
+        <td>Security scan detected critical or high-severity patterns</td>
+      </tr>
+      <tr>
+        <td>User reports</td>
+        <td>SUSPICIOUS</td>
+        <td>Multiple users reported suspicious behavior</td>
+      </tr>
+      <tr>
+        <td>Blocklist match</td>
+        <td>MALICIOUS</td>
+        <td>Skill matches known malicious patterns or authors</td>
+      </tr>
+      <tr>
+        <td>Anomaly detection</td>
+        <td>SUSPICIOUS</td>
+        <td>Sudden behavior change in previously trusted skill</td>
+      </tr>
+      <tr>
+        <td>Missing metadata</td>
+        <td>LOW_QUALITY</td>
+        <td>Required fields missing from SKILL.md</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>User Experience</h2>
+
+  <h3>When Installing a Quarantined Skill</h3>
+
+  <p>If you try to install a quarantined skill, you'll see different messages depending on severity:</p>
+
+  <div class="callout warning">
+    <h4>MALICIOUS Skills</h4>
+    <pre><code>{`Error: This skill has been quarantined for security reasons and cannot be installed.
+Reason: Security threat detected - jailbreak patterns found
+For more information, visit skillsmith.app/docs/quarantine`}</code></pre>
+  </div>
+
+  <div class="callout warning">
+    <h4>SUSPICIOUS Skills</h4>
+    <pre><code>{`Warning: This skill is under review and cannot be installed yet.
+Reason: Accesses sensitive file patterns
+Review status: Pending (estimated 24-48 hours)
+You will be notified when the review is complete.`}</code></pre>
+  </div>
+
+  <div class="callout">
+    <h4>RISKY Skills</h4>
+    <pre><code>{`Warning: This skill has been flagged for the following risks:
+- References external domain: api.example.com
+- Contains high-entropy content (possible obfuscation)
+
+Do you want to proceed with installation? (y/N)`}</code></pre>
+  </div>
+
+  <h3>Checking Quarantine Status</h3>
+
+  <p>You can check if a skill is quarantined before installing:</p>
+
+  <pre><code>{`# Using the CLI
+skillsmith info <skill-id>
+
+# Response includes quarantine status
+{
+  "id": "community/suspicious-skill",
+  "quarantineStatus": {
+    "quarantined": true,
+    "severity": "SUSPICIOUS",
+    "reason": "Accesses sensitive file patterns",
+    "reviewStatus": "pending"
+  }
+}`}</code></pre>
+
+  <h2>For Skill Authors</h2>
+
+  <h3>Checking If Your Skill Is Quarantined</h3>
+
+  <p>Authors can check their skill's quarantine status:</p>
+
+  <pre><code>{`skillsmith info <your-skill-id>
+# Or via the MCP server
+"Check the status of my-skill-name"`}</code></pre>
+
+  <h3>Resolution Process</h3>
+
+  <p>If your skill is quarantined, follow these steps to resolve it:</p>
+
+  <ol>
+    <li>
+      <strong>Review the findings</strong>: Check the quarantine reason to understand what triggered it
+    </li>
+    <li>
+      <strong>Fix the issues</strong>: Update your skill to address the security concerns
+      <ul>
+        <li>Remove or justify external URL references</li>
+        <li>Avoid accessing sensitive file patterns</li>
+        <li>Remove any code that could be misinterpreted as malicious</li>
+      </ul>
+    </li>
+    <li>
+      <strong>Push updates</strong>: Commit your changes to the skill repository
+    </li>
+    <li>
+      <strong>Request re-scan</strong>: The skill will be automatically re-scanned on the next index cycle (typically within 24 hours)
+    </li>
+    <li>
+      <strong>Wait for review</strong>: For SUSPICIOUS or MALICIOUS severity, manual review is required even after fixes
+    </li>
+  </ol>
+
+  <h3>Appeal Process</h3>
+
+  <p>If you believe your skill was incorrectly quarantined (false positive):</p>
+
+  <ol>
+    <li>
+      <strong>Document your case</strong>: Explain why the flagged patterns are legitimate and necessary
+    </li>
+    <li>
+      <strong>Open an issue</strong>: Create an issue at
+      <a href="https://github.com/Smith-Horn-Group/skillsmith/issues" target="_blank" rel="noopener noreferrer">GitHub</a>
+      with label <code>quarantine-appeal</code>
+    </li>
+    <li>
+      <strong>Include evidence</strong>: Provide the skill ID, quarantine reason, and your justification
+    </li>
+    <li>
+      <strong>Await response</strong>: Appeals are typically reviewed within 2-5 business days
+    </li>
+  </ol>
+
+  <h2>Review Timeline</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Severity</th>
+        <th>Initial Triage</th>
+        <th>Full Review</th>
+        <th>Appeal Resolution</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>MALICIOUS</td>
+        <td>24 hours</td>
+        <td>3-5 days</td>
+        <td>5-10 days</td>
+      </tr>
+      <tr>
+        <td>SUSPICIOUS</td>
+        <td>24-48 hours</td>
+        <td>2-5 days</td>
+        <td>3-7 days</td>
+      </tr>
+      <tr>
+        <td>RISKY</td>
+        <td>Automatic</td>
+        <td>N/A</td>
+        <td>1-3 days</td>
+      </tr>
+      <tr>
+        <td>LOW_QUALITY</td>
+        <td>Automatic</td>
+        <td>N/A</td>
+        <td>1-2 days</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Preventing Quarantine</h2>
+
+  <p>To avoid having your skill quarantined:</p>
+
+  <ul>
+    <li>Follow the <a href="/docs/security#best-practices-for-authors">security best practices for authors</a></li>
+    <li>Run <code>skillsmith validate</code> locally before publishing</li>
+    <li>Avoid external URLs unless absolutely necessary</li>
+    <li>Never access sensitive files (.env, credentials, keys)</li>
+    <li>Include complete metadata in your SKILL.md</li>
+    <li>Submit for verification to get the Verified badge</li>
+  </ul>
+
+  <h2>Related Documentation</h2>
+
+  <ul>
+    <li><a href="/docs/security">Security Model</a> - What we scan for and why</li>
+    <li><a href="/docs/trust-tiers">Trust Tiers</a> - How verification affects trust</li>
+    <li><a href="/docs/cli">CLI Reference</a> - Using the validate command</li>
+  </ul>
+</DocsLayout>
+
+<style>
+  .severity-levels {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    margin: 1.5rem 0;
+  }
+
+  .severity {
+    padding: 1.25rem 1.5rem;
+    border-radius: 0.5rem;
+    border-left: 4px solid;
+  }
+
+  .severity-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .severity-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  }
+
+  .severity-level {
+    font-size: 0.75rem;
+    color: var(--color-text-muted, #9ca3af);
+  }
+
+  .severity-description {
+    font-weight: 500;
+    margin: 0 0 0.75rem 0;
+  }
+
+  .severity ul {
+    margin: 0 0 0.75rem 0;
+    padding-left: 1.25rem;
+    font-size: 0.9rem;
+  }
+
+  .severity li {
+    margin: 0.25rem 0;
+  }
+
+  .severity-example {
+    font-size: 0.85rem;
+    color: var(--color-text-muted, #9ca3af);
+    margin: 0;
+  }
+
+  .severity-malicious {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgb(239, 68, 68);
+  }
+
+  .severity-malicious .severity-badge {
+    background: rgba(239, 68, 68, 0.2);
+    color: rgb(239, 68, 68);
+  }
+
+  .severity-suspicious {
+    background: rgba(249, 115, 22, 0.1);
+    border-color: rgb(249, 115, 22);
+  }
+
+  .severity-suspicious .severity-badge {
+    background: rgba(249, 115, 22, 0.2);
+    color: rgb(249, 115, 22);
+  }
+
+  .severity-risky {
+    background: rgba(234, 179, 8, 0.1);
+    border-color: rgb(234, 179, 8);
+  }
+
+  .severity-risky .severity-badge {
+    background: rgba(234, 179, 8, 0.2);
+    color: rgb(234, 179, 8);
+  }
+
+  .severity-low-quality {
+    background: rgba(156, 163, 175, 0.1);
+    border-color: rgb(156, 163, 175);
+  }
+
+  .severity-low-quality .severity-badge {
+    background: rgba(156, 163, 175, 0.2);
+    color: rgb(156, 163, 175);
+  }
+</style>

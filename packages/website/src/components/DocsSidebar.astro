@@ -11,6 +11,9 @@ const navItems = [
   { href: '/docs/cli', label: 'CLI Reference', icon: 'terminal' },
   { href: '/docs/mcp-server', label: 'MCP Server', icon: 'server' },
   { href: '/docs/api', label: 'API Reference', icon: 'code' },
+  { href: '/docs/security', label: 'Security', icon: 'shield' },
+  { href: '/docs/quarantine', label: 'Quarantine', icon: 'alert' },
+  { href: '/docs/trust-tiers', label: 'Trust Tiers', icon: 'badge' },
 ];
 
 function isActive(href: string): boolean {
@@ -128,6 +131,18 @@ function isActive(href: string): boolean {
 
   .nav-icon[data-icon="package"]::before {
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M16.5 9.4l-9-5.19'/%3E%3Cpath d='M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z'/%3E%3Cpolyline points='3.27 6.96 12 12.01 20.73 6.96'/%3E%3Cline x1='12' y1='22.08' x2='12' y2='12'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon="shield"]::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon="alert"]::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z'/%3E%3Cline x1='12' y1='9' x2='12' y2='13'/%3E%3Cline x1='12' y1='17' x2='12.01' y2='17'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon="badge"]::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76z'/%3E%3Cpath d='M9 12l2 2 4-4'/%3E%3C/svg%3E");
   }
 
   @media (max-width: 1024px) {

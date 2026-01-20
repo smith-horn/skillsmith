@@ -1,0 +1,445 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="Trust Tiers" description="Understand Skillsmith's four-tier trust system for evaluating skill safety and quality">
+  <h1>Trust Tiers</h1>
+
+  <p class="lead">
+    Skillsmith uses a four-tier trust system to help you evaluate skill safety before installation.
+    Each tier represents a different level of verification and review.
+  </p>
+
+  <h2>Tier Overview</h2>
+
+  <div class="tier-grid">
+    <div class="tier-card tier-official">
+      <div class="tier-badge">
+        <svg class="tier-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>Official</span>
+      </div>
+      <p>Anthropic or partner skills</p>
+      <ul>
+        <li>Auto-install: Yes</li>
+        <li>Review required: No</li>
+      </ul>
+    </div>
+
+    <div class="tier-card tier-verified">
+      <div class="tier-badge">
+        <svg class="tier-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+        </svg>
+        <span>Verified</span>
+      </div>
+      <p>Publisher verified, quality checked</p>
+      <ul>
+        <li>Auto-install: Yes</li>
+        <li>Review required: No</li>
+      </ul>
+    </div>
+
+    <div class="tier-card tier-community">
+      <div class="tier-badge">
+        <svg class="tier-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" />
+        </svg>
+        <span>Community</span>
+      </div>
+      <p>Basic scan passed, metadata present</p>
+      <ul>
+        <li>Auto-install: No</li>
+        <li>Review required: Recommended</li>
+      </ul>
+    </div>
+
+    <div class="tier-card tier-unverified">
+      <div class="tier-badge">
+        <svg class="tier-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+        <span>Unverified</span>
+      </div>
+      <p>No verification performed</p>
+      <ul>
+        <li>Auto-install: No</li>
+        <li>Review required: Required</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Official Tier</h2>
+
+  <div class="tier-detail">
+    <h3>What It Means</h3>
+    <p>
+      Published by Anthropic or trusted partners. These skills undergo a full security review
+      and are maintained with the highest standards.
+    </p>
+
+    <h3>Requirements</h3>
+    <ul>
+      <li>Published under <code>anthropic/</code> namespace</li>
+      <li>Full code review by Anthropic security team</li>
+      <li>Cryptographic signing (planned)</li>
+      <li>Automatic updates deployed</li>
+    </ul>
+
+    <h3>Examples</h3>
+    <p>
+      <code>anthropic/varlock</code>, <code>anthropic/commit</code>, <code>anthropic/governance</code>
+    </p>
+
+    <h3>When to Install</h3>
+    <p>
+      <strong>Always safe.</strong> These skills are maintained by Anthropic and suitable for any environment,
+      including production and enterprise use.
+    </p>
+  </div>
+
+  <h2>Verified Tier</h2>
+
+  <div class="tier-detail">
+    <h3>What It Means</h3>
+    <p>
+      Publisher identity is verified, and the skill meets quality and age requirements.
+      The author is accountable for the skill's behavior.
+    </p>
+
+    <h3>Requirements</h3>
+    <ul>
+      <li>Publisher identity verified via GitHub OAuth</li>
+      <li>Automated security scan passed with no critical/high findings</li>
+      <li>Minimum 10 GitHub stars</li>
+      <li>Published for at least 30 days</li>
+      <li>Has valid LICENSE file</li>
+      <li>Complete README and SKILL.md</li>
+    </ul>
+
+    <h3>Verification Process</h3>
+    <ol>
+      <li>Publisher submits verification request</li>
+      <li>Automated security scan runs</li>
+      <li>Identity verification via GitHub</li>
+      <li>Manual review for edge cases</li>
+      <li>Verified badge granted (renewable annually)</li>
+    </ol>
+
+    <h3>When to Install</h3>
+    <p>
+      <strong>Generally safe.</strong> The publisher is accountable for the skill.
+      Suitable for production use in most cases.
+    </p>
+  </div>
+
+  <h2>Community Tier</h2>
+
+  <div class="tier-detail">
+    <h3>What It Means</h3>
+    <p>
+      The skill passed basic security scans and has required metadata, but the publisher
+      identity has not been verified.
+    </p>
+
+    <h3>Requirements</h3>
+    <ul>
+      <li>Security scan passed (no critical findings)</li>
+      <li>Valid SKILL.md with proper frontmatter</li>
+      <li>Has LICENSE file</li>
+      <li>Has README.md</li>
+      <li>No blocklist matches</li>
+    </ul>
+
+    <h3>What Community Tier Does NOT Guarantee</h3>
+    <ul class="warning-list">
+      <li>Publisher identity</li>
+      <li>Code quality</li>
+      <li>Ongoing maintenance</li>
+      <li>Absence of subtle security issues</li>
+    </ul>
+
+    <h3>When to Install</h3>
+    <p>
+      <strong>Review first.</strong> Check the author's GitHub profile and other projects.
+      Read the SKILL.md content before installing.
+    </p>
+  </div>
+
+  <h2>Unverified Tier</h2>
+
+  <div class="tier-detail">
+    <h3>What It Means</h3>
+    <p>
+      No verification has been performed. The skill may be newly published, failed a security scan,
+      or the author hasn't submitted for verification.
+    </p>
+
+    <h3>Why a Skill Might Be Unverified</h3>
+    <ul>
+      <li>Just published (hasn't been scanned yet)</li>
+      <li>Failed security scan</li>
+      <li>Missing required files (LICENSE, README)</li>
+      <li>Author hasn't submitted for verification</li>
+      <li><a href="/docs/quarantine">Quarantined</a> for suspicious activity</li>
+    </ul>
+
+    <h3>When to Install</h3>
+    <p>
+      <strong>Only if you personally trust the author</strong> or you've manually reviewed all code.
+      Installation requires explicit confirmation:
+    </p>
+
+    <pre><code>{`This skill is unverified. Are you sure you want to install? (y/N)`}</code></pre>
+  </div>
+
+  <h2>Getting Verified</h2>
+
+  <p>To upgrade your skill from Community to Verified:</p>
+
+  <ol>
+    <li>
+      <strong>Ensure requirements are met</strong>
+      <ul>
+        <li>Security scan passes with no critical/high findings</li>
+        <li>At least 10 GitHub stars</li>
+        <li>Published for at least 30 days</li>
+        <li>Complete LICENSE, README, and SKILL.md</li>
+      </ul>
+    </li>
+    <li>
+      <strong>Submit verification request</strong>
+      <p>Visit <a href="https://skillsmith.app/verify">skillsmith.app/verify</a> to start the process</p>
+    </li>
+    <li>
+      <strong>Complete identity verification</strong>
+      <p>Authenticate with your GitHub account to verify publisher identity</p>
+    </li>
+    <li>
+      <strong>Wait for review</strong>
+      <p>Typical review time is 2-5 business days</p>
+    </li>
+    <li>
+      <strong>Maintain verification</strong>
+      <p>Verified status is renewable annually and can be revoked if issues arise</p>
+    </li>
+  </ol>
+
+  <h2>Tier Transitions</h2>
+
+  <h3>Upgrades</h3>
+  <p>Skills can upgrade tiers by meeting higher requirements:</p>
+  <ul>
+    <li><strong>Unverified → Community</strong>: Pass basic security scan, add required metadata</li>
+    <li><strong>Community → Verified</strong>: Submit verification request, meet all Verified requirements</li>
+  </ul>
+
+  <h3>Downgrades</h3>
+  <p>Skills can be downgraded if:</p>
+  <ul>
+    <li>Security scan fails on update</li>
+    <li>Publisher verification expires</li>
+    <li>Reports of malicious behavior</li>
+    <li>Author requests removal</li>
+  </ul>
+
+  <h2>Filtering by Trust Tier</h2>
+
+  <p>Use the <code>--tier</code> filter when searching to find skills at specific trust levels:</p>
+
+  <h3>Using Claude (MCP)</h3>
+
+  <pre><code>{`"Find verified testing skills"
+"Show only official skills"
+"Search for community git helpers"`}</code></pre>
+
+  <h3>Using the CLI</h3>
+
+  <pre><code>{`# Find verified skills only
+skillsmith search testing --tier verified
+
+# Find official Anthropic skills
+skillsmith search --tier official
+
+# Exclude unverified skills
+skillsmith search git --tier community,verified,official`}</code></pre>
+
+  <h2>Recommendations by Use Case</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Scenario</th>
+        <th>Recommended Minimum Tier</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Production code</td>
+        <td><span class="tier-badge-inline tier-verified">Verified</span> or <span class="tier-badge-inline tier-official">Official</span></td>
+      </tr>
+      <tr>
+        <td>Personal projects</td>
+        <td><span class="tier-badge-inline tier-community">Community</span> or higher</td>
+      </tr>
+      <tr>
+        <td>Experimentation</td>
+        <td>Any (with review)</td>
+      </tr>
+      <tr>
+        <td>Enterprise / Regulated</td>
+        <td><span class="tier-badge-inline tier-official">Official</span> only</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Trust Tier in API Responses</h2>
+
+  <p>The <code>get_skill</code> tool returns detailed trust information:</p>
+
+  <pre><code>{`{
+  "id": "community/jest-helper",
+  "trustTier": "verified",
+  "publisherVerified": true,
+  "scanPassed": true,
+  "scanDate": "2026-01-10",
+  "stars": 47,
+  "publishedDays": 89
+}`}</code></pre>
+
+  <h2>Questions?</h2>
+
+  <ul>
+    <li><strong>How do I get verified?</strong> Visit <a href="https://skillsmith.app/verify">skillsmith.app/verify</a></li>
+    <li><strong>Report a suspicious skill:</strong> <a href="mailto:security@skillsmith.app">security@skillsmith.app</a></li>
+    <li><strong>Request tier review:</strong> <a href="mailto:support@skillsmith.app">support@skillsmith.app</a></li>
+  </ul>
+
+  <h2>Related Documentation</h2>
+
+  <ul>
+    <li><a href="/docs/security">Security Model</a> - How security scanning works</li>
+    <li><a href="/docs/quarantine">Quarantine System</a> - What happens to flagged skills</li>
+    <li><a href="/docs/cli">CLI Reference</a> - Search and filter commands</li>
+  </ul>
+</DocsLayout>
+
+<style>
+  .tier-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+
+  .tier-card {
+    padding: 1.25rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--color-border, rgba(255, 255, 255, 0.1));
+    background: var(--color-bg-secondary, rgba(255, 255, 255, 0.02));
+  }
+
+  .tier-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    font-weight: 600;
+  }
+
+  .tier-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  .tier-card p {
+    font-size: 0.9rem;
+    color: var(--color-text-muted, #9ca3af);
+    margin: 0 0 0.75rem 0;
+  }
+
+  .tier-card ul {
+    margin: 0;
+    padding-left: 1rem;
+    font-size: 0.85rem;
+  }
+
+  .tier-card li {
+    margin: 0.25rem 0;
+  }
+
+  .tier-official {
+    border-color: rgba(34, 197, 94, 0.3);
+  }
+
+  .tier-official .tier-badge {
+    color: rgb(34, 197, 94);
+  }
+
+  .tier-verified {
+    border-color: rgba(59, 130, 246, 0.3);
+  }
+
+  .tier-verified .tier-badge {
+    color: rgb(59, 130, 246);
+  }
+
+  .tier-community {
+    border-color: rgba(234, 179, 8, 0.3);
+  }
+
+  .tier-community .tier-badge {
+    color: rgb(234, 179, 8);
+  }
+
+  .tier-unverified {
+    border-color: rgba(239, 68, 68, 0.3);
+  }
+
+  .tier-unverified .tier-badge {
+    color: rgb(239, 68, 68);
+  }
+
+  .tier-detail {
+    margin: 1.5rem 0 2.5rem 0;
+    padding-left: 1rem;
+    border-left: 3px solid var(--color-border, rgba(255, 255, 255, 0.1));
+  }
+
+  .tier-detail h3 {
+    font-size: 1rem;
+    margin-top: 1.25rem;
+  }
+
+  .tier-detail h3:first-child {
+    margin-top: 0;
+  }
+
+  .warning-list li {
+    color: rgb(234, 179, 8);
+  }
+
+  .tier-badge-inline {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .tier-badge-inline.tier-official {
+    background: rgba(34, 197, 94, 0.2);
+    color: rgb(34, 197, 94);
+  }
+
+  .tier-badge-inline.tier-verified {
+    background: rgba(59, 130, 246, 0.2);
+    color: rgb(59, 130, 246);
+  }
+
+  .tier-badge-inline.tier-community {
+    background: rgba(234, 179, 8, 0.2);
+    color: rgb(234, 179, 8);
+  }
+</style>

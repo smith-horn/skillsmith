@@ -58,6 +58,24 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
           "position": 5,
           "name": "API Reference",
           "url": "https://skillsmith.app/docs/api"
+        },
+        {
+          "@type": "ListItem",
+          "position": 6,
+          "name": "Security",
+          "url": "https://skillsmith.app/docs/security"
+        },
+        {
+          "@type": "ListItem",
+          "position": 7,
+          "name": "Quarantine",
+          "url": "https://skillsmith.app/docs/quarantine"
+        },
+        {
+          "@type": "ListItem",
+          "position": 8,
+          "name": "Trust Tiers",
+          "url": "https://skillsmith.app/docs/trust-tiers"
         }
       ]
     }
@@ -137,11 +155,26 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
       <h3>API Reference</h3>
       <p>Detailed API documentation for developers and integrators.</p>
     </a>
+
+    <a href="/docs/security" class="doc-card">
+      <h3>Security</h3>
+      <p>Learn how Skillsmith protects your environment through security scanning.</p>
+    </a>
+
+    <a href="/docs/quarantine" class="doc-card">
+      <h3>Quarantine</h3>
+      <p>Understand how flagged skills are handled and the review process.</p>
+    </a>
+
+    <a href="/docs/trust-tiers" class="doc-card">
+      <h3>Trust Tiers</h3>
+      <p>Understand skill verification levels and what they mean for you.</p>
+    </a>
   </div>
 
   <h2>Trust Tiers</h2>
 
-  <p>Skillsmith categorizes skills by trust level to help you make informed decisions:</p>
+  <p>Skillsmith categorizes skills by trust level to help you make informed decisions. <a href="/docs/trust-tiers">Learn more about trust tiers &rarr;</a></p>
 
   <table>
     <thead>
@@ -160,12 +193,12 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
         <td>Community-reviewed skills with quality checks</td>
       </tr>
       <tr>
-        <td><code>experimental</code></td>
-        <td>New or beta skills, use with caution</td>
+        <td><code>community</code></td>
+        <td>Community-reviewed skills with quality checks</td>
       </tr>
       <tr>
-        <td><code>unknown</code></td>
-        <td>Unverified skills, not recommended for production</td>
+        <td><code>unverified</code></td>
+        <td>Unverified skills, requires manual review</td>
       </tr>
     </tbody>
   </table>
