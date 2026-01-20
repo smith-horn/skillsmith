@@ -398,6 +398,28 @@ All scheduled jobs log to the `audit_logs` table:
 
 ---
 
+## Website Documentation (skillsmith.app)
+
+Public documentation pages at https://skillsmith.app/docs:
+
+| Page | Path | Description |
+|------|------|-------------|
+| Overview | `/docs` | Main documentation landing page |
+| Getting Started | `/docs/getting-started` | Setup guide for MCP server and CLI |
+| CLI Reference | `/docs/cli` | Complete CLI command reference |
+| MCP Server | `/docs/mcp-server` | MCP server configuration |
+| API Reference | `/docs/api` | API documentation for integrators |
+| Security | `/docs/security` | Security scanning, threat model, best practices |
+| Quarantine | `/docs/quarantine` | Quarantine severity levels and resolution process |
+| Trust Tiers | `/docs/trust-tiers` | Four-tier trust system (Official, Verified, Community, Unverified) |
+
+**Deployment**: Website auto-deploys via Vercel on push to `main`. Manual deploy:
+```bash
+cd packages/website && vercel --prod
+```
+
+---
+
 ## Troubleshooting
 
 ### Container won't start
