@@ -20,12 +20,12 @@ Implemented comprehensive monitoring and alerting infrastructure for Skillsmith'
 - **Function**: `ops-report` Edge Function
 - **Schedule**: Mondays 9 AM UTC
 - **Content**: Indexer stats, refresh stats, database counts, automated alerts
-- **Delivery**: Email to support@skillsmith.app via Resend
+- **Delivery**: Email to support@smithhorn.ca via Resend (direct, bypassing inbound webhook)
 
 ### 3. Alert Notifications
 - **Function**: `alert-notify` Edge Function
 - **Triggers**: Workflow failures (indexer, refresh)
-- **Delivery**: Immediate email to support@skillsmith.app
+- **Delivery**: Immediate email to support@smithhorn.ca (direct, bypassing inbound webhook)
 
 ### 4. Shared GitHub Auth
 - Extracted GitHub App authentication to `_shared/github-auth.ts`
