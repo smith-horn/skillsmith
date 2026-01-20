@@ -68,7 +68,7 @@ export interface RateLimitResult {
 /**
  * Default rate limits per endpoint
  *
- * SMI-1608: Tightened rate limits for anti-scraping protection
+ * SMI-1613: Tightened rate limits for anti-scraping protection
  * - skills-search: 100 → 10 req/min (scraping 500 skills takes 50+ min)
  * - skills-get: 100 → 10 req/min
  * - skills-recommend: 50 → 10 req/min
