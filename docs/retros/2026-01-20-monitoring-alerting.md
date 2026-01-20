@@ -46,6 +46,12 @@ Implemented comprehensive monitoring and alerting infrastructure for Skillsmith'
 - **Fix**: Updated FROM_EMAIL to use `skillsmith.app`
 - **Lesson**: When email fails silently, check domain verification first
 
+### Resend Inbound Webhook Loop
+- **Issue**: Ops report emails arrived with "No content" in the body
+- **Root Cause**: Sending to `support@skillsmith.app` triggered Resend's inbound webhook, which forwarded to `support@smithhorn.ca`, but Resend doesn't include body content in the webhook payload for self-sent emails
+- **Fix**: Changed operational emails (ops-report, alert-notify) to send directly to `support@smithhorn.ca`
+- **Lesson**: Avoid sending emails through inbound webhooks when you control both sender and recipient
+
 ### Batch Size Limits
 - **Issue**: Batch size of 500 caused Edge Function timeout
 - **Root Cause**: 150ms delay × 500 calls = 75 seconds minimum, plus GitHub API latency
@@ -100,4 +106,5 @@ feat(monitoring): add weekly ops report and alert notifications (SMI-1617)
 fix(email): use verified domain skillsmith.app instead of skillsmith.dev
 fix(email): update dashboard/docs URLs to skillsmith.app
 docs: add skills-refresh-metadata to Edge Functions table (SMI-1617)
+fix(email): send operational emails directly to avoid inbound webhook loop (SMI-1617)
 ```
