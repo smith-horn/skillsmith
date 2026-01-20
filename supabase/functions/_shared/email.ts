@@ -19,9 +19,9 @@ const FROM_EMAIL = Deno.env.get('EMAIL_FROM') || 'Skillsmith <noreply@skillsmith
 const REPLY_TO_EMAIL = Deno.env.get('EMAIL_REPLY_TO') || 'support@skillsmith.app'
 
 // Dashboard and docs URLs
-const DASHBOARD_URL = Deno.env.get('DASHBOARD_URL') || 'https://skillsmith.dev/account'
-const DOCS_URL = Deno.env.get('DOCS_URL') || 'https://skillsmith.dev/docs'
-const QUICKSTART_URL = Deno.env.get('QUICKSTART_URL') || 'https://skillsmith.dev/docs/quickstart'
+const DASHBOARD_URL = Deno.env.get('DASHBOARD_URL') || 'https://skillsmith.app/account'
+const DOCS_URL = Deno.env.get('DOCS_URL') || 'https://skillsmith.app/docs'
+const QUICKSTART_URL = Deno.env.get('QUICKSTART_URL') || 'https://skillsmith.app/docs/quickstart'
 
 /**
  * Tier information for email content
