@@ -267,25 +267,11 @@ const lastUpdated = 'January 17, 2026';
         <div class="space-y-2">
           <p class="text-dark-300">
             <span class="text-dark-400">General Inquiries:</span>
-            <button
-              class="text-primary-400 hover:text-primary-300 ml-2 email-reveal"
-              data-user="info"
-              data-domain="smithhorn.ca"
-              onclick="revealEmail(this)"
-            >
-              Click to reveal email
-            </button>
+            <a href="/contact?topic=general" class="text-primary-400 hover:text-primary-300 ml-2">Contact Form</a>
           </p>
           <p class="text-dark-300">
             <span class="text-dark-400">Support:</span>
-            <button
-              class="text-primary-400 hover:text-primary-300 ml-2 email-reveal"
-              data-user="support"
-              data-domain="smithhorn.ca"
-              onclick="revealEmail(this)"
-            >
-              Click to reveal email
-            </button>
+            <a href="/contact?topic=support" class="text-primary-400 hover:text-primary-300 ml-2">Contact Form</a>
           </p>
         </div>
 
@@ -302,17 +288,4 @@ const lastUpdated = 'January 17, 2026';
       </a>
     </div>
   </div>
-
-  <script is:inline>
-    function revealEmail(button) {
-      const user = button.getAttribute('data-user');
-      const domain = button.getAttribute('data-domain');
-      const email = user + '@' + domain;
-      const link = document.createElement('a');
-      link.href = 'mailto:' + email;
-      link.className = 'text-primary-400 hover:text-primary-300';
-      link.textContent = email;
-      button.replaceWith(link);
-    }
-  </script>
 </BaseLayout>
