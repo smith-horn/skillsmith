@@ -3,7 +3,7 @@
  * @module skills-search
  *
  * SMI-1180: API Development - Wave 3
- * SMI-1608: Anti-scraping protection (min 3 chars, no wildcards)
+ * SMI-1613: Anti-scraping protection (min 3 chars, no wildcards)
  *
  * Query Parameters:
  * - query (required): Search term (min 3 characters, wildcards not allowed)
@@ -69,7 +69,7 @@ Deno.serve(async (req: Request) => {
       url.searchParams.get('offset')
     )
 
-    // SMI-1608: Anti-scraping protection - require actual search terms
+    // SMI-1613: Anti-scraping protection - require actual search terms
     // Removed wildcard (*) support to prevent enumeration attacks
     // Increased minimum query length from 2 to 3 characters
     if (!query || query.trim().length < 3) {
