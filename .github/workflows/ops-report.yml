@@ -1,0 +1,129 @@
+# SMI-1617: Weekly operations report with email notification
+# Sends comprehensive ops report to support@skillsmith.app
+
+name: Weekly Ops Report
+
+on:
+  schedule:
+    # Every Monday at 9:00 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Number of days to include in report'
+        required: false
+        default: '7'
+        type: string
+      dry_run:
+        description: 'Dry run (generate report but do not send email)'
+        required: false
+        default: 'false'
+        type: boolean
+      recipients:
+        description: 'Email recipients (comma-separated, default: support@skillsmith.app)'
+        required: false
+        default: 'support@skillsmith.app'
+        type: string
+
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+jobs:
+  send-report:
+    name: Generate and Send Ops Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Validate Secrets
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::Required secrets not configured."
+            exit 1
+          fi
+          echo "✓ Secrets validated"
+
+      - name: Trigger Ops Report
+        id: report
+        run: |
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+          DAYS="${{ github.event.inputs.days || '7' }}"
+          RECIPIENTS="${{ github.event.inputs.recipients || 'support@skillsmith.app' }}"
+
+          # Convert comma-separated recipients to JSON array
+          RECIPIENTS_JSON=$(echo "$RECIPIENTS" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')
+
+          BODY=$(cat <<EOF
+          {
+            "days": $DAYS,
+            "dryRun": $DRY_RUN,
+            "recipients": $RECIPIENTS_JSON
+          }
+          EOF
+          )
+
+          echo "Triggering ops report with: $BODY"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
+            "$SUPABASE_URL/functions/v1/ops-report")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "Response code: $HTTP_CODE"
+          echo "Response: $BODY"
+
+          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+          echo "response<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "::error::Ops report failed with status $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: Generate Summary
+        if: success()
+        run: |
+          RESPONSE='${{ steps.report.outputs.response }}'
+
+          ALERT_COUNT=$(echo "$RESPONSE" | jq -r '.data.report.alerts | length')
+          TOTAL_SKILLS=$(echo "$RESPONSE" | jq -r '.data.report.database.totalSkills')
+          INDEXER_RUNS=$(echo "$RESPONSE" | jq -r '.data.report.indexer.runs')
+          REFRESH_RUNS=$(echo "$RESPONSE" | jq -r '.data.report.refresh.runs')
+          EMAIL_SENT=$(echo "$RESPONSE" | jq -r '.data.emailSent // "N/A (dry run)"')
+
+          echo "### 📊 Weekly Ops Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$ALERT_COUNT" -gt 0 ]; then
+            echo "⚠️ **$ALERT_COUNT Alert(s)**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "$RESPONSE" | jq -r '.data.report.alerts[]' | while read alert; do
+              echo "- $alert" >> $GITHUB_STEP_SUMMARY
+            done
+            echo "" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ No alerts" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Skills | $TOTAL_SKILLS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Indexer Runs | $INDEXER_RUNS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Refresh Runs | $REFRESH_RUNS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Email Sent | $EMAIL_SENT |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Report Failure
+        if: failure()
+        run: |
+          echo "### ❌ Ops Report Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "HTTP Code: ${{ steps.report.outputs.http_code }}" >> $GITHUB_STEP_SUMMARY

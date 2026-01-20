@@ -336,12 +336,51 @@ npx claude-flow swarm --config .claude/hive-mind/your-config.yaml
 | `skills-recommend` | Skill recommendations | API Key |
 | `indexer` | GitHub skill indexing (scheduled) | Service Role |
 | `skills-refresh-metadata` | Refresh metadata for existing skills (scheduled) | Service Role |
+| `ops-report` | Weekly operations report with email | Service Role |
+| `alert-notify` | Send alert emails on job failures | Service Role |
 
 **Deploy a function:**
 ```bash
 npx supabase functions deploy <function-name> --no-verify-jwt  # Anonymous access
 npx supabase functions deploy <function-name>                   # Requires auth
 ```
+
+---
+
+## Monitoring & Alerts
+
+### Scheduled Jobs
+
+| Job | Schedule | Function |
+|-----|----------|----------|
+| Skill Indexer | Daily 2 AM UTC | `indexer` |
+| Metadata Refresh | Hourly :30 | `skills-refresh-metadata` |
+| Weekly Ops Report | Monday 9 AM UTC | `ops-report` |
+| Billing Monitor | Monday 9 AM UTC | GitHub Actions only |
+
+### Alert Notifications
+
+Alerts are sent to `support@skillsmith.app` via Resend when:
+- Indexer workflow fails
+- Metadata refresh workflow fails (scheduled runs only)
+- Weekly ops report detects anomalies
+
+**Trigger manual ops report:**
+```bash
+varlock run -- bash -c 'curl -X POST \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"days\": 7, \"dryRun\": false}" \
+  "$SUPABASE_URL/functions/v1/ops-report"'
+```
+
+### Audit Logs
+
+All scheduled jobs log to the `audit_logs` table:
+- `indexer:run` - Skill indexing results
+- `refresh:run` - Metadata refresh results
+- `ops-report:sent` - Weekly report sent
+- `alert:sent` - Alert notification sent
 
 ---
 
