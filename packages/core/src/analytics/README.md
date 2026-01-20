@@ -7,6 +7,17 @@
 
 The Analytics module provides comprehensive infrastructure for tracking skill usage, running A/B experiments, and generating ROI dashboards. This implementation supports the Phase 4 Product Strategy goals of making skill value visible and validating ROI.
 
+## Privacy Guarantee
+
+**All analytics data is stored locally and never transmitted to Skillsmith servers.**
+
+- **Storage**: `~/.skillsmith/analytics.db` (SQLite on your machine)
+- **Retention**: 30-day rolling window, automatically cleaned
+- **Transmission**: None - this is a local-only feature
+- **Purpose**: Personal productivity insights and ROI tracking
+
+This module exists to help YOU understand the value you're getting from skills. We don't collect, aggregate, or analyze your usage patterns.
+
 ## Features
 
 ### Epic 3: Skill Usage Analytics

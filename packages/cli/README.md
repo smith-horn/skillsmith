@@ -420,6 +420,34 @@ By default, the CLI uses `~/.skillsmith/skills.db`. Override with:
 SKILLSMITH_DB_PATH=/custom/path/skills.db skillsmith search "testing"
 ```
 
+## Privacy & Data Handling
+
+Skillsmith is designed with privacy as a core principle.
+
+### What Stays on Your Computer (Never Transmitted)
+
+| Data | Location | Purpose |
+|------|----------|---------|
+| Skill usage history | `~/.skillsmith/analytics.db` | Personal ROI tracking |
+| Time saved metrics | `~/.skillsmith/analytics.db` | Your productivity insights |
+| Value calculations | Computed locally | ROI dashboard |
+| Project context | Hashed locally | Anonymous grouping |
+
+**The ROI Dashboard feature is 100% local.** Your usage patterns, time saved, and value metrics never leave your computer. This data exists solely for your benefit.
+
+### What Is Transmitted (Required for Functionality)
+
+| Data | When | Why |
+|------|------|-----|
+| Search queries | When you search | To return matching skills |
+| Skill IDs | When viewing/installing | To fetch skill details |
+
+### Optional Telemetry (Opt-In)
+
+Anonymous product analytics (search counts, feature usage) are **opt-in only**. Telemetry is disabled by default and requires explicit configuration (`SKILLSMITH_TELEMETRY_ENABLED=true`).
+
+To run fully offline: Set `SKILLSMITH_OFFLINE_MODE=true` to disable all network calls.
+
 ## Examples
 
 ### Discover and Install Skills
