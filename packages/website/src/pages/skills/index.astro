@@ -258,7 +258,7 @@ const trustTiers = [
     let allResults = [];
     let debounceTimer = null;
 
-    const MIN_QUERY_LENGTH = 3; // SMI-1608: Minimum characters for search
+    const MIN_QUERY_LENGTH = 3; // SMI-1613: Minimum characters for search
 
     // DOM Elements
     const searchInput = document.getElementById('search-input');
@@ -384,7 +384,7 @@ const trustTiers = [
       const category = categoryFilter.value;
       const trustTier = trustFilter.value;
 
-      // SMI-1608: Require minimum query length to prevent enumeration
+      // SMI-1613: Require minimum query length to prevent enumeration
       if (query.length < MIN_QUERY_LENGTH) {
         showState('search-prompt');
         resultsCount.textContent = `Enter at least ${MIN_QUERY_LENGTH} characters to search`;
@@ -395,7 +395,7 @@ const trustTiers = [
       showState('loading');
       resultsCount.textContent = 'Searching...';
 
-      // SMI-1608: Add timeout to prevent indefinite loading
+      // SMI-1613: Add timeout to prevent indefinite loading
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
