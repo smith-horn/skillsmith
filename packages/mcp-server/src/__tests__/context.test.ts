@@ -20,23 +20,27 @@ import {
 } from '../context.js'
 
 describe('Context Module', () => {
-  const originalEnv = process.env
+  // Store original values for env vars we modify
+  const ENV_VARS_TO_CLEAR = [
+    'SKILLSMITH_DB_PATH',
+    'SKILLSMITH_TELEMETRY_ENABLED',
+    'POSTHOG_API_KEY',
+    'SKILLSMITH_BACKGROUND_SYNC',
+    'SKILLSMITH_LLM_FAILOVER_ENABLED',
+  ] as const
 
   beforeEach(async () => {
     vi.resetModules()
-    process.env = { ...originalEnv }
-    // Clear any env vars that affect context creation
-    delete process.env.SKILLSMITH_DB_PATH
-    delete process.env.SKILLSMITH_TELEMETRY_ENABLED
-    delete process.env.POSTHOG_API_KEY
-    delete process.env.SKILLSMITH_BACKGROUND_SYNC
-    delete process.env.SKILLSMITH_LLM_FAILOVER_ENABLED
+    // Use vi.stubEnv for proper environment isolation
+    ENV_VARS_TO_CLEAR.forEach((key) => {
+      vi.stubEnv(key, undefined as unknown as string)
+    })
     // Reset global context
     await resetToolContext()
   })
 
   afterEach(async () => {
-    process.env = originalEnv
+    vi.unstubAllEnvs()
     vi.restoreAllMocks()
     await resetToolContext()
   })

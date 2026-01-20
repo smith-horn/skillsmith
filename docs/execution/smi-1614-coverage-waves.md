@@ -162,6 +162,38 @@ docker exec skillsmith-dev-1 npm run test:coverage
 
 ---
 
+## Code Review Follow-up (PR #24)
+
+After PR #23 was merged, a code review identified several issues that were addressed in PR #24.
+
+### Issues Identified
+
+| Issue | Severity | Description |
+|-------|----------|-------------|
+| Mock-based expiration tests | Major | License expiration tests (lines 418-517) tested mocks instead of actual `getExpirationWarning` implementation |
+| Environment restoration | Minor | Manual `process.env` manipulation could cause test pollution |
+| Duplicate mock objects | Minor | Similar mock middleware created across multiple tests |
+| Magic numbers | Minor | Hard-coded values like `24 * 60 * 60 * 1000` reduced readability |
+| Undocumented timeout | Minor | 15s timeout lacked explanation of why it's needed |
+
+### Resolutions
+
+1. **Export `getExpirationWarning`** - Added `@internal` tag and exported the pure function for direct unit testing
+2. **Use `vi.stubEnv()`** - Replaced manual env manipulation with proper vitest environment stubbing
+3. **Create `createMockMiddleware()`** - Factory function reduces duplication
+4. **Add `MS_PER_DAY` constant** - Named constant improves code readability
+5. **Document 15s timeout** - Added explanation that monorepo CI loads real enterprise validator
+
+### Test Quality Improvements
+
+The new `getExpirationWarning` tests:
+- Use `vi.useFakeTimers()` for deterministic time control
+- Test all boundary conditions (0, 1, 30, 31 days)
+- Exercise actual implementation logic, not pre-computed mocks
+- Include proper cleanup in `finally` blocks
+
+---
+
 ## Decision Log
 
 | Date | Decision | Rationale |
@@ -169,3 +201,5 @@ docker exec skillsmith-dev-1 npm run test:coverage
 | 2026-01-19 | Commit at 67.82% instead of 72% | Significant progress made on context.ts. Remaining work can be done in follow-up PRs. |
 | 2026-01-19 | Skip threshold update to 72% | Need ~4% more branch coverage before raising threshold. |
 | 2026-01-19 | Focus on context.ts first | Largest gap (46.83%) with most testable surface area. |
+| 2026-01-19 | Export internal function for testing | Pure functions like `getExpirationWarning` are easier to test directly than through integration. |
+| 2026-01-19 | Use `vi.stubEnv()` pattern | Vitest's built-in env stubbing is cleaner than manual `process.env` manipulation. |

@@ -12,12 +12,31 @@ import {
   requiresLicense,
   getRequiredFeature,
   createLicenseErrorResponse,
+  getExpirationWarning,
   TOOL_FEATURES,
   FEATURE_DISPLAY_NAMES,
   FEATURE_TIERS,
   type FeatureFlag,
   type LicenseInfo,
+  type LicenseMiddleware,
 } from '../../middleware/license.js'
+
+// Time constants for readability
+const MS_PER_DAY = 24 * 60 * 60 * 1000
+
+/**
+ * Factory function for creating mock LicenseMiddleware
+ * Reduces duplication across tests
+ */
+function createMockMiddleware(overrides?: Partial<LicenseMiddleware>): LicenseMiddleware {
+  return {
+    checkFeature: vi.fn().mockResolvedValue({ valid: true }),
+    checkTool: vi.fn().mockResolvedValue({ valid: true }),
+    getLicenseInfo: vi.fn().mockResolvedValue(null),
+    invalidateCache: vi.fn(),
+    ...overrides,
+  }
+}
 
 describe('License Middleware', () => {
   const originalEnv = process.env
@@ -139,21 +158,28 @@ describe('License Middleware', () => {
         process.env.SKILLSMITH_LICENSE_KEY = 'invalid-key-123'
       })
 
-      it('should return null when license key present but validation unavailable', async () => {
-        // When a license key is provided but the enterprise package is not available,
-        // we return null to indicate validation failure rather than silently degrading
-        // to community tier. This ensures paying customers get feedback.
-        // See SMI-1130 for rationale.
-        //
-        // SMI-1588: Increased timeout to handle enterprise validator initialization
-        // in monorepo CI where the package is available but validation may be slow.
-        const middleware = createLicenseMiddleware()
-        const license = await middleware.getLicenseInfo()
+      it(
+        'should return null when license key present but validation unavailable',
+        async () => {
+          // When a license key is provided but the enterprise package is not available,
+          // we return null to indicate validation failure rather than silently degrading
+          // to community tier. This ensures paying customers get feedback.
+          // See SMI-1130 for rationale.
+          //
+          // SMI-1588: Extended timeout (15s) required because in monorepo CI the
+          // @skillsmith/enterprise package IS available. The dynamic import at line 107
+          // of license.ts loads the package, and LicenseValidator initialization may
+          // involve async operations (key decryption, signature verification).
+          // This is NOT a test smell - it reflects real-world enterprise validation latency.
+          const middleware = createLicenseMiddleware()
+          const license = await middleware.getLicenseInfo()
 
-        // License key present + no validator = null (validation failed)
-        // License key present + validator available = validates (may still be null if invalid)
-        expect(license).toBeNull()
-      }, 15000) // Extended timeout for enterprise validator initialization
+          // License key present + no validator = null (validation failed)
+          // License key present + validator available = validates (may still be null if invalid)
+          expect(license).toBeNull()
+        },
+        15 * 1000
+      ) // 15s: Enterprise validator initialization in monorepo CI
 
       it('should still allow community tools', async () => {
         const middleware = createLicenseMiddleware()
@@ -185,7 +211,8 @@ describe('License Middleware', () => {
       })
 
       it('should return cached license within TTL period', async () => {
-        const middleware = createLicenseMiddleware({ cacheTtlMs: 60000 }) // 60 second TTL
+        const cacheTtl = 60 * 1000 // 60 seconds
+        const middleware = createLicenseMiddleware({ cacheTtlMs: cacheTtl })
 
         const license1 = await middleware.getLicenseInfo()
         // Immediately get again - should be cached
@@ -198,12 +225,13 @@ describe('License Middleware', () => {
         vi.useFakeTimers()
 
         try {
-          const middleware = createLicenseMiddleware({ cacheTtlMs: 100 }) // 100ms TTL
+          const shortTtl = 100 // 100ms TTL for fast test
+          const middleware = createLicenseMiddleware({ cacheTtlMs: shortTtl })
 
           const license1 = await middleware.getLicenseInfo()
 
           // Advance time past TTL
-          vi.advanceTimersByTime(200)
+          vi.advanceTimersByTime(shortTtl * 2)
 
           const license2 = await middleware.getLicenseInfo()
 
@@ -246,13 +274,9 @@ describe('License Middleware', () => {
     })
 
     it('should return valid for features in license', async () => {
-      // Mock a licensed middleware
-      const mockMiddleware = {
+      const mockMiddleware = createMockMiddleware({
         checkFeature: vi.fn().mockResolvedValue({ valid: true }),
-        checkTool: vi.fn(),
-        getLicenseInfo: vi.fn(),
-        invalidateCache: vi.fn(),
-      }
+      })
 
       const checkPrivate = requireFeature('private_skills')
       const result = await checkPrivate(mockMiddleware)
@@ -415,105 +439,109 @@ describe('License Middleware', () => {
     })
   })
 
-  describe('license expiration warning', () => {
-    it('should return warning when license expires within 30 days', async () => {
-      // Mock middleware that returns a license expiring in 15 days
-      const expiresIn15Days = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000)
-      const mockMiddleware = {
-        checkFeature: vi.fn().mockResolvedValue({
-          valid: true,
-          warning: `Your license expires in 15 days. Please renew to avoid service interruption.`,
-        }),
-        checkTool: vi.fn(),
-        getLicenseInfo: vi.fn().mockResolvedValue({
-          valid: true,
-          tier: 'enterprise',
-          features: ['audit_logging'],
-          expiresAt: expiresIn15Days,
-        }),
-        invalidateCache: vi.fn(),
-      }
+  describe('getExpirationWarning', () => {
+    it('should return warning when license expires within 30 days', () => {
+      vi.useFakeTimers()
+      try {
+        const now = new Date('2026-01-15T12:00:00Z')
+        vi.setSystemTime(now)
 
-      const result = await mockMiddleware.checkFeature('audit_logging')
-      expect(result.valid).toBe(true)
-      expect(result.warning).toContain('expires in 15 days')
-      expect(result.warning).toContain('Please renew')
+        const expiresIn15Days = new Date(now.getTime() + 15 * MS_PER_DAY)
+        const warning = getExpirationWarning(expiresIn15Days)
+
+        expect(warning).toBe(
+          'Your license expires in 15 days. Please renew to avoid service interruption.'
+        )
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
-    it('should use singular day when 1 day remaining', async () => {
-      const mockMiddleware = {
-        checkFeature: vi.fn().mockResolvedValue({
-          valid: true,
-          warning: `Your license expires in 1 day. Please renew to avoid service interruption.`,
-        }),
-        checkTool: vi.fn(),
-        getLicenseInfo: vi.fn(),
-        invalidateCache: vi.fn(),
-      }
+    it('should use singular day when 1 day remaining', () => {
+      vi.useFakeTimers()
+      try {
+        const now = new Date('2026-01-15T12:00:00Z')
+        vi.setSystemTime(now)
 
-      const result = await mockMiddleware.checkFeature('audit_logging')
-      expect(result.warning).toContain('1 day')
-      expect(result.warning).not.toContain('1 days')
+        const expiresIn1Day = new Date(now.getTime() + 1 * MS_PER_DAY)
+        const warning = getExpirationWarning(expiresIn1Day)
+
+        expect(warning).toBe(
+          'Your license expires in 1 day. Please renew to avoid service interruption.'
+        )
+        expect(warning).not.toContain('1 days')
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
-    it('should not return warning when license expires in more than 30 days', async () => {
-      const mockMiddleware = {
-        checkFeature: vi.fn().mockResolvedValue({
-          valid: true,
-          warning: undefined,
-        }),
-        checkTool: vi.fn(),
-        getLicenseInfo: vi.fn(),
-        invalidateCache: vi.fn(),
-      }
+    it('should not return warning when license expires in more than 30 days', () => {
+      vi.useFakeTimers()
+      try {
+        const now = new Date('2026-01-15T12:00:00Z')
+        vi.setSystemTime(now)
 
-      const result = await mockMiddleware.checkFeature('audit_logging')
-      expect(result.valid).toBe(true)
-      expect(result.warning).toBeUndefined()
+        const expiresIn31Days = new Date(now.getTime() + 31 * MS_PER_DAY)
+        const warning = getExpirationWarning(expiresIn31Days)
+
+        expect(warning).toBeUndefined()
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
-    it('should not return warning when expiresAt is undefined', async () => {
-      const mockMiddleware = {
-        checkFeature: vi.fn().mockResolvedValue({
-          valid: true,
-          warning: undefined,
-        }),
-        checkTool: vi.fn(),
-        getLicenseInfo: vi.fn().mockResolvedValue({
-          valid: true,
-          tier: 'team',
-          features: ['private_skills'],
-          expiresAt: undefined,
-        }),
-        invalidateCache: vi.fn(),
-      }
-
-      const result = await mockMiddleware.checkFeature('private_skills')
-      expect(result.valid).toBe(true)
-      expect(result.warning).toBeUndefined()
+    it('should not return warning when expiresAt is undefined', () => {
+      const warning = getExpirationWarning(undefined)
+      expect(warning).toBeUndefined()
     })
 
-    it('should not return warning when license is already expired (daysUntilExpiry <= 0)', async () => {
-      // Mock middleware with an expired license
-      const expiredDate = new Date(Date.now() - 24 * 60 * 60 * 1000) // Yesterday
-      const mockMiddleware = {
-        checkFeature: vi.fn().mockResolvedValue({
-          valid: true, // License might still work for grace period
-          warning: undefined, // No warning for expired - it's past the point of warning
-        }),
-        checkTool: vi.fn(),
-        getLicenseInfo: vi.fn().mockResolvedValue({
-          valid: true,
-          tier: 'enterprise',
-          features: ['audit_logging'],
-          expiresAt: expiredDate,
-        }),
-        invalidateCache: vi.fn(),
-      }
+    it('should not return warning when license is already expired (daysUntilExpiry <= 0)', () => {
+      vi.useFakeTimers()
+      try {
+        const now = new Date('2026-01-15T12:00:00Z')
+        vi.setSystemTime(now)
 
-      const result = await mockMiddleware.checkFeature('audit_logging')
-      // When license has already expired, no "expiring soon" warning is shown
-      expect(result.warning).toBeUndefined()
+        const expiredYesterday = new Date(now.getTime() - 1 * MS_PER_DAY)
+        const warning = getExpirationWarning(expiredYesterday)
+
+        // When license has already expired, no "expiring soon" warning is shown
+        expect(warning).toBeUndefined()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('should return warning at exactly 30 days', () => {
+      vi.useFakeTimers()
+      try {
+        const now = new Date('2026-01-15T12:00:00Z')
+        vi.setSystemTime(now)
+
+        const expiresIn30Days = new Date(now.getTime() + 30 * MS_PER_DAY)
+        const warning = getExpirationWarning(expiresIn30Days)
+
+        expect(warning).toBe(
+          'Your license expires in 30 days. Please renew to avoid service interruption.'
+        )
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('should not return warning when license expires today (0 days)', () => {
+      vi.useFakeTimers()
+      try {
+        const now = new Date('2026-01-15T12:00:00Z')
+        vi.setSystemTime(now)
+
+        // Expires today - 0 days remaining (edge case: daysUntilExpiry > 0 check)
+        const expiresToday = new Date(now.getTime() + 1) // Just 1ms in the future
+        const warning = getExpirationWarning(expiresToday)
+
+        expect(warning).toBeUndefined()
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 })
