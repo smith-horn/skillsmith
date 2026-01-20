@@ -7,13 +7,13 @@
 
 export interface QualityTier {
   /** Minimum star count for this tier (inclusive) */
-  minStars: number;
+  minStars: number
   /** Tailwind CSS color class */
-  color: string;
+  color: string
   /** Human-readable tier label */
-  label: string;
+  label: string
   /** Description for accessibility and documentation */
-  description: string;
+  description: string
 }
 
 /**
@@ -24,7 +24,7 @@ export const TIER_THRESHOLDS = {
   ELITE: 10000,
   HIGH_QUALITY: 500,
   GROWING: 50,
-} as const;
+} as const
 
 /**
  * Quality tiers ordered from highest to lowest.
@@ -55,7 +55,7 @@ export const QUALITY_TIERS: readonly QualityTier[] = [
     label: 'New',
     description: 'Under 50 stars',
   },
-] as const;
+] as const
 
 /**
  * Get the quality tier for a given star count.
@@ -70,8 +70,11 @@ export const QUALITY_TIERS: readonly QualityTier[] = [
  * ```
  */
 export function getQualityTier(stars: number | null | undefined): QualityTier {
-  const starCount = stars ?? 0;
-  return QUALITY_TIERS.find(tier => starCount >= tier.minStars) ?? QUALITY_TIERS[QUALITY_TIERS.length - 1];
+  const starCount = stars ?? 0
+  return (
+    QUALITY_TIERS.find((tier) => starCount >= tier.minStars) ??
+    QUALITY_TIERS[QUALITY_TIERS.length - 1]
+  )
 }
 
 /**
@@ -81,7 +84,7 @@ export function getQualityTier(stars: number | null | undefined): QualityTier {
  * @returns Formatted string (e.g., "10,000")
  */
 export function formatStarCount(num: number | null | undefined): string {
-  return new Intl.NumberFormat().format(num ?? 0);
+  return new Intl.NumberFormat().format(num ?? 0)
 }
 
 /**
@@ -91,15 +94,18 @@ export function formatStarCount(num: number | null | undefined): string {
  * @param stars - The star count
  * @returns Object with aria-label and title attributes
  */
-export function getAccessibilityAttrs(tier: QualityTier, stars: number | null | undefined): {
-  'aria-label': string;
-  title: string;
-  role: string;
+export function getAccessibilityAttrs(
+  tier: QualityTier,
+  stars: number | null | undefined
+): {
+  'aria-label': string
+  title: string
+  role: string
 } {
-  const starCount = formatStarCount(stars);
+  const starCount = formatStarCount(stars)
   return {
     'aria-label': `${tier.label}: ${starCount} stars`,
     title: `${tier.label}: ${starCount} stars`,
     role: 'img',
-  };
+  }
 }
