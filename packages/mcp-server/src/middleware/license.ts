@@ -151,8 +151,9 @@ export function getRequiredFeature(toolName: string): FeatureFlag | null {
 
 /**
  * Check if license is expiring soon (within 30 days)
+ * @internal Exported for testing
  */
-function getExpirationWarning(expiresAt?: Date): string | undefined {
+export function getExpirationWarning(expiresAt?: Date): string | undefined {
   if (!expiresAt) return undefined
   const daysUntilExpiry = Math.floor((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
   if (daysUntilExpiry <= 30 && daysUntilExpiry > 0) {
