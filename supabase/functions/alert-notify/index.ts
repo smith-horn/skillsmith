@@ -37,7 +37,9 @@ interface AlertRequest {
   runUrl?: string
 }
 
-const ALERT_RECIPIENTS = ['support@skillsmith.app']
+// Send to smithhorn.ca directly to avoid Resend inbound webhook loop
+// (Resend inbound doesn't include body content for self-sent emails)
+const ALERT_RECIPIENTS = ['support@smithhorn.ca']
 
 /**
  * Generate alert email HTML

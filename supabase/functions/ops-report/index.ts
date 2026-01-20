@@ -10,7 +10,7 @@
  * - Skill database stats
  * - Error rates
  *
- * Sends report to support@skillsmith.app via Resend.
+ * Sends report to support@smithhorn.ca via Resend.
  *
  * Request Body (optional):
  * - dryRun: If true, return report but don't send email (default: false)
@@ -284,7 +284,9 @@ Deno.serve(async (req: Request) => {
 
     const dryRun = body.dryRun ?? false
     const days = Math.min(Math.max(body.days || 7, 1), 30)
-    const recipients = body.recipients || ['support@skillsmith.app']
+    // Send to smithhorn.ca directly to avoid Resend inbound webhook loop
+    // (Resend inbound doesn't include body content for self-sent emails)
+    const recipients = body.recipients || ['support@smithhorn.ca']
 
     const supabase = createSupabaseAdminClient()
 
