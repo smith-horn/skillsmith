@@ -396,6 +396,8 @@ jobs:
     timeout-minutes: 15
     needs: docker-build
     if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
 
     steps:
       - name: Checkout
