@@ -418,6 +418,10 @@ Public documentation pages at https://skillsmith.app/docs:
 cd packages/website && vercel --prod
 ```
 
+**Contact Form**: All user inquiries route through `/contact` form (no exposed email addresses).
+- Supports `?topic=` URL param: `verification`, `security`, `support`, `enterprise`, `general`, etc.
+- `/verify` redirects to `/contact?topic=verification`
+
 ---
 
 ## Troubleshooting
