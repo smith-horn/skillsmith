@@ -15,8 +15,8 @@ const RESEND_API_URL = 'https://api.resend.com/emails'
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
 
 // Email sender configuration
-const FROM_EMAIL = Deno.env.get('EMAIL_FROM') || 'Skillsmith <noreply@skillsmith.dev>'
-const REPLY_TO_EMAIL = Deno.env.get('EMAIL_REPLY_TO') || 'support@skillsmith.dev'
+const FROM_EMAIL = Deno.env.get('EMAIL_FROM') || 'Skillsmith <noreply@skillsmith.app>'
+const REPLY_TO_EMAIL = Deno.env.get('EMAIL_REPLY_TO') || 'support@skillsmith.app'
 
 // Dashboard and docs URLs
 const DASHBOARD_URL = Deno.env.get('DASHBOARD_URL') || 'https://skillsmith.dev/account'
