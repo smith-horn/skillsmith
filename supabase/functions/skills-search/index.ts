@@ -3,9 +3,10 @@
  * @module skills-search
  *
  * SMI-1180: API Development - Wave 3
+ * SMI-1608: Anti-scraping protection (min 3 chars, no wildcards)
  *
  * Query Parameters:
- * - query (required): Search term (min 2 characters)
+ * - query (required): Search term (min 3 characters, wildcards not allowed)
  * - category: Filter by category
  * - trust_tier: Filter by trust level (verified, community, experimental, unknown)
  * - min_score: Minimum quality score (0-100, will be converted to 0-1)
@@ -68,11 +69,21 @@ Deno.serve(async (req: Request) => {
       url.searchParams.get('offset')
     )
 
-    // Validate required query parameter (allow '*' as wildcard for all skills)
-    const isWildcard = query?.trim() === '*'
-    if (!isWildcard && (!query || query.trim().length < 2)) {
+    // SMI-1608: Anti-scraping protection - require actual search terms
+    // Removed wildcard (*) support to prevent enumeration attacks
+    // Increased minimum query length from 2 to 3 characters
+    if (!query || query.trim().length < 3) {
+      return errorResponse('Query parameter required (minimum 3 characters)', 400, {
+        parameter: 'query',
+        received: query,
+        hint: 'Use specific search terms like "testing", "git", or "docker"',
+      })
+    }
+
+    // Block wildcard queries explicitly
+    if (query.trim() === '*') {
       return errorResponse(
-        'Query parameter required (minimum 2 characters, or use * for all)',
+        'Wildcard queries are not supported. Please use specific search terms.',
         400,
         {
           parameter: 'query',
@@ -110,35 +121,18 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createSupabaseClient(req.headers.get('authorization') ?? undefined)
 
-    let results: SearchResult[]
+    // Use the search_skills function for full-text search
+    const { data: searchResults, error: searchError } = await supabase.rpc('search_skills', {
+      search_query: query.trim(),
+      limit_count: limit,
+      offset_count: offset,
+    })
 
-    if (isWildcard) {
-      // List all skills when query is '*'
-      const { data: allSkills, error: listError } = await supabase
-        .from('skills')
-        .select('id, name, author, description, trust_tier, quality_score')
-        .order('quality_score', { ascending: false })
-        .range(offset, offset + limit - 1)
-
-      if (listError) {
-        console.error('List error:', listError)
-        return errorResponse('Failed to list skills', 500, { code: listError.code })
-      }
-      results = allSkills || []
-    } else {
-      // Use the search_skills function for full-text search
-      const { data: searchResults, error: searchError } = await supabase.rpc('search_skills', {
-        search_query: query!.trim(),
-        limit_count: limit,
-        offset_count: offset,
-      })
-
-      if (searchError) {
-        console.error('Search error:', searchError)
-        return errorResponse('Search failed', 500, { code: searchError.code })
-      }
-      results = searchResults || []
+    if (searchError) {
+      console.error('Search error:', searchError)
+      return errorResponse('Search failed', 500, { code: searchError.code })
     }
+    let results: SearchResult[] = searchResults || []
 
     // Apply additional filters in-memory (could be optimized with a custom RPC)
     if (trustTier) {

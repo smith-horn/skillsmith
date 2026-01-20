@@ -67,11 +67,16 @@ export interface RateLimitResult {
 
 /**
  * Default rate limits per endpoint
+ *
+ * SMI-1608: Tightened rate limits for anti-scraping protection
+ * - skills-search: 100 → 10 req/min (scraping 500 skills takes 50+ min)
+ * - skills-get: 100 → 10 req/min
+ * - skills-recommend: 50 → 10 req/min
  */
 export const RATE_LIMITS: Record<string, RateLimitConfig> = {
-  'skills-search': { requests: 100, windowSeconds: 60 },
-  'skills-get': { requests: 100, windowSeconds: 60 },
-  'skills-recommend': { requests: 50, windowSeconds: 60 },
+  'skills-search': { requests: 10, windowSeconds: 60 },
+  'skills-get': { requests: 10, windowSeconds: 60 },
+  'skills-recommend': { requests: 10, windowSeconds: 60 },
   events: { requests: 200, windowSeconds: 60 },
 }
 
