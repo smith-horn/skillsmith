@@ -1,15 +1,15 @@
-# SMI-1618: GitHub Actions workflow for scheduled skill metadata refresh
+# SMI-1617: GitHub Actions workflow for scheduled skill metadata refresh
 # Refreshes metadata (stars, quality_score) for existing skills in the database
 #
-# Runs 2 hours after the indexer to avoid overlap
+# Runs hourly to keep ~14k skills fresh (100/hour = full refresh every 6 days)
 # The indexer adds new skills; this job keeps existing skills up-to-date
 
 name: Skill Metadata Refresh
 
 on:
   schedule:
-    # Run daily at 4:00 AM UTC (2 hours after indexer at 2:00 AM)
-    - cron: '0 4 * * *'
+    # Run hourly at minute 30 (offset from indexer which runs at :00)
+    - cron: '30 * * * *'
   workflow_dispatch:
     inputs:
       batch_size:
