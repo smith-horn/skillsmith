@@ -117,3 +117,18 @@ jobs:
           echo "HTTP Code: ${{ steps.indexer.outputs.http_code }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Response: \`${{ steps.indexer.outputs.response }}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Send Alert on Failure
+        if: failure()
+        run: |
+          curl -s -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "type": "indexer_failed",
+              "message": "The daily skill indexer workflow failed. HTTP Code: ${{ steps.indexer.outputs.http_code }}",
+              "workflow": "Skill Indexer",
+              "runId": "${{ github.run_id }}",
+              "runUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }' \
+            "$SUPABASE_URL/functions/v1/alert-notify" || true

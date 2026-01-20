@@ -127,3 +127,19 @@ jobs:
           echo "HTTP Code: ${{ steps.refresh.outputs.http_code }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Response: \`${{ steps.refresh.outputs.response }}\`" >> $GITHUB_STEP_SUMMARY
+
+      # Only alert on scheduled runs to avoid noise during manual testing
+      - name: Send Alert on Failure
+        if: failure() && github.event_name == 'schedule'
+        run: |
+          curl -s -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "type": "refresh_failed",
+              "message": "The hourly metadata refresh workflow failed. HTTP Code: ${{ steps.refresh.outputs.http_code }}",
+              "workflow": "Skill Metadata Refresh",
+              "runId": "${{ github.run_id }}",
+              "runUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }' \
+            "$SUPABASE_URL/functions/v1/alert-notify" || true
