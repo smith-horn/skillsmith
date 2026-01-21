@@ -175,7 +175,8 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
 
         // Validate: require query OR at least one filter
         const hasQuery = query.trim().length > 0
-        const hasFilters = trustTiers.length > 0 || (minQualityScore !== undefined && minQualityScore > 0)
+        const hasFilters =
+          trustTiers.length > 0 || (minQualityScore !== undefined && minQualityScore > 0)
 
         if (!hasQuery && !hasFilters) {
           console.log(chalk.red('Please provide a search query or select at least one filter.'))
@@ -365,7 +366,10 @@ Quality Score Formula:
 
   Verified skills from high-trust authors may have manually assigned scores.`
     )
-    .argument('[query]', 'Search query (optional when using --tier, --category, or --min-score filters)')
+    .argument(
+      '[query]',
+      'Search query (optional when using --tier, --category, or --min-score filters)'
+    )
     .option('-i, --interactive', 'Launch interactive search mode')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .option('-l, --limit <number>', 'Maximum results to show', '20')
@@ -392,7 +396,13 @@ Quality Score Formula:
             await runInteractiveSearch(dbPath)
           } else if (query) {
             // Query provided - run search with optional filters
-            const searchOpts: { db: string; limit: number; tier?: TrustTier; category?: string; minScore?: number } = {
+            const searchOpts: {
+              db: string
+              limit: number
+              tier?: TrustTier
+              category?: string
+              minScore?: number
+            } = {
               db: dbPath,
               limit,
             }
@@ -409,7 +419,13 @@ Quality Score Formula:
           } else if (tier !== undefined || category !== undefined || minScore !== undefined) {
             // No query but filters provided - run filter-only search
             console.log(chalk.blue('Running filter-only search...'))
-            const searchOpts: { db: string; limit: number; tier?: TrustTier; category?: string; minScore?: number } = {
+            const searchOpts: {
+              db: string
+              limit: number
+              tier?: TrustTier
+              category?: string
+              minScore?: number
+            } = {
               db: dbPath,
               limit,
             }

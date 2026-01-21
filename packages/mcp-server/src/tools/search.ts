@@ -137,6 +137,14 @@ export async function executeSearch(
     )
   }
 
+  // SMI-1613: Anti-scraping - require minimum 3 chars when query IS provided
+  if (hasQuery && input.query!.trim().length < 3) {
+    throw new SkillsmithError(
+      ErrorCodes.SEARCH_QUERY_EMPTY,
+      'Query must be at least 3 characters. Use specific search terms like "testing", "git", or "docker".'
+    )
+  }
+
   const filters: SearchFilters = {}
 
   // Apply category filter
@@ -213,10 +221,16 @@ export async function executeSearch(
 
       // SMI-1184: Track search event (silent on failure)
       if (context.distinctId) {
-        trackSkillSearch(context.distinctId, input.query || '', response.total, response.timing.totalMs, {
-          trustTier: filters.trustTier,
-          category: filters.category,
-        })
+        trackSkillSearch(
+          context.distinctId,
+          input.query || '',
+          response.total,
+          response.timing.totalMs,
+          {
+            trustTier: filters.trustTier,
+            category: filters.category,
+          }
+        )
       }
 
       return response
@@ -274,10 +288,16 @@ export async function executeSearch(
 
   // SMI-1184: Track search event (silent on failure)
   if (context.distinctId) {
-    trackSkillSearch(context.distinctId, input.query || '', response.total, response.timing.totalMs, {
-      trustTier: filters.trustTier,
-      category: filters.category,
-    })
+    trackSkillSearch(
+      context.distinctId,
+      input.query || '',
+      response.total,
+      response.timing.totalMs,
+      {
+        trustTier: filters.trustTier,
+        category: filters.category,
+      }
+    )
   }
 
   return response

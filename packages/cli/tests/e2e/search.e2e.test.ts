@@ -386,23 +386,11 @@ describe('E2E: skillsmith search', () => {
       expect(result.stderr).not.toContain('2 characters')
       expect(result.stderr).not.toContain('at least')
 
-      assertNoHardcoded(
-        result,
-        'skillsmith search a',
-        'search: single char query',
-        __filename
-      )
+      assertNoHardcoded(result, 'skillsmith search a', 'search: single char query', __filename)
     })
 
     it('should combine query with filters', async () => {
-      const result = await runCommand([
-        'search',
-        'test',
-        '--tier',
-        'community',
-        '-d',
-        TEST_DB_PATH,
-      ])
+      const result = await runCommand(['search', 'test', '--tier', 'community', '-d', TEST_DB_PATH])
 
       expect(result.exitCode).toBe(0)
 

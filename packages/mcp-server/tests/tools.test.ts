@@ -8,7 +8,6 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { executeSearch } from '../src/tools/search.js'
-import { SkillsmithError } from '@skillsmith/core'
 import { createSeededTestContext, type ToolContext } from '../src/__tests__/test-utils.js'
 
 // Mock the file operations for testing
@@ -208,9 +207,9 @@ describe('Filter-only search', () => {
   })
 
   it('should throw error when no query and no filters', async () => {
-    await expect(
-      executeSearch({} as Parameters<typeof executeSearch>[0], context)
-    ).rejects.toThrow(/query or.*filter/i)
+    await expect(executeSearch({} as Parameters<typeof executeSearch>[0], context)).rejects.toThrow(
+      /query or.*filter/i
+    )
   })
 
   it('should accept single character query', async () => {

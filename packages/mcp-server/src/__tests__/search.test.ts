@@ -88,8 +88,9 @@ describe('Search Tool', () => {
       await expect(executeSearch({ query: '' }, context)).rejects.toThrow(SkillsmithError)
     })
 
-    it('should throw error for query less than 2 characters', async () => {
+    it('should throw error for query less than 3 characters', async () => {
       await expect(executeSearch({ query: 'a' }, context)).rejects.toThrow(SkillsmithError)
+      await expect(executeSearch({ query: 'ab' }, context)).rejects.toThrow(SkillsmithError)
     })
 
     it('should throw error for invalid min_score', async () => {
