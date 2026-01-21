@@ -29,7 +29,23 @@ const TRUST_TIER_COLORS: Record<TrustTier, (text: string) => string> = {
   unknown: chalk.gray,
 }
 
-const SKILLS_DIR = join(homedir(), '.claude', 'skills')
+/**
+ * SMI-1630: Search both global and local skill directories
+ *
+ * Global: ~/.claude/skills/
+ * Local: ${process.cwd()}/.claude/skills/
+ *
+ * Local skills take precedence over global skills with the same name.
+ */
+const GLOBAL_SKILLS_DIR = join(homedir(), '.claude', 'skills')
+
+/**
+ * Returns the local skills directory path.
+ * Computed at call time to handle working directory changes.
+ */
+function getLocalSkillsDir(): string {
+  return join(process.cwd(), '.claude', 'skills')
+}
 
 interface InstalledSkill {
   name: string
@@ -41,17 +57,25 @@ interface InstalledSkill {
 }
 
 /**
- * Get list of installed skills from ~/.claude/skills
+ * Extended Skill type with optional version field.
+ * Used for type-safe version comparisons in getSkillDiff.
  */
-async function getInstalledSkills(): Promise<InstalledSkill[]> {
+interface SkillWithVersion extends Skill {
+  version?: string
+}
+
+/**
+ * Get skills from a specific directory
+ */
+async function getSkillsFromDirectory(skillsDir: string): Promise<InstalledSkill[]> {
   const skills: InstalledSkill[] = []
 
   try {
-    const entries = await readdir(SKILLS_DIR, { withFileTypes: true })
+    const entries = await readdir(skillsDir, { withFileTypes: true })
 
     for (const entry of entries) {
       if (entry.isDirectory()) {
-        const skillPath = join(SKILLS_DIR, entry.name)
+        const skillPath = join(skillsDir, entry.name)
         const skillMdPath = join(skillPath, 'SKILL.md')
 
         try {
@@ -68,7 +92,14 @@ async function getInstalledSkills(): Promise<InstalledSkill[]> {
             installDate: skillMdStat.mtime.toISOString().split('T')[0] || 'Unknown',
             hasUpdates: false, // Would check remote for updates
           })
-        } catch {
+        } catch (error) {
+          // Only treat ENOENT (file not found) as "no SKILL.md"
+          // Re-throw permission errors and other unexpected errors
+          const errno = (error as NodeJS.ErrnoException).code
+          if (errno !== 'ENOENT') {
+            throw error
+          }
+
           // No SKILL.md, treat as unknown skill
           const dirStat = await stat(skillPath)
           skills.push({
@@ -89,6 +120,35 @@ async function getInstalledSkills(): Promise<InstalledSkill[]> {
   }
 
   return skills
+}
+
+/**
+ * Get list of installed skills from both global (~/.claude/skills) and
+ * local (./claude/skills) directories.
+ *
+ * SMI-1630: Local skills take precedence over global skills with the same name.
+ */
+async function getInstalledSkills(): Promise<InstalledSkill[]> {
+  // Get skills from both directories
+  const [globalSkills, localSkills] = await Promise.all([
+    getSkillsFromDirectory(GLOBAL_SKILLS_DIR),
+    getSkillsFromDirectory(getLocalSkillsDir()),
+  ])
+
+  // Create a map for deduplication, local skills take precedence
+  const skillMap = new Map<string, InstalledSkill>()
+
+  // Add global skills first
+  for (const skill of globalSkills) {
+    skillMap.set(skill.name, skill)
+  }
+
+  // Add local skills (overwrites global skills with same name)
+  for (const skill of localSkills) {
+    skillMap.set(skill.name, skill)
+  }
+
+  return Array.from(skillMap.values())
 }
 
 /**
@@ -125,7 +185,11 @@ function displaySkillsTable(skills: InstalledSkill[]): void {
 
   console.log('\n' + chalk.bold.blue('Installed Skills') + '\n')
   console.log(table.toString())
-  console.log(chalk.dim(`\n${skills.length} skill(s) installed in ${SKILLS_DIR}\n`))
+  console.log(
+    chalk.dim(
+      `\n${skills.length} skill(s) found (global: ~/.claude/skills, local: ./.claude/skills)\n`
+    )
+  )
 }
 
 /**
@@ -156,9 +220,11 @@ async function getSkillDiff(
 
     const changes: string[] = []
 
-    if (installed?.version !== (skill as Skill & { version?: string }).version) {
+    const skillWithVersion = skill as SkillWithVersion
+
+    if (installed?.version !== skillWithVersion.version) {
       changes.push(
-        `Version: ${installed?.version || 'N/A'} -> ${(skill as Skill & { version?: string }).version || 'N/A'}`
+        `Version: ${installed?.version || 'N/A'} -> ${skillWithVersion.version || 'N/A'}`
       )
     }
 
@@ -168,7 +234,7 @@ async function getSkillDiff(
 
     return {
       oldVersion: installed?.version || null,
-      newVersion: (skill as Skill & { version?: string }).version || null,
+      newVersion: skillWithVersion.version || null,
       changes,
     }
   } finally {

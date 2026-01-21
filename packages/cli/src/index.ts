@@ -37,9 +37,17 @@ import {
 import { DEFAULT_DB_PATH } from './config.js'
 import { sanitizeError } from './utils/sanitize.js'
 import { displayStartupHeader } from './utils/license.js'
+import { checkNodeVersion } from './utils/node-version.js'
 import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
+
+// SMI-1629: Check Node.js version before anything else
+const versionError = checkNodeVersion()
+if (versionError) {
+  console.error(versionError)
+  process.exit(1)
+}
 
 // Read version from package.json dynamically
 const __dirname = dirname(fileURLToPath(import.meta.url))
