@@ -212,10 +212,10 @@ describe('Filter-only search', () => {
     )
   })
 
-  it('should accept single character query', async () => {
-    const result = await executeSearch({ query: 'a' }, context)
-    expect(result.results).toBeDefined()
-    expect(result.query).toBe('a')
+  it('should reject query less than 3 characters (anti-scraping)', async () => {
+    // SMI-1613: Anti-scraping requires minimum 3 characters
+    await expect(executeSearch({ query: 'a' }, context)).rejects.toThrow(/at least 3 characters/)
+    await expect(executeSearch({ query: 'ab' }, context)).rejects.toThrow(/at least 3 characters/)
   })
 
   it('should accept empty query with min_score filter', async () => {
