@@ -415,6 +415,19 @@ npx supabase functions deploy <function-name> --no-verify-jwt  # Anonymous acces
 npx supabase functions deploy <function-name>                   # Requires auth
 ```
 
+**Anonymous functions (MUST use `--no-verify-jwt`):**
+```bash
+npx supabase functions deploy early-access-signup --no-verify-jwt
+npx supabase functions deploy contact-submit --no-verify-jwt
+npx supabase functions deploy stats --no-verify-jwt
+npx supabase functions deploy skills-search --no-verify-jwt
+npx supabase functions deploy skills-get --no-verify-jwt
+npx supabase functions deploy skills-recommend --no-verify-jwt
+npx supabase functions deploy events --no-verify-jwt
+```
+
+> **Note**: The `verify_jwt` setting is also configured in `supabase/config.toml` for local development. When deploying to production, you must use the `--no-verify-jwt` flag explicitly.
+
 ---
 
 ## Monitoring & Alerts
