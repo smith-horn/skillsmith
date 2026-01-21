@@ -87,6 +87,9 @@ Once configured, you can ask Claude:
 "Compare jest-helper and vitest-helper"
 "Install the commit skill"
 "Recommend skills for my React project"
+"Browse all security skills"
+"Show verified skills"
+"List high-quality skills (score > 80)"
 ```
 
 ---
@@ -450,11 +453,13 @@ packages/
 
 **search**
 
-- `query` (required): Search term (min 2 characters)
+- `query` (optional): Search term. Required if no filters provided.
 - `category`: Filter by category (development, testing, devops, etc.)
 - `trust_tier`: Filter by trust level (verified, community, experimental)
 - `min_score`: Minimum quality score (0-100)
 - `limit`: Max results (default 10)
+
+**Note:** Either `query` OR at least one filter (`category`, `trust_tier`, `min_score`) must be provided.
 
 **get_skill**
 

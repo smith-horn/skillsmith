@@ -92,7 +92,7 @@ export interface ApiSearchResult extends ApiSkill {
  * Search parameters for skills-search endpoint
  */
 export interface SearchParams {
-  /** Search query (minimum 2 characters) */
+  /** Search query (optional if filters provided) */
   query: string
   /** Filter by category name */
   category?: ApiCategory

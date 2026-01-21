@@ -5,7 +5,7 @@
  * SMI-1180: API Development - Wave 3
  *
  * Query Parameters:
- * - query (required): Search term (min 2 characters)
+ * - query (optional): Search term (if omitted, at least one filter required)
  * - category: Filter by category
  * - trust_tier: Filter by trust level (verified, community, experimental, unknown)
  * - min_score: Minimum quality score (0-100, will be converted to 0-1)
@@ -68,12 +68,16 @@ Deno.serve(async (req: Request) => {
       url.searchParams.get('offset')
     )
 
-    // Validate required query parameter
-    if (!query || query.trim().length < 2) {
-      return errorResponse('Query parameter required (minimum 2 characters)', 400, {
-        parameter: 'query',
-        received: query,
-      })
+    // Validate: require query OR at least one filter
+    const hasQuery = query && query.trim().length > 0
+    const hasFilters = category || trustTier || minScore !== null
+
+    if (!hasQuery && !hasFilters) {
+      return errorResponse(
+        'Provide a search query or at least one filter (category, trust_tier, min_score)',
+        400,
+        { parameters: { query, category, trust_tier: trustTier, min_score: minScore } }
+      )
     }
 
     // Validate trust_tier if provided
@@ -105,54 +109,130 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createSupabaseClient(req.headers.get('authorization') ?? undefined)
 
-    // Use the search_skills function for full-text search
-    const { data: searchResults, error: searchError } = await supabase.rpc('search_skills', {
-      search_query: query.trim(),
-      limit_count: limit,
-      offset_count: offset,
-    })
+    let results: SearchResult[] = []
 
-    if (searchError) {
-      console.error('Search error:', searchError)
-      return errorResponse('Search failed', 500, { code: searchError.code })
-    }
+    if (hasQuery) {
+      // Full-text search path: use search_skills RPC
+      const { data: searchResults, error: searchError } = await supabase.rpc('search_skills', {
+        search_query: query!.trim(),
+        limit_count: limit,
+        offset_count: offset,
+      })
 
-    let results: SearchResult[] = searchResults || []
+      if (searchError) {
+        console.error('Search error:', searchError)
+        return errorResponse('Search failed', 500, { code: searchError.code })
+      }
 
-    // Apply additional filters in-memory (could be optimized with a custom RPC)
-    if (trustTier) {
-      results = results.filter((skill) => skill.trust_tier === trustTier)
-    }
+      results = searchResults || []
 
-    if (normalizedMinScore !== null) {
-      results = results.filter(
-        (skill) => skill.quality_score !== null && skill.quality_score >= normalizedMinScore
-      )
-    }
+      // Apply additional filters in-memory for query path
+      if (trustTier) {
+        results = results.filter((skill) => skill.trust_tier === trustTier)
+      }
 
-    // If category filter is provided, join with skill_categories
-    if (category) {
-      const skillIds = results.map((r) => r.id)
-      if (skillIds.length > 0) {
-        const { data: categoryData } = await supabase
-          .from('skill_categories')
-          .select('skill_id, categories!inner(name)')
-          .in('skill_id', skillIds)
-          .eq('categories.name', category)
+      if (normalizedMinScore !== null) {
+        results = results.filter(
+          (skill) => skill.quality_score !== null && skill.quality_score >= normalizedMinScore
+        )
+      }
 
-        if (categoryData) {
-          const matchingIds = new Set(categoryData.map((c) => c.skill_id))
-          results = results.filter((skill) => matchingIds.has(skill.id))
-        } else {
-          results = []
+      // If category filter is provided with query, join with skill_categories
+      if (category) {
+        const skillIds = results.map((r) => r.id)
+        if (skillIds.length > 0) {
+          const { data: categoryData } = await supabase
+            .from('skill_categories')
+            .select('skill_id, categories!inner(name)')
+            .in('skill_id', skillIds)
+            .eq('categories.name', category)
+
+          if (categoryData) {
+            const matchingIds = new Set(categoryData.map((c) => c.skill_id))
+            results = results.filter((skill) => matchingIds.has(skill.id))
+          } else {
+            results = []
+          }
         }
+      }
+    } else {
+      // Filter-only path: query skills table directly
+      if (category) {
+        // Category requires a join with skill_categories
+        let categoryQuery = supabase
+          .from('skills')
+          .select(
+            `
+            id, name, description, author, repo_url, quality_score, trust_tier, tags, stars, created_at, updated_at,
+            skill_categories!inner(category_id, categories!inner(name))
+          `
+          )
+          .eq('skill_categories.categories.name', category)
+          .order('quality_score', { ascending: false, nullsFirst: false })
+          .limit(limit)
+          .range(offset, offset + limit - 1)
+
+        if (trustTier) {
+          categoryQuery = categoryQuery.eq('trust_tier', trustTier)
+        }
+        if (normalizedMinScore !== null) {
+          categoryQuery = categoryQuery.gte('quality_score', normalizedMinScore)
+        }
+
+        const { data: categoryResults, error: catError } = await categoryQuery
+
+        if (catError) {
+          console.error('Category filter query error:', catError)
+          return errorResponse('Filter query failed', 500, { code: catError.code })
+        }
+
+        // Map results to remove the nested join data
+        results = (categoryResults || []).map((skill) => ({
+          id: skill.id,
+          name: skill.name,
+          description: skill.description,
+          author: skill.author,
+          repo_url: skill.repo_url,
+          quality_score: skill.quality_score,
+          trust_tier: skill.trust_tier,
+          tags: skill.tags,
+          stars: skill.stars,
+          created_at: skill.created_at,
+          updated_at: skill.updated_at,
+        }))
+      } else {
+        // No category filter, simple query with trust_tier and/or min_score
+        let queryBuilder = supabase
+          .from('skills')
+          .select(
+            'id, name, description, author, repo_url, quality_score, trust_tier, tags, stars, created_at, updated_at'
+          )
+          .order('quality_score', { ascending: false, nullsFirst: false })
+          .limit(limit)
+          .range(offset, offset + limit - 1)
+
+        if (trustTier) {
+          queryBuilder = queryBuilder.eq('trust_tier', trustTier)
+        }
+        if (normalizedMinScore !== null) {
+          queryBuilder = queryBuilder.gte('quality_score', normalizedMinScore)
+        }
+
+        const { data: filterResults, error: filterError } = await queryBuilder
+
+        if (filterError) {
+          console.error('Filter query error:', filterError)
+          return errorResponse('Filter query failed', 500, { code: filterError.code })
+        }
+
+        results = filterResults || []
       }
     }
 
     const response = jsonResponse({
       data: results,
       meta: {
-        query: query.trim(),
+        query: hasQuery ? query!.trim() : null,
         total: results.length,
         limit,
         offset,

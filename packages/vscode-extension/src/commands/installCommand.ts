@@ -12,8 +12,8 @@ import { isValidSkillId } from '../utils/security.js'
 import { searchSkills as searchMockSkills, type SkillData } from '../data/mockSkills.js'
 import { getMcpClient } from '../mcp/McpClient.js'
 
-/** Minimum query length for search */
-const MIN_QUERY_LENGTH = 2
+/** Minimum query length for search (0 = query optional, filters can be used) */
+const MIN_QUERY_LENGTH = 0
 
 /** Debounce delay for search input */
 const SEARCH_DEBOUNCE_MS = 300
@@ -43,7 +43,7 @@ async function showQuickInstallPicker(): Promise<void> {
   const quickPick = vscode.window.createQuickPick<SkillQuickPickItem>()
 
   quickPick.title = 'Install Skill'
-  quickPick.placeholder = 'Search for skills to install (type at least 2 characters)'
+  quickPick.placeholder = 'Search for skills to install (or browse by selecting filters)'
   quickPick.matchOnDescription = true
   quickPick.matchOnDetail = true
 
@@ -59,11 +59,8 @@ async function showQuickInstallPicker(): Promise<void> {
 
     const query = value.trim()
 
-    if (query.length < MIN_QUERY_LENGTH) {
-      quickPick.items = []
-      quickPick.busy = false
-      return
-    }
+    // Empty query is valid - will browse all skills
+    // Only skip if user is still typing (handled by debounce)
 
     // Show loading state
     quickPick.busy = true
@@ -77,7 +74,7 @@ async function showQuickInstallPicker(): Promise<void> {
           quickPick.items = [
             {
               label: '$(info) No skills found',
-              description: `No results for "${query}"`,
+              description: query ? `No results for "${query}"` : 'No skills available',
               alwaysShow: true,
               skill: null,
             },

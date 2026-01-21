@@ -67,7 +67,7 @@ export interface ErrorResponse {
 export const ErrorSuggestions: Partial<Record<ErrorCode, string>> = {
   SKILL_NOT_FOUND: 'Try searching with different keywords or check the skill ID spelling',
   SKILL_INVALID_ID: 'Skill IDs should be in format "author/skill-name" or a valid UUID',
-  SEARCH_QUERY_EMPTY: 'Provide a search query with at least 2 characters',
+  SEARCH_QUERY_EMPTY: 'Provide a search query or at least one filter (category, trust_tier, min_score)',
   SEARCH_INDEX_UNAVAILABLE: 'The search index is being updated. Please try again in a moment',
   CONFIG_NOT_FOUND: 'Run "skillsmith init" to create the configuration file',
   NETWORK_RATE_LIMITED: 'Wait a few minutes before trying again',
