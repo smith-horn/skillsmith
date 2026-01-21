@@ -38,7 +38,14 @@ const TRUST_TIER_COLORS: Record<TrustTier, (text: string) => string> = {
  * Local skills take precedence over global skills with the same name.
  */
 const GLOBAL_SKILLS_DIR = join(homedir(), '.claude', 'skills')
-const LOCAL_SKILLS_DIR = join(process.cwd(), '.claude', 'skills')
+
+/**
+ * Returns the local skills directory path.
+ * Computed at call time to handle working directory changes.
+ */
+function getLocalSkillsDir(): string {
+  return join(process.cwd(), '.claude', 'skills')
+}
 
 interface InstalledSkill {
   name: string
@@ -110,7 +117,7 @@ async function getInstalledSkills(): Promise<InstalledSkill[]> {
   // Get skills from both directories
   const [globalSkills, localSkills] = await Promise.all([
     getSkillsFromDirectory(GLOBAL_SKILLS_DIR),
-    getSkillsFromDirectory(LOCAL_SKILLS_DIR),
+    getSkillsFromDirectory(getLocalSkillsDir()),
   ])
 
   // Create a map for deduplication, local skills take precedence
@@ -163,7 +170,11 @@ function displaySkillsTable(skills: InstalledSkill[]): void {
 
   console.log('\n' + chalk.bold.blue('Installed Skills') + '\n')
   console.log(table.toString())
-  console.log(chalk.dim(`\n${skills.length} skill(s) installed in ~/.claude/skills\n`))
+  console.log(
+    chalk.dim(
+      `\n${skills.length} skill(s) found (global: ~/.claude/skills, local: ./.claude/skills)\n`
+    )
+  )
 }
 
 /**

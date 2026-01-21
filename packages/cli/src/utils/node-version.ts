@@ -5,11 +5,30 @@
  * version specified in package.json engines field.
  */
 
+import { readFileSync } from 'fs'
+import { dirname, join } from 'path'
+import { fileURLToPath } from 'url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
 /**
- * Minimum required Node.js version.
- * Must match the "engines.node" field in package.json.
+ * Reads the minimum Node.js version from package.json engines field.
+ * Falls back to '22.0.0' if not found.
  */
-const MIN_NODE_VERSION = '22.0.0'
+function loadMinNodeVersion(): string {
+  try {
+    const packageJsonPath = join(__dirname, '..', '..', 'package.json')
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'))
+    const engineConstraint = packageJson.engines?.node ?? '>=22.0.0'
+    // Extract version number from constraint (e.g., ">=22.0.0" -> "22.0.0")
+    return engineConstraint.replace(/[>=<^~\s]/g, '')
+  } catch {
+    // Fallback if package.json can't be read
+    return '22.0.0'
+  }
+}
+
+const MIN_NODE_VERSION = loadMinNodeVersion()
 
 /**
  * Returns the minimum required Node.js version.
