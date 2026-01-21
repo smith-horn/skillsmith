@@ -1,11 +1,15 @@
 /**
  * Tests for MCP Tools (SMI-586, SMI-588)
+ * Updated for ADR-019: Filter-Only Skill Search
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
+import { executeSearch } from '../src/tools/search.js'
+import { SkillsmithError } from '@skillsmith/core'
+import { createSeededTestContext, type ToolContext } from '../src/__tests__/test-utils.js'
 
 // Mock the file operations for testing
 const TEST_SKILLS_DIR = path.join(os.tmpdir(), 'test-claude-skills-' + Date.now())
@@ -159,5 +163,87 @@ describe('MCP Tool Schemas', () => {
 
     expect(validInput.skillName.length).toBeGreaterThan(0)
     expect(typeof validInput.force).toBe('boolean')
+  })
+})
+
+/**
+ * ADR-019: Filter-Only Skill Search Tests
+ *
+ * These tests validate the new filter-only search functionality:
+ * - Search with category filter only (no query required)
+ * - Search with trust_tier filter only (no query required)
+ * - Search with min_score filter only (no query required)
+ * - Accept single character queries (minimum length removed)
+ * - Error when no query AND no filters provided
+ *
+ * TDD Red Phase: These tests SHOULD FAIL until implementation is complete.
+ */
+describe('Filter-only search', () => {
+  let context: ToolContext
+
+  beforeAll(() => {
+    context = createSeededTestContext()
+  })
+
+  afterAll(() => {
+    context.db.close()
+  })
+
+  it('should search with category filter only (no query)', async () => {
+    const result = await executeSearch(
+      { category: 'testing' } as Parameters<typeof executeSearch>[0],
+      context
+    )
+    expect(result.results).toBeDefined()
+    expect(result.filters.category).toBe('testing')
+  })
+
+  it('should search with trust_tier filter only (no query)', async () => {
+    const result = await executeSearch(
+      { trust_tier: 'verified' } as Parameters<typeof executeSearch>[0],
+      context
+    )
+    expect(result.results).toBeDefined()
+    expect(result.filters.trustTier).toBe('verified')
+  })
+
+  it('should throw error when no query and no filters', async () => {
+    await expect(
+      executeSearch({} as Parameters<typeof executeSearch>[0], context)
+    ).rejects.toThrow(/query or.*filter/i)
+  })
+
+  it('should accept single character query', async () => {
+    const result = await executeSearch({ query: 'a' }, context)
+    expect(result.results).toBeDefined()
+    expect(result.query).toBe('a')
+  })
+
+  it('should accept empty query with min_score filter', async () => {
+    const result = await executeSearch(
+      { min_score: 80 } as Parameters<typeof executeSearch>[0],
+      context
+    )
+    expect(result.results).toBeDefined()
+    expect(result.filters.minScore).toBe(0.8)
+  })
+
+  it('should accept empty query string with category filter', async () => {
+    const result = await executeSearch(
+      { query: '', category: 'devops' } as Parameters<typeof executeSearch>[0],
+      context
+    )
+    expect(result.results).toBeDefined()
+    expect(result.filters.category).toBe('devops')
+  })
+
+  it('should combine multiple filters without query', async () => {
+    const result = await executeSearch(
+      { category: 'testing', trust_tier: 'community' } as Parameters<typeof executeSearch>[0],
+      context
+    )
+    expect(result.results).toBeDefined()
+    expect(result.filters.category).toBe('testing')
+    expect(result.filters.trustTier).toBe('community')
   })
 })

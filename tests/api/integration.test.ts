@@ -41,20 +41,24 @@ describe('API Integration Tests', () => {
   const skipIfNoSupabase = process.env.SKIP_INTEGRATION_TESTS === 'true'
 
   describe.skipIf(skipIfNoSupabase)('GET /skills-search', () => {
-    it('should return 400 when query is missing', async () => {
+    it('should return 400 when no query and no filters provided', async () => {
       const response = await apiRequest('/skills-search')
       expect(response.status).toBe(400)
 
       const body = await response.json()
-      expect(body.error).toContain('Query parameter required')
+      // New behavior: error should mention needing query OR filter
+      expect(body.error).toContain('query or')
+      expect(body.error.toLowerCase()).toContain('filter')
     })
 
-    it('should return 400 when query is too short', async () => {
+    it('should accept single character queries', async () => {
+      // SMI-XXXX: Minimum query length removed - single char queries now valid
       const response = await apiRequest('/skills-search?query=a')
-      expect(response.status).toBe(400)
+      expect(response.status).toBe(200)
 
       const body = await response.json()
-      expect(body.error).toContain('minimum 2 characters')
+      expect(body.data).toBeDefined()
+      expect(Array.isArray(body.data)).toBe(true)
     })
 
     it('should return results for valid query', async () => {
@@ -107,6 +111,66 @@ describe('API Integration Tests', () => {
 
       expect(response.status).toBe(204)
       expect(response.headers.get('Access-Control-Allow-Methods')).toContain('GET')
+    })
+
+    /**
+     * SMI-XXXX: Filter-only search tests
+     * These tests verify that search works with filters alone (no query required).
+     * This is the TDD red phase - tests should FAIL until implementation is complete.
+     */
+    describe('Filter-only search', () => {
+      it('should return skills when filtering by category without query', async () => {
+        const response = await apiRequest('/skills-search?category=Security')
+        expect(response.status).toBe(200)
+
+        const body = await response.json()
+        expect(body.data).toBeDefined()
+        expect(Array.isArray(body.data)).toBe(true)
+        expect(body.meta.filters.category).toBe('Security')
+      })
+
+      it('should return skills when filtering by trust_tier without query', async () => {
+        const response = await apiRequest('/skills-search?trust_tier=verified')
+        expect(response.status).toBe(200)
+
+        const body = await response.json()
+        expect(body.data).toBeDefined()
+        expect(Array.isArray(body.data)).toBe(true)
+      })
+
+      it('should return skills when filtering by min_score without query', async () => {
+        const response = await apiRequest('/skills-search?min_score=80')
+        expect(response.status).toBe(200)
+
+        const body = await response.json()
+        expect(body.data).toBeDefined()
+        expect(Array.isArray(body.data)).toBe(true)
+        // All returned skills should have score >= 80
+        body.data.forEach((skill: { quality_score?: number }) => {
+          if (skill.quality_score !== undefined) {
+            expect(skill.quality_score).toBeGreaterThanOrEqual(80)
+          }
+        })
+      })
+
+      it('should return filtered results when query and category provided', async () => {
+        const response = await apiRequest('/skills-search?query=test&category=Testing')
+        expect(response.status).toBe(200)
+
+        const body = await response.json()
+        expect(body.meta.query).toBe('test')
+        expect(body.meta.filters.category).toBe('Testing')
+      })
+
+      it('should return filtered results when multiple filters provided without query', async () => {
+        const response = await apiRequest('/skills-search?category=Testing&trust_tier=verified')
+        expect(response.status).toBe(200)
+
+        const body = await response.json()
+        expect(body.data).toBeDefined()
+        expect(body.meta.filters.category).toBe('Testing')
+        expect(body.meta.filters.trust_tier).toBe('verified')
+      })
     })
   })
 

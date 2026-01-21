@@ -308,14 +308,9 @@ describe('E2E: skillsmith search', () => {
       assertNoHardcoded(result, 'skillsmith search ""', 'search: empty query', __filename)
     })
 
-    it('should reject single character query', async () => {
-      const result = await runCommand(['search', 'a', '-d', TEST_DB_PATH])
-
-      // Should fail with validation error
-      expect(result.exitCode).not.toBe(0)
-
-      assertNoHardcoded(result, 'skillsmith search a', 'search: short query', __filename)
-    })
+    // Note: Single character query test removed per ADR-019.
+    // Filter-only search allows single character queries.
+    // See 'Filter-only search' > 'should accept single character query' for current behavior.
 
     it('should handle missing database gracefully', async () => {
       const result = await runCommand(['search', 'test', '-d', '/nonexistent/db.db'])
@@ -331,6 +326,114 @@ describe('E2E: skillsmith search', () => {
 
       // Should either fail or ignore invalid tier
       assertNoHardcoded(result, 'skillsmith search -t invalid', 'search: invalid tier', __filename)
+    })
+  })
+
+  /**
+   * Filter-only search tests (ADR-019)
+   *
+   * These tests validate the ability to search with filters alone,
+   * without requiring a query string. This enables browsing by tier
+   * or category.
+   *
+   * TDD RED PHASE: These tests are expected to FAIL until implementation.
+   */
+  describe('Filter-only search', () => {
+    it('should search with --tier flag only (no query)', async () => {
+      const result = await runCommand(['search', '--tier', 'verified', '-d', TEST_DB_PATH])
+
+      // Should return results or "no results" message, not an error
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr).not.toContain('Error')
+
+      assertNoHardcoded(
+        result,
+        'skillsmith search --tier verified',
+        'search: tier-only filter',
+        __filename
+      )
+    })
+
+    it('should search with --category flag only (no query)', async () => {
+      const result = await runCommand(['search', '--category', 'testing', '-d', TEST_DB_PATH])
+
+      // Should return results or "no results" message, not an error
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr).not.toContain('Error')
+
+      assertNoHardcoded(
+        result,
+        'skillsmith search --category testing',
+        'search: category-only filter',
+        __filename
+      )
+    })
+
+    it('should show guidance when no query and no filters', async () => {
+      const result = await runCommand(['search', '-d', TEST_DB_PATH])
+
+      // Should prompt user for query or suggest using filters or interactive mode
+      const output = result.stdout + result.stderr
+      expect(output).toMatch(/query|filter|-i|interactive/i)
+    })
+
+    it('should accept single character query', async () => {
+      const result = await runCommand(['search', 'a', '-d', TEST_DB_PATH])
+
+      // Should succeed - single char queries are now allowed
+      expect(result.exitCode).toBe(0)
+      // Should NOT show the "at least 2 characters" validation error
+      expect(result.stderr).not.toContain('2 characters')
+      expect(result.stderr).not.toContain('at least')
+
+      assertNoHardcoded(
+        result,
+        'skillsmith search a',
+        'search: single char query',
+        __filename
+      )
+    })
+
+    it('should combine query with filters', async () => {
+      const result = await runCommand([
+        'search',
+        'test',
+        '--tier',
+        'community',
+        '-d',
+        TEST_DB_PATH,
+      ])
+
+      expect(result.exitCode).toBe(0)
+
+      assertNoHardcoded(
+        result,
+        'skillsmith search test --tier community',
+        'search: query with filter',
+        __filename
+      )
+    })
+
+    it('should search with multiple filters (tier + category)', async () => {
+      const result = await runCommand([
+        'search',
+        '--tier',
+        'community',
+        '--category',
+        'testing',
+        '-d',
+        TEST_DB_PATH,
+      ])
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr).not.toContain('Error')
+
+      assertNoHardcoded(
+        result,
+        'skillsmith search --tier community --category testing',
+        'search: multi-filter',
+        __filename
+      )
     })
   })
 

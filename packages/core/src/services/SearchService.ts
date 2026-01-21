@@ -62,12 +62,18 @@ export class SearchService {
       return cached
     }
 
+    // ADR-019: Handle empty/whitespace-only queries with filter-only search
+    const trimmedQuery = query?.trim() || ''
+    if (trimmedQuery.length === 0) {
+      return this.searchByFiltersOnly(options)
+    }
+
     // Build the FTS5 query
     const ftsQuery = this.buildFtsQuery(query)
 
-    // Handle empty/whitespace-only queries - return empty results
+    // Handle case where query contains only special characters (results in empty FTS query)
     if (!ftsQuery) {
-      return { items: [], total: 0, limit, offset, hasMore: false }
+      return this.searchByFiltersOnly(options)
     }
 
     // Build filter conditions
@@ -253,6 +259,107 @@ export class SearchService {
    */
   clearCache(): number {
     return this.cache.clear()
+  }
+
+  /**
+   * ADR-019: Filter-only search when query is empty
+   * Queries the skills table directly instead of using FTS5
+   */
+  private searchByFiltersOnly(options: SearchOptions): PaginatedResults<SearchResult> {
+    const { limit = 20, offset = 0, trustTier, minQualityScore, category } = options
+
+    // Check cache first
+    const cacheKey = this.buildCacheKey(options)
+    const cached = this.cache.get<PaginatedResults<SearchResult>>(cacheKey)
+    if (cached) {
+      return cached
+    }
+
+    // Build base query
+    const params: (string | number)[] = []
+    let countSql: string
+    let searchSql: string
+
+    if (category) {
+      // Category filter requires joining with skill_categories and categories tables
+      const baseJoin = `
+        FROM skills s
+        INNER JOIN skill_categories sc ON s.id = sc.skill_id
+        INNER JOIN categories c ON sc.category_id = c.id
+        WHERE c.name = ?`
+
+      const filters: string[] = []
+      params.push(category)
+
+      if (trustTier) {
+        filters.push('s.trust_tier = ?')
+        params.push(trustTier)
+      }
+
+      if (minQualityScore !== undefined) {
+        filters.push('s.quality_score >= ?')
+        params.push(minQualityScore)
+      }
+
+      const whereClause = filters.length > 0 ? ` AND ${filters.join(' AND ')}` : ''
+
+      countSql = `SELECT COUNT(*) as total ${baseJoin}${whereClause}`
+      searchSql = `
+        SELECT s.*, 1.0 as rank
+        ${baseJoin}${whereClause}
+        ORDER BY s.quality_score DESC NULLS LAST
+        LIMIT ? OFFSET ?`
+    } else {
+      // No category filter - simpler query
+      const filters: string[] = []
+
+      if (trustTier) {
+        filters.push('s.trust_tier = ?')
+        params.push(trustTier)
+      }
+
+      if (minQualityScore !== undefined) {
+        filters.push('s.quality_score >= ?')
+        params.push(minQualityScore)
+      }
+
+      const whereClause = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : ''
+
+      countSql = `SELECT COUNT(*) as total FROM skills s ${whereClause}`
+      searchSql = `
+        SELECT s.*, 1.0 as rank
+        FROM skills s
+        ${whereClause}
+        ORDER BY s.quality_score DESC NULLS LAST
+        LIMIT ? OFFSET ?`
+    }
+
+    // Get total count (using params without limit/offset)
+    const { total } = this.db.prepare(countSql).get(...params) as { total: number }
+
+    // Get paginated results
+    params.push(limit, offset)
+    const rows = this.db.prepare(searchSql).all(...params) as FTSRow[]
+
+    // Build results (no highlights for filter-only search)
+    const items = rows.map((row) => ({
+      skill: this.rowToSkill(row),
+      rank: 1.0,
+      highlights: {},
+    }))
+
+    const result: PaginatedResults<SearchResult> = {
+      items,
+      total,
+      limit,
+      offset,
+      hasMore: offset + items.length < total,
+    }
+
+    // Cache the results
+    this.cache.set(cacheKey, result, this.cacheTtl)
+
+    return result
   }
 
   /**

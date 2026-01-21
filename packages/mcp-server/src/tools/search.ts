@@ -83,7 +83,7 @@ export const searchToolSchema = {
         maximum: 100,
       },
     },
-    required: ['query'],
+    required: [], // Query is optional if filters are provided
   },
 }
 
@@ -92,8 +92,8 @@ export const searchToolSchema = {
  * @interface SearchInput
  */
 export interface SearchInput {
-  /** Search query string (minimum 2 characters) */
-  query: string
+  /** Search query string (optional if filters provided) */
+  query?: string
   /** Filter by skill category */
   category?: string
   /** Filter by trust tier level */
@@ -112,7 +112,7 @@ export interface SearchInput {
  * @param input - Search parameters including query and optional filters
  * @param context - Tool context with API client and local services
  * @returns Promise resolving to search response with results and timing
- * @throws {SkillsmithError} When query is empty or less than 2 characters
+ * @throws {SkillsmithError} When no query and no filters are provided
  * @throws {SkillsmithError} When min_score is outside 0-100 range
  *
  * @example
@@ -126,11 +126,14 @@ export async function executeSearch(
 ): Promise<SearchResponse> {
   const startTime = performance.now()
 
-  // Validate query
-  if (!input.query || input.query.trim().length < 2) {
+  // Validate: require query OR at least one filter
+  const hasQuery = input.query && input.query.trim().length > 0
+  const hasFilters = input.category || input.trust_tier || input.min_score !== undefined
+
+  if (!hasQuery && !hasFilters) {
     throw new SkillsmithError(
       ErrorCodes.SEARCH_QUERY_EMPTY,
-      'Search query must be at least 2 characters'
+      'Provide a search query or at least one filter (category, trust_tier, min_score)'
     )
   }
 
@@ -141,8 +144,16 @@ export async function executeSearch(
     filters.category = input.category as SkillCategory
   }
 
-  // Apply trust tier filter
+  // Apply trust tier filter with runtime validation
+  const VALID_TRUST_TIERS = ['verified', 'community', 'experimental', 'unknown'] as const
   if (input.trust_tier) {
+    if (!VALID_TRUST_TIERS.includes(input.trust_tier as (typeof VALID_TRUST_TIERS)[number])) {
+      throw new SkillsmithError(
+        ErrorCodes.VALIDATION_INVALID_TYPE,
+        `Invalid trust_tier: ${input.trust_tier}. Must be one of: ${VALID_TRUST_TIERS.join(', ')}`,
+        { details: { trust_tier: input.trust_tier, allowed: VALID_TRUST_TIERS } }
+      )
+    }
     filters.trustTier = input.trust_tier as TrustTier
   }
 
@@ -164,7 +175,7 @@ export async function executeSearch(
   if (!context.apiClient.isOffline()) {
     try {
       const apiResponse = await context.apiClient.search({
-        query: input.query.trim(),
+        query: hasQuery ? input.query!.trim() : '',
         limit: 10,
         offset: 0,
         trustTier: filters.trustTier ? mapTrustTierToDb(filters.trustTier) : undefined,
@@ -192,7 +203,7 @@ export async function executeSearch(
       const response: SearchResponse = {
         results,
         total: (apiResponse.meta?.total as number) ?? results.length,
-        query: input.query,
+        query: input.query || '', // May be empty for filter-only searches
         filters,
         timing: {
           searchMs: Math.round(searchEnd - searchStart),
@@ -202,7 +213,7 @@ export async function executeSearch(
 
       // SMI-1184: Track search event (silent on failure)
       if (context.distinctId) {
-        trackSkillSearch(context.distinctId, input.query, response.total, response.timing.totalMs, {
+        trackSkillSearch(context.distinctId, input.query || '', response.total, response.timing.totalMs, {
           trustTier: filters.trustTier,
           category: filters.category,
         })
@@ -221,8 +232,11 @@ export async function executeSearch(
   // Fallback: Use local SearchService for FTS5 search with BM25 ranking
   const dbTrustTier = filters.trustTier ? mapTrustTierToDb(filters.trustTier) : undefined
 
+  // Local search fallback - pass empty string if no query
+  const searchQuery = hasQuery ? input.query!.trim() : ''
+
   const searchResults = context.searchService.search({
-    query: input.query.trim(),
+    query: searchQuery,
     limit: 10,
     offset: 0,
     trustTier: dbTrustTier,
@@ -250,7 +264,7 @@ export async function executeSearch(
   const response: SearchResponse = {
     results,
     total: searchResults.total,
-    query: input.query,
+    query: input.query || '', // May be empty for filter-only searches
     filters,
     timing: {
       searchMs: Math.round(searchEnd - searchStart),
@@ -260,7 +274,7 @@ export async function executeSearch(
 
   // SMI-1184: Track search event (silent on failure)
   if (context.distinctId) {
-    trackSkillSearch(context.distinctId, input.query, response.total, response.timing.totalMs, {
+    trackSkillSearch(context.distinctId, input.query || '', response.total, response.timing.totalMs, {
       trustTier: filters.trustTier,
       category: filters.category,
     })

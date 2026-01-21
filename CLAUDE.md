@@ -55,10 +55,18 @@ Add to `~/.claude/settings.json`:
 ```
 
 Once configured, you can ask Claude:
-- "Search for testing skills"
-- "Find verified skills for git workflows"
-- "Compare jest-helper and vitest-helper"
-- "Install the commit skill"
+
+```
+"Search for testing skills"
+"Find verified skills for git workflows"
+"Show details for community/jest-helper"
+"Compare jest-helper and vitest-helper"
+"Install the commit skill"
+"Recommend skills for my React project"
+"Browse all security skills"
+"Show verified skills"
+"List high-quality skills (score > 80)"
+```
 
 ---
 
@@ -148,15 +156,35 @@ packages/
 
 ## Skillsmith MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `search` | Search for skills with filters |
-| `get_skill` | Get detailed skill information |
-| `install_skill` | Install a skill to ~/.claude/skills |
-| `uninstall_skill` | Remove an installed skill |
-| `recommend` | Get contextual skill recommendations |
-| `validate` | Validate a skill's structure |
-| `compare` | Compare skills side-by-side |
+| Tool              | Description                          | Example                                   |
+| ----------------- | ------------------------------------ | ----------------------------------------- |
+| `search`          | Search for skills with filters       | `"Find testing skills"`                   |
+| `get_skill`       | Get detailed skill information       | `"Get details for community/jest-helper"` |
+| `install_skill`   | Install a skill to ~/.claude/skills  | `"Install jest-helper"`                   |
+| `uninstall_skill` | Remove an installed skill            | `"Uninstall jest-helper"`                 |
+| `recommend`       | Get contextual skill recommendations | `"Recommend skills for React"`            |
+| `validate`        | Validate a skill's structure         | `"Validate the commit skill"`             |
+| `compare`         | Compare skills side-by-side          | `"Compare jest-helper and vitest-helper"` |
+
+### Tool Parameters
+
+**search**
+
+- `query` (optional): Search term. Required if no filters provided.
+- `category`: Filter by category (development, testing, devops, etc.)
+- `trust_tier`: Filter by trust level (verified, community, experimental)
+- `min_score`: Minimum quality score (0-100)
+- `limit`: Max results (default 10)
+
+**Note:** Either `query` OR at least one filter (`category`, `trust_tier`, `min_score`) must be provided.
+
+**get_skill**
+
+- `id` (required): Skill ID in format `author/name`
+
+**compare**
+
+- `skill_ids` (required): Array of skill IDs to compare (2-5 skills)
 
 ### Trust Tiers
 
