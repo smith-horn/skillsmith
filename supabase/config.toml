@@ -373,6 +373,15 @@ verify_jwt = false
 [functions.skills-get]
 verify_jwt = false
 
+[functions.early-access-signup]
+verify_jwt = false
+
+[functions.contact-submit]
+verify_jwt = false
+
+[functions.stats]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
