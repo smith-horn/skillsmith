@@ -57,6 +57,14 @@ interface InstalledSkill {
 }
 
 /**
+ * Extended Skill type with optional version field.
+ * Used for type-safe version comparisons in getSkillDiff.
+ */
+interface SkillWithVersion extends Skill {
+  version?: string
+}
+
+/**
  * Get skills from a specific directory
  */
 async function getSkillsFromDirectory(skillsDir: string): Promise<InstalledSkill[]> {
@@ -84,7 +92,14 @@ async function getSkillsFromDirectory(skillsDir: string): Promise<InstalledSkill
             installDate: skillMdStat.mtime.toISOString().split('T')[0] || 'Unknown',
             hasUpdates: false, // Would check remote for updates
           })
-        } catch {
+        } catch (error) {
+          // Only treat ENOENT (file not found) as "no SKILL.md"
+          // Re-throw permission errors and other unexpected errors
+          const errno = (error as NodeJS.ErrnoException).code
+          if (errno !== 'ENOENT') {
+            throw error
+          }
+
           // No SKILL.md, treat as unknown skill
           const dirStat = await stat(skillPath)
           skills.push({
@@ -205,9 +220,11 @@ async function getSkillDiff(
 
     const changes: string[] = []
 
-    if (installed?.version !== (skill as Skill & { version?: string }).version) {
+    const skillWithVersion = skill as SkillWithVersion
+
+    if (installed?.version !== skillWithVersion.version) {
       changes.push(
-        `Version: ${installed?.version || 'N/A'} -> ${(skill as Skill & { version?: string }).version || 'N/A'}`
+        `Version: ${installed?.version || 'N/A'} -> ${skillWithVersion.version || 'N/A'}`
       )
     }
 
@@ -217,7 +234,7 @@ async function getSkillDiff(
 
     return {
       oldVersion: installed?.version || null,
-      newVersion: (skill as Skill & { version?: string }).version || null,
+      newVersion: skillWithVersion.version || null,
       changes,
     }
   } finally {

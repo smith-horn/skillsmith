@@ -57,7 +57,9 @@ export function getCurrentNodeVersion(): string {
  */
 export function compareVersions(a: string, b: string): number {
   const parseVersion = (v: string): number[] => {
-    const parts = v.split('.').map((p) => parseInt(p, 10) || 0)
+    // Strip pre-release suffix (e.g., "22.0.0-beta.1" -> "22.0.0")
+    const cleanVersion = v.split('-')[0] ?? v
+    const parts = cleanVersion.split('.').map((p) => parseInt(p, 10) || 0)
     // Pad to at least 3 parts for consistent comparison
     while (parts.length < 3) {
       parts.push(0)

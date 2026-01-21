@@ -231,6 +231,15 @@ describe('SMI-1629: Node version detection', () => {
       // 22 should be treated as 22.0.0
       expect(compareVersions('22', '22.0.0')).toBe(0)
     })
+
+    it('handles pre-release version tags', async () => {
+      const { compareVersions } = await import('../src/utils/node-version.js')
+
+      // Pre-release suffix should be stripped, treating 22.0.0-beta.1 as 22.0.0
+      expect(compareVersions('22.0.0-beta.1', '22.0.0')).toBe(0)
+      expect(compareVersions('22.0.0-nightly', '21.0.0')).toBeGreaterThan(0)
+      expect(compareVersions('22.0.0-alpha', '23.0.0')).toBeLessThan(0)
+    })
   })
 
   describe('formatVersionError', () => {

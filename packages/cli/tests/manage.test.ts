@@ -31,18 +31,22 @@ vi.mock('ora', () => ({
   })),
 }))
 
-// Mock core
+// Mock core - use class implementations to avoid vitest warning
 vi.mock('@skillsmith/core', () => ({
   createDatabase: vi.fn(() => ({
     close: vi.fn(),
   })),
-  SkillRepository: vi.fn(() => ({
-    findAll: vi.fn(() => ({ items: [], total: 0, limit: 1000, offset: 0, hasMore: false })),
-  })),
-  SkillParser: vi.fn(() => ({
-    parse: vi.fn(),
-    inferTrustTier: vi.fn(() => 'unknown'),
-  })),
+  SkillRepository: vi.fn().mockImplementation(function () {
+    return {
+      findAll: vi.fn(() => ({ items: [], total: 0, limit: 1000, offset: 0, hasMore: false })),
+    }
+  }),
+  SkillParser: vi.fn().mockImplementation(function () {
+    return {
+      parse: vi.fn(),
+      inferTrustTier: vi.fn(() => 'unknown'),
+    }
+  }),
 }))
 
 describe('SMI-745: Skill Management Commands', () => {
@@ -453,6 +457,50 @@ A test skill.
       const skills = await getInstalledSkills()
 
       expect(skills).toEqual([])
+    })
+
+    it('should throw permission errors instead of silently ignoring them', async () => {
+      const { readdir } = await import('fs/promises')
+      const readdirMock = vi.mocked(readdir)
+
+      // Simulate permission denied error
+      readdirMock.mockRejectedValue(
+        Object.assign(new Error('Permission denied'), { code: 'EACCES' })
+      )
+
+      const { getInstalledSkills } = await import('../src/commands/manage.js')
+
+      await expect(getInstalledSkills()).rejects.toThrow('Permission denied')
+    })
+
+    it('should throw when SKILL.md has permission error', async () => {
+      const { readdir, readFile, stat } = await import('fs/promises')
+      const readdirMock = vi.mocked(readdir)
+      const readFileMock = vi.mocked(readFile)
+      const statMock = vi.mocked(stat)
+
+      readdirMock.mockImplementation(async (dirPath) => {
+        if (dirPath === GLOBAL_SKILLS_DIR) {
+          return [{ name: 'protected-skill', isDirectory: () => true }] as unknown as ReturnType<
+            typeof readdir
+          >
+        }
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      })
+
+      // stat succeeds for SKILL.md path
+      statMock.mockResolvedValue({
+        mtime: new Date('2024-01-15'),
+      } as unknown as Awaited<ReturnType<typeof stat>>)
+
+      // But reading the file fails with permission error
+      readFileMock.mockRejectedValue(
+        Object.assign(new Error('Permission denied'), { code: 'EACCES' })
+      )
+
+      const { getInstalledSkills } = await import('../src/commands/manage.js')
+
+      await expect(getInstalledSkills()).rejects.toThrow('Permission denied')
     })
   })
 
