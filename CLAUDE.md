@@ -24,6 +24,10 @@ docker exec skillsmith-dev-1 npm run audit:standards
 
 **IMPORTANT**: The `docs/` directory and `.claude/hive-mind/` are encrypted with git-crypt. You MUST unlock before reading these files.
 
+### Setup
+
+Set `GIT_CRYPT_KEY_PATH` in your `.env` file (see `.env.example`). Key path is managed via Varlock.
+
 ### Check Status
 
 ```bash
@@ -34,18 +38,32 @@ git-crypt status docs/ | head -5
 ### Unlock (Required for Reading Docs)
 
 ```bash
-# Unlock using the symmetric key
-git-crypt unlock ~/.skillsmith-keys/skillsmith-git-crypt.key
+# Unlock using Varlock-managed key path (tilde expansion required)
+varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'
+```
+
+### Troubleshooting: Files Still Encrypted After Unlock
+
+If `git-crypt unlock` succeeds but files still show encrypted content, the smudge filter isn't being triggered. Use this workaround:
+
+```bash
+# Batch decrypt files manually (pipe through smudge filter)
+for f in docs/gtm/*.md docs/gtm/**/*.md; do
+  if [ -f "$f" ]; then
+    cat "$f" | git-crypt smudge > "/tmp/$(basename $f)" 2>/dev/null
+    mv "/tmp/$(basename $f)" "$f"
+  fi
+done
 ```
 
 ### Worktree Considerations
 
-When creating git worktrees, git-crypt must be unlocked in the **main repo first**, then the worktree inherits the unlocked state. If you hit errors like `gpg: No such file or directory`, use the symmetric key approach above.
+When creating git worktrees, git-crypt must be unlocked in the **main repo first**, then the worktree inherits the unlocked state.
 
 ```bash
 # 1. Unlock in main repo first
 cd /path/to/skillsmith
-git-crypt unlock ~/.skillsmith-keys/skillsmith-git-crypt.key
+varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'
 
 # 2. Then create worktree
 git worktree add ../worktrees/my-feature -b feature/my-feature
