@@ -1,0 +1,12 @@
+# git-crypt encryption for sensitive documentation
+# Files matching these patterns will be encrypted in the repo
+
+# Encrypt all docs (ADRs, implementation plans, architecture)
+docs/** filter=git-crypt diff=git-crypt
+
+# Except public-facing docs that should remain readable
+docs/development/*.md !filter !diff
+docs/templates/*.md !filter !diff
+
+# Encrypt hive-mind configurations
+.claude/hive-mind/** filter=git-crypt diff=git-crypt
