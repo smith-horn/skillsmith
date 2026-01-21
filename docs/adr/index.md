@@ -29,6 +29,7 @@ ADRs document significant architectural decisions made during the project. They 
 | [ADR-018](018-registry-sync-system.md) | Registry Sync System | Accepted | 2026-01-15 |
 | [ADR-019](019-indexer-skillmd-validation.md) | Indexer SKILL.md Validation | Accepted | 2026-01-16 |
 | [ADR-020](020-phase4-security-hardening.md) | Phase 4 Security Hardening (AIDefence, Trust-Tier, E2B) | **New** | 2026-01-17 |
+| [ADR-021](021-filter-only-skill-search.md) | Filter-Only Skill Search | **New** | 2026-01-21 |
 
 ### Legacy ADRs (Pre-Implementation Design Phase)
 

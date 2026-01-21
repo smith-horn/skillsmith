@@ -148,11 +148,10 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
     while (phase !== 'exit') {
       // Phase: Collect search query and filters
       if (phase === 'collect_query') {
-        // Step 1: Enter search query
+        // Step 1: Enter search query (optional if filters will be provided)
         const query = await input({
-          message: 'Enter search query:',
+          message: 'Enter search query (or press Enter to browse with filters):',
           default: '',
-          validate: (value: string) => value.trim().length > 0 || 'Please enter a search query',
         })
 
         // Step 2: Filter by trust tier
@@ -173,6 +172,15 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
           min: 0,
           max: 100,
         })
+
+        // Validate: require query OR at least one filter
+        const hasQuery = query.trim().length > 0
+        const hasFilters = trustTiers.length > 0 || (minQualityScore !== undefined && minQualityScore > 0)
+
+        if (!hasQuery && !hasFilters) {
+          console.log(chalk.red('Please provide a search query or select at least one filter.'))
+          continue // Stay in collect_query phase
+        }
 
         state = {
           query,
@@ -354,7 +362,7 @@ Quality Score Formula:
 
   Verified skills from high-trust authors may have manually assigned scores.`
     )
-    .argument('[query]', 'Search query')
+    .argument('[query]', 'Search query (optional when using --tier, --category, or --min-score filters)')
     .option('-i, --interactive', 'Launch interactive search mode')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
     .option('-l, --limit <number>', 'Maximum results to show', '20')
@@ -375,13 +383,7 @@ Quality Score Formula:
           if (interactive) {
             await runInteractiveSearch(dbPath)
           } else if (query) {
-            // Validate minimum query length
-            if (query.length < 2) {
-              console.error(chalk.red('Error: Search query must be at least 2 characters'))
-              process.exit(1)
-            }
-
-            // Build options object - only include defined values
+            // Query provided - run search with optional filters
             const searchOpts: { db: string; limit: number; tier?: TrustTier; minScore?: number } = {
               db: dbPath,
               limit,
@@ -393,13 +395,32 @@ Quality Score Formula:
               searchOpts.minScore = minScore
             }
             await runSearch(query, searchOpts)
+          } else if (tier !== undefined || minScore !== undefined) {
+            // No query but filters provided - run filter-only search
+            console.log(chalk.blue('Running filter-only search...'))
+            const searchOpts: { db: string; limit: number; tier?: TrustTier; minScore?: number } = {
+              db: dbPath,
+              limit,
+            }
+            if (tier !== undefined) {
+              searchOpts.tier = tier
+            }
+            if (minScore !== undefined) {
+              searchOpts.minScore = minScore
+            }
+            await runSearch('', searchOpts)
           } else {
+            // No query and no filters
             console.log(
-              chalk.yellow('Please provide a search query or use -i for interactive mode')
+              chalk.yellow(
+                'Please provide a search query, filters (--tier, --min-score), or use -i for interactive mode'
+              )
             )
-            console.log(
-              chalk.dim('Example: skillsmith search "authentication" or skillsmith search -i')
-            )
+            console.log(chalk.dim('Examples:'))
+            console.log(chalk.dim('  skillsmith search "authentication"'))
+            console.log(chalk.dim('  skillsmith search --tier verified'))
+            console.log(chalk.dim('  skillsmith search --tier community --min-score 70'))
+            console.log(chalk.dim('  skillsmith search -i'))
           }
         } catch (error) {
           console.error(chalk.red('Search error:'), sanitizeError(error))
