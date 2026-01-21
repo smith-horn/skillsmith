@@ -308,18 +308,9 @@ describe('E2E: skillsmith search', () => {
       assertNoHardcoded(result, 'skillsmith search ""', 'search: empty query', __filename)
     })
 
-    // TODO(SMI-XXXX): Remove this test after filter-only search implementation.
-    // The new behavior allows single character queries.
-    // See 'Filter-only search' > 'should accept single character query' for new expectation.
-    it.skip('should reject single character query (DEPRECATED - see Filter-only search tests)', async () => {
-      const result = await runCommand(['search', 'a', '-d', TEST_DB_PATH])
-
-      // OLD BEHAVIOR: Should fail with validation error
-      // NEW BEHAVIOR: Should succeed (single char queries allowed)
-      expect(result.exitCode).not.toBe(0)
-
-      assertNoHardcoded(result, 'skillsmith search a', 'search: short query', __filename)
-    })
+    // Note: Single character query test removed per ADR-019.
+    // Filter-only search allows single character queries.
+    // See 'Filter-only search' > 'should accept single character query' for current behavior.
 
     it('should handle missing database gracefully', async () => {
       const result = await runCommand(['search', 'test', '-d', '/nonexistent/db.db'])
@@ -339,7 +330,7 @@ describe('E2E: skillsmith search', () => {
   })
 
   /**
-   * Filter-only search tests (SMI-XXXX)
+   * Filter-only search tests (ADR-019)
    *
    * These tests validate the ability to search with filters alone,
    * without requiring a query string. This enables browsing by tier

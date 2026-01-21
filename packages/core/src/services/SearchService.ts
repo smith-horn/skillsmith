@@ -62,7 +62,7 @@ export class SearchService {
       return cached
     }
 
-    // SMI-XXXX: Handle empty/whitespace-only queries with filter-only search
+    // ADR-019: Handle empty/whitespace-only queries with filter-only search
     const trimmedQuery = query?.trim() || ''
     if (trimmedQuery.length === 0) {
       return this.searchByFiltersOnly(options)
@@ -262,7 +262,7 @@ export class SearchService {
   }
 
   /**
-   * SMI-XXXX: Filter-only search when query is empty
+   * ADR-019: Filter-only search when query is empty
    * Queries the skills table directly instead of using FTS5
    */
   private searchByFiltersOnly(options: SearchOptions): PaginatedResults<SearchResult> {
