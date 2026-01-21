@@ -1,0 +1,473 @@
+[Speaker 1]
+You'll get better response.
+
+[Speaker 2]
+Okay, here we go. So, um? We were saying gold is like, just. Get real people to give you real feedback on the thing, because if you can get that user saying, no matter how you get there, right? But you end up with a user saying, great. This is the repo. This is the perfect set of skills for that repo.
+
+[Speaker 3]
+Yep,
+
+[Speaker 2]
+That pair is your golden data set, right, right?
+
+[Speaker 3]
+Silver
+
+[Speaker 2]
+Are things that fail in some ways relative to that one is. Here are some existing, you know, someone has put in an effort as a human in finding the skills for this right? And that's the linter story. I think there is a there will be. There should be a pattern.
+
+Meant the set of skills for a particular repo, right because, like a linter, you're saying I don't like this, don't do it, or you're saying, do more of this kind of stuff, right?
+
+[Speaker 3]
+You embed preferences, which include judgment. Yeah, so
+
+[Speaker 2]
+You're all saying if you're going to contribute to this repo? Yeah, I'm gonna
+
+[Speaker 3]
+Check every
+
+[Speaker 2]
+Single one of your contributions with this agent, so you do it before you send it to me. Please and thank you, right? So I think there's this idea of, like, cool. You're part of the open source Community, your your. Hopefully some of this exists already. I haven't showered. Yeah, if it doesn't, maybe they're, you know, the same users you can talk to. You can kind of pitch on that basis, right? Um.
+
+Already doing is like a really good silver data set because it already gives you some qualitative judgment. Yeah, you won't
+
+[Speaker 3]
+Get
+
+[Speaker 2]
+Automated performance results, but you will get qualitative results from, like, okay, I have these 10 examples. My, I prefer my version to the public version. Yep. And that means I can't test if there's an improvement because my version is going to be compared to another version of mine, right? But It at least gives you a place of saying, well, actually, this fails, right? Yeah, okay,
+
+[Speaker 3]
+So Alpha testing is actually about first time user onboarding, and does the user see get value from it, right? Like, that's like the product testing, yeah, and second is going to be performance testing. Like, how effective is it and going through a bunch of Open Source, uh, repos that have, um, like human configured skills in them, and like, have a lot of stars and are valued, it ends up being.
+
+[Speaker 2]
+Data set by doing things like measuring the number of scars for a particular repo with skills or,
+
+[Speaker 3]
+Yeah,
+
+[Speaker 2]
+Whatever.
+
+[Speaker 3]
+And they're seeing, like, they're like, linting, and like how they've built in judgment.
+
+[Speaker 2]
+Different. There's a pattern which I know, you know, which is just the llm as a judge, right, which I think is where you will find yourself being able to prompt engineer your way to perform it. Yeah.
+
+If you're doing this, that is not based on elements that's based on semantic embeddings and perhaps scoring the space. Then, when you compare? The results to? What the llm would recommend by native, naively, right? Then you are getting some value there, but you are also able to.
+
+[Speaker 1]
+Push it for
+
+[Speaker 2]
+Why this, why that right? There's definitely some, um, and you. You can get this all set up. You get a lot of the infrastructure for free with blank fuse with the LLN as a judge.
+
+[Speaker 3]
+And I think at that
+
+[Speaker 2]
+Point, you'll get some ability to say, cool. I get some performance results because the LLN is, like, it's a good starting place. It will look and think about everything I recommend. And
+
+[Speaker 1]
+If something
+
+[Speaker 2]
+Goes wrong, like all of a sudden, this repo doesn't have something you can look into that eval and figure it out, right?
+
+Uh, which have a version of this. Um, are you familiar with Lane fuse only by name?
+
+[Speaker 1]
+Um.
+
+[Speaker 2]
+When fuse is very agentic in how it's set up, it's free. It's open source. There's the paid version, which is currently the one I'm on. Although on the hobby tier, it's all free. And you know, it's not shocking in terms of what it does very similar to others. But like, I've been working around this week with. The really basic classification eval rate, which has your your kind of output and expected output, and you'll be able to run this every time you change the prompt right, and I add some version of that way. It's like, cool. I changed the prompt. It did it get better, right? Um. Can do things like dive into the trace and say, cool. But what was the actual like content here annotated? You build up your your performance testing over time through a tool like this, and I think that's just definitely worth looking at. They have. I haven't started this right, but they happen it out of the box. Llm evaluator, right? Stuff like that, I think. Um, and so I could use this for performance
+
+[Speaker 3]
+Testing of skillsmith to see if it's recommending. Appropriate skills for given repository. Yeah, so you would
+
+[Speaker 2]
+Have your your build your data set. You would have your run your experiment break, which is like, hey, I have. Here, I have this the staging and the production version of the prompt right, and I tried to compare them, and they add the exact same accuracy, so I didn't change. But I've deleted yesterday because I. It was very confusing because I added the number of observations. Um, and so the the numbers didn't mean anything, but what I did find was like. Uh, look dinner with the mirror is getting classified as life Ops. As well as career, which isn't quite right, so? This is a starting place for me to say, not just. Hey, this is like 90 better than it was last time, right?
+
+[Speaker 3]
+It's
+
+[Speaker 2]
+The old classifier issue. Yeah, here's the here's the weaknesses in the current version, and it helps you
+
+[Speaker 3]
+Suppose the fails exactly,
+
+[Speaker 2]
+And so, one really common pattern here is to say any feedback that you get. Here's a repo. Here's a response, right? Like, maybe I'll give you some feedback based on my repo right, and then you'll be able to build in some version of. Output and be able to run it again right.
+
+[Speaker 1]
+And
+
+[Speaker 2]
+Again, Claude will walk you through getting the the. Set up here. Okay. But you are you're you're? You are classified. It's just a massive classification project problem, right? Yeah, you've got
+
+[Speaker 3]
+14, 000 skills. Yeah, all classified
+
+[Speaker 2]
+And vector database. Select up to select, however many you like some number of these full ten thousand. Yeah, go, right, yeah, and
+
+[Speaker 3]
+You can.
+
+[Speaker 2]
+Anyways, there's a bunch of different ways to do this, but I would start with the simplest, which is like, what is a turnkey solution based on examples that you're getting from real people? Yeah. Okay, okay.
+
+Let me go back and just test because I'm going to score running out of time. Sorry, uh, I have my repo. I have everything here that is.
+
+Um. And. I haven't updated, uh, skill snap, so I think I need to do. I'm
+
+[Speaker 1]
+Just going to
+
+[Speaker 3]
+Ask Claude, actually. Yeah, at latest. It is now in the. Creamy. Cli docks. A bit of a glaring admission for my initial release. This is our way to update. Fit. There we go. Uh, yeah, something like that. I'll do it. There you go.
+
+The latest version of skillsmith on him is 0.0.1. That's right, no, it's 0.3.1.
+
+[Speaker 2]
+I think it's just checked. I think it's not the burden I installed. I think that's what happened. Right and PMD skillsmith version. Yeah, uh, it's checked your version on your machine. Yeah. So, yeah, the version I had is here. Is there one
+
+[Speaker 3]
+Perfect? Yep, we're a couple post the skill staff. Um.
+
+[Speaker 2]
+0.3.1. Where does it say
+
+[Speaker 3]
+Installed locally? Available on NPR.
+
+[Speaker 1]
+What's the? It's an idiom from your?
+
+Thank you.
+
+Okay. I was, like, wait no, no, no, no, no, no, no, they're building a house right now. I would hear about that, yeah. Sorry possibilities!
+
+That way could be perfect.
+
+[Speaker 2]
+I have to say, no problem. That's what I fixed, though.
+
+[Speaker 3]
+What version mismatch I requires, uh, 22?
+
+[Speaker 1]
+Are you
+
+[Speaker 3]
+In a virtual machine, a container, right?
+
+[Speaker 2]
+I'm gonna do everything globally, okay? Frustrating. At times, I
+
+[Speaker 3]
+Try and minimize working sometimes. Yeah, and then running multiple Docker containers on a machine. With uh testing, I'm
+
+[Speaker 2]
+Actually going to
+
+[Speaker 3]
+Reconfigure my gaming PC into a local server in Linux. I'm going to get a bunch of like 64 gigabyte RAM, and just like.
+
+[Speaker 2]
+Set up. I was because I was singing this. I do have some issues in the clay, the local models I run are just not smart. Yeah, and to some extent, that means I'm finding Educators. Yeah,
+
+[Speaker 1]
+Uh, good, and
+
+[Speaker 4]
+My name is cases. Yeah, all good
+
+[Speaker 2]
+Things for me to learn, but in another sense, it's frustrating because. Shoes that are my real issues or anything that's? Days, I shouldn't be able. I shouldn't eat, like,
+
+[Speaker 3]
+Yeah, the way the prompt as much as I am. Yeah,
+
+[Speaker 2]
+So a bigger machine would definitely be.
+
+[Speaker 3]
+Yeah, and like progressively moving, just like. Uh, clean container. Install everything fresh, no dependency conflicts, and then, um, like running, uh, get work trees, just like a real fucking Beast. But that backs down my machine a couple times this week running, like, say, three, get work trees at the same time, and then I'm at like 44, like gigabytes of RAM. And then, like, you know, Apple freaks out. And then it starts to like, stop services. I gotta like, restart.
+
+64 on my MacBook M4.
+
+[Speaker 2]
+Uh, and
+
+[Speaker 3]
+So I just can't. Run my workflow on my M4 anymore. So, I kind of want to like, have a. Like, run it over on this machine.
+
+[Speaker 2]
+Um,
+
+[Speaker 3]
+Otherwise, I'm seeing people have little terraformers. Set up everything on like S3 ac2 and then just like filling it off your AWS account. Which I don't want to do.
+
+[Speaker 1]
+Is, yeah, it's been like just the pet trains.
+
+[Speaker 3]
+Um, I think it's like. 50 or 160 bucks of RAM. I gotta buy from Best Buy, and I guess plug it in. And it's like uninstall Windows and put in Linux. And then it's done.
+
+[Speaker 2]
+Um, sorry, listen.
+
+[Speaker 3]
+Yeah, yeah, this is just updating dependencies. Yeah,
+
+[Speaker 2]
+Well, it's still getting. I don't know why I have no money as like a hard credit version somewhere. Oh,
+
+[Speaker 3]
+Um.
+
+[Speaker 2]
+Had an issue last time, and I was able to use some of the stuff somehow. But yeah, and since I have the last few minutes. I think now I just want to make sure, yeah, confusing you with
+
+[Speaker 1]
+Something. I'm certain this
+
+[Speaker 3]
+Is gonna happen. This is great for me to see. Uh, there's a technical level that's going to be required to use skillsmiths.
+
+[Speaker 1]
+Yeah, there's too many things to do that. It's a different rule, because thank you so much.
+
+I had to go to this restaurant, because yeah, I'm in
+
+[Speaker 2]
+The park near one. And that's it. I'm going to show you again. I mean, also, the thing is, I know, it's not going to be an issue. It depends.
+
+[Speaker 1]
+Yeah, yeah.
+
+[Speaker 2]
+What's your favorite? My shoes.
+
+As possibilities. So, it's removing
+
+[Speaker 3]
+The prior and then installing the new one. Yeah, so there's a lot of different places where, which version of mode I use
+
+[Speaker 2]
+Can be defined. Yeah, I think I've done something in the distant path of past. That was a bad path, right?
+
+[Speaker 3]
+Um, yeah, you can have it in a reach and then a folder and.
+
+[Speaker 1]
+Yeah,
+
+[Speaker 2]
+Obviously, looking and trying to find out where where I did something.
+
+[Speaker 3]
+Yep,
+
+[Speaker 2]
+But not find it yet. Yeah.
+
+[Speaker 1]
+You got
+
+[Speaker 3]
+A permission denied dear multiple users. No, I just need to see Dairy. Yeah. Stand that? I don't know if it's a math thing, but like. Sometimes, an npm just works. Sometimes you got a pseudo npm like, it's not clear. Yes, what the trigger is?
+
+[Speaker 4]
+I'm
+
+[Speaker 2]
+Gonna do something about what the installer is trying to access to do, right?
+
+[Speaker 1]
+Yeah.
+
+[Speaker 3]
+It's great for me to see. I, uh. I have these issues, and I'm using Claude as my interface, and often it can just debug. And I've had a couple people, um, like you like, send me screenshots, or like output from Claude, like it backs out a report to get over to my clock, and it can, like, yeah, figure it out, and so this particular. Type of issue, where there's like a node dependency that isn't met. Then, how is there a way for me to?
+
+That's why we did not symbol. Can I action that in some way? Okay, cool. I'm
+
+[Speaker 2]
+On the right to a close-made version now. Okay?
+
+[Speaker 1]
+Okay, okay.
+
+So it's like, oh yeah, yeah, the same thing. Yeah, so, yeah. So, when do you have any
+
+[Speaker 3]
+Skills installed right now?
+
+[Speaker 1]
+Here.
+
+[Speaker 3]
+Okay.
+
+[Speaker 1]
+I found myself my main purpose, and then again, everything
+
+[Speaker 2]
+Works as expected
+
+[Speaker 1]
+And socialized room. And I got all my employees to know about one. Yeah, I put
+
+[Speaker 2]
+The right nose and skill. Smith, isn't it good?
+
+[Speaker 1]
+Right now. See
+
+[Speaker 3]
+If that just does it directly or invokes? Oh, there we go. So, I just did a bash. Yeah, I should. I do have a coach skills directory, so something's wrong.
+
+[Speaker 2]
+Yeah, but let's see, maybe there's something else,
+
+[Speaker 3]
+Uh. Okay, now it's using India. I still have to list, which is, uh, correct. Okay. People. You have no cloud skills installed. Those are the elbows.
+
+[Speaker 2]
+Still, shrimp is available and everything install skills.
+
+[Speaker 5]
+That I teach, so I definitely have.
+
+[Speaker 3]
+This is a thing, and so there's.
+
+[Speaker 1]
+That is fine,
+
+[Speaker 3]
+Like a fuller structure. So, if it's like, uh, formatted in the way that, uh, Claude has plugins, it'll actually have a subfolder and name it like. Linear skill, and then inside the linear scale folder will be like the skill MD file, and so
+
+[Speaker 2]
+It has Claude
+
+[Speaker 3]
+Skills slash D start. Oh, dslash skills dslot gives a skill.
+
+[Speaker 2]
+Skill.md, right? This is. This is what I thought was a skill, and I have run it with okay.
+
+[Speaker 1]
+I think this time ago,
+
+[Speaker 3]
+Great! This is great, uh, error reading file. Okay, just got a permission tissue, um? I like it. I wasn't able to read that file in your repo file doesn't exist. Oh, interesting. Directly familiar search.
+
+[Speaker 1]
+Very stronger and bring down. Is that, am I getting worse?
+
+[Speaker 3]
+Yep, I ain't get ignore all my skills.
+
+[Speaker 1]
+Out, and so she had a long time, and I was, like, okay, we can do a few years more. Huh?
+
+[Speaker 2]
+Yeah, see, it has found it found it okay.
+
+[Speaker 3]
+Can you? Like back out why it wasn't found the first time he's not remove the engine? This is great. I love this type of. I checked the wrong location. The home directory, Global skills, but the skill is in. Okay, Jeff gets guard projects. Okay, so maybe I can take that away as an action item to, um? Uh,
+
+[Speaker 1]
+Make sure that,
+
+[Speaker 3]
+Uh, skillsmith both checks Global skills and local directory skills. Uh, when searching for? Skill.md files. Um. In Charles's case, uh, skillsmith initially looked globally, but then did not. Look locally in the current location. Home directory versus um? Project directory, local skills. So,
+
+[Speaker 1]
+This
+
+[Speaker 2]
+Is what I did last memory. What are the commands I can use? Yeah.
+
+[Speaker 6]
+Do you like Skillets?
+
+[Speaker 1]
+Yeah.
+
+[Speaker 3]
+And I hope people get to enjoy. And, like, Skrillex, you know, like, so, what do
+
+[Speaker 2]
+I want I want recommend?
+
+[Speaker 1]
+I know because you're doing your own here with all your friends.
+
+The left. So, what did she do with Mark? I'm sure, okay. I wonder if
+
+[Speaker 3]
+On the CLI install? It also included the local, the mCP, which is a dependency it should have, because that's what like sync is about. I'm updating the global refo of skills daily.
+
+[Speaker 2]
+And 76 files, but zero Frameworks. Uh,
+
+[Speaker 3]
+Okay, oh, found five recommendations
+
+[Speaker 2]
+Cool. Um, that looks a little short. I think that's fine.
+
+[Speaker 3]
+Oh, interestingly, I find another CLI for installing Cloud skills.
+
+[Speaker 1]
+Yeah,
+
+[Speaker 3]
+Help write skills files.
+
+[Speaker 1]
+Yes,
+
+[Speaker 3]
+Okay, that's all General.
+
+[Speaker 2]
+So I don't have any skills, so it's saying.
+
+[Speaker 3]
+Here are some skills. Let's try to find some relevant one, uh, closet Dev. Is that relevant? Collection of
+
+[Speaker 2]
+Cloud skills, so it's given me the entire repo for.
+
+How's that? So, I think this isn't quite right. This is one of the things I mentioned before, right? Yeah, I don't have any Frameworks and a lot of the skills and the optimizations continue around. Hey, I'm trying to interact with interface with this, make my interface seem easier. I see, like, I don't want to use an MCP server for this. I'm going to use a scope.
+
+[Speaker 3]
+Yeah, but
+
+[Speaker 2]
+The the.
+
+Area for my writing. The thing, I I, the part of the space I want to search put in, is like? Uh, code reviews, like, who am I? I'm a yeah. Very technical. I need to prevent myself from getting into these, like horrible code hangups. Like, what are some best practices for helping, right? Like, yeah, there's almost a
+
+[Speaker 3]
+The service area of the repo doesn't expose at a code review might be a skill needed. Yeah, so there's
+
+[Speaker 2]
+There's my golden data set, right? Like, my, my? Data set is like if I think about the kinds of skills that would be most helpful to me. Yeah, it is things that make Claudia a better development partner for me as a non-technical piano, because that is not true. That is great. Like, just a starting Place. Do you need to run? I don't. Um, but I can stop now.
+
+[Speaker 1]
+Um,
+
+[Speaker 5]
+Am I seeing you this evening? Yes. Cool
+
+[Speaker 2]
+Well, I will send you the screen recording. I don't think there's anything I'm toured in there. Whether you might see a cover letter, I was, uh, for robotics in there.
