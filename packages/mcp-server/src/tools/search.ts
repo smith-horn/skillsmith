@@ -144,8 +144,16 @@ export async function executeSearch(
     filters.category = input.category as SkillCategory
   }
 
-  // Apply trust tier filter
+  // Apply trust tier filter with runtime validation
+  const VALID_TRUST_TIERS = ['verified', 'community', 'experimental', 'unknown'] as const
   if (input.trust_tier) {
+    if (!VALID_TRUST_TIERS.includes(input.trust_tier as (typeof VALID_TRUST_TIERS)[number])) {
+      throw new SkillsmithError(
+        ErrorCodes.VALIDATION_INVALID_TYPE,
+        `Invalid trust_tier: ${input.trust_tier}. Must be one of: ${VALID_TRUST_TIERS.join(', ')}`,
+        { details: { trust_tier: input.trust_tier, allowed: VALID_TRUST_TIERS } }
+      )
+    }
     filters.trustTier = input.trust_tier as TrustTier
   }
 

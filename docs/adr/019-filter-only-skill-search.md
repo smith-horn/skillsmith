@@ -3,7 +3,7 @@
 **Status**: Accepted
 **Date**: 2026-01-21
 **Deciders**: Skillsmith Team
-**Related Issues**: SMI-XXXX (Remove skill search minimum)
+**Related Issues**: ADR-019 (Filter-Only Skill Search)
 
 ## Context
 

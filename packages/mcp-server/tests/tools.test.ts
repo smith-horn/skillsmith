@@ -1,6 +1,6 @@
 /**
  * Tests for MCP Tools (SMI-586, SMI-588)
- * Updated for SMI-XXXX: Filter-Only Skill Search
+ * Updated for ADR-019: Filter-Only Skill Search
  */
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest'
@@ -167,7 +167,7 @@ describe('MCP Tool Schemas', () => {
 })
 
 /**
- * SMI-XXXX: Filter-Only Skill Search Tests
+ * ADR-019: Filter-Only Skill Search Tests
  *
  * These tests validate the new filter-only search functionality:
  * - Search with category filter only (no query required)
