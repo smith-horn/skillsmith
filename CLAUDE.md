@@ -20,6 +20,48 @@ docker exec skillsmith-dev-1 npm run audit:standards
 
 ---
 
+## Git-Crypt (Encrypted Documentation)
+
+**IMPORTANT**: The `docs/` directory and `.claude/hive-mind/` are encrypted with git-crypt. You MUST unlock before reading these files.
+
+### Check Status
+
+```bash
+git-crypt status docs/ | head -5
+# If you see "encrypted:" prefix, files are locked
+```
+
+### Unlock (Required for Reading Docs)
+
+```bash
+# Unlock using the symmetric key
+git-crypt unlock ~/.skillsmith-keys/skillsmith-git-crypt.key
+```
+
+### Worktree Considerations
+
+When creating git worktrees, git-crypt must be unlocked in the **main repo first**, then the worktree inherits the unlocked state. If you hit errors like `gpg: No such file or directory`, use the symmetric key approach above.
+
+```bash
+# 1. Unlock in main repo first
+cd /path/to/skillsmith
+git-crypt unlock ~/.skillsmith-keys/skillsmith-git-crypt.key
+
+# 2. Then create worktree
+git worktree add ../worktrees/my-feature -b feature/my-feature
+```
+
+### Encrypted Paths
+
+| Path | Contains |
+|------|----------|
+| `docs/**` | ADRs, implementation plans, architecture docs |
+| `.claude/hive-mind/**` | Hive mind execution configs |
+
+**Exception**: `docs/development/*.md` and `docs/templates/*.md` are NOT encrypted.
+
+---
+
 ## License and Pricing
 
 **License**: [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license) - See [ADR-013](docs/adr/013-open-core-licensing.md)
