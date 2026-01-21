@@ -313,7 +313,7 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
  */
 async function runSearch(
   query: string,
-  options: { db: string; limit: number; tier?: TrustTier; minScore?: number }
+  options: { db: string; limit: number; tier?: TrustTier; category?: string; minScore?: number }
 ): Promise<void> {
   const db = createDatabase(options.db)
   const searchService = new SearchService(db)
@@ -328,6 +328,9 @@ async function runSearch(
     // Add optional filters only when they have values (exactOptionalPropertyTypes)
     if (options.tier !== undefined) {
       searchOptions.trustTier = options.tier
+    }
+    if (options.category !== undefined) {
+      searchOptions.category = options.category
     }
     if (options.minScore !== undefined) {
       searchOptions.minQualityScore = options.minScore / 100
@@ -370,6 +373,10 @@ Quality Score Formula:
       '-t, --tier <tier>',
       'Filter by trust tier (verified, community, experimental, unknown)'
     )
+    .option(
+      '-c, --category <category>',
+      'Filter by category (development, testing, devops, documentation, productivity, security)'
+    )
     .option('-s, --min-score <number>', 'Minimum quality score (0-100, see above for formula)')
     .action(
       async (query: string | undefined, opts: Record<string, string | boolean | undefined>) => {
@@ -378,32 +385,39 @@ Quality Score Formula:
           const dbPath = opts['db'] as string
           const limit = parseInt(opts['limit'] as string, 10)
           const tier = opts['tier'] as TrustTier | undefined
+          const category = opts['category'] as string | undefined
           const minScore = opts['min-score'] ? parseInt(opts['min-score'] as string, 10) : undefined
 
           if (interactive) {
             await runInteractiveSearch(dbPath)
           } else if (query) {
             // Query provided - run search with optional filters
-            const searchOpts: { db: string; limit: number; tier?: TrustTier; minScore?: number } = {
+            const searchOpts: { db: string; limit: number; tier?: TrustTier; category?: string; minScore?: number } = {
               db: dbPath,
               limit,
             }
             if (tier !== undefined) {
               searchOpts.tier = tier
+            }
+            if (category !== undefined) {
+              searchOpts.category = category
             }
             if (minScore !== undefined) {
               searchOpts.minScore = minScore
             }
             await runSearch(query, searchOpts)
-          } else if (tier !== undefined || minScore !== undefined) {
+          } else if (tier !== undefined || category !== undefined || minScore !== undefined) {
             // No query but filters provided - run filter-only search
             console.log(chalk.blue('Running filter-only search...'))
-            const searchOpts: { db: string; limit: number; tier?: TrustTier; minScore?: number } = {
+            const searchOpts: { db: string; limit: number; tier?: TrustTier; category?: string; minScore?: number } = {
               db: dbPath,
               limit,
             }
             if (tier !== undefined) {
               searchOpts.tier = tier
+            }
+            if (category !== undefined) {
+              searchOpts.category = category
             }
             if (minScore !== undefined) {
               searchOpts.minScore = minScore
@@ -413,12 +427,13 @@ Quality Score Formula:
             // No query and no filters
             console.log(
               chalk.yellow(
-                'Please provide a search query, filters (--tier, --min-score), or use -i for interactive mode'
+                'Please provide a search query, filters (--tier, --category, --min-score), or use -i for interactive mode'
               )
             )
             console.log(chalk.dim('Examples:'))
             console.log(chalk.dim('  skillsmith search "authentication"'))
             console.log(chalk.dim('  skillsmith search --tier verified'))
+            console.log(chalk.dim('  skillsmith search --category security'))
             console.log(chalk.dim('  skillsmith search --tier community --min-score 70'))
             console.log(chalk.dim('  skillsmith search -i'))
           }
