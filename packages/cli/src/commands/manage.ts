@@ -29,7 +29,16 @@ const TRUST_TIER_COLORS: Record<TrustTier, (text: string) => string> = {
   unknown: chalk.gray,
 }
 
-const SKILLS_DIR = join(homedir(), '.claude', 'skills')
+/**
+ * SMI-1630: Search both global and local skill directories
+ *
+ * Global: ~/.claude/skills/
+ * Local: ${process.cwd()}/.claude/skills/
+ *
+ * Local skills take precedence over global skills with the same name.
+ */
+const GLOBAL_SKILLS_DIR = join(homedir(), '.claude', 'skills')
+const LOCAL_SKILLS_DIR = join(process.cwd(), '.claude', 'skills')
 
 interface InstalledSkill {
   name: string
@@ -41,17 +50,17 @@ interface InstalledSkill {
 }
 
 /**
- * Get list of installed skills from ~/.claude/skills
+ * Get skills from a specific directory
  */
-async function getInstalledSkills(): Promise<InstalledSkill[]> {
+async function getSkillsFromDirectory(skillsDir: string): Promise<InstalledSkill[]> {
   const skills: InstalledSkill[] = []
 
   try {
-    const entries = await readdir(SKILLS_DIR, { withFileTypes: true })
+    const entries = await readdir(skillsDir, { withFileTypes: true })
 
     for (const entry of entries) {
       if (entry.isDirectory()) {
-        const skillPath = join(SKILLS_DIR, entry.name)
+        const skillPath = join(skillsDir, entry.name)
         const skillMdPath = join(skillPath, 'SKILL.md')
 
         try {
@@ -92,6 +101,35 @@ async function getInstalledSkills(): Promise<InstalledSkill[]> {
 }
 
 /**
+ * Get list of installed skills from both global (~/.claude/skills) and
+ * local (./claude/skills) directories.
+ *
+ * SMI-1630: Local skills take precedence over global skills with the same name.
+ */
+async function getInstalledSkills(): Promise<InstalledSkill[]> {
+  // Get skills from both directories
+  const [globalSkills, localSkills] = await Promise.all([
+    getSkillsFromDirectory(GLOBAL_SKILLS_DIR),
+    getSkillsFromDirectory(LOCAL_SKILLS_DIR),
+  ])
+
+  // Create a map for deduplication, local skills take precedence
+  const skillMap = new Map<string, InstalledSkill>()
+
+  // Add global skills first
+  for (const skill of globalSkills) {
+    skillMap.set(skill.name, skill)
+  }
+
+  // Add local skills (overwrites global skills with same name)
+  for (const skill of localSkills) {
+    skillMap.set(skill.name, skill)
+  }
+
+  return Array.from(skillMap.values())
+}
+
+/**
  * Display skills in a table format
  */
 function displaySkillsTable(skills: InstalledSkill[]): void {
@@ -125,7 +163,7 @@ function displaySkillsTable(skills: InstalledSkill[]): void {
 
   console.log('\n' + chalk.bold.blue('Installed Skills') + '\n')
   console.log(table.toString())
-  console.log(chalk.dim(`\n${skills.length} skill(s) installed in ${SKILLS_DIR}\n`))
+  console.log(chalk.dim(`\n${skills.length} skill(s) installed in ~/.claude/skills\n`))
 }
 
 /**
