@@ -144,6 +144,7 @@ const CATEGORY_IDS = {
   documentation: 'cat-documentation',
   productivity: 'cat-productivity',
   development: 'cat-development',
+  integrations: 'cat-integrations',
 } as const
 
 /**
@@ -219,32 +220,89 @@ function categorizeSkill(tags: string[], description?: string | null): string[] 
     categories.push(CATEGORY_IDS.documentation)
   }
 
-  // Productivity: productivity, automation, workflow, tools, cli, utility
-  const productivityKeywords = ['productivity', 'automation', 'workflow', 'tools', 'cli', 'utility']
+  // Productivity: productivity, automation, workflow, tools, cli, utility + AI assistants (SMI-1678)
+  const productivityKeywords = [
+    'productivity',
+    'automation',
+    'workflow',
+    'tools',
+    'cli',
+    'utility',
+    // SMI-1678: AI assistant expansion
+    'ai-assistant',
+    'chatbot',
+    'chat-bot',
+    'rag',
+    'ai-tools',
+    'ai-tool',
+    'orchestration',
+  ]
   if (
     productivityKeywords.some(
       (kw) => tagsText.includes(kw) || tags.some((t) => t.toLowerCase() === kw)
-    )
+    ) ||
+    descLower.includes('ai assistant') ||
+    descLower.includes('chatbot')
   ) {
     categories.push(CATEGORY_IDS.productivity)
   }
 
-  // Development: coding, agent, programming, framework, sdk, mcp-server, claude-code, vibe-coding, ai-coding
+  // Integrations: MCP ecosystem, API integrations (SMI-1676)
+  const integrationsKeywords = [
+    'mcp',
+    'mcp-server',
+    'mcp-client',
+    'model-context-protocol',
+    'mcp-tools',
+    'mcp-gateway',
+    'api-integration',
+    'api-client',
+  ]
+  if (
+    integrationsKeywords.some(
+      (kw) => tagsText.includes(kw) || tags.some((t) => t.toLowerCase() === kw)
+    ) ||
+    descLower.includes('mcp server') ||
+    descLower.includes('model context protocol')
+  ) {
+    categories.push(CATEGORY_IDS.integrations)
+  }
+
+  // Development: coding, agent, programming, framework, sdk, claude-code, vibe-coding, ai-coding + AI/LLM (SMI-1677)
   const devKeywords = [
     'coding',
     'agent',
     'programming',
     'framework',
     'sdk',
-    'mcp-server',
     'claude-code',
     'vibe-coding',
     'ai-coding',
+    // SMI-1677: Claude/AI ecosystem expansion
+    'claude',
+    'anthropic',
+    'claude-ai',
+    'anthropic-claude',
+    'claudecode',
+    'codex',
+    'cursor',
+    'opencode',
+    'llm',
+    'ai-agent',
+    'ai-agents',
+    'agentic-ai',
+    'agentic-framework',
+    'agentic-coding',
+    'openai',
+    'gemini',
+    'ollama',
   ]
   if (
     devKeywords.some((kw) => tagsText.includes(kw) || tags.some((t) => t.toLowerCase() === kw)) ||
     descLower.includes('coding agent') ||
-    descLower.includes('development')
+    descLower.includes('development') ||
+    descLower.includes('claude code') ||
+    descLower.includes('large language model')
   ) {
     categories.push(CATEGORY_IDS.development)
   }
