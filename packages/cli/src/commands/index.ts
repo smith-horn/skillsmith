@@ -34,3 +34,6 @@ export { createSyncCommand } from './sync.js'
 
 // SMI-1455: Database Merge Command
 export { createMergeCommand } from './merge.js'
+
+// SMI-824: Install Skillsmith Skill Command
+export { createInstallSkillCommand } from './install-skill.js'

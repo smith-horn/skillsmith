@@ -36,7 +36,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "assets"
   ],
   "license": "Elastic-2.0",
   "repository": {
