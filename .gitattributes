@@ -7,6 +7,7 @@ docs/** filter=git-crypt diff=git-crypt
 # Except public-facing docs that should remain readable
 docs/development/*.md !filter !diff
 docs/templates/*.md !filter !diff
+docs/templates/*.ts !filter !diff
 
 # Encrypt hive-mind configurations
 .claude/hive-mind/** filter=git-crypt diff=git-crypt
