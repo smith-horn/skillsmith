@@ -30,6 +30,8 @@
 import { z } from 'zod'
 import {
   type MCPTrustTier as TrustTier,
+  type SkillRole,
+  SKILL_ROLES,
   SkillMatcher,
   OverlapDetector,
   trackEvent,
@@ -37,6 +39,18 @@ import {
 import type { ToolContext } from '../context.js'
 import { getInstalledSkills } from '../utils/installed-skills.js'
 import { mapTrustTierFromDb, getTrustBadge } from '../utils/validation.js'
+
+/**
+ * SMI-1631: Type-safe Zod schema for skill roles
+ */
+const skillRoleSchema = z.enum([
+  'code-quality',
+  'testing',
+  'documentation',
+  'workflow',
+  'security',
+  'development-partner',
+] as const)
 
 /**
  * Zod schema for recommend tool input validation
@@ -52,6 +66,8 @@ export const recommendInputSchema = z.object({
   detect_overlap: z.boolean().default(true),
   /** Minimum similarity threshold (0-1, default 0.3) */
   min_similarity: z.number().min(0).max(1).default(0.3),
+  /** SMI-1631: Filter by skill role for targeted recommendations */
+  role: skillRoleSchema.optional(),
 })
 
 /**
@@ -75,6 +91,8 @@ export interface SkillRecommendation {
   trust_tier: TrustTier
   /** Overall quality score */
   quality_score: number
+  /** SMI-1631: Skill roles for role-based filtering */
+  roles?: SkillRole[]
 }
 
 /**
@@ -87,6 +105,8 @@ export interface RecommendResponse {
   candidates_considered: number
   /** Skills filtered due to overlap */
   overlap_filtered: number
+  /** SMI-1631: Skills filtered due to role mismatch */
+  role_filtered: number
   /** Query context used for matching */
   context: {
     installed_count: number
@@ -94,6 +114,8 @@ export interface RecommendResponse {
     using_semantic_matching: boolean
     /** SMI-906: Whether installed skills were auto-detected from ~/.claude/skills/ */
     auto_detected: boolean
+    /** SMI-1631: Role filter applied */
+    role_filter?: SkillRole
   }
   /** Performance timing */
   timing: {
@@ -107,7 +129,7 @@ export interface RecommendResponse {
 export const recommendToolSchema = {
   name: 'skill_recommend',
   description:
-    'Recommend skills based on currently installed skills and optional project context. Uses semantic similarity to find relevant skills. Auto-detects installed skills from ~/.claude/skills/ if not provided.',
+    'Recommend skills based on currently installed skills and optional project context. Uses semantic similarity to find relevant skills. Auto-detects installed skills from ~/.claude/skills/ if not provided. SMI-1631: Supports role-based filtering for targeted recommendations.',
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -141,6 +163,12 @@ export const recommendToolSchema = {
         maximum: 1,
         default: 0.3,
       },
+      role: {
+        type: 'string',
+        enum: [...SKILL_ROLES],
+        description:
+          'SMI-1631: Filter by skill role (code-quality, testing, documentation, workflow, security, development-partner). Skills matching the role get a +30 score boost.',
+      },
     },
     required: [],
   },
@@ -165,6 +193,89 @@ interface SkillData {
   qualityScore: number
   /** Trust tier */
   trustTier: TrustTier
+  /** SMI-1631: Skill roles for role-based filtering */
+  roles: SkillRole[]
+}
+
+/**
+ * SMI-1631: Infer skill roles from tags when not explicitly set
+ * Maps common tags to skill roles for better filtering
+ */
+function inferRolesFromTags(tags: string[]): SkillRole[] {
+  const roleMapping: Record<string, SkillRole> = {
+    // Code quality
+    lint: 'code-quality',
+    linting: 'code-quality',
+    format: 'code-quality',
+    formatting: 'code-quality',
+    prettier: 'code-quality',
+    eslint: 'code-quality',
+    'code-review': 'code-quality',
+    review: 'code-quality',
+    refactor: 'code-quality',
+    refactoring: 'code-quality',
+    'code-style': 'code-quality',
+    // Testing
+    test: 'testing',
+    testing: 'testing',
+    jest: 'testing',
+    vitest: 'testing',
+    mocha: 'testing',
+    playwright: 'testing',
+    cypress: 'testing',
+    e2e: 'testing',
+    unit: 'testing',
+    integration: 'testing',
+    tdd: 'testing',
+    // Documentation
+    docs: 'documentation',
+    documentation: 'documentation',
+    readme: 'documentation',
+    jsdoc: 'documentation',
+    typedoc: 'documentation',
+    changelog: 'documentation',
+    api: 'documentation',
+    // Workflow
+    git: 'workflow',
+    commit: 'workflow',
+    pr: 'workflow',
+    'pull-request': 'workflow',
+    ci: 'workflow',
+    cd: 'workflow',
+    'ci-cd': 'workflow',
+    deploy: 'workflow',
+    deployment: 'workflow',
+    automation: 'workflow',
+    workflow: 'workflow',
+    // Security
+    security: 'security',
+    audit: 'security',
+    vulnerability: 'security',
+    cve: 'security',
+    secrets: 'security',
+    authentication: 'security',
+    auth: 'security',
+    // Development partner
+    ai: 'development-partner',
+    assistant: 'development-partner',
+    helper: 'development-partner',
+    copilot: 'development-partner',
+    productivity: 'development-partner',
+    scaffold: 'development-partner',
+    generator: 'development-partner',
+  }
+
+  const inferredRoles = new Set<SkillRole>()
+  for (const tag of tags) {
+    const normalizedTag = tag.toLowerCase().replace(/[-_]/g, '')
+    for (const [keyword, role] of Object.entries(roleMapping)) {
+      if (normalizedTag.includes(keyword.replace(/[-_]/g, ''))) {
+        inferredRoles.add(role)
+      }
+    }
+  }
+
+  return [...inferredRoles]
 }
 
 /**
@@ -177,6 +288,7 @@ function transformSkillToMatchData(skill: {
   tags: string[]
   qualityScore: number | null
   trustTier: string
+  roles?: SkillRole[]
 }): SkillData {
   // Generate trigger phrases from name and first few tags
   const triggerPhrases = [
@@ -186,6 +298,9 @@ function transformSkillToMatchData(skill: {
     ...skill.tags.slice(0, 3).map((tag) => `${tag} ${skill.name}`),
   ]
 
+  // SMI-1631: Use explicit roles or infer from tags
+  const roles = skill.roles?.length ? skill.roles : inferRolesFromTags(skill.tags)
+
   return {
     id: skill.id,
     name: skill.name,
@@ -194,6 +309,7 @@ function transformSkillToMatchData(skill: {
     keywords: skill.tags,
     qualityScore: Math.round((skill.qualityScore ?? 0.5) * 100),
     trustTier: mapTrustTierFromDb(skill.trustTier),
+    roles,
   }
 }
 
@@ -236,7 +352,7 @@ export async function executeRecommend(
   // Validate input with Zod
   const validated = recommendInputSchema.parse(input)
   let { installed_skills } = validated
-  const { project_context, limit, detect_overlap, min_similarity } = validated
+  const { project_context, limit, detect_overlap, min_similarity, role } = validated
 
   // SMI-906: Auto-detect installed skills from ~/.claude/skills/ if not provided
   const autoDetected = installed_skills.length === 0
@@ -267,24 +383,48 @@ export async function executeRecommend(
       const endTime = performance.now()
 
       // Convert API results to response format
-      const recommendations: SkillRecommendation[] = apiResponse.data.map((skill) => ({
-        skill_id: skill.id,
-        name: skill.name,
-        reason: `Matches your stack: ${stack.slice(0, 3).join(', ')}`,
-        similarity_score: 0.8, // API doesn't return similarity score, use default
-        trust_tier: mapTrustTierFromDb(skill.trust_tier),
-        quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
-      }))
+      // SMI-1631: Infer roles and apply role filtering for API results
+      let recommendations: SkillRecommendation[] = apiResponse.data.map((skill) => {
+        const skillRoles = inferRolesFromTags(skill.tags || [])
+        return {
+          skill_id: skill.id,
+          name: skill.name,
+          reason: `Matches your stack: ${stack.slice(0, 3).join(', ')}`,
+          similarity_score: 0.8, // API doesn't return similarity score, use default
+          trust_tier: mapTrustTierFromDb(skill.trust_tier),
+          quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
+          roles: skillRoles,
+        }
+      })
+
+      // SMI-1631: Apply role filtering and score boosting for API results
+      let roleFiltered = 0
+      if (role) {
+        const originalCount = recommendations.length
+        // Filter to only skills with matching role
+        recommendations = recommendations.filter((rec) => rec.roles?.includes(role))
+        roleFiltered = originalCount - recommendations.length
+
+        // Apply +30 score boost for role matches and re-sort
+        recommendations = recommendations.map((rec) => ({
+          ...rec,
+          quality_score: Math.min(100, rec.quality_score + 30),
+          reason: `${rec.reason} (role: ${role})`,
+        }))
+        recommendations.sort((a, b) => b.quality_score - a.quality_score)
+      }
 
       const response: RecommendResponse = {
         recommendations,
-        candidates_considered: recommendations.length,
+        candidates_considered: apiResponse.data.length,
         overlap_filtered: 0,
+        role_filtered: roleFiltered,
         context: {
           installed_count: installed_skills.length,
           has_project_context: !!project_context,
           using_semantic_matching: true,
           auto_detected: autoDetected,
+          role_filter: role,
         },
         timing: {
           totalMs: Math.round(endTime - startTime),
@@ -370,6 +510,7 @@ export async function executeRecommend(
   })
 
   let overlapFiltered = 0
+  let roleFiltered = 0
 
   // Apply overlap detection if enabled and there are installed skills
   let filteredCandidates = candidates
@@ -386,6 +527,13 @@ export async function executeRecommend(
     overlapFiltered = filterResult.rejected.length
 
     overlapDetector.close()
+  }
+
+  // SMI-1631: Apply role-based filtering if role is specified
+  if (role) {
+    const beforeRoleFilter = filteredCandidates.length
+    filteredCandidates = filteredCandidates.filter((s) => s.roles.includes(role))
+    roleFiltered = beforeRoleFilter - filteredCandidates.length
   }
 
   // Build query from installed skills and project context
@@ -406,15 +554,22 @@ export async function executeRecommend(
   const matchResults = await matcher.findSimilarSkills(query, filteredCandidates, limit)
 
   // Transform to response format
+  // SMI-1631: Include roles and apply +30 score boost for role matches
   const recommendations: SkillRecommendation[] = matchResults.map((result) => {
     const skill = result.skill as SkillData
+    const hasRoleMatch = role && skill.roles.includes(role)
+    const boostedScore = hasRoleMatch
+      ? Math.min(100, (skill.qualityScore ?? 50) + 30)
+      : (skill.qualityScore ?? 50)
+
     return {
       skill_id: skill.id,
       name: skill.name,
-      reason: result.matchReason,
+      reason: hasRoleMatch ? `${result.matchReason} (role: ${role})` : result.matchReason,
       similarity_score: result.similarityScore,
       trust_tier: skill.trustTier,
-      quality_score: skill.qualityScore ?? 50,
+      quality_score: boostedScore,
+      roles: skill.roles,
     }
   })
 
@@ -426,11 +581,13 @@ export async function executeRecommend(
     recommendations,
     candidates_considered: candidates.length,
     overlap_filtered: overlapFiltered,
+    role_filtered: roleFiltered,
     context: {
       installed_count: installed_skills.length,
       has_project_context: !!project_context,
       using_semantic_matching: true,
       auto_detected: autoDetected,
+      role_filter: role,
     },
     timing: {
       totalMs: Math.round(endTime - startTime),
@@ -463,12 +620,18 @@ export function formatRecommendations(response: RecommendResponse): string {
     lines.push('Suggestions:')
     lines.push('  - Try adding more installed skills for better matching')
     lines.push('  - Provide a project context for more relevant results')
+    // SMI-1631: Suggest removing role filter if one was applied
+    if (response.context.role_filter) {
+      lines.push(`  - Try removing the role filter (currently: ${response.context.role_filter})`)
+    }
   } else {
     lines.push(`Found ${response.recommendations.length} recommendation(s):\n`)
 
     response.recommendations.forEach((rec, index) => {
       const trustBadge = getTrustBadge(rec.trust_tier)
-      lines.push(`${index + 1}. ${rec.name} ${trustBadge}`)
+      // SMI-1631: Show roles if present
+      const rolesDisplay = rec.roles?.length ? ` [${rec.roles.join(', ')}]` : ''
+      lines.push(`${index + 1}. ${rec.name} ${trustBadge}${rolesDisplay}`)
       lines.push(
         `   Score: ${rec.quality_score}/100 | Relevance: ${Math.round(rec.similarity_score * 100)}%`
       )
@@ -482,6 +645,13 @@ export function formatRecommendations(response: RecommendResponse): string {
   lines.push(`Candidates considered: ${response.candidates_considered}`)
   if (response.overlap_filtered > 0) {
     lines.push(`Filtered for overlap: ${response.overlap_filtered}`)
+  }
+  // SMI-1631: Show role filter stats
+  if (response.role_filtered > 0) {
+    lines.push(`Filtered for role: ${response.role_filtered}`)
+  }
+  if (response.context.role_filter) {
+    lines.push(`Role filter: ${response.context.role_filter}`)
   }
   if (response.context.auto_detected) {
     lines.push(

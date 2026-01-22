@@ -37,6 +37,15 @@ vi.mock('@skillsmith/core', () => ({
   createApiClient: () => ({
     getRecommendations: (...args: unknown[]) => mocks.getRecommendations(...args),
   }),
+  // SMI-1631: Add SKILL_ROLES export for role-based filtering
+  SKILL_ROLES: [
+    'code-quality',
+    'testing',
+    'documentation',
+    'workflow',
+    'security',
+    'development-partner',
+  ] as const,
 }))
 
 vi.mock('ora', () => ({
@@ -253,6 +262,16 @@ describe('SMI-1353: CLI recommend command', () => {
       const maxFilesOpt = cmd.options.find((o) => o.short === '-m')
       expect(maxFilesOpt).toBeDefined()
       expect(maxFilesOpt?.long).toBe('--max-files')
+    })
+
+    // SMI-1631: Role option tests
+    it('should have --role option with short flag -r', async () => {
+      const { createRecommendCommand } = await import('../src/commands/recommend.js')
+      const cmd = createRecommendCommand()
+
+      const roleOpt = cmd.options.find((o) => o.short === '-r')
+      expect(roleOpt).toBeDefined()
+      expect(roleOpt?.long).toBe('--role')
     })
   })
 
@@ -872,6 +891,104 @@ describe('SMI-1353: CLI recommend command', () => {
       const call = mockGetRecommendations.mock.calls[0]![0]
       const reactCount = call.stack.filter((s: string) => s === 'react').length
       expect(reactCount).toBe(1)
+    })
+  })
+
+  // ==========================================================================
+  // SMI-1631: Role-Based Filtering Tests
+  // ==========================================================================
+
+  describe('role-based filtering', () => {
+    it('should apply role filtering locally', async () => {
+      // Mock a response with skills that have roles inferred from tags
+      mockGetRecommendations.mockResolvedValue(
+        createMockApiResponse([
+          {
+            id: 'test/test-helper',
+            name: 'Test Helper',
+            description: 'Testing utilities',
+            author: 'test',
+            repo_url: null,
+            quality_score: 0.8,
+            trust_tier: 'verified',
+            tags: ['testing', 'jest', 'unit-test'],
+            stars: 100,
+            created_at: '2024-01-01',
+            updated_at: '2024-01-01',
+          },
+        ])
+      )
+
+      const { createRecommendCommand } = await import('../src/commands/recommend.js')
+      const cmd = createRecommendCommand()
+
+      await cmd.parseAsync(['node', 'test', '.', '--role', 'testing', '--json'])
+
+      const output = mockConsoleLog.mock.calls[0]![0]
+      const parsed = JSON.parse(output)
+      // Role filter should be recorded in meta
+      expect(parsed.meta.role_filter).toBe('testing')
+    })
+
+    it('should not set role filter for invalid role', async () => {
+      const { createRecommendCommand } = await import('../src/commands/recommend.js')
+      const cmd = createRecommendCommand()
+
+      await cmd.parseAsync(['node', 'test', '.', '--role', 'invalid-role', '--json'])
+
+      const output = mockConsoleLog.mock.calls[0]![0]
+      const parsed = JSON.parse(output)
+      // Invalid role should not be set
+      expect(parsed.meta.role_filter).toBeNull()
+    })
+
+    it('should warn user about invalid role', async () => {
+      const { createRecommendCommand } = await import('../src/commands/recommend.js')
+      const cmd = createRecommendCommand()
+
+      await cmd.parseAsync(['node', 'test', '.', '--role', 'not-a-role'])
+
+      const errorOutput = mockConsoleError.mock.calls.map((c) => c[0]).join('\n')
+      expect(errorOutput).toContain('Invalid role')
+      expect(errorOutput).toContain('not-a-role')
+    })
+
+    it('should accept all valid role values', async () => {
+      const validRoles = [
+        'code-quality',
+        'testing',
+        'documentation',
+        'workflow',
+        'security',
+        'development-partner',
+      ]
+
+      for (const role of validRoles) {
+        vi.clearAllMocks()
+        mockAnalyze.mockResolvedValue(createMockCodebaseContext())
+        mockGetRecommendations.mockResolvedValue(createMockApiResponse())
+
+        const { createRecommendCommand } = await import('../src/commands/recommend.js')
+        const cmd = createRecommendCommand()
+
+        await cmd.parseAsync(['node', 'test', '.', '-r', role, '--json'])
+
+        const output = mockConsoleLog.mock.calls[0]![0]
+        const parsed = JSON.parse(output)
+        // Role filter should be recorded in meta for valid roles
+        expect(parsed.meta.role_filter).toBe(role)
+      }
+    })
+
+    it('should include role_filter in JSON output when specified', async () => {
+      const { createRecommendCommand } = await import('../src/commands/recommend.js')
+      const cmd = createRecommendCommand()
+
+      await cmd.parseAsync(['node', 'test', '.', '--role', 'security', '--json'])
+
+      const output = mockConsoleLog.mock.calls[0]![0]
+      const parsed = JSON.parse(output)
+      expect(parsed.meta.role_filter).toBe('security')
     })
   })
 

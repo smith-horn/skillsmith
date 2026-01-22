@@ -144,7 +144,7 @@ describe('Recommend Tool Integration', () => {
       for (const rec of result.recommendations) {
         expect(rec.quality_score).toBeGreaterThanOrEqual(0)
         expect(rec.quality_score).toBeLessThanOrEqual(100)
-        expect(['verified', 'community', 'standard', 'unverified']).toContain(rec.trust_tier)
+        expect(['verified', 'community', 'experimental', 'unknown']).toContain(rec.trust_tier)
         expect(rec.reason).toBeDefined()
         expect(rec.similarity_score).toBeGreaterThanOrEqual(0)
         expect(rec.similarity_score).toBeLessThanOrEqual(1)
@@ -295,6 +295,7 @@ describe('Recommend Tool Integration', () => {
         recommendations: [],
         candidates_considered: 0,
         overlap_filtered: 0,
+        role_filtered: 0, // SMI-1631: Added for role-based filtering
         context: {
           installed_count: 0,
           has_project_context: false,

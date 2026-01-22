@@ -20,6 +20,8 @@ import {
   createApiClient,
   type CodebaseContext,
   type TrustTier,
+  type SkillRole,
+  SKILL_ROLES,
 } from '@skillsmith/core'
 import { sanitizeError } from '../utils/sanitize.js'
 
@@ -54,6 +56,8 @@ interface SkillRecommendation {
   similarity_score: number
   trust_tier: TrustTier
   quality_score: number
+  /** SMI-1631: Skill roles for role-based filtering */
+  roles?: SkillRole[]
 }
 
 /**
@@ -63,11 +67,15 @@ interface RecommendResponse {
   recommendations: SkillRecommendation[]
   candidates_considered: number
   overlap_filtered: number
+  /** SMI-1631: Skills filtered due to role mismatch */
+  role_filtered: number
   context: {
     installed_count: number
     has_project_context: boolean
     using_semantic_matching: boolean
     auto_detected: boolean
+    /** SMI-1631: Role filter applied */
+    role_filter?: SkillRole
   }
   timing: {
     totalMs: number
@@ -122,6 +130,10 @@ function formatRecommendations(
     lines.push('  - Ensure the project has a package.json')
     lines.push('  - Try a project with more dependencies')
     lines.push('  - Use --context to provide additional context')
+    // SMI-1631: Suggest removing role filter if one was applied
+    if (response.context.role_filter) {
+      lines.push(`  - Try removing the --role filter (currently: ${response.context.role_filter})`)
+    }
   } else {
     lines.push(`Found ${chalk.bold(response.recommendations.length)} recommendation(s):`)
     lines.push('')
@@ -144,7 +156,11 @@ function formatRecommendations(
         relevanceDisplay = relevanceColor(`${Math.round(rec.similarity_score * 100)}%`)
       }
 
-      lines.push(`${chalk.bold(`${index + 1}.`)} ${chalk.bold(rec.name)} ${trustBadge}`)
+      // SMI-1631: Show roles if present
+      const rolesDisplay = rec.roles?.length ? chalk.cyan(` [${rec.roles.join(', ')}]`) : ''
+      lines.push(
+        `${chalk.bold(`${index + 1}.`)} ${chalk.bold(rec.name)} ${trustBadge}${rolesDisplay}`
+      )
       lines.push(
         `   Score: ${qualityColor(`${rec.quality_score}/100`)} | Relevance: ${relevanceDisplay}`
       )
@@ -158,6 +174,13 @@ function formatRecommendations(
   lines.push(chalk.dim(`Candidates considered: ${response.candidates_considered}`))
   if (response.overlap_filtered > 0) {
     lines.push(chalk.dim(`Filtered for overlap: ${response.overlap_filtered}`))
+  }
+  // SMI-1631: Show role filter stats
+  if (response.role_filtered > 0) {
+    lines.push(chalk.dim(`Filtered for role: ${response.role_filtered}`))
+  }
+  if (response.context.role_filter) {
+    lines.push(chalk.dim(`Role filter: ${response.context.role_filter}`))
   }
   if (response.context.auto_detected) {
     lines.push(
@@ -198,6 +221,9 @@ function formatAsJson(response: RecommendResponse, context: CodebaseContext | nu
     meta: {
       candidates_considered: response.candidates_considered,
       overlap_filtered: response.overlap_filtered,
+      // SMI-1631: Include role filter information
+      role_filtered: response.role_filtered,
+      role_filter: response.context.role_filter ?? null,
       installed_count: response.context.installed_count,
       auto_detected: response.context.auto_detected,
       timing_ms: response.timing.totalMs,
@@ -393,6 +419,87 @@ function getInstalledSkills(): InstalledSkill[] {
 }
 
 /**
+ * SMI-1631: Infer skill roles from tags when not explicitly set
+ * Maps common tags to skill roles for better filtering
+ */
+function inferRolesFromTags(tags: string[]): SkillRole[] {
+  const roleMapping: Record<string, SkillRole> = {
+    // Code quality
+    lint: 'code-quality',
+    linting: 'code-quality',
+    format: 'code-quality',
+    formatting: 'code-quality',
+    prettier: 'code-quality',
+    eslint: 'code-quality',
+    'code-review': 'code-quality',
+    review: 'code-quality',
+    refactor: 'code-quality',
+    refactoring: 'code-quality',
+    'code-style': 'code-quality',
+    // Testing
+    test: 'testing',
+    testing: 'testing',
+    jest: 'testing',
+    vitest: 'testing',
+    mocha: 'testing',
+    playwright: 'testing',
+    cypress: 'testing',
+    e2e: 'testing',
+    unit: 'testing',
+    integration: 'testing',
+    tdd: 'testing',
+    // Documentation
+    docs: 'documentation',
+    documentation: 'documentation',
+    readme: 'documentation',
+    jsdoc: 'documentation',
+    typedoc: 'documentation',
+    changelog: 'documentation',
+    api: 'documentation',
+    // Workflow
+    git: 'workflow',
+    commit: 'workflow',
+    pr: 'workflow',
+    'pull-request': 'workflow',
+    ci: 'workflow',
+    cd: 'workflow',
+    'ci-cd': 'workflow',
+    deploy: 'workflow',
+    deployment: 'workflow',
+    automation: 'workflow',
+    workflow: 'workflow',
+    // Security
+    security: 'security',
+    audit: 'security',
+    vulnerability: 'security',
+    cve: 'security',
+    secrets: 'security',
+    authentication: 'security',
+    auth: 'security',
+    // Development partner
+    ai: 'development-partner',
+    assistant: 'development-partner',
+    helper: 'development-partner',
+    copilot: 'development-partner',
+    productivity: 'development-partner',
+    scaffold: 'development-partner',
+    generator: 'development-partner',
+  }
+
+  const inferredRoles = new Set<SkillRole>()
+  for (const tag of tags) {
+    const normalizedTag = tag.toLowerCase().replace(/[-_]/g, '')
+    for (const [keyword, role] of Object.entries(roleMapping)) {
+      if (normalizedTag.includes(keyword.replace(/[-_]/g, ''))) {
+        inferredRoles.add(role)
+      }
+    }
+  }
+
+  return [...inferredRoles]
+}
+
+/**
  * Normalize a skill name for comparison (SMI-1358)
  * Removes common prefixes/suffixes and normalizes case
  */
@@ -487,6 +594,8 @@ async function runRecommend(
     installed: string[] | undefined
     noOverlap: boolean
     maxFiles: number
+    /** SMI-1631: Filter by skill role */
+    role: SkillRole | undefined
   }
 ): Promise<void> {
   const spinner = ora()
@@ -530,6 +639,7 @@ async function runRecommend(
     })
 
     // Transform API response to expected format
+    // SMI-1631: Include inferred roles from tags
     let recommendations: SkillRecommendation[] = apiResponse.data.map((skill) => ({
       skill_id: skill.id,
       name: skill.name,
@@ -537,6 +647,7 @@ async function runRecommend(
       similarity_score: -1, // API doesn't return this; -1 indicates not available
       trust_tier: validateTrustTier(skill.trust_tier),
       quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
+      roles: inferRolesFromTags(skill.tags || []),
     }))
 
     // SMI-1358: Apply overlap filtering if enabled (default behavior)
@@ -567,24 +678,50 @@ async function runRecommend(
       }
     }
 
+    // SMI-1631: Apply role-based filtering if role is specified
+    let roleFiltered = 0
+    if (options.role) {
+      const beforeRoleFilter = recommendations.length
+      recommendations = recommendations.filter((rec) => rec.roles?.includes(options.role!))
+      roleFiltered = beforeRoleFilter - recommendations.length
+
+      // Apply +30 score boost for role matches and re-sort
+      recommendations = recommendations.map((rec) => ({
+        ...rec,
+        quality_score: Math.min(100, rec.quality_score + 30),
+        reason: `${rec.reason} (role: ${options.role})`,
+      }))
+      recommendations.sort((a, b) => b.quality_score - a.quality_score)
+    }
+
     const response: RecommendResponse = {
       recommendations,
       candidates_considered: apiResponse.data.length,
       overlap_filtered: overlapFiltered,
+      role_filtered: roleFiltered,
       context: {
         installed_count: installedSkills.length,
         has_project_context: !!options.context,
         using_semantic_matching: true,
         auto_detected: autoDetected,
+        // SMI-1631: Only set role_filter if role is defined
+        ...(options.role ? { role_filter: options.role } : {}),
       },
       timing: {
         totalMs: codebaseContext.metadata.durationMs,
       },
     }
 
-    spinner.succeed(
-      `Found ${response.recommendations.length} recommendations${overlapFiltered > 0 ? ` (${overlapFiltered} filtered for overlap)` : ''}`
-    )
+    // Build status message with filter counts
+    let filterMsg = ''
+    if (overlapFiltered > 0 || roleFiltered > 0) {
+      const parts: string[] = []
+      if (overlapFiltered > 0) parts.push(`${overlapFiltered} overlap`)
+      if (roleFiltered > 0) parts.push(`${roleFiltered} role`)
+      filterMsg = ` (filtered: ${parts.join(', ')})`
+    }
+
+    spinner.succeed(`Found ${response.recommendations.length} recommendations${filterMsg}`)
 
     // Step 4: Output results
     if (options.json) {
@@ -624,6 +761,10 @@ export function createRecommendCommand(): Command {
     .option('-i, --installed <skills...>', 'Currently installed skill IDs')
     .option('--no-overlap', 'Disable overlap detection')
     .option('-m, --max-files <number>', 'Maximum files to analyze', '1000')
+    .option(
+      '-r, --role <role>',
+      `SMI-1631: Filter by skill role (${SKILL_ROLES.join(', ')}). Skills matching the role get a +30 score boost.`
+    )
     .action(
       async (targetPath: string, opts: Record<string, string | boolean | string[] | undefined>) => {
         const limit = parseInt(opts['limit'] as string, 10)
@@ -632,6 +773,20 @@ export function createRecommendCommand(): Command {
         const context = opts['context'] as string | undefined
         const installed = opts['installed'] as string[] | undefined
         const noOverlap = opts['overlap'] === false
+        // SMI-1631: Parse and validate role option
+        const roleInput = opts['role'] as string | undefined
+        let role: SkillRole | undefined
+        if (roleInput) {
+          if (SKILL_ROLES.includes(roleInput as SkillRole)) {
+            role = roleInput as SkillRole
+          } else {
+            console.error(
+              chalk.yellow(
+                `Warning: Invalid role "${roleInput}". Valid roles: ${SKILL_ROLES.join(', ')}`
+              )
+            )
+          }
+        }
 
         await runRecommend(targetPath, {
           limit: isNaN(limit) ? 5 : Math.min(Math.max(limit, 1), 50),
@@ -640,6 +795,7 @@ export function createRecommendCommand(): Command {
           context,
           installed,
           noOverlap,
+          role,
         })
       }
     )

@@ -77,7 +77,10 @@ export type {
   SearchResult,
   TrustTier,
   CacheEntry,
+  // SMI-1631: Skill roles for role-based recommendations
+  SkillRole,
 } from './types/skill.js'
+export { SKILL_ROLES } from './types/skill.js'
 
 // Search
 export { HybridSearch } from './search/index.js'
