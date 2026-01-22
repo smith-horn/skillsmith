@@ -40,9 +40,9 @@ describe('Logger', () => {
     // Save original aggregator before any test modifies it
     originalAggregator = getLogAggregator()
 
-    // Clear aggregator
+    // Clear aggregator if it has a clear method
     if ('clear' in originalAggregator) {
-      ;(originalAggregator as any).clear()
+      ;(originalAggregator as { clear: () => void }).clear()
     }
   })
 

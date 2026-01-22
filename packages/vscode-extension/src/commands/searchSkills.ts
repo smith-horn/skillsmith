@@ -6,9 +6,6 @@ import { SkillSearchProvider } from '../providers/SkillSearchProvider.js'
 import { searchSkills as searchMockSkills, type SkillData } from '../data/mockSkills.js'
 import { getMcpClient } from '../mcp/McpClient.js'
 
-/** Minimum query length for search (0 = query optional, filters can be used) */
-const MIN_QUERY_LENGTH = 0
-
 export function registerSearchCommand(
   context: vscode.ExtensionContext,
   searchProvider: SkillSearchProvider

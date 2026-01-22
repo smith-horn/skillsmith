@@ -14,6 +14,7 @@ import {
   RateLimitQueueFullError,
   type RateLimitStorage,
   type RateLimitMetrics,
+  type RateLimitResult,
 } from '../src/security/index.js'
 
 describe('RateLimiter - Token Bucket Algorithm', () => {
@@ -1375,7 +1376,7 @@ describe('RateLimiter - Memory Bounds (Wave 3 Fixes)', () => {
       await limiter.waitForToken('test-key')
 
       // Queue many concurrent requests
-      const promises: Promise<any>[] = []
+      const promises: Promise<RateLimitResult>[] = []
       for (let i = 0; i < 10; i++) {
         promises.push(limiter.waitForToken('test-key'))
       }
