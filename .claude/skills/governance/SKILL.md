@@ -82,16 +82,37 @@ The `npm run audit:standards` command verifies:
 
 ## Code Review Workflow
 
-**IMPORTANT: All issues require resolution before PR merge.**
+**IMPORTANT: All issues require resolution OR tracking before PR merge.**
 
 When performing a code review:
 
-1. **Identify ALL issues** - Critical, medium, and low severity
-2. **Create Linear issues for EVERY finding** - No filtering by severity
-   - Create as sub-issues under the parent feature/task
-   - Use format: `[Code Review] <description>`
-3. **Resolve ALL issues before merge** - No exceptions for "low priority"
+1. **Identify ALL issues** - Critical, major, and minor severity
+2. **For EACH issue, immediately do ONE of:**
+   - **Fix it now** - Implement the fix before moving on
+   - **Create a Linear issue** - If deferring, create the issue IMMEDIATELY
+3. **No "deferred" without a ticket** - "Deferred" without documentation = forgotten
 4. **Re-review after fixes** - Verify each fix addresses the issue
+
+### The Deferred Issue Rule
+
+**"Deferred" is not a resolution. A Linear issue number is.**
+
+When you identify an issue that won't be fixed in the current PR:
+1. Stop what you're doing
+2. Create the Linear sub-issue immediately
+3. Note the issue number (e.g., SMI-1234) in your review
+4. Only then continue with the review
+
+```bash
+# Create sub-issue immediately when deferring
+npx tsx ~/.claude/skills/linear/scripts/linear-ops.ts create-sub-issue SMI-XXX "Issue title" "Description" --priority 3
+```
+
+**Anti-pattern (NEVER do this):**
+> "This is a minor issue, we can address it later."
+
+**Correct pattern:**
+> "Created SMI-1234 to track this. Deferring to post-merge."
 
 ### Issue Creation Template
 
@@ -105,15 +126,25 @@ Description:
 - Standard: §<section> from standards.md
 ```
 
-### Severity Guide (for documentation only, not for filtering)
+### Severity Guide
 
-| Severity | Examples |
-|----------|----------|
-| Critical | Security vulnerabilities, data loss risks, breaking changes |
-| Medium | Missing tests, type safety issues, performance concerns |
-| Low | Style inconsistencies, documentation gaps, minor refactors |
+| Severity | Action | Examples |
+|----------|--------|----------|
+| Critical | Fix before merge | Security vulnerabilities, data loss risks |
+| Major | Fix OR create issue before merge | Missing tests, type safety issues |
+| Minor | Fix OR create issue before merge | Style inconsistencies, minor refactors |
 
-**All severities block PR merge until resolved.**
+**Every issue gets either a fix or a Linear ticket. No exceptions.**
+
+### Code Review Completion Checklist
+
+Before marking a code review complete:
+
+- [ ] All critical issues fixed
+- [ ] All major issues either fixed OR have Linear tickets
+- [ ] All minor issues either fixed OR have Linear tickets
+- [ ] Each deferred issue has a ticket number documented
+- [ ] Re-review confirms fixes are correct
 
 ## When to Invoke
 
