@@ -45,12 +45,18 @@ async function directoryExists(path: string): Promise<boolean> {
 
 /**
  * Copy all files from source to destination directory
+ * Skips symlinks for security (prevents path traversal attacks)
  */
 async function copyDirectory(src: string, dest: string): Promise<number> {
   const entries = await readdir(src, { withFileTypes: true })
   let filesCopied = 0
 
   for (const entry of entries) {
+    // Security: Skip symlinks to prevent path traversal attacks
+    if (entry.isSymbolicLink()) {
+      continue
+    }
+
     const srcPath = join(src, entry.name)
     const destPath = join(dest, entry.name)
 
@@ -101,6 +107,15 @@ async function installSkillsmithSkill(force: boolean): Promise<void> {
     // Copy all assets
     const filesCopied = await copyDirectory(assetsPath, targetPath)
 
+    // Validate that files were actually copied
+    if (filesCopied === 0) {
+      spinner.warn(chalk.yellow('Warning: No files found in assets directory'))
+      console.log(
+        chalk.dim('This may indicate a corrupted installation. Try reinstalling the CLI.')
+      )
+      return
+    }
+
     spinner.succeed(chalk.green('Skillsmith skill installed successfully!'))
 
     console.log()
@@ -134,7 +149,7 @@ export function createInstallSkillCommand(): Command {
       try {
         await installSkillsmithSkill(opts.force ?? false)
       } catch (error) {
-        console.error(chalk.red('Installation error:'), sanitizeError(error))
+        console.error(chalk.red('Error:'), sanitizeError(error))
         process.exit(1)
       }
     })

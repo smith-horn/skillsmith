@@ -73,6 +73,7 @@ function createDirEntry(name: string, isDir: boolean) {
     name,
     isDirectory: () => isDir,
     isFile: () => !isDir,
+    isSymbolicLink: () => false,
   }
 }
 
@@ -463,6 +464,47 @@ describe('SMI-824: Install Skillsmith Skill Command', () => {
 
       const output = mockConsoleLog.mock.calls.map((c) => c[0]).join('\n')
       expect(output).toContain('Files copied: 3')
+    })
+
+    it('should skip symlinks for security', async () => {
+      // Assets directory exists
+      mockStat.mockImplementation(async (path: string) => {
+        if (path.includes('assets/skillsmith-skill') || path.includes('assets\\skillsmith-skill')) {
+          return { isDirectory: () => true }
+        }
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      })
+
+      // Assets include a symlink (which should be skipped)
+      mockReaddir.mockResolvedValue([
+        createDirEntry('SKILL.md', false),
+        {
+          name: 'dangerous-symlink',
+          isDirectory: () => false,
+          isFile: () => false,
+          isSymbolicLink: () => true,
+        },
+      ])
+
+      mockMkdir.mockResolvedValue(undefined)
+      mockCopyFile.mockResolvedValue(undefined)
+
+      const { createInstallSkillCommand } = await import('../src/commands/install-skill.js')
+      const cmd = createInstallSkillCommand()
+
+      await cmd.parseAsync(['node', 'test'])
+
+      // Should only copy the regular file, not the symlink
+      expect(mockCopyFile).toHaveBeenCalledTimes(1)
+      expect(mockCopyFile).toHaveBeenCalledWith(
+        expect.stringContaining('SKILL.md'),
+        expect.stringContaining('SKILL.md')
+      )
+      // Should not have tried to copy the symlink
+      expect(mockCopyFile).not.toHaveBeenCalledWith(
+        expect.stringContaining('dangerous-symlink'),
+        expect.any(String)
+      )
     })
   })
 
