@@ -191,6 +191,13 @@ export async function executeGetSkill(
     scoreBreakdown: undefined, // Breakdown not stored in current schema
     tags: dbSkill.tags || [],
     installCommand: 'claude skill add ' + dbSkill.id,
+    // SMI-825: Security summary
+    security: {
+      passed: dbSkill.securityPassed,
+      riskScore: dbSkill.riskScore,
+      findingsCount: dbSkill.securityFindingsCount,
+      scannedAt: dbSkill.securityScannedAt,
+    },
     createdAt: dbSkill.createdAt,
     updatedAt: dbSkill.updatedAt,
   }
@@ -278,6 +285,29 @@ export function formatSkillDetails(response: GetSkillResponse): string {
   // Tags
   if (skill.tags && skill.tags.length > 0) {
     lines.push('Tags: ' + skill.tags.join(', '))
+  }
+  lines.push('')
+
+  // SMI-825: Security information
+  lines.push('--- Security ---')
+  if (skill.security) {
+    if (skill.security.passed === null) {
+      lines.push('  Status: Not scanned')
+    } else if (skill.security.passed) {
+      lines.push('  Status: PASSED')
+      lines.push('  Risk Score: ' + (skill.security.riskScore ?? 0) + '/100')
+      lines.push('  Findings: ' + (skill.security.findingsCount ?? 0))
+    } else {
+      lines.push('  Status: FAILED')
+      lines.push('  Risk Score: ' + (skill.security.riskScore ?? 0) + '/100 (HIGH)')
+      lines.push('  Findings: ' + (skill.security.findingsCount ?? 0))
+      lines.push('  WARNING: This skill has security issues. Review carefully before use.')
+    }
+    if (skill.security.scannedAt) {
+      lines.push('  Scanned: ' + skill.security.scannedAt)
+    }
+  } else {
+    lines.push('  Status: Not scanned')
   }
   lines.push('')
 

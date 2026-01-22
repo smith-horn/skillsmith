@@ -98,6 +98,11 @@ interface IndexedSkillRow {
   trust_tier: string
   tags: string
   installable: boolean | null
+  // SMI-825: Security scan columns
+  risk_score: number | null
+  security_findings_count: number | null
+  security_scanned_at: string | null
+  security_passed: number | null // SQLite uses 0/1 for boolean
   created_at: string
   updated_at: string
   last_indexed_at: string | null
@@ -226,6 +231,7 @@ export class IndexerRepository {
 
   /**
    * Convert a database row to an IndexedSkill object
+   * SMI-825: Added security scan fields
    */
   private rowToSkill(row: IndexedSkillRow): IndexedSkill {
     return {
@@ -238,6 +244,11 @@ export class IndexerRepository {
       trustTier: row.trust_tier as TrustTier,
       tags: JSON.parse(row.tags || '[]'),
       installable: row.installable ?? false,
+      // SMI-825: Security scan fields
+      riskScore: row.risk_score,
+      securityFindingsCount: row.security_findings_count ?? 0,
+      securityScannedAt: row.security_scanned_at,
+      securityPassed: row.security_passed === null ? null : row.security_passed === 1,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       lastIndexedAt: row.last_indexed_at ?? row.updated_at,

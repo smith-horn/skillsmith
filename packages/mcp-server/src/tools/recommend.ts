@@ -195,6 +195,8 @@ interface SkillData {
   trustTier: TrustTier
   /** SMI-1631: Skill roles for role-based filtering */
   roles: SkillRole[]
+  /** SMI-1632: Whether this is an installable skill (vs a collection) */
+  installable: boolean
 }
 
 /**
@@ -280,6 +282,7 @@ function inferRolesFromTags(tags: string[]): SkillRole[] {
 
 /**
  * Transform a database skill to SkillData format for matching
+ * SMI-1632: Added installable field to filter out collections
  */
 function transformSkillToMatchData(skill: {
   id: string
@@ -289,6 +292,7 @@ function transformSkillToMatchData(skill: {
   qualityScore: number | null
   trustTier: string
   roles?: SkillRole[]
+  installable: boolean
 }): SkillData {
   // Generate trigger phrases from name and first few tags
   const triggerPhrases = [
@@ -310,12 +314,15 @@ function transformSkillToMatchData(skill: {
     qualityScore: Math.round((skill.qualityScore ?? 0.5) * 100),
     trustTier: mapTrustTierFromDb(skill.trustTier),
     roles,
+    // SMI-1632: Default to true if not explicitly set
+    installable: skill.installable !== false,
   }
 }
 
 /**
  * Load skills from database via ToolContext
  * Returns skills transformed to SkillData format for matching
+ * Note: Collection filtering is done in the candidate filter using naming patterns (SMI-1632)
  */
 async function loadSkillsFromDatabase(
   context: ToolContext,
@@ -480,9 +487,29 @@ export async function executeRecommend(
   })
 
   // Filter out already installed skills AND semantically similar names from candidates
+  // SMI-1632: Also filter out skill collections (multi-skill repositories)
   const candidates = skillDatabase.filter((s) => {
     const skillName = s.name.toLowerCase()
     const skillIdName = s.id.split('/').pop()?.toLowerCase() || ''
+
+    // SMI-1632: Exclude skill collections based on naming patterns
+    // Collections typically have names ending in '-skills', '-collection', or '-pack'
+    // or have 'collection' in their description
+    const collectionPatterns = [
+      '-skills',
+      '-collection',
+      '-pack',
+      'skill-collection',
+      'skills-repo',
+    ]
+    const isCollection =
+      collectionPatterns.some((pattern) => skillIdName.includes(pattern)) ||
+      (s.description.toLowerCase().includes('collection of') &&
+        s.description.toLowerCase().includes('skill'))
+
+    if (isCollection) {
+      return false
+    }
 
     // Exclude if exact ID match (case-insensitive)
     if (installed_skills.some((id) => id.toLowerCase() === s.id.toLowerCase())) {

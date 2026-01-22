@@ -554,6 +554,7 @@ export class SkillsmithApiClient {
    * Convert API result to Skill type
    * SMI-1577: Handle optional fields with sensible defaults
    * Uses epoch timestamp as sentinel for missing dates to avoid data integrity issues
+   * SMI-825: Added security scan fields
    */
   static toSkill(result: ApiSearchResult): Skill {
     // Sentinel value for missing timestamps - clearly indicates unknown date
@@ -568,6 +569,11 @@ export class SkillsmithApiClient {
       trustTier: result.trust_tier,
       tags: result.tags || [],
       installable: result.installable ?? false,
+      // SMI-825: Security scan fields (default to not scanned for API results)
+      riskScore: null,
+      securityFindingsCount: 0,
+      securityScannedAt: null,
+      securityPassed: null,
       createdAt: result.created_at ?? UNKNOWN_DATE,
       updatedAt: result.updated_at ?? UNKNOWN_DATE,
     }
