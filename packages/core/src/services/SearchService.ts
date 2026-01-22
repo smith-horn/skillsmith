@@ -30,6 +30,11 @@ interface FTSRow {
   trust_tier: string
   tags: string
   installable: boolean | null
+  // SMI-825: Security scan columns
+  risk_score: number | null
+  security_findings_count: number | null
+  security_scanned_at: string | null
+  security_passed: number | null // SQLite uses 0/1 for boolean
   created_at: string
   updated_at: string
   rank: number
@@ -53,7 +58,17 @@ export class SearchService {
    * Search skills using FTS5 with BM25 ranking
    */
   search(options: SearchOptions): PaginatedResults<SearchResult> {
-    const { query, limit = 20, offset = 0, trustTier, minQualityScore, category } = options
+    const {
+      query,
+      limit = 20,
+      offset = 0,
+      trustTier,
+      minQualityScore,
+      category,
+      // SMI-825: Security filters
+      safeOnly,
+      maxRiskScore,
+    } = options
 
     // Check cache first
     const cacheKey = this.buildCacheKey(options)
@@ -88,6 +103,16 @@ export class SearchService {
     if (minQualityScore !== undefined) {
       filters.push('s.quality_score >= ?')
       params.push(minQualityScore)
+    }
+
+    // SMI-825: Security filters
+    if (safeOnly) {
+      filters.push('s.security_passed = 1')
+    }
+
+    if (maxRiskScore !== undefined) {
+      filters.push('(s.risk_score IS NULL OR s.risk_score <= ?)')
+      params.push(maxRiskScore)
     }
 
     // Category filter requires joining with skill_categories and categories tables
@@ -266,7 +291,16 @@ export class SearchService {
    * Queries the skills table directly instead of using FTS5
    */
   private searchByFiltersOnly(options: SearchOptions): PaginatedResults<SearchResult> {
-    const { limit = 20, offset = 0, trustTier, minQualityScore, category } = options
+    const {
+      limit = 20,
+      offset = 0,
+      trustTier,
+      minQualityScore,
+      category,
+      // SMI-825: Security filters
+      safeOnly,
+      maxRiskScore,
+    } = options
 
     // Check cache first
     const cacheKey = this.buildCacheKey(options)
@@ -301,6 +335,16 @@ export class SearchService {
         params.push(minQualityScore)
       }
 
+      // SMI-825: Security filters
+      if (safeOnly) {
+        filters.push('s.security_passed = 1')
+      }
+
+      if (maxRiskScore !== undefined) {
+        filters.push('(s.risk_score IS NULL OR s.risk_score <= ?)')
+        params.push(maxRiskScore)
+      }
+
       const whereClause = filters.length > 0 ? ` AND ${filters.join(' AND ')}` : ''
 
       countSql = `SELECT COUNT(*) as total ${baseJoin}${whereClause}`
@@ -321,6 +365,16 @@ export class SearchService {
       if (minQualityScore !== undefined) {
         filters.push('s.quality_score >= ?')
         params.push(minQualityScore)
+      }
+
+      // SMI-825: Security filters
+      if (safeOnly) {
+        filters.push('s.security_passed = 1')
+      }
+
+      if (maxRiskScore !== undefined) {
+        filters.push('(s.risk_score IS NULL OR s.risk_score <= ?)')
+        params.push(maxRiskScore)
       }
 
       const whereClause = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : ''
@@ -493,6 +547,11 @@ export class SearchService {
       trustTier: row.trust_tier as TrustTier,
       tags: JSON.parse(row.tags || '[]'),
       installable: row.installable ?? false,
+      // SMI-825: Security scan fields
+      riskScore: row.risk_score,
+      securityFindingsCount: row.security_findings_count ?? 0,
+      securityScannedAt: row.security_scanned_at,
+      securityPassed: row.security_passed === null ? null : row.security_passed === 1,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }

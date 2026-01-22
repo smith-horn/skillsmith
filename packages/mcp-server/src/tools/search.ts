@@ -82,6 +82,17 @@ export const searchToolSchema = {
         minimum: 0,
         maximum: 100,
       },
+      // SMI-825: Security filters
+      safe_only: {
+        type: 'boolean',
+        description: 'Only show skills that passed security scan',
+      },
+      max_risk: {
+        type: 'number',
+        description: 'Maximum risk score (0-100, lower is safer)',
+        minimum: 0,
+        maximum: 100,
+      },
     },
     required: [], // Query is optional if filters are provided
   },
@@ -100,6 +111,10 @@ export interface SearchInput {
   trust_tier?: string
   /** Minimum quality score (0-100) */
   min_score?: number
+  /** SMI-825: Only show skills that passed security scan */
+  safe_only?: boolean
+  /** SMI-825: Maximum risk score (0-100, lower is safer) */
+  max_risk?: number
 }
 
 /**
@@ -128,12 +143,17 @@ export async function executeSearch(
 
   // Validate: require query OR at least one filter
   const hasQuery = input.query && input.query.trim().length > 0
-  const hasFilters = input.category || input.trust_tier || input.min_score !== undefined
+  const hasFilters =
+    input.category ||
+    input.trust_tier ||
+    input.min_score !== undefined ||
+    input.safe_only !== undefined ||
+    input.max_risk !== undefined
 
   if (!hasQuery && !hasFilters) {
     throw new SkillsmithError(
       ErrorCodes.SEARCH_QUERY_EMPTY,
-      'Provide a search query or at least one filter (category, trust_tier, min_score)'
+      'Provide a search query or at least one filter (category, trust_tier, min_score, safe_only, max_risk)'
     )
   }
 
@@ -175,6 +195,22 @@ export async function executeSearch(
       )
     }
     filters.minScore = input.min_score / 100 // Convert to 0-1 scale for DB
+  }
+
+  // SMI-825: Apply security filters
+  if (input.safe_only !== undefined) {
+    filters.safeOnly = input.safe_only
+  }
+
+  if (input.max_risk !== undefined) {
+    if (input.max_risk < 0 || input.max_risk > 100) {
+      throw new SkillsmithError(
+        ErrorCodes.VALIDATION_OUT_OF_RANGE,
+        'max_risk must be between 0 and 100',
+        { details: { max_risk: input.max_risk } }
+      )
+    }
+    filters.maxRiskScore = input.max_risk
   }
 
   const searchStart = performance.now()
@@ -256,12 +292,16 @@ export async function executeSearch(
     trustTier: dbTrustTier,
     minQualityScore: filters.minScore,
     category: filters.category,
+    // SMI-825: Security filters
+    safeOnly: filters.safeOnly,
+    maxRiskScore: filters.maxRiskScore,
   })
 
   const searchEnd = performance.now()
 
   // Convert SearchResult to SkillSearchResult format
   // SMI-1491: Added repository field for transparency
+  // SMI-825: Added security summary
   const results: SkillSearchResult[] = searchResults.items.map((item) => ({
     id: item.skill.id,
     name: item.skill.name,
@@ -271,6 +311,13 @@ export async function executeSearch(
     trustTier: mapTrustTierFromDb(item.skill.trustTier),
     score: Math.round((item.skill.qualityScore ?? 0) * 100), // Convert 0-1 to 0-100
     repository: item.skill.repoUrl || undefined,
+    // SMI-825: Security summary
+    security: {
+      passed: item.skill.securityPassed,
+      riskScore: item.skill.riskScore,
+      findingsCount: item.skill.securityFindingsCount,
+      scannedAt: item.skill.securityScannedAt,
+    },
   }))
 
   const endTime = performance.now()

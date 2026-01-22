@@ -49,6 +49,20 @@ export interface ScoreBreakdown {
 }
 
 /**
+ * SMI-825: Security scan summary for display
+ */
+export interface SecuritySummary {
+  /** Whether the skill passed security scan (null = not scanned) */
+  passed: boolean | null
+  /** Risk score from 0-100 (lower is safer) */
+  riskScore: number | null
+  /** Number of security findings */
+  findingsCount: number
+  /** When the skill was last scanned */
+  scannedAt: string | null
+}
+
+/**
  * Full skill definition
  */
 export interface Skill {
@@ -64,6 +78,8 @@ export interface Skill {
   scoreBreakdown?: ScoreBreakdown
   tags: string[]
   installCommand?: string
+  /** SMI-825: Security scan summary */
+  security?: SecuritySummary
   createdAt: string
   updatedAt: string
 }
@@ -71,6 +87,7 @@ export interface Skill {
 /**
  * Skill search result (subset of full skill)
  * SMI-1491: Added repository field for transparency about installation source
+ * SMI-825: Added security summary
  */
 export interface SkillSearchResult {
   id: string
@@ -82,6 +99,8 @@ export interface SkillSearchResult {
   score: number
   /** GitHub repository URL (may be undefined for seed data/metadata-only skills) */
   repository?: string
+  /** SMI-825: Security scan summary */
+  security?: SecuritySummary
 }
 
 /**
@@ -91,6 +110,10 @@ export interface SearchFilters {
   category?: SkillCategory
   trustTier?: TrustTier
   minScore?: number
+  /** SMI-825: Only show skills that passed security scan */
+  safeOnly?: boolean
+  /** SMI-825: Maximum risk score (0-100, lower is safer) */
+  maxRiskScore?: number
 }
 
 /**
