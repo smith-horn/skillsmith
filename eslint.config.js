@@ -3,22 +3,25 @@ import tseslint from 'typescript-eslint'
 import prettierConfig from 'eslint-config-prettier'
 import globals from 'globals'
 
-export default tseslint.config(
-  // Global ignores - must be first
-  {
-    ignores: [
-      '**/dist/**',
-      '**/node_modules/**',
-      '**/coverage/**',
-      '**/*.d.ts',
-      '**/*.js',
-      '**/*.mjs',
-      '!eslint.config.js',
-      '**/vitest.config.integration.ts',
-      // Website uses Astro with its own ESLint config - lint separately
-      'packages/website/**',
-    ],
-  },
+// Global ignores - must be separate config object with ONLY ignores property
+const globalIgnores = {
+  ignores: [
+    '**/dist/**',
+    '**/node_modules/**',
+    '**/coverage/**',
+    '**/*.d.ts',
+    '**/*.js',
+    '**/*.mjs',
+    '!eslint.config.js',
+    '**/vitest.config.integration.ts',
+    // Website uses Astro with its own ESLint config - lint separately
+    'packages/website/**',
+    // Git-crypt encrypted files - cannot be parsed in CI
+    'docs/**/*.ts',
+  ],
+}
+
+const tsConfig = tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   prettierConfig,
@@ -52,3 +55,5 @@ export default tseslint.config(
     },
   }
 )
+
+export default [globalIgnores, ...tsConfig]
