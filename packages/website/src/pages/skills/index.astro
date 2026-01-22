@@ -423,13 +423,8 @@ const trustTiers = [
         const data = await response.json();
         allResults = data.data || data.skills || data.results || [];
 
-        // Defensive client-side filtering (API already filters, but ensure consistency)
-        if (category) {
-          allResults = allResults.filter(s => s.category === category);
-        }
-        if (trustTier) {
-          allResults = allResults.filter(s => s.trust_tier === trustTier);
-        }
+        // Note: API already filters by category/trustTier, no client-side filtering needed
+        // The API response doesn't include category field, so we trust the server filtering
 
         // Sort results
         sortResults();
