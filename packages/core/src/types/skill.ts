@@ -4,6 +4,30 @@
 
 export type TrustTier = 'verified' | 'community' | 'experimental' | 'unknown'
 
+/**
+ * SMI-1631: Skill roles for role-based recommendations
+ * Used to filter and prioritize skills based on their primary purpose
+ */
+export type SkillRole =
+  | 'code-quality'
+  | 'testing'
+  | 'documentation'
+  | 'workflow'
+  | 'security'
+  | 'development-partner'
+
+/**
+ * Valid skill roles array for validation
+ */
+export const SKILL_ROLES: readonly SkillRole[] = [
+  'code-quality',
+  'testing',
+  'documentation',
+  'workflow',
+  'security',
+  'development-partner',
+] as const
+
 export interface Skill {
   id: string
   name: string
@@ -13,6 +37,8 @@ export interface Skill {
   qualityScore: number | null
   trustTier: TrustTier
   tags: string[]
+  /** SMI-1631: Skill roles for role-based filtering */
+  roles?: SkillRole[]
   installable: boolean
   createdAt: string
   updatedAt: string
@@ -27,6 +53,8 @@ export interface SkillCreateInput {
   qualityScore?: number | null
   trustTier?: TrustTier
   tags?: string[]
+  /** SMI-1631: Skill roles for role-based filtering */
+  roles?: SkillRole[]
   installable?: boolean
 }
 
@@ -38,6 +66,8 @@ export interface SkillUpdateInput {
   qualityScore?: number | null
   trustTier?: TrustTier
   tags?: string[]
+  /** SMI-1631: Skill roles for role-based filtering */
+  roles?: SkillRole[]
   installable?: boolean
 }
 

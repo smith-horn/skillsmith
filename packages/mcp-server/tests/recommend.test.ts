@@ -172,7 +172,7 @@ describe('Skill Recommend Tool', () => {
 
       for (const rec of result.recommendations) {
         expect(rec.trust_tier).toBeDefined()
-        expect(['verified', 'community', 'standard', 'unverified']).toContain(rec.trust_tier)
+        expect(['verified', 'community', 'experimental', 'unknown']).toContain(rec.trust_tier)
         expect(rec.quality_score).toBeGreaterThanOrEqual(0)
         expect(rec.quality_score).toBeLessThanOrEqual(100)
       }
@@ -240,6 +240,160 @@ describe('Skill Recommend Tool', () => {
     })
   })
 
+  // SMI-1631: Role-based filtering tests
+  describe('role-based filtering', () => {
+    it('should validate role parameter in schema', () => {
+      const result = recommendInputSchema.parse({
+        installed_skills: [],
+        role: 'testing',
+      })
+      expect(result.role).toBe('testing')
+    })
+
+    it('should reject invalid role values', () => {
+      expect(() =>
+        recommendInputSchema.parse({
+          installed_skills: [],
+          role: 'invalid-role',
+        })
+      ).toThrow()
+    })
+
+    it('should accept all valid role values', () => {
+      const validRoles = [
+        'code-quality',
+        'testing',
+        'documentation',
+        'workflow',
+        'security',
+        'development-partner',
+      ]
+
+      for (const role of validRoles) {
+        const result = recommendInputSchema.parse({
+          installed_skills: [],
+          role,
+        })
+        expect(result.role).toBe(role)
+      }
+    })
+
+    it('should include role_filtered count in response', async () => {
+      const result = await executeRecommend(
+        {
+          installed_skills: [],
+          role: 'testing',
+          detect_overlap: false,
+          limit: 10,
+        },
+        toolContext
+      )
+
+      // role_filtered should be a number (could be 0 if all skills match)
+      expect(typeof result.role_filtered).toBe('number')
+      expect(result.role_filtered).toBeGreaterThanOrEqual(0)
+    })
+
+    it('should include role_filter in context', async () => {
+      const result = await executeRecommend(
+        {
+          installed_skills: [],
+          role: 'testing',
+          detect_overlap: false,
+          limit: 5,
+        },
+        toolContext
+      )
+
+      expect(result.context.role_filter).toBe('testing')
+    })
+
+    it('should not set role_filter when no role is specified', async () => {
+      const result = await executeRecommend(
+        {
+          installed_skills: [],
+          detect_overlap: false,
+          limit: 5,
+        },
+        toolContext
+      )
+
+      expect(result.context.role_filter).toBeUndefined()
+    })
+
+    it('should include roles array in recommendations', async () => {
+      const result = await executeRecommend(
+        {
+          installed_skills: [],
+          detect_overlap: false,
+          limit: 5,
+        },
+        toolContext
+      )
+
+      // All recommendations should have a roles array (may be empty)
+      for (const rec of result.recommendations) {
+        expect(Array.isArray(rec.roles)).toBe(true)
+      }
+    })
+
+    it('should boost quality score by 30 for role matches', async () => {
+      // First, get recommendations without role filter
+      const withoutRole = await executeRecommend(
+        {
+          installed_skills: [],
+          detect_overlap: false,
+          limit: 10,
+        },
+        toolContext
+      )
+
+      // Find a skill that has the 'testing' role
+      const testingSkill = withoutRole.recommendations.find((r) => r.roles?.includes('testing'))
+
+      if (testingSkill) {
+        const originalScore = testingSkill.quality_score
+
+        // Now get recommendations with testing role filter
+        const withRole = await executeRecommend(
+          {
+            installed_skills: [],
+            role: 'testing',
+            detect_overlap: false,
+            limit: 10,
+          },
+          toolContext
+        )
+
+        const boostedSkill = withRole.recommendations.find(
+          (r) => r.skill_id === testingSkill.skill_id
+        )
+
+        if (boostedSkill) {
+          // Score should be boosted by 30 (capped at 100)
+          const expectedScore = Math.min(100, originalScore + 30)
+          expect(boostedSkill.quality_score).toBe(expectedScore)
+        }
+      }
+    })
+
+    it('should include role in reason when role filter is applied', async () => {
+      const result = await executeRecommend(
+        {
+          installed_skills: [],
+          role: 'testing',
+          detect_overlap: false,
+          limit: 5,
+        },
+        toolContext
+      )
+
+      for (const rec of result.recommendations) {
+        expect(rec.reason).toContain('role: testing')
+      }
+    })
+  })
+
   describe('formatRecommendations', () => {
     it('should format recommendations for terminal display', async () => {
       const result = await executeRecommend(
@@ -292,6 +446,39 @@ describe('Skill Recommend Tool', () => {
 
       expect(formatted).toContain('Candidates considered:')
       expect(formatted).toContain('ms')
+    })
+
+    // SMI-1631: Role display in formatted output
+    it('should show role filter in formatted output when applied', async () => {
+      const result = await executeRecommend(
+        {
+          installed_skills: [],
+          role: 'testing',
+          detect_overlap: false,
+          limit: 5,
+        },
+        toolContext
+      )
+      const formatted = formatRecommendations(result)
+
+      expect(formatted).toContain('Role filter: testing')
+    })
+
+    it('should show role filtered count when skills were filtered', async () => {
+      const result = await executeRecommend(
+        {
+          installed_skills: [],
+          role: 'testing',
+          detect_overlap: false,
+          limit: 10,
+        },
+        toolContext
+      )
+
+      if (result.role_filtered > 0) {
+        const formatted = formatRecommendations(result)
+        expect(formatted).toContain(`Filtered for role: ${result.role_filtered}`)
+      }
     })
   })
 })
