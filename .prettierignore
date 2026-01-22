@@ -4,3 +4,7 @@ coverage/
 *.md
 pnpm-lock.yaml
 package-lock.json
+
+# Git-crypt encrypted directories - cannot be parsed in CI
+docs/
+.claude/hive-mind/
