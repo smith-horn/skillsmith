@@ -208,8 +208,8 @@ export class ROIDashboardService {
 
   private calculateWeeklyTrend(
     events: UsageEvent[],
-    startDate: string,
-    endDate: string
+    _startDate: string, // TODO: SMI-1683 - Implement date range filtering
+    _endDate: string
   ): Array<{ week: string; timeSaved: number }> {
     // Group events by week
     const weeklyGroups: Record<string, UsageEvent[]> = {}
@@ -240,8 +240,8 @@ export class ROIDashboardService {
   }
 
   private computeStakeholderROIOnTheFly(
-    startDate: string,
-    endDate: string
+    _startDate: string, // TODO: SMI-1683 - Implement date range filtering
+    _endDate: string
   ): ROIDashboard['stakeholder'] {
     // This is a simplified version - in production, query events directly
     return {

@@ -407,8 +407,8 @@ describe('Analytics Integration Tests', () => {
         })
       }
 
-      const beforeROI = roiService.getUserROI('user-1', 30)
-      const baselineTime = beforeROI!.totalTimeSaved
+      // Get baseline ROI (validates service is working before experiment)
+      roiService.getUserROI('user-1', 30)
 
       // 2. Run experiment
       const experiment = experimentService.createExperiment({

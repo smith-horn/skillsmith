@@ -22,7 +22,6 @@ import {
   serializeCacheEntry,
   deserializeCacheEntry,
   getTTLTierName,
-  type CacheEntry,
   // TieredCache
   EnhancedTieredCache,
   // CacheManager
@@ -128,19 +127,10 @@ describe('CacheEntry', () => {
 
     it('should return RARE for low-frequency queries', () => {
       const now = FIXED_TIMESTAMP
-      const twoHoursAgo = now - 2 * 60 * 60 * 1000
-      // 1 hit in 2 hours = 0.5 hits/hour = 12 hits/day
-      // But we need < 1 hit/day AND > 1 hour age to be RARE
-      // 0.5 hits/hour * 24 = 12 hits/day, which is > 1
-      // Need much lower frequency
-      const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000
-      // 0.5 hits in 24 hours = 0.5 hits/day < 1
-      const tier = calculateTTLTier(twentyFourHoursAgo, 0.5, now)
-      // With 0.5 hits in 24 hours, hitsPerHour = 0.5/24 = 0.02, hitsPerDay = 0.5 < 1
-      // But hitCount must be integer, so use 1 hit in 48 hours
+      // Need < 1 hit/day AND > 1 hour age to be RARE
+      // Use 1 hit in 48 hours = 0.02 hits/hour = 0.5 hits/day < 1
       const fortyEightHoursAgo = now - 48 * 60 * 60 * 1000
       const tierRare = calculateTTLTier(fortyEightHoursAgo, 1, now)
-      // 1 hit in 48 hours = 0.02 hits/hour = 0.5 hits/day < 1
       expect(tierRare).toBe(TTLTier.RARE)
     })
 
