@@ -35,6 +35,21 @@ interface InteractiveSearchState {
 }
 
 /**
+ * SMI-825: Format security status for display
+ */
+function formatSecurityStatus(skill: SearchResult['skill']): string {
+  if (skill.securityPassed === null) {
+    return chalk.gray('--')
+  }
+  if (skill.securityPassed) {
+    const riskText = skill.riskScore !== null ? ` (${skill.riskScore})` : ''
+    return chalk.green('PASS' + riskText)
+  }
+  const riskText = skill.riskScore !== null ? ` (${skill.riskScore})` : ''
+  return chalk.red('FAIL' + riskText)
+}
+
+/**
  * Format a skill result for display with color coding
  */
 function formatSkillRow(result: SearchResult): string[] {
@@ -44,10 +59,11 @@ function formatSkillRow(result: SearchResult): string[] {
 
   return [
     colorFn(skill.name),
-    skill.description?.slice(0, 50) || 'No description',
+    skill.description?.slice(0, 40) || 'No description',
     skill.author || 'Unknown',
     colorFn(skill.trustTier),
     score,
+    formatSecurityStatus(skill), // SMI-825: Security status
   ]
 }
 
@@ -72,8 +88,9 @@ function displayResults(
       chalk.bold('Author'),
       chalk.bold('Trust Tier'),
       chalk.bold('Quality'),
+      chalk.bold('Security'), // SMI-825: Security column
     ],
-    colWidths: [25, 52, 20, 15, 10],
+    colWidths: [20, 42, 18, 13, 10, 12],
     wordWrap: true,
   })
 
@@ -119,8 +136,27 @@ function displaySkillDetails(result: SearchResult): void {
   )
   console.log(chalk.bold('Tags: ') + (skill.tags.length > 0 ? skill.tags.join(', ') : 'None'))
   console.log(chalk.bold('Repository: ') + (skill.repoUrl || 'N/A'))
-  console.log(chalk.bold('Created: ') + skill.createdAt)
-  console.log(chalk.bold('Updated: ') + skill.updatedAt)
+
+  // SMI-825: Security information
+  console.log(chalk.bold('\nSecurity Status:'))
+  if (skill.securityPassed === null) {
+    console.log('  Status: ' + chalk.gray('Not scanned'))
+  } else if (skill.securityPassed) {
+    console.log('  Status: ' + chalk.green('PASSED'))
+    console.log('  Risk Score: ' + chalk.green((skill.riskScore ?? 0) + '/100'))
+    console.log('  Findings: ' + (skill.securityFindingsCount ?? 0))
+  } else {
+    console.log('  Status: ' + chalk.red('FAILED'))
+    console.log('  Risk Score: ' + chalk.red((skill.riskScore ?? 0) + '/100'))
+    console.log('  Findings: ' + chalk.red(skill.securityFindingsCount ?? 0))
+  }
+  if (skill.securityScannedAt) {
+    console.log('  Scanned: ' + skill.securityScannedAt)
+  }
+
+  console.log(chalk.bold('\nDates:'))
+  console.log('  Created: ' + skill.createdAt)
+  console.log('  Updated: ' + skill.updatedAt)
   console.log()
 }
 
@@ -314,7 +350,16 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
  */
 async function runSearch(
   query: string,
-  options: { db: string; limit: number; tier?: TrustTier; category?: string; minScore?: number }
+  options: {
+    db: string
+    limit: number
+    tier?: TrustTier
+    category?: string
+    minScore?: number
+    // SMI-825: Security filters
+    safeOnly?: boolean
+    maxRisk?: number
+  }
 ): Promise<void> {
   const db = createDatabase(options.db)
   const searchService = new SearchService(db)
@@ -335,6 +380,13 @@ async function runSearch(
     }
     if (options.minScore !== undefined) {
       searchOptions.minQualityScore = options.minScore / 100
+    }
+    // SMI-825: Security filters
+    if (options.safeOnly !== undefined) {
+      searchOptions.safeOnly = options.safeOnly
+    }
+    if (options.maxRisk !== undefined) {
+      searchOptions.maxRiskScore = options.maxRisk
     }
 
     const results = searchService.search(searchOptions)
@@ -382,6 +434,9 @@ Quality Score Formula:
       'Filter by category (development, testing, devops, documentation, productivity, security)'
     )
     .option('-s, --min-score <number>', 'Minimum quality score (0-100, see above for formula)')
+    // SMI-825: Security filters
+    .option('--safe-only', 'Only show skills that passed security scan')
+    .option('--max-risk <number>', 'Maximum risk score (0-100, lower is safer)')
     .action(
       async (query: string | undefined, opts: Record<string, string | boolean | undefined>) => {
         try {
@@ -391,6 +446,9 @@ Quality Score Formula:
           const tier = opts['tier'] as TrustTier | undefined
           const category = opts['category'] as string | undefined
           const minScore = opts['min-score'] ? parseInt(opts['min-score'] as string, 10) : undefined
+          // SMI-825: Security filters
+          const safeOnly = opts['safe-only'] as boolean | undefined
+          const maxRisk = opts['max-risk'] ? parseInt(opts['max-risk'] as string, 10) : undefined
 
           if (interactive) {
             await runInteractiveSearch(dbPath)
@@ -402,6 +460,8 @@ Quality Score Formula:
               tier?: TrustTier
               category?: string
               minScore?: number
+              safeOnly?: boolean
+              maxRisk?: number
             } = {
               db: dbPath,
               limit,
@@ -415,8 +475,21 @@ Quality Score Formula:
             if (minScore !== undefined) {
               searchOpts.minScore = minScore
             }
+            // SMI-825: Security filters
+            if (safeOnly !== undefined) {
+              searchOpts.safeOnly = safeOnly
+            }
+            if (maxRisk !== undefined) {
+              searchOpts.maxRisk = maxRisk
+            }
             await runSearch(query, searchOpts)
-          } else if (tier !== undefined || category !== undefined || minScore !== undefined) {
+          } else if (
+            tier !== undefined ||
+            category !== undefined ||
+            minScore !== undefined ||
+            safeOnly !== undefined ||
+            maxRisk !== undefined
+          ) {
             // No query but filters provided - run filter-only search
             console.log(chalk.blue('Running filter-only search...'))
             const searchOpts: {
@@ -425,6 +498,8 @@ Quality Score Formula:
               tier?: TrustTier
               category?: string
               minScore?: number
+              safeOnly?: boolean
+              maxRisk?: number
             } = {
               db: dbPath,
               limit,
@@ -438,12 +513,19 @@ Quality Score Formula:
             if (minScore !== undefined) {
               searchOpts.minScore = minScore
             }
+            // SMI-825: Security filters
+            if (safeOnly !== undefined) {
+              searchOpts.safeOnly = safeOnly
+            }
+            if (maxRisk !== undefined) {
+              searchOpts.maxRisk = maxRisk
+            }
             await runSearch('', searchOpts)
           } else {
             // No query and no filters
             console.log(
               chalk.yellow(
-                'Please provide a search query, filters (--tier, --category, --min-score), or use -i for interactive mode'
+                'Please provide a search query, filters (--tier, --category, --min-score, --safe-only, --max-risk), or use -i for interactive mode'
               )
             )
             console.log(chalk.dim('Examples:'))
@@ -451,6 +533,8 @@ Quality Score Formula:
             console.log(chalk.dim('  skillsmith search --tier verified'))
             console.log(chalk.dim('  skillsmith search --category security'))
             console.log(chalk.dim('  skillsmith search --tier community --min-score 70'))
+            console.log(chalk.dim('  skillsmith search --safe-only'))
+            console.log(chalk.dim('  skillsmith search --max-risk 30'))
             console.log(chalk.dim('  skillsmith search -i'))
           }
         } catch (error) {

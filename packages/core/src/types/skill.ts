@@ -40,6 +40,11 @@ export interface Skill {
   /** SMI-1631: Skill roles for role-based filtering */
   roles?: SkillRole[]
   installable: boolean
+  // SMI-825: Security scan fields
+  riskScore: number | null
+  securityFindingsCount: number
+  securityScannedAt: string | null
+  securityPassed: boolean | null
   createdAt: string
   updatedAt: string
 }
@@ -56,6 +61,11 @@ export interface SkillCreateInput {
   /** SMI-1631: Skill roles for role-based filtering */
   roles?: SkillRole[]
   installable?: boolean
+  // SMI-825: Security scan fields
+  riskScore?: number | null
+  securityFindingsCount?: number
+  securityScannedAt?: string | null
+  securityPassed?: boolean | null
 }
 
 export interface SkillUpdateInput {
@@ -69,6 +79,11 @@ export interface SkillUpdateInput {
   /** SMI-1631: Skill roles for role-based filtering */
   roles?: SkillRole[]
   installable?: boolean
+  // SMI-825: Security scan fields
+  riskScore?: number | null
+  securityFindingsCount?: number
+  securityScannedAt?: string | null
+  securityPassed?: boolean | null
 }
 
 export interface SearchOptions {
@@ -78,6 +93,9 @@ export interface SearchOptions {
   trustTier?: TrustTier
   minQualityScore?: number
   category?: string
+  // SMI-825: Security filters
+  safeOnly?: boolean // Only show skills that passed security scan
+  maxRiskScore?: number // Maximum risk score (0-100)
 }
 
 export interface SearchResult {

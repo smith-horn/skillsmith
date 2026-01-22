@@ -14,7 +14,7 @@ import type { Database as BetterSqliteDatabase } from 'better-sqlite3'
 
 export type DatabaseType = BetterSqliteDatabase
 
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 /**
  * SQL statements for creating the database schema
@@ -42,6 +42,11 @@ CREATE TABLE IF NOT EXISTS skills (
   quality_score REAL CHECK(quality_score IS NULL OR (quality_score >= 0 AND quality_score <= 1)),
   trust_tier TEXT CHECK(trust_tier IN ('verified', 'community', 'experimental', 'unknown')) DEFAULT 'unknown',
   tags TEXT DEFAULT '[]', -- JSON array of tags
+  -- SMI-825: Security scan columns
+  risk_score INTEGER CHECK(risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 100)),
+  security_findings_count INTEGER DEFAULT 0,
+  security_scanned_at TEXT,
+  security_passed INTEGER, -- boolean: 1 = passed, 0 = failed, NULL = not scanned
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -117,6 +122,8 @@ CREATE INDEX IF NOT EXISTS idx_skills_trust_tier ON skills(trust_tier);
 CREATE INDEX IF NOT EXISTS idx_skills_quality_score ON skills(quality_score);
 CREATE INDEX IF NOT EXISTS idx_skills_updated_at ON skills(updated_at);
 CREATE INDEX IF NOT EXISTS idx_skills_created_at ON skills(created_at);
+CREATE INDEX IF NOT EXISTS idx_skills_risk_score ON skills(risk_score);
+CREATE INDEX IF NOT EXISTS idx_skills_security_passed ON skills(security_passed);
 CREATE INDEX IF NOT EXISTS idx_sources_type ON sources(type);
 CREATE INDEX IF NOT EXISTS idx_sources_is_active ON sources(is_active);
 CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);
@@ -210,6 +217,21 @@ CREATE TABLE IF NOT EXISTS sync_history (
 -- Index for efficient history queries
 CREATE INDEX IF NOT EXISTS idx_sync_history_started ON sync_history(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sync_history_status ON sync_history(status);
+`,
+  },
+  {
+    version: 4,
+    description: 'SMI-825: Add security scan columns to skills table',
+    sql: `
+-- Add security columns to skills table
+ALTER TABLE skills ADD COLUMN risk_score INTEGER CHECK(risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 100));
+ALTER TABLE skills ADD COLUMN security_findings_count INTEGER DEFAULT 0;
+ALTER TABLE skills ADD COLUMN security_scanned_at TEXT;
+ALTER TABLE skills ADD COLUMN security_passed INTEGER;
+
+-- Index for efficient security queries
+CREATE INDEX IF NOT EXISTS idx_skills_risk_score ON skills(risk_score);
+CREATE INDEX IF NOT EXISTS idx_skills_security_passed ON skills(security_passed);
 `,
   },
 ]
