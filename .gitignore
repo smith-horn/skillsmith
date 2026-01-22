@@ -69,7 +69,6 @@ stripe-config*.md
 # Internal planning and strategy (not public)
 docs/backlog/
 docs/strategy/
-docs/research/
 
 # Development artifacts (anchored to root level)
 /data/
@@ -80,13 +79,9 @@ test-results/
 packages/*/data/
 packages/*/output/
 
-# Generated technical data
-docs/technical/data/
-
 # Phase 4 working documents (not finalized)
 docs/phase4/
 docs/phase4-research/
-docs/reports/
 docs/architecture/phase-4.5-large-scale-testing.md
 docs/architecture/phase4-trigger-system.md
 docs/retros/phase-4-product-strategy.md
