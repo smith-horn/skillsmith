@@ -16,8 +16,9 @@ const globalIgnores = {
     '**/vitest.config.integration.ts',
     // Website uses Astro with its own ESLint config - lint separately
     'packages/website/**',
-    // Git-crypt encrypted files - cannot be parsed in CI
+    // Git-crypt encrypted TS files - templates excluded via .gitattributes
     'docs/**/*.ts',
+    '!docs/templates/*.ts',
   ],
 }
 
