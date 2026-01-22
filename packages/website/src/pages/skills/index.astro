@@ -4,6 +4,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 const categories = [
   { value: '', label: 'All Categories' },
   { value: 'development', label: 'Development' },
+  { value: 'integrations', label: 'Integrations' },
   { value: 'testing', label: 'Testing' },
   { value: 'devops', label: 'DevOps' },
   { value: 'documentation', label: 'Documentation' },
@@ -49,30 +50,36 @@ const trustTiers = [
         {
           "@type": "ListItem",
           "position": 2,
+          "name": "Integrations",
+          "description": "MCP servers, API integrations, and protocol implementations"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
           "name": "Testing",
           "description": "Testing frameworks and utilities"
         },
         {
           "@type": "ListItem",
-          "position": 3,
+          "position": 4,
           "name": "DevOps",
           "description": "CI/CD, deployment, and infrastructure skills"
         },
         {
           "@type": "ListItem",
-          "position": 4,
+          "position": 5,
           "name": "Documentation",
           "description": "Documentation generation and management"
         },
         {
           "@type": "ListItem",
-          "position": 5,
+          "position": 6,
           "name": "Productivity",
           "description": "Workflow automation and productivity tools"
         },
         {
           "@type": "ListItem",
-          "position": 6,
+          "position": 7,
           "name": "Security",
           "description": "Security scanning and best practices"
         }
