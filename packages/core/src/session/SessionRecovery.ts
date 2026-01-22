@@ -239,8 +239,9 @@ export class SessionRecovery {
     newSessionOptions: SessionOptions
   ): Promise<RecoveryResult> {
     try {
-      // Create new session
-      const newSession = await this.manager.startSession({
+      // Create new session (return value unused - we use getCurrentSession() below)
+      // TODO: SMI-1684 - Consider using newSession directly for consistency
+      await this.manager.startSession({
         ...newSessionOptions,
         // Preserve issue ID if not specified
         issueId: newSessionOptions.issueId ?? previousSession.issueId,

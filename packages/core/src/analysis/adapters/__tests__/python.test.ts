@@ -10,7 +10,6 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { PythonAdapter } from '../python.js'
-import type { ParseResult } from '../../types.js'
 
 describe('PythonAdapter', () => {
   let adapter: PythonAdapter
