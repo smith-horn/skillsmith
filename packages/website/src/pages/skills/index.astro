@@ -214,7 +214,7 @@ const trustTiers = [
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
       </svg>
       <h3 class="text-xl font-semibold text-dark-300 mb-2">Start Searching</h3>
-      <p class="text-dark-500 mb-4">Enter at least 3 characters to search for skills</p>
+      <p class="text-dark-500 mb-4">Enter a search term or select a filter to browse skills</p>
       <div class="flex flex-wrap justify-center gap-2 max-w-md mx-auto">
         <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="testing">testing</button>
         <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="git">git</button>
@@ -384,10 +384,13 @@ const trustTiers = [
       const category = categoryFilter.value;
       const trustTier = trustFilter.value;
 
-      // SMI-1613: Require minimum query length to prevent enumeration
-      if (query.length < MIN_QUERY_LENGTH) {
+      // ADR-019: Allow filter-only searches (query OR filter required)
+      const hasQuery = query.length >= MIN_QUERY_LENGTH;
+      const hasFilter = category || trustTier;
+
+      if (!hasQuery && !hasFilter) {
         showState('search-prompt');
-        resultsCount.textContent = `Enter at least ${MIN_QUERY_LENGTH} characters to search`;
+        resultsCount.textContent = 'Enter a search term or select a filter';
         allResults = [];
         return;
       }
@@ -402,7 +405,8 @@ const trustTiers = [
       try {
         // Build query parameters for GET request
         const params = new URLSearchParams();
-        params.set('query', query);
+        // ADR-019: Only include query if it meets minimum length
+        if (hasQuery) params.set('query', query);
         params.set('limit', '100');
         if (category) params.set('category', category);
         if (trustTier) params.set('trust_tier', trustTier);
@@ -527,7 +531,7 @@ const trustTiers = [
 
     // Initial load - show search prompt instead of calling API
     showState('search-prompt');
-    resultsCount.textContent = `Enter at least ${MIN_QUERY_LENGTH} characters to search`;
+    resultsCount.textContent = 'Enter a search term or select a filter';
   </script>
 
   <style>
