@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/mcp.json",
+  "mcpServers": {
+    "claude-flow": {
+      "command": "npx",
+      "args": ["claude-flow@alpha", "mcp", "start"],
+      "env": {
+        "CLAUDE_FLOW_LOG_LEVEL": "info",
+        "CLAUDE_FLOW_MEMORY_BACKEND": "sqlite"
+      }
+    }
+  }
+}

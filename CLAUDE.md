@@ -80,6 +80,91 @@ git worktree add ../worktrees/my-feature -b feature/my-feature
 
 ---
 
+## Claude-Flow MCP Server (REQUIRED for Hive Mind)
+
+**IMPORTANT**: Hive mind execution and agent spawning require the claude-flow MCP server to be configured.
+
+### Quick Setup
+
+```bash
+# Add MCP server (one-time setup)
+claude mcp add claude-flow -- npx claude-flow@alpha mcp start
+
+# Verify it's configured
+claude mcp list | grep claude-flow
+```
+
+### Project-Level Configuration (Recommended)
+
+The project includes `.mcp.json` for automatic MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "claude-flow": {
+      "command": "npx",
+      "args": ["claude-flow@alpha", "mcp", "start"],
+      "env": {
+        "CLAUDE_FLOW_LOG_LEVEL": "info",
+        "CLAUDE_FLOW_MEMORY_BACKEND": "sqlite"
+      }
+    }
+  }
+}
+```
+
+### MCP Tools Available
+
+Once configured, these tools become available for agent coordination:
+
+| Tool | Purpose |
+|------|---------|
+| `mcp__claude-flow__swarm_init` | Initialize swarm with topology (hierarchical, mesh, etc.) |
+| `mcp__claude-flow__agent_spawn` | Spawn specialist agents (architect, coder, tester, reviewer) |
+| `mcp__claude-flow__task_orchestrate` | Coordinate task execution |
+| `mcp__claude-flow__memory_usage` | Shared memory operations |
+| `mcp__claude-flow__swarm_destroy` | Cleanup swarm after completion |
+
+### Specialist Agent Types
+
+| Agent | Role | Specialization |
+|-------|------|----------------|
+| `architect` | System design | API contracts, infrastructure, DDD |
+| `coder` | Implementation | Backend, frontend, React, Astro, Rust |
+| `tester` | QA | Unit, integration, E2E, security tests |
+| `reviewer` | Code review | Security audit, best practices |
+| `researcher` | Analysis | Codebase exploration, documentation |
+
+### Example: Spawning Agents for a Wave
+
+```javascript
+// 1. Initialize swarm (use "laptop" profile for MacBook)
+mcp__claude-flow__swarm_init({
+  topology: "hierarchical",
+  maxAgents: 2,  // MacBook constraint
+  queen_model: "sonnet",
+  worker_model: "haiku"
+})
+
+// 2. Spawn specialist team (all in single message for parallel execution)
+mcp__claude-flow__agent_spawn({ type: "architect" })
+mcp__claude-flow__agent_spawn({ type: "coder" })
+mcp__claude-flow__agent_spawn({ type: "tester" })
+mcp__claude-flow__agent_spawn({ type: "reviewer" })
+
+// 3. Execute and coordinate via task_orchestrate
+mcp__claude-flow__task_orchestrate({
+  task: "Implement SMI-XXX feature",
+  strategy: "parallel"
+})
+```
+
+**See Also**:
+- [Hive Mind Execution Skill](.claude/skills/hive-mind-execution/SKILL.md)
+- [Hive Mind Advanced Skill](.claude/skills/hive-mind-advanced/SKILL.md)
+
+---
+
 ## License and Pricing
 
 **License**: [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license) - See [ADR-013](docs/adr/013-open-core-licensing.md)
