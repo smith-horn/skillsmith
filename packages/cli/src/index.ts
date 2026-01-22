@@ -15,6 +15,7 @@
  * - author subagent: Generate companion subagent for a skill (SMI-1389)
  * - author transform: Upgrade existing skill with subagent (SMI-1390)
  * - author mcp-init: Scaffold a new MCP server project (SMI-1433)
+ * - install-skill: Install skillsmith skill for /skillsmith slash command (SMI-824)
  */
 
 import { Command } from 'commander'
@@ -33,6 +34,7 @@ import {
   createAnalyzeCommand,
   createRecommendCommand,
   createSyncCommand,
+  createInstallSkillCommand,
 } from './commands/index.js'
 import { DEFAULT_DB_PATH } from './config.js'
 import { sanitizeError } from './utils/sanitize.js'
@@ -128,5 +130,8 @@ program.addCommand(createRecommendCommand())
 
 // Registry Sync
 program.addCommand(createSyncCommand())
+
+// SMI-824: Install skillsmith skill for /skillsmith slash command
+program.addCommand(createInstallSkillCommand())
 
 program.parse()
