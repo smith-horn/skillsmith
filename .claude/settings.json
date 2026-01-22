@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.command // empty' | tr '\\n' '\\0' | xargs -0 -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then npx claude-flow@alpha hooks pre-command --command \"$CMD\" --validate-safety true --prepare-resources true 2>/dev/null || true; fi'"
+            "command": "cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' ' | xargs -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then npx claude-flow@alpha hooks pre-command --command \"$CMD\" --validate-safety true --prepare-resources true 2>/dev/null || true; fi'"
           }
         ]
       },
@@ -59,7 +59,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.command // empty' | tr '\\n' '\\0' | xargs -0 -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then npx claude-flow@alpha hooks post-command --command \"$CMD\" --success true --track-metrics true --store-results true 2>/dev/null || true; fi'"
+            "command": "cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' ' | xargs -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then npx claude-flow@alpha hooks post-command --command \"$CMD\" --success true --track-metrics true --store-results true 2>/dev/null || true; fi'"
           }
         ]
       },
