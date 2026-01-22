@@ -142,7 +142,8 @@ Deno.serve(async (req: Request) => {
     let results: SearchResult[] = []
 
     // SMI-1660: Performance monitoring - classify query type and start timing
-    const queryType: QueryType = hasQuery && hasFilters ? 'combined' : hasQuery ? 'fts' : 'filter-only'
+    const queryType: QueryType =
+      hasQuery && hasFilters ? 'combined' : hasQuery ? 'fts' : 'filter-only'
     const queryStartTime = Date.now()
 
     if (hasQuery) {

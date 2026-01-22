@@ -175,8 +175,19 @@ function categorizeSkill(tags: string[], description?: string | null): string[] 
   }
 
   // Testing: testing, test, tdd, jest, vitest, e2e, playwright, cypress
-  const testingKeywords = ['testing', 'test', 'tdd', 'jest', 'vitest', 'e2e', 'playwright', 'cypress']
-  if (testingKeywords.some((kw) => tagsText.includes(kw) || tags.some((t) => t.toLowerCase() === kw))) {
+  const testingKeywords = [
+    'testing',
+    'test',
+    'tdd',
+    'jest',
+    'vitest',
+    'e2e',
+    'playwright',
+    'cypress',
+  ]
+  if (
+    testingKeywords.some((kw) => tagsText.includes(kw) || tags.some((t) => t.toLowerCase() === kw))
+  ) {
     categories.push(CATEGORY_IDS.testing)
   }
 
@@ -193,7 +204,9 @@ function categorizeSkill(tags: string[], description?: string | null): string[] 
     'github-actions',
     'workflow-automation',
   ]
-  if (devopsKeywords.some((kw) => tagsText.includes(kw) || tags.some((t) => t.toLowerCase() === kw))) {
+  if (
+    devopsKeywords.some((kw) => tagsText.includes(kw) || tags.some((t) => t.toLowerCase() === kw))
+  ) {
     categories.push(CATEGORY_IDS.devops)
   }
 
@@ -208,7 +221,11 @@ function categorizeSkill(tags: string[], description?: string | null): string[] 
 
   // Productivity: productivity, automation, workflow, tools, cli, utility
   const productivityKeywords = ['productivity', 'automation', 'workflow', 'tools', 'cli', 'utility']
-  if (productivityKeywords.some((kw) => tagsText.includes(kw) || tags.some((t) => t.toLowerCase() === kw))) {
+  if (
+    productivityKeywords.some(
+      (kw) => tagsText.includes(kw) || tags.some((t) => t.toLowerCase() === kw)
+    )
+  ) {
     categories.push(CATEGORY_IDS.productivity)
   }
 
@@ -1031,7 +1048,9 @@ Deno.serve(async (req: Request) => {
               .upsert(categoryRows, { onConflict: 'skill_id,category_id', ignoreDuplicates: true })
 
             if (catError) {
-              console.log(`[Categorization] Error assigning categories for skill ${skill.id}: ${catError.message}`)
+              console.log(
+                `[Categorization] Error assigning categories for skill ${skill.id}: ${catError.message}`
+              )
             } else {
               categorizedCount++
               categoryAssignments += categories.length
@@ -1057,7 +1076,9 @@ Deno.serve(async (req: Request) => {
           }
         }
 
-        console.log(`[Categorization] Categorized ${categorizedCount} skills with ${categoryAssignments} total category assignments`)
+        console.log(
+          `[Categorization] Categorized ${categorizedCount} skills with ${categoryAssignments} total category assignments`
+        )
       }
 
       // Log to audit_logs

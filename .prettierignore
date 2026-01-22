@@ -5,6 +5,9 @@ coverage/
 pnpm-lock.yaml
 package-lock.json
 
+# Auto-generated directories
+.astro/
+
 # Git-crypt encrypted directories - cannot be parsed in CI
 docs/
 .claude/hive-mind/
