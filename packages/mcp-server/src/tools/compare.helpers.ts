@@ -3,7 +3,7 @@
  * @module @skillsmith/mcp-server/tools/compare.helpers
  */
 
-import type { TrustTier } from '@skillsmith/core'
+import type { MCPTrustTier as TrustTier } from '@skillsmith/core'
 import { mapTrustTierFromDb, extractCategoryFromTags } from '../utils/validation.js'
 import type {
   ExtendedSkill,

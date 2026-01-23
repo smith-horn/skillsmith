@@ -48,11 +48,7 @@ export type {
   DbSkillRecord,
 } from './compare.types.js'
 
-export {
-  compareInputSchema,
-  compareToolSchema,
-  TRUST_TIER_RANK,
-} from './compare.types.js'
+export { compareInputSchema, compareToolSchema, TRUST_TIER_RANK } from './compare.types.js'
 
 // Re-export helpers for testing/extension
 export {
