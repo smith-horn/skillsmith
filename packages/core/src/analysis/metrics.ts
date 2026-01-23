@@ -22,15 +22,8 @@ import type { AnalysisMetricsConfig, AnalysisMetricsSnapshot } from './metrics.t
 // Import implementations
 import { InMemoryCounter, InMemoryHistogram, InMemoryGauge } from './metrics.implementations.js'
 
-// Re-export types for public API
-export type {
-  AnalysisMetricsConfig,
-  AnalysisMetricsSnapshot,
-  HistogramStats,
-} from './metrics.types.js'
-
-// Re-export implementations for testing/extension
-export { InMemoryCounter, InMemoryHistogram, InMemoryGauge } from './metrics.implementations.js'
+// Re-export only public API types (SMI-1718: trimmed internal exports)
+export type { AnalysisMetricsConfig, AnalysisMetricsSnapshot } from './metrics.types.js'
 
 /**
  * Analysis Pipeline Metrics Collector

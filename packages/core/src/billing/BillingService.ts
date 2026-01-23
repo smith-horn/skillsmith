@@ -33,11 +33,8 @@ import type { BillingServiceConfig, SubscriptionRow, InvoiceRow } from './Billin
 // Import helpers
 import { mapRowToSubscription, mapRowToInvoice } from './BillingService.helpers.js'
 
-// Re-export types for public API
-export type { BillingServiceConfig, SubscriptionRow, InvoiceRow } from './BillingService.types.js'
-
-// Re-export helpers for testing
-export { mapRowToSubscription, mapRowToInvoice } from './BillingService.helpers.js'
+// Re-export only public API types (SMI-1718: trimmed internal exports)
+export type { BillingServiceConfig } from './BillingService.types.js'
 
 const logger = createLogger('BillingService')
 

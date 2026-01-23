@@ -23,20 +23,8 @@ import {
   LANGUAGE_KEYWORDS,
 } from './language-detector.patterns.js'
 
-// Re-export types for public API
-export type {
-  LanguageDetectionResult,
-  LanguageDetectorOptions,
-  ContentPattern,
-  ShebangPattern,
-} from './language-detector.types.js'
-
-// Re-export patterns for testing/extension
-export {
-  SHEBANG_PATTERNS,
-  CONTENT_PATTERNS,
-  LANGUAGE_KEYWORDS,
-} from './language-detector.patterns.js'
+// Re-export only public API types (SMI-1718: trimmed internal exports)
+export type { LanguageDetectionResult } from './language-detector.types.js'
 
 /**
  * Detects programming language from file content

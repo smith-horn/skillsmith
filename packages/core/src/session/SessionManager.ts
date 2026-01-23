@@ -25,26 +25,9 @@ import {
   DefaultCommandExecutor,
 } from './SessionManager.helpers.js'
 
-// Re-export types and helpers for public API
-export type {
-  CommandExecutor,
-  MemoryResult,
-  SessionOptions,
-  ClaudeFlowMemoryModule,
-  ClaudeFlowMcpModule,
-} from './SessionManager.types.js'
-
-export { sanitizeSessionData } from './SessionManager.types.js'
-
-export {
-  getClaudeFlowMemory,
-  getClaudeFlowMcp,
-  MEMORY_KEYS,
-  USE_V3_API,
-  MEMORY_NAMESPACE,
-  validateMemoryKey,
-  DefaultCommandExecutor,
-} from './SessionManager.helpers.js'
+// Re-export only public API types (SMI-1718: trimmed internal exports)
+export type { CommandExecutor, MemoryResult, SessionOptions } from './SessionManager.types.js'
+export { DefaultCommandExecutor } from './SessionManager.helpers.js'
 
 /**
  * Session Manager for claude-flow memory integration

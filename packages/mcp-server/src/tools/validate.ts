@@ -35,24 +35,9 @@ import { validateInputSchema } from './validate.types.js'
 // Import helpers
 import { parseYamlFrontmatter, hasPathTraversal, validateMetadata } from './validate.helpers.js'
 
-// Re-export types for public API
+// Re-export only public API types (SMI-1718: trimmed internal exports)
 export type { ValidateInput, ValidateResponse, ValidationError } from './validate.types.js'
-
-export {
-  validateInputSchema,
-  validateToolSchema,
-  FIELD_LIMITS,
-  SSRF_PATTERNS,
-  PATH_TRAVERSAL_PATTERNS,
-} from './validate.types.js'
-
-// Re-export helpers for testing/extension
-export {
-  parseYamlFrontmatter,
-  hasSsrfPattern,
-  hasPathTraversal,
-  validateMetadata,
-} from './validate.helpers.js'
+export { validateInputSchema, validateToolSchema } from './validate.types.js'
 
 /**
  * Execute skill validation.

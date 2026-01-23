@@ -512,15 +512,15 @@ Use this skill by mentioning it in Claude Code.
    * Tests for trust-tier sensitive security scanning in install flow
    */
   describe('SMI-1533: Trust-Tier Security Scanning', () => {
-    // Import the actual validateTrustTier function from install.ts
-    // Using dynamic import to avoid circular dependency issues
+    // Import the actual validateTrustTier function from install.types.ts
+    // SMI-1718: Import from types file after re-export trimming
     let validateTrustTier: (
       value: string | null | undefined
     ) => 'verified' | 'community' | 'experimental' | 'unknown'
 
     beforeAll(async () => {
-      const installModule = await import('../../src/tools/install.js')
-      validateTrustTier = installModule.validateTrustTier
+      const installTypesModule = await import('../../src/tools/install.types.js')
+      validateTrustTier = installTypesModule.validateTrustTier
     })
 
     // Type alias for trust tier (used in tests below)

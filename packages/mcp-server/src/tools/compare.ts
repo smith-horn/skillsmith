@@ -38,26 +38,14 @@ import {
   formatScoreBar,
 } from './compare.helpers.js'
 
-// Re-export types for public API
+// Re-export only public API types (SMI-1718: trimmed internal exports)
 export type {
   CompareInput,
   CompareResponse,
   SkillSummary,
   SkillDifference,
-  ExtendedSkill,
-  DbSkillRecord,
 } from './compare.types.js'
-
-export { compareInputSchema, compareToolSchema, TRUST_TIER_RANK } from './compare.types.js'
-
-// Re-export helpers for testing/extension
-export {
-  toSummary,
-  generateDifferences,
-  generateRecommendation,
-  dbSkillToExtended,
-  formatScoreBar,
-} from './compare.helpers.js'
+export { compareInputSchema, compareToolSchema } from './compare.types.js'
 
 /**
  * Execute skill comparison.

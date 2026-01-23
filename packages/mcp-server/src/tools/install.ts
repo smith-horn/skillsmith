@@ -40,38 +40,8 @@ import {
   generateTips,
 } from './install.helpers.js'
 
-// Re-export types for public API
-export {
-  installInputSchema,
-  validateTrustTier,
-  VALID_TRUST_TIERS,
-  TRUST_TIER_SCANNER_OPTIONS,
-  CLAUDE_SKILLS_DIR,
-  SKILLSMITH_DIR,
-  MANIFEST_PATH,
-  type InstallInput,
-  type InstallResult,
-  type SkillManifest,
-  type ParsedSkillId,
-  type ParsedRepoUrl,
-  type RegistrySkillInfo,
-} from './install.types.js'
-
-// Re-export helpers for testing/extension
-export {
-  loadManifest,
-  saveManifest,
-  updateManifestSafely,
-  acquireManifestLock,
-  releaseManifestLock,
-  parseSkillId,
-  parseRepoUrl,
-  lookupSkillFromRegistry,
-  fetchFromGitHub,
-  validateSkillMd,
-  generateTips,
-  type SkillMdValidation,
-} from './install.helpers.js'
+// Re-export only public API types (SMI-1718: trimmed internal exports)
+export { installInputSchema, type InstallInput, type InstallResult } from './install.types.js'
 
 /**
  * Install a skill from GitHub to the local Claude Code skills directory.

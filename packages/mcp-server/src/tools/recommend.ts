@@ -27,25 +27,14 @@ import {
   isSkillCollection,
 } from './recommend.helpers.js'
 
-// Re-export types and schemas for public API
+// Re-export only public API types (SMI-1718: trimmed internal exports)
 export {
   recommendInputSchema,
   recommendToolSchema,
-  skillRoleSchema,
   type RecommendInput,
   type RecommendResponse,
   type SkillRecommendation,
-  type SkillData,
 } from './recommend.types.js'
-
-// Re-export helpers for testing
-export {
-  inferRolesFromTags,
-  transformSkillToMatchData,
-  loadSkillsFromDatabase,
-  isSkillCollection,
-  COLLECTION_PATTERNS,
-} from './recommend.helpers.js'
 
 /**
  * Execute skill recommendation based on installed skills and context.
