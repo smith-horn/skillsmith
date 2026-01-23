@@ -7,7 +7,6 @@ import type {
   ExpertId,
   RoutingDecision,
   SONAMetrics,
-  SONARouterConfig,
   ToolType,
 } from './types.js'
 
