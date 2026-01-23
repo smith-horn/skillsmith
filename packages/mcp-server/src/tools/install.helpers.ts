@@ -5,7 +5,6 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import type { TrustTier } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import {
   MANIFEST_PATH,
