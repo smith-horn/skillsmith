@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Pre-rebase hook: Warn about unmerged feature branches
+# Prevents accidental loss of work during rebase operations
+# See: docs/retros/2025-01-22-docs-404-recovery.md
+
+set -e
+
+echo ""
+echo -e "\033[0;34m=== Pre-Rebase Check ===\033[0m"
+echo ""
+
+# Get the target branch (what we're rebasing onto)
+TARGET_BRANCH="${1:-HEAD}"
+
+# Find feature branches with commits not in main
+echo -e "\033[1;33mChecking for unmerged feature branches...\033[0m"
+
+UNMERGED_BRANCHES=$(git branch --no-merged main 2>/dev/null | grep -v "^\*" | sed 's/^[[:space:]]*//' || true)
+
+if [ -z "$UNMERGED_BRANCHES" ]; then
+    echo -e "\033[0;32m  ✓ No unmerged feature branches found\033[0m"
+    echo ""
+    exit 0
+fi
+
+# Count commits in each unmerged branch
+echo ""
+echo -e "\033[1;33m⚠️  WARNING: Found unmerged feature branches\033[0m"
+echo ""
+echo "The following branches have commits not in main:"
+echo ""
+
+SIGNIFICANT_BRANCHES=""
+while IFS= read -r branch; do
+    if [ -n "$branch" ]; then
+        # Count commits ahead of main
+        COMMIT_COUNT=$(git rev-list --count main.."$branch" 2>/dev/null || echo "0")
+
+        # Get last commit date
+        LAST_COMMIT=$(git log -1 --format='%cr' "$branch" 2>/dev/null || echo "unknown")
+
+        # Get last commit message (first line)
+        LAST_MSG=$(git log -1 --format='%s' "$branch" 2>/dev/null | head -c 50 || echo "")
+
+        if [ "$COMMIT_COUNT" -gt 0 ]; then
+            echo -e "  \033[1;31m$branch\033[0m"
+            echo "    └─ $COMMIT_COUNT commit(s) ahead of main"
+            echo "    └─ Last commit: $LAST_COMMIT"
+            echo "    └─ \"$LAST_MSG...\""
+            echo ""
+            SIGNIFICANT_BRANCHES="$SIGNIFICANT_BRANCHES$branch\n"
+        fi
+    fi
+done <<< "$UNMERGED_BRANCHES"
+
+if [ -z "$SIGNIFICANT_BRANCHES" ]; then
+    echo -e "\033[0;32m  ✓ No significant unmerged work found\033[0m"
+    echo ""
+    exit 0
+fi
+
+# Warn and require confirmation
+echo -e "\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+echo -e "\033[1;33m⚠️  CAUTION: Rebasing may cause these branches to diverge\033[0m"
+echo -e "\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+echo ""
+echo "Consider merging or backing up important work before rebasing."
+echo ""
+echo "Options:"
+echo "  • Merge important branches first: git merge <branch>"
+echo "  • Create backup tags: git tag backup/<branch> <branch>"
+echo "  • Skip this check: git rebase --no-verify"
+echo ""
+
+# Check if running in interactive mode
+if [ -t 0 ]; then
+    read -p "Continue with rebase? (y/N) " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo -e "\033[0;31mRebase aborted.\033[0m"
+        exit 1
+    fi
+else
+    # Non-interactive mode (CI/scripts) - just warn, don't block
+    echo -e "\033[1;33mRunning in non-interactive mode - proceeding with rebase\033[0m"
+fi
+
+echo ""
+echo -e "\033[0;32m=== Pre-Rebase Check Passed ===\033[0m"
+echo ""

@@ -138,6 +138,48 @@ cd /path/to/skillsmith
 
 See `.claude/skills/worktree-manager/SKILL.md` for detailed documentation.
 
+## Git Hooks
+
+Skillsmith uses [Husky](https://typicode.github.io/husky/) for git hooks.
+
+### Pre-commit Hook
+
+Runs automatically on every commit:
+- Secret scanning
+- TypeScript type checking
+- Linting and formatting staged files
+
+### Pre-push Hook
+
+Runs before pushing to remote:
+- Security test suite
+- npm audit (high severity)
+- Hardcoded secret detection
+- Coverage threshold check
+
+### Pre-rebase Hook
+
+**New:** Warns about unmerged feature branches before rebasing to prevent accidental work loss.
+
+```bash
+# Example output
+⚠️  WARNING: Found unmerged feature branches
+
+  feature/my-work
+    └─ 5 commit(s) ahead of main
+    └─ Last commit: 2 hours ago
+    └─ "feat: implement new feature..."
+
+Consider merging or backing up important work before rebasing.
+
+Options:
+  • Merge important branches first: git merge <branch>
+  • Create backup tags: git tag backup/<branch> <branch>
+  • Skip this check: git rebase --no-verify
+```
+
+This hook was added after the [docs 404 incident](docs/retros/2025-01-22-docs-404-recovery.md) where completed work was lost during a rebase because feature branches were never merged.
+
 ## Code Quality
 
 All code must pass these checks before merge:
