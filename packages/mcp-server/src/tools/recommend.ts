@@ -4,333 +4,49 @@
  * @see SMI-741: Add MCP Tool skill_recommend
  * @see SMI-602: Integrate semantic matching with EmbeddingService
  * @see SMI-604: Add trigger phrase overlap detection
- *
- * Provides skill recommendations based on:
- * - Currently installed skills (semantic similarity)
- * - Optional project context (semantic matching)
- * - Codebase analysis (framework detection)
- * - Overlap detection (avoid similar skills)
- *
- * @example
- * // Basic recommendation
- * const results = await executeRecommend({
- *   installed_skills: ['anthropic/commit'],
- *   limit: 5
- * }, toolContext);
- *
- * @example
- * // Recommendation with project context
- * const results = await executeRecommend({
- *   installed_skills: ['anthropic/commit'],
- *   project_context: 'React frontend with Jest testing',
- *   limit: 10
- * }, toolContext);
  */
 
-import { z } from 'zod'
-import {
-  type MCPTrustTier as TrustTier,
-  type SkillRole,
-  SKILL_ROLES,
-  SkillMatcher,
-  OverlapDetector,
-  trackEvent,
-} from '@skillsmith/core'
+import { SkillMatcher, OverlapDetector, trackEvent } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { getInstalledSkills } from '../utils/installed-skills.js'
 import { mapTrustTierFromDb, getTrustBadge } from '../utils/validation.js'
 
-/**
- * SMI-1631: Type-safe Zod schema for skill roles
- */
-const skillRoleSchema = z.enum([
-  'code-quality',
-  'testing',
-  'documentation',
-  'workflow',
-  'security',
-  'development-partner',
-] as const)
+// Import types
+import {
+  recommendInputSchema,
+  recommendToolSchema,
+  type RecommendInput,
+  type RecommendResponse,
+  type SkillRecommendation,
+  type SkillData,
+} from './recommend.types.js'
 
-/**
- * Zod schema for recommend tool input validation
- */
-export const recommendInputSchema = z.object({
-  /** Currently installed skill IDs */
-  installed_skills: z.array(z.string()).min(0).default([]),
-  /** Optional project description for context-aware recommendations */
-  project_context: z.string().optional(),
-  /** Maximum recommendations to return (default 5) */
-  limit: z.number().min(1).max(50).default(5),
-  /** Enable overlap detection (default true) */
-  detect_overlap: z.boolean().default(true),
-  /** Minimum similarity threshold (0-1, default 0.3) */
-  min_similarity: z.number().min(0).max(1).default(0.3),
-  /** SMI-1631: Filter by skill role for targeted recommendations */
-  role: skillRoleSchema.optional(),
-})
+// Import helpers
+import {
+  inferRolesFromTags,
+  loadSkillsFromDatabase,
+  isSkillCollection,
+} from './recommend.helpers.js'
 
-/**
- * Input type (before parsing, allows optional fields)
- */
-export type RecommendInput = z.input<typeof recommendInputSchema>
+// Re-export types and schemas for public API
+export {
+  recommendInputSchema,
+  recommendToolSchema,
+  skillRoleSchema,
+  type RecommendInput,
+  type RecommendResponse,
+  type SkillRecommendation,
+  type SkillData,
+} from './recommend.types.js'
 
-/**
- * Individual skill recommendation with reasoning
- */
-export interface SkillRecommendation {
-  /** Skill identifier */
-  skill_id: string
-  /** Skill name */
-  name: string
-  /** Why this skill is recommended */
-  reason: string
-  /** Semantic similarity score (0-1) */
-  similarity_score: number
-  /** Trust tier for user confidence */
-  trust_tier: TrustTier
-  /** Overall quality score */
-  quality_score: number
-  /** SMI-1631: Skill roles for role-based filtering */
-  roles?: SkillRole[]
-}
-
-/**
- * Recommendation response with timing info
- */
-export interface RecommendResponse {
-  /** List of recommended skills */
-  recommendations: SkillRecommendation[]
-  /** Total candidates considered */
-  candidates_considered: number
-  /** Skills filtered due to overlap */
-  overlap_filtered: number
-  /** SMI-1631: Skills filtered due to role mismatch */
-  role_filtered: number
-  /** Query context used for matching */
-  context: {
-    installed_count: number
-    has_project_context: boolean
-    using_semantic_matching: boolean
-    /** SMI-906: Whether installed skills were auto-detected from ~/.claude/skills/ */
-    auto_detected: boolean
-    /** SMI-1631: Role filter applied */
-    role_filter?: SkillRole
-  }
-  /** Performance timing */
-  timing: {
-    totalMs: number
-  }
-}
-
-/**
- * MCP tool schema definition for skill_recommend
- */
-export const recommendToolSchema = {
-  name: 'skill_recommend',
-  description:
-    'Recommend skills based on currently installed skills and optional project context. Uses semantic similarity to find relevant skills. Auto-detects installed skills from ~/.claude/skills/ if not provided. SMI-1631: Supports role-based filtering for targeted recommendations.',
-  inputSchema: {
-    type: 'object' as const,
-    properties: {
-      installed_skills: {
-        type: 'array',
-        items: { type: 'string' },
-        description:
-          'Currently installed skill IDs (e.g., ["anthropic/commit", "community/jest-helper"]). If empty, auto-detects from ~/.claude/skills/',
-      },
-      project_context: {
-        type: 'string',
-        description:
-          'Optional project description for context-aware recommendations (e.g., "React frontend with Jest testing")',
-      },
-      limit: {
-        type: 'number',
-        description: 'Maximum recommendations to return (default 5, max 50)',
-        minimum: 1,
-        maximum: 50,
-        default: 5,
-      },
-      detect_overlap: {
-        type: 'boolean',
-        description: 'Enable overlap detection to filter similar skills (default true)',
-        default: true,
-      },
-      min_similarity: {
-        type: 'number',
-        description: 'Minimum similarity threshold (0-1, default 0.3)',
-        minimum: 0,
-        maximum: 1,
-        default: 0.3,
-      },
-      role: {
-        type: 'string',
-        enum: [...SKILL_ROLES],
-        description:
-          'SMI-1631: Filter by skill role (code-quality, testing, documentation, workflow, security, development-partner). Skills matching the role get a +30 score boost.',
-      },
-    },
-    required: [],
-  },
-}
-
-/**
- * Skill data format for matching operations
- * Transformed from database Skill records
- */
-interface SkillData {
-  /** Unique skill identifier */
-  id: string
-  /** Skill display name */
-  name: string
-  /** Skill description */
-  description: string
-  /** Trigger phrases for overlap detection (derived from tags) */
-  triggerPhrases: string[]
-  /** Keywords for matching (from tags) */
-  keywords: string[]
-  /** Quality score (0-100) */
-  qualityScore: number
-  /** Trust tier */
-  trustTier: TrustTier
-  /** SMI-1631: Skill roles for role-based filtering */
-  roles: SkillRole[]
-  /** SMI-1632: Whether this is an installable skill (vs a collection) */
-  installable: boolean
-}
-
-/**
- * SMI-1631: Infer skill roles from tags when not explicitly set
- * Maps common tags to skill roles for better filtering
- */
-function inferRolesFromTags(tags: string[]): SkillRole[] {
-  const roleMapping: Record<string, SkillRole> = {
-    // Code quality
-    lint: 'code-quality',
-    linting: 'code-quality',
-    format: 'code-quality',
-    formatting: 'code-quality',
-    prettier: 'code-quality',
-    eslint: 'code-quality',
-    'code-review': 'code-quality',
-    review: 'code-quality',
-    refactor: 'code-quality',
-    refactoring: 'code-quality',
-    'code-style': 'code-quality',
-    // Testing
-    test: 'testing',
-    testing: 'testing',
-    jest: 'testing',
-    vitest: 'testing',
-    mocha: 'testing',
-    playwright: 'testing',
-    cypress: 'testing',
-    e2e: 'testing',
-    unit: 'testing',
-    integration: 'testing',
-    tdd: 'testing',
-    // Documentation
-    docs: 'documentation',
-    documentation: 'documentation',
-    readme: 'documentation',
-    jsdoc: 'documentation',
-    typedoc: 'documentation',
-    changelog: 'documentation',
-    api: 'documentation',
-    // Workflow
-    git: 'workflow',
-    commit: 'workflow',
-    pr: 'workflow',
-    'pull-request': 'workflow',
-    ci: 'workflow',
-    cd: 'workflow',
-    'ci-cd': 'workflow',
-    deploy: 'workflow',
-    deployment: 'workflow',
-    automation: 'workflow',
-    workflow: 'workflow',
-    // Security
-    security: 'security',
-    audit: 'security',
-    vulnerability: 'security',
-    cve: 'security',
-    secrets: 'security',
-    authentication: 'security',
-    auth: 'security',
-    // Development partner
-    ai: 'development-partner',
-    assistant: 'development-partner',
-    helper: 'development-partner',
-    copilot: 'development-partner',
-    productivity: 'development-partner',
-    scaffold: 'development-partner',
-    generator: 'development-partner',
-  }
-
-  const inferredRoles = new Set<SkillRole>()
-  for (const tag of tags) {
-    const normalizedTag = tag.toLowerCase().replace(/[-_]/g, '')
-    for (const [keyword, role] of Object.entries(roleMapping)) {
-      if (normalizedTag.includes(keyword.replace(/[-_]/g, ''))) {
-        inferredRoles.add(role)
-      }
-    }
-  }
-
-  return [...inferredRoles]
-}
-
-/**
- * Transform a database skill to SkillData format for matching
- * SMI-1632: Added installable field to filter out collections
- */
-function transformSkillToMatchData(skill: {
-  id: string
-  name: string
-  description: string | null
-  tags: string[]
-  qualityScore: number | null
-  trustTier: string
-  roles?: SkillRole[]
-  installable: boolean
-}): SkillData {
-  // Generate trigger phrases from name and first few tags
-  const triggerPhrases = [
-    skill.name,
-    `use ${skill.name}`,
-    `${skill.name} help`,
-    ...skill.tags.slice(0, 3).map((tag) => `${tag} ${skill.name}`),
-  ]
-
-  // SMI-1631: Use explicit roles or infer from tags
-  const roles = skill.roles?.length ? skill.roles : inferRolesFromTags(skill.tags)
-
-  return {
-    id: skill.id,
-    name: skill.name,
-    description: skill.description || '',
-    triggerPhrases,
-    keywords: skill.tags,
-    qualityScore: Math.round((skill.qualityScore ?? 0.5) * 100),
-    trustTier: mapTrustTierFromDb(skill.trustTier),
-    roles,
-    // SMI-1632: Default to true if not explicitly set
-    installable: skill.installable !== false,
-  }
-}
-
-/**
- * Load skills from database via ToolContext
- * Returns skills transformed to SkillData format for matching
- * Note: Collection filtering is done in the candidate filter using naming patterns (SMI-1632)
- */
-async function loadSkillsFromDatabase(
-  context: ToolContext,
-  limit: number = 500
-): Promise<SkillData[]> {
-  const result = context.skillRepository.findAll(limit, 0)
-  return result.items.map(transformSkillToMatchData)
-}
+// Re-export helpers for testing
+export {
+  inferRolesFromTags,
+  transformSkillToMatchData,
+  loadSkillsFromDatabase,
+  isSkillCollection,
+  COLLECTION_PATTERNS,
+} from './recommend.helpers.js'
 
 /**
  * Execute skill recommendation based on installed skills and context.
@@ -338,17 +54,6 @@ async function loadSkillsFromDatabase(
  * SMI-1183: Uses API as primary source with local fallback.
  * - Tries live API first (api.skillsmith.app)
  * - Falls back to local semantic matching if API is offline or fails
- *
- * @param input - Recommendation parameters
- * @returns Promise resolving to recommendation response
- * @throws {SkillsmithError} When validation fails
- *
- * @example
- * const response = await executeRecommend({
- *   installed_skills: ['anthropic/commit'],
- *   project_context: 'React TypeScript frontend',
- *   limit: 5
- * }, toolContext);
  */
 export async function executeRecommend(
   input: RecommendInput,
@@ -408,7 +113,6 @@ export async function executeRecommend(
       let roleFiltered = 0
       if (role) {
         const originalCount = recommendations.length
-        // Filter to only skills with matching role
         recommendations = recommendations.filter((rec) => rec.roles?.includes(role))
         roleFiltered = originalCount - recommendations.length
 
@@ -458,12 +162,11 @@ export async function executeRecommend(
   }
 
   // Fallback: Load skills from database and use local semantic matching
-  // Use 500 as default to balance coverage vs performance
   const skillDatabase = await loadSkillsFromDatabase(context, 500)
 
-  // Initialize matcher with fallback mode for now (real embeddings in production)
+  // Initialize matcher with fallback mode for now
   const matcher = new SkillMatcher({
-    useFallback: true, // Use mock embeddings for consistent behavior
+    useFallback: true,
     minSimilarity: min_similarity,
     qualityWeight: 0.3,
   })
@@ -474,11 +177,8 @@ export async function executeRecommend(
   )
 
   // SMI-907: Extract installed skill names for name-based overlap detection
-  // This filters skills with semantically similar names (e.g., "docker" filters "docker-compose")
   const installedNames = installed_skills.map((id) => {
-    // Extract the skill name from the ID (e.g., "community/docker" -> "docker")
     const idName = id.split('/').pop()?.toLowerCase() || ''
-    // Also check if any installed skill data has a matching name
     const skillData = installedSkillData.find((s) => s.id.toLowerCase() === id.toLowerCase())
     return {
       idName,
@@ -487,27 +187,12 @@ export async function executeRecommend(
   })
 
   // Filter out already installed skills AND semantically similar names from candidates
-  // SMI-1632: Also filter out skill collections (multi-skill repositories)
   const candidates = skillDatabase.filter((s) => {
     const skillName = s.name.toLowerCase()
     const skillIdName = s.id.split('/').pop()?.toLowerCase() || ''
 
     // SMI-1632: Exclude skill collections based on naming patterns
-    // Collections typically have names ending in '-skills', '-collection', or '-pack'
-    // or have 'collection' in their description
-    const collectionPatterns = [
-      '-skills',
-      '-collection',
-      '-pack',
-      'skill-collection',
-      'skills-repo',
-    ]
-    const isCollection =
-      collectionPatterns.some((pattern) => skillIdName.includes(pattern)) ||
-      (s.description.toLowerCase().includes('collection of') &&
-        s.description.toLowerCase().includes('skill'))
-
-    if (isCollection) {
+    if (isSkillCollection(skillIdName, s.description)) {
       return false
     }
 
@@ -517,12 +202,10 @@ export async function executeRecommend(
     }
 
     // SMI-907: Exclude if name is contained in or contains installed skill name
-    // This prevents recommending "docker-compose" when "docker" is installed
     for (const installed of installedNames) {
       const { idName, skillName: installedSkillName } = installed
       if (!idName && !installedSkillName) continue
 
-      // Check name containment both ways
       if (
         (installedSkillName && skillName.includes(installedSkillName)) ||
         (installedSkillName && installedSkillName.includes(skillName)) ||
