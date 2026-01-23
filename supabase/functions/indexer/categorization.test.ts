@@ -185,6 +185,16 @@ describe('categorizeSkill', () => {
       const result = categorizeSkill(['e2e'])
       expect(result).toContain(CATEGORY_IDS.testing)
     })
+
+    it('should categorize by description containing "testing"', () => {
+      const result = categorizeSkill([], 'A comprehensive testing framework')
+      expect(result).toContain(CATEGORY_IDS.testing)
+    })
+
+    it('should categorize by description containing "unit test"', () => {
+      const result = categorizeSkill([], 'Unit test utilities for React')
+      expect(result).toContain(CATEGORY_IDS.testing)
+    })
   })
 
   describe('devops category', () => {
@@ -200,6 +210,16 @@ describe('categorizeSkill', () => {
 
     it('should categorize github-actions skills', () => {
       const result = categorizeSkill(['github-actions'])
+      expect(result).toContain(CATEGORY_IDS.devops)
+    })
+
+    it('should categorize by description containing "deployment"', () => {
+      const result = categorizeSkill([], 'Automated deployment tool')
+      expect(result).toContain(CATEGORY_IDS.devops)
+    })
+
+    it('should categorize by description containing "ci/cd"', () => {
+      const result = categorizeSkill([], 'CI/CD pipeline automation')
       expect(result).toContain(CATEGORY_IDS.devops)
     })
   })
