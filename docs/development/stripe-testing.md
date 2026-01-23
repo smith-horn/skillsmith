@@ -224,9 +224,113 @@ const session = await stripe.checkout.sessions.create({
 
 ---
 
+## E2E Test Verification
+
+**IMPORTANT:** Run E2E tests before deploying any payment page changes.
+
+### Run Checkout E2E Tests
+
+```bash
+# Create the E2E config (if not exists)
+cat > vitest.e2e.config.ts << 'EOF'
+import { defineConfig } from 'vitest/config'
+export default defineConfig({
+  test: {
+    include: ['tests/e2e/**/*.spec.ts'],
+    exclude: [],
+    testTimeout: 30000,
+  },
+})
+EOF
+
+# Run checkout tests
+docker exec skillsmith-dev-1 npx vitest run tests/e2e/checkout-flow.spec.ts --config vitest.e2e.config.ts
+
+# Run webhook tests
+docker exec skillsmith-dev-1 npx vitest run tests/e2e/webhook-handling.spec.ts --config vitest.e2e.config.ts
+```
+
+### What the Tests Verify
+
+| Test Category | Verification |
+|---------------|--------------|
+| Signup page accessibility | Page loads, tier params work |
+| Checkout session creation | All tiers (individual, team, enterprise) |
+| Billing periods | Monthly and annual |
+| Validation | Invalid tier, malformed email, seat limits |
+| Security | XSS handling, no 500 errors |
+| Performance | Response under 3 seconds |
+
+---
+
+## Manual Testing Flow
+
+### Quick Checkout Verification
+
+```bash
+# Test Individual tier
+curl -s -X POST 'https://vrcnzpmndtroqxxoqkzy.supabase.co/functions/v1/checkout' \
+  -H 'Content-Type: application/json' \
+  -d '{"tier":"individual","period":"monthly","email":"test@example.com"}' | jq .
+
+# Test Team tier with seats
+curl -s -X POST 'https://vrcnzpmndtroqxxoqkzy.supabase.co/functions/v1/checkout' \
+  -H 'Content-Type: application/json' \
+  -d '{"tier":"team","period":"monthly","seatCount":3,"email":"test@example.com"}' | jq .
+```
+
+### Browser Testing
+
+1. Go to https://www.skillsmith.app/signup?tier=team
+2. Verify correct tier is displayed (Team - $25/user/mo)
+3. Click "Start Trial"
+4. Enter test card: `4242 4242 4242 4242`
+5. Use any future expiry, any CVC, any ZIP
+6. Complete checkout
+7. Verify redirect to `/signup/success`
+
+---
+
+## Pre-Deployment Checklist
+
+Before deploying payment page changes, verify:
+
+- [ ] **E2E tests pass**: `npx vitest run tests/e2e/checkout-flow.spec.ts --config vitest.e2e.config.ts`
+- [ ] **Tier parameter works**: `/signup?tier=team` shows Team tier
+- [ ] **All tiers accessible**: Individual, Team, Enterprise
+- [ ] **Pricing correct**: Matches `packages/website/src/lib/pricing.ts`
+- [ ] **Success page works**: `/signup/success` loads after checkout
+- [ ] **Cancel returns to pricing**: Canceling checkout returns to `/pricing`
+
+### API Endpoint Reference
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/functions/v1/checkout` | POST | Create Stripe checkout session |
+| `/functions/v1/stripe-webhook` | POST | Handle Stripe webhooks |
+| `/functions/v1/verify-subscription` | POST | Verify subscription status |
+
+### Request Parameters
+
+```typescript
+// POST /functions/v1/checkout
+{
+  tier: 'individual' | 'team' | 'enterprise',  // required
+  period: 'monthly' | 'annual',                 // required
+  seatCount?: number,                           // optional, 1-1000
+  email?: string,                               // optional
+  successUrl?: string,                          // optional
+  cancelUrl?: string                            // optional
+}
+```
+
+---
+
 ## Related Documentation
 
 - [Stripe CLI Documentation](https://stripe.com/docs/stripe-cli)
 - [Stripe Webhooks Guide](https://stripe.com/docs/webhooks)
 - [Testing Stripe Integrations](https://stripe.com/docs/testing)
+- [Checkout E2E Tests](../../tests/e2e/checkout-flow.spec.ts)
 - [Webhook E2E Tests](../../tests/e2e/webhook-handling.spec.ts)
+- [Pricing Configuration](../../packages/website/src/lib/pricing.ts)
