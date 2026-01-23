@@ -1,0 +1,180 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="Documentation" description="Learn how to use Skillsmith for Claude Code skill discovery and management">
+  <!-- JSON-LD Schema -->
+  <script type="application/ld+json" slot="head">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Skillsmith Documentation",
+    "description": "Complete documentation for Skillsmith - AI-powered skill discovery and management for Claude Code",
+    "url": "https://skillsmith.app/docs",
+    "author": {
+      "@type": "Organization",
+      "name": "Smith Horn Group"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "Skillsmith",
+      "url": "https://skillsmith.app"
+    },
+    "about": {
+      "@type": "SoftwareApplication",
+      "name": "Skillsmith",
+      "applicationCategory": "DeveloperApplication"
+    },
+    "mainEntity": {
+      "@type": "ItemList",
+      "name": "Documentation Sections",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Quickstart Guide",
+          "url": "https://skillsmith.app/docs/quickstart"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Getting Started",
+          "url": "https://skillsmith.app/docs/getting-started"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "CLI Reference",
+          "url": "https://skillsmith.app/docs/cli"
+        },
+        {
+          "@type": "ListItem",
+          "position": 4,
+          "name": "MCP Server",
+          "url": "https://skillsmith.app/docs/mcp-server"
+        },
+        {
+          "@type": "ListItem",
+          "position": 5,
+          "name": "API Reference",
+          "url": "https://skillsmith.app/docs/api"
+        }
+      ]
+    }
+  }
+  </script>
+
+  <h1>Skillsmith Documentation</h1>
+
+  <p class="lead">
+    Skillsmith is an MCP server for Claude Code skill discovery, installation, and management.
+    It helps you find, evaluate, and install skills for your Claude Code environment.
+  </p>
+
+  <h2>What is Skillsmith?</h2>
+
+  <p>
+    Skillsmith provides a comprehensive toolset for managing Claude Code skills. Whether you're
+    looking for testing utilities, git workflow helpers, or specialized development tools,
+    Skillsmith makes it easy to discover and install the skills you need.
+  </p>
+
+  <h3>Key Features</h3>
+
+  <ul>
+    <li><strong>Skill Discovery</strong> - Search and browse thousands of community skills</li>
+    <li><strong>Smart Recommendations</strong> - Get personalized skill suggestions based on your project</li>
+    <li><strong>Trust Verification</strong> - Know which skills are verified, community-reviewed, or experimental</li>
+    <li><strong>Easy Installation</strong> - Install skills with a single command</li>
+    <li><strong>Skill Comparison</strong> - Compare similar skills side-by-side</li>
+  </ul>
+
+  <h2>Quick Start</h2>
+
+  <p>Get started with Skillsmith in minutes:</p>
+
+  <h3>1. Configure the MCP Server</h3>
+
+  <p>Add Skillsmith to your Claude settings file (<code>~/.claude/settings.json</code>):</p>
+
+  <pre><code>{`{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"]
+    }
+  }
+}`}</code></pre>
+
+  <h3>2. Start Using Skillsmith</h3>
+
+  <p>Once configured, ask Claude to find and install skills:</p>
+
+  <pre><code>{`"Search for testing skills"
+"Find verified skills for git workflows"
+"Install the commit skill"
+"Recommend skills for my React project"`}</code></pre>
+
+  <h2>Documentation Sections</h2>
+
+  <div class="card-grid">
+    <a href="/docs/getting-started" class="doc-card">
+      <h3>Getting Started</h3>
+      <p>Step-by-step guide to set up Skillsmith in your environment.</p>
+    </a>
+
+    <a href="/docs/cli" class="doc-card">
+      <h3>CLI Reference</h3>
+      <p>Complete command reference for the Skillsmith CLI.</p>
+    </a>
+
+    <a href="/docs/mcp-server" class="doc-card">
+      <h3>MCP Server</h3>
+      <p>Learn how to configure and use the MCP server with Claude.</p>
+    </a>
+
+    <a href="/docs/api" class="doc-card">
+      <h3>API Reference</h3>
+      <p>Detailed API documentation for developers and integrators.</p>
+    </a>
+  </div>
+
+  <h2>Trust Tiers</h2>
+
+  <p>Skillsmith categorizes skills by trust level to help you make informed decisions:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Tier</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>verified</code></td>
+        <td>Official Anthropic skills with full security review</td>
+      </tr>
+      <tr>
+        <td><code>community</code></td>
+        <td>Community-reviewed skills with quality checks</td>
+      </tr>
+      <tr>
+        <td><code>experimental</code></td>
+        <td>New or beta skills, use with caution</td>
+      </tr>
+      <tr>
+        <td><code>unknown</code></td>
+        <td>Unverified skills, not recommended for production</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Need Help?</h2>
+
+  <p>
+    If you run into issues or have questions, check out our
+    <a href="https://github.com/Smith-Horn-Group/skillsmith/issues">GitHub Issues</a>
+    or join the community discussion.
+  </p>
+</DocsLayout>
