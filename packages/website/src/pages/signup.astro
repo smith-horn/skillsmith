@@ -17,12 +17,10 @@
 export const prerender = false;
 
 import { PRICING_TIERS } from '../lib/pricing.ts';
+import { getSupabaseConfig } from '../lib/supabase-config';
 
 // Read env vars at SSR time to inject into client script
-const supabaseConfig = {
-  url: import.meta.env.PUBLIC_SUPABASE_URL || '',
-  anonKey: import.meta.env.PUBLIC_SUPABASE_ANON_KEY || '',
-};
+const supabaseConfig = getSupabaseConfig();
 
 // Read query parameters
 const url = new URL(Astro.request.url);
@@ -39,9 +37,6 @@ const monthlyPrice = tierData?.price ?? 0;
 const annualPrice = monthlyPrice * 10; // 10 months for the price of 12
 const displayPrice = period === 'annual' ? annualPrice : monthlyPrice;
 const savingsPercent = period === 'annual' ? 17 : 0; // ~17% savings
-
-// API base URL for checkout
-const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app';
 ---
 
 <!DOCTYPE html>
@@ -862,21 +857,15 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmit
   }
 </style>
 
-<!-- Store server-side variables for client script -->
-<div id="signup-config" data-api-base-url={apiBaseUrl} style="display: none;"></div>
-
 <script>
   import { createClient } from '@supabase/supabase-js'
 
-  // Get configuration from data attributes
-  const configEl = document.getElementById('signup-config')
-  const apiBaseUrl = configEl?.dataset.apiBaseUrl || ''
-
   // Supabase configuration
   // Read config injected by SSR script in head
-  const config = (window as any).__SUPABASE_CONFIG__ || {};
+  const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '', apiBaseUrl: 'https://api.skillsmith.app' };
   const supabaseUrl = config.url;
   const supabaseAnonKey = config.anonKey;
+  const apiBaseUrl = config.apiBaseUrl;
 
   // Initialize checkout form handling
   document.addEventListener('DOMContentLoaded', () => {

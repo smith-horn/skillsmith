@@ -11,11 +11,10 @@
 // Disable prerendering - this page needs SSR to read env vars and handle auth
 export const prerender = false;
 
+import { getSupabaseConfig } from '../../lib/supabase-config';
+
 // Read env vars at SSR time to inject into client script
-const supabaseConfig = {
-  url: import.meta.env.PUBLIC_SUPABASE_URL || '',
-  anonKey: import.meta.env.PUBLIC_SUPABASE_ANON_KEY || '',
-};
+const supabaseConfig = getSupabaseConfig();
 ---
 
 <!DOCTYPE html>
@@ -682,7 +681,7 @@ const supabaseConfig = {
   import { createClient } from '@supabase/supabase-js'
 
   // Read config injected by SSR script in head
-  const config = (window as any).__SUPABASE_CONFIG__ || {};
+  const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' };
   const supabaseUrl = config.url;
   const supabaseAnonKey = config.anonKey;
 
