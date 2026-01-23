@@ -36,11 +36,14 @@ export {
   shouldUseSONARouting,
   isHighConfidenceDecision,
   usedFallback,
-  createSONARouter,
 } from './SONARouter.helpers.js'
 
-export type { V3RoutingResult, V3MoERouter, V3RoutingSuggestion, V3SONAOptimizer }
-  from './SONARouter.helpers.js'
+export type {
+  V3RoutingResult,
+  V3MoERouter,
+  V3RoutingSuggestion,
+  V3SONAOptimizer,
+} from './SONARouter.helpers.js'
 
 // ============================================================================
 // Main SONARouter Class
@@ -476,4 +479,17 @@ export class SONARouter {
       this.v3MoE.updateExpertWeights(expertId, success ? 1.0 : -0.5)
     }
   }
+}
+
+// ============================================================================
+// Factory Function
+// ============================================================================
+
+/**
+ * Create and initialize a SONARouter instance
+ */
+export async function createSONARouter(config?: SONARouterConfig): Promise<SONARouter> {
+  const router = new SONARouter(config)
+  await router.initialize()
+  return router
 }

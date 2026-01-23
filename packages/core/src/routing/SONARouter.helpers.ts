@@ -282,16 +282,8 @@ export function hashObject(obj: Record<string, unknown>): string {
 }
 
 // ============================================================================
-// Factory Helper
+// Factory Helper (Stub for backwards compat - actual implementation in SONARouter.ts)
 // ============================================================================
 
-import { SONARouter } from './SONARouter.js'
-
-/**
- * Create and initialize a SONARouter instance
- */
-export async function createSONARouter(config?: SONARouterConfig): Promise<SONARouter> {
-  const router = new SONARouter(config)
-  await router.initialize()
-  return router
-}
+// Note: createSONARouter is now exported directly from SONARouter.ts to avoid
+// circular dependency. This re-export is handled in the main file.

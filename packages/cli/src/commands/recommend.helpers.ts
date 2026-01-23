@@ -64,6 +64,7 @@ export function getTrustBadge(tier: TrustTier): string {
     case 'experimental':
       return chalk.yellow('[EXPERIMENTAL]')
     case 'unknown':
+    default:
       return chalk.gray('[UNKNOWN]')
   }
 }
