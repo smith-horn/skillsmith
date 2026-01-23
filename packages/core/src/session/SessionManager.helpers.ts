@@ -14,8 +14,10 @@ import type {
 // Module Loading State
 // ============================================================================
 
-let claudeFlowMemory: ClaudeFlowMemoryModule | undefined | null = null
-let claudeFlowMcp: ClaudeFlowMcpModule | undefined | null = null
+// Use symbol to distinguish "not yet attempted" from "attempted but failed (undefined)"
+const NOT_LOADED = Symbol('not-loaded')
+let claudeFlowMemory: ClaudeFlowMemoryModule | undefined | typeof NOT_LOADED = NOT_LOADED
+let claudeFlowMcp: ClaudeFlowMcpModule | undefined | typeof NOT_LOADED = NOT_LOADED
 
 // Module paths are constructed dynamically to prevent ESM static analysis
 const CLAUDE_FLOW_BASE = 'claude-flow'
@@ -34,7 +36,7 @@ const MCP_MODULE_PATH = '/v3/@claude-flow/cli/dist/src/mcp-client.js'
  * ESM static analysis from resolving the module at parse time.
  */
 export async function getClaudeFlowMemory(): Promise<ClaudeFlowMemoryModule | undefined> {
-  if (claudeFlowMemory === null) {
+  if (claudeFlowMemory === NOT_LOADED) {
     try {
       // String concatenation prevents static analysis
       const modulePath = CLAUDE_FLOW_BASE + MEMORY_MODULE_PATH
@@ -43,7 +45,7 @@ export async function getClaudeFlowMemory(): Promise<ClaudeFlowMemoryModule | un
       claudeFlowMemory = undefined // Mark as attempted but failed
     }
   }
-  return claudeFlowMemory
+  return claudeFlowMemory === NOT_LOADED ? undefined : claudeFlowMemory
 }
 
 /**
@@ -54,7 +56,7 @@ export async function getClaudeFlowMemory(): Promise<ClaudeFlowMemoryModule | un
  * ESM static analysis from resolving the module at parse time.
  */
 export async function getClaudeFlowMcp(): Promise<ClaudeFlowMcpModule | undefined> {
-  if (claudeFlowMcp === null) {
+  if (claudeFlowMcp === NOT_LOADED) {
     try {
       // String concatenation prevents static analysis
       const modulePath = CLAUDE_FLOW_BASE + MCP_MODULE_PATH
@@ -63,7 +65,7 @@ export async function getClaudeFlowMcp(): Promise<ClaudeFlowMcpModule | undefine
       claudeFlowMcp = undefined // Mark as attempted but failed
     }
   }
-  return claudeFlowMcp
+  return claudeFlowMcp === NOT_LOADED ? undefined : claudeFlowMcp
 }
 
 // ============================================================================
