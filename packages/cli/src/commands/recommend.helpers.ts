@@ -7,7 +7,13 @@ import chalk from 'chalk'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { TrustTier, CodebaseContext, SkillRole } from '@skillsmith/core'
+import type {
+  TrustTier,
+  CodebaseContext,
+  SkillRole,
+  FrameworkInfo,
+  DependencyInfo,
+} from '@skillsmith/core'
 import type {
   SkillRecommendation,
   RecommendResponse,
@@ -84,7 +90,10 @@ export function formatRecommendations(
 
   if (context) {
     if (context.frameworks.length > 0) {
-      const frameworks = context.frameworks.slice(0, 3).map((f) => f.name).join(', ')
+      const frameworks = context.frameworks
+        .slice(0, 3)
+        .map((f: FrameworkInfo) => f.name)
+        .join(', ')
       lines.push(chalk.dim(`Detected: ${frameworks}`))
       lines.push('')
     }
@@ -156,11 +165,11 @@ export function formatAsJson(response: RecommendResponse, context: CodebaseConte
   const output = {
     recommendations: response.recommendations,
     analysis: context ? {
-      frameworks: context.frameworks.slice(0, 10).map((f) => ({
+      frameworks: context.frameworks.slice(0, 10).map((f: FrameworkInfo) => ({
         name: f.name,
         confidence: Math.round(f.confidence * 100),
       })),
-      dependencies: context.dependencies.slice(0, 20).map((d) => ({
+      dependencies: context.dependencies.slice(0, 20).map((d: DependencyInfo) => ({
         name: d.name,
         is_dev: d.isDev,
       })),
@@ -191,11 +200,11 @@ export function formatOfflineResults(context: CodebaseContext, json: boolean): s
     return JSON.stringify({
       offline: true,
       analysis: {
-        frameworks: context.frameworks.slice(0, 10).map((f) => ({
+        frameworks: context.frameworks.slice(0, 10).map((f: FrameworkInfo) => ({
           name: f.name,
           confidence: Math.round(f.confidence * 100),
         })),
-        dependencies: context.dependencies.slice(0, 20).map((d) => ({
+        dependencies: context.dependencies.slice(0, 20).map((d: DependencyInfo) => ({
           name: d.name,
           is_dev: d.isDev,
         })),
@@ -217,17 +226,17 @@ export function formatOfflineResults(context: CodebaseContext, json: boolean): s
 
   if (context.frameworks.length > 0) {
     lines.push(chalk.bold('Detected Frameworks:'))
-    context.frameworks.slice(0, 5).forEach((f) => {
+    context.frameworks.slice(0, 5).forEach((f: FrameworkInfo) => {
       lines.push(`  - ${f.name} (${Math.round(f.confidence * 100)}% confidence)`)
     })
     lines.push('')
   }
 
   if (context.dependencies.length > 0) {
-    const prodDeps = context.dependencies.filter((d) => !d.isDev).slice(0, 10)
+    const prodDeps = context.dependencies.filter((d: DependencyInfo) => !d.isDev).slice(0, 10)
     if (prodDeps.length > 0) {
       lines.push(chalk.bold('Key Dependencies:'))
-      prodDeps.forEach((d) => lines.push(`  - ${d.name}`))
+      prodDeps.forEach((d: DependencyInfo) => lines.push(`  - ${d.name}`))
       lines.push('')
     }
   }
@@ -308,7 +317,7 @@ export function getInstalledSkills(): InstalledSkill[] {
             if (tagsContent) {
               skill.tags = tagsContent
                 .split(',')
-                .map((t) => t.trim().replace(/['"]/g, '').toLowerCase())
+                .map((t: string) => t.trim().replace(/['"]/g, '').toLowerCase())
                 .filter(Boolean)
             }
             const categoryMatch = frontmatter.match(/category:\s*["']?([^"'\n]+)["']?/)

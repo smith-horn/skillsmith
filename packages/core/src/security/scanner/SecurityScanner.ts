@@ -27,6 +27,14 @@ import {
   calculateRiskScore,
 } from './SecurityScanner.helpers.js'
 
+// Import formatters (used for both re-export and static methods)
+import {
+  toMinimalRefs,
+  toSARIF,
+  toGitHubAnnotations,
+  toSummary,
+} from './SecurityScanner.formatters.js'
+
 // Re-export helpers and formatters for public API
 export {
   LineContext,
@@ -35,20 +43,7 @@ export {
   isDocumentationContext,
   calculateRiskScore,
 }
-export {
-  toMinimalRefs,
-  toSARIF,
-  toGitHubAnnotations,
-  toSummary,
-} from './SecurityScanner.formatters.js'
-
-// Import formatters for static methods
-import {
-  toMinimalRefs,
-  toSARIF,
-  toGitHubAnnotations,
-  toSummary,
-} from './SecurityScanner.formatters.js'
+export { toMinimalRefs, toSARIF, toGitHubAnnotations, toSummary }
 
 export class SecurityScanner {
   private allowedDomains: Set<string>
