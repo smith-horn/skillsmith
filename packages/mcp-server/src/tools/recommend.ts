@@ -14,7 +14,6 @@ import { mapTrustTierFromDb, getTrustBadge } from '../utils/validation.js'
 // Import types
 import {
   recommendInputSchema,
-  recommendToolSchema,
   type RecommendInput,
   type RecommendResponse,
   type SkillRecommendation,
