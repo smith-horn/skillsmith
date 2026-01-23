@@ -21,28 +21,56 @@ import { EventEmitter } from 'events'
 
 // Re-export types for public API
 export type {
-  LLMProviderType, ProviderPriority, LoadBalanceStrategy, FailoverCondition,
-  ProviderConfig, FallbackRule, FallbackStrategy, CircuitBreakerConfig,
-  MultiLLMProviderConfig, HealthCheckResult, ProviderStatus, LLMRequest,
-  LLMResponse, ProviderMetrics, SkillCompatibilityResult, ResolvedMultiLLMConfig,
+  LLMProviderType,
+  ProviderPriority,
+  LoadBalanceStrategy,
+  FailoverCondition,
+  ProviderConfig,
+  FallbackRule,
+  FallbackStrategy,
+  CircuitBreakerConfig,
+  MultiLLMProviderConfig,
+  HealthCheckResult,
+  ProviderStatus,
+  LLMRequest,
+  LLMResponse,
+  ProviderMetrics,
+  SkillCompatibilityResult,
+  ResolvedMultiLLMConfig,
 } from './MultiLLMProvider.types.js'
 export { DEFAULT_MULTI_LLM_CONFIG } from './MultiLLMProvider.types.js'
 
 // Re-export helpers for consumers
-export { CircuitBreaker, getErrorCondition, estimateTokens, calculateCost,
-  calculateCompatibilityScore } from './MultiLLMProvider.helpers.js'
+export {
+  CircuitBreaker,
+  getErrorCondition,
+  estimateTokens,
+  calculateCost,
+  calculateCompatibilityScore,
+} from './MultiLLMProvider.helpers.js'
 export type { CircuitState, CircuitBreakerMetrics } from './MultiLLMProvider.helpers.js'
 
 // Internal imports
 import type {
-  LLMProviderType, ProviderConfig, MultiLLMProviderConfig, FallbackStrategy,
-  HealthCheckResult, ProviderStatus, LLMRequest, LLMResponse, ProviderMetrics,
-  SkillCompatibilityResult, ResolvedMultiLLMConfig,
+  LLMProviderType,
+  MultiLLMProviderConfig,
+  FallbackStrategy,
+  HealthCheckResult,
+  ProviderStatus,
+  LLMRequest,
+  LLMResponse,
+  ProviderMetrics,
+  SkillCompatibilityResult,
+  ResolvedMultiLLMConfig,
 } from './MultiLLMProvider.types.js'
 import { DEFAULT_MULTI_LLM_CONFIG } from './MultiLLMProvider.types.js'
 import {
-  CircuitBreaker, getErrorCondition, estimateTokens, calculateCost,
-  calculateCompatibilityScore, simulateRequest,
+  CircuitBreaker,
+  getErrorCondition,
+  estimateTokens,
+  calculateCost,
+  calculateCompatibilityScore,
+  simulateRequest,
 } from './MultiLLMProvider.helpers.js'
 
 // ============================================================================
@@ -270,7 +298,9 @@ export class MultiLLMProvider extends EventEmitter {
       }
     }
 
-    const scores = Object.values(results).filter((r) => r.compatible).map((r) => r.score)
+    const scores = Object.values(results)
+      .filter((r) => r.compatible)
+      .map((r) => r.score)
     const overallScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0
 
     const recommendedProviders = Object.entries(results)
@@ -294,7 +324,10 @@ export class MultiLLMProvider extends EventEmitter {
     avgSuccessRate: number
     providerBreakdown: Record<LLMProviderType, number>
   } {
-    let totalRequests = 0, totalCost = 0, totalLatency = 0, totalSuccessRate = 0
+    let totalRequests = 0,
+      totalCost = 0,
+      totalLatency = 0,
+      totalSuccessRate = 0
     const providerBreakdown: Record<LLMProviderType, number> = {} as Record<LLMProviderType, number>
 
     for (const [provider, metrics] of this.providerMetrics) {

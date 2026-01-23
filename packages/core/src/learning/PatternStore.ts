@@ -8,27 +8,74 @@ import { randomUUID } from 'crypto'
 import { EmbeddingService } from '../embeddings/index.js'
 
 // Re-export public API types and constants
-export type { EWCConfig, PatternStoreConfig, PatternOutcomeType, PatternOutcome,
-  PatternRecommendationContext, SkillFeatures, Pattern, StoredPattern, PatternQuery,
-  SimilarPattern, ConsolidationResult, PatternStoreMetrics, ConsolidationState,
-  PatternRow } from './PatternStore.types.js'
-export { DEFAULT_EWC_CONFIG, DEFAULT_PATTERN_STORE_CONFIG, PATTERN_REWARDS } from './PatternStore.types.js'
+export type {
+  EWCConfig,
+  PatternStoreConfig,
+  PatternOutcomeType,
+  PatternOutcome,
+  PatternRecommendationContext,
+  SkillFeatures,
+  Pattern,
+  StoredPattern,
+  PatternQuery,
+  SimilarPattern,
+  ConsolidationResult,
+  PatternStoreMetrics,
+  ConsolidationState,
+  PatternRow,
+} from './PatternStore.types.js'
+export {
+  DEFAULT_EWC_CONFIG,
+  DEFAULT_PATTERN_STORE_CONFIG,
+  PATTERN_REWARDS,
+} from './PatternStore.types.js'
 export type { IFisherInformationMatrix } from './PatternStore.helpers.js'
 export { FisherInformationMatrix } from './PatternStore.helpers.js'
 
 // Internal imports
-import type { EWCConfig, PatternStoreConfig, PatternOutcome, Pattern, StoredPattern,
-  PatternQuery, SimilarPattern, ConsolidationResult, PatternStoreMetrics,
-  ConsolidationState, PatternRow } from './PatternStore.types.js'
+import type {
+  EWCConfig,
+  PatternStoreConfig,
+  PatternOutcome,
+  Pattern,
+  PatternQuery,
+  SimilarPattern,
+  ConsolidationResult,
+  PatternStoreMetrics,
+  ConsolidationState,
+  PatternRow,
+} from './PatternStore.types.js'
 import { DEFAULT_EWC_CONFIG, DEFAULT_PATTERN_STORE_CONFIG } from './PatternStore.types.js'
-import { PATTERN_STORE_SCHEMA, FisherInformationMatrix, contextToText, computeGradient,
-  deserializeEmbedding, cosineSimilarity, importanceWeightedSimilarity,
-  calculatePatternImportance, calculateDimensionImportance, rowToStoredPattern } from './PatternStore.helpers.js'
-import { getPatternCount, getDatabaseSize, getSamplePatterns, getAllPatterns,
-  updatePatternInDB, updatePatternImportance, updateAccessCount, deletePattern,
-  loadFisherMatrixData, saveFisherMatrixData, recordConsolidation, getPatternsByOutcome,
-  getAverageImportance, getHighImportanceCount, getConsolidationStats,
-  getContextEmbeddings } from './PatternStore.queries.js'
+import {
+  PATTERN_STORE_SCHEMA,
+  FisherInformationMatrix,
+  contextToText,
+  computeGradient,
+  deserializeEmbedding,
+  cosineSimilarity,
+  importanceWeightedSimilarity,
+  calculatePatternImportance,
+  calculateDimensionImportance,
+  rowToStoredPattern,
+} from './PatternStore.helpers.js'
+import {
+  getPatternCount,
+  getDatabaseSize,
+  getSamplePatterns,
+  getAllPatterns,
+  updatePatternInDB,
+  updatePatternImportance,
+  updateAccessCount,
+  deletePattern,
+  loadFisherMatrixData,
+  saveFisherMatrixData,
+  recordConsolidation,
+  getPatternsByOutcome,
+  getAverageImportance,
+  getHighImportanceCount,
+  getConsolidationStats,
+  getContextEmbeddings,
+} from './PatternStore.queries.js'
 
 /** PatternStore - EWC++ pattern storage for successful recommendation matches */
 export class PatternStore {
