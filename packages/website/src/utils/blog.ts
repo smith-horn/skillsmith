@@ -14,9 +14,9 @@
  * // Returns: 5 (for ~1000 words)
  */
 export function calculateReadingTime(content: string): number {
-  const wordsPerMinute = 200;
-  const words = content.split(/\s+/).length;
-  return Math.ceil(words / wordsPerMinute);
+  const wordsPerMinute = 200
+  const words = content.split(/\s+/).length
+  return Math.ceil(words / wordsPerMinute)
 }
 
 /**
@@ -37,5 +37,5 @@ export function formatDate(date: Date, format: 'short' | 'long' = 'long'): strin
     year: 'numeric',
     month: format,
     day: 'numeric',
-  }).format(date);
+  }).format(date)
 }
