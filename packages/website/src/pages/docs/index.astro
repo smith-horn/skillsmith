@@ -137,6 +137,21 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
       <h3>API Reference</h3>
       <p>Detailed API documentation for developers and integrators.</p>
     </a>
+
+    <a href="/docs/security" class="doc-card">
+      <h3>Security</h3>
+      <p>Learn how Skillsmith protects your Claude Code environment.</p>
+    </a>
+
+    <a href="/docs/trust-tiers" class="doc-card">
+      <h3>Trust Tiers</h3>
+      <p>Understand the four-tier trust system for evaluating skills.</p>
+    </a>
+
+    <a href="/docs/quarantine" class="doc-card">
+      <h3>Quarantine</h3>
+      <p>What happens when skills are flagged for security issues.</p>
+    </a>
   </div>
 
   <h2>Trust Tiers</h2>
@@ -152,20 +167,20 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
     </thead>
     <tbody>
       <tr>
+        <td><code>official</code></td>
+        <td>Anthropic or partner skills with full security review</td>
+      </tr>
+      <tr>
         <td><code>verified</code></td>
-        <td>Official Anthropic skills with full security review</td>
+        <td>Publisher verified, quality checked</td>
       </tr>
       <tr>
         <td><code>community</code></td>
-        <td>Community-reviewed skills with quality checks</td>
+        <td>Basic scan passed, metadata present</td>
       </tr>
       <tr>
-        <td><code>experimental</code></td>
-        <td>New or beta skills, use with caution</td>
-      </tr>
-      <tr>
-        <td><code>unknown</code></td>
-        <td>Unverified skills, not recommended for production</td>
+        <td><code>unverified</code></td>
+        <td>No verification performed, review before installing</td>
       </tr>
     </tbody>
   </table>
