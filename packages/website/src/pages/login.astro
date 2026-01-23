@@ -7,6 +7,9 @@
  * Handles email/password login with Supabase Auth.
  * Redirects to account dashboard on success.
  */
+
+// Disable prerendering - this page needs SSR to read env vars
+export const prerender = false;
 ---
 
 <!DOCTYPE html>
