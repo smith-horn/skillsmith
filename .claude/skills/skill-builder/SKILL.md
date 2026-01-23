@@ -555,6 +555,176 @@ Before publishing a skill, verify:
 
 ---
 
+## Behavioral Classification (ADR-025)
+
+Every skill should declare its **behavioral classification** to set user expectations and guide Claude's interaction pattern. See [ADR-025](../../docs/adr/025-skill-behavioral-classification.md) for the full decision record.
+
+### The Four Classifications
+
+| Classification | Directive | When to Use |
+|----------------|-----------|-------------|
+| **Autonomous Execution** | EXECUTE, DON'T ASK | Prescribed workflows with no decisions needed |
+| **Guided Decision** | ASK, THEN EXECUTE | Requires user input on specific choices |
+| **Interactive Exploration** | ASK THROUGHOUT | Ongoing dialogue is the value |
+| **Configurable Enforcement** | USER-CONFIGURED | Behavior depends on project settings |
+
+### 1. Autonomous Execution
+
+**Directive**: EXECUTE, DON'T ASK
+
+Skills that follow a prescribed workflow with no decisions required. They should execute automatically without asking for permission.
+
+**Examples**:
+- `governance` - Code review findings actioned immediately
+- `hive-mind-execution` - Executes planned waves
+- `docker-enforce` - Enforces container patterns
+
+**Template Addition**:
+```markdown
+## Behavioral Classification
+
+**Type**: Autonomous Execution
+
+This skill executes automatically without asking for permission. When invoked:
+1. The prescribed workflow runs immediately
+2. Findings are actioned (fixed or tracked)
+3. Results are reported
+
+**Anti-pattern**: "Would you like me to run the code review?"
+**Correct pattern**: *Runs code review, reports findings, actions them*
+```
+
+### 2. Guided Decision
+
+**Directive**: ASK, THEN EXECUTE
+
+Skills that require user input on specific decisions, then execute based on those choices. They ask structured questions at defined points.
+
+**Examples**:
+- `wave-planner` - Asks about scope, then generates plan
+- `mcp-decision-helper` - Guides through decision matrix
+- `skill-builder` - Asks classification, then generates
+
+**Template Addition**:
+```markdown
+## Behavioral Classification
+
+**Type**: Guided Decision
+
+This skill will ask for your input on key decisions, then execute based on your choices.
+
+**Decision Points**:
+1. [First question - e.g., "Which scope?"]
+2. [Second question - e.g., "Which approach?"]
+3. [Third question - e.g., "Create ADR?"]
+
+After decisions are made, execution proceeds automatically.
+```
+
+### 3. Interactive Exploration
+
+**Directive**: ASK THROUGHOUT
+
+Skills that engage in ongoing dialogue. The interaction IS the value.
+
+**Examples**:
+- `dev-browser` - Continuous web automation interaction
+- `researcher` - Explores topics based on feedback
+- `pair-programming` - Collaborative coding discussion
+
+**Template Addition**:
+```markdown
+## Behavioral Classification
+
+**Type**: Interactive Exploration
+
+This skill engages in ongoing dialogue. Expect frequent questions and discussion as we explore together.
+
+**Interaction Pattern**:
+- I'll ask clarifying questions as we go
+- Provide feedback to steer the exploration
+- We'll iterate until you're satisfied
+```
+
+### 4. Configurable Enforcement
+
+**Directive**: USER-CONFIGURED
+
+Skills that adapt based on project configuration.
+
+**Examples**:
+- `varlock` - Block vs warn mode
+- `security-auditor` - Severity thresholds from config
+- `ci-doctor` - Strictness based on environment
+
+**Template Addition**:
+```markdown
+## Behavioral Classification
+
+**Type**: Configurable Enforcement
+
+This skill's behavior depends on your project configuration.
+
+**Configuration Options**:
+| Setting | Options | Default |
+|---------|---------|---------|
+| `mode` | `strict`, `warn`, `off` | `warn` |
+| `severity_threshold` | `critical`, `high`, `medium`, `low` | `high` |
+
+Configure in `config.yaml` or `.claude/settings.json`.
+```
+
+### Choosing a Classification
+
+```
+┌─────────────────────────────────────────┐
+│ Does the skill need user input to work? │
+└─────────────────────────────────────────┘
+         │                        │
+        YES                       NO
+         │                        │
+         ▼                        ▼
+┌─────────────────┐     ┌──────────────────────┐
+│ Is input needed │     │ Autonomous Execution │
+│ throughout, or  │     └──────────────────────┘
+│ just upfront?   │
+└─────────────────┘
+    │           │
+  UPFRONT   THROUGHOUT
+    │           │
+    ▼           ▼
+┌────────────┐  ┌───────────────────────┐
+│  Guided    │  │ Interactive           │
+│  Decision  │  │ Exploration           │
+└────────────┘  └───────────────────────┘
+
+Exception: If behavior depends on config → Configurable Enforcement
+```
+
+### Adding Classification to Your Skill
+
+Add a `## Behavioral Classification` section near the top of your SKILL.md:
+
+```markdown
+---
+name: "My Skill"
+description: "What it does and when to use it."
+---
+
+# My Skill
+
+## Behavioral Classification
+
+**Type**: [Autonomous Execution | Guided Decision | Interactive Exploration | Configurable Enforcement]
+
+[Brief explanation of what this means for users]
+
+## What This Skill Does
+[Rest of skill content...]
+```
+
+---
+
 ## Skill Builder Templates
 
 ### Template 1: Basic Skill (Minimal)

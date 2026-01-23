@@ -5,6 +5,20 @@ description: "Enforces engineering standards and code quality policies. Use duri
 
 # Governance Skill
 
+## Behavioral Classification
+
+**Type**: Autonomous Execution (ADR-025)
+
+This skill executes automatically without asking for permission. When triggered during code review:
+1. All issues are identified (critical, major, minor)
+2. Each issue is immediately actioned: **fixed** or **Linear ticket created**
+3. Results are reported
+
+**Anti-pattern**: "Would you like me to fix these issues?"
+**Correct pattern**: "Found 5 issues. Fixing 2 high-severity now. Created SMI-1234, SMI-1235 for 3 medium/low."
+
+---
+
 Enforces engineering standards from [standards.md](../../../docs/architecture/standards.md) during development.
 
 ## Trigger Phrases
@@ -120,6 +134,8 @@ The `npm run audit:standards` command verifies:
 
 **IMPORTANT: All issues require resolution OR tracking before PR merge.**
 
+**⚠️ EXECUTE, DON'T ASK**: This workflow is mandatory. Do NOT ask "would you like me to fix these?" or "should I create Linear tickets?" - just execute the workflow. The user expects you to follow governance automatically.
+
 When performing a code review:
 
 1. **Identify ALL issues** - Critical, major, and minor severity
@@ -128,6 +144,12 @@ When performing a code review:
    - **Create a Linear issue** - If deferring, create the issue IMMEDIATELY
 3. **No "deferred" without a ticket** - "Deferred" without documentation = forgotten
 4. **Re-review after fixes** - Verify each fix addresses the issue
+
+**Anti-pattern (NEVER do this):**
+> "I found 5 issues. Would you like me to fix them or create tickets?"
+
+**Correct pattern:**
+> "Found 5 issues. Fixing 2 high-severity now. Creating Linear tickets for 3 medium/low."
 
 ### The Deferred Issue Rule
 

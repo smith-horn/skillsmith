@@ -1,0 +1,45 @@
+# Wave 1: Foundation & Quick Wins
+# Initiative: SMI-1735 Skill Architecture Refactor
+# Estimated: ~45K tokens
+
+name: "Skill Refactor Wave 1: Foundation"
+description: "Establish behavioral classification framework and quick wins"
+
+resources:
+  max_agents: 2
+  profile: laptop
+  token_budget: 50000
+
+agents:
+  - type: documentation-writer
+    role: lead
+    issues:
+      - SMI-1740  # Add discovery check to wave-planner
+      - SMI-1744  # Create ADR for Behavioral Classification
+      - SMI-1738  # Create Behavioral Classification Framework
+
+quality:
+  require_tests: false  # Documentation wave
+  governance_review: after_each_commit
+
+# Behavioral Classification: This wave is GUIDED DECISION
+# The framework being created will ask for user input on classification choices
+
+deliverables:
+  - path: ~/.claude/skills/wave-planner/SKILL.md
+    changes: Add discovery phase section
+
+  - path: docs/adr/025-skill-behavioral-classification.md
+    changes: Create new ADR
+
+  - path: .claude/skills/skill-builder/SKILL.md
+    changes: Add behavioral classification section
+
+  - path: .claude/skills/governance/SKILL.md
+    changes: Document as "Autonomous Execution" type
+
+acceptance_criteria:
+  - wave-planner checks for existing files before creating
+  - ADR-025 documents 4-tier classification
+  - skill-builder includes classification guidance
+  - governance skill clarifies its behavioral type
