@@ -362,4 +362,15 @@ export const CODE_REVIEW_FOCUS = {
     requiredTests: ['unit', 'integration'],
     patterns: ['packages/*/tests/**/*.test.ts'],
   },
+  // SMI-1720: Prettier formatting check
+  style: {
+    patterns: [
+      'Prettier formatted (npm run format:check)',
+      'Consistent indentation',
+      'No trailing whitespace',
+      'Proper import ordering',
+    ],
+    command: 'npm run format:check',
+    fixCommand: 'npm run format',
+  },
 }
