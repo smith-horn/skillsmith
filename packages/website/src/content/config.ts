@@ -1,4 +1,4 @@
-import { defineCollection, z } from 'astro:content';
+import { defineCollection, z } from 'astro:content'
 
 /**
  * Blog collection schema
@@ -20,6 +20,6 @@ const blog = defineCollection({
     draft: z.boolean().default(false),
     ogImage: z.string().optional(),
   }),
-});
+})
 
-export const collections = { blog };
+export const collections = { blog }
