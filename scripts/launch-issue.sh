@@ -5,6 +5,24 @@
 
 set -e
 
+# =============================================================================
+# SMI-1687: Docker container check (required for npm execution)
+# =============================================================================
+DOCKER_CONTAINER="skillsmith-dev-1"
+
+if ! command -v docker &> /dev/null; then
+  echo "Error: Docker is not installed"
+  exit 1
+fi
+
+if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DOCKER_CONTAINER}$"; then
+  echo "Error: Docker container '${DOCKER_CONTAINER}' is not running"
+  echo "Start it with: docker compose --profile dev up -d"
+  exit 1
+fi
+
+echo "Using Docker container: ${DOCKER_CONTAINER}"
+
 ISSUE_ID="${1:-}"
 REPO_DIR="/Users/williamsmith/Documents/GitHub/Claude-Skill-Discovery/skillsmith"
 WORKTREE_DIR="/Users/williamsmith/Documents/GitHub/Claude-Skill-Discovery/worktrees/phase-2b"
@@ -57,10 +75,10 @@ cd "$WORKTREE_DIR"
 echo "Working directory: $(pwd)"
 echo ""
 
-# 2. Verify dependencies
+# 2. Verify dependencies (SMI-1687: use Docker for npm)
 if [ ! -d "node_modules" ]; then
-    echo "Installing dependencies..."
-    npm install
+    echo "Installing dependencies via Docker..."
+    docker exec $DOCKER_CONTAINER npm install
 fi
 
 # 3. Show quick reference
@@ -69,7 +87,7 @@ cat << REFERENCE
 ║                    $ISSUE_UPPER QUICK REFERENCE
 ╠══════════════════════════════════════════════════════════════════╣
 ║  After EACH file:                                                ║
-║    npm run typecheck                                             ║
+║    docker exec $DOCKER_CONTAINER npm run typecheck               ║
 ║    npx claude-flow@alpha hooks post-edit --file "X" \\
 ║        --memory-key "${ISSUE_ID}/files"
 ║                                                                  ║
