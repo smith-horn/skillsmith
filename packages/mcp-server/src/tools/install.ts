@@ -24,7 +24,6 @@ import { getToolContext } from '../context.js'
 import {
   TRUST_TIER_SCANNER_OPTIONS,
   CLAUDE_SKILLS_DIR,
-  installInputSchema,
   type InstallInput,
   type InstallResult,
 } from './install.types.js'
