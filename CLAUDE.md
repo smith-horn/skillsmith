@@ -20,6 +20,52 @@ docker exec skillsmith-dev-1 npm run audit:standards
 
 ---
 
+## CI Health Requirements
+
+**CI stability is a top priority.** All code changes must pass CI before merging. Monitor CI success rate and address issues proactively.
+
+### Zero Tolerance Policy
+
+| Category | Requirement |
+|----------|-------------|
+| ESLint | Zero warnings, zero errors |
+| TypeScript | Strict mode, no `any` types without justification |
+| Prettier | All files formatted |
+| Tests | 100% pass rate, no flaky tests |
+| Security | No high-severity vulnerabilities |
+
+### Scripts Must Use Docker
+
+**All scripts MUST use Docker for npm commands.** Local npm execution causes environment inconsistencies.
+
+```bash
+# CORRECT - Docker execution
+docker exec skillsmith-dev-1 npm test
+docker exec skillsmith-dev-1 npm run build
+
+# INCORRECT - Local execution (NEVER use)
+npm test
+npm run build
+```
+
+### Code Quality Standards
+
+| Standard | Target | Tracked By |
+|----------|--------|------------|
+| ESLint warnings | 0 | CI lint job |
+| Explicit `any` types | 0 (or justified) | ESLint rule |
+| File size | < 500 lines | Governance audit |
+| Test coverage | > 80% | Codecov |
+
+### When CI Fails
+
+1. **Do not merge** - CI failures block PRs
+2. **Investigate immediately** - Check the failing job logs
+3. **Create Linear issue** - If fix is non-trivial, track it
+4. **Fix locally first** - Run `docker exec skillsmith-dev-1 npm run preflight` before pushing
+
+---
+
 ## Git-Crypt (Encrypted Documentation)
 
 **IMPORTANT**: The `docs/` directory and `.claude/hive-mind/` are encrypted with git-crypt. You MUST unlock before reading these files.
