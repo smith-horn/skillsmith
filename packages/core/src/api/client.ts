@@ -235,17 +235,17 @@ export class SkillsmithApiClient {
 
   constructor(config: ApiClientConfig = {}) {
     const baseUrl = config.baseUrl || process.env.SKILLSMITH_API_URL || DEFAULT_BASE_URL
-    if (!baseUrl) {
-      throw new Error(
-        'Skillsmith API URL not configured. Set SUPABASE_URL or SKILLSMITH_API_URL environment variable.'
-      )
-    }
-    this.baseUrl = baseUrl
+
+    // Auto-enable offline mode if no URL is configured (graceful degradation)
+    // This allows the client to work in test/dev environments without explicit configuration
+    const explicitOfflineMode = config.offlineMode ?? process.env.SKILLSMITH_OFFLINE_MODE === 'true'
+    this.offlineMode = explicitOfflineMode || !baseUrl
+
+    this.baseUrl = baseUrl || 'offline://not-configured'
     this.anonKey = config.anonKey || process.env.SUPABASE_ANON_KEY
     this.timeout = config.timeout ?? 30000
     this.maxRetries = config.maxRetries ?? 3
     this.debug = config.debug ?? false
-    this.offlineMode = config.offlineMode ?? process.env.SKILLSMITH_OFFLINE_MODE === 'true'
   }
 
   /**
