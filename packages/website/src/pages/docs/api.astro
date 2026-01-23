@@ -1,0 +1,394 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="API Reference" description="Skillsmith API documentation for developers and integrators">
+  <h1>API Reference</h1>
+
+  <p class="lead">
+    Build integrations with Skillsmith using our TypeScript API. Access skill search,
+    installation, and management programmatically.
+  </p>
+
+  <h2>Installation</h2>
+
+  <pre><code>{`npm install @skillsmith/core`}</code></pre>
+
+  <h2>Quick Start</h2>
+
+  <pre><code>{`import { SkillRegistry, SkillInstaller } from '@skillsmith/core';
+
+// Initialize the registry
+const registry = new SkillRegistry();
+
+// Search for skills
+const results = await registry.search({
+  query: 'testing',
+  trustTier: 'verified',
+  limit: 10
+});
+
+// Install a skill
+const installer = new SkillInstaller();
+await installer.install('community/jest-helper');`}</code></pre>
+
+  <h2>SkillRegistry</h2>
+
+  <p>The main interface for discovering and querying skills.</p>
+
+  <h3>Constructor</h3>
+
+  <pre><code>{`const registry = new SkillRegistry(options?: RegistryOptions);`}</code></pre>
+
+  <h4>RegistryOptions</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>Type</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>registryUrl</code></td>
+        <td><code>string</code></td>
+        <td>Custom registry URL</td>
+      </tr>
+      <tr>
+        <td><code>cacheEnabled</code></td>
+        <td><code>boolean</code></td>
+        <td>Enable response caching</td>
+      </tr>
+      <tr>
+        <td><code>cacheTtl</code></td>
+        <td><code>number</code></td>
+        <td>Cache TTL in seconds</td>
+      </tr>
+      <tr>
+        <td><code>apiKey</code></td>
+        <td><code>string</code></td>
+        <td>API key for authenticated requests</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>search()</h3>
+
+  <p>Search for skills matching the given criteria.</p>
+
+  <pre><code>{`async search(options: SearchOptions): Promise<SearchResult[]>`}</code></pre>
+
+  <h4>SearchOptions</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>Type</th>
+        <th>Required</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>query</code></td>
+        <td><code>string</code></td>
+        <td>Yes</td>
+        <td>Search query (min 2 characters)</td>
+      </tr>
+      <tr>
+        <td><code>category</code></td>
+        <td><code>Category</code></td>
+        <td>No</td>
+        <td>Filter by category</td>
+      </tr>
+      <tr>
+        <td><code>trustTier</code></td>
+        <td><code>TrustTier</code></td>
+        <td>No</td>
+        <td>Filter by trust tier</td>
+      </tr>
+      <tr>
+        <td><code>minScore</code></td>
+        <td><code>number</code></td>
+        <td>No</td>
+        <td>Minimum quality score (0-100)</td>
+      </tr>
+      <tr>
+        <td><code>limit</code></td>
+        <td><code>number</code></td>
+        <td>No</td>
+        <td>Max results (default: 10)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h4>Example</h4>
+
+  <pre><code>{`const results = await registry.search({
+  query: 'git',
+  trustTier: 'verified',
+  category: 'devops',
+  minScore: 80,
+  limit: 5
+});
+
+for (const skill of results) {
+  console.log(\`\${skill.id}: \${skill.name}\`);
+}`}</code></pre>
+
+  <h3>getSkill()</h3>
+
+  <p>Get detailed information about a specific skill.</p>
+
+  <pre><code>{`async getSkill(id: string): Promise<Skill | null>`}</code></pre>
+
+  <h4>Example</h4>
+
+  <pre><code>{`const skill = await registry.getSkill('community/jest-helper');
+
+if (skill) {
+  console.log(skill.name);
+  console.log(skill.description);
+  console.log(skill.trustTier);
+  console.log(skill.qualityScore);
+}`}</code></pre>
+
+  <h3>compare()</h3>
+
+  <p>Compare multiple skills side-by-side.</p>
+
+  <pre><code>{`async compare(ids: string[]): Promise<ComparisonResult>`}</code></pre>
+
+  <h4>Example</h4>
+
+  <pre><code>{`const comparison = await registry.compare([
+  'community/jest-helper',
+  'community/vitest-helper'
+]);
+
+console.log(comparison.skills);
+console.log(comparison.differences);
+console.log(comparison.recommendation);`}</code></pre>
+
+  <h2>SkillInstaller</h2>
+
+  <p>Handle skill installation and removal.</p>
+
+  <h3>Constructor</h3>
+
+  <pre><code>{`const installer = new SkillInstaller(options?: InstallerOptions);`}</code></pre>
+
+  <h4>InstallerOptions</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>Type</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>installPath</code></td>
+        <td><code>string</code></td>
+        <td>Default installation directory</td>
+      </tr>
+      <tr>
+        <td><code>registry</code></td>
+        <td><code>SkillRegistry</code></td>
+        <td>Registry instance to use</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>install()</h3>
+
+  <p>Install a skill to the local environment.</p>
+
+  <pre><code>{`async install(id: string, options?: InstallOptions): Promise<InstallResult>`}</code></pre>
+
+  <h4>InstallOptions</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>Type</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>path</code></td>
+        <td><code>string</code></td>
+        <td>Override installation path</td>
+      </tr>
+      <tr>
+        <td><code>force</code></td>
+        <td><code>boolean</code></td>
+        <td>Overwrite existing installation</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h4>Example</h4>
+
+  <pre><code>{`const result = await installer.install('community/jest-helper', {
+  path: '~/.claude/skills',
+  force: true
+});
+
+if (result.success) {
+  console.log(\`Installed to \${result.installPath}\`);
+} else {
+  console.error(result.error);
+}`}</code></pre>
+
+  <h3>uninstall()</h3>
+
+  <p>Remove an installed skill.</p>
+
+  <pre><code>{`async uninstall(id: string): Promise<UninstallResult>`}</code></pre>
+
+  <h3>list()</h3>
+
+  <p>List all installed skills.</p>
+
+  <pre><code>{`async list(): Promise<InstalledSkill[]>`}</code></pre>
+
+  <h2>Types</h2>
+
+  <h3>Skill</h3>
+
+  <pre><code>{`interface Skill {
+  id: string;              // "author/name" format
+  name: string;            // Display name
+  description: string;     // Full description
+  author: string;          // Author identifier
+  version: string;         // Semantic version
+  trustTier: TrustTier;    // Trust level
+  qualityScore: number;    // 0-100 score
+  category: Category;      // Primary category
+  tags: string[];          // Searchable tags
+  dependencies: string[];  // Required dependencies
+  createdAt: Date;         // Creation timestamp
+  updatedAt: Date;         // Last update timestamp
+}`}</code></pre>
+
+  <h3>TrustTier</h3>
+
+  <pre><code>{`type TrustTier = 'verified' | 'community' | 'experimental' | 'unknown';`}</code></pre>
+
+  <h3>Category</h3>
+
+  <pre><code>{`type Category =
+  | 'development'
+  | 'testing'
+  | 'devops'
+  | 'documentation'
+  | 'security'
+  | 'productivity'
+  | 'data'
+  | 'ai'
+  | 'other';`}</code></pre>
+
+  <h3>SearchResult</h3>
+
+  <pre><code>{`interface SearchResult {
+  skill: Skill;
+  score: number;        // Relevance score
+  highlights: string[]; // Matching text highlights
+}`}</code></pre>
+
+  <h2>Error Handling</h2>
+
+  <pre><code>{`import { SkillsmithError, NotFoundError, ValidationError } from '@skillsmith/core';
+
+try {
+  await registry.getSkill('invalid/skill');
+} catch (error) {
+  if (error instanceof NotFoundError) {
+    console.log('Skill not found');
+  } else if (error instanceof ValidationError) {
+    console.log('Invalid skill ID format');
+  } else {
+    throw error;
+  }
+}`}</code></pre>
+
+  <h3>Error Types</h3>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Error</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>SkillsmithError</code></td>
+        <td>Base error class</td>
+      </tr>
+      <tr>
+        <td><code>NotFoundError</code></td>
+        <td>Skill or resource not found</td>
+      </tr>
+      <tr>
+        <td><code>ValidationError</code></td>
+        <td>Invalid input or parameters</td>
+      </tr>
+      <tr>
+        <td><code>InstallError</code></td>
+        <td>Installation failed</td>
+      </tr>
+      <tr>
+        <td><code>NetworkError</code></td>
+        <td>Network request failed</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Rate Limiting</h2>
+
+  <p>API requests are rate-limited based on your plan:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Plan</th>
+        <th>Requests/Month</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Community</td>
+        <td>1,000</td>
+      </tr>
+      <tr>
+        <td>Individual</td>
+        <td>10,000</td>
+      </tr>
+      <tr>
+        <td>Team</td>
+        <td>100,000</td>
+      </tr>
+      <tr>
+        <td>Enterprise</td>
+        <td>Unlimited</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <h4>API Key Required</h4>
+    <p>
+      For higher rate limits and premium features, obtain an API key from your
+      <a href="/account">account settings</a>.
+    </p>
+  </div>
+</DocsLayout>
