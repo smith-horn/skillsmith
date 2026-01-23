@@ -400,19 +400,11 @@ export class StripeWebhookHandler {
 
     if (!customerId) return
 
-    // Get subscription ID from parent.subscription_details (Stripe v20+ structure)
-    const subscriptionDetails = invoice.parent?.subscription_details
-    const subscriptionId = subscriptionDetails?.subscription
-      ? typeof subscriptionDetails.subscription === 'string'
-        ? subscriptionDetails.subscription
-        : subscriptionDetails.subscription.id
-      : undefined
-
     // Store invoice
     this.billing.storeInvoice({
       customerId,
       stripeInvoiceId: invoice.id,
-      subscriptionId,
+      subscriptionId: this.extractSubscriptionIdFromInvoice(invoice),
       amountCents: invoice.amount_paid,
       currency: invoice.currency,
       status: 'paid',
@@ -440,12 +432,7 @@ export class StripeWebhookHandler {
     if (!customerId) return
 
     // Get subscription ID from parent.subscription_details (Stripe v20+ structure)
-    const subscriptionDetails = invoice.parent?.subscription_details
-    const subscriptionId = subscriptionDetails?.subscription
-      ? typeof subscriptionDetails.subscription === 'string'
-        ? subscriptionDetails.subscription
-        : subscriptionDetails.subscription.id
-      : undefined
+    const subscriptionId = this.extractSubscriptionIdFromInvoice(invoice)
 
     // Store invoice with failed status
     this.billing.storeInvoice({
@@ -577,13 +564,41 @@ export class StripeWebhookHandler {
    * Get current period end from subscription (Stripe v20+ moved this to items)
    */
   private getCurrentPeriodEnd(subscription: Stripe.Subscription): number {
-    return subscription.items.data[0]?.current_period_end ?? Math.floor(Date.now() / 1000)
+    const periodEnd = subscription.items.data[0]?.current_period_end
+    if (!periodEnd) {
+      logger.warn('No subscription items found for period end', {
+        subscriptionId: subscription.id,
+        itemCount: subscription.items.data.length,
+      })
+      return Math.floor(Date.now() / 1000)
+    }
+    return periodEnd
   }
 
   /**
    * Get current period start from subscription (Stripe v20+ moved this to items)
    */
   private getCurrentPeriodStart(subscription: Stripe.Subscription): number {
-    return subscription.items.data[0]?.current_period_start ?? Math.floor(Date.now() / 1000)
+    const periodStart = subscription.items.data[0]?.current_period_start
+    if (!periodStart) {
+      logger.warn('No subscription items found for period start', {
+        subscriptionId: subscription.id,
+        itemCount: subscription.items.data.length,
+      })
+      return Math.floor(Date.now() / 1000)
+    }
+    return periodStart
+  }
+
+  /**
+   * Extract subscription ID from invoice (Stripe v20+ structure)
+   * The subscription is now at invoice.parent.subscription_details.subscription
+   */
+  private extractSubscriptionIdFromInvoice(invoice: Stripe.Invoice): string | undefined {
+    const subscription = invoice.parent?.subscription_details?.subscription
+    if (!subscription) {
+      return undefined
+    }
+    return typeof subscription === 'string' ? subscription : subscription.id
   }
 }
