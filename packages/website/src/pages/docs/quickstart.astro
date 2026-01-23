@@ -44,7 +44,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             "@type": "HowToStep",
             "position": 2,
             "name": "Configure Skillsmith MCP Server",
-            "text": "Add Skillsmith to ~/.claude/settings.json: {\"mcpServers\": {\"skillsmith\": {\"command\": \"npx\", \"args\": [\"-y\", \"@skillsmith/mcp-server\"]}}}"
+            "text": "Copy the configuration snippet and paste it into Claude Code. Claude will automatically update your settings.json. Then restart Claude Code to load the server."
           },
           {
             "@type": "HowToStep",
@@ -278,20 +278,14 @@ curl -fsSL https://claude.ai/install.sh | sh</code></pre>
         </h3>
 
         <p class="text-dark-300 mb-4">
-          Add Skillsmith to your Claude Code configuration. This is a one-time setup.
+          Copy this snippet and paste it directly into Claude Code. Claude will automatically update your settings:
         </p>
 
-        <!-- Platform Tabs for config -->
         <div class="bg-dark-900 border border-dark-700 rounded-lg overflow-hidden">
-          <div class="flex border-b border-dark-700">
-            <button class="config-tab active px-4 py-2 text-sm font-medium" data-config="mac">macOS / Linux</button>
-            <button class="config-tab px-4 py-2 text-sm font-medium" data-config="windows">Windows</button>
-          </div>
-
           <div class="p-4">
-            <div class="config-content" data-config="mac">
-              <p class="text-dark-400 text-sm mb-3">Edit <code class="bg-dark-800 px-1.5 py-0.5 rounded">~/.claude/settings.json</code>:</p>
-              <pre class="bg-dark-950 rounded p-3 overflow-x-auto"><code class="text-sm text-dark-200">{`{
+            <pre class="bg-dark-950 rounded p-3 overflow-x-auto"><code class="text-sm text-dark-200">{`Add this MCP server to my settings.json:
+
+{
   "mcpServers": {
     "skillsmith": {
       "command": "npx",
@@ -299,24 +293,19 @@ curl -fsSL https://claude.ai/install.sh | sh</code></pre>
     }
   }
 }`}</code></pre>
-            </div>
-            <div class="config-content hidden" data-config="windows">
-              <p class="text-dark-400 text-sm mb-3">Edit <code class="bg-dark-800 px-1.5 py-0.5 rounded">%USERPROFILE%\.claude\settings.json</code>:</p>
-              <pre class="bg-dark-950 rounded p-3 overflow-x-auto"><code class="text-sm text-dark-200">{`{
-  "mcpServers": {
-    "skillsmith": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"]
-    }
-  }
-}`}</code></pre>
-              <p class="text-dark-500 text-xs mt-2">Tip: Open with <code class="bg-dark-800 px-1 rounded">notepad %USERPROFILE%\.claude\settings.json</code></p>
-            </div>
           </div>
         </div>
 
+        <div class="bg-primary-900/20 border border-primary-700/50 rounded-lg p-4 mt-4">
+          <p class="text-primary-300 text-sm">
+            <strong>Why this works:</strong> Claude Code can edit your <code class="bg-dark-800 px-1 rounded">settings.json</code> directly.
+            This reduces installation from a multi-step process to a simple copy-paste.
+          </p>
+        </div>
+
         <p class="text-dark-400 text-sm mt-3">
-          After saving, restart Claude Code to load Skillsmith.
+          After Claude updates your settings, restart Claude Code to load Skillsmith
+          (Cmd/Ctrl+Shift+P → "Claude Code: Restart").
         </p>
       </div>
 

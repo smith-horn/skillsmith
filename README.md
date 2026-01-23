@@ -50,11 +50,13 @@ Skillsmith uses the Model Context Protocol (MCP) to integrate with Claude Code:
 
 ## Installation
 
-### Configure with Claude Code
+### Configure with Claude Code (Recommended)
 
-Add to your Claude Code MCP settings (`~/.claude/settings.json`):
+Copy this snippet and paste it into Claude Code:
 
-```json
+```
+Add this MCP server to my settings.json:
+
 {
   "mcpServers": {
     "skillsmith": {
@@ -64,6 +66,8 @@ Add to your Claude Code MCP settings (`~/.claude/settings.json`):
   }
 }
 ```
+
+Claude will automatically update your `~/.claude/settings.json`. After restarting Claude Code (Cmd/Ctrl+Shift+P → "Claude Code: Restart"), you can immediately ask Claude to search for skills.
 
 ### CLI Installation (Development)
 

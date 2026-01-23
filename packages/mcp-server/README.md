@@ -10,9 +10,11 @@ npm install @skillsmith/mcp-server
 
 ## Quick Start
 
-Add to your Claude Code configuration (`~/.claude/settings.json`):
+Copy this snippet and paste it into Claude Code:
 
-```json
+```
+Add this MCP server to my settings.json:
+
 {
   "mcpServers": {
     "skillsmith": {
@@ -23,7 +25,7 @@ Add to your Claude Code configuration (`~/.claude/settings.json`):
 }
 ```
 
-Then ask Claude:
+Claude will automatically update your `~/.claude/settings.json`. After restarting Claude Code (Cmd/Ctrl+Shift+P → "Claude Code: Restart"), ask Claude:
 
 ```
 "Search for testing skills"

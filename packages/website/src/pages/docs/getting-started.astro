@@ -30,9 +30,11 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
     install skills through natural language.
   </p>
 
-  <p>Add the following to your Claude settings file at <code>~/.claude/settings.json</code>:</p>
+  <p>Copy this snippet and paste it directly into Claude Code:</p>
 
-  <pre><code>{`{
+  <pre><code>{`Add this MCP server to my settings.json:
+
+{
   "mcpServers": {
     "skillsmith": {
       "command": "npx",
@@ -41,7 +43,10 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   }
 }`}</code></pre>
 
-  <p>After adding this configuration, restart Claude Code to load the Skillsmith server.</p>
+  <p>
+    Claude will automatically update your <code>~/.claude/settings.json</code>.
+    After restarting Claude Code (Cmd/Ctrl+Shift+P → "Claude Code: Restart"), the Skillsmith server will be loaded.
+  </p>
 
   <h3>Option 2: CLI Installation</h3>
 
