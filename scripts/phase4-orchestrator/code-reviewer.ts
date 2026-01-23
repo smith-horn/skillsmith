@@ -382,6 +382,8 @@ By Category:
   📝 Style: ${byCategory.style}
 
 ${blockers.length > 0 ? '⚠️  BLOCKING ISSUES REQUIRE RESOLUTION' : '✅ No blocking issues - ready to proceed'}
+
+Policy: All findings require fix OR Linear ticket (SMI-1726)
 `.trim()
 }
 
@@ -451,4 +453,67 @@ Implement the fix now.
   }
 
   return { resolved, unresolved }
+}
+
+/**
+ * SMI-1726: Create Linear issues for non-blocking findings
+ *
+ * Per governance policy, ALL findings must either be:
+ * 1. Fixed immediately, OR
+ * 2. Tracked in a Linear issue
+ *
+ * This function creates issues for medium/low findings that weren't auto-fixed.
+ */
+export async function createIssuesForFindings(
+  findings: CodeReviewFinding[],
+  epicId: string,
+  dryRun = false
+): Promise<{ created: string[]; failed: string[] }> {
+  // Filter to non-blocking findings (medium and low)
+  const nonBlockingFindings = findings.filter(
+    (f) => !CONFIG.blockingPriorities.includes(f.severity as 'critical' | 'high')
+  )
+
+  if (nonBlockingFindings.length === 0) {
+    console.log('[CodeReview] No non-blocking findings to create issues for')
+    return { created: [], failed: [] }
+  }
+
+  console.log(
+    `\n[CodeReview] Creating Linear issues for ${nonBlockingFindings.length} non-blocking findings...`
+  )
+
+  const created: string[] = []
+  const failed: string[] = []
+
+  if (dryRun) {
+    console.log('[DryRun] Would create issues for:')
+    nonBlockingFindings.forEach((f) => console.log(`  - ${f.title} (${f.severity})`))
+    return { created: nonBlockingFindings.map((f) => f.title), failed: [] }
+  }
+
+  // Dynamic import to avoid circular dependency
+  const { createLinearSync } = await import('./linear-sync.js')
+
+  try {
+    const linear = await createLinearSync()
+
+    for (const finding of nonBlockingFindings) {
+      try {
+        const issueId = await linear.createCodeReviewIssue(finding, epicId)
+        created.push(issueId)
+        console.log(`[CodeReview] ✅ Created issue ${issueId}: ${finding.title}`)
+      } catch (error) {
+        failed.push(finding.title)
+        console.log(`[CodeReview] ❌ Failed to create issue for: ${finding.title}`)
+        console.error(error)
+      }
+    }
+  } catch (error) {
+    console.error('[CodeReview] Failed to initialize Linear client:', error)
+    return { created: [], failed: nonBlockingFindings.map((f) => f.title) }
+  }
+
+  console.log(`[CodeReview] Created ${created.length} issues, ${failed.length} failed`)
+  return { created, failed }
 }
