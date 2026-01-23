@@ -674,6 +674,16 @@ docker exec skillsmith-dev-1 npm rebuild better-sqlite3
 docker exec skillsmith-dev-1 npm rebuild onnxruntime-node
 ```
 
+### VSCode extension build fails with "@esbuild/linux-x64" not found
+
+This occurs when `npm ci --ignore-scripts` skips esbuild's postinstall script that downloads platform-specific binaries.
+
+```bash
+docker exec skillsmith-dev-1 npm rebuild esbuild
+```
+
+> **Note**: The Dockerfile already handles this via `npm rebuild better-sqlite3 onnxruntime-node esbuild`
+
 ---
 
 ## Support
