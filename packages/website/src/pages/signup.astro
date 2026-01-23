@@ -3,6 +3,7 @@
  * Skillsmith Signup Page
  *
  * SMI-1071: Website Integration - Signup Page with Stripe Checkout
+ * SMI-1700: Enable SSR to read tier query parameter dynamically
  *
  * Reads query parameters:
  * - tier: 'community' | 'individual' | 'team' | 'enterprise'
@@ -11,6 +12,9 @@
  * For paid tiers, initiates Stripe checkout.
  * For community tier, shows free signup form.
  */
+
+// Disable prerendering - this page needs SSR to read query params
+export const prerender = false;
 
 import { PRICING_TIERS } from '../lib/pricing.ts';
 
