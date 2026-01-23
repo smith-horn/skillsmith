@@ -11,13 +11,10 @@
  * Run with: npm test -- tests/e2e/checkout-flow.spec.ts
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll } from 'vitest'
 
 // API_BASE must be set via environment variable - no hardcoded fallback
 const API_BASE = process.env.SKILLSMITH_API_URL
-if (!API_BASE) {
-  throw new Error('SKILLSMITH_API_URL environment variable is required for E2E tests')
-}
 const WEBSITE_BASE = process.env.SKILLSMITH_WEBSITE_URL || 'https://www.skillsmith.app'
 
 // Stripe test mode card (always succeeds)
@@ -35,6 +32,12 @@ function generateTestEmail(): string {
 }
 
 describe('Checkout Flow E2E Tests', () => {
+  beforeAll(() => {
+    if (!API_BASE) {
+      throw new Error('SKILLSMITH_API_URL environment variable is required for E2E tests')
+    }
+  })
+
   describe('Checkout Page Accessibility', () => {
     it('should return signup page with pricing plans', async () => {
       const response = await fetch(`${WEBSITE_BASE}/signup`)
