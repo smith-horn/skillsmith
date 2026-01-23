@@ -1,0 +1,385 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="CLI Reference" description="Complete command reference for the Skillsmith CLI">
+  <h1>CLI Reference</h1>
+
+  <p class="lead">
+    The Skillsmith CLI (<code>skillsmith</code> or <code>sklx</code>) provides commands
+    for skill discovery, installation, and management.
+  </p>
+
+  <h2>Installation</h2>
+
+  <pre><code>{`# Global installation
+npm install -g @skillsmith/cli
+
+# Or use npx for one-off commands
+npx @skillsmith/cli <command>`}</code></pre>
+
+  <h2>Core Commands</h2>
+
+  <h3>search</h3>
+
+  <p>Search for skills in the Skillsmith registry.</p>
+
+  <pre><code>{`skillsmith search <query> [options]
+
+# Examples
+skillsmith search testing
+skillsmith search git --tier verified
+skillsmith search --category devops --limit 20`}</code></pre>
+
+  <h4>Options</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th>Description</th>
+        <th>Default</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>--tier</code></td>
+        <td>Filter by trust tier (verified, community, experimental)</td>
+        <td>all</td>
+      </tr>
+      <tr>
+        <td><code>--category</code></td>
+        <td>Filter by category</td>
+        <td>all</td>
+      </tr>
+      <tr>
+        <td><code>--min-score</code></td>
+        <td>Minimum quality score (0-100)</td>
+        <td>0</td>
+      </tr>
+      <tr>
+        <td><code>--limit</code></td>
+        <td>Maximum number of results</td>
+        <td>10</td>
+      </tr>
+      <tr>
+        <td><code>--json</code></td>
+        <td>Output results as JSON</td>
+        <td>false</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>install</h3>
+
+  <p>Install a skill to your local environment.</p>
+
+  <pre><code>{`skillsmith install <skill-id> [options]
+
+# Examples
+skillsmith install jest-helper
+skillsmith install community/git-commit
+skillsmith install anthropic/official-skill --force`}</code></pre>
+
+  <h4>Options</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th>Description</th>
+        <th>Default</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>--path</code></td>
+        <td>Installation directory</td>
+        <td>~/.claude/skills/</td>
+      </tr>
+      <tr>
+        <td><code>--force</code></td>
+        <td>Overwrite existing installation</td>
+        <td>false</td>
+      </tr>
+      <tr>
+        <td><code>--dry-run</code></td>
+        <td>Preview without installing</td>
+        <td>false</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>uninstall</h3>
+
+  <p>Remove an installed skill.</p>
+
+  <pre><code>{`skillsmith uninstall <skill-id> [options]
+
+# Examples
+skillsmith uninstall jest-helper
+skillsmith uninstall community/git-commit --confirm`}</code></pre>
+
+  <h4>Options</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th>Description</th>
+        <th>Default</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>--confirm</code></td>
+        <td>Skip confirmation prompt</td>
+        <td>false</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>info</h3>
+
+  <p>Get detailed information about a skill.</p>
+
+  <pre><code>{`skillsmith info <skill-id>
+
+# Examples
+skillsmith info jest-helper
+skillsmith info community/git-commit --json`}</code></pre>
+
+  <h3>list</h3>
+
+  <p>List installed skills.</p>
+
+  <pre><code>{`skillsmith list [options]
+
+# Examples
+skillsmith list
+skillsmith list --json
+skillsmith list --path ~/custom/skills`}</code></pre>
+
+  <h3>compare</h3>
+
+  <p>Compare multiple skills side-by-side.</p>
+
+  <pre><code>{`skillsmith compare <skill-id> <skill-id> [...]
+
+# Examples
+skillsmith compare jest-helper vitest-helper
+skillsmith compare skill-a skill-b skill-c --json`}</code></pre>
+
+  <h3>recommend</h3>
+
+  <p>Get personalized skill recommendations.</p>
+
+  <pre><code>{`skillsmith recommend [options]
+
+# Examples
+skillsmith recommend
+skillsmith recommend --context react
+skillsmith recommend --analyze ./package.json`}</code></pre>
+
+  <h4>Options</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>--context</code></td>
+        <td>Technology context (react, node, python, etc.)</td>
+      </tr>
+      <tr>
+        <td><code>--analyze</code></td>
+        <td>Analyze a file for context</td>
+      </tr>
+      <tr>
+        <td><code>--limit</code></td>
+        <td>Maximum recommendations</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Author Commands</h2>
+
+  <p>Commands for skill authoring and development.</p>
+
+  <h3>author subagent</h3>
+
+  <p>Generate a companion subagent for a skill.</p>
+
+  <pre><code>{`skillsmith author subagent <skill-path> [options]
+
+# Examples
+skillsmith author subagent ./my-skill
+skillsmith author subagent ./my-skill --output ./agents`}</code></pre>
+
+  <h4>Options</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>--output, -o</code></td>
+        <td>Output directory for generated subagent</td>
+      </tr>
+      <tr>
+        <td><code>--tools</code></td>
+        <td>Override detected tools (comma-separated)</td>
+      </tr>
+      <tr>
+        <td><code>--model</code></td>
+        <td>Model to use (sonnet, opus, haiku)</td>
+      </tr>
+      <tr>
+        <td><code>--skip-claude-md</code></td>
+        <td>Skip CLAUDE.md delegation snippet</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>author transform</h3>
+
+  <p>Transform an existing skill to add subagent support.</p>
+
+  <pre><code>{`skillsmith author transform <skill-path> [options]
+
+# Examples
+skillsmith author transform ./my-skill
+skillsmith author transform ./skills --batch --dry-run`}</code></pre>
+
+  <h4>Options</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>--dry-run</code></td>
+        <td>Preview changes without writing</td>
+      </tr>
+      <tr>
+        <td><code>--batch</code></td>
+        <td>Process multiple skills in directory</td>
+      </tr>
+      <tr>
+        <td><code>--tools</code></td>
+        <td>Override detected tools</td>
+      </tr>
+      <tr>
+        <td><code>--model</code></td>
+        <td>Model to use</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>validate</h3>
+
+  <p>Validate a skill's structure and metadata.</p>
+
+  <pre><code>{`skillsmith validate <skill-path>
+
+# Examples
+skillsmith validate ./my-skill
+skillsmith validate ~/.claude/skills/jest-helper`}</code></pre>
+
+  <h2>Global Options</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>--version</code></td>
+        <td>Show CLI version</td>
+      </tr>
+      <tr>
+        <td><code>--help</code></td>
+        <td>Show help for command</td>
+      </tr>
+      <tr>
+        <td><code>--verbose</code></td>
+        <td>Enable verbose output</td>
+      </tr>
+      <tr>
+        <td><code>--quiet</code></td>
+        <td>Suppress non-essential output</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Configuration</h2>
+
+  <p>The CLI can be configured via environment variables or a config file at <code>~/.skillsmithrc</code>:</p>
+
+  <pre><code>{`# ~/.skillsmithrc
+{
+  "defaultTier": "community",
+  "installPath": "~/.claude/skills",
+  "registry": "https://registry.skillsmith.dev"
+}`}</code></pre>
+
+  <h3>Environment Variables</h3>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Variable</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>SKILLSMITH_REGISTRY</code></td>
+        <td>Custom registry URL</td>
+      </tr>
+      <tr>
+        <td><code>SKILLSMITH_INSTALL_PATH</code></td>
+        <td>Default installation path</td>
+      </tr>
+      <tr>
+        <td><code>SKILLSMITH_API_KEY</code></td>
+        <td>API key for authenticated requests</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Troubleshooting</h2>
+
+  <h3>Common Issues</h3>
+
+  <div class="callout warning">
+    <h4>Permission Denied</h4>
+    <p>
+      If you see permission errors when installing globally, try using
+      <code>npx @skillsmith/cli</code> instead, or fix npm permissions.
+    </p>
+  </div>
+
+  <div class="callout">
+    <h4>Skill Not Found</h4>
+    <p>
+      Ensure you're using the correct skill ID format (<code>author/name</code>).
+      Use <code>skillsmith search</code> to find available skills.
+    </p>
+  </div>
+</DocsLayout>

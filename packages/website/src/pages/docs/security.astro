@@ -1,0 +1,365 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="Security" description="Learn how Skillsmith protects your Claude Code environment through security scanning and trust verification">
+  <h1>Security</h1>
+
+  <p class="lead">
+    Skillsmith protects your Claude Code environment through automated security scanning,
+    trust verification, and a multi-tier defense system.
+  </p>
+
+  <h2>Security Boundaries</h2>
+
+  <p>Skillsmith operates within a layered security model:</p>
+
+  <div class="security-zones">
+    <div class="zone zone-trusted">
+      <h4>Trusted Zone</h4>
+      <ul>
+        <li>Claude model safety guardrails</li>
+        <li>Claude Code runtime sandbox</li>
+        <li>OS-level file access controls</li>
+      </ul>
+    </div>
+
+    <div class="zone zone-semi-trusted">
+      <h4>Semi-Trusted Zone (Skillsmith)</h4>
+      <ul>
+        <li>Curated skill index</li>
+        <li>Quality scoring</li>
+        <li>Static security analysis</li>
+        <li>Trust tier verification</li>
+        <li>Conflict detection</li>
+      </ul>
+    </div>
+
+    <div class="zone zone-untrusted">
+      <h4>Untrusted Zone</h4>
+      <ul>
+        <li>GitHub repositories</li>
+        <li>Third-party skill authors</li>
+        <li>Community registries</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>What We Scan For</h2>
+
+  <p>Every skill is scanned for security issues before being made available. Findings are categorized by severity:</p>
+
+  <h3>Critical Severity (Blocks Installation)</h3>
+
+  <p>These patterns <strong>always block installation</strong>:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th>Detected Patterns</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Jailbreak Attempts</strong></td>
+        <td>
+          <code>"ignore previous instructions"</code>,
+          <code>"developer mode"</code>,
+          <code>"bypass safety"</code>,
+          <code>"act as an AI without restrictions"</code>
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Malicious URLs</strong></td>
+        <td>External domains not on the allowlist (github.com, anthropic.com, claude.ai are allowed)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>High Severity (Requires Confirmation)</h3>
+
+  <p>These patterns require explicit user confirmation before proceeding:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th>Detected Patterns</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>SSRF Patterns</strong></td>
+        <td>
+          <code>file://</code>, <code>gopher://</code>, <code>ldap://</code> protocols,
+          localhost references, private IP ranges
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Sensitive File Access</strong></td>
+        <td>
+          <code>*.env*</code>, <code>*.pem</code>, <code>*.key</code>,
+          <code>*credentials*</code>, <code>*secrets*</code>
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Dangerous Commands</strong></td>
+        <td>
+          <code>rm -rf</code>, <code>curl</code>/<code>wget</code> to unknown domains,
+          <code>eval</code>/<code>exec</code> with dynamic input
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Medium Severity (Warning Only)</h3>
+
+  <p>These patterns generate warnings but don't block installation:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th>Detected Patterns</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Obfuscation</strong></td>
+        <td>High entropy content, possible base64 payloads, unusual character sequences</td>
+      </tr>
+      <tr>
+        <td><strong>Permission Keywords</strong></td>
+        <td>References to sudo, root, admin, system modification commands</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Threat Model</h2>
+
+  <p>Skillsmith actively mitigates the following threats:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Threat</th>
+        <th>Severity</th>
+        <th>Mitigation</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Malicious SKILL.md</td>
+        <td>Critical</td>
+        <td>Pattern scanning, trust tiers</td>
+        <td><span class="badge badge-active">Active</span></td>
+      </tr>
+      <tr>
+        <td>Prompt injection</td>
+        <td>Critical</td>
+        <td>Pattern detection, entropy analysis</td>
+        <td><span class="badge badge-active">Active</span></td>
+      </tr>
+      <tr>
+        <td>Typosquatting</td>
+        <td>High</td>
+        <td>Levenshtein distance, character substitution detection</td>
+        <td><span class="badge badge-active">Active</span></td>
+      </tr>
+      <tr>
+        <td>Dependency hijacking</td>
+        <td>Medium</td>
+        <td>URL allowlist</td>
+        <td><span class="badge badge-active">Active</span></td>
+      </tr>
+      <tr>
+        <td>Author key compromise</td>
+        <td>Medium</td>
+        <td>Anomaly detection</td>
+        <td><span class="badge badge-planned">Planned</span></td>
+      </tr>
+      <tr>
+        <td>Supply chain attack</td>
+        <td>High</td>
+        <td>Registry signing</td>
+        <td><span class="badge badge-planned">Planned</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Best Practices for Users</h2>
+
+  <div class="callout">
+    <h4>1. Always Check Trust Tier</h4>
+    <p>
+      Before installing a skill, verify its <a href="/docs/trust-tiers">trust tier</a>:
+    </p>
+    <ul>
+      <li><strong>Official/Verified</strong>: Generally safe for production use</li>
+      <li><strong>Community</strong>: Review skill content before installing</li>
+      <li><strong>Unverified</strong>: Only install if you personally trust the author</li>
+    </ul>
+  </div>
+
+  <div class="callout">
+    <h4>2. Review Unverified Skills</h4>
+    <p>For unverified skills, always check:</p>
+    <ul>
+      <li>Read the SKILL.md content for suspicious instructions</li>
+      <li>Look for unusual URLs or command patterns</li>
+      <li>Check the author's GitHub profile and other projects</li>
+    </ul>
+  </div>
+
+  <div class="callout">
+    <h4>3. Use Validation Before Manual Install</h4>
+    <p>
+      Use <code>skillsmith validate &lt;path&gt;</code> to run security scans on locally-downloaded skills.
+    </p>
+  </div>
+
+  <div class="callout">
+    <h4>4. Keep Skillsmith Updated</h4>
+    <p>
+      New security patterns are added regularly. Update with:
+      <code>npx @skillsmith/mcp-server@latest</code>
+    </p>
+  </div>
+
+  <h2>Best Practices for Authors</h2>
+
+  <p>To ensure your skill passes security scans:</p>
+
+  <ol>
+    <li><strong>Avoid external URLs</strong> unless necessary. Prefer documented APIs (github.com, npm registry)</li>
+    <li><strong>Never request sensitive file access</strong>. Don't read .env files or credential stores</li>
+    <li><strong>Be explicit about permissions</strong>. Document what files you read/write and what commands you execute</li>
+    <li><strong>Submit for verification</strong>. Verified skills get more visibility and trust. See <a href="/docs/trust-tiers">Trust Tiers</a></li>
+  </ol>
+
+  <h2>What Happens When Scans Fail</h2>
+
+  <p>
+    Skills that fail security scans are placed in <a href="/docs/quarantine">quarantine</a>.
+    The severity of findings determines what happens next:
+  </p>
+
+  <ul>
+    <li><strong>Critical findings</strong>: Skill cannot be installed</li>
+    <li><strong>High findings</strong>: Manual review required before installation allowed</li>
+    <li><strong>Medium findings</strong>: Skill can be installed with warnings displayed</li>
+  </ul>
+
+  <p>
+    <a href="/docs/quarantine">Learn more about the quarantine system &rarr;</a>
+  </p>
+
+  <h2>Reporting Security Issues</h2>
+
+  <h3>Vulnerabilities in Skillsmith</h3>
+
+  <p>If you discover a vulnerability in Skillsmith itself:</p>
+
+  <ul>
+    <li>Email: <a href="mailto:security@skillsmith.app">security@skillsmith.app</a></li>
+    <li>GitHub: <a href="https://github.com/Smith-Horn-Group/skillsmith/security/advisories" target="_blank" rel="noopener noreferrer">Security Advisories</a></li>
+  </ul>
+
+  <h3>Malicious Skills</h3>
+
+  <p>To report a malicious or suspicious skill:</p>
+
+  <ul>
+    <li>Open an issue on <a href="https://github.com/Smith-Horn-Group/skillsmith/issues" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+    <li>Include the skill ID and specific concern</li>
+    <li>We investigate and blocklist within 24 hours</li>
+  </ul>
+
+  <h2>Related Documentation</h2>
+
+  <ul>
+    <li><a href="/docs/trust-tiers">Trust Tiers</a> - Understand skill verification levels</li>
+    <li><a href="/docs/quarantine">Quarantine System</a> - What happens to flagged skills</li>
+    <li><a href="/privacy">Privacy Policy</a> - How we handle your data</li>
+  </ul>
+</DocsLayout>
+
+<style>
+  .security-zones {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+
+  .zone {
+    padding: 1rem 1.5rem;
+    border-radius: 0.5rem;
+    border-left: 4px solid;
+  }
+
+  .zone h4 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .zone ul {
+    margin: 0;
+    padding-left: 1.25rem;
+    font-size: 0.9rem;
+  }
+
+  .zone li {
+    margin: 0.25rem 0;
+  }
+
+  .zone-trusted {
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgb(34, 197, 94);
+  }
+
+  .zone-trusted h4 {
+    color: rgb(34, 197, 94);
+  }
+
+  .zone-semi-trusted {
+    background: rgba(234, 179, 8, 0.1);
+    border-color: rgb(234, 179, 8);
+  }
+
+  .zone-semi-trusted h4 {
+    color: rgb(234, 179, 8);
+  }
+
+  .zone-untrusted {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgb(239, 68, 68);
+  }
+
+  .zone-untrusted h4 {
+    color: rgb(239, 68, 68);
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .badge-active {
+    background: rgba(34, 197, 94, 0.2);
+    color: rgb(34, 197, 94);
+  }
+
+  .badge-planned {
+    background: rgba(156, 163, 175, 0.2);
+    color: rgb(156, 163, 175);
+  }
+</style>
