@@ -153,6 +153,74 @@ async function checkArchitecture(
 }
 
 /**
+ * SMI-1720: Check Prettier formatting
+ */
+async function checkFormatting(artifacts: string[], dryRun: boolean): Promise<CodeReviewFinding[]> {
+  const findings: CodeReviewFinding[] = []
+
+  if (dryRun) {
+    console.log('[CodeReview] [DryRun] Would check formatting for:', artifacts)
+    return findings
+  }
+
+  // Run prettier check on changed files
+  const tsFiles = artifacts.filter(
+    (f) => f.endsWith('.ts') || f.endsWith('.tsx') || f.endsWith('.js') || f.endsWith('.jsx')
+  )
+
+  if (tsFiles.length === 0) {
+    return findings
+  }
+
+  try {
+    const { execSync } = await import('child_process')
+    const filePaths = tsFiles.map((f) => join(CONFIG.skillsmithPath, f)).join(' ')
+
+    // Use prettier --check to find unformatted files
+    execSync(`npx prettier --check ${filePaths}`, {
+      cwd: CONFIG.skillsmithPath,
+      stdio: 'pipe',
+    })
+  } catch (error) {
+    // Prettier exits with code 1 if files are unformatted
+    const err = error as { stdout?: Buffer; stderr?: Buffer }
+    const output = err.stdout?.toString() || err.stderr?.toString() || ''
+
+    // Parse output to find unformatted files
+    const unformattedFiles = output
+      .split('\n')
+      .filter((line) => line.includes('[warn]') || artifacts.some((a) => line.includes(a)))
+      .map((line) => line.replace('[warn] ', '').trim())
+      .filter(Boolean)
+
+    if (unformattedFiles.length > 0) {
+      findings.push({
+        severity: 'medium',
+        category: 'style',
+        title: 'Formatting issues detected',
+        description: `${unformattedFiles.length} file(s) have formatting issues. Run 'npm run format' to fix.`,
+        suggestedFix: 'Run: docker exec skillsmith-dev-1 npm run format',
+      })
+
+      // Add individual file findings for visibility
+      for (const file of unformattedFiles.slice(0, 5)) {
+        // Limit to first 5
+        findings.push({
+          severity: 'low',
+          category: 'style',
+          title: 'Unformatted file',
+          description: `File needs formatting: ${file}`,
+          file,
+          suggestedFix: `Run: npx prettier --write "${file}"`,
+        })
+      }
+    }
+  }
+
+  return findings
+}
+
+/**
  * Check test coverage
  */
 async function checkTestCoverage(
@@ -248,6 +316,11 @@ export async function runCodeReview(
   const testFindings = await checkTestCoverage(artifacts, dryRun)
   allFindings.push(...testFindings)
   console.log(`[CodeReview] Testing: ${testFindings.length} findings`)
+
+  console.log('[CodeReview] Checking formatting (SMI-1720)...')
+  const styleFindings = await checkFormatting(artifacts, dryRun)
+  allFindings.push(...styleFindings)
+  console.log(`[CodeReview] Style: ${styleFindings.length} findings`)
 
   // Separate blockers (critical and high)
   const blockers = allFindings.filter((f) =>
