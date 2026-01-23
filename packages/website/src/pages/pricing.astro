@@ -42,7 +42,7 @@ const tiers: PricingTier[] = [
       "Public skill access",
     ],
     cta: "Get Started",
-    ctaHref: "/docs/quickstart",
+    ctaHref: "/signup?tier=community",
   },
   {
     name: "Individual",
@@ -203,7 +203,7 @@ const faqs = [
               "priceCurrency": "USD",
               "description": "Free tier - 1,000 API calls/month. Skill search, installation, basic recommendations, community support.",
               "availability": "https://schema.org/InStock",
-              "url": "https://skillsmith.app/docs/quickstart"
+              "url": "https://skillsmith.app/signup?tier=community"
             },
             {
               "@type": "Offer",
@@ -326,7 +326,7 @@ const faqs = [
         </div>
         <div class="nav-actions">
           <a href="/login" class="btn btn-ghost">Log in</a>
-          <a href="/signup" class="btn btn-primary">Get Started</a>
+          <a href="/signup?tier=community" class="btn btn-primary">Get Started</a>
         </div>
       </nav>
     </header>
@@ -512,7 +512,7 @@ const faqs = [
         <h2>Ready to supercharge your Claude Code workflow?</h2>
         <p>Join thousands of developers using Skillsmith to discover and manage skills.</p>
         <div class="cta-buttons">
-          <a href="/signup" class="btn btn-primary btn-large">Get Started Free</a>
+          <a href="/signup?tier=community" class="btn btn-primary btn-large">Get Started Free</a>
           <a href="/contact" class="btn btn-ghost btn-large">Contact Sales</a>
         </div>
       </section>
