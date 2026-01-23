@@ -7,6 +7,9 @@
  * Shows user profile, subscription status, and license keys.
  * Requires authentication - redirects to login if not authenticated.
  */
+
+// Disable prerendering - this page needs SSR to read env vars and handle auth
+export const prerender = false;
 ---
 
 <!DOCTYPE html>
