@@ -3,7 +3,7 @@
 ## Quick Deploy via Dashboard (Recommended)
 
 1. Open the Supabase SQL Editor:
-   https://supabase.com/dashboard/project/vrcnzpmndtroqxxoqkzy/sql/new
+   https://supabase.com/dashboard/project/${SUPABASE_PROJECT_REF}/sql/new
 
 2. Copy the entire contents of `supabase/migrations/001_initial_schema.sql`
 
@@ -66,8 +66,8 @@ DELETE FROM skills WHERE name = 'test-skill';
 After deployment, ensure these are set in `.env`:
 
 ```bash
-SUPABASE_PROJECT_REF=vrcnzpmndtroqxxoqkzy
-SUPABASE_URL=https://vrcnzpmndtroqxxoqkzy.supabase.co
+SUPABASE_PROJECT_REF=<your-project-ref>
+SUPABASE_URL=https://<your-project-ref>.supabase.co
 SUPABASE_ANON_KEY=<from Dashboard → Settings → API>
 SUPABASE_SERVICE_ROLE_KEY=<from Dashboard → Settings → API>
 ```

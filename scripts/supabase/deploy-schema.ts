@@ -23,7 +23,12 @@ interface QueryResult {
 
 async function deploySchema(): Promise<void> {
   const accessToken = process.env.SUPABASE_ACCESS_TOKEN
-  const projectRef = process.env.SUPABASE_PROJECT_REF || 'vrcnzpmndtroqxxoqkzy'
+  const projectRef = process.env.SUPABASE_PROJECT_REF
+  if (!projectRef) {
+    console.error('Error: SUPABASE_PROJECT_REF not set in environment')
+    console.error('Get your project ref from your Supabase dashboard URL')
+    process.exit(1)
+  }
 
   if (!accessToken) {
     console.error('Error: SUPABASE_ACCESS_TOKEN not set in environment')

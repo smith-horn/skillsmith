@@ -6,6 +6,6 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     timestamp: new Date().toISOString(),
     service: 'skillsmith-api-proxy',
     version: '1.0.0',
-    upstream: 'https://vrcnzpmndtroqxxoqkzy.supabase.co',
+    upstream: process.env.SUPABASE_URL || 'not-configured',
   })
 }

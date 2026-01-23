@@ -207,7 +207,7 @@ function generateReportHtml(report: OpsReport): string {
     <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;">
     <p style="margin: 0; font-size: 12px; color: #9ca3af; text-align: center;">
       Generated: ${new Date().toISOString()}<br>
-      <a href="https://supabase.com/dashboard/project/vrcnzpmndtroqxxoqkzy/functions" style="color: #6366f1;">View Functions Dashboard</a>
+      <a href="https://supabase.com/dashboard" style="color: #6366f1;">View Functions Dashboard</a>
     </p>
   </div>
 </body>

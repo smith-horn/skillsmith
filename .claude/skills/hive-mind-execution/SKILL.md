@@ -628,8 +628,8 @@ When modifying payment-related pages (`signup.astro`, `pricing.astro`, checkout 
 
 **Pre-Deployment Verification:**
 ```bash
-# Quick API test
-curl -s -X POST 'https://vrcnzpmndtroqxxoqkzy.supabase.co/functions/v1/checkout' \
+# Quick API test (replace with your SUPABASE_URL)
+curl -s -X POST "${SUPABASE_URL}/functions/v1/checkout" \
   -H 'Content-Type: application/json' \
   -d '{"tier":"individual","period":"monthly"}' | jq '.sessionId'
 

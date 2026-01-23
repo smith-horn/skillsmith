@@ -13,8 +13,11 @@
 
 import { describe, it, expect } from 'vitest'
 
-const API_BASE =
-  process.env.SKILLSMITH_API_URL || 'https://vrcnzpmndtroqxxoqkzy.supabase.co/functions/v1'
+// API_BASE must be set via environment variable - no hardcoded fallback
+const API_BASE = process.env.SKILLSMITH_API_URL
+if (!API_BASE) {
+  throw new Error('SKILLSMITH_API_URL environment variable is required for E2E tests')
+}
 const WEBSITE_BASE = process.env.SKILLSMITH_WEBSITE_URL || 'https://www.skillsmith.app'
 
 // Stripe test mode card (always succeeds)

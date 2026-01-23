@@ -4,7 +4,11 @@
 
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.SUPABASE_URL || 'https://vrcnzpmndtroqxxoqkzy.supabase.co'
+const supabaseUrl = process.env.SUPABASE_URL
+if (!supabaseUrl) {
+  console.error('SUPABASE_URL environment variable is required')
+  process.exit(1)
+}
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY
 
 if (!supabaseKey) {

@@ -9,7 +9,12 @@ import * as fs from 'fs'
 import * as path from 'path'
 
 async function verifySchema(): Promise<void> {
-  const projectRef = process.env.SUPABASE_PROJECT_REF || 'vrcnzpmndtroqxxoqkzy'
+  const projectRef = process.env.SUPABASE_PROJECT_REF
+  if (!projectRef) {
+    console.error('Error: SUPABASE_PROJECT_REF not set in environment')
+    console.error('Get your project ref from your Supabase dashboard URL')
+    process.exit(1)
+  }
   const anonKey = process.env.SUPABASE_ANON_KEY
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 

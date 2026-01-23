@@ -35,7 +35,8 @@ import * as path from 'path'
 // Configuration
 // =============================================================================
 
-const DEFAULT_SUPABASE_URL = 'https://vrcnzpmndtroqxxoqkzy.supabase.co'
+// No hardcoded default - must be configured via environment
+const DEFAULT_SUPABASE_URL: string | undefined = undefined
 const DEFAULT_TIMEOUT_MS = 5000
 const RESPONSE_TIME_THRESHOLD_MS = 500
 
@@ -556,6 +557,10 @@ async function main(): Promise<void> {
   const options = parseArgs()
 
   const supabaseUrl = process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL
+  if (!supabaseUrl) {
+    console.error('Error: SUPABASE_URL environment variable is required')
+    process.exit(1)
+  }
   const anonKey = process.env.SUPABASE_ANON_KEY
 
   const headers = getHeaders(anonKey)
