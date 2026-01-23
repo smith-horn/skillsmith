@@ -10,6 +10,12 @@
 
 // Disable prerendering - this page needs SSR to read env vars and handle auth
 export const prerender = false;
+
+// Read env vars at SSR time to inject into client script
+const supabaseConfig = {
+  url: import.meta.env.PUBLIC_SUPABASE_URL || '',
+  anonKey: import.meta.env.PUBLIC_SUPABASE_ANON_KEY || '',
+};
 ---
 
 <!DOCTYPE html>
@@ -23,6 +29,9 @@ export const prerender = false;
     <title>Account Dashboard | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
     <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig;
+    </script>
   </head>
   <body>
     <header class="header">
@@ -672,8 +681,10 @@ export const prerender = false;
 <script>
   import { createClient } from '@supabase/supabase-js'
 
-  const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL
-  const supabaseAnonKey = import.meta.env.PUBLIC_SUPABASE_ANON_KEY
+  // Read config injected by SSR script in head
+  const config = (window as any).__SUPABASE_CONFIG__ || {};
+  const supabaseUrl = config.url;
+  const supabaseAnonKey = config.anonKey;
 
   // Escape HTML to prevent XSS
   function escapeHtml(text: string): string {

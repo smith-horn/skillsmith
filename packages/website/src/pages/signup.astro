@@ -18,6 +18,12 @@ export const prerender = false;
 
 import { PRICING_TIERS } from '../lib/pricing.ts';
 
+// Read env vars at SSR time to inject into client script
+const supabaseConfig = {
+  url: import.meta.env.PUBLIC_SUPABASE_URL || '',
+  anonKey: import.meta.env.PUBLIC_SUPABASE_ANON_KEY || '',
+};
+
 // Read query parameters
 const url = new URL(Astro.request.url);
 const tier = url.searchParams.get('tier') || 'community';
@@ -58,6 +64,9 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmit
     <title>Sign Up{tierData ? ` - ${tierData.name}` : ''} | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
     <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig;
+    </script>
   </head>
   <body>
     <header class="header">
@@ -864,8 +873,10 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmit
   const apiBaseUrl = configEl?.dataset.apiBaseUrl || ''
 
   // Supabase configuration
-  const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL
-  const supabaseAnonKey = import.meta.env.PUBLIC_SUPABASE_ANON_KEY
+  // Read config injected by SSR script in head
+  const config = (window as any).__SUPABASE_CONFIG__ || {};
+  const supabaseUrl = config.url;
+  const supabaseAnonKey = config.anonKey;
 
   // Initialize checkout form handling
   document.addEventListener('DOMContentLoaded', () => {
