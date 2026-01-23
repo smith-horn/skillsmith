@@ -268,13 +268,13 @@ docker exec skillsmith-dev-1 npx vitest run tests/e2e/webhook-handling.spec.ts -
 ### Quick Checkout Verification
 
 ```bash
-# Test Individual tier
-curl -s -X POST 'https://vrcnzpmndtroqxxoqkzy.supabase.co/functions/v1/checkout' \
+# Test Individual tier (replace $SUPABASE_URL with your project URL)
+curl -s -X POST "${SUPABASE_URL}/functions/v1/checkout" \
   -H 'Content-Type: application/json' \
   -d '{"tier":"individual","period":"monthly","email":"test@example.com"}' | jq .
 
 # Test Team tier with seats
-curl -s -X POST 'https://vrcnzpmndtroqxxoqkzy.supabase.co/functions/v1/checkout' \
+curl -s -X POST "${SUPABASE_URL}/functions/v1/checkout" \
   -H 'Content-Type: application/json' \
   -d '{"tier":"team","period":"monthly","seatCount":3,"email":"test@example.com"}' | jq .
 ```

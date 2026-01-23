@@ -163,7 +163,11 @@ export interface ApiClientConfig {
   offlineMode?: boolean
 }
 
-const DEFAULT_BASE_URL = 'https://vrcnzpmndtroqxxoqkzy.supabase.co/functions/v1'
+// Default base URL is constructed from SUPABASE_URL environment variable
+// Falls back to undefined to fail explicitly if not configured
+const DEFAULT_BASE_URL = process.env.SUPABASE_URL
+  ? `${process.env.SUPABASE_URL}/functions/v1`
+  : undefined
 
 /**
  * Calculate delay with exponential backoff and jitter
@@ -230,7 +234,13 @@ export class SkillsmithApiClient {
   private offlineMode: boolean
 
   constructor(config: ApiClientConfig = {}) {
-    this.baseUrl = config.baseUrl || process.env.SKILLSMITH_API_URL || DEFAULT_BASE_URL
+    const baseUrl = config.baseUrl || process.env.SKILLSMITH_API_URL || DEFAULT_BASE_URL
+    if (!baseUrl) {
+      throw new Error(
+        'Skillsmith API URL not configured. Set SUPABASE_URL or SKILLSMITH_API_URL environment variable.'
+      )
+    }
+    this.baseUrl = baseUrl
     this.anonKey = config.anonKey || process.env.SUPABASE_ANON_KEY
     this.timeout = config.timeout ?? 30000
     this.maxRetries = config.maxRetries ?? 3

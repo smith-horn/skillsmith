@@ -2,16 +2,16 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
+      "source": "/health",
+      "destination": "/api/health"
+    },
+    {
       "source": "/functions/v1/:path*",
-      "destination": "https://vrcnzpmndtroqxxoqkzy.supabase.co/functions/v1/:path*"
+      "destination": "/api/proxy?path=functions/v1/:path*"
     },
     {
       "source": "/rest/v1/:path*",
-      "destination": "https://vrcnzpmndtroqxxoqkzy.supabase.co/rest/v1/:path*"
-    },
-    {
-      "source": "/health",
-      "destination": "/api/health"
+      "destination": "/api/proxy?path=rest/v1/:path*"
     }
   ],
   "headers": [
