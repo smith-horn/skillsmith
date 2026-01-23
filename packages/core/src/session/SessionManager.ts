@@ -16,10 +16,39 @@ import type { SessionData, Checkpoint } from './SessionContext.js'
 // Note: claude-flow is an optional dependency - imports are FULLY dynamic to avoid
 // Node.js ESM static analysis which would fail at module load time.
 // We use string concatenation to prevent static analysis of the import specifier.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let claudeFlowMemory: any = null
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let claudeFlowMcp: any = null
+
+/**
+ * SMI-1685: Type definitions for dynamically imported claude-flow memory module
+ * These interfaces define the expected shape of the memory module API
+ */
+interface ClaudeFlowMemoryModule {
+  storeEntry?(params: {
+    key: string
+    value: string
+    namespace: string
+  }): Promise<{ success: boolean; error?: string }>
+  getEntry?(params: { key: string; namespace: string }): Promise<{
+    success: boolean
+    found: boolean
+    entry?: { content: string }
+    error?: string
+  }>
+}
+
+/**
+ * SMI-1685: Type definitions for dynamically imported claude-flow MCP module
+ * These interfaces define the expected shape of the MCP client API
+ */
+interface ClaudeFlowMcpModule {
+  callMCPTool?(
+    toolName: string,
+    params: Record<string, unknown>
+  ): Promise<{ success: boolean; deleted?: boolean; error?: string }>
+  MCPClientError?: new (message: string) => Error
+}
+
+let claudeFlowMemory: ClaudeFlowMemoryModule | undefined | null = null
+let claudeFlowMcp: ClaudeFlowMcpModule | undefined | null = null
 
 // Module paths are constructed dynamically to prevent ESM static analysis
 const CLAUDE_FLOW_BASE = 'claude-flow'
