@@ -18,7 +18,7 @@
  * - url: Stripe billing portal URL
  */
 
-import Stripe from 'https://esm.sh/stripe@14.5.0'
+import Stripe from 'https://esm.sh/stripe@20'
 import {
   handleCorsPreflightRequest,
   jsonResponse,
@@ -110,10 +110,8 @@ Deno.serve(async (req: Request) => {
 
     const returnUrl = body.returnUrl || DEFAULT_RETURN_URL
 
-    // Initialize Stripe
-    const stripe = new Stripe(stripeSecretKey, {
-      apiVersion: '2023-10-16',
-    })
+    // Initialize Stripe (uses SDK default API version)
+    const stripe = new Stripe(stripeSecretKey)
 
     // Create billing portal session
     const session = await stripe.billingPortal.sessions.create({

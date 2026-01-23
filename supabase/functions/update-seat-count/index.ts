@@ -24,7 +24,7 @@
  * - prorationAmount: Amount charged/credited
  */
 
-import Stripe from 'https://esm.sh/stripe@14.5.0'
+import Stripe from 'https://esm.sh/stripe@20'
 import {
   handleCorsPreflightRequest,
   jsonResponse,
@@ -144,10 +144,8 @@ Deno.serve(async (req: Request) => {
       )
     }
 
-    // Initialize Stripe
-    const stripe = new Stripe(stripeSecretKey, {
-      apiVersion: '2023-10-16',
-    })
+    // Initialize Stripe (uses SDK default API version)
+    const stripe = new Stripe(stripeSecretKey)
 
     // Retrieve the subscription to get the subscription item
     const stripeSubscription = await stripe.subscriptions.retrieve(

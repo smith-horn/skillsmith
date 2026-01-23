@@ -73,6 +73,7 @@
     "lint-staged": "^15.2.11",
     "posthog-node": "5.19.0",
     "prettier": "^3.4.2",
+    "stripe": "20.2.0",
     "supabase": "2.71.3",
     "tsx": "^4.7.0",
     "typescript": "^5.7.2",

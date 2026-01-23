@@ -257,16 +257,17 @@ export class StripeWebhookHandler {
       tier,
       status: StripeClient.mapSubscriptionStatus(subscription.status),
       seatCount,
-      currentPeriodStart: new Date(subscription.current_period_start * 1000),
-      currentPeriodEnd: new Date(subscription.current_period_end * 1000),
+      currentPeriodStart: new Date(this.getCurrentPeriodStart(subscription) * 1000),
+      currentPeriodEnd: new Date(this.getCurrentPeriodEnd(subscription) * 1000),
     })
 
     // Generate license key if subscription is active
     if (subscription.status === 'active' && this.onLicenseKeyNeeded) {
+      const periodEnd = this.getCurrentPeriodEnd(subscription)
       const licenseKey = await this.onLicenseKeyNeeded({
         customerId: customer.id,
         tier,
-        expiresAt: new Date(subscription.current_period_end * 1000),
+        expiresAt: new Date(periodEnd * 1000),
         subscriptionId: sub.id,
       })
 
@@ -275,7 +276,7 @@ export class StripeWebhookHandler {
         subscriptionId: sub.id,
         organizationId: customer.id,
         keyJwt: licenseKey,
-        keyExpiry: new Date(subscription.current_period_end * 1000),
+        keyExpiry: new Date(periodEnd * 1000),
       })
 
       // Send license key email
@@ -286,7 +287,7 @@ export class StripeWebhookHandler {
           data: {
             licenseKey,
             tier,
-            expiresAt: new Date(subscription.current_period_end * 1000).toISOString(),
+            expiresAt: new Date(periodEnd * 1000).toISOString(),
           },
         })
       }
@@ -328,10 +329,11 @@ export class StripeWebhookHandler {
         this.revokeLicenseKey(existingSub.id, 'tier_change')
 
         // Generate new license key
+        const periodEnd = this.getCurrentPeriodEnd(subscription)
         const licenseKey = await this.onLicenseKeyNeeded({
           customerId: customer.id,
           tier: newTier,
-          expiresAt: new Date(subscription.current_period_end * 1000),
+          expiresAt: new Date(periodEnd * 1000),
           subscriptionId: existingSub.id,
         })
 
@@ -339,7 +341,7 @@ export class StripeWebhookHandler {
           subscriptionId: existingSub.id,
           organizationId: customer.id,
           keyJwt: licenseKey,
-          keyExpiry: new Date(subscription.current_period_end * 1000),
+          keyExpiry: new Date(periodEnd * 1000),
         })
       }
     }
@@ -398,12 +400,19 @@ export class StripeWebhookHandler {
 
     if (!customerId) return
 
+    // Get subscription ID from parent.subscription_details (Stripe v20+ structure)
+    const subscriptionDetails = invoice.parent?.subscription_details
+    const subscriptionId = subscriptionDetails?.subscription
+      ? typeof subscriptionDetails.subscription === 'string'
+        ? subscriptionDetails.subscription
+        : subscriptionDetails.subscription.id
+      : undefined
+
     // Store invoice
     this.billing.storeInvoice({
       customerId,
       stripeInvoiceId: invoice.id,
-      subscriptionId:
-        typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id,
+      subscriptionId,
       amountCents: invoice.amount_paid,
       currency: invoice.currency,
       status: 'paid',
@@ -430,12 +439,19 @@ export class StripeWebhookHandler {
 
     if (!customerId) return
 
+    // Get subscription ID from parent.subscription_details (Stripe v20+ structure)
+    const subscriptionDetails = invoice.parent?.subscription_details
+    const subscriptionId = subscriptionDetails?.subscription
+      ? typeof subscriptionDetails.subscription === 'string'
+        ? subscriptionDetails.subscription
+        : subscriptionDetails.subscription.id
+      : undefined
+
     // Store invoice with failed status
     this.billing.storeInvoice({
       customerId,
       stripeInvoiceId: invoice.id,
-      subscriptionId:
-        typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id,
+      subscriptionId,
       amountCents: invoice.amount_due,
       currency: invoice.currency,
       status: 'open',
@@ -555,5 +571,19 @@ export class StripeWebhookHandler {
 
     // Fallback to quantity from first item
     return subscription.items.data[0]?.quantity ?? 1
+  }
+
+  /**
+   * Get current period end from subscription (Stripe v20+ moved this to items)
+   */
+  private getCurrentPeriodEnd(subscription: Stripe.Subscription): number {
+    return subscription.items.data[0]?.current_period_end ?? Math.floor(Date.now() / 1000)
+  }
+
+  /**
+   * Get current period start from subscription (Stripe v20+ moved this to items)
+   */
+  private getCurrentPeriodStart(subscription: Stripe.Subscription): number {
+    return subscription.items.data[0]?.current_period_start ?? Math.floor(Date.now() / 1000)
   }
 }

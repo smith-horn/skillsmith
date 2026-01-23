@@ -20,7 +20,7 @@
  * - hasMore: Boolean indicating if more invoices exist
  */
 
-import Stripe from 'https://esm.sh/stripe@14.5.0'
+import Stripe from 'https://esm.sh/stripe@20'
 import {
   handleCorsPreflightRequest,
   jsonResponse,
@@ -126,10 +126,8 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Initialize Stripe
-    const stripe = new Stripe(stripeSecretKey, {
-      apiVersion: '2023-10-16',
-    })
+    // Initialize Stripe (uses SDK default API version)
+    const stripe = new Stripe(stripeSecretKey)
 
     // Build Stripe list params
     const listParams: Stripe.InvoiceListParams = {
