@@ -1,0 +1,81 @@
+---
+/**
+ * Blog Post Dynamic Route
+ * SMI-1728: Blog system implementation
+ */
+import BlogLayout from '../../layouts/BlogLayout.astro';
+import { getCollection, type CollectionEntry } from 'astro:content';
+import { calculateReadingTime } from '../../utils/blog';
+
+export async function getStaticPaths() {
+  const posts = await getCollection('blog', ({ data }) => !data.draft);
+  return posts.map((post) => ({
+    params: { slug: post.slug },
+    props: { post },
+  }));
+}
+
+interface Props {
+  post: CollectionEntry<'blog'>;
+}
+
+const { post } = Astro.props;
+const { Content } = await post.render();
+
+const readingTime = calculateReadingTime(post.body ?? '');
+
+// Get site URL from Astro config (SMI-1733)
+const siteUrl = Astro.site?.toString().replace(/\/$/, '') || 'https://skillsmith.app';
+
+// Format dates for JSON-LD
+const datePublished = post.data.date.toISOString();
+const dateModified = post.data.updated?.toISOString() ?? datePublished;
+
+// Build JSON-LD data
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": post.data.title,
+  "description": post.data.description,
+  "image": post.data.ogImage ?? `${siteUrl}/logo-icon.svg`,
+  "datePublished": datePublished,
+  "dateModified": dateModified,
+  "author": {
+    "@type": "Person",
+    "name": post.data.author ?? "Skillsmith Team"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Skillsmith",
+    "logo": {
+      "@type": "ImageObject",
+      "url": `${siteUrl}/logo-icon.svg`
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": `${siteUrl}/blog/${post.slug}`
+  },
+  "keywords": post.data.tags?.join(", ") ?? "",
+  "articleSection": post.data.category ?? "Guides",
+  "wordCount": (post.body ?? '').split(/\s+/).length,
+  "timeRequired": `PT${readingTime}M`
+};
+---
+
+<BlogLayout
+  title={post.data.title}
+  description={post.data.description}
+  author={post.data.author}
+  date={post.data.date}
+  updated={post.data.updated}
+  category={post.data.category}
+  tags={post.data.tags}
+  ogImage={post.data.ogImage}
+  readingTime={readingTime}
+>
+  <!-- JSON-LD for BlogPosting -->
+  <script type="application/ld+json" slot="head" set:html={JSON.stringify(jsonLd)} />
+
+  <Content />
+</BlogLayout>
