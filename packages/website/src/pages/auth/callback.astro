@@ -7,6 +7,14 @@
  * Handles OAuth callbacks and email verification links.
  * Supabase Auth redirects here after email verification.
  */
+
+// Disable prerendering - this page needs SSR to read env vars
+export const prerender = false;
+
+import { getSupabaseConfig } from '../../lib/supabase-config';
+
+// Read env vars at SSR time to inject into client script
+const supabaseConfig = getSupabaseConfig();
 ---
 
 <!DOCTYPE html>
@@ -20,6 +28,9 @@
     <title>Verifying... | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
     <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig;
+    </script>
   </head>
   <body>
     <main class="callback-container">
@@ -201,8 +212,10 @@
 <script>
   import { createClient } from '@supabase/supabase-js'
 
-  const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL
-  const supabaseAnonKey = import.meta.env.PUBLIC_SUPABASE_ANON_KEY
+  // Read config injected by SSR script in head
+  const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' };
+  const supabaseUrl = config.url;
+  const supabaseAnonKey = config.anonKey;
 
   document.addEventListener('DOMContentLoaded', async () => {
     const loadingState = document.getElementById('loading-state') as HTMLDivElement | null
