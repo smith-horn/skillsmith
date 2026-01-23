@@ -1,0 +1,105 @@
+---
+/**
+ * CopyableCodeBlock Component
+ *
+ * A code block with a prominent copy-to-clipboard button and visual feedback.
+ * Used for installation snippets and configuration examples.
+ */
+interface Props {
+  code: string;
+  language?: string;
+  buttonText?: string;
+}
+
+const { code, language = 'text', buttonText = 'Copy to Clipboard' } = Astro.props;
+const uniqueId = `code-block-${Math.random().toString(36).substring(7)}`;
+---
+
+<div class="copyable-code-block relative group" data-code-block-id={uniqueId}>
+  <!-- Code block -->
+  <pre class="bg-[#0D0D0F] border border-white/10 rounded-xl p-5 overflow-x-auto font-mono text-sm text-[#E5E5E5] leading-relaxed"><code class={`language-${language}`} set:html={code} /></pre>
+
+  <!-- Copy button -->
+  <button
+    type="button"
+    class="copy-button absolute top-3 right-3 px-4 py-2 bg-[#E07A5F] hover:bg-[#D4694E] text-white text-sm font-semibold rounded-lg transition-all duration-200 flex items-center gap-2 shadow-lg hover:shadow-xl"
+    data-code={code}
+    aria-label="Copy code to clipboard"
+  >
+    <!-- Default: Copy icon -->
+    <span class="copy-icon">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+      </svg>
+    </span>
+    <!-- Success: Checkmark icon (hidden by default) -->
+    <span class="check-icon hidden">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+      </svg>
+    </span>
+    <span class="button-text">{buttonText}</span>
+  </button>
+</div>
+
+<script>
+  // Copy to clipboard functionality
+  document.querySelectorAll('.copyable-code-block').forEach(block => {
+    const button = block.querySelector('.copy-button') as HTMLButtonElement;
+    const copyIcon = button?.querySelector('.copy-icon') as HTMLElement;
+    const checkIcon = button?.querySelector('.check-icon') as HTMLElement;
+    const buttonText = button?.querySelector('.button-text') as HTMLElement;
+
+    if (!button) return;
+
+    button.addEventListener('click', async () => {
+      const code = button.dataset.code || '';
+
+      try {
+        await navigator.clipboard.writeText(code);
+
+        // Show success state
+        copyIcon.classList.add('hidden');
+        checkIcon.classList.remove('hidden');
+        buttonText.textContent = 'Copied!';
+        button.classList.remove('bg-[#E07A5F]', 'hover:bg-[#D4694E]');
+        button.classList.add('bg-[#81B29A]');
+
+        // Track in GA if available
+        if (typeof (window as any).gtag === 'function') {
+          (window as any).gtag('event', 'copy_config', {
+            event_category: 'engagement',
+            event_label: 'mcp_install_snippet',
+          });
+        }
+
+        // Reset after 2 seconds
+        setTimeout(() => {
+          copyIcon.classList.remove('hidden');
+          checkIcon.classList.add('hidden');
+          buttonText.textContent = button.dataset.originalText || 'Copy to Clipboard';
+          button.classList.add('bg-[#E07A5F]', 'hover:bg-[#D4694E]');
+          button.classList.remove('bg-[#81B29A]');
+        }, 2000);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+        buttonText.textContent = 'Failed to copy';
+        setTimeout(() => {
+          buttonText.textContent = button.dataset.originalText || 'Copy to Clipboard';
+        }, 2000);
+      }
+    });
+
+    // Store original text
+    if (buttonText) {
+      button.dataset.originalText = buttonText.textContent || '';
+    }
+  });
+</script>
+
+<style>
+  .copyable-code-block pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+</style>

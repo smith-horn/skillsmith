@@ -216,6 +216,74 @@
     </div>
   </section>
 
+  <!-- MCP Install Section -->
+  <section class="py-20 border-t border-white/[0.06]">
+    <div class="max-w-[800px] mx-auto px-6">
+      <div class="text-center mb-10">
+        <h2 class="text-2xl sm:text-3xl font-bold mb-3">Get Started in Seconds</h2>
+        <p class="text-[#A1A1AA]">Copy this snippet and paste it into Claude Code</p>
+      </div>
+
+      <!-- Copyable Code Block -->
+      <div class="relative group mb-8" id="mcp-install-block">
+        <pre class="bg-[#0D0D0F] border border-white/10 rounded-xl p-6 overflow-x-auto font-mono text-sm text-[#E5E5E5] leading-relaxed"><code id="mcp-install-code">Add this MCP server to my settings.json:
+
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"]
+    }
+  }
+}</code></pre>
+
+        <!-- Copy button -->
+        <button
+          type="button"
+          id="copy-mcp-config"
+          class="absolute top-4 right-4 px-5 py-2.5 bg-[#E07A5F] hover:bg-[#D4694E] text-white text-sm font-semibold rounded-lg transition-all duration-200 flex items-center gap-2 shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98]"
+          aria-label="Copy configuration to clipboard"
+        >
+          <!-- Copy icon -->
+          <svg id="copy-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+          <!-- Checkmark icon (hidden by default) -->
+          <svg id="check-icon" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+          <span id="copy-text">Copy to Clipboard</span>
+        </button>
+      </div>
+
+      <!-- Helper text -->
+      <p class="text-center text-[#A1A1AA] mb-8">
+        Claude will update your settings automatically. After restarting, ask:
+        <span class="block mt-2 text-[#E07A5F] font-medium">"Find testing skills for my project"</span>
+      </p>
+
+      <!-- Value props inline -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center text-sm">
+        <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
+          <span class="block text-[#E07A5F] font-bold text-lg mb-1" id="skill-count-install">14,000+</span>
+          <span class="text-[#A1A1AA]">Searchable skills</span>
+        </div>
+        <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
+          <span class="block text-[#E07A5F] font-bold text-lg mb-1">AI-Powered</span>
+          <span class="text-[#A1A1AA]">Recommendations</span>
+        </div>
+        <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
+          <span class="block text-[#E07A5F] font-bold text-lg mb-1">One-Click</span>
+          <span class="text-[#A1A1AA]">Installation</span>
+        </div>
+        <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
+          <span class="block text-[#E07A5F] font-bold text-lg mb-1">Side-by-Side</span>
+          <span class="text-[#A1A1AA]">Comparison</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- Value Props Section -->
   <section class="py-24 border-t border-white/[0.06]">
     <div class="max-w-[1200px] mx-auto px-6">
@@ -411,6 +479,57 @@
     }
   </style>
 
+  <!-- Copy to Clipboard Handler -->
+  <script is:inline>
+    (function() {
+      const copyButton = document.getElementById('copy-mcp-config');
+      const codeBlock = document.getElementById('mcp-install-code');
+      const copyIcon = document.getElementById('copy-icon');
+      const checkIcon = document.getElementById('check-icon');
+      const copyText = document.getElementById('copy-text');
+
+      if (!copyButton || !codeBlock) return;
+
+      copyButton.addEventListener('click', async () => {
+        const code = codeBlock.textContent || '';
+
+        try {
+          await navigator.clipboard.writeText(code);
+
+          // Show success state
+          copyIcon.classList.add('hidden');
+          checkIcon.classList.remove('hidden');
+          copyText.textContent = 'Copied!';
+          copyButton.classList.remove('bg-[#E07A5F]', 'hover:bg-[#D4694E]');
+          copyButton.classList.add('bg-[#81B29A]');
+
+          // Track in GA if available
+          if (typeof gtag === 'function') {
+            gtag('event', 'copy_config', {
+              event_category: 'engagement',
+              event_label: 'mcp_install_snippet',
+            });
+          }
+
+          // Reset after 2.5 seconds
+          setTimeout(() => {
+            copyIcon.classList.remove('hidden');
+            checkIcon.classList.add('hidden');
+            copyText.textContent = 'Copy to Clipboard';
+            copyButton.classList.add('bg-[#E07A5F]', 'hover:bg-[#D4694E]');
+            copyButton.classList.remove('bg-[#81B29A]');
+          }, 2500);
+        } catch (err) {
+          console.error('Failed to copy:', err);
+          copyText.textContent = 'Failed to copy';
+          setTimeout(() => {
+            copyText.textContent = 'Copy to Clipboard';
+          }, 2000);
+        }
+      });
+    })();
+  </script>
+
   <!-- Fetch live skill count -->
   <script define:vars={{ statsApiUrl: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1/stats` }}>
     (function() {
@@ -425,10 +544,12 @@
       function updateCount(count) {
         const el = document.getElementById('skill-count');
         const elFeature = document.getElementById('skill-count-feature');
+        const elInstall = document.getElementById('skill-count-install');
         if (count > 0) {
           const formattedCount = formatNumber(count) + '+';
           if (el) el.textContent = formattedCount;
           if (elFeature) elFeature.textContent = formattedCount;
+          if (elInstall) elInstall.textContent = formattedCount;
         }
       }
 
