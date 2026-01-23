@@ -11,11 +11,7 @@ import { randomUUID } from 'node:crypto'
 import type { SessionData, Checkpoint } from './SessionContext.js'
 
 // Import types
-import type {
-  CommandExecutor,
-  MemoryResult,
-  SessionOptions,
-} from './SessionManager.types.js'
+import type { CommandExecutor, MemoryResult, SessionOptions } from './SessionManager.types.js'
 import { sanitizeSessionData } from './SessionManager.types.js'
 
 // Import helpers
@@ -38,9 +34,7 @@ export type {
   ClaudeFlowMcpModule,
 } from './SessionManager.types.js'
 
-export {
-  sanitizeSessionData,
-} from './SessionManager.types.js'
+export { sanitizeSessionData } from './SessionManager.types.js'
 
 export {
   getClaudeFlowMemory,

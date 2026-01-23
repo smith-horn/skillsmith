@@ -4,9 +4,9 @@
  */
 
 export interface SupabaseConfig {
-  url: string;
-  anonKey: string;
-  apiBaseUrl: string;
+  url: string
+  anonKey: string
+  apiBaseUrl: string
 }
 
 /**
@@ -18,5 +18,5 @@ export function getSupabaseConfig(): SupabaseConfig {
     url: import.meta.env.PUBLIC_SUPABASE_URL || '',
     anonKey: import.meta.env.PUBLIC_SUPABASE_ANON_KEY || '',
     apiBaseUrl: import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app',
-  };
+  }
 }

@@ -3,11 +3,7 @@
  * @module @skillsmith/core/security/scanner/SecurityScanner.helpers
  */
 
-import type {
-  SecurityFinding,
-  RiskScoreBreakdown,
-  FindingConfidence,
-} from './types.js'
+import type { SecurityFinding, RiskScoreBreakdown, FindingConfidence } from './types.js'
 import { SEVERITY_WEIGHTS, CATEGORY_WEIGHTS } from './weights.js'
 
 // ============================================================================

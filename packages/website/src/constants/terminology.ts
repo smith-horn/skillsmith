@@ -44,12 +44,12 @@ export const TRUST_TIERS = {
     autoInstall: false,
     reviewRequired: true,
   },
-} as const;
+} as const
 
 /**
  * Trust tier type for TypeScript
  */
-export type TrustTierId = (typeof TRUST_TIERS)[keyof typeof TRUST_TIERS]['id'];
+export type TrustTierId = (typeof TRUST_TIERS)[keyof typeof TRUST_TIERS]['id']
 
 /**
  * Ordered list of trust tiers (highest to lowest trust)
@@ -59,7 +59,7 @@ export const TRUST_TIER_ORDER = [
   TRUST_TIERS.VERIFIED,
   TRUST_TIERS.COMMUNITY,
   TRUST_TIERS.UNVERIFIED,
-] as const;
+] as const
 
 /**
  * Quarantine Severity Levels
@@ -97,13 +97,13 @@ export const QUARANTINE_SEVERITY = {
     canInstall: true,
     color: 'gray',
   },
-} as const;
+} as const
 
 /**
  * Quarantine severity type
  */
 export type QuarantineSeverityId =
-  (typeof QUARANTINE_SEVERITY)[keyof typeof QUARANTINE_SEVERITY]['id'];
+  (typeof QUARANTINE_SEVERITY)[keyof typeof QUARANTINE_SEVERITY]['id']
 
 /**
  * Skill Categories
@@ -118,12 +118,12 @@ export const SKILL_CATEGORIES = {
   DATA: { id: 'data', label: 'Data' },
   AI: { id: 'ai', label: 'AI' },
   OTHER: { id: 'other', label: 'Other' },
-} as const;
+} as const
 
 /**
  * Category type
  */
-export type CategoryId = (typeof SKILL_CATEGORIES)[keyof typeof SKILL_CATEGORIES]['id'];
+export type CategoryId = (typeof SKILL_CATEGORIES)[keyof typeof SKILL_CATEGORIES]['id']
 
 /**
  * Pricing Tiers
@@ -161,12 +161,12 @@ export const PRICING_TIERS = {
     apiCalls: Infinity,
     apiCallsLabel: 'Unlimited',
   },
-} as const;
+} as const
 
 /**
  * Pricing tier type
  */
-export type PricingTierId = (typeof PRICING_TIERS)[keyof typeof PRICING_TIERS]['id'];
+export type PricingTierId = (typeof PRICING_TIERS)[keyof typeof PRICING_TIERS]['id']
 
 /**
  * Contact Topics (for /contact form)
@@ -181,18 +181,18 @@ export const CONTACT_TOPICS = {
   SUPPORT: { id: 'support', label: 'Support', path: '/contact?topic=support' },
   ENTERPRISE: { id: 'enterprise', label: 'Enterprise', path: '/contact?topic=enterprise' },
   GENERAL: { id: 'general', label: 'General', path: '/contact?topic=general' },
-} as const;
+} as const
 
 /**
  * Helper to get trust tier by ID
  */
 export function getTrustTierById(id: string) {
-  return Object.values(TRUST_TIERS).find((tier) => tier.id === id);
+  return Object.values(TRUST_TIERS).find((tier) => tier.id === id)
 }
 
 /**
  * Helper to get quarantine severity by ID
  */
 export function getQuarantineSeverityById(id: string) {
-  return Object.values(QUARANTINE_SEVERITY).find((severity) => severity.id === id);
+  return Object.values(QUARANTINE_SEVERITY).find((severity) => severity.id === id)
 }

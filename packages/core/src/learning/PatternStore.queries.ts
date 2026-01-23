@@ -187,9 +187,7 @@ export function recordConsolidation(
 /**
  * Get pattern counts by outcome type
  */
-export function getPatternsByOutcome(
-  db: Database.Database
-): Record<PatternOutcomeType, number> {
+export function getPatternsByOutcome(db: Database.Database): Record<PatternOutcomeType, number> {
   const stmt = db.prepare(
     'SELECT outcome_type, COUNT(*) as count FROM patterns GROUP BY outcome_type'
   )

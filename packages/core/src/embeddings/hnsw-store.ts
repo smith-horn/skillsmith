@@ -18,8 +18,14 @@ import type { VectorDB } from 'claude-flow/v3/@claude-flow/cli/dist/src/ruvector
 
 // Re-export types for public API
 export type {
-  HierarchicalNSW, HNSWSearchResult, HierarchicalNSWConstructor, HNSWConfig,
-  HNSWEmbeddingStoreOptions, HNSWIndexStats, BatchInsertResult, IEmbeddingStore,
+  HierarchicalNSW,
+  HNSWSearchResult,
+  HierarchicalNSWConstructor,
+  HNSWConfig,
+  HNSWEmbeddingStoreOptions,
+  HNSWIndexStats,
+  BatchInsertResult,
+  IEmbeddingStore,
 } from './hnsw-store.types.js'
 export { DEFAULT_HNSW_CONFIG, HNSW_PRESETS } from './hnsw-store.types.js'
 
@@ -27,8 +33,14 @@ export { DEFAULT_HNSW_CONFIG, HNSW_PRESETS } from './hnsw-store.types.js'
 export { createHNSWStore, isHNSWAvailable, loadHNSWLib } from './hnsw-store.helpers.js'
 
 // Internal imports
-import type { HNSWConfig, HNSWEmbeddingStoreOptions, HNSWIndexStats, BatchInsertResult,
-  IEmbeddingStore, HierarchicalNSW } from './hnsw-store.types.js'
+import type {
+  HNSWConfig,
+  HNSWEmbeddingStoreOptions,
+  HNSWIndexStats,
+  BatchInsertResult,
+  IEmbeddingStore,
+  HierarchicalNSW,
+} from './hnsw-store.types.js'
 import { DEFAULT_HNSW_CONFIG } from './hnsw-store.types.js'
 import { shouldUseHNSW, validateDimensions, estimateMemoryUsage } from './hnsw-store.helpers.js'
 
@@ -100,8 +112,12 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
     const stmt = this.db.prepare('SELECT embedding FROM skill_embeddings WHERE skill_id = ?')
     const row = stmt.get(skillId) as { embedding: Buffer } | undefined
     if (!row) return null
-    return new Float32Array(row.embedding.buffer.slice(
-      row.embedding.byteOffset, row.embedding.byteOffset + row.embedding.byteLength))
+    return new Float32Array(
+      row.embedding.buffer.slice(
+        row.embedding.byteOffset,
+        row.embedding.byteOffset + row.embedding.byteLength
+      )
+    )
   }
 
   getAllEmbeddings(): Map<string, Float32Array> {
@@ -110,8 +126,12 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
     const rows = stmt.all() as Array<{ skill_id: string; embedding: Buffer }>
     const result = new Map<string, Float32Array>()
     for (const row of rows) {
-      const embedding = new Float32Array(row.embedding.buffer.slice(
-        row.embedding.byteOffset, row.embedding.byteOffset + row.embedding.byteLength))
+      const embedding = new Float32Array(
+        row.embedding.buffer.slice(
+          row.embedding.byteOffset,
+          row.embedding.byteOffset + row.embedding.byteLength
+        )
+      )
       result.set(row.skill_id, embedding)
     }
     return result
@@ -143,7 +163,10 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
     return results.slice(0, topK)
   }
 
-  async findSimilarAsync(queryEmbedding: Float32Array, topK: number = 10): Promise<SimilarityResult[]> {
+  async findSimilarAsync(
+    queryEmbedding: Float32Array,
+    topK: number = 10
+  ): Promise<SimilarityResult[]> {
     await this.ensureInitialized()
     validateDimensions(queryEmbedding, this.config.dimensions)
 
@@ -163,7 +186,9 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
     if (a.length !== b.length) {
       throw new Error(`Embedding dimension mismatch: ${a.length} vs ${b.length}`)
     }
-    let dotProduct = 0, normA = 0, normB = 0
+    let dotProduct = 0,
+      normA = 0,
+      normB = 0
     for (let i = 0; i < a.length; i++) {
       dotProduct += a[i] * b[i]
       normA += a[i] * a[i]
@@ -194,7 +219,9 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
       try {
         const size = this.vectorDB.size()
         if (!(size instanceof Promise)) vectorCount = Math.max(vectorCount, size)
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
     return {
       vectorCount,
@@ -210,9 +237,17 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
     }
   }
 
-  batchInsert(embeddings: Array<{ skillId: string; embedding: Float32Array; text: string }>): BatchInsertResult {
+  batchInsert(
+    embeddings: Array<{ skillId: string; embedding: Float32Array; text: string }>
+  ): BatchInsertResult {
     const startTime = Date.now()
-    const result: BatchInsertResult = { inserted: 0, updated: 0, failed: 0, errors: [], durationMs: 0 }
+    const result: BatchInsertResult = {
+      inserted: 0,
+      updated: 0,
+      failed: 0,
+      errors: [],
+      durationMs: 0,
+    }
 
     if (!this.db) {
       result.errors.push({ skillId: '*', error: 'Database not initialized' })
@@ -237,10 +272,14 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
           const exists = checkStmt.get(skillId)
           insertStmt.run(skillId, Buffer.from(embedding.buffer), text)
           if (this.vectorDB) {
-            try { this.vectorDB.insert(embedding, skillId, { text }) }
-            catch (err) { console.warn(`VectorDB insert failed for ${skillId}: ${err}`) }
+            try {
+              this.vectorDB.insert(embedding, skillId, { text })
+            } catch (err) {
+              console.warn(`VectorDB insert failed for ${skillId}: ${err}`)
+            }
           }
-          if (exists) result.updated++; else result.inserted++
+          if (exists) result.updated++
+          else result.inserted++
         } catch (err) {
           result.failed++
           result.errors.push({ skillId, error: err instanceof Error ? err.message : String(err) })
@@ -265,7 +304,9 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
         if (vdbResult instanceof Promise) {
           vdbResult.catch((err) => console.warn(`VectorDB remove failed: ${err}`))
         }
-      } catch (err) { console.warn(`VectorDB remove failed: ${err}`) }
+      } catch (err) {
+        console.warn(`VectorDB remove failed: ${err}`)
+      }
     }
     return removed
   }
@@ -286,7 +327,9 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
       try {
         const clearResult = this.vectorDB.clear()
         if (clearResult instanceof Promise) await clearResult
-      } catch (err) { console.warn(`Failed to clear VectorDB: ${err}`) }
+      } catch (err) {
+        console.warn(`Failed to clear VectorDB: ${err}`)
+      }
     }
     await this.initHNSWIndex()
     if (this.db && this.vectorDB) {
@@ -295,7 +338,9 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
         try {
           const result = this.vectorDB.insert(embedding, skillId)
           if (result instanceof Promise) await result
-        } catch (err) { console.warn(`Failed to reinsert ${skillId}: ${err}`) }
+        } catch (err) {
+          console.warn(`Failed to reinsert ${skillId}: ${err}`)
+        }
       }
     }
   }
@@ -323,19 +368,22 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
   // IMPORTANT: Keep dynamic import here for V3 lazy loading / graceful degradation
   private async initHNSWIndex(): Promise<void> {
     try {
-      const vectorDbModule = await import(
-        'claude-flow/v3/@claude-flow/cli/dist/src/ruvector/vector-db.js'
-      )
+      const vectorDbModule =
+        await import('claude-flow/v3/@claude-flow/cli/dist/src/ruvector/vector-db.js')
       const loaded = await vectorDbModule.loadRuVector()
       if (!loaded) console.warn('[HNSWEmbeddingStore] ruvector not available')
 
       this.vectorDB = await vectorDbModule.createVectorDB(this.config.dimensions)
       const status = vectorDbModule.getStatus()
-      console.log(`[HNSWEmbeddingStore] Initialized: ${status.backend}${status.wasmAccelerated ? ' (WASM)' : ''}`)
+      console.log(
+        `[HNSWEmbeddingStore] Initialized: ${status.backend}${status.wasmAccelerated ? ' (WASM)' : ''}`
+      )
 
       // Rebuild from SQLite
       if (this.db) {
-        const count = this.db.prepare('SELECT COUNT(*) as c FROM skill_embeddings').get() as { c: number }
+        const count = this.db.prepare('SELECT COUNT(*) as c FROM skill_embeddings').get() as {
+          c: number
+        }
         if (count.c > 0) {
           console.log(`[HNSWEmbeddingStore] Rebuilding from ${count.c} embeddings...`)
           const allEmbeddings = this.getAllEmbeddings()
@@ -343,7 +391,9 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
             try {
               const result = this.vectorDB.insert(embedding, skillId)
               if (result instanceof Promise) await result
-            } catch (err) { console.warn(`Failed to insert ${skillId}: ${err}`) }
+            } catch (err) {
+              console.warn(`Failed to insert ${skillId}: ${err}`)
+            }
           }
           console.log(`[HNSWEmbeddingStore] Index rebuilt with ${allEmbeddings.size} vectors`)
         }

@@ -8,12 +8,7 @@
 import { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
-import {
-  CodebaseAnalyzer,
-  createApiClient,
-  type SkillRole,
-  SKILL_ROLES,
-} from '@skillsmith/core'
+import { CodebaseAnalyzer, createApiClient, type SkillRole, SKILL_ROLES } from '@skillsmith/core'
 import { sanitizeError } from '../utils/sanitize.js'
 
 // Re-export types for public API

@@ -117,10 +117,7 @@ export function toGitHubAnnotations(report: ScanReport): string[] {
     const severity =
       finding.severity === 'critical' || finding.severity === 'high' ? 'error' : 'warning'
     const line = finding.lineNumber ?? 1
-    const message = finding.message
-      .replace(/%/g, '%25')
-      .replace(/\r/g, '%0D')
-      .replace(/\n/g, '%0A')
+    const message = finding.message.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')
     return `::${severity} file=${report.skillId},line=${line}::${message}`
   })
 }

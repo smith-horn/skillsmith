@@ -9,206 +9,28 @@
  * - Memory usage (gauge)
  * - Error counts by type (counter)
  *
- * Configuration:
- * - SKILLSMITH_TELEMETRY_ENABLED: Master switch for all telemetry (default: auto)
- * - SKILLSMITH_ANALYSIS_METRICS_ENABLED: Enable/disable analysis metrics (default: true)
- *
- * Graceful Fallback:
- * - If OpenTelemetry packages are not installed, uses in-memory implementations
- * - Metrics APIs remain functional for local statistics
- *
  * @see docs/architecture/multi-language-analysis.md
  * @module analysis/metrics
  */
 
-import type { Counter, Histogram, Gauge, MetricLabels } from '../telemetry/metrics.js'
+import type { MetricLabels } from '../telemetry/metrics.js'
 import type { SupportedLanguage } from './types.js'
 
-/**
- * Analysis metrics configuration
- */
-export interface AnalysisMetricsConfig {
-  /** Whether to enable metrics collection (default: true) */
-  enabled?: boolean
-  /** Prefix for all metric names (default: skillsmith.analysis) */
-  metricPrefix?: string
-}
+// Import types
+import type { AnalysisMetricsConfig, AnalysisMetricsSnapshot } from './metrics.types.js'
 
-/**
- * In-memory counter implementation
- */
-class InMemoryCounter implements Counter {
-  private values = new Map<string, number>()
+// Import implementations
+import { InMemoryCounter, InMemoryHistogram, InMemoryGauge } from './metrics.implementations.js'
 
-  add(value: number, labels?: MetricLabels): void {
-    const key = labels ? JSON.stringify(labels) : ''
-    const current = this.values.get(key) ?? 0
-    this.values.set(key, current + value)
-  }
+// Re-export types for public API
+export type {
+  AnalysisMetricsConfig,
+  AnalysisMetricsSnapshot,
+  HistogramStats,
+} from './metrics.types.js'
 
-  increment(labels?: MetricLabels): void {
-    this.add(1, labels)
-  }
-
-  getValues(): Map<string, number> {
-    return new Map(this.values)
-  }
-
-  getTotal(): number {
-    let total = 0
-    for (const count of this.values.values()) {
-      total += count
-    }
-    return total
-  }
-
-  reset(): void {
-    this.values.clear()
-  }
-}
-
-/**
- * In-memory histogram implementation
- */
-class InMemoryHistogram implements Histogram {
-  private values: number[] = []
-  private labeledValues = new Map<string, number[]>()
-
-  record(value: number, labels?: MetricLabels): void {
-    this.values.push(value)
-    if (labels) {
-      const key = JSON.stringify(labels)
-      const arr = this.labeledValues.get(key) ?? []
-      arr.push(value)
-      this.labeledValues.set(key, arr)
-    }
-  }
-
-  getStats(): { count: number; sum: number; mean: number; p50: number; p95: number; p99: number } {
-    if (this.values.length === 0) {
-      return { count: 0, sum: 0, mean: 0, p50: 0, p95: 0, p99: 0 }
-    }
-
-    const sorted = [...this.values].sort((a, b) => a - b)
-    const sum = sorted.reduce((acc, v) => acc + v, 0)
-    const mean = sum / sorted.length
-
-    const percentile = (p: number): number => {
-      const index = Math.ceil((p / 100) * sorted.length) - 1
-      return sorted[Math.max(0, index)]
-    }
-
-    return {
-      count: sorted.length,
-      sum,
-      mean,
-      p50: percentile(50),
-      p95: percentile(95),
-      p99: percentile(99),
-    }
-  }
-
-  getStatsByLabel(labels: MetricLabels): ReturnType<typeof this.getStats> {
-    const key = JSON.stringify(labels)
-    const values = this.labeledValues.get(key) ?? []
-
-    if (values.length === 0) {
-      return { count: 0, sum: 0, mean: 0, p50: 0, p95: 0, p99: 0 }
-    }
-
-    const sorted = [...values].sort((a, b) => a - b)
-    const sum = sorted.reduce((acc, v) => acc + v, 0)
-    const mean = sum / sorted.length
-
-    const percentile = (p: number): number => {
-      const index = Math.ceil((p / 100) * sorted.length) - 1
-      return sorted[Math.max(0, index)]
-    }
-
-    return {
-      count: sorted.length,
-      sum,
-      mean,
-      p50: percentile(50),
-      p95: percentile(95),
-      p99: percentile(99),
-    }
-  }
-
-  reset(): void {
-    this.values = []
-    this.labeledValues.clear()
-  }
-}
-
-/**
- * In-memory gauge implementation
- */
-class InMemoryGauge implements Gauge {
-  private values = new Map<string, number>()
-
-  set(value: number, labels?: MetricLabels): void {
-    const key = labels ? JSON.stringify(labels) : ''
-    this.values.set(key, value)
-  }
-
-  getValue(labels?: MetricLabels): number {
-    const key = labels ? JSON.stringify(labels) : ''
-    return this.values.get(key) ?? 0
-  }
-
-  getAllValues(): Map<string, number> {
-    return new Map(this.values)
-  }
-
-  reset(): void {
-    this.values.clear()
-  }
-}
-
-/**
- * Analysis metrics snapshot for export
- */
-export interface AnalysisMetricsSnapshot {
-  timestamp: string
-  filesParsed: {
-    total: number
-    byLanguage: Record<string, number>
-  }
-  parseDuration: {
-    stats: { count: number; sum: number; mean: number; p50: number; p95: number; p99: number }
-    byLanguage: Record<
-      string,
-      { count: number; sum: number; mean: number; p50: number; p95: number; p99: number }
-    >
-  }
-  cache: {
-    hits: number
-    misses: number
-    hitRate: number
-    size: number
-  }
-  workerPool: {
-    activeWorkers: number
-    queuedTasks: number
-    utilization: number
-  }
-  memory: {
-    heapUsed: number
-    heapTotal: number
-    rss: number
-  }
-  errors: {
-    total: number
-    byType: Record<string, number>
-  }
-  aggregator: {
-    filesProcessed: number
-    totalImports: number
-    totalExports: number
-    totalFunctions: number
-  }
-}
+// Re-export implementations for testing/extension
+export { InMemoryCounter, InMemoryHistogram, InMemoryGauge } from './metrics.implementations.js'
 
 /**
  * Analysis Pipeline Metrics Collector
@@ -299,60 +121,36 @@ export class AnalysisMetrics {
     this.aggregatorFunctions = new InMemoryGauge()
   }
 
-  /**
-   * Check if metrics collection is enabled
-   */
+  /** Check if metrics collection is enabled */
   isEnabled(): boolean {
     return this.enabled
   }
 
-  /**
-   * Record a file being parsed
-   *
-   * @param language - The language of the parsed file
-   */
+  /** Record a file being parsed */
   recordFileParsed(language: SupportedLanguage | string): void {
     if (!this.enabled) return
     this.filesParsed.increment({ language })
   }
 
-  /**
-   * Record parse duration for a file
-   *
-   * @param language - The language of the parsed file
-   * @param durationMs - Parse duration in milliseconds
-   */
+  /** Record parse duration for a file */
   recordParseDuration(language: SupportedLanguage | string, durationMs: number): void {
     if (!this.enabled) return
     this.parseDuration.record(durationMs, { language })
   }
 
-  /**
-   * Record a cache hit
-   *
-   * @param language - Optional language for the cache hit
-   */
+  /** Record a cache hit */
   recordCacheHit(language?: SupportedLanguage | string): void {
     if (!this.enabled) return
     this.cacheHits.increment(language ? { language } : undefined)
   }
 
-  /**
-   * Record a cache miss
-   *
-   * @param language - Optional language for the cache miss
-   */
+  /** Record a cache miss */
   recordCacheMiss(language?: SupportedLanguage | string): void {
     if (!this.enabled) return
     this.cacheMisses.increment(language ? { language } : undefined)
   }
 
-  /**
-   * Update cache size
-   *
-   * @param size - Current cache size in bytes
-   * @param entries - Current number of cache entries
-   */
+  /** Update cache size */
   updateCacheSize(size: number, entries?: number): void {
     if (!this.enabled) return
     this.cacheSize.set(size)
@@ -361,13 +159,7 @@ export class AnalysisMetrics {
     }
   }
 
-  /**
-   * Update worker pool metrics
-   *
-   * @param activeWorkers - Number of currently active workers
-   * @param queuedTasks - Number of tasks waiting in queue
-   * @param poolSize - Total pool size for utilization calculation
-   */
+  /** Update worker pool metrics */
   updateWorkerPool(activeWorkers: number, queuedTasks: number, poolSize?: number): void {
     if (!this.enabled) return
     this.workerPoolActive.set(activeWorkers)
@@ -377,11 +169,7 @@ export class AnalysisMetrics {
     }
   }
 
-  /**
-   * Update memory usage metrics
-   *
-   * Records current Node.js memory usage stats.
-   */
+  /** Update memory usage metrics */
   updateMemoryUsage(): void {
     if (!this.enabled) return
     const usage = process.memoryUsage()
@@ -390,12 +178,7 @@ export class AnalysisMetrics {
     this.memoryRss.set(usage.rss)
   }
 
-  /**
-   * Record an error
-   *
-   * @param errorType - Type/category of the error
-   * @param language - Optional language context
-   */
+  /** Record an error */
   recordError(errorType: string, language?: SupportedLanguage | string): void {
     if (!this.enabled) return
     const labels: MetricLabels = { errorType }
@@ -405,14 +188,7 @@ export class AnalysisMetrics {
     this.errorCount.increment(labels)
   }
 
-  /**
-   * Update aggregator metrics
-   *
-   * @param filesProcessed - Number of files processed
-   * @param imports - Total imports found
-   * @param exports - Total exports found
-   * @param functions - Total functions found
-   */
+  /** Update aggregator metrics */
   updateAggregatorStats(
     filesProcessed: number,
     imports: number,
@@ -426,11 +202,7 @@ export class AnalysisMetrics {
     this.aggregatorFunctions.set(functions)
   }
 
-  /**
-   * Get cache hit rate
-   *
-   * @returns Cache hit rate as a decimal (0-1)
-   */
+  /** Get cache hit rate */
   getCacheHitRate(): number {
     const hits = this.cacheHits.getTotal()
     const misses = this.cacheMisses.getTotal()
@@ -438,11 +210,7 @@ export class AnalysisMetrics {
     return total > 0 ? hits / total : 0
   }
 
-  /**
-   * Get files parsed by language
-   *
-   * @returns Map of language to count
-   */
+  /** Get files parsed by language */
   getFilesByLanguage(): Record<string, number> {
     const result: Record<string, number> = {}
     for (const [key, count] of this.filesParsed.getValues()) {
@@ -460,23 +228,14 @@ export class AnalysisMetrics {
     return result
   }
 
-  /**
-   * Get parse duration stats by language
-   *
-   * @param language - Language to get stats for
-   * @returns Duration statistics
-   */
+  /** Get parse duration stats by language */
   getParseDurationByLanguage(
     language: SupportedLanguage | string
   ): ReturnType<InMemoryHistogram['getStats']> {
     return this.parseDuration.getStatsByLabel({ language })
   }
 
-  /**
-   * Get complete metrics snapshot
-   *
-   * @returns Snapshot of all current metrics
-   */
+  /** Get complete metrics snapshot */
   getSnapshot(): AnalysisMetricsSnapshot {
     const hits = this.cacheHits.getTotal()
     const misses = this.cacheMisses.getTotal()
@@ -556,9 +315,7 @@ export class AnalysisMetrics {
     }
   }
 
-  /**
-   * Reset all metrics
-   */
+  /** Reset all metrics */
   reset(): void {
     this.filesParsed.reset()
     this.parseDuration.reset()
@@ -582,11 +339,7 @@ export class AnalysisMetrics {
 // Default metrics instance
 let defaultAnalysisMetrics: AnalysisMetrics | null = null
 
-/**
- * Get the default analysis metrics instance
- *
- * @returns The shared AnalysisMetrics instance
- */
+/** Get the default analysis metrics instance */
 export function getAnalysisMetrics(): AnalysisMetrics {
   if (!defaultAnalysisMetrics) {
     defaultAnalysisMetrics = new AnalysisMetrics()
@@ -594,12 +347,7 @@ export function getAnalysisMetrics(): AnalysisMetrics {
   return defaultAnalysisMetrics
 }
 
-/**
- * Initialize the default analysis metrics instance
- *
- * @param config - Optional configuration
- * @returns The initialized AnalysisMetrics instance
- */
+/** Initialize the default analysis metrics instance */
 export function initializeAnalysisMetrics(config?: AnalysisMetricsConfig): AnalysisMetrics {
   if (defaultAnalysisMetrics) {
     defaultAnalysisMetrics.reset()
@@ -608,14 +356,7 @@ export function initializeAnalysisMetrics(config?: AnalysisMetricsConfig): Analy
   return defaultAnalysisMetrics
 }
 
-/**
- * Helper: Time an async operation and record to analysis metrics
- *
- * @param language - Language being parsed
- * @param fn - Async function to time
- * @param metrics - Optional metrics instance (uses default if not provided)
- * @returns Result of the function
- */
+/** Helper: Time an async operation and record to analysis metrics */
 export async function timeParseAsync<T>(
   language: SupportedLanguage | string,
   fn: () => Promise<T>,
@@ -633,14 +374,7 @@ export async function timeParseAsync<T>(
   }
 }
 
-/**
- * Helper: Time a sync operation and record to analysis metrics
- *
- * @param language - Language being parsed
- * @param fn - Function to time
- * @param metrics - Optional metrics instance (uses default if not provided)
- * @returns Result of the function
- */
+/** Helper: Time a sync operation and record to analysis metrics */
 export function timeParseSync<T>(
   language: SupportedLanguage | string,
   fn: () => T,

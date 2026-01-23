@@ -3,12 +3,7 @@
  * @module @skillsmith/core/routing/SONARouter.helpers
  */
 
-import type {
-  ExpertId,
-  RoutingDecision,
-  SONAMetrics,
-  ToolType,
-} from './types.js'
+import type { ExpertId, RoutingDecision, SONAMetrics, ToolType } from './types.js'
 
 // ============================================================================
 // V3 MoE Types (from claude-flow)

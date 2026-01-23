@@ -14,11 +14,7 @@ import type {
   FrameworkInfo,
   DependencyInfo,
 } from '@skillsmith/core'
-import type {
-  SkillRecommendation,
-  RecommendResponse,
-  InstalledSkill,
-} from './recommend.types.js'
+import type { SkillRecommendation, RecommendResponse, InstalledSkill } from './recommend.types.js'
 import { VALID_TRUST_TIERS } from './recommend.types.js'
 
 // ============================================================================
@@ -123,14 +119,21 @@ export function formatRecommendations(
         relevanceDisplay = chalk.gray('N/A')
       } else {
         const relevanceColor =
-          rec.similarity_score >= 0.7 ? chalk.green :
-          rec.similarity_score >= 0.4 ? chalk.yellow : chalk.gray
+          rec.similarity_score >= 0.7
+            ? chalk.green
+            : rec.similarity_score >= 0.4
+              ? chalk.yellow
+              : chalk.gray
         relevanceDisplay = relevanceColor(`${Math.round(rec.similarity_score * 100)}%`)
       }
 
       const rolesDisplay = rec.roles?.length ? chalk.cyan(` [${rec.roles.join(', ')}]`) : ''
-      lines.push(`${chalk.bold(`${index + 1}.`)} ${chalk.bold(rec.name)} ${trustBadge}${rolesDisplay}`)
-      lines.push(`   Score: ${qualityColor(`${rec.quality_score}/100`)} | Relevance: ${relevanceDisplay}`)
+      lines.push(
+        `${chalk.bold(`${index + 1}.`)} ${chalk.bold(rec.name)} ${trustBadge}${rolesDisplay}`
+      )
+      lines.push(
+        `   Score: ${qualityColor(`${rec.quality_score}/100`)} | Relevance: ${relevanceDisplay}`
+      )
       lines.push(`   ${chalk.dim(rec.reason)}`)
       lines.push(`   ${chalk.dim(`ID: ${rec.skill_id}`)}`)
       lines.push('')
@@ -149,7 +152,11 @@ export function formatRecommendations(
     lines.push(chalk.dim(`Role filter: ${response.context.role_filter}`))
   }
   if (response.context.auto_detected) {
-    lines.push(chalk.dim(`Installed skills: ${response.context.installed_count} (auto-detected from ~/.claude/skills/)`))
+    lines.push(
+      chalk.dim(
+        `Installed skills: ${response.context.installed_count} (auto-detected from ~/.claude/skills/)`
+      )
+    )
   } else {
     lines.push(chalk.dim(`Installed skills: ${response.context.installed_count}`))
   }
@@ -164,20 +171,22 @@ export function formatRecommendations(
 export function formatAsJson(response: RecommendResponse, context: CodebaseContext | null): string {
   const output = {
     recommendations: response.recommendations,
-    analysis: context ? {
-      frameworks: context.frameworks.slice(0, 10).map((f: FrameworkInfo) => ({
-        name: f.name,
-        confidence: Math.round(f.confidence * 100),
-      })),
-      dependencies: context.dependencies.slice(0, 20).map((d: DependencyInfo) => ({
-        name: d.name,
-        is_dev: d.isDev,
-      })),
-      stats: {
-        total_files: context.stats.totalFiles,
-        total_lines: context.stats.totalLines,
-      },
-    } : null,
+    analysis: context
+      ? {
+          frameworks: context.frameworks.slice(0, 10).map((f: FrameworkInfo) => ({
+            name: f.name,
+            confidence: Math.round(f.confidence * 100),
+          })),
+          dependencies: context.dependencies.slice(0, 20).map((d: DependencyInfo) => ({
+            name: d.name,
+            is_dev: d.isDev,
+          })),
+          stats: {
+            total_files: context.stats.totalFiles,
+            total_lines: context.stats.totalLines,
+          },
+        }
+      : null,
     meta: {
       candidates_considered: response.candidates_considered,
       overlap_filtered: response.overlap_filtered,
@@ -197,24 +206,28 @@ export function formatAsJson(response: RecommendResponse, context: CodebaseConte
  */
 export function formatOfflineResults(context: CodebaseContext, json: boolean): string {
   if (json) {
-    return JSON.stringify({
-      offline: true,
-      analysis: {
-        frameworks: context.frameworks.slice(0, 10).map((f: FrameworkInfo) => ({
-          name: f.name,
-          confidence: Math.round(f.confidence * 100),
-        })),
-        dependencies: context.dependencies.slice(0, 20).map((d: DependencyInfo) => ({
-          name: d.name,
-          is_dev: d.isDev,
-        })),
-        stats: {
-          total_files: context.stats.totalFiles,
-          total_lines: context.stats.totalLines,
+    return JSON.stringify(
+      {
+        offline: true,
+        analysis: {
+          frameworks: context.frameworks.slice(0, 10).map((f: FrameworkInfo) => ({
+            name: f.name,
+            confidence: Math.round(f.confidence * 100),
+          })),
+          dependencies: context.dependencies.slice(0, 20).map((d: DependencyInfo) => ({
+            name: d.name,
+            is_dev: d.isDev,
+          })),
+          stats: {
+            total_files: context.stats.totalFiles,
+            total_lines: context.stats.totalLines,
+          },
         },
+        message: 'Unable to reach Skillsmith API. Showing analysis-only results.',
       },
-      message: 'Unable to reach Skillsmith API. Showing analysis-only results.',
-    }, null, 2)
+      null,
+      2
+    )
   }
 
   const lines: string[] = []
@@ -349,23 +362,60 @@ export function getInstalledSkills(): InstalledSkill[] {
  */
 export function inferRolesFromTags(tags: string[]): SkillRole[] {
   const roleMapping: Record<string, SkillRole> = {
-    lint: 'code-quality', linting: 'code-quality', format: 'code-quality',
-    formatting: 'code-quality', prettier: 'code-quality', eslint: 'code-quality',
-    'code-review': 'code-quality', review: 'code-quality', refactor: 'code-quality',
-    refactoring: 'code-quality', 'code-style': 'code-quality',
-    test: 'testing', testing: 'testing', jest: 'testing', vitest: 'testing',
-    mocha: 'testing', playwright: 'testing', cypress: 'testing',
-    e2e: 'testing', unit: 'testing', integration: 'testing', tdd: 'testing',
-    docs: 'documentation', documentation: 'documentation', readme: 'documentation',
-    jsdoc: 'documentation', typedoc: 'documentation', changelog: 'documentation', api: 'documentation',
-    git: 'workflow', commit: 'workflow', pr: 'workflow', 'pull-request': 'workflow',
-    ci: 'workflow', cd: 'workflow', 'ci-cd': 'workflow', deploy: 'workflow',
-    deployment: 'workflow', automation: 'workflow', workflow: 'workflow',
-    security: 'security', audit: 'security', vulnerability: 'security',
-    cve: 'security', secrets: 'security', authentication: 'security', auth: 'security',
-    ai: 'development-partner', assistant: 'development-partner', helper: 'development-partner',
-    copilot: 'development-partner', productivity: 'development-partner',
-    scaffold: 'development-partner', generator: 'development-partner',
+    lint: 'code-quality',
+    linting: 'code-quality',
+    format: 'code-quality',
+    formatting: 'code-quality',
+    prettier: 'code-quality',
+    eslint: 'code-quality',
+    'code-review': 'code-quality',
+    review: 'code-quality',
+    refactor: 'code-quality',
+    refactoring: 'code-quality',
+    'code-style': 'code-quality',
+    test: 'testing',
+    testing: 'testing',
+    jest: 'testing',
+    vitest: 'testing',
+    mocha: 'testing',
+    playwright: 'testing',
+    cypress: 'testing',
+    e2e: 'testing',
+    unit: 'testing',
+    integration: 'testing',
+    tdd: 'testing',
+    docs: 'documentation',
+    documentation: 'documentation',
+    readme: 'documentation',
+    jsdoc: 'documentation',
+    typedoc: 'documentation',
+    changelog: 'documentation',
+    api: 'documentation',
+    git: 'workflow',
+    commit: 'workflow',
+    pr: 'workflow',
+    'pull-request': 'workflow',
+    ci: 'workflow',
+    cd: 'workflow',
+    'ci-cd': 'workflow',
+    deploy: 'workflow',
+    deployment: 'workflow',
+    automation: 'workflow',
+    workflow: 'workflow',
+    security: 'security',
+    audit: 'security',
+    vulnerability: 'security',
+    cve: 'security',
+    secrets: 'security',
+    authentication: 'security',
+    auth: 'security',
+    ai: 'development-partner',
+    assistant: 'development-partner',
+    helper: 'development-partner',
+    copilot: 'development-partner',
+    productivity: 'development-partner',
+    scaffold: 'development-partner',
+    generator: 'development-partner',
   }
 
   const inferredRoles = new Set<SkillRole>()
@@ -402,7 +452,10 @@ export function normalizeSkillName(name: string): string {
 /**
  * Check if two skills overlap in functionality (SMI-1358)
  */
-export function skillsOverlap(installed: InstalledSkill, recommended: SkillRecommendation): boolean {
+export function skillsOverlap(
+  installed: InstalledSkill,
+  recommended: SkillRecommendation
+): boolean {
   const installedName = normalizeSkillName(installed.name)
   const recommendedName = normalizeSkillName(recommended.name)
   const recommendedId = recommended.skill_id.toLowerCase()
