@@ -18,6 +18,15 @@ describe('recommend.helpers', () => {
       expect(inferRolesFromTags([])).toEqual([])
     })
 
+    // SMI-1725: Defensive null/undefined handling
+    it('handles null input gracefully', () => {
+      expect(inferRolesFromTags(null as unknown as string[])).toEqual([])
+    })
+
+    it('handles undefined input gracefully', () => {
+      expect(inferRolesFromTags(undefined as unknown as string[])).toEqual([])
+    })
+
     it('infers code-quality role from lint tags', () => {
       const result = inferRolesFromTags(['lint', 'eslint'])
       expect(result).toContain('code-quality')

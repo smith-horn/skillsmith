@@ -204,14 +204,25 @@ describe('compare.helpers', () => {
     })
 
     it('recommends skill B when it clearly wins', () => {
-      const skillA = createSkill({ score: 50, trustTier: 'experimental' })
-      const skillB = createSkill({ score: 90, trustTier: 'verified' })
+      // SMI-1724: Use distinct names for clarity
+      const skillA = createSkill({
+        id: 'test/skill-a',
+        name: 'skill-a',
+        score: 50,
+        trustTier: 'experimental',
+      })
+      const skillB = createSkill({
+        id: 'test/skill-b',
+        name: 'skill-b',
+        score: 90,
+        trustTier: 'verified',
+      })
       const diffs = generateDifferences(skillA, skillB)
 
       const result = generateRecommendation(skillA, skillB, diffs)
 
       expect(result.winner).toBe('b')
-      expect(result.recommendation).toContain('skill-a') // skillB has same name in fixture
+      expect(result.recommendation).toContain('skill-b')
     })
 
     it('returns tie when skills are comparable', () => {

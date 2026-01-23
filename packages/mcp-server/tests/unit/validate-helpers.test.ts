@@ -159,6 +159,18 @@ tags:
       expect(hasSsrfPattern('http://10.0.0.1/internal')).toBe(true)
     })
 
+    // SMI-1723: Additional private IP ranges
+    it('detects private IP 192.168.x.x', () => {
+      expect(hasSsrfPattern('http://192.168.1.1/admin')).toBe(true)
+      expect(hasSsrfPattern('http://192.168.0.100/config')).toBe(true)
+    })
+
+    it('detects cloud metadata service 169.254.x.x', () => {
+      // AWS/Azure/GCP metadata endpoints
+      expect(hasSsrfPattern('http://169.254.169.254/latest/meta-data/')).toBe(true)
+      expect(hasSsrfPattern('http://169.254.170.2/v2/credentials')).toBe(true)
+    })
+
     it('allows safe URLs', () => {
       expect(hasSsrfPattern('https://github.com/user/repo')).toBe(false)
       expect(hasSsrfPattern('https://example.com')).toBe(false)

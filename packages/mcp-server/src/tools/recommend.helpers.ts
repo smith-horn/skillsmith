@@ -15,8 +15,14 @@ import type { SkillData } from './recommend.types.js'
 /**
  * SMI-1631: Infer skill roles from tags when not explicitly set
  * Maps common tags to skill roles for better filtering
+ * SMI-1725: Handles null/undefined input gracefully
  */
 export function inferRolesFromTags(tags: string[]): SkillRole[] {
+  // Defensive: handle null/undefined input
+  if (!tags || !Array.isArray(tags)) {
+    return []
+  }
+
   const roleMapping: Record<string, SkillRole> = {
     // Code quality
     lint: 'code-quality',

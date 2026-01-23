@@ -104,6 +104,7 @@ export const SSRF_PATTERNS = [
   /10\.\d+\.\d+\.\d+/,
   /172\.(1[6-9]|2\d|3[01])\.\d+\.\d+/,
   /192\.168\.\d+\.\d+/,
+  /169\.254\.\d+\.\d+/, // SMI-1723: Cloud metadata service (AWS, Azure, GCP)
 ]
 
 /**
