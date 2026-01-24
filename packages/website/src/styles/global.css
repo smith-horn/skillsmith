@@ -311,7 +311,6 @@ font-family: var(--font-sans);
 }
 
 @layer utilities {
-
   @keyframes animate-in {
     from {
       opacity: 0;
