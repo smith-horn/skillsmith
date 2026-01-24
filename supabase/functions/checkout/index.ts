@@ -14,7 +14,7 @@
  * - sessionId: Stripe session ID
  */
 
-import Stripe from 'https://esm.sh/stripe@14.5.0'
+import Stripe from 'https://esm.sh/stripe@20'
 import {
   handleCorsPreflightRequest,
   jsonResponse,
@@ -137,10 +137,8 @@ Deno.serve(async (req: Request) => {
       )
     }
 
-    // Initialize Stripe
-    const stripe = new Stripe(stripeSecretKey, {
-      apiVersion: '2023-10-16',
-    })
+    // Initialize Stripe (uses SDK default API version)
+    const stripe = new Stripe(stripeSecretKey)
 
     // Build success/cancel URLs
     const successUrl = body.successUrl || DEFAULT_SUCCESS_URL

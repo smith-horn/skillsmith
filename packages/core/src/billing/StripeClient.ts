@@ -112,7 +112,7 @@ export class StripeClient {
 
   constructor(config: StripeClientConfig) {
     this.stripe = new Stripe(config.secretKey, {
-      apiVersion: '2023-10-16',
+      // Use SDK default API version (2025-11-17.clover for v20)
       typescript: true,
     })
     this.webhookSecret = config.webhookSecret
@@ -506,11 +506,12 @@ export class StripeClient {
   }
 
   /**
-   * Get upcoming invoice (preview of next charge)
+   * Get upcoming invoice preview (preview of next charge)
+   * Note: Stripe v20+ uses createPreview instead of retrieveUpcoming
    */
-  async getUpcomingInvoice(customerId: StripeCustomerId): Promise<Stripe.UpcomingInvoice | null> {
+  async getUpcomingInvoice(customerId: StripeCustomerId): Promise<Stripe.Invoice | null> {
     try {
-      return await this.stripe.invoices.retrieveUpcoming({
+      return await this.stripe.invoices.createPreview({
         customer: customerId,
       })
     } catch (error: unknown) {

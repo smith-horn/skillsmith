@@ -72,9 +72,10 @@ interface OTelNodeSDK {
   new (config: unknown): { start(): Promise<void>; shutdown(): Promise<void> }
 }
 
-interface OTelResource {
-  new (attributes: Record<string, string>): unknown
-}
+/**
+ * Resource factory function type (v2.x uses resourceFromAttributes instead of class)
+ */
+type OTelResourceFromAttributes = (attributes: Record<string, string>) => unknown
 
 function getApi(): OTelApi | null {
   return api as OTelApi | null
@@ -84,8 +85,8 @@ function getSdk(): { NodeSDK: OTelNodeSDK } | null {
   return sdk as { NodeSDK: OTelNodeSDK } | null
 }
 
-function getResources(): { Resource: OTelResource } | null {
-  return resources as { Resource: OTelResource } | null
+function getResources(): { resourceFromAttributes: OTelResourceFromAttributes } | null {
+  return resources as { resourceFromAttributes: OTelResourceFromAttributes } | null
 }
 
 function getSemanticConventions(): Record<string, string> | null {
@@ -316,9 +317,8 @@ export class SkillsmithTracer {
       // Build SDK configuration
       const sdkConfig: Record<string, unknown> = {}
 
-      // Create resource with service info
-      const Resource = otelResources.Resource
-      sdkConfig.resource = new Resource({
+      // Create resource with service info (v2.x uses resourceFromAttributes function)
+      sdkConfig.resource = otelResources.resourceFromAttributes({
         [otelSemConv['ATTR_SERVICE_NAME'] ?? 'service.name']: this.config.serviceName,
         [otelSemConv['ATTR_SERVICE_VERSION'] ?? 'service.version']: '0.1.0',
       })

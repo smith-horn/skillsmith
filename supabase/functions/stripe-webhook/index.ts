@@ -13,7 +13,7 @@
  * - invoice.payment_failed: Handle failed payments
  */
 
-import Stripe from 'https://esm.sh/stripe@14.5.0'
+import Stripe from 'https://esm.sh/stripe@20'
 import { createSupabaseAdminClient, logInvocation, getRequestId } from '../_shared/supabase.ts'
 import { generateLicenseKey, hashLicenseKey, getRateLimitForTier } from '../_shared/license.ts'
 import { sendWelcomeEmail, sendPaymentFailedEmail } from '../_shared/email.ts'
@@ -44,7 +44,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const body = await req.text()
-  const stripe = new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2023-10-16' })
+  const stripe = new Stripe(STRIPE_SECRET_KEY)
 
   let event: Stripe.Event
   try {
