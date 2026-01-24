@@ -1,7 +1,7 @@
 ---
 title: "Composing Agents, Sub-Agents, Skills, and Sub-Skills: A Decision Framework for Product Builders"
 description: "The architecture decisions that determine whether your AI workflow scales or collapses"
-author: "William Smith"
+author: "Ryan Smith"
 date: 2026-01-23
 category: "Guides"
 tags: ["agents", "skills", "architecture", "claude-code", "context-window", "multi-agent"]
