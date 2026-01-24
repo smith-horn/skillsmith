@@ -45,14 +45,16 @@ fi
 echo "🔍 Running pre-push coverage check..."
 
 # Check if Docker is available
-if ! docker exec skillsmith-dev-1 echo "ok" > /dev/null 2>&1; then
+# SMI-1774: Use -w /app to support running from worktree directories
+if ! docker exec -w /app skillsmith-dev-1 echo "ok" > /dev/null 2>&1; then
   echo "⚠️  Docker not running - skipping coverage check"
   echo "   Run: docker compose --profile dev up -d"
   exit 0  # Don't block push, just warn
 fi
 
 # Run coverage check (uses existing test:coverage script)
-if docker exec skillsmith-dev-1 npm run test:coverage > /dev/null 2>&1; then
+# SMI-1774: Use -w /app to support running from worktree directories
+if docker exec -w /app skillsmith-dev-1 npm run test:coverage > /dev/null 2>&1; then
   echo "✅ Coverage check passed"
 else
   echo ""

@@ -40,9 +40,10 @@ fi
 echo ""
 
 # Helper function to run commands in Docker or locally
+# SMI-1774: Use -w /app to support running from worktree directories
 run_cmd() {
   if [ $USE_DOCKER -eq 1 ]; then
-    docker exec $DOCKER_CONTAINER "$@"
+    docker exec -w /app $DOCKER_CONTAINER "$@"
   else
     "$@"
   fi

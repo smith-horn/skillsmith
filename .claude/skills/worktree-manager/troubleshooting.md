@@ -112,6 +112,21 @@ docs/
 
 ## Docker Issues
 
+### Issue: "current working directory is outside of container mount namespace root"
+
+**Cause**: Docker exec inherits the host's current directory, which doesn't exist in the container when running from a worktree
+**Solution**: Always use `-w /app` flag with docker exec
+
+```bash
+# From a worktree directory, this will fail:
+docker exec skillsmith-dev-1 npm test  # ERROR
+
+# Use -w /app to specify the container working directory:
+docker exec -w /app skillsmith-dev-1 npm test  # WORKS
+```
+
+**Note**: As of SMI-1774, the git hooks (pre-push, pre-push-check.sh) have been updated to include `-w /app` automatically.
+
 ### Issue: Docker changes not visible in worktree
 
 **Cause**: Docker container mounted from main repo path, not worktree path
