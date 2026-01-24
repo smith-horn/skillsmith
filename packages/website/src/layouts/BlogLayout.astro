@@ -48,7 +48,7 @@ const formattedUpdated = updated ? formatDate(updated) : null;
   <div class="flex min-h-[calc(100vh-4rem)]">
     <!-- Main Content -->
     <main class="flex-1 min-w-0 px-4 py-10 sm:px-8 lg:px-12">
-      <article class="blog-content max-w-3xl mx-auto">
+      <article class="blog-content max-w-2xl mx-auto">
         <!-- Back to blog link -->
         <a href="/blog" class="inline-flex items-center gap-2 text-dark-400 hover:text-primary-500 transition-colors mb-8 group">
           <svg class="w-4 h-4 transition-transform group-hover:-translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -186,23 +186,19 @@ const formattedUpdated = updated ? formatDate(updated) : null;
   }
 
   .prose-content h2 {
-    font-size: 1.5rem;
+    font-size: 1.875rem;
     font-weight: 600;
     color: white;
     margin-top: 2.5rem;
     margin-bottom: 1rem;
-    padding-top: 1.5rem;
-    border-top: 1px solid #1e293b;
   }
 
   .prose-content h2:first-of-type {
-    border-top: none;
-    padding-top: 0;
     margin-top: 0;
   }
 
   .prose-content h3 {
-    font-size: 1.25rem;
+    font-size: 1.5rem;
     font-weight: 600;
     color: white;
     margin-top: 2rem;
@@ -210,7 +206,7 @@ const formattedUpdated = updated ? formatDate(updated) : null;
   }
 
   .prose-content h4 {
-    font-size: 1.125rem;
+    font-size: 1.25rem;
     font-weight: 600;
     color: #e2e8f0;
     margin-top: 1.5rem;
@@ -295,10 +291,33 @@ const formattedUpdated = updated ? formatDate(updated) : null;
     border: 1px solid #1e293b;
   }
 
+  /* Table wrapper for horizontal scroll on mobile */
+  .prose-content .table-wrapper {
+    overflow-x: auto;
+    margin: 1.5rem 0;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .prose-content .table-wrapper::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 24px;
+    background: linear-gradient(to right, transparent, rgba(13, 13, 15, 0.8));
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .prose-content .table-wrapper.has-scroll::after {
+    opacity: 1;
+  }
+
   .prose-content table {
     width: 100%;
     font-size: 0.875rem;
-    margin: 1.5rem 0;
     border-collapse: collapse;
   }
 
