@@ -140,12 +140,17 @@
 <script>
   // Image Lightbox functionality
   document.addEventListener('DOMContentLoaded', () => {
-    const lightbox = document.getElementById('image-lightbox');
-    const lightboxImage = document.getElementById('lightbox-image') as HTMLImageElement;
-    const closeButton = document.getElementById('lightbox-close');
-    const backdrop = lightbox?.querySelector('.lightbox-backdrop');
+    const lightboxEl = document.getElementById('image-lightbox');
+    const lightboxImageEl = document.getElementById('lightbox-image') as HTMLImageElement | null;
+    const closeButtonEl = document.getElementById('lightbox-close');
 
-    if (!lightbox || !lightboxImage || !closeButton) return;
+    if (!lightboxEl || !lightboxImageEl || !closeButtonEl) return;
+
+    // Store validated references (TypeScript now knows these are non-null)
+    const lightbox = lightboxEl;
+    const lightboxImage = lightboxImageEl;
+    const closeButton = closeButtonEl;
+    const backdrop = lightbox.querySelector('.lightbox-backdrop');
 
     // Open lightbox function
     function openLightbox(imgSrc: string, imgAlt: string) {
