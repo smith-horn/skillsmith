@@ -50,9 +50,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Changes to source code won't invalidate the dependency cache
 COPY package*.json ./
 COPY packages/core/package*.json ./packages/core/
+COPY packages/enterprise/package*.json ./packages/enterprise/
 COPY packages/mcp-server/package*.json ./packages/mcp-server/
 COPY packages/cli/package*.json ./packages/cli/
 COPY packages/vscode-extension/package*.json ./packages/vscode-extension/
+COPY packages/website/package*.json ./packages/website/
 
 # Install ALL dependencies (including devDependencies for building)
 # Using npm ci for reproducible builds from package-lock.json
