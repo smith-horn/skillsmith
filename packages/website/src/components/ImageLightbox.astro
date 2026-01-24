@@ -1,0 +1,221 @@
+---
+/**
+ * ImageLightbox - Fullscreen image viewer for blog diagrams
+ * SMI-1757 Wave 3: Accessibility improvements
+ *
+ * Features:
+ * - Click image to open fullscreen overlay
+ * - ESC or click outside to close
+ * - Keyboard accessible (Tab, Enter, ESC)
+ * - Respects prefers-reduced-motion
+ */
+---
+
+<!-- Lightbox overlay (initially hidden) -->
+<div
+  id="image-lightbox"
+  class="lightbox"
+  role="dialog"
+  aria-modal="true"
+  aria-label="Image viewer"
+  hidden
+>
+  <div class="lightbox-backdrop"></div>
+  <div class="lightbox-content">
+    <img
+      id="lightbox-image"
+      src=""
+      alt=""
+      class="lightbox-img"
+    />
+    <button
+      id="lightbox-close"
+      class="lightbox-close"
+      aria-label="Close image viewer (Escape)"
+      type="button"
+    >
+      <svg
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<style is:global>
+  .lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+  }
+
+  .lightbox[hidden] {
+    display: none;
+  }
+
+  .lightbox.is-open {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .lightbox-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.9);
+    cursor: pointer;
+  }
+
+  .lightbox-content {
+    position: relative;
+    max-width: 95vw;
+    max-height: 95vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .lightbox-img {
+    max-width: 100%;
+    max-height: 90vh;
+    object-fit: contain;
+    border-radius: 4px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    transform: scale(0.95);
+    transition: transform 0.2s ease;
+  }
+
+  .lightbox.is-open .lightbox-img {
+    transform: scale(1);
+  }
+
+  .lightbox-close {
+    position: absolute;
+    top: -40px;
+    right: 0;
+    padding: 8px;
+    background: transparent;
+    border: none;
+    color: white;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
+  }
+
+  .lightbox-close:hover,
+  .lightbox-close:focus {
+    opacity: 1;
+    outline: none;
+  }
+
+  .lightbox-close:focus-visible {
+    outline: 2px solid #E07A5F;
+    outline-offset: 2px;
+  }
+
+  /* Respect reduced motion preference */
+  @media (prefers-reduced-motion: reduce) {
+    .lightbox,
+    .lightbox-img {
+      transition: none;
+    }
+  }
+</style>
+
+<script>
+  // Image Lightbox functionality
+  document.addEventListener('DOMContentLoaded', () => {
+    const lightbox = document.getElementById('image-lightbox');
+    const lightboxImage = document.getElementById('lightbox-image') as HTMLImageElement;
+    const closeButton = document.getElementById('lightbox-close');
+    const backdrop = lightbox?.querySelector('.lightbox-backdrop');
+
+    if (!lightbox || !lightboxImage || !closeButton) return;
+
+    // Open lightbox function
+    function openLightbox(imgSrc: string, imgAlt: string) {
+      lightboxImage.src = imgSrc;
+      lightboxImage.alt = imgAlt;
+      lightbox.hidden = false;
+      // Force reflow for animation
+      void lightbox.offsetWidth;
+      lightbox.classList.add('is-open');
+      closeButton.focus();
+      document.body.style.overflow = 'hidden';
+    }
+
+    // Close lightbox function
+    function closeLightbox() {
+      lightbox.classList.remove('is-open');
+      document.body.style.overflow = '';
+      setTimeout(() => {
+        lightbox.hidden = true;
+        lightboxImage.src = '';
+        lightboxImage.alt = '';
+      }, 200);
+    }
+
+    // Close button click
+    closeButton.addEventListener('click', closeLightbox);
+
+    // Backdrop click
+    backdrop?.addEventListener('click', closeLightbox);
+
+    // ESC key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !lightbox.hidden) {
+        closeLightbox();
+      }
+    });
+
+    // Make prose images clickable
+    const proseImages = document.querySelectorAll('.prose-content img');
+    proseImages.forEach((img) => {
+      const imgEl = img as HTMLImageElement;
+
+      // Add interactive attributes
+      imgEl.setAttribute('role', 'button');
+      imgEl.setAttribute('tabindex', '0');
+      imgEl.setAttribute('aria-label', `${imgEl.alt || 'Image'} - Click to enlarge`);
+
+      // Click handler
+      imgEl.addEventListener('click', () => {
+        openLightbox(imgEl.src, imgEl.alt);
+      });
+
+      // Keyboard handler (Enter/Space)
+      imgEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openLightbox(imgEl.src, imgEl.alt);
+        }
+      });
+    });
+
+    // Add scope to table headers for accessibility
+    const tables = document.querySelectorAll('.prose-content table');
+    tables.forEach((table) => {
+      const headerCells = table.querySelectorAll('th');
+      headerCells.forEach((th) => {
+        if (!th.hasAttribute('scope')) {
+          th.setAttribute('scope', 'col');
+        }
+      });
+    });
+  });
+</script>

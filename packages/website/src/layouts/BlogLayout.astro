@@ -1,5 +1,6 @@
 ---
 import BaseLayout from './BaseLayout.astro';
+import ImageLightbox from '../components/ImageLightbox.astro';
 import { formatDate } from '../utils/blog';
 
 interface Props {
@@ -115,6 +116,9 @@ const formattedUpdated = updated ? formatDate(updated) : null;
         <div class="prose-content">
           <slot />
         </div>
+
+        <!-- Image Lightbox Component -->
+        <ImageLightbox />
 
         <!-- Tags -->
         {tags.length > 0 && (
@@ -289,6 +293,23 @@ const formattedUpdated = updated ? formatDate(updated) : null;
     border-radius: 0.5rem;
     margin: 2rem 0;
     border: 1px solid #1e293b;
+    cursor: zoom-in;
+    transition: opacity 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .prose-content img:hover {
+    opacity: 0.9;
+    box-shadow: 0 0 0 2px rgba(224, 122, 95, 0.3);
+  }
+
+  .prose-content img:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px #E07A5F;
+  }
+
+  .prose-content img:focus-visible {
+    outline: 2px solid #E07A5F;
+    outline-offset: 2px;
   }
 
   /* Table wrapper for horizontal scroll on mobile */
