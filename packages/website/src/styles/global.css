@@ -5,13 +5,259 @@
  * consistent base styling across all pages.
  */
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
+
+@source '../**/*.{astro,html,js,jsx,md,mdx,svelte,ts,tsx,vue}';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  /* Dark foundation - Skillsmith brand */
+  --color-bg-primary: #0d0d0f;
+  --color-bg-secondary: #18181b;
+  --color-bg-tertiary: #27272a;
+
+  /* Coral accent (primary brand color) */
+  --color-coral: #e07a5f;
+  --color-coral-dark: #d4694e;
+  --color-coral-light: #f09080;
+
+  /* Supporting accents */
+  --color-sage: #81b29a;
+  --color-amber: #f4a261;
+
+  /* Primary color scale (maps to coral for brand consistency) */
+  --color-primary-50: #fef3f0;
+  --color-primary-100: #fce8e3;
+  --color-primary-200: #f9cfc5;
+  --color-primary-300: #f4ae9d;
+  --color-primary-400: #ec8b73;
+  --color-primary-500: #e07a5f;
+  --color-primary-600: #d4694e;
+  --color-primary-700: #b85542;
+  --color-primary-800: #974539;
+  --color-primary-900: #7d3b32;
+
+  /* Secondary color scale (maps to sage) */
+  --color-secondary-50: #f0f7f4;
+  --color-secondary-100: #dcefe5;
+  --color-secondary-200: #bbdfce;
+  --color-secondary-300: #8fc7ad;
+  --color-secondary-400: #81b29a;
+  --color-secondary-500: #4a9b7a;
+  --color-secondary-600: #387d62;
+  --color-secondary-700: #2e6450;
+  --color-secondary-800: #285042;
+  --color-secondary-900: #234237;
+
+  /* Gray scale */
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f3f4f6;
+  --color-gray-200: #e5e7eb;
+  --color-gray-300: #d1d5db;
+  --color-gray-400: #9ca3af;
+  --color-gray-500: #6b7280;
+  --color-gray-600: #4b5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1f2937;
+  --color-gray-900: #111827;
+
+  /* Green scale for badges */
+  --color-green-100: #dcfce7;
+  --color-green-800: #166534;
+
+  /* Blue scale for badges */
+  --color-blue-100: #dbeafe;
+  --color-blue-800: #1e40af;
+
+  /* Yellow scale for badges */
+  --color-yellow-100: #fef9c3;
+  --color-yellow-800: #854d0e;
+
+  /* Typography */
+  --font-sans: Satoshi, system-ui, -apple-system, sans-serif;
+  --font-mono: JetBrains Mono, Menlo, monospace;
+
+  /* Shadows */
+  --shadow-glow: 0 0 40px rgba(224, 122, 95, 0.15);
+  --shadow-cta: 0 8px 32px rgba(224, 122, 95, 0.25);
+  --shadow-soft: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-hover: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+
+  /* Animations */
+  --animate-fade-up: fadeUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  --animate-float: float 20s ease-in-out infinite;
+
+  @keyframes fadeUp {
+    0% {
+      opacity: 0;
+      transform: translateY(24px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes float {
+    0%,
+    100% {
+      transform: translate(0, 0);
+    }
+    50% {
+      transform: translate(30px, -20px);
+    }
+  }
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+@utility btn {
+  /* Button variants */
+  @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
+}
+
+@utility btn-primary {
+  @apply btn bg-primary-600 text-white hover:bg-primary-700;
+}
+
+@utility btn-secondary {
+  @apply btn bg-gray-100 text-gray-900 hover:bg-gray-200;
+}
+
+@utility btn-outline {
+  @apply btn border border-gray-300 bg-white text-gray-700 hover:bg-gray-50;
+}
+
+@utility btn-ghost {
+  @apply btn text-gray-600 hover:bg-gray-100 hover:text-gray-900;
+}
+
+@utility btn-lg {
+  @apply px-6 py-3 text-base;
+}
+
+@utility btn-sm {
+  @apply px-3 py-1.5 text-xs;
+}
+
+@utility card {
+  /* Card styles */
+  @apply rounded-xl border border-gray-200 bg-white shadow-soft;
+}
+
+@utility card-hover {
+  @apply card transition-shadow duration-200 hover:shadow-hover;
+}
+
+@utility badge {
+  /* Badge styles */
+  @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+}
+
+@utility badge-verified {
+  @apply badge bg-green-100 text-green-800;
+}
+
+@utility badge-community {
+  @apply badge bg-blue-100 text-blue-800;
+}
+
+@utility badge-experimental {
+  @apply badge bg-yellow-100 text-yellow-800;
+}
+
+@utility input {
+  /* Input styles */
+  @apply block w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-900 placeholder-gray-500 focus:border-primary-500 focus:outline-hidden focus:ring-1 focus:ring-primary-500;
+}
+
+@utility input-lg {
+  @apply input px-5 py-3 text-base;
+}
+
+@utility section {
+  /* Section styles */
+  @apply py-16 sm:py-24;
+}
+
+@utility section-dark {
+  @apply section bg-gray-900 text-white;
+}
+
+@utility container-narrow {
+  /* Container variants */
+  @apply mx-auto max-w-3xl px-4;
+}
+
+@utility container-wide {
+  @apply mx-auto max-w-7xl px-4 sm:px-6 lg:px-8;
+}
+
+@utility prose-custom {
+  /* Prose styles for documentation */
+  @apply prose prose-gray max-w-none prose-headings:font-semibold prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline prose-code:before:content-none prose-code:after:content-none;
+}
+
+@utility text-gradient {
+  /* Text gradient */
+  @apply bg-clip-text text-transparent bg-linear-to-r from-primary-600 to-secondary-600;
+}
+
+@utility backdrop-blur-safe {
+  /* Backdrop blur with @supports fallback for older browsers */
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+
+  @supports (backdrop-filter: blur(0)) {
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+}
+
+@utility animate-in {
+  /* Animation utilities */
+  animation: animate-in 0.3s ease-out;
+}
+
+@utility no-scrollbar {
+  /* Hide scrollbar */
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility aspect-hero {
+  /* Aspect ratio utilities */
+  aspect-ratio: 16 / 9;
+}
+
+@utility aspect-card {
+  aspect-ratio: 4 / 3;
+}
 
 @layer base {
   html {
-    font-family: 'Satoshi', system-ui, sans-serif;
+    font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -52,7 +298,7 @@
 
   /* Code block styles */
   code {
-    @apply font-mono text-sm bg-gray-100 px-1.5 py-0.5 rounded;
+    @apply font-mono text-sm bg-gray-100 px-1.5 py-0.5 rounded-sm;
   }
 
   pre {
@@ -64,111 +310,7 @@
   }
 }
 
-@layer components {
-  /* Button variants */
-  .btn {
-    @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
-  }
-
-  .btn-primary {
-    @apply btn bg-primary-600 text-white hover:bg-primary-700;
-  }
-
-  .btn-secondary {
-    @apply btn bg-gray-100 text-gray-900 hover:bg-gray-200;
-  }
-
-  .btn-outline {
-    @apply btn border border-gray-300 bg-white text-gray-700 hover:bg-gray-50;
-  }
-
-  .btn-ghost {
-    @apply btn text-gray-600 hover:bg-gray-100 hover:text-gray-900;
-  }
-
-  .btn-lg {
-    @apply px-6 py-3 text-base;
-  }
-
-  .btn-sm {
-    @apply px-3 py-1.5 text-xs;
-  }
-
-  /* Card styles */
-  .card {
-    @apply rounded-xl border border-gray-200 bg-white shadow-soft;
-  }
-
-  .card-hover {
-    @apply card transition-shadow duration-200 hover:shadow-hover;
-  }
-
-  /* Badge styles */
-  .badge {
-    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
-  }
-
-  .badge-verified {
-    @apply badge bg-green-100 text-green-800;
-  }
-
-  .badge-community {
-    @apply badge bg-blue-100 text-blue-800;
-  }
-
-  .badge-experimental {
-    @apply badge bg-yellow-100 text-yellow-800;
-  }
-
-  /* Input styles */
-  .input {
-    @apply block w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-900 placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500;
-  }
-
-  .input-lg {
-    @apply input px-5 py-3 text-base;
-  }
-
-  /* Section styles */
-  .section {
-    @apply py-16 sm:py-24;
-  }
-
-  .section-dark {
-    @apply section bg-gray-900 text-white;
-  }
-
-  /* Container variants */
-  .container-narrow {
-    @apply mx-auto max-w-3xl px-4;
-  }
-
-  .container-wide {
-    @apply mx-auto max-w-7xl px-4 sm:px-6 lg:px-8;
-  }
-
-  /* Prose styles for documentation */
-  .prose-custom {
-    @apply prose prose-gray max-w-none prose-headings:font-semibold prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline prose-code:before:content-none prose-code:after:content-none;
-  }
-}
-
 @layer utilities {
-  /* Text gradient */
-  .text-gradient {
-    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary-600 to-secondary-600;
-  }
-
-  /* Backdrop blur support */
-  .backdrop-blur-safe {
-    @apply backdrop-blur supports-[backdrop-filter]:backdrop-blur-lg;
-  }
-
-  /* Animation utilities */
-  .animate-in {
-    animation: animate-in 0.3s ease-out;
-  }
-
   @keyframes animate-in {
     from {
       opacity: 0;
@@ -178,24 +320,5 @@
       opacity: 1;
       transform: translateY(0);
     }
-  }
-
-  /* Hide scrollbar */
-  .no-scrollbar {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-
-  .no-scrollbar::-webkit-scrollbar {
-    display: none;
-  }
-
-  /* Aspect ratio utilities */
-  .aspect-hero {
-    aspect-ratio: 16 / 9;
-  }
-
-  .aspect-card {
-    aspect-ratio: 4 / 3;
   }
 }
