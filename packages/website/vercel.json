@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "astro",
+  "buildCommand": "astro build",
   "redirects": [
     {
       "source": "/:path*",
