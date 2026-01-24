@@ -1,5 +1,6 @@
 # =============================================================================
 # Dockerfile - Optimized for Production (SMI-994)
+# Cache bust: 2026-01-24 major-deps-upgrade
 # =============================================================================
 # Optimizations applied:
 # 1. Multi-stage build - Separate build and runtime stages
