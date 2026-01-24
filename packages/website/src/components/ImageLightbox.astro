@@ -152,8 +152,12 @@
     const closeButton = closeButtonEl;
     const backdrop = lightbox.querySelector('.lightbox-backdrop');
 
+    // Track the element that triggered the lightbox for focus return
+    let lastFocusedElement: HTMLElement | null = null;
+
     // Open lightbox function
-    function openLightbox(imgSrc: string, imgAlt: string) {
+    function openLightbox(imgSrc: string, imgAlt: string, triggerElement: HTMLElement) {
+      lastFocusedElement = triggerElement;
       lightboxImage.src = imgSrc;
       lightboxImage.alt = imgAlt;
       lightbox.hidden = false;
@@ -168,11 +172,17 @@
     function closeLightbox() {
       lightbox.classList.remove('is-open');
       document.body.style.overflow = '';
+      const elementToFocus = lastFocusedElement;
       setTimeout(() => {
         lightbox.hidden = true;
         lightboxImage.src = '';
         lightboxImage.alt = '';
+        // Restore focus to the element that opened the lightbox
+        if (elementToFocus) {
+          elementToFocus.focus();
+        }
       }, 200);
+      lastFocusedElement = null;
     }
 
     // Close button click
@@ -200,14 +210,14 @@
 
       // Click handler
       imgEl.addEventListener('click', () => {
-        openLightbox(imgEl.src, imgEl.alt);
+        openLightbox(imgEl.src, imgEl.alt, imgEl);
       });
 
       // Keyboard handler (Enter/Space)
       imgEl.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          openLightbox(imgEl.src, imgEl.alt);
+          openLightbox(imgEl.src, imgEl.alt, imgEl);
         }
       });
     });
