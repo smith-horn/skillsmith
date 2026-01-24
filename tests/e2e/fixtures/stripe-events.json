@@ -1,0 +1,144 @@
+{
+  "checkout_session_completed": {
+    "id": "evt_test_checkout_123",
+    "type": "checkout.session.completed",
+    "data": {
+      "object": {
+        "id": "cs_test_session_123",
+        "mode": "subscription",
+        "customer": "cus_test_customer_123",
+        "subscription": "sub_test_subscription_123",
+        "customer_email": "test@example.com",
+        "customer_details": {
+          "email": "test@example.com",
+          "name": "Test User"
+        },
+        "metadata": {
+          "tier": "individual",
+          "billingPeriod": "monthly",
+          "seatCount": "1"
+        }
+      }
+    }
+  },
+  "checkout_session_team": {
+    "id": "evt_test_checkout_team_456",
+    "type": "checkout.session.completed",
+    "data": {
+      "object": {
+        "id": "cs_test_session_team_456",
+        "mode": "subscription",
+        "customer": "cus_test_customer_team_456",
+        "subscription": "sub_test_subscription_team_456",
+        "customer_email": "team@example.com",
+        "customer_details": {
+          "email": "team@example.com",
+          "name": "Team Admin"
+        },
+        "metadata": {
+          "tier": "team",
+          "billingPeriod": "annual",
+          "seatCount": "5"
+        }
+      }
+    }
+  },
+  "checkout_session_pending": {
+    "id": "evt_test_checkout_pending_789",
+    "type": "checkout.session.completed",
+    "data": {
+      "object": {
+        "id": "cs_test_session_pending_789",
+        "mode": "subscription",
+        "customer": "cus_test_pending_789",
+        "subscription": "sub_test_pending_789",
+        "customer_email": "pending@example.com",
+        "customer_details": {
+          "email": "pending@example.com",
+          "name": "Pending User"
+        },
+        "metadata": {
+          "tier": "individual",
+          "billingPeriod": "monthly",
+          "seatCount": "1"
+        }
+      }
+    }
+  },
+  "subscription_updated": {
+    "id": "evt_test_sub_updated_123",
+    "type": "customer.subscription.updated",
+    "data": {
+      "object": {
+        "id": "sub_test_subscription_123",
+        "customer": "cus_test_customer_123",
+        "status": "active",
+        "current_period_start": 1704067200,
+        "current_period_end": 1706745600,
+        "cancel_at_period_end": false,
+        "canceled_at": null
+      }
+    }
+  },
+  "subscription_canceled": {
+    "id": "evt_test_sub_canceled_123",
+    "type": "customer.subscription.updated",
+    "data": {
+      "object": {
+        "id": "sub_test_subscription_123",
+        "customer": "cus_test_customer_123",
+        "status": "canceled",
+        "current_period_start": 1704067200,
+        "current_period_end": 1706745600,
+        "cancel_at_period_end": false,
+        "canceled_at": 1705276800
+      }
+    }
+  },
+  "subscription_deleted": {
+    "id": "evt_test_sub_deleted_123",
+    "type": "customer.subscription.deleted",
+    "data": {
+      "object": {
+        "id": "sub_test_subscription_123",
+        "customer": "cus_test_customer_123",
+        "status": "canceled"
+      }
+    }
+  },
+  "invoice_payment_succeeded": {
+    "id": "evt_test_invoice_success_123",
+    "type": "invoice.payment_succeeded",
+    "data": {
+      "object": {
+        "id": "in_test_invoice_123",
+        "subscription": "sub_test_subscription_123",
+        "customer": "cus_test_customer_123",
+        "customer_email": "test@example.com",
+        "amount_paid": 999,
+        "currency": "usd"
+      }
+    }
+  },
+  "invoice_payment_failed": {
+    "id": "evt_test_invoice_failed_123",
+    "type": "invoice.payment_failed",
+    "data": {
+      "object": {
+        "id": "in_test_invoice_failed_123",
+        "subscription": "sub_test_subscription_123",
+        "customer": "cus_test_customer_123",
+        "customer_email": "test@example.com",
+        "amount_due": 999,
+        "currency": "usd",
+        "attempt_count": 1
+      }
+    }
+  },
+  "stripe_test_cards": {
+    "success": "4242424242424242",
+    "decline": "4000000000000002",
+    "insufficient_funds": "4000000000009995",
+    "requires_authentication": "4000002500003155"
+  }
+}
