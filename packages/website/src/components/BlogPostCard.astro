@@ -77,7 +77,7 @@ const formattedDate = new Intl.DateTimeFormat('en-US', {
       {description}
     </p>
 
-    <div class="flex items-center justify-between text-xs text-dark-500">
+    <div class="flex items-center justify-between text-xs text-dark-400">
       <div class="flex items-center gap-3">
         <span>{author}</span>
         <span>&middot;</span>
@@ -101,7 +101,7 @@ const formattedDate = new Intl.DateTimeFormat('en-US', {
           </span>
         ))}
         {tags.length > 3 && (
-          <span class="px-2 py-0.5 text-xs text-dark-500">
+          <span class="px-2 py-0.5 text-xs text-dark-400">
             +{tags.length - 3}
           </span>
         )}
