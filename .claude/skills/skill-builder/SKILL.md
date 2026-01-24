@@ -79,6 +79,7 @@ For detailed information, see the following files:
 | [Specification](./specification.md) | YAML frontmatter, directory structure, progressive disclosure |
 | [Templates](./templates.md) | Basic, intermediate, and advanced skill templates |
 | [Best Practices](./best-practices.md) | Content writing guidelines, validation checklist |
+| [Skill Locations](./skill-locations.md) | User vs project skills, precedence, migration |
 
 ---
 
