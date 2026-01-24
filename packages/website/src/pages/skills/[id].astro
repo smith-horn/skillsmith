@@ -262,7 +262,7 @@ const { id } = Astro.params;
       document.getElementById('install-command-claude').textContent = `"Install the ${skillName} skill"`;
 
       // Details
-      document.getElementById('skill-category').textContent = skill.category || 'Uncategorized';
+      document.getElementById('skill-category').textContent = skill.categories?.[0] || 'Uncategorized';
       document.getElementById('skill-trust-tier').textContent = trustTier.charAt(0).toUpperCase() + trustTier.slice(1);
       document.getElementById('skill-version-detail').textContent = skill.version || 'Unknown';
 
