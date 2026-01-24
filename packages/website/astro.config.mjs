@@ -8,6 +8,14 @@ export default defineConfig({
 
   integrations: [sitemap()],
 
+  // Markdown configuration with Shiki syntax highlighting
+  markdown: {
+    shikiConfig: {
+      theme: 'github-dark',
+      wrap: true,
+    },
+  },
+
   // Vercel adapter for hybrid rendering
   adapter: vercel(),
 
