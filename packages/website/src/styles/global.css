@@ -6,6 +6,7 @@
  */
 
 @import 'tailwindcss';
+@plugin '@tailwindcss/typography';
 
 @source '../**/*.{astro,html,js,jsx,md,mdx,svelte,ts,tsx,vue}';
 
@@ -220,8 +221,14 @@
 }
 
 @utility backdrop-blur-safe {
-  /* Backdrop blur support */
-  @apply backdrop-blur-sm supports-backdrop-filter:backdrop-blur-lg;
+  /* Backdrop blur with @supports fallback for older browsers */
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+
+  @supports (backdrop-filter: blur(0)) {
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
 }
 
 @utility animate-in {
@@ -250,7 +257,7 @@
 
 @layer base {
   html {
-    font-family: 'Satoshi', system-ui, sans-serif;
+font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
