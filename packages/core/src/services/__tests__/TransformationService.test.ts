@@ -89,7 +89,9 @@ Task("agent3", "task 3")
       )
 
       expect(result.transformed).toBe(true)
-      expect(result.stats.tokenReductionPercent).toBeGreaterThan(0)
+      // Token reduction should be meaningful (>= 10%) but capped at 80%
+      expect(result.stats.tokenReductionPercent).toBeGreaterThanOrEqual(10)
+      expect(result.stats.tokenReductionPercent).toBeLessThanOrEqual(80)
       expect(result.analysis).toBeDefined()
     })
 
