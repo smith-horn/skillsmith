@@ -189,6 +189,26 @@ const TOOL_PATTERNS: Record<string, { patterns: string[]; weight: number }> = {
 }
 
 /**
+ * Escape special regex characters in a string
+ * @param str - String to escape
+ * @returns Escaped string safe for use in RegExp
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Determine confidence level based on match count
+ * @param matchCount - Number of detected tools
+ * @returns Confidence level
+ */
+function getConfidenceLevel(matchCount: number): 'high' | 'medium' | 'low' {
+  if (matchCount >= 4) return 'high'
+  if (matchCount >= 2) return 'medium'
+  return 'low'
+}
+
+/**
  * Thresholds for optimization decisions
  */
 const THRESHOLDS = {
@@ -216,6 +236,8 @@ const THRESHOLDS = {
  *
  * @param content - The full SKILL.md content
  * @returns Analysis of optimization potential
+ * @remarks The lineCount for an empty string returns 1, matching standard
+ * String.split('\n') behavior where ''.split('\n') yields ['']
  */
 export function analyzeSkill(content: string): SkillAnalysis {
   const lines = content.split('\n')
@@ -354,13 +376,14 @@ function estimateExamplesLines(content: string): number {
  * Analyze tool usage patterns in the content
  */
 function analyzeToolUsage(content: string): ToolUsageAnalysis {
-  const lowerContent = content.toLowerCase()
   const detectedTools: string[] = []
   let totalWeight = 0
 
   for (const [tool, config] of Object.entries(TOOL_PATTERNS)) {
     for (const pattern of config.patterns) {
-      if (lowerContent.includes(pattern.toLowerCase())) {
+      // Use word-boundary regex to avoid false positives (e.g., "searching" matching "search")
+      const regex = new RegExp(`\\b${escapeRegex(pattern)}\\b`, 'i')
+      if (regex.test(content)) {
         if (!detectedTools.includes(tool)) {
           detectedTools.push(tool)
           totalWeight += config.weight
@@ -381,10 +404,8 @@ function analyzeToolUsage(content: string): ToolUsageAnalysis {
     fileReadCount + fileWriteCount >= THRESHOLDS.heavyToolUsageCount ||
     totalWeight >= 10
 
-  // Calculate confidence
-  const matchCount = detectedTools.length
-  const confidence: 'high' | 'medium' | 'low' =
-    matchCount >= 4 ? 'high' : matchCount >= 2 ? 'medium' : 'low'
+  // Calculate confidence using helper function
+  const confidence = getConfidenceLevel(detectedTools.length)
 
   return {
     detectedTools,
