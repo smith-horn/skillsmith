@@ -27,6 +27,7 @@ Enforces engineering standards from [standards.md](../../../docs/architecture/st
 - "commit", "before I merge"
 - "standards", "compliance"
 - "code quality", "best practices"
+- "retro", "retrospective"
 
 ## Quick Audit
 
@@ -213,6 +214,108 @@ Before marking a code review complete:
 - [ ] All minor issues either fixed OR have Linear tickets
 - [ ] Each deferred issue has a ticket number documented
 - [ ] Re-review confirms fixes are correct
+- [ ] **Code review report written to `docs/code_review/`**
+
+### Code Review Report (Mandatory)
+
+**Every code review MUST produce a written report** saved to `docs/code_review/`.
+
+**File naming**: `YYYY-MM-DD-<brief-slug>.md`
+**Example**: `2025-01-24-auth-refactor-review.md`
+
+**Template**:
+
+```markdown
+# Code Review: <Title>
+
+**Date**: YYYY-MM-DD
+**Reviewer**: Claude Code Review Agent
+**Related Issues**: SMI-XXX
+**Files Changed**: N files
+
+## Summary
+
+Brief description of what was reviewed.
+
+## Files Reviewed
+
+| File | Lines Changed | Status | Notes |
+|------|---------------|--------|-------|
+| `path/to/file.ts` | +X/-Y | PASS/FAIL | Brief note |
+
+## Findings
+
+| Finding | Severity | Status |
+|---------|----------|--------|
+| Description | Critical/High/Medium/Low | Fixed/Created SMI-XXX |
+
+## Overall Result
+
+**PASS/FAIL**: Summary of review outcome.
+
+## Recommendations (Non-Blocking)
+
+- Recommendation 1
+- Recommendation 2
+```
+
+---
+
+## Retrospective Reports
+
+When running a retrospective ("retro"), **MUST produce a written report** saved to `docs/retros/`.
+
+**File naming**: `YYYY-MM-DD-<topic-slug>.md`
+**Example**: `2025-01-24-auth-migration-retro.md`
+
+**Template**:
+
+```markdown
+# <Topic> Retrospective
+
+**Date:** YYYY-MM-DD
+**Duration:** N sessions
+**Issues Completed:** SMI-XXX, SMI-YYY
+**Branch:** `branch-name`
+
+## What Went Well
+
+1. Item 1
+2. Item 2
+
+## What Went Wrong
+
+1. Issue 1
+2. Issue 2
+
+## Metrics
+
+| Metric | Value |
+|--------|-------|
+| Files modified | N |
+| Tests passing | N/N |
+| Issues found | N |
+
+## Key Lessons
+
+1. Lesson 1
+2. Lesson 2
+
+## Recommendations
+
+1. Recommendation for future work
+```
+
+### Retrospective Completion Checklist
+
+- [ ] All completed issues listed with SMI numbers
+- [ ] "What Went Well" has at least 2 items
+- [ ] "What Went Wrong" is honest (even if brief)
+- [ ] Metrics are accurate
+- [ ] Key lessons are actionable
+- [ ] **Report written to `docs/retros/`**
+
+---
 
 ## When to Invoke
 
