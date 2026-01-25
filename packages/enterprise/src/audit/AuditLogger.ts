@@ -19,161 +19,35 @@ import type {
 } from '@skillsmith/core'
 import type { Database as DatabaseType } from 'better-sqlite3'
 
-/**
- * Enterprise-specific audit event types
- */
-export type EnterpriseAuditEventType =
-  | 'sso_login'
-  | 'rbac_check'
-  | 'license_validation'
-  | 'exporter_registered'
-  | 'exporter_unregistered'
-  | 'export_completed'
-  | 'export_failed'
+// Re-export types from extracted module
+export {
+  type EnterpriseAuditEventType,
+  type ExtendedAuditEventType,
+  type SSOLoginInput,
+  type RBACCheckInput,
+  type LicenseCheckInput,
+  type EnterpriseAuditLogEntry,
+  type AuditEvent,
+  type AuditExporter,
+  type EnterpriseAuditLoggerConfig,
+  ENTERPRISE_MIN_RETENTION_DAYS,
+  ENTERPRISE_MAX_RETENTION_DAYS,
+} from './audit-event-types.js'
 
-/**
- * Combined audit event types (core + enterprise)
- */
-export type ExtendedAuditEventType =
-  | 'url_fetch'
-  | 'file_access'
-  | 'skill_install'
-  | 'skill_uninstall'
-  | 'security_scan'
-  | 'cache_operation'
-  | 'source_sync'
-  | 'config_change'
-  | EnterpriseAuditEventType
-
-/**
- * SSO Login audit event input (for logSSOEvent method)
- */
-export interface SSOLoginInput {
-  /** SSO provider (e.g., 'okta', 'azure_ad', 'google') */
-  provider: string
-  /** User identifier (email or username) */
-  userId: string
-  /** Result of the SSO operation */
-  result: AuditResult
-  /** Session ID if login was successful */
-  sessionId?: string
-  /** IP address of the client */
-  clientIp?: string
-  /** User agent string */
-  userAgent?: string
-  /** Additional metadata */
-  metadata?: Record<string, unknown>
-}
-
-/**
- * RBAC permission check audit event input (for logRBACEvent method)
- */
-export interface RBACCheckInput {
-  /** User or service account performing the action */
-  principal: string
-  /** Principal type */
-  principalType: 'user' | 'service_account' | 'api_key'
-  /** Resource being accessed */
-  resource: string
-  /** Permission being checked */
-  permission: string
-  /** Roles that were evaluated */
-  roles?: string[]
-  /** Result of the permission check */
-  result: AuditResult
-  /** Denial reason if blocked */
-  denialReason?: string
-  /** Additional metadata */
-  metadata?: Record<string, unknown>
-}
-
-/**
- * License validation audit event input (for logLicenseEvent method)
- */
-export interface LicenseCheckInput {
-  /** License key identifier (last 4 chars only for security) */
-  licenseKeyHint: string
-  /** License tier being validated */
-  tier: 'starter' | 'professional' | 'enterprise' | 'unlimited'
-  /** Feature being checked */
-  feature?: string
-  /** Result of the validation */
-  result: AuditResult
-  /** Expiration date of the license */
-  expiresAt?: string
-  /** Seats used vs total */
-  seatsUsed?: number
-  seatsTotal?: number
-  /** Additional metadata */
-  metadata?: Record<string, unknown>
-}
-
-/**
- * Extended audit log entry with enterprise event types
- */
-export interface EnterpriseAuditLogEntry extends Omit<AuditLogEntry, 'event_type'> {
-  event_type: ExtendedAuditEventType
-}
-
-/**
- * Audit event data for export (read-only representation)
- */
-export interface AuditEvent {
-  id: string
-  event_type: ExtendedAuditEventType
-  timestamp: string
-  actor: AuditActor
-  resource: string
-  action: string
-  result: AuditResult
-  metadata?: Record<string, unknown>
-  created_at: string
-}
-
-/**
- * Interface for audit event exporters
- */
-export interface AuditExporter {
-  /** Unique name for this exporter */
-  name: string
-  /** Export events to external system */
-  export(events: AuditEvent[]): Promise<void>
-}
-
-/**
- * Enterprise audit logger configuration
- */
-export interface EnterpriseAuditLoggerConfig extends AuditLoggerConfig {
-  /**
-   * Minimum retention period in days
-   * @default 30
-   */
-  minRetentionDays?: number
-
-  /**
-   * Maximum retention period in days
-   * @default 90
-   */
-  maxRetentionDays?: number
-
-  /**
-   * Buffer size for batch exports
-   * @default 100
-   */
-  exportBufferSize?: number
-
-  /**
-   * Auto-flush interval in milliseconds (0 to disable)
-   * @default 0
-   */
-  autoFlushInterval?: number
-}
-
-/**
- * Enterprise retention constraints
- */
-export const ENTERPRISE_MIN_RETENTION_DAYS = 30
-export const ENTERPRISE_MAX_RETENTION_DAYS = 90
+// Import for internal use
+import {
+  type EnterpriseAuditEventType,
+  type ExtendedAuditEventType,
+  type SSOLoginInput,
+  type RBACCheckInput,
+  type LicenseCheckInput,
+  type EnterpriseAuditLogEntry,
+  type AuditEvent,
+  type AuditExporter,
+  type EnterpriseAuditLoggerConfig,
+  ENTERPRISE_MIN_RETENTION_DAYS,
+  ENTERPRISE_MAX_RETENTION_DAYS,
+} from './audit-event-types.js'
 
 /**
  * Enterprise Audit Logger with enhanced features for compliance
@@ -252,9 +126,6 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
 
   /**
    * Register an exporter to receive audit events
-   *
-   * @param exporter - The exporter to register
-   * @throws Error if an exporter with the same name is already registered
    */
   registerExporter(exporter: AuditExporter): void {
     if (this.exporters.some((e) => e.name === exporter.name)) {
@@ -263,7 +134,6 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
 
     this.exporters.push(exporter)
 
-    // Log the registration
     this.log({
       event_type: 'config_change' as const,
       actor: 'system',
@@ -279,9 +149,6 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
 
   /**
    * Unregister an exporter by name
-   *
-   * @param name - The name of the exporter to unregister
-   * @returns true if the exporter was found and removed, false otherwise
    */
   unregisterExporter(name: string): boolean {
     const index = this.exporters.findIndex((e) => e.name === name)
@@ -291,7 +158,6 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
 
     this.exporters.splice(index, 1)
 
-    // Log the unregistration
     this.log({
       event_type: 'config_change' as const,
       actor: 'system',
@@ -316,8 +182,6 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
 
   /**
    * Log an SSO login event
-   *
-   * @param event - SSO event details
    */
   logSSOEvent(event: SSOLoginInput): void {
     this.logEnterpriseEvent({
@@ -339,8 +203,6 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
 
   /**
    * Log an RBAC permission check event
-   *
-   * @param event - RBAC check event details
    */
   logRBACEvent(event: RBACCheckInput): void {
     this.logEnterpriseEvent({
@@ -362,8 +224,6 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
 
   /**
    * Log a license validation event
-   *
-   * @param event - License validation event details
    */
   logLicenseEvent(event: LicenseCheckInput): void {
     this.logEnterpriseEvent({
@@ -390,9 +250,7 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
   private logEnterpriseEvent(
     entry: Omit<EnterpriseAuditLogEntry, 'id' | 'timestamp' | 'created_at'>
   ): void {
-    // Use parent class log method for core event types
-    // For enterprise types, we still store them but they'll be typed as 'config_change' in the DB
-    const coreEventType = this.mapToCorEventType(entry.event_type)
+    const coreEventType = this.mapToCoreEventType(entry.event_type)
 
     this.log({
       event_type: coreEventType,
@@ -406,7 +264,6 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
       },
     })
 
-    // Add to buffer for export
     const timestamp = new Date().toISOString()
     this.eventBuffer.push({
       id: crypto.randomUUID(),
@@ -420,7 +277,6 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
       created_at: timestamp,
     })
 
-    // Auto-flush if buffer is full
     if (this.eventBuffer.length >= (this.enterpriseConfig.exportBufferSize ?? 100)) {
       this.flush().catch(console.error)
     }
@@ -429,7 +285,7 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
   /**
    * Map enterprise event types to core event types for storage
    */
-  private mapToCorEventType(
+  private mapToCoreEventType(
     eventType: ExtendedAuditEventType
   ): 'config_change' | 'security_scan' | 'url_fetch' | 'file_access' {
     switch (eventType) {
@@ -449,8 +305,6 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
 
   /**
    * Flush buffered events to all registered exporters
-   *
-   * @returns Promise that resolves when all exporters have completed
    */
   async flush(): Promise<void> {
     if (this.eventBuffer.length === 0 || this.exporters.length === 0) {
@@ -471,7 +325,6 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
       })
     )
 
-    // Log export results
     const successCount = results.filter((r) => r.status === 'fulfilled' && r.value.success).length
     const failCount = results.length - successCount
 
@@ -493,16 +346,12 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
 
   /**
    * Query enterprise audit logs with optional event type filter
-   *
-   * @param filter - Query filters
-   * @returns Array of matching enterprise audit log entries
    */
   queryEnterprise(
     filter: AuditQueryFilter & { enterpriseEventType?: EnterpriseAuditEventType } = {}
   ): EnterpriseAuditLogEntry[] {
     const coreResults = this.query(filter)
 
-    // Filter by enterprise event type if specified
     if (filter.enterpriseEventType) {
       return coreResults
         .filter((entry) => {
@@ -526,11 +375,7 @@ export class EnterpriseAuditLogger extends CoreAuditLogger {
   /**
    * Get retention configuration
    */
-  getRetentionConfig(): {
-    current: number
-    min: number
-    max: number
-  } {
+  getRetentionConfig(): { current: number; min: number; max: number } {
     return {
       current: this.enterpriseConfig.retentionDays ?? 90,
       min: this.enterpriseConfig.minRetentionDays ?? ENTERPRISE_MIN_RETENTION_DAYS,

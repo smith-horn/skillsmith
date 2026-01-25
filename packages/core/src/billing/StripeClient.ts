@@ -26,84 +26,15 @@ import type {
   SubscriptionStatus,
 } from './types.js'
 import { BillingError } from './types.js'
+import type { StripeClientConfig, TierPriceConfigs } from './stripe-client-types.js'
+import { mapSubscriptionStatus as mapStripeSubscriptionStatus } from './stripe-helpers.js'
+
+// Re-export types for backward compatibility
+export type { StripeClientConfig, TierPriceConfigs } from './stripe-client-types.js'
 
 const logger = createLogger('StripeClient')
 
-// ============================================================================
-// Configuration
-// ============================================================================
-
-/**
- * Stripe client configuration
- */
-export interface StripeClientConfig {
-  /**
-   * Stripe secret key (sk_test_xxx or sk_live_xxx)
-   */
-  secretKey: string
-
-  /**
-   * Stripe webhook signing secret (whsec_xxx)
-   */
-  webhookSecret: string
-
-  /**
-   * Price ID mappings for each tier
-   */
-  prices: TierPriceConfigs
-
-  /**
-   * Base URL for success/cancel redirects
-   */
-  appUrl?: string
-}
-
-/**
- * Price configurations for all tiers
- */
-export interface TierPriceConfigs {
-  individual: {
-    monthly: StripePriceId
-    annual: StripePriceId
-  }
-  team: {
-    monthly: StripePriceId
-    annual: StripePriceId
-  }
-  enterprise: {
-    monthly: StripePriceId
-    annual: StripePriceId
-  }
-}
-
-// ============================================================================
-// StripeClient Class
-// ============================================================================
-
-/**
- * Stripe API client wrapper
- *
- * @example
- * ```typescript
- * const client = new StripeClient({
- *   secretKey: process.env.STRIPE_SECRET_KEY!,
- *   webhookSecret: process.env.STRIPE_WEBHOOK_SECRET!,
- *   prices: {
- *     individual: { monthly: 'price_xxx', annual: 'price_yyy' },
- *     team: { monthly: 'price_xxx', annual: 'price_yyy' },
- *     enterprise: { monthly: 'price_xxx', annual: 'price_yyy' },
- *   },
- * });
- *
- * const session = await client.createCheckoutSession({
- *   tier: 'team',
- *   billingPeriod: 'monthly',
- *   seatCount: 5,
- *   successUrl: 'https://app.example.com/success',
- *   cancelUrl: 'https://app.example.com/cancel',
- * });
- * ```
- */
+/** Stripe API client wrapper for subscription management and billing operations */
 export class StripeClient {
   private readonly stripe: Stripe
   private readonly webhookSecret: string
@@ -122,9 +53,7 @@ export class StripeClient {
     logger.info('Stripe client initialized')
   }
 
-  // ==========================================================================
-  // Customer Management
-  // ==========================================================================
+  // --- Customer Management ---
 
   /**
    * Create a new Stripe customer
@@ -190,9 +119,7 @@ export class StripeClient {
     return this.stripe.customers.update(customerId, params)
   }
 
-  // ==========================================================================
-  // Checkout Session
-  // ==========================================================================
+  // --- Checkout Session ---
 
   /**
    * Create a Stripe Checkout session for subscription
@@ -282,9 +209,7 @@ export class StripeClient {
     })
   }
 
-  // ==========================================================================
-  // Subscription Management
-  // ==========================================================================
+  // --- Subscription Management ---
 
   /**
    * Get a subscription by ID
@@ -427,9 +352,7 @@ export class StripeClient {
     })
   }
 
-  // ==========================================================================
-  // Customer Portal
-  // ==========================================================================
+  // --- Customer Portal ---
 
   /**
    * Create a Stripe Customer Portal session
@@ -462,9 +385,7 @@ export class StripeClient {
     }
   }
 
-  // ==========================================================================
-  // Invoice Management
-  // ==========================================================================
+  // --- Invoice Management ---
 
   /**
    * List invoices for a customer
@@ -522,9 +443,7 @@ export class StripeClient {
     }
   }
 
-  // ==========================================================================
-  // Webhook Handling
-  // ==========================================================================
+  // --- Webhook Handling ---
 
   /**
    * Verify and parse a webhook event
@@ -540,9 +459,7 @@ export class StripeClient {
     }
   }
 
-  // ==========================================================================
-  // Helper Methods
-  // ==========================================================================
+  // --- Helper Methods ---
 
   /**
    * Get the price ID for a tier and billing period
@@ -564,26 +481,7 @@ export class StripeClient {
    * Map Stripe subscription status to our status
    */
   static mapSubscriptionStatus(stripeStatus: Stripe.Subscription.Status): SubscriptionStatus {
-    switch (stripeStatus) {
-      case 'active':
-        return 'active'
-      case 'past_due':
-        return 'past_due'
-      case 'canceled':
-        return 'canceled'
-      case 'trialing':
-        return 'trialing'
-      case 'paused':
-        return 'paused'
-      case 'incomplete':
-        return 'incomplete'
-      case 'incomplete_expired':
-        return 'incomplete_expired'
-      case 'unpaid':
-        return 'unpaid'
-      default:
-        return 'active'
-    }
+    return mapStripeSubscriptionStatus(stripeStatus)
   }
 
   /**

@@ -16,57 +16,27 @@ import { z } from 'zod'
 import type { Skill, TrustTier, SearchOptions } from '../types/skill.js'
 import { SkillsmithError, ErrorCodes } from '../errors.js'
 
+// Import from extracted modules
+import {
+  SearchResponseSchema,
+  SingleSkillResponseSchema,
+  TelemetryResponseSchema,
+} from './schemas.js'
+import { calculateBackoff, buildRequestHeaders, DEFAULT_BASE_URL } from './utils.js'
+
+// Re-export for backwards compatibility
+export { generateAnonymousId } from './utils.js'
+export {
+  ApiSearchResultSchema,
+  SearchResponseSchema,
+  SingleSkillResponseSchema,
+  TelemetryResponseSchema,
+  TrustTierSchema,
+} from './schemas.js'
+
 // ============================================================================
-// Zod Schemas for API Response Validation (SMI-1258)
+// Types
 // ============================================================================
-
-/**
- * Trust tier enum values
- */
-const TrustTierSchema = z.enum(['verified', 'community', 'experimental', 'unknown'])
-
-/**
- * Schema for individual search result from API
- * SMI-1577: Added .optional() and .default() to handle partial API responses
- */
-const ApiSearchResultSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  description: z.string().nullable(),
-  author: z.string().nullable(),
-  repo_url: z.string().nullable().optional(),
-  quality_score: z.number().nullable(),
-  trust_tier: TrustTierSchema.default('unknown'),
-  tags: z.array(z.string()).default([]),
-  stars: z.number().nullable().optional(),
-  installable: z.boolean().nullable().optional(),
-  created_at: z.string().optional(),
-  updated_at: z.string().optional(),
-})
-
-/**
- * Schema for generic API response wrapper
- */
-function createApiResponseSchema<T extends z.ZodTypeAny>(dataSchema: T) {
-  return z.object({
-    data: dataSchema,
-    meta: z.record(z.string(), z.unknown()).optional(),
-  })
-}
-
-/**
- * Schema for telemetry response
- */
-const TelemetryResponseSchema = z.object({
-  data: z.object({
-    ok: z.boolean(),
-  }),
-  meta: z.record(z.string(), z.unknown()).optional(),
-})
-
-// Pre-built schemas for common responses
-const SearchResponseSchema = createApiResponseSchema(z.array(ApiSearchResultSchema))
-const SingleSkillResponseSchema = createApiResponseSchema(ApiSearchResultSchema)
 
 /**
  * API response wrapper
@@ -163,54 +133,9 @@ export interface ApiClientConfig {
   offlineMode?: boolean
 }
 
-// Default base URL is constructed from SUPABASE_URL environment variable
-// Falls back to undefined to fail explicitly if not configured
-const DEFAULT_BASE_URL = process.env.SUPABASE_URL
-  ? `${process.env.SUPABASE_URL}/functions/v1`
-  : undefined
-
-/**
- * Calculate delay with exponential backoff and jitter
- */
-function calculateBackoff(attempt: number, baseDelay = 1000): number {
-  const exponentialDelay = baseDelay * Math.pow(2, attempt)
-  const jitter = Math.random() * 0.3 * exponentialDelay
-  return Math.min(exponentialDelay + jitter, 30000) // Max 30s
-}
-
-/**
- * Generate anonymous ID for telemetry using cryptographic randomness.
- * Returns a UUID v4 format string (e.g., "550e8400-e29b-41d4-a716-446655440000").
- *
- * Note: This generates a fresh ID per session - it is NOT stored persistently.
- * For persistent anonymous IDs, the caller must handle storage.
- */
-export function generateAnonymousId(): string {
-  // Use Node.js crypto.randomUUID() for cryptographically secure random IDs
-  // This is available in Node.js 14.17.0+ and all modern browsers
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-
-  // Fallback for older environments: use crypto.getRandomValues if available
-  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
-    const bytes = new Uint8Array(16)
-    crypto.getRandomValues(bytes)
-    // Set version (4) and variant (RFC4122) bits
-    bytes[6] = (bytes[6] & 0x0f) | 0x40
-    bytes[8] = (bytes[8] & 0x3f) | 0x80
-    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-  }
-
-  // Last resort fallback (not cryptographically secure, but functional)
-  const chars = 'abcdef0123456789'
-  let id = ''
-  for (let i = 0; i < 32; i++) {
-    id += chars[Math.floor(Math.random() * chars.length)]
-  }
-  return `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(16, 20)}-${id.slice(20)}`
-}
+// ============================================================================
+// API Client Class
+// ============================================================================
 
 /**
  * Skillsmith API Client
@@ -265,29 +190,8 @@ export class SkillsmithApiClient {
   }
 
   /**
-   * Build request headers
-   */
-  private buildHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'x-request-id': `client-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    }
-
-    if (this.anonKey) {
-      headers['Authorization'] = `Bearer ${this.anonKey}`
-      headers['apikey'] = this.anonKey
-    }
-
-    return headers
-  }
-
-  /**
    * Make API request with retry logic and optional schema validation
    * SMI-1258: Added runtime validation for API responses
-   *
-   * @param endpoint - API endpoint path
-   * @param options - Fetch options
-   * @param schema - Optional zod schema for response validation
    */
   private async request<T>(
     endpoint: string,
@@ -307,7 +211,7 @@ export class SkillsmithApiClient {
         const response = await fetch(url, {
           ...options,
           headers: {
-            ...this.buildHeaders(),
+            ...buildRequestHeaders(this.anonKey),
             ...options.headers,
           },
           signal: controller.signal,
@@ -407,9 +311,6 @@ export class SkillsmithApiClient {
   /**
    * Search for skills
    * SMI-1258: Validates response against SearchResponseSchema
-   *
-   * @param options - Search options
-   * @returns Search results
    */
   async search(options: SearchOptions): Promise<ApiResponse<ApiSearchResult[]>> {
     const params = new URLSearchParams()
@@ -432,9 +333,6 @@ export class SkillsmithApiClient {
   /**
    * Get skill by ID
    * SMI-1258: Validates response against SingleSkillResponseSchema
-   *
-   * @param id - Skill ID (UUID or author/name format)
-   * @returns Skill details
    */
   async getSkill(id: string): Promise<ApiResponse<ApiSearchResult>> {
     const encodedId = encodeURIComponent(id)
@@ -448,9 +346,6 @@ export class SkillsmithApiClient {
   /**
    * Get skill recommendations based on tech stack
    * SMI-1258: Validates response against SearchResponseSchema
-   *
-   * @param request - Recommendation request
-   * @returns Recommended skills
    */
   async getRecommendations(
     request: RecommendationRequest
@@ -468,9 +363,6 @@ export class SkillsmithApiClient {
   /**
    * Record telemetry event
    * SMI-1258: Validates response against TelemetryResponseSchema
-   *
-   * @param event - Telemetry event
-   * @returns Success response
    */
   async recordEvent(event: TelemetryEvent): Promise<{ ok: boolean }> {
     try {
@@ -492,11 +384,6 @@ export class SkillsmithApiClient {
 
   /**
    * Check API health status
-   *
-   * Returns service health information including status, timestamp, and version.
-   * In offline mode, returns a synthetic healthy response.
-   *
-   * @returns Health status object
    */
   async checkHealth(): Promise<{
     status: 'healthy' | 'degraded' | 'unhealthy'
@@ -518,7 +405,7 @@ export class SkillsmithApiClient {
       const timeoutId = setTimeout(() => controller.abort(), 5000) // 5s timeout for health
 
       const response = await fetch(`${this.baseUrl}/health`, {
-        headers: this.buildHeaders(),
+        headers: buildRequestHeaders(this.anonKey),
         signal: controller.signal,
       })
 
@@ -563,7 +450,6 @@ export class SkillsmithApiClient {
   /**
    * Convert API result to Skill type
    * SMI-1577: Handle optional fields with sensible defaults
-   * Uses epoch timestamp as sentinel for missing dates to avoid data integrity issues
    * SMI-825: Added security scan fields
    */
   static toSkill(result: ApiSearchResult): Skill {
@@ -590,20 +476,15 @@ export class SkillsmithApiClient {
   }
 }
 
+// ============================================================================
+// Factory Function
+// ============================================================================
+
 /**
  * Create a default API client instance
  */
 export function createApiClient(config?: ApiClientConfig): SkillsmithApiClient {
   return new SkillsmithApiClient(config)
-}
-
-// SMI-1258: Export schemas for testing and external validation
-export {
-  ApiSearchResultSchema,
-  SearchResponseSchema,
-  SingleSkillResponseSchema,
-  TelemetryResponseSchema,
-  TrustTierSchema,
 }
 
 export default SkillsmithApiClient

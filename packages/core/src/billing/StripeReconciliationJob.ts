@@ -13,80 +13,27 @@
  */
 
 import type { Database as BetterSqliteDatabase } from 'better-sqlite3'
-import type Stripe from 'stripe'
 import { createLogger } from '../utils/logger.js'
 import type { StripeClient } from './StripeClient.js'
-import type { StripeSubscriptionId, SubscriptionStatus } from './types.js'
+import type { StripeSubscriptionId } from './types.js'
+import { mapStripeStatus, mapInvoiceStatus } from './reconciliation-helpers.js'
+import type {
+  StripeReconciliationJobConfig,
+  Discrepancy,
+  ReconciliationResult,
+  LocalSubscription,
+  LocalInvoice,
+} from './reconciliation-types.js'
+
+// Re-export types for backward compatibility
+export type {
+  StripeReconciliationJobConfig,
+  DiscrepancyType,
+  Discrepancy,
+  ReconciliationResult,
+} from './reconciliation-types.js'
 
 const logger = createLogger('StripeReconciliation')
-
-// ============================================================================
-// Configuration
-// ============================================================================
-
-export interface StripeReconciliationJobConfig {
-  /**
-   * StripeClient for API calls
-   */
-  stripeClient: StripeClient
-
-  /**
-   * Database connection
-   */
-  db: BetterSqliteDatabase
-
-  /**
-   * Whether to automatically fix discrepancies
-   * @default false
-   */
-  autoFix?: boolean
-
-  /**
-   * Maximum subscriptions to process per run
-   * @default 100
-   */
-  batchSize?: number
-}
-
-// ============================================================================
-// Types
-// ============================================================================
-
-export type DiscrepancyType =
-  | 'status_mismatch'
-  | 'missing_local'
-  | 'missing_stripe'
-  | 'tier_mismatch'
-  | 'seat_count_mismatch'
-  | 'period_mismatch'
-  | 'invoice_status_mismatch'
-  | 'invoice_amount_mismatch'
-
-export interface Discrepancy {
-  type: DiscrepancyType
-  entityType: 'subscription' | 'invoice'
-  entityId: string
-  stripeId: string
-  localValue: string | number | null
-  stripeValue: string | number | null
-  description: string
-  fixed: boolean
-}
-
-export interface ReconciliationResult {
-  success: boolean
-  startedAt: string
-  completedAt: string
-  durationMs: number
-  stats: {
-    subscriptionsChecked: number
-    invoicesChecked: number
-    discrepanciesFound: number
-    discrepanciesFixed: number
-  }
-  discrepancies: Discrepancy[]
-  errors: string[]
-}
 
 // ============================================================================
 // StripeReconciliationJob Class
@@ -478,73 +425,5 @@ export class StripeReconciliationJob {
       default:
         return false
     }
-  }
-}
-
-// ============================================================================
-// Helper Types
-// ============================================================================
-
-interface LocalSubscription {
-  id: string
-  customerId: string
-  stripeSubscriptionId: string
-  stripeCustomerId: string
-  tier: string
-  status: string
-  seatCount: number
-  currentPeriodStart: string | null
-  currentPeriodEnd: string | null
-}
-
-interface LocalInvoice {
-  id: string
-  customerId: string
-  stripeInvoiceId: string
-  amountCents: number
-  status: string
-}
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-function mapStripeStatus(stripeStatus: Stripe.Subscription.Status): SubscriptionStatus {
-  switch (stripeStatus) {
-    case 'active':
-      return 'active'
-    case 'past_due':
-      return 'past_due'
-    case 'canceled':
-      return 'canceled'
-    case 'trialing':
-      return 'trialing'
-    case 'paused':
-      return 'paused'
-    case 'incomplete':
-      return 'incomplete'
-    case 'incomplete_expired':
-      return 'incomplete_expired'
-    case 'unpaid':
-      return 'unpaid'
-    default:
-      return 'active'
-  }
-}
-
-function mapInvoiceStatus(stripeStatus: Stripe.Invoice.Status | null): string {
-  switch (stripeStatus) {
-    case 'paid':
-      return 'paid'
-    case 'open':
-      return 'open'
-    case 'draft':
-      return 'draft'
-    case 'void':
-      return 'void'
-    case 'uncollectible':
-      return 'uncollectible'
-    default:
-      return 'open'
   }
 }

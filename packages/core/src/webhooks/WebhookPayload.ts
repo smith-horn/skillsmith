@@ -10,243 +10,27 @@
  * SMI-680: Added zod schema validation for security
  */
 
-import { z } from 'zod'
+import { PushEventSchema, RepositoryEventSchema, PingEventSchema } from './webhook-schemas.js'
 
-/**
- * GitHub webhook event types we handle
- */
-export type WebhookEventType = 'push' | 'repository' | 'ping'
+import type { PushEventPayload, RepositoryEventPayload, PingEventPayload } from './webhook-types.js'
 
-/**
- * Repository action types
- */
-export type RepositoryAction =
-  | 'created'
-  | 'deleted'
-  | 'archived'
-  | 'unarchived'
-  | 'publicized'
-  | 'privatized'
-  | 'renamed'
-  | 'transferred'
-
-/**
- * Git commit author/committer
- */
-export interface GitUser {
-  name: string
-  email: string
-  username?: string
-}
-
-/**
- * A single commit in a push event
- */
-export interface PushCommit {
-  id: string
-  tree_id: string
-  distinct: boolean
-  message: string
-  timestamp: string
-  url: string
-  author: GitUser
-  committer: GitUser
-  added: string[]
-  removed: string[]
-  modified: string[]
-}
-
-/**
- * Repository owner (user or organization)
- */
-export interface RepositoryOwner {
-  login: string
-  id: number
-  type: 'User' | 'Organization'
-  avatar_url?: string
-  html_url?: string
-}
-
-/**
- * Repository information in webhook payloads
- */
-export interface WebhookRepository {
-  id: number
-  name: string
-  full_name: string
-  private: boolean
-  owner: RepositoryOwner
-  html_url: string
-  description: string | null
-  fork: boolean
-  url: string
-  created_at: string | number
-  updated_at: string
-  pushed_at: string | number
-  homepage: string | null
-  size: number
-  stargazers_count: number
-  watchers_count: number
-  language: string | null
-  forks_count: number
-  archived: boolean
-  disabled: boolean
-  open_issues_count: number
-  topics: string[]
-  visibility: 'public' | 'private' | 'internal'
-  default_branch: string
-}
-
-/**
- * Sender information (who triggered the event)
- */
-export interface WebhookSender {
-  login: string
-  id: number
-  type: 'User' | 'Organization' | 'Bot'
-  avatar_url?: string
-  html_url?: string
-}
-
-/**
- * Push event payload
- * @see https://docs.github.com/en/webhooks/webhook-events-and-payloads#push
- */
-export interface PushEventPayload {
-  ref: string
-  before: string
-  after: string
-  created: boolean
-  deleted: boolean
-  forced: boolean
-  base_ref: string | null
-  compare: string
-  commits: PushCommit[]
-  head_commit: PushCommit | null
-  repository: WebhookRepository
-  pusher: GitUser
-  sender: WebhookSender
-}
-
-/**
- * Repository event payload
- * @see https://docs.github.com/en/webhooks/webhook-events-and-payloads#repository
- */
-export interface RepositoryEventPayload {
-  action: RepositoryAction
-  repository: WebhookRepository
-  sender: WebhookSender
-  changes?: {
-    owner?: {
-      from: RepositoryOwner
-    }
-    repository?: {
-      name: {
-        from: string
-      }
-    }
-  }
-}
-
-/**
- * Ping event payload (sent when webhook is first configured)
- * @see https://docs.github.com/en/webhooks/webhook-events-and-payloads#ping
- */
-export interface PingEventPayload {
-  zen: string
-  hook_id: number
-  hook: {
-    type: string
-    id: number
-    name: string
-    active: boolean
-    events: string[]
-    config: {
-      content_type: string
-      insecure_ssl: string
-      url: string
-    }
-  }
-  repository?: WebhookRepository
-  sender: WebhookSender
-}
-
-/**
- * Union type of all webhook payloads we handle
- */
-export type WebhookPayload = PushEventPayload | RepositoryEventPayload | PingEventPayload
-
-/**
- * Parsed webhook event with type discrimination
- */
-export type ParsedWebhookEvent =
-  | { type: 'push'; payload: PushEventPayload }
-  | { type: 'repository'; payload: RepositoryEventPayload }
-  | { type: 'ping'; payload: PingEventPayload }
-  | { type: 'unknown'; payload: unknown }
-
-/**
- * Signature verification result
- */
-export interface SignatureVerificationResult {
-  valid: boolean
-  error?: string
-}
-
-/**
- * SKILL.md change detected in a push event
- */
-export interface SkillFileChange {
-  /**
-   * Type of change: added, modified, or removed
-   */
-  changeType: 'added' | 'modified' | 'removed'
-
-  /**
-   * Full path to the SKILL.md file (e.g., ".claude/skills/my-skill/SKILL.md")
-   */
-  filePath: string
-
-  /**
-   * Repository full name (e.g., "owner/repo")
-   */
-  repoFullName: string
-
-  /**
-   * Repository URL
-   */
-  repoUrl: string
-
-  /**
-   * Commit SHA that made the change
-   */
-  commitSha: string
-
-  /**
-   * Commit message
-   */
-  commitMessage: string
-
-  /**
-   * Repository default branch
-   */
-  defaultBranch: string
-
-  /**
-   * Repository owner
-   */
-  owner: string
-
-  /**
-   * Repository name
-   */
-  repoName: string
-
-  /**
-   * Timestamp of the change
-   */
-  timestamp: string
-}
+// Re-export types for backward compatibility
+export type {
+  WebhookEventType,
+  RepositoryAction,
+  GitUser,
+  PushCommit,
+  RepositoryOwner,
+  WebhookRepository,
+  WebhookSender,
+  PushEventPayload,
+  RepositoryEventPayload,
+  PingEventPayload,
+  WebhookPayload,
+  ParsedWebhookEvent,
+  SignatureVerificationResult,
+  SkillFileChange,
+} from './webhook-types.js'
 
 /**
  * Check if a file path is a SKILL.md file
@@ -261,8 +45,10 @@ export function isSkillFile(filePath: string): boolean {
 /**
  * Extract SKILL.md changes from a push event
  */
-export function extractSkillChanges(payload: PushEventPayload): SkillFileChange[] {
-  const changes: SkillFileChange[] = []
+export function extractSkillChanges(
+  payload: PushEventPayload
+): import('./webhook-types.js').SkillFileChange[] {
+  const changes: import('./webhook-types.js').SkillFileChange[] = []
 
   // Skip if this is a branch deletion
   if (payload.deleted) {
@@ -334,143 +120,14 @@ export function extractSkillChanges(payload: PushEventPayload): SkillFileChange[
   return changes
 }
 
-// =============================================================================
-// SMI-680: Zod Schemas for secure payload validation
-// =============================================================================
-
-/**
- * Git user schema (author/committer)
- */
-const _GitUserSchema = z
-  .object({
-    name: z.string(),
-    email: z.string(),
-    username: z.string().optional(),
-  })
-  .passthrough()
-
-/**
- * Repository owner schema
- */
-const RepositoryOwnerSchema = z
-  .object({
-    login: z.string(),
-    id: z.number(),
-    type: z.enum(['User', 'Organization']),
-    avatar_url: z.string().optional(),
-    html_url: z.string().optional(),
-  })
-  .passthrough()
-
-/**
- * Webhook repository schema - minimum required fields
- */
-const WebhookRepositorySchema = z
-  .object({
-    id: z.number().optional(),
-    name: z.string().optional(),
-    full_name: z.string(),
-    private: z.boolean().optional(),
-    owner: RepositoryOwnerSchema.optional(),
-    html_url: z.string().optional(),
-    default_branch: z.string(),
-  })
-  .passthrough()
-
-/**
- * Push commit schema
- */
-const PushCommitSchema = z
-  .object({
-    id: z.string(),
-    message: z.string(),
-    added: z.array(z.string()),
-    removed: z.array(z.string()),
-    modified: z.array(z.string()),
-  })
-  .passthrough()
-
-/**
- * Push event payload schema
- * @see https://docs.github.com/en/webhooks/webhook-events-and-payloads#push
- */
-const PushEventSchema = z
-  .object({
-    ref: z.string(),
-    before: z.string(),
-    after: z.string(),
-    repository: WebhookRepositorySchema,
-    commits: z.array(PushCommitSchema).optional(),
-  })
-  .passthrough()
-
-/**
- * Webhook sender schema
- */
-const WebhookSenderSchema = z
-  .object({
-    login: z.string(),
-    id: z.number(),
-    type: z.enum(['User', 'Organization', 'Bot']),
-  })
-  .passthrough()
-
-/**
- * Repository event payload schema
- * @see https://docs.github.com/en/webhooks/webhook-events-and-payloads#repository
- */
-const RepositoryEventSchema = z
-  .object({
-    action: z.string(),
-    repository: WebhookRepositorySchema,
-    sender: WebhookSenderSchema.optional(),
-  })
-  .passthrough()
-
-/**
- * Webhook hook config schema
- */
-const WebhookHookConfigSchema = z
-  .object({
-    content_type: z.string(),
-    insecure_ssl: z.string(),
-    url: z.string(),
-  })
-  .passthrough()
-
-/**
- * Webhook hook schema
- */
-const WebhookHookSchema = z
-  .object({
-    type: z.string(),
-    id: z.number(),
-    name: z.string(),
-    active: z.boolean(),
-    events: z.array(z.string()),
-    config: WebhookHookConfigSchema,
-  })
-  .passthrough()
-
-/**
- * Ping event payload schema
- * @see https://docs.github.com/en/webhooks/webhook-events-and-payloads#ping
- */
-const PingEventSchema = z
-  .object({
-    zen: z.string(),
-    hook_id: z.number(),
-    hook: WebhookHookSchema,
-    repository: WebhookRepositorySchema.optional(),
-    sender: WebhookSenderSchema.optional(),
-  })
-  .passthrough()
-
 /**
  * Parse a raw webhook payload into a typed event
  * SMI-680: Now uses zod schemas for secure validation
  */
-export function parseWebhookPayload(eventType: string, payload: unknown): ParsedWebhookEvent {
+export function parseWebhookPayload(
+  eventType: string,
+  payload: unknown
+): import('./webhook-types.js').ParsedWebhookEvent {
   switch (eventType) {
     case 'push': {
       const result = PushEventSchema.safeParse(payload)

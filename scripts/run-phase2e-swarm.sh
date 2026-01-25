@@ -1,10 +1,28 @@
 #!/bin/bash
 # SMI-738 to SMI-749: Performance & Polish Swarm
+# SMI-1139: Updated to use Docker for npm commands
 # Run this script in a separate terminal session
 
 set -e
 
-cd /Users/williamsmith/Documents/GitHub/Claude-Skill-Discovery/skillsmith
+# Get the script's directory and navigate to project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
+# =============================================================================
+# Verify Docker container is running (SMI-1139)
+# =============================================================================
+DOCKER_CONTAINER="skillsmith-dev-1"
+
+if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DOCKER_CONTAINER}$"; then
+  echo "Error: ${DOCKER_CONTAINER} container not running"
+  echo "Run: docker compose --profile dev up -d"
+  exit 1
+fi
+
+echo "🐳 Docker container verified: ${DOCKER_CONTAINER}"
+echo ""
 
 echo "🚀 Starting Performance & Polish Swarm (SMI-738 to SMI-749)"
 echo "============================================================"

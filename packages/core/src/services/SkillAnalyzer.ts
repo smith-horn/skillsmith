@@ -11,225 +11,47 @@
  * community skills into more performant versions.
  */
 
-/**
- * Analysis result for a skill's optimization potential
- */
-export interface SkillAnalysis {
-  /** Total line count of the skill content */
-  lineCount: number
+// Re-export types for public API
+export type {
+  SkillAnalysis,
+  ToolUsageAnalysis,
+  TaskPatternAnalysis,
+  ExtractableSection,
+  OptimizationRecommendation,
+  ParsedSection,
+  ConfidenceLevel,
+} from './SkillAnalyzer.types.js'
 
-  /** Number of lines in the main content (excluding examples) */
-  mainContentLines: number
+// Internal imports
+import type {
+  SkillAnalysis,
+  ToolUsageAnalysis,
+  TaskPatternAnalysis,
+  ExtractableSection,
+  OptimizationRecommendation,
+  ParsedSection,
+} from './SkillAnalyzer.types.js'
 
-  /** Number of lines in examples section */
-  examplesLines: number
+import {
+  THRESHOLDS,
+  detectTools,
+  countCommandPatterns,
+  shouldSuggestSubagent,
+  getConfidenceLevel,
+  estimateExamplesLines,
+  countSequentialTaskCalls,
+  calculateBatchSavings,
+  getExtractionReason,
+  calculateExtractionPriority,
+} from './SkillAnalyzer.helpers.js'
 
-  /** Tools detected in the skill content */
-  toolUsage: ToolUsageAnalysis
-
-  /** Task() call patterns detected */
-  taskPatterns: TaskPatternAnalysis
-
-  /** Sections that could be extracted as sub-skills */
-  extractableSections: ExtractableSection[]
-
-  /** Recommended optimizations to apply */
-  recommendations: OptimizationRecommendation[]
-
-  /** Overall optimization score (0-100) */
-  optimizationScore: number
-
-  /** Whether this skill would benefit from transformation */
-  shouldTransform: boolean
-}
-
-/**
- * Tool usage analysis result
- */
-export interface ToolUsageAnalysis {
-  /** List of detected tools */
-  detectedTools: string[]
-
-  /** Number of Bash commands detected */
-  bashCommandCount: number
-
-  /** Number of file reads detected (Read/Glob/Grep) */
-  fileReadCount: number
-
-  /** Number of file writes detected (Write/Edit) */
-  fileWriteCount: number
-
-  /** Whether heavy tool usage suggests subagent */
-  suggestsSubagent: boolean
-
-  /** Confidence in tool detection */
-  confidence: 'high' | 'medium' | 'low'
-}
-
-/**
- * Task() call pattern analysis
- */
-export interface TaskPatternAnalysis {
-  /** Total number of Task() calls detected */
-  taskCallCount: number
-
-  /** Number of sequential Task() calls that could be parallelized */
-  sequentialCalls: number
-
-  /** Whether Task() calls can be batched */
-  canBatch: boolean
-
-  /** Estimated token savings from batching (percentage) */
-  batchSavingsPercent: number
-}
-
-/**
- * Section that could be extracted as a sub-skill
- */
-export interface ExtractableSection {
-  /** Section name/title */
-  name: string
-
-  /** Start line number */
-  startLine: number
-
-  /** End line number */
-  endLine: number
-
-  /** Number of lines */
-  lineCount: number
-
-  /** Extraction priority (1 = highest) */
-  priority: number
-
-  /** Reason for extraction recommendation */
-  reason: string
-}
-
-/**
- * Optimization recommendation
- */
-export interface OptimizationRecommendation {
-  /** Recommendation type */
-  type: 'decompose' | 'parallelize' | 'subagent' | 'progressive-disclosure'
-
-  /** Human-readable description */
-  description: string
-
-  /** Estimated token savings (percentage) */
-  estimatedSavings: number
-
-  /** Priority (1 = highest) */
-  priority: number
-
-  /** Affected sections or patterns */
-  affectedAreas: string[]
-}
-
-/**
- * Tool detection patterns for analyzing skill content
- */
-const TOOL_PATTERNS: Record<string, { patterns: string[]; weight: number }> = {
-  Read: {
-    patterns: ['read file', 'read the file', 'examine', 'view file', 'cat ', 'Read tool'],
-    weight: 1,
-  },
-  Write: {
-    patterns: [
-      'write file',
-      'create file',
-      'save to',
-      'output to file',
-      'Write tool',
-      'write the file',
-    ],
-    weight: 2,
-  },
-  Edit: {
-    patterns: ['edit file', 'modify file', 'update file', 'patch', 'Edit tool', 'replace in'],
-    weight: 2,
-  },
-  Bash: {
-    patterns: [
-      'bash',
-      'npm ',
-      'npx ',
-      'git ',
-      'docker',
-      'yarn ',
-      'pnpm ',
-      'execute command',
-      'run command',
-      'terminal',
-      'shell',
-      'Bash tool',
-    ],
-    weight: 3,
-  },
-  Grep: {
-    patterns: ['grep', 'search for', 'find text', 'pattern match', 'Grep tool'],
-    weight: 1,
-  },
-  Glob: {
-    patterns: ['glob', 'find file', 'file pattern', 'list files', 'Glob tool'],
-    weight: 1,
-  },
-  WebFetch: {
-    patterns: ['fetch', 'http', 'api call', 'url', 'WebFetch', 'download', 'request'],
-    weight: 2,
-  },
-  WebSearch: {
-    patterns: ['web search', 'search online', 'lookup online', 'WebSearch'],
-    weight: 2,
-  },
-  Task: {
-    patterns: ['Task(', 'Task tool', 'spawn agent', 'delegate to', 'subagent'],
-    weight: 3,
-  },
-}
-
-/**
- * Escape special regex characters in a string
- * @param str - String to escape
- * @returns Escaped string safe for use in RegExp
- */
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-/**
- * Determine confidence level based on match count
- * @param matchCount - Number of detected tools
- * @returns Confidence level
- */
-function getConfidenceLevel(matchCount: number): 'high' | 'medium' | 'low' {
-  if (matchCount >= 4) return 'high'
-  if (matchCount >= 2) return 'medium'
-  return 'low'
-}
-
-/**
- * Thresholds for optimization decisions
- */
-const THRESHOLDS = {
-  /** Maximum lines before recommending decomposition */
-  maxLinesBeforeDecompose: 500,
-
-  /** Minimum lines for an extractable section */
-  minSectionLines: 50,
-
-  /** Heavy tool usage count that suggests subagent */
-  heavyToolUsageCount: 5,
-
-  /** Sequential Task() calls that should be parallelized */
-  sequentialTaskThreshold: 2,
-
-  /** Minimum optimization score to recommend transformation */
-  minTransformScore: 30,
-
-  /** Large examples section threshold */
-  largeExamplesThreshold: 200,
-}
+// Re-export helpers for testing and advanced usage
+export {
+  TOOL_PATTERNS,
+  THRESHOLDS,
+  escapeRegex,
+  getConfidenceLevel,
+} from './SkillAnalyzer.helpers.js'
 
 /**
  * Analyze a skill's content for optimization opportunities
@@ -258,7 +80,6 @@ export function analyzeSkill(content: string): SkillAnalysis {
   // Generate recommendations
   const recommendations = generateRecommendations(
     lineCount,
-    mainContentLines,
     examplesLines,
     toolUsage,
     taskPatterns,
@@ -292,10 +113,10 @@ export function analyzeSkill(content: string): SkillAnalysis {
 function analyzeSections(content: string): {
   mainContentLines: number
   examplesLines: number
-  sections: Array<{ name: string; startLine: number; endLine: number; content: string }>
+  sections: ParsedSection[]
 } {
   const lines = content.split('\n')
-  const sections: Array<{ name: string; startLine: number; endLine: number; content: string }> = []
+  const sections: ParsedSection[] = []
 
   let currentSection: { name: string; startLine: number; lines: string[] } | null = null
   let examplesStartLine = -1
@@ -359,52 +180,18 @@ function analyzeSections(content: string): {
 }
 
 /**
- * Estimate examples lines by looking for code blocks
- */
-function estimateExamplesLines(content: string): number {
-  const codeBlockMatches = content.match(/```[\s\S]*?```/g) || []
-  let totalLines = 0
-
-  for (const block of codeBlockMatches) {
-    totalLines += block.split('\n').length
-  }
-
-  return totalLines
-}
-
-/**
  * Analyze tool usage patterns in the content
  */
 function analyzeToolUsage(content: string): ToolUsageAnalysis {
-  const detectedTools: string[] = []
-  let totalWeight = 0
+  const { tools: detectedTools, totalWeight } = detectTools(content)
+  const { bashCommandCount, fileReadCount, fileWriteCount } = countCommandPatterns(content)
 
-  for (const [tool, config] of Object.entries(TOOL_PATTERNS)) {
-    for (const pattern of config.patterns) {
-      // Use word-boundary regex to avoid false positives (e.g., "searching" matching "search")
-      const regex = new RegExp(`\\b${escapeRegex(pattern)}\\b`, 'i')
-      if (regex.test(content)) {
-        if (!detectedTools.includes(tool)) {
-          detectedTools.push(tool)
-          totalWeight += config.weight
-        }
-        break
-      }
-    }
-  }
+  const suggestsSubagent = shouldSuggestSubagent(
+    bashCommandCount,
+    fileReadCount + fileWriteCount,
+    totalWeight
+  )
 
-  // Count specific tool patterns
-  const bashCommandCount = (content.match(/\b(npm|npx|git|docker|yarn|pnpm)\s/gi) || []).length
-  const fileReadCount = (content.match(/\b(read|cat|head|tail|grep|find)\s/gi) || []).length
-  const fileWriteCount = (content.match(/\b(write|edit|modify|create)\s+file/gi) || []).length
-
-  // Determine if heavy tool usage suggests subagent
-  const suggestsSubagent =
-    bashCommandCount >= THRESHOLDS.heavyToolUsageCount ||
-    fileReadCount + fileWriteCount >= THRESHOLDS.heavyToolUsageCount ||
-    totalWeight >= 10
-
-  // Calculate confidence using helper function
   const confidence = getConfidenceLevel(detectedTools.length)
 
   return {
@@ -421,36 +208,12 @@ function analyzeToolUsage(content: string): ToolUsageAnalysis {
  * Analyze Task() call patterns
  */
 function analyzeTaskPatterns(content: string): TaskPatternAnalysis {
-  // Find Task() calls
   const taskCalls = content.match(/Task\s*\([^)]+\)/g) || []
   const taskCallCount = taskCalls.length
 
-  // Detect sequential patterns (Task calls on consecutive lines without batching)
-  const lines = content.split('\n')
-  let sequentialCalls = 0
-  let consecutiveTaskLines = 0
-
-  for (const line of lines) {
-    if (line.includes('Task(') || line.includes('Task (')) {
-      consecutiveTaskLines++
-    } else if (consecutiveTaskLines > 0) {
-      if (consecutiveTaskLines >= THRESHOLDS.sequentialTaskThreshold) {
-        sequentialCalls += consecutiveTaskLines
-      }
-      consecutiveTaskLines = 0
-    }
-  }
-
-  // Check for final sequence
-  if (consecutiveTaskLines >= THRESHOLDS.sequentialTaskThreshold) {
-    sequentialCalls += consecutiveTaskLines
-  }
-
+  const sequentialCalls = countSequentialTaskCalls(content)
   const canBatch = sequentialCalls >= THRESHOLDS.sequentialTaskThreshold
-
-  // Estimate savings from batching
-  // Batching reduces context overhead by ~30-50%
-  const batchSavingsPercent = canBatch ? Math.min(50, sequentialCalls * 10) : 0
+  const batchSavingsPercent = calculateBatchSavings(sequentialCalls)
 
   return {
     taskCallCount,
@@ -464,7 +227,7 @@ function analyzeTaskPatterns(content: string): TaskPatternAnalysis {
  * Find sections that could be extracted as sub-skills
  */
 function findExtractableSections(
-  sections: Array<{ name: string; startLine: number; endLine: number; content: string }>,
+  sections: ParsedSection[],
   totalLines: number
 ): ExtractableSection[] {
   const extractable: ExtractableSection[] = []
@@ -477,31 +240,8 @@ function findExtractableSections(
       continue
     }
 
-    // Calculate priority based on size relative to total
-    const sizeRatio = lineCount / totalLines
-    let priority = 3
-
-    if (sizeRatio > 0.3) {
-      priority = 1
-    } else if (sizeRatio > 0.15) {
-      priority = 2
-    }
-
-    // Determine reason for extraction
-    let reason = ''
-    const lowerName = section.name.toLowerCase()
-
-    if (lowerName.includes('api') || lowerName.includes('reference')) {
-      reason = 'API reference sections can be loaded on-demand'
-    } else if (lowerName.includes('example') || lowerName.includes('usage')) {
-      reason = 'Examples can be progressively disclosed'
-    } else if (lowerName.includes('advanced') || lowerName.includes('configuration')) {
-      reason = 'Advanced topics are rarely needed in initial context'
-    } else if (lineCount > 100) {
-      reason = 'Large section suitable for sub-skill extraction'
-    } else {
-      reason = 'Section size suggests separate loading benefit'
-    }
+    const priority = calculateExtractionPriority(lineCount, totalLines)
+    const reason = getExtractionReason(section.name, lineCount)
 
     extractable.push({
       name: section.name,
@@ -522,7 +262,6 @@ function findExtractableSections(
  */
 function generateRecommendations(
   lineCount: number,
-  mainContentLines: number,
   examplesLines: number,
   toolUsage: ToolUsageAnalysis,
   taskPatterns: TaskPatternAnalysis,

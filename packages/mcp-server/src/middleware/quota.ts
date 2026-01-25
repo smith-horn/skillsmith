@@ -20,6 +20,31 @@
 import type { LicenseMiddleware, LicenseInfo, LicenseTier } from './license.js'
 import { buildQuotaExceededResponse, type MCPErrorResponse } from './errorFormatter.js'
 
+// Import types from quota-types.ts
+export type {
+  QuotaCheckResult,
+  QuotaMetadata,
+  QuotaMiddlewareOptions,
+  QuotaStorage,
+  QuotaMiddleware,
+  WarningLevel,
+} from './quota-types.js'
+
+import type {
+  QuotaCheckResult,
+  QuotaMetadata,
+  QuotaMiddlewareOptions,
+  QuotaMiddleware,
+} from './quota-types.js'
+
+// Import helpers from quota-helpers.ts
+import {
+  InMemoryQuotaStorage,
+  getWarningLevel,
+  getWarningMessage,
+  getCustomerId,
+} from './quota-helpers.js'
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -36,229 +61,9 @@ const TIER_QUOTAS: Record<LicenseTier, number> = {
 }
 
 /**
- * Warning threshold type for quota levels
- */
-type WarningLevel = 0 | 80 | 90 | 100
-
-/**
  * Configuration for the upgrade URL
  */
 const UPGRADE_URL = 'https://skillsmith.app/upgrade'
-
-// ============================================================================
-// Types
-// ============================================================================
-
-/**
- * Quota check result returned after validating usage
- */
-export interface QuotaCheckResult {
-  /** Whether the tool call is allowed */
-  allowed: boolean
-  /** Remaining API calls in the current period */
-  remaining: number
-  /** Total limit for the current tier (-1 for unlimited) */
-  limit: number
-  /** Percentage of quota used (0-100+) */
-  percentUsed: number
-  /** Current warning level (0, 80, 90, or 100) */
-  warningLevel: WarningLevel
-  /** When the quota resets (start of next billing period) */
-  resetAt: Date
-  /** Warning or error message if applicable */
-  message?: string
-  /** Upgrade URL if quota is exceeded or near limit */
-  upgradeUrl?: string
-}
-
-/**
- * Quota information to include in response metadata
- */
-export interface QuotaMetadata {
-  /** Remaining API calls */
-  remaining: number
-  /** Total limit (-1 for unlimited) */
-  limit: number
-  /** When the quota resets */
-  resetAt: string
-  /** Warning message if approaching limit */
-  warning?: string
-}
-
-/**
- * Quota middleware configuration options
- */
-export interface QuotaMiddlewareOptions {
-  /**
-   * Cost of each API call (default: 1)
-   * Can be customized per tool if some tools are more expensive
-   */
-  defaultCost?: number
-
-  /**
-   * Whether to track usage even for unlimited tiers (enterprise)
-   * Useful for analytics purposes
-   */
-  trackUnlimited?: boolean
-
-  /**
-   * Custom storage adapter for quota tracking
-   * If not provided, uses in-memory storage (resets on restart)
-   */
-  storage?: QuotaStorage
-}
-
-/**
- * Interface for quota storage adapters
- */
-export interface QuotaStorage {
-  /** Get current usage for a customer in the current period */
-  getUsage(customerId: string): Promise<{ used: number; periodStart: Date; periodEnd: Date }>
-  /** Increment usage count */
-  incrementUsage(customerId: string, cost: number): Promise<void>
-  /** Initialize quota for a new billing period */
-  initializePeriod(customerId: string, limit: number): Promise<void>
-}
-
-/**
- * Quota middleware instance
- */
-export interface QuotaMiddleware {
-  /**
-   * Check if a tool call is allowed and track usage
-   * Call this BEFORE executing the tool
-   */
-  checkAndTrack(
-    toolName: string,
-    licenseInfo: LicenseInfo | null,
-    customerId?: string
-  ): Promise<QuotaCheckResult>
-
-  /**
-   * Get current quota status without incrementing
-   */
-  getStatus(licenseInfo: LicenseInfo | null, customerId?: string): Promise<QuotaCheckResult>
-
-  /**
-   * Build quota metadata for response _meta field
-   */
-  buildMetadata(result: QuotaCheckResult): QuotaMetadata
-
-  /**
-   * Build error response for quota exceeded
-   */
-  buildExceededResponse(result: QuotaCheckResult): MCPErrorResponse
-}
-
-// ============================================================================
-// In-Memory Storage (Default)
-// ============================================================================
-
-/**
- * Simple in-memory storage for quota tracking
- * Note: This resets on server restart. Use a database-backed storage
- * in production via the storage option.
- */
-class InMemoryQuotaStorage implements QuotaStorage {
-  private usage: Map<
-    string,
-    {
-      used: number
-      periodStart: Date
-      periodEnd: Date
-    }
-  > = new Map()
-
-  async getUsage(
-    customerId: string
-  ): Promise<{ used: number; periodStart: Date; periodEnd: Date }> {
-    const now = new Date()
-    const existing = this.usage.get(customerId)
-
-    // If we have existing data and it's still in the current period, return it
-    if (existing && existing.periodEnd > now) {
-      return existing
-    }
-
-    // Otherwise, create a new period
-    const periodStart = this.getMonthStart(now)
-    const periodEnd = this.getMonthEnd(now)
-    const newUsage = { used: 0, periodStart, periodEnd }
-    this.usage.set(customerId, newUsage)
-    return newUsage
-  }
-
-  async incrementUsage(customerId: string, cost: number): Promise<void> {
-    const usage = await this.getUsage(customerId)
-    usage.used += cost
-  }
-
-  async initializePeriod(customerId: string, _limit: number): Promise<void> {
-    const now = new Date()
-    this.usage.set(customerId, {
-      used: 0,
-      periodStart: this.getMonthStart(now),
-      periodEnd: this.getMonthEnd(now),
-    })
-  }
-
-  private getMonthStart(date: Date): Date {
-    return new Date(date.getFullYear(), date.getMonth(), 1)
-  }
-
-  private getMonthEnd(date: Date): Date {
-    return new Date(date.getFullYear(), date.getMonth() + 1, 1)
-  }
-}
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/**
- * Get the warning level based on percentage used
- */
-function getWarningLevel(percentUsed: number): WarningLevel {
-  if (percentUsed >= 100) return 100
-  if (percentUsed >= 90) return 90
-  if (percentUsed >= 80) return 80
-  return 0
-}
-
-/**
- * Get warning message based on level and current usage
- */
-function getWarningMessage(
-  warningLevel: WarningLevel,
-  used: number,
-  limit: number,
-  _tier: LicenseTier
-): string | undefined {
-  if (warningLevel === 0) return undefined
-
-  const remaining = Math.max(0, limit - used)
-
-  switch (warningLevel) {
-    case 100:
-      return `API quota exceeded (${used.toLocaleString()}/${limit.toLocaleString()} calls). Upgrade to continue.`
-    case 90:
-      return `Warning: 90% of API quota used (${remaining.toLocaleString()} calls remaining). Consider upgrading.`
-    case 80:
-      return `Notice: 80% of API quota used (${remaining.toLocaleString()} calls remaining).`
-    default:
-      return undefined
-  }
-}
-
-/**
- * Generate a customer ID from license info
- * Falls back to 'anonymous' for community users without an organization ID
- */
-function getCustomerId(licenseInfo: LicenseInfo | null, providedId?: string): string {
-  if (providedId) return providedId
-  if (licenseInfo?.organizationId) return licenseInfo.organizationId
-  return 'anonymous'
-}
 
 // ============================================================================
 // Quota Middleware Factory

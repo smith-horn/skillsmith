@@ -11,6 +11,9 @@
 import { LanguageAdapter, type SupportedLanguage } from './base.js'
 import type { ParseResult, ImportInfo, ExportInfo, FunctionInfo, FrameworkRule } from './base.js'
 
+// Re-export Cargo.toml parser for backwards compatibility
+export { parseCargoToml, type CargoDependency } from './rust-parsers.js'
+
 /**
  * Extended ExportInfo for Rust with visibility support
  */
@@ -30,16 +33,75 @@ export interface RustFunctionInfo extends FunctionInfo {
 }
 
 /**
- * Cargo.toml dependency information
+ * Rust framework detection rules
  */
-export interface CargoDependency {
-  /** Crate name */
-  name: string
-  /** Version specifier */
-  version: string
-  /** Whether this is a dev dependency */
-  isDev: boolean
-}
+const RUST_FRAMEWORK_RULES: FrameworkRule[] = [
+  {
+    name: 'Actix',
+    depIndicators: ['actix-web', 'actix-rt'],
+    importIndicators: ['actix_web', 'actix_rt'],
+  },
+  {
+    name: 'Rocket',
+    depIndicators: ['rocket'],
+    importIndicators: ['rocket'],
+  },
+  {
+    name: 'Axum',
+    depIndicators: ['axum'],
+    importIndicators: ['axum'],
+  },
+  {
+    name: 'Tokio',
+    depIndicators: ['tokio'],
+    importIndicators: ['tokio'],
+  },
+  {
+    name: 'Serde',
+    depIndicators: ['serde', 'serde_json'],
+    importIndicators: ['serde', 'serde_json'],
+  },
+  {
+    name: 'Diesel',
+    depIndicators: ['diesel'],
+    importIndicators: ['diesel'],
+  },
+  {
+    name: 'SQLx',
+    depIndicators: ['sqlx'],
+    importIndicators: ['sqlx'],
+  },
+  {
+    name: 'Clap',
+    depIndicators: ['clap'],
+    importIndicators: ['clap'],
+  },
+  {
+    name: 'Warp',
+    depIndicators: ['warp'],
+    importIndicators: ['warp'],
+  },
+  {
+    name: 'Reqwest',
+    depIndicators: ['reqwest'],
+    importIndicators: ['reqwest'],
+  },
+  {
+    name: 'Hyper',
+    depIndicators: ['hyper'],
+    importIndicators: ['hyper'],
+  },
+  {
+    name: 'Tonic',
+    depIndicators: ['tonic'],
+    importIndicators: ['tonic'],
+  },
+  {
+    name: 'Tracing',
+    depIndicators: ['tracing', 'tracing-subscriber'],
+    importIndicators: ['tracing', 'tracing_subscriber'],
+  },
+]
 
 /**
  * Rust Language Adapter
@@ -81,73 +143,7 @@ export class RustAdapter extends LanguageAdapter {
    * Get Rust framework detection rules
    */
   getFrameworkRules(): FrameworkRule[] {
-    return [
-      {
-        name: 'Actix',
-        depIndicators: ['actix-web', 'actix-rt'],
-        importIndicators: ['actix_web', 'actix_rt'],
-      },
-      {
-        name: 'Rocket',
-        depIndicators: ['rocket'],
-        importIndicators: ['rocket'],
-      },
-      {
-        name: 'Axum',
-        depIndicators: ['axum'],
-        importIndicators: ['axum'],
-      },
-      {
-        name: 'Tokio',
-        depIndicators: ['tokio'],
-        importIndicators: ['tokio'],
-      },
-      {
-        name: 'Serde',
-        depIndicators: ['serde', 'serde_json'],
-        importIndicators: ['serde', 'serde_json'],
-      },
-      {
-        name: 'Diesel',
-        depIndicators: ['diesel'],
-        importIndicators: ['diesel'],
-      },
-      {
-        name: 'SQLx',
-        depIndicators: ['sqlx'],
-        importIndicators: ['sqlx'],
-      },
-      {
-        name: 'Clap',
-        depIndicators: ['clap'],
-        importIndicators: ['clap'],
-      },
-      {
-        name: 'Warp',
-        depIndicators: ['warp'],
-        importIndicators: ['warp'],
-      },
-      {
-        name: 'Reqwest',
-        depIndicators: ['reqwest'],
-        importIndicators: ['reqwest'],
-      },
-      {
-        name: 'Hyper',
-        depIndicators: ['hyper'],
-        importIndicators: ['hyper'],
-      },
-      {
-        name: 'Tonic',
-        depIndicators: ['tonic'],
-        importIndicators: ['tonic'],
-      },
-      {
-        name: 'Tracing',
-        depIndicators: ['tracing', 'tracing-subscriber'],
-        importIndicators: ['tracing', 'tracing_subscriber'],
-      },
-    ]
+    return RUST_FRAMEWORK_RULES
   }
 
   /**
@@ -159,15 +155,6 @@ export class RustAdapter extends LanguageAdapter {
 
   /**
    * Extract use statements from Rust source
-   *
-   * Handles:
-   * - use crate::module::item;
-   * - use std::collections::HashMap;
-   * - use super::parent;
-   * - use self::child;
-   * - use std::{io, fs};
-   * - use module::*;
-   * - extern crate foo;
    */
   private extractImports(content: string, filePath: string): ImportInfo[] {
     const imports: ImportInfo[] = []
@@ -255,9 +242,6 @@ export class RustAdapter extends LanguageAdapter {
 
   /**
    * Extract exports (pub items) from Rust source
-   *
-   * In Rust, items prefixed with `pub` are public.
-   * Handles visibility modifiers: pub, pub(crate), pub(super), pub(in path)
    */
   private extractExports(content: string, filePath: string): ExportInfo[] {
     const exports: ExportInfo[] = []
@@ -376,13 +360,6 @@ export class RustAdapter extends LanguageAdapter {
 
   /**
    * Extract function definitions from Rust source
-   *
-   * Handles:
-   * - fn name(params)
-   * - pub fn name(params)
-   * - async fn name(params)
-   * - pub async fn name(params)
-   * - Functions with generics: fn name<T>(params)
    */
   private extractFunctions(content: string, filePath: string): FunctionInfo[] {
     const functions: FunctionInfo[] = []
@@ -398,7 +375,6 @@ export class RustAdapter extends LanguageAdapter {
         /^(\s*)(pub(?:\([^)]+\))?\s+)?(async\s+)?fn\s+(\w+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)/
       )
       if (match) {
-        const _indentation = match[1]
         const pubModifier = match[2]
         const isAsync = !!match[3]
         const name = match[4]
@@ -422,7 +398,7 @@ export class RustAdapter extends LanguageAdapter {
         for (let j = i - 1; j >= 0; j--) {
           const prevLine = lines[j].trim()
           if (prevLine.startsWith('#[')) {
-            // Extract attribute name: #[test] -> test, #[tokio::test] -> tokio::test
+            // Extract attribute name
             const attrMatch = prevLine.match(/#\[([^\]]+)\]/)
             if (attrMatch) {
               // Get just the attribute name, not its arguments
@@ -453,97 +429,4 @@ export class RustAdapter extends LanguageAdapter {
 
     return functions
   }
-}
-
-/**
- * Parse Cargo.toml to extract dependencies
- *
- * @param content - Content of Cargo.toml file
- * @returns Array of dependencies with name, version, and isDev flag
- *
- * @example
- * ```typescript
- * const deps = parseCargoToml(cargoTomlContent)
- * console.log(deps) // [{ name: 'serde', version: '1.0', isDev: false }]
- * ```
- */
-export function parseCargoToml(content: string): CargoDependency[] {
-  const deps: CargoDependency[] = []
-  const lines = content.split('\n')
-  let inDeps = false
-  let inDevDeps = false
-  let inBuildDeps = false
-
-  for (const line of lines) {
-    const trimmed = line.trim()
-
-    // Track which section we're in
-    if (trimmed === '[dependencies]') {
-      inDeps = true
-      inDevDeps = false
-      inBuildDeps = false
-      continue
-    }
-    if (trimmed === '[dev-dependencies]') {
-      inDeps = false
-      inDevDeps = true
-      inBuildDeps = false
-      continue
-    }
-    if (trimmed === '[build-dependencies]') {
-      inDeps = false
-      inDevDeps = false
-      inBuildDeps = true
-      continue
-    }
-    // Any other section header exits dependency sections
-    if (trimmed.startsWith('[')) {
-      inDeps = false
-      inDevDeps = false
-      inBuildDeps = false
-      continue
-    }
-
-    // Parse dependencies in relevant sections
-    if (inDeps || inDevDeps || inBuildDeps) {
-      // Skip empty lines and comments
-      if (trimmed === '' || trimmed.startsWith('#')) {
-        continue
-      }
-
-      // Simple format: name = "version"
-      const simpleMatch = trimmed.match(/^([\w-]+)\s*=\s*"([^"]+)"/)
-      if (simpleMatch) {
-        deps.push({
-          name: simpleMatch[1],
-          version: simpleMatch[2],
-          isDev: inDevDeps,
-        })
-        continue
-      }
-
-      // Table format: name = { version = "1.0", features = [...] }
-      const tableMatch = trimmed.match(/^([\w-]+)\s*=\s*\{.*version\s*=\s*"([^"]+)"/)
-      if (tableMatch) {
-        deps.push({
-          name: tableMatch[1],
-          version: tableMatch[2],
-          isDev: inDevDeps,
-        })
-        continue
-      }
-
-      // Git/path dependencies without version (we still capture them)
-      const gitMatch = trimmed.match(/^([\w-]+)\s*=\s*\{.*(?:git|path)\s*=/)
-      if (gitMatch) {
-        deps.push({
-          name: gitMatch[1],
-          version: 'git/path',
-          isDev: inDevDeps,
-        })
-      }
-    }
-  }
-
-  return deps
 }

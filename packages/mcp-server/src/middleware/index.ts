@@ -49,6 +49,7 @@ export {
   type QuotaCheckResult,
   type QuotaMetadata,
   type QuotaStorage,
+  type WarningLevel,
 } from './quota.js'
 
 // Degradation middleware (SMI-1060)

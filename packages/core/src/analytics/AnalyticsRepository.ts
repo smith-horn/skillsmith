@@ -13,97 +13,40 @@ import { randomUUID } from 'crypto'
 import type {
   UsageEvent,
   UsageEventInput,
-  UsageEventType,
   Experiment,
   ExperimentInput,
   ExperimentAssignment,
   ExperimentOutcome,
   OutcomeInput,
   ROIMetrics,
-  ROIMetricType,
   ExperimentVariant,
   ExperimentStatus,
 } from './types.js'
 
-/**
- * Raw database row type for skill_usage_events table
- * Used for type-safe parsing of external database data
- */
-interface UsageEventRow {
-  id: string
-  skill_id: string
-  user_id: string
-  session_id: string
-  event_type: string
-  context: string | null
-  value_score: number | null
-  timestamp: string
-  created_at: string
-}
+// Re-export row types for testing
+export type {
+  UsageEventRow,
+  ExperimentRow,
+  ExperimentAssignmentRow,
+  ExperimentOutcomeRow,
+  ROIMetricsRow,
+} from './AnalyticsRepository.types.js'
 
-/**
- * Raw database row type for experiments table
- */
-interface ExperimentRow {
-  id: string
-  name: string
-  description: string | null
-  hypothesis: string | null
-  status: string
-  variant_a: string
-  variant_b: string
-  start_date: string | null
-  end_date: string | null
-  target_sample_size: number
-  created_at: string
-  updated_at: string
-}
+// Internal imports
+import type {
+  UsageEventRow,
+  ExperimentRow,
+  ExperimentAssignmentRow,
+  ROIMetricsRow,
+} from './AnalyticsRepository.types.js'
 
-/**
- * Raw database row type for experiment_assignments table
- */
-interface ExperimentAssignmentRow {
-  id: string
-  experiment_id: string
-  user_id: string
-  variant: string
-  assigned_at: string
-}
-
-/**
- * Raw database row type for experiment_outcomes table
- */
-interface ExperimentOutcomeRow {
-  id: string
-  experiment_id: string
-  assignment_id: string
-  outcome_type: string
-  outcome_value: number
-  metadata: string | null
-  measured_at: string
-  created_at: string
-}
-
-/**
- * Raw database row type for roi_metrics table
- */
-interface ROIMetricsRow {
-  id: string
-  metric_type: string
-  entity_id: string | null
-  period_start: string
-  period_end: string
-  total_activations: number
-  total_invocations: number
-  total_successes: number
-  total_failures: number
-  avg_value_score: number
-  estimated_time_saved: number
-  estimated_value_usd: number
-  metadata: string | null
-  computed_at: string
-  created_at: string
-}
+import {
+  rowToUsageEvent,
+  rowToExperiment,
+  rowToAssignment,
+  rowToOutcome,
+  rowToROIMetrics,
+} from './AnalyticsRepository.helpers.js'
 
 /**
  * Repository for analytics operations
@@ -155,18 +98,7 @@ export class AnalyticsRepository {
       | undefined
 
     if (!row) return null
-
-    return {
-      id: row.id,
-      skillId: row.skill_id,
-      userId: row.user_id,
-      sessionId: row.session_id,
-      eventType: row.event_type as UsageEventType,
-      context: row.context ? JSON.parse(row.context) : undefined,
-      valueScore: row.value_score ?? undefined,
-      timestamp: row.timestamp,
-      createdAt: row.created_at,
-    }
+    return rowToUsageEvent(row)
   }
 
   /**
@@ -181,17 +113,7 @@ export class AnalyticsRepository {
       )
       .all(skillId, startDate, endDate) as UsageEventRow[]
 
-    return rows.map((row) => ({
-      id: row.id,
-      skillId: row.skill_id,
-      userId: row.user_id,
-      sessionId: row.session_id,
-      eventType: row.event_type as UsageEventType,
-      context: row.context ? JSON.parse(row.context) : undefined,
-      valueScore: row.value_score ?? undefined,
-      timestamp: row.timestamp,
-      createdAt: row.created_at,
-    }))
+    return rows.map(rowToUsageEvent)
   }
 
   /**
@@ -206,17 +128,7 @@ export class AnalyticsRepository {
       )
       .all(userId, startDate, endDate) as UsageEventRow[]
 
-    return rows.map((row) => ({
-      id: row.id,
-      skillId: row.skill_id,
-      userId: row.user_id,
-      sessionId: row.session_id,
-      eventType: row.event_type as UsageEventType,
-      context: row.context ? JSON.parse(row.context) : undefined,
-      valueScore: row.value_score ?? undefined,
-      timestamp: row.timestamp,
-      createdAt: row.created_at,
-    }))
+    return rows.map(rowToUsageEvent)
   }
 
   /**
@@ -231,17 +143,7 @@ export class AnalyticsRepository {
       )
       .all(startDate, endDate) as UsageEventRow[]
 
-    return rows.map((row) => ({
-      id: row.id,
-      skillId: row.skill_id,
-      userId: row.user_id,
-      sessionId: row.session_id,
-      eventType: row.event_type as UsageEventType,
-      context: row.context ? JSON.parse(row.context) : undefined,
-      valueScore: row.value_score ?? undefined,
-      timestamp: row.timestamp,
-      createdAt: row.created_at,
-    }))
+    return rows.map(rowToUsageEvent)
   }
 
   /**
@@ -294,8 +196,7 @@ export class AnalyticsRepository {
       | undefined
 
     if (!row) return null
-
-    return this.rowToExperiment(row)
+    return rowToExperiment(row)
   }
 
   /**
@@ -307,8 +208,7 @@ export class AnalyticsRepository {
       | undefined
 
     if (!row) return null
-
-    return this.rowToExperiment(row)
+    return rowToExperiment(row)
   }
 
   /**
@@ -330,7 +230,7 @@ export class AnalyticsRepository {
       .prepare("SELECT * FROM experiments WHERE status = 'active' ORDER BY created_at DESC")
       .all() as ExperimentRow[]
 
-    return rows.map((row) => this.rowToExperiment(row))
+    return rows.map(rowToExperiment)
   }
 
   // ==================== Experiment Assignments ====================
@@ -357,13 +257,7 @@ export class AnalyticsRepository {
       .prepare('SELECT * FROM experiment_assignments WHERE experiment_id = ? AND user_id = ?')
       .get(experimentId, userId) as ExperimentAssignmentRow
 
-    return {
-      id: row.id,
-      experimentId: row.experiment_id,
-      userId: row.user_id,
-      variant: row.variant as ExperimentVariant,
-      assignedAt: row.assigned_at,
-    }
+    return rowToAssignment(row)
   }
 
   /**
@@ -375,14 +269,7 @@ export class AnalyticsRepository {
       .get(experimentId, userId) as ExperimentAssignmentRow | undefined
 
     if (!row) return null
-
-    return {
-      id: row.id,
-      experimentId: row.experiment_id,
-      userId: row.user_id,
-      variant: row.variant as ExperimentVariant,
-      assignedAt: row.assigned_at,
-    }
+    return rowToAssignment(row)
   }
 
   /**
@@ -393,13 +280,7 @@ export class AnalyticsRepository {
       .prepare('SELECT * FROM experiment_assignments WHERE experiment_id = ?')
       .all(experimentId) as ExperimentAssignmentRow[]
 
-    return rows.map((row) => ({
-      id: row.id,
-      experimentId: row.experiment_id,
-      userId: row.user_id,
-      variant: row.variant as ExperimentVariant,
-      assignedAt: row.assigned_at,
-    }))
+    return rows.map(rowToAssignment)
   }
 
   // ==================== Experiment Outcomes ====================
@@ -427,18 +308,9 @@ export class AnalyticsRepository {
 
     const row = this.db
       .prepare('SELECT * FROM experiment_outcomes WHERE id = ?')
-      .get(id) as ExperimentOutcomeRow
+      .get(id) as import('./AnalyticsRepository.types.js').ExperimentOutcomeRow
 
-    return {
-      id: row.id,
-      experimentId: row.experiment_id,
-      assignmentId: row.assignment_id,
-      outcomeType: row.outcome_type,
-      outcomeValue: row.outcome_value,
-      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
-      measuredAt: row.measured_at,
-      createdAt: row.created_at,
-    }
+    return rowToOutcome(row)
   }
 
   /**
@@ -449,18 +321,9 @@ export class AnalyticsRepository {
       .prepare(
         'SELECT * FROM experiment_outcomes WHERE experiment_id = ? ORDER BY measured_at DESC'
       )
-      .all(experimentId) as ExperimentOutcomeRow[]
+      .all(experimentId) as import('./AnalyticsRepository.types.js').ExperimentOutcomeRow[]
 
-    return rows.map((row) => ({
-      id: row.id,
-      experimentId: row.experiment_id,
-      assignmentId: row.assignment_id,
-      outcomeType: row.outcome_type,
-      outcomeValue: row.outcome_value,
-      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
-      measuredAt: row.measured_at,
-      createdAt: row.created_at,
-    }))
+    return rows.map(rowToOutcome)
   }
 
   // ==================== ROI Metrics ====================
@@ -498,8 +361,7 @@ export class AnalyticsRepository {
     )
 
     const row = this.db.prepare('SELECT * FROM roi_metrics WHERE id = ?').get(id) as ROIMetricsRow
-
-    return this.rowToROIMetrics(row)
+    return rowToROIMetrics(row)
   }
 
   /**
@@ -514,7 +376,7 @@ export class AnalyticsRepository {
       )
       .all(metricType, startDate, endDate) as ROIMetricsRow[]
 
-    return rows.map((row) => this.rowToROIMetrics(row))
+    return rows.map(rowToROIMetrics)
   }
 
   /**
@@ -529,46 +391,6 @@ export class AnalyticsRepository {
       )
       .all(entityId, startDate, endDate) as ROIMetricsRow[]
 
-    return rows.map((row) => this.rowToROIMetrics(row))
-  }
-
-  private rowToROIMetrics(row: ROIMetricsRow): ROIMetrics {
-    return {
-      id: row.id,
-      metricType: row.metric_type as ROIMetricType,
-      entityId: row.entity_id ?? undefined,
-      periodStart: row.period_start,
-      periodEnd: row.period_end,
-      totalActivations: row.total_activations,
-      totalInvocations: row.total_invocations,
-      totalSuccesses: row.total_successes,
-      totalFailures: row.total_failures,
-      avgValueScore: row.avg_value_score,
-      estimatedTimeSaved: row.estimated_time_saved,
-      estimatedValueUsd: row.estimated_value_usd,
-      metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
-      computedAt: row.computed_at,
-      createdAt: row.created_at,
-    }
-  }
-
-  /**
-   * Convert a database row to an Experiment object
-   */
-  private rowToExperiment(row: ExperimentRow): Experiment {
-    return {
-      id: row.id,
-      name: row.name,
-      description: row.description ?? undefined,
-      hypothesis: row.hypothesis ?? undefined,
-      status: row.status as ExperimentStatus,
-      variantA: JSON.parse(row.variant_a),
-      variantB: JSON.parse(row.variant_b),
-      startDate: row.start_date ?? undefined,
-      endDate: row.end_date ?? undefined,
-      targetSampleSize: row.target_sample_size,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }
+    return rows.map(rowToROIMetrics)
   }
 }

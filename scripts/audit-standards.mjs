@@ -256,7 +256,10 @@ try {
 console.log(`\n${BOLD}9. Script Docker Compliance${RESET}`)
 
 // Check if scripts use local npm commands (anti-pattern)
-// Excludes: launch-*.sh (workflow launchers run locally by design)
+// Excludes:
+//   - launch-*.sh (workflow launchers run locally by design)
+//   - run_cmd npm (Docker wrapper function per SMI-1366)
+//   - Documentation/descriptive text (e.g., "Add npm run benchmark script")
 const scriptsDir = 'scripts'
 if (existsSync(scriptsDir)) {
   const scriptFiles = readdirSync(scriptsDir).filter(
@@ -276,6 +279,13 @@ if (existsSync(scriptsDir)) {
     const lines = content.split('\n')
     for (const line of lines) {
       if (line.trim().startsWith('#')) continue
+      // Skip run_cmd wrapper (Docker fallback per SMI-1366)
+      if (line.includes('run_cmd')) continue
+      // Skip descriptive documentation text (not executable commands)
+      // These patterns describe actions, not execute them
+      if (line.match(/Add\s+npm\s+(run\s+)?[a-z]+\s+script/i)) continue
+      if (line.match(/Add\s+npm\s+script/i)) continue
+      if (line.match(/Create\s+.*npm\s+/i)) continue
       if (
         line.match(/(?<!docker exec \S+ )npm (run|test|install)\b/) &&
         !line.includes('docker exec')

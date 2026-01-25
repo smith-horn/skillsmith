@@ -10,6 +10,7 @@
 
 import { LanguageAdapter, type SupportedLanguage, type FrameworkRule } from './base.js'
 import type { ParseResult, ImportInfo, ExportInfo, FunctionInfo } from '../types.js'
+import { PYTHON_FRAMEWORK_RULES } from './python-frameworks.js'
 
 /**
  * Python adapter using regex-based parsing with optional tree-sitter
@@ -144,83 +145,10 @@ export class PythonAdapter extends LanguageAdapter {
   /**
    * Get Python framework detection rules
    *
-   * Detects common Python frameworks and libraries including:
-   * - Web frameworks: Django, FastAPI, Flask
-   * - Testing: pytest
-   * - Data science: pandas, numpy
-   * - Databases: SQLAlchemy
-   * - Task queues: Celery
-   *
    * @returns Array of framework detection rules
    */
   getFrameworkRules(): FrameworkRule[] {
-    return [
-      {
-        name: 'Django',
-        depIndicators: ['django', 'Django'],
-        importIndicators: ['django', 'django.db', 'django.http', 'django.views', 'django.urls'],
-      },
-      {
-        name: 'FastAPI',
-        depIndicators: ['fastapi'],
-        importIndicators: ['fastapi', 'starlette', 'pydantic'],
-      },
-      {
-        name: 'Flask',
-        depIndicators: ['flask', 'Flask'],
-        importIndicators: ['flask', 'flask_restful', 'flask_sqlalchemy'],
-      },
-      {
-        name: 'pytest',
-        depIndicators: ['pytest'],
-        importIndicators: ['pytest', 'pytest_asyncio', '_pytest'],
-      },
-      {
-        name: 'pandas',
-        depIndicators: ['pandas'],
-        importIndicators: ['pandas', 'pd'],
-      },
-      {
-        name: 'numpy',
-        depIndicators: ['numpy'],
-        importIndicators: ['numpy', 'np'],
-      },
-      {
-        name: 'SQLAlchemy',
-        depIndicators: ['sqlalchemy', 'SQLAlchemy'],
-        importIndicators: ['sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext'],
-      },
-      {
-        name: 'Celery',
-        depIndicators: ['celery'],
-        importIndicators: ['celery', 'celery.task'],
-      },
-      {
-        name: 'Requests',
-        depIndicators: ['requests'],
-        importIndicators: ['requests'],
-      },
-      {
-        name: 'aiohttp',
-        depIndicators: ['aiohttp'],
-        importIndicators: ['aiohttp'],
-      },
-      {
-        name: 'Scrapy',
-        depIndicators: ['scrapy'],
-        importIndicators: ['scrapy'],
-      },
-      {
-        name: 'TensorFlow',
-        depIndicators: ['tensorflow', 'tensorflow-gpu'],
-        importIndicators: ['tensorflow', 'tf'],
-      },
-      {
-        name: 'PyTorch',
-        depIndicators: ['torch', 'pytorch'],
-        importIndicators: ['torch', 'torch.nn', 'torchvision'],
-      },
-    ]
+    return PYTHON_FRAMEWORK_RULES
   }
 
   /**
@@ -241,10 +169,6 @@ export class PythonAdapter extends LanguageAdapter {
 
   /**
    * Parse Python source code using regex patterns
-   *
-   * @param content - Python source code
-   * @param filePath - Path to the file
-   * @returns Parsed result
    */
   private parseWithRegex(content: string, filePath: string): ParseResult {
     const imports = this.extractImports(content, filePath)
@@ -255,18 +179,6 @@ export class PythonAdapter extends LanguageAdapter {
 
   /**
    * Extract imports from Python source code
-   *
-   * Handles:
-   * - `import module`
-   * - `import module as alias`
-   * - `from module import name`
-   * - `from module import name as alias`
-   * - `from module import *`
-   * - `from module import (name1, name2)`
-   *
-   * @param content - Python source code
-   * @param filePath - Path to the file
-   * @returns Array of import information
    */
   private extractImports(content: string, filePath: string): ImportInfo[] {
     const imports: ImportInfo[] = []
@@ -352,9 +264,6 @@ export class PythonAdapter extends LanguageAdapter {
 
   /**
    * Parse comma-separated import names, handling aliases
-   *
-   * @param namesStr - String containing import names
-   * @returns Array of imported names (without aliases)
    */
   private parseImportNames(namesStr: string): string[] {
     return namesStr
@@ -372,21 +281,13 @@ export class PythonAdapter extends LanguageAdapter {
 
   /**
    * Extract exports from Python source code
-   *
-   * In Python, exports are determined by:
-   * 1. `__all__` list (explicit exports)
-   * 2. Top-level class/function definitions (implicit, if not starting with _)
-   *
-   * @param content - Python source code
-   * @param filePath - Path to the file
-   * @returns Array of export information
    */
   private extractExports(content: string, filePath: string): ExportInfo[] {
     const exports: ExportInfo[] = []
     const lines = content.split('\n')
     const explicitExports = new Set<string>()
 
-    // Look for __all__ definition (handle multi-line with [\s\S] instead of dotAll flag)
+    // Look for __all__ definition
     const allMatch = content.match(/__all__\s*=\s*\[([^\]]+)\]/)
     if (allMatch) {
       const names = allMatch[1].match(/['"](\w+)['"]/g) || []
@@ -415,7 +316,7 @@ export class PythonAdapter extends LanguageAdapter {
       const classMatch = line.match(/^class\s+(\w+)/)
       if (classMatch) {
         const name = classMatch[1]
-        // Only add if not private (starts with _) and not already in __all__
+        // Only add if not private and not already in __all__
         if (!name.startsWith('_') && !explicitExports.has(name)) {
           exports.push({
             name,
@@ -431,7 +332,7 @@ export class PythonAdapter extends LanguageAdapter {
       const funcMatch = line.match(/^(?:async\s+)?def\s+(\w+)/)
       if (funcMatch) {
         const name = funcMatch[1]
-        // Only add if not private (starts with _) and not already in __all__
+        // Only add if not private and not already in __all__
         if (!name.startsWith('_') && !explicitExports.has(name)) {
           exports.push({
             name,
@@ -449,15 +350,6 @@ export class PythonAdapter extends LanguageAdapter {
 
   /**
    * Extract function definitions from Python source code
-   *
-   * Handles:
-   * - Regular functions: `def func():`
-   * - Async functions: `async def func():`
-   * - Methods (indented functions)
-   *
-   * @param content - Python source code
-   * @param filePath - Path to the file
-   * @returns Array of function information
    */
   private extractFunctions(content: string, filePath: string): FunctionInfo[] {
     const functions: FunctionInfo[] = []
@@ -500,13 +392,6 @@ export class PythonAdapter extends LanguageAdapter {
 
   /**
    * Parse Python source code using tree-sitter for more accurate results
-   *
-   * Tree-sitter provides a full AST which enables more accurate parsing
-   * of complex Python constructs.
-   *
-   * @param content - Python source code
-   * @param filePath - Path to the file
-   * @returns Parsed result
    */
   private parseWithTreeSitter(content: string, filePath: string): ParseResult {
     // Tree-sitter parsing for more accurate results

@@ -12,46 +12,15 @@
 import { Worker, isMainThread, parentPort, workerData } from 'worker_threads'
 import os from 'os'
 import { EventEmitter } from 'events'
-import type { ParseResult } from './types.js'
-import { getAnalysisMetrics, type AnalysisMetrics } from './metrics.js'
+import { getAnalysisMetrics } from './metrics.js'
+import type { ParseTask, WorkerResult, WorkerPoolOptions, QueuedTask } from './worker-types.js'
+import { getLanguageFromExtension, chunkArray, WORKER_PARSE_CODE } from './worker-utils.js'
 
-/**
- * Task to be parsed by a worker
- */
-export interface ParseTask {
-  /** Path to the file */
-  filePath: string
-  /** File content to parse */
-  content: string
-  /** Programming language */
-  language: string
-}
+// Re-export types for backwards compatibility
+export type { ParseTask, WorkerResult, WorkerPoolOptions } from './worker-types.js'
 
-/**
- * Result from a worker parse operation
- */
-export interface WorkerResult {
-  /** Path to the file */
-  filePath: string
-  /** Parse result */
-  result: ParseResult
-  /** Time taken to parse in milliseconds */
-  durationMs: number
-  /** Error message if parsing failed */
-  error?: string
-}
-
-/**
- * Options for ParserWorkerPool
- */
-export interface WorkerPoolOptions {
-  /** Number of workers in pool (default: CPU cores - 1) */
-  poolSize?: number
-  /** Minimum batch size to use workers (default: 10) */
-  minBatchForWorkers?: number
-  /** Custom metrics instance (uses default if not provided) */
-  metrics?: AnalysisMetrics
-}
+// SMI-1330/1331: Import types for cached router
+type LanguageRouterType = InstanceType<(typeof import('./router.js'))['LanguageRouter']>
 
 /**
  * Worker thread pool for parallel file parsing
@@ -78,20 +47,13 @@ export interface WorkerPoolOptions {
  * pool.dispose()
  * ```
  */
-// SMI-1330/1331: Import types for cached router
-type LanguageRouterType = InstanceType<(typeof import('./router.js'))['LanguageRouter']>
-
 export class ParserWorkerPool extends EventEmitter {
   private workers: Worker[] = []
-  private taskQueue: Array<{
-    task: ParseTask
-    resolve: (r: WorkerResult) => void
-    reject: (e: Error) => void
-  }> = []
+  private taskQueue: QueuedTask[] = []
   private activeWorkers = 0
   private readonly poolSize: number
   private readonly minBatchForWorkers: number
-  private readonly metrics: AnalysisMetrics
+  private readonly metrics: ReturnType<typeof getAnalysisMetrics>
   private disposed = false
   // SMI-1330/1331: Cache router to avoid recreation on each parseInline call
   private router: LanguageRouterType | null = null
@@ -146,14 +108,6 @@ export class ParserWorkerPool extends EventEmitter {
    * @param tasks - Array of parse tasks
    * @returns Array of worker results
    * @throws Error if pool has been disposed
-   *
-   * @example
-   * ```typescript
-   * const results = await pool.parseFiles([
-   *   { filePath: 'a.ts', content: 'export const a = 1', language: 'typescript' },
-   *   { filePath: 'b.ts', content: 'export const b = 2', language: 'typescript' },
-   * ])
-   * ```
    */
   async parseFiles(tasks: ParseTask[]): Promise<WorkerResult[]> {
     if (this.disposed) {
@@ -190,7 +144,7 @@ export class ParserWorkerPool extends EventEmitter {
       } else {
         // Extract language from file extension
         const ext = result.filePath.split('.').pop()?.toLowerCase()
-        const language = this.getLanguageFromExtension(ext)
+        const language = getLanguageFromExtension(ext)
         if (language) {
           this.metrics.recordFileParsed(language)
           this.metrics.recordParseDuration(language, result.durationMs)
@@ -199,31 +153,6 @@ export class ParserWorkerPool extends EventEmitter {
     }
     // Update memory usage after batch processing
     this.metrics.updateMemoryUsage()
-  }
-
-  /**
-   * Get language from file extension
-   * SMI-1337: Helper for metrics
-   */
-  private getLanguageFromExtension(ext?: string): string | undefined {
-    if (!ext) return undefined
-    const extensionToLanguage: Record<string, string> = {
-      ts: 'typescript',
-      tsx: 'typescript',
-      mts: 'typescript',
-      cts: 'typescript',
-      js: 'javascript',
-      jsx: 'javascript',
-      mjs: 'javascript',
-      cjs: 'javascript',
-      py: 'python',
-      pyi: 'python',
-      pyw: 'python',
-      go: 'go',
-      rs: 'rust',
-      java: 'java',
-    }
-    return extensionToLanguage[ext]
   }
 
   /**
@@ -278,7 +207,7 @@ export class ParserWorkerPool extends EventEmitter {
   private async parseWithWorkers(tasks: ParseTask[]): Promise<WorkerResult[]> {
     // Chunk tasks for workers
     const chunkSize = Math.ceil(tasks.length / this.poolSize)
-    const chunks = this.chunkArray(tasks, chunkSize)
+    const chunks = chunkArray(tasks, chunkSize)
 
     const results = await Promise.all(chunks.map((chunk) => this.dispatchToWorker(chunk)))
 
@@ -290,143 +219,7 @@ export class ParserWorkerPool extends EventEmitter {
    */
   private async dispatchToWorker(tasks: ParseTask[]): Promise<WorkerResult[]> {
     return new Promise((resolve, reject) => {
-      // Create inline worker with basic regex-based parsing
-      // Full adapter-based parsing happens in main thread for accuracy
-      const workerCode = `
-        const { parentPort, workerData } = require('worker_threads');
-
-        function processTask(task) {
-          const start = Date.now();
-          try {
-            const result = {
-              imports: [],
-              exports: [],
-              functions: [],
-            };
-
-            const lines = task.content.split('\\n');
-            for (let i = 0; i < lines.length; i++) {
-              const line = lines[i];
-
-              // Detect imports (TypeScript/JavaScript)
-              if (/^import\\s/.test(line) || /^from\\s/.test(line)) {
-                const moduleMatch = line.match(/from\\s+['"]([^'"]+)['"]/);
-                result.imports.push({
-                  module: moduleMatch ? moduleMatch[1] : line.trim(),
-                  namedImports: [],
-                  isTypeOnly: /^import\\s+type/.test(line),
-                  sourceFile: task.filePath,
-                  line: i + 1,
-                });
-              }
-
-              // Detect imports (Python)
-              if (/^import\\s+\\w/.test(line) || /^from\\s+\\w/.test(line)) {
-                const moduleMatch = line.match(/^(?:from\\s+)?(\\w+(?:\\.\\w+)*)/);
-                if (moduleMatch && !result.imports.some(imp => imp.line === i + 1)) {
-                  result.imports.push({
-                    module: moduleMatch[1],
-                    namedImports: [],
-                    isTypeOnly: false,
-                    sourceFile: task.filePath,
-                    line: i + 1,
-                  });
-                }
-              }
-
-              // Detect imports (Go)
-              if (/^\\s*"[^"]+"/.test(line) || /^import\\s+/.test(line)) {
-                const pathMatch = line.match(/"([^"]+)"/);
-                if (pathMatch) {
-                  result.imports.push({
-                    module: pathMatch[1],
-                    namedImports: [],
-                    isTypeOnly: false,
-                    sourceFile: task.filePath,
-                    line: i + 1,
-                  });
-                }
-              }
-
-              // Detect functions (TypeScript/JavaScript)
-              const tsFuncMatch = line.match(/^(export\\s+)?(async\\s+)?function\\s+(\\w+)/);
-              if (tsFuncMatch) {
-                result.functions.push({
-                  name: tsFuncMatch[3],
-                  parameterCount: 0,
-                  isAsync: !!tsFuncMatch[2],
-                  isExported: !!tsFuncMatch[1],
-                  sourceFile: task.filePath,
-                  line: i + 1,
-                });
-              }
-
-              // Detect functions (Python)
-              const pyFuncMatch = line.match(/^(async\\s+)?def\\s+(\\w+)/);
-              if (pyFuncMatch) {
-                result.functions.push({
-                  name: pyFuncMatch[2],
-                  parameterCount: 0,
-                  isAsync: !!pyFuncMatch[1],
-                  isExported: !pyFuncMatch[2].startsWith('_'),
-                  sourceFile: task.filePath,
-                  line: i + 1,
-                });
-              }
-
-              // Detect functions (Go)
-              const goFuncMatch = line.match(/^func\\s+(?:\\([^)]+\\)\\s+)?(\\w+)/);
-              if (goFuncMatch) {
-                const isExported = goFuncMatch[1][0] === goFuncMatch[1][0].toUpperCase();
-                result.functions.push({
-                  name: goFuncMatch[1],
-                  parameterCount: 0,
-                  isAsync: false,
-                  isExported: isExported,
-                  sourceFile: task.filePath,
-                  line: i + 1,
-                });
-              }
-
-              // Detect exports (TypeScript/JavaScript)
-              if (/^export\\s+(default\\s+)?(const|let|var|class|function|interface|type|enum)/.test(line)) {
-                const exportMatch = line.match(/^export\\s+(default\\s+)?(const|let|var|class|function|interface|type|enum)\\s+(\\w+)/);
-                if (exportMatch) {
-                  result.exports.push({
-                    name: exportMatch[3],
-                    kind: exportMatch[2] === 'function' ? 'function' :
-                          exportMatch[2] === 'class' ? 'class' :
-                          exportMatch[2] === 'interface' ? 'interface' :
-                          exportMatch[2] === 'type' ? 'type' :
-                          exportMatch[2] === 'enum' ? 'enum' : 'variable',
-                    isDefault: !!exportMatch[1],
-                    sourceFile: task.filePath,
-                    line: i + 1,
-                  });
-                }
-              }
-            }
-
-            return {
-              filePath: task.filePath,
-              result,
-              durationMs: Date.now() - start,
-            };
-          } catch (error) {
-            return {
-              filePath: task.filePath,
-              result: { imports: [], exports: [], functions: [] },
-              durationMs: Date.now() - start,
-              error: error.message || String(error),
-            };
-          }
-        }
-
-        const results = workerData.tasks.map(processTask);
-        parentPort.postMessage(results);
-      `
-
-      const worker = new Worker(workerCode, {
+      const worker = new Worker(WORKER_PARSE_CODE, {
         eval: true,
         workerData: { tasks },
       })
@@ -455,17 +248,6 @@ export class ParserWorkerPool extends EventEmitter {
         }
       })
     })
-  }
-
-  /**
-   * Chunk an array into smaller arrays
-   */
-  private chunkArray<T>(array: T[], size: number): T[][] {
-    const chunks: T[][] = []
-    for (let i = 0; i < array.length; i += size) {
-      chunks.push(array.slice(i, i + size))
-    }
-    return chunks
   }
 
   /**

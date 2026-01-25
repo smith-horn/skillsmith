@@ -42,36 +42,29 @@
  * @module mcp-server-template
  */
 
-export interface McpServerTemplateData {
-  name: string
-  description: string
-  tools: McpToolDefinition[]
-  author: string
-}
+// Re-export types for backwards compatibility
+export type {
+  McpServerTemplateData,
+  McpToolDefinition,
+  McpParameterDefinition,
+} from './mcp-template-types.js'
 
-export interface McpToolDefinition {
-  name: string
-  description: string
-  parameters?: McpParameterDefinition[]
-}
+// Import types and constants
+import type { McpServerTemplateData } from './mcp-template-types.js'
+import { VERSIONS } from './mcp-template-types.js'
 
-export interface McpParameterDefinition {
-  name: string
-  type: 'string' | 'number' | 'boolean' | 'array' | 'object'
-  description: string
-  required?: boolean
-}
+// Import handlers
+import {
+  generateToolDefinition,
+  generateToolCase,
+  generateToolImport,
+  generateToolImplementation,
+  generateToolDocs,
+} from './mcp-template-handlers.js'
 
-/**
- * Dependency version constants for easier maintenance
- */
-const VERSIONS = {
-  MCP_SDK: '^1.0.0',
-  TYPES_NODE: '^20.0.0',
-  TSX: '^4.0.0',
-  TYPESCRIPT: '^5.0.0',
-  NODE_ENGINE: '>=18.0.0',
-} as const
+// ============================================================================
+// Template Constants
+// ============================================================================
 
 /**
  * package.json template for MCP server
@@ -396,119 +389,9 @@ npm-debug.log*
 coverage/
 `
 
-/**
- * Escape single quotes in strings for safe template interpolation
- */
-function escapeQuotes(str: string): string {
-  return str.replace(/'/g, "\\'")
-}
-
-/**
- * Generate tool definition code for a single tool
- */
-function generateToolDefinition(tool: McpToolDefinition, indent: string = '  '): string {
-  const properties: string[] = []
-  const required: string[] = []
-
-  for (const param of tool.parameters || []) {
-    properties.push(`${indent}      ${param.name}: {
-${indent}        type: '${param.type}',
-${indent}        description: '${escapeQuotes(param.description)}',
-${indent}      },`)
-    if (param.required) {
-      required.push(`'${param.name}'`)
-    }
-  }
-
-  const propertiesStr = properties.length > 0 ? properties.join('\n') : ''
-  const requiredStr =
-    required.length > 0 ? `\n${indent}    required: [${required.join(', ')}],` : ''
-
-  return `${indent}{
-${indent}  name: '${escapeQuotes(tool.name)}',
-${indent}  description: '${escapeQuotes(tool.description)}',
-${indent}  inputSchema: {
-${indent}    type: 'object',
-${indent}    properties: {
-${propertiesStr}
-${indent}    },${requiredStr}
-${indent}  },
-${indent}},`
-}
-
-/**
- * Generate tool handler case for switch statement
- */
-function generateToolCase(tool: McpToolDefinition): string {
-  const handlerName = `handle${tool.name.charAt(0).toUpperCase()}${tool.name.slice(1).replace(/-/g, '')}Tool`
-  const argsType = `${tool.name.charAt(0).toUpperCase()}${tool.name.slice(1).replace(/-/g, '')}ToolArgs`
-  return `    case '${tool.name}':
-      return ${handlerName}(args as unknown as ${argsType})`
-}
-
-/**
- * Generate tool import statement
- */
-function generateToolImport(tool: McpToolDefinition): string {
-  const baseName = tool.name.charAt(0).toUpperCase() + tool.name.slice(1).replace(/-/g, '')
-  return `import { handle${baseName}Tool, type ${baseName}ToolArgs } from './${tool.name}.js'`
-}
-
-/**
- * Generate a stub implementation file for a custom tool
- */
-function generateToolImplementation(tool: McpToolDefinition): string {
-  const baseName = tool.name.charAt(0).toUpperCase() + tool.name.slice(1).replace(/-/g, '')
-  const params = tool.parameters || []
-
-  // Generate TypeScript interface properties
-  const interfaceProps = params
-    .map((p) => {
-      const tsType =
-        p.type === 'array' ? 'unknown[]' : p.type === 'object' ? 'Record<string, unknown>' : p.type
-      return `  ${p.name}${p.required ? '' : '?'}: ${tsType}`
-    })
-    .join('\n')
-
-  // Generate implementation placeholder
-  const returnPlaceholder =
-    params.length > 0
-      ? `\`${tool.name} called with: \${JSON.stringify({ ${params.map((p) => `${p.name}: args.${p.name}`).join(', ')} })}\``
-      : `'${tool.name} called'`
-
-  return `/**
- * ${baseName} Tool Implementation
- *
- * ${escapeQuotes(tool.description)}
- * TODO: Implement your tool logic here.
- */
-
-export interface ${baseName}ToolArgs {
-${interfaceProps || '  // No parameters'}
-}
-
-export async function handle${baseName}Tool(args: ${baseName}ToolArgs): Promise<string> {
-  // TODO: Implement ${tool.name} logic
-  return ${returnPlaceholder}
-}
-`
-}
-
-/**
- * Generate tool documentation for README
- */
-function generateToolDocs(tools: McpToolDefinition[]): string {
-  if (tools.length === 0) {
-    return '- `example` - An example tool that echoes input'
-  }
-
-  return tools
-    .map((tool) => {
-      const params = tool.parameters?.map((p) => `\`${p.name}\``).join(', ') || 'none'
-      return `- \`${tool.name}\` - ${tool.description}\n  - Parameters: ${params}`
-    })
-    .join('\n')
-}
+// ============================================================================
+// Main Render Function
+// ============================================================================
 
 /**
  * Render MCP server templates

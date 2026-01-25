@@ -45,8 +45,8 @@ Store your progress after each issue:
 **Task:**
 1. Remove unused imports (SkillsmithError, ErrorCodes from recommend.ts)
 2. Remove or properly export unused types (RecommendParsed, ValidateParsed)
-3. Run: npm run lint -- --fix
-4. Verify: npm run typecheck
+3. Run: docker exec skillsmith-dev-1 npm run lint -- --fix
+4. Verify: docker exec skillsmith-dev-1 npm run typecheck
 
 ### SMI-759: Refactor CLI search to iterative loop [~8K tokens]
 **File:** packages/cli/src/commands/search.ts:243
@@ -54,7 +54,7 @@ Store your progress after each issue:
 1. Replace recursive runInteractiveSearch call with while loop
 2. Use a state machine pattern instead of recursion
 3. Add tests for multiple consecutive searches
-4. Verify: npm run typecheck && npm test
+4. Verify: docker exec skillsmith-dev-1 npm run typecheck && docker exec skillsmith-dev-1 npm test
 
 ### SMI-762: Document swarm recovery procedures [~6K tokens]
 **File:** Create docs/guides/swarm-recovery.md
@@ -74,10 +74,10 @@ Store your progress after each issue:
 
 ## Completion Criteria
 - All 4 issues complete
-- npm run typecheck passes
-- npm run lint passes
+- docker exec skillsmith-dev-1 npm run typecheck passes
+- docker exec skillsmith-dev-1 npm run lint passes
 - Commit with message referencing all 4 issues
-- Mark issues Done in Linear: npm run linear:done SMI-757 SMI-759 SMI-762 SMI-763
+- Mark issues Done in Linear: docker exec skillsmith-dev-1 npm run linear:done SMI-757 SMI-759 SMI-762 SMI-763
 
 ## Important
 - Use Docker for tests: docker exec skillsmith-dev-1 npm test
@@ -141,7 +141,7 @@ Store progress after each issue.
 - All 3 issues complete
 - Tests pass with good coverage
 - Commit with message referencing issues
-- Mark issues Done: npm run linear:done SMI-755 SMI-758 SMI-760
+- Mark issues Done: docker exec skillsmith-dev-1 npm run linear:done SMI-755 SMI-758 SMI-760
 
 ## Important
 - These are more complex - take time to design before implementing
@@ -208,7 +208,7 @@ These issues are LARGE. To avoid context overflow:
 - Both issues complete
 - Integration tests pass
 - Commit referencing both issues
-- Mark Done: npm run linear:done SMI-754 SMI-756"
+- Mark Done: docker exec skillsmith-dev-1 npm run linear:done SMI-754 SMI-756"
 ```
 
 ---
@@ -299,7 +299,7 @@ docker compose --profile dev up -d
 docker exec skillsmith-dev-1 npm run typecheck
 
 # 4. Check Linear access
-npm run linear:check 2>/dev/null || echo "Linear access OK"
+docker exec skillsmith-dev-1 npm run linear:check 2>/dev/null || echo "Linear access OK"
 
 # 5. Create fresh branch
 git checkout -b feature/phase-2e-followup

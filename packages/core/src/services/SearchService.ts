@@ -20,25 +20,21 @@ import type {
 } from '../types/skill.js'
 import { CacheRepository } from '../repositories/CacheRepository.js'
 
-interface FTSRow {
-  id: string
-  name: string
-  description: string | null
-  author: string | null
-  repo_url: string | null
-  quality_score: number | null
-  trust_tier: string
-  tags: string
-  installable: boolean | null
-  // SMI-825: Security scan columns
-  risk_score: number | null
-  security_findings_count: number | null
-  security_scanned_at: string | null
-  security_passed: number | null // SQLite uses 0/1 for boolean
-  created_at: string
-  updated_at: string
-  rank: number
-}
+// Re-export types for public API
+export type { FTSRow, BooleanSearchTerms, SearchCacheOptions } from './SearchService.types.js'
+
+// Internal imports
+import type { FTSRow } from './SearchService.types.js'
+import {
+  escapeFtsToken,
+  buildFtsQuery,
+  buildCacheKey,
+  rowToSkill,
+  buildSearchResult,
+} from './SearchService.helpers.js'
+
+// Re-export helpers for testing and advanced usage
+export { escapeFtsToken, buildFtsQuery, buildHighlights } from './SearchService.helpers.js'
 
 /**
  * Full-text search service with BM25 ranking
@@ -71,7 +67,7 @@ export class SearchService {
     } = options
 
     // Check cache first
-    const cacheKey = this.buildCacheKey(options)
+    const cacheKey = buildCacheKey(options)
     const cached = this.cache.get<PaginatedResults<SearchResult>>(cacheKey)
     if (cached) {
       return cached
@@ -84,7 +80,7 @@ export class SearchService {
     }
 
     // Build the FTS5 query
-    const ftsQuery = this.buildFtsQuery(query)
+    const ftsQuery = buildFtsQuery(query)
 
     // Handle case where query contains only special characters (results in empty FTS query)
     if (!ftsQuery) {
@@ -160,7 +156,7 @@ export class SearchService {
     const rows = this.db.prepare(searchSql).all(...params) as FTSRow[]
 
     // Build results with highlights
-    const items = rows.map((row) => this.buildSearchResult(row, query))
+    const items = rows.map((row) => buildSearchResult(row, query))
 
     const result: PaginatedResults<SearchResult> = {
       items,
@@ -198,15 +194,15 @@ export class SearchService {
     const parts: string[] = []
 
     if (terms.must?.length) {
-      parts.push(terms.must.map((t) => this.escapeFtsToken(t)).join(' AND '))
+      parts.push(terms.must.map((t) => escapeFtsToken(t)).join(' AND '))
     }
 
     if (terms.should?.length) {
-      parts.push(`(${terms.should.map((t) => this.escapeFtsToken(t)).join(' OR ')})`)
+      parts.push(`(${terms.should.map((t) => escapeFtsToken(t)).join(' OR ')})`)
     }
 
     if (terms.not?.length) {
-      parts.push(terms.not.map((t) => `NOT ${this.escapeFtsToken(t)}`).join(' AND '))
+      parts.push(terms.not.map((t) => `NOT ${escapeFtsToken(t)}`).join(' AND '))
     }
 
     const query = parts.join(' AND ')
@@ -241,7 +237,7 @@ export class SearchService {
     // Build a query from the skill's name and tags
     const tags = JSON.parse(skill.tags || '[]') as string[]
     const queryParts = [skill.name, ...tags].filter(Boolean)
-    const query = queryParts.map((p) => this.escapeFtsToken(p)).join(' OR ')
+    const query = queryParts.map((p) => escapeFtsToken(p)).join(' OR ')
 
     const sql = `
       SELECT
@@ -256,7 +252,7 @@ export class SearchService {
     `
 
     const rows = this.db.prepare(sql).all(query, skillId, limit) as FTSRow[]
-    return rows.map((row) => this.buildSearchResult(row, skill.name))
+    return rows.map((row) => buildSearchResult(row, skill.name))
   }
 
   /**
@@ -279,7 +275,7 @@ export class SearchService {
     params.push(limit)
 
     const rows = this.db.prepare(sql).all(...params) as FTSRow[]
-    return rows.map((row) => this.rowToSkill(row))
+    return rows.map((row) => rowToSkill(row))
   }
 
   /**
@@ -306,7 +302,7 @@ export class SearchService {
     } = options
 
     // Check cache first
-    const cacheKey = this.buildCacheKey(options)
+    const cacheKey = buildCacheKey(options)
     const cached = this.cache.get<PaginatedResults<SearchResult>>(cacheKey)
     if (cached) {
       return cached
@@ -408,7 +404,7 @@ export class SearchService {
 
     // Build results (no highlights for filter-only search)
     const items = rows.map((row) => ({
-      skill: this.rowToSkill(row),
+      skill: rowToSkill(row),
       rank: 1.0,
       highlights: {},
     }))
@@ -425,146 +421,5 @@ export class SearchService {
     this.cache.set(cacheKey, result, this.cacheTtl)
 
     return result
-  }
-
-  /**
-   * Build FTS5 query with proper escaping
-   *
-   * SMI-1034: Enhanced to filter empty tokens after escaping special characters.
-   */
-  private buildFtsQuery(query: string): string {
-    // Handle special FTS5 syntax (advanced users can use raw FTS5 queries)
-    // Only pass through if quotes are balanced (phrase query) and operators are space-separated
-    const quoteCount = (query.match(/"/g) || []).length
-    const hasBalancedQuotes = quoteCount > 0 && quoteCount % 2 === 0
-    const hasOperators =
-      query.includes(' AND ') || query.includes(' OR ') || query.includes(' NOT ')
-
-    if (hasBalancedQuotes || hasOperators) {
-      return query
-    }
-
-    // Split into tokens, escape each, and filter empty results
-    const tokens = query
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((t) => this.escapeFtsToken(t))
-      .filter((t) => t.length > 0) // Remove empty tokens after escaping
-
-    // Return empty string if no valid tokens remain
-    if (tokens.length === 0) {
-      return ''
-    }
-
-    return tokens.map((t) => t + '*').join(' ')
-  }
-
-  /**
-   * Escape a single FTS token
-   *
-   * SMI-1034: Escape FTS5 special characters to prevent syntax errors.
-   * FTS5 special characters include: . " ' ( ) [ ] { } * ^ -
-   * The hyphen `-` is the NOT operator in FTS5, so it must be escaped too.
-   * These are replaced with spaces to ensure queries don't fail.
-   */
-  private escapeFtsToken(token: string): string {
-    // Remove FTS5 special syntax characters that would cause parse errors
-    // Including hyphen which is the NOT operator in FTS5
-    return token
-      .replace(/[."'()[\]{}*^-]/g, ' ') // Replace special chars with space (including hyphen)
-      .replace(/\s+/g, ' ') // Collapse multiple spaces
-      .trim()
-  }
-
-  /**
-   * Build cache key from search options
-   */
-  private buildCacheKey(options: SearchOptions): string {
-    return `search:${JSON.stringify(options)}`
-  }
-
-  /**
-   * Build a search result with highlights
-   */
-  private buildSearchResult(row: FTSRow, query: string): SearchResult {
-    const skill = this.rowToSkill(row)
-    const highlights = this.buildHighlights(skill, query)
-
-    return {
-      skill,
-      rank: Math.abs(row.rank), // BM25 returns negative values
-      highlights,
-    }
-  }
-
-  /**
-   * Build highlighted snippets for matched terms
-   */
-  private buildHighlights(skill: Skill, query: string): SearchResult['highlights'] {
-    const highlights: SearchResult['highlights'] = {}
-
-    // Extract query terms (ignoring operators)
-    const terms = query
-      .replace(/["()]/g, '')
-      .split(/\s+/)
-      .filter((t) => !['AND', 'OR', 'NOT'].includes(t.toUpperCase()))
-      .map((t) => t.replace(/\*$/, '').toLowerCase())
-
-    // Build regex for matching
-    if (terms.length === 0) return highlights
-
-    const regex = new RegExp(
-      `(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
-      'gi'
-    )
-
-    // Highlight in name
-    if (skill.name && regex.test(skill.name)) {
-      highlights.name = skill.name.replace(regex, '<mark>$1</mark>')
-    }
-
-    // Highlight in description
-    if (skill.description && regex.test(skill.description)) {
-      // Find the first match and extract surrounding context
-      const match = skill.description.match(regex)
-      if (match) {
-        const index = skill.description.toLowerCase().indexOf(match[0].toLowerCase())
-        const start = Math.max(0, index - 50)
-        const end = Math.min(skill.description.length, index + match[0].length + 50)
-
-        let snippet = skill.description.slice(start, end)
-        if (start > 0) snippet = '...' + snippet
-        if (end < skill.description.length) snippet = snippet + '...'
-
-        highlights.description = snippet.replace(regex, '<mark>$1</mark>')
-      }
-    }
-
-    return highlights
-  }
-
-  /**
-   * Convert database row to Skill object
-   */
-  private rowToSkill(row: FTSRow): Skill {
-    return {
-      id: row.id,
-      name: row.name,
-      description: row.description,
-      author: row.author,
-      repoUrl: row.repo_url,
-      qualityScore: row.quality_score,
-      trustTier: row.trust_tier as TrustTier,
-      tags: JSON.parse(row.tags || '[]'),
-      installable: row.installable ?? false,
-      // SMI-825: Security scan fields
-      riskScore: row.risk_score,
-      securityFindingsCount: row.security_findings_count ?? 0,
-      securityScannedAt: row.security_scanned_at,
-      securityPassed: row.security_passed === null ? null : row.security_passed === 1,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }
   }
 }
