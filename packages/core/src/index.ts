@@ -31,6 +31,42 @@ export type {
 // Services (SMI-579)
 export { SearchService } from './services/SearchService.js'
 
+// Optimization Services (Skillsmith Optimization Layer)
+export {
+  analyzeSkill,
+  quickTransformCheck,
+  type SkillAnalysis,
+  type ToolUsageAnalysis,
+  type TaskPatternAnalysis,
+  type ExtractableSection,
+  type OptimizationRecommendation,
+} from './services/SkillAnalyzer.js'
+
+export {
+  decomposeSkill,
+  parallelizeTaskCalls,
+  type DecompositionResult,
+  type DecomposedSkill,
+  type SubSkill,
+  type DecompositionStats,
+  type DecomposerOptions,
+} from './services/SkillDecomposer.js'
+
+export {
+  generateSubagent,
+  generateMinimalSubagent,
+  type SubagentDefinition,
+  type SubagentGenerationResult,
+} from './services/SubagentGenerator.js'
+
+export {
+  TransformationService,
+  transformSkill,
+  type TransformationResult,
+  type TransformationStats,
+  type TransformationServiceOptions,
+} from './services/TransformationService.js'
+
 // API Client (SMI-1244, SMI-1245, SMI-1300)
 export {
   SkillsmithApiClient,
