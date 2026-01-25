@@ -127,6 +127,11 @@ const TOOL_PATTERNS: Record<string, { patterns: string[]; priority: number }> = 
 const BASE_TOOLS = ['Read']
 
 /**
+ * SMI-1819: Maximum length for subagent names to prevent overly long identifiers
+ */
+const MAX_SUBAGENT_NAME_LENGTH = 100
+
+/**
  * Generate tool usage guidelines for a subagent
  */
 function generateToolGuidelines(tools: string[]): string {
@@ -270,8 +275,7 @@ function extractTriggerPhrases(description: string, content: string): string[] {
   const textToSearch = description + ' ' + content.slice(0, 2000) // Search first 2000 chars
 
   for (const pattern of patterns) {
-    let match
-    while ((match = pattern.exec(textToSearch)) !== null) {
+    for (const match of textToSearch.matchAll(pattern)) {
       const phrase = match[1].trim().toLowerCase()
       if (phrase.length >= 5 && phrase.length <= 50 && !phrases.includes(phrase)) {
         phrases.push(phrase)
@@ -349,6 +353,14 @@ export function generateSubagent(
   content: string,
   analysis: SkillAnalysis
 ): SubagentGenerationResult {
+  // SMI-1815: Validate skill name is non-empty
+  if (!skillName || skillName.trim() === '') {
+    return {
+      generated: false,
+      reason: 'Skill name is required for subagent generation',
+    }
+  }
+
   // Check if subagent is recommended
   if (!analysis.toolUsage.suggestsSubagent && analysis.lineCount < 300) {
     return {
@@ -368,8 +380,11 @@ export function generateSubagent(
   // Determine model
   const model = determineModel(analysis.toolUsage, analysis.lineCount)
 
-  // Generate subagent name
-  const subagentName = `${skillName}-specialist`
+  // SMI-1819: Generate subagent name with length limit
+  const suffix = '-specialist'
+  const maxBaseLength = MAX_SUBAGENT_NAME_LENGTH - suffix.length
+  const baseName = skillName.length > maxBaseLength ? skillName.slice(0, maxBaseLength) : skillName
+  const subagentName = `${baseName}${suffix}`
 
   // Generate subagent description
   const subagentDescription = description || `Specialist agent for ${skillName} operations`
@@ -419,12 +434,25 @@ export function generateMinimalSubagent(
   description: string,
   content: string
 ): SubagentGenerationResult {
+  // SMI-1815: Validate skill name is non-empty
+  if (!skillName || skillName.trim() === '') {
+    return {
+      generated: false,
+      reason: 'Skill name is required for subagent generation',
+    }
+  }
+
   const detectedTools = detectTools(content)
   const triggerPhrases = extractTriggerPhrases(description, content)
 
   // Default to sonnet for minimal subagents
   const model: ClaudeModel = CLAUDE_MODELS.SONNET
-  const subagentName = `${skillName}-specialist`
+
+  // SMI-1819: Generate subagent name with length limit
+  const suffix = '-specialist'
+  const maxBaseLength = MAX_SUBAGENT_NAME_LENGTH - suffix.length
+  const baseName = skillName.length > maxBaseLength ? skillName.slice(0, maxBaseLength) : skillName
+  const subagentName = `${baseName}${suffix}`
   const subagentDescription = description || `Specialist agent for ${skillName} operations`
 
   const subagentContent = generateSubagentContent(
