@@ -27,7 +27,7 @@ describe('TransformationService', () => {
     })
   })
 
-  describe('transformSync', () => {
+  describe('transformWithoutCache', () => {
     it('should not transform simple skills', () => {
       const service = new TransformationService()
       const content = `---
@@ -39,7 +39,7 @@ description: A simple skill
 
 Just basic content.
 `
-      const result = service.transformSync('simple-skill', 'A simple skill', content)
+      const result = service.transformWithoutCache('simple-skill', 'A simple skill', content)
 
       expect(result.transformed).toBe(false)
       expect(result.mainSkillContent).toContain('Optimized by Skillsmith')
@@ -82,7 +82,7 @@ Task("agent2", "task 2")
 Task("agent3", "task 3")
 \`\`\`
 `
-      const result = service.transformSync(
+      const result = service.transformWithoutCache(
         'complex-skill',
         'A complex skill with multiple optimization opportunities',
         content
@@ -115,7 +115,11 @@ Use bash to execute commands.
 Terminal operations are common.
 Shell scripting is required.
 `
-      const result = service.transformSync('tool-skill', 'A skill with heavy tool usage', content)
+      const result = service.transformWithoutCache(
+        'tool-skill',
+        'A skill with heavy tool usage',
+        content
+      )
 
       expect(result.subagent).toBeDefined()
       expect(result.subagent?.name).toBe('tool-skill-specialist')
@@ -125,7 +129,7 @@ Shell scripting is required.
     it('should include attribution in transformed content', () => {
       const service = new TransformationService()
       const content = `# Skill\n\nContent.`
-      const result = service.transformSync('skill', 'Test skill', content)
+      const result = service.transformWithoutCache('skill', 'Test skill', content)
 
       expect(result.mainSkillContent).toContain('Optimized by Skillsmith')
       expect(result.attribution).toContain('Optimized by Skillsmith')
@@ -134,7 +138,7 @@ Shell scripting is required.
     it('should populate transformation stats', () => {
       const service = new TransformationService()
       const content = `# Skill\n\n${'Content line.\n'.repeat(100)}`
-      const result = service.transformSync('skill', 'Test skill', content)
+      const result = service.transformWithoutCache('skill', 'Test skill', content)
 
       expect(result.stats.originalLines).toBeGreaterThan(0)
       expect(result.stats.optimizedLines).toBeGreaterThan(0)
@@ -212,7 +216,7 @@ ${examplesSection}
 
 ${'Config line with detailed settings\n'.repeat(200)}
 `
-      const result = service.transformSync(
+      const result = service.transformWithoutCache(
         'decompose-skill',
         'A skill that needs decomposition',
         content
@@ -242,7 +246,7 @@ ${'Content\n'.repeat(100)}
 
 ${'Content\n'.repeat(100)}
 `
-      const result = service.transformSync('naming-skill', 'Test sub-skill naming', content)
+      const result = service.transformWithoutCache('naming-skill', 'Test sub-skill naming', content)
 
       for (const subSkill of result.subSkills) {
         expect(subSkill.filename).toMatch(/\.md$/)
@@ -273,7 +277,11 @@ ${'- endpoint\n'.repeat(500)}
 
 ${'Example\n'.repeat(500)}
 `
-      const result = service.transformSync('huge-skill', 'An extremely large skill', content)
+      const result = service.transformWithoutCache(
+        'huge-skill',
+        'An extremely large skill',
+        content
+      )
 
       expect(result.stats.tokenReductionPercent).toBeLessThanOrEqual(80)
     })

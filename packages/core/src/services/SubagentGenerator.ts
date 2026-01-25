@@ -1,5 +1,5 @@
 /**
- * SMI-XXX: SubagentGenerator - Generate companion subagent definitions
+ * SMI-1788: SubagentGenerator - Generate companion subagent definitions
  *
  * Creates subagent definitions for skills that benefit from parallel
  * execution with context isolation. Subagents enable:
@@ -12,6 +12,17 @@
  */
 
 import type { SkillAnalysis, ToolUsageAnalysis } from './SkillAnalyzer.js'
+
+/**
+ * SMI-1795: Claude model constants for type safety and consistency
+ */
+export const CLAUDE_MODELS = {
+  HAIKU: 'haiku',
+  SONNET: 'sonnet',
+  OPUS: 'opus',
+} as const
+
+export type ClaudeModel = (typeof CLAUDE_MODELS)[keyof typeof CLAUDE_MODELS]
 
 /**
  * Generated subagent definition
@@ -29,8 +40,8 @@ export interface SubagentDefinition {
   /** Tools the subagent needs access to */
   tools: string[]
 
-  /** Recommended model (sonnet, opus, haiku) */
-  model: 'sonnet' | 'opus' | 'haiku'
+  /** Recommended model */
+  model: ClaudeModel
 
   /** The full markdown content for ~/.claude/agents/ */
   content: string
@@ -157,7 +168,7 @@ function generateSubagentContent(
   description: string,
   triggerPhrases: string[],
   tools: string[],
-  model: 'sonnet' | 'opus' | 'haiku'
+  model: ClaudeModel
 ): string {
   const triggerString =
     triggerPhrases.length > 0
@@ -214,7 +225,7 @@ function generateClaudeMdSnippet(
   description: string,
   triggerPhrases: string[],
   tools: string[],
-  model: 'sonnet' | 'opus' | 'haiku'
+  model: ClaudeModel
 ): string {
   const triggerPatterns =
     triggerPhrases.length > 0
@@ -284,14 +295,12 @@ function extractTriggerPhrases(description: string, content: string): string[] {
 
 /**
  * Determine optimal model for subagent
+ * SMI-1795: Uses CLAUDE_MODELS constants for type safety
  */
-function determineModel(
-  toolUsage: ToolUsageAnalysis,
-  lineCount: number
-): 'sonnet' | 'opus' | 'haiku' {
+function determineModel(toolUsage: ToolUsageAnalysis, lineCount: number): ClaudeModel {
   // Haiku for simple, fast operations
   if (toolUsage.detectedTools.length <= 2 && lineCount < 200) {
-    return 'haiku'
+    return CLAUDE_MODELS.HAIKU
   }
 
   // Opus for complex, reasoning-heavy tasks
@@ -299,11 +308,11 @@ function determineModel(
     toolUsage.bashCommandCount > 5 ||
     (toolUsage.fileReadCount > 3 && toolUsage.fileWriteCount > 3)
   ) {
-    return 'opus'
+    return CLAUDE_MODELS.OPUS
   }
 
   // Sonnet for balanced workloads (default)
-  return 'sonnet'
+  return CLAUDE_MODELS.SONNET
 }
 
 /**
@@ -414,7 +423,7 @@ export function generateMinimalSubagent(
   const triggerPhrases = extractTriggerPhrases(description, content)
 
   // Default to sonnet for minimal subagents
-  const model: 'sonnet' | 'opus' | 'haiku' = 'sonnet'
+  const model: ClaudeModel = CLAUDE_MODELS.SONNET
   const subagentName = `${skillName}-specialist`
   const subagentDescription = description || `Specialist agent for ${skillName} operations`
 

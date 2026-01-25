@@ -233,7 +233,7 @@ export async function installSkill(
       }
     }
 
-    // SMI-XXX: Apply Skillsmith Optimization Layer (unless skipped)
+    // SMI-1788: Apply Skillsmith Optimization Layer (unless skipped)
     let optimizationInfo: OptimizationInfo = { optimized: false }
     let finalSkillContent = skillMdContent
     let subSkillFiles: Array<{ filename: string; content: string }> = []
@@ -283,24 +283,46 @@ export async function installSkill(
       }
     }
 
-    // Create installation directory
-    await fs.mkdir(installPath, { recursive: true })
+    // SMI-1792, SMI-1797: Atomic file installation with transaction pattern
+    // SMI-1804: Parallelize file writes for better performance
+    const writtenFiles: string[] = []
+    try {
+      // Create installation directory
+      await fs.mkdir(installPath, { recursive: true })
 
-    // Write SKILL.md (optimized or original)
-    await fs.writeFile(path.join(installPath, 'SKILL.md'), finalSkillContent)
+      // Write SKILL.md (optimized or original)
+      const mainSkillPath = path.join(installPath, 'SKILL.md')
+      await fs.writeFile(mainSkillPath, finalSkillContent)
+      writtenFiles.push(mainSkillPath)
 
-    // Write sub-skills if any
-    for (const subSkill of subSkillFiles) {
-      await fs.writeFile(path.join(installPath, subSkill.filename), subSkill.content)
-    }
+      // Write sub-skills in parallel (SMI-1804: Performance optimization)
+      if (subSkillFiles.length > 0) {
+        await Promise.all(
+          subSkillFiles.map(async (subSkill) => {
+            const subPath = path.join(installPath, subSkill.filename)
+            await fs.writeFile(subPath, subSkill.content)
+            writtenFiles.push(subPath)
+          })
+        )
+      }
 
-    // Write companion subagent if generated
-    if (subagentContent) {
-      const agentsDir = path.join(os.homedir(), '.claude', 'agents')
-      await fs.mkdir(agentsDir, { recursive: true })
-      const subagentPath = path.join(agentsDir, `${skillName}-specialist.md`)
-      await fs.writeFile(subagentPath, subagentContent)
-      optimizationInfo.subagentPath = subagentPath
+      // Write companion subagent if generated
+      if (subagentContent) {
+        const agentsDir = path.join(os.homedir(), '.claude', 'agents')
+        await fs.mkdir(agentsDir, { recursive: true })
+        const subagentPath = path.join(agentsDir, `${skillName}-specialist.md`)
+        await fs.writeFile(subagentPath, subagentContent)
+        writtenFiles.push(subagentPath)
+        optimizationInfo.subagentPath = subagentPath
+      }
+    } catch (writeError) {
+      // SMI-1792: Rollback on failure - remove any files we wrote
+      for (const filePath of writtenFiles) {
+        await fs.unlink(filePath).catch(() => {})
+      }
+      // Try to remove the directory if we created it and it's now empty
+      await fs.rmdir(installPath).catch(() => {})
+      throw writeError
     }
 
     // Try to fetch optional files
@@ -355,11 +377,29 @@ export async function installSkill(
       tips: generateOptimizedTips(skillName, optimizationInfo, claudeMdSnippet),
     }
   } catch (error) {
+    // SMI-1793: Sanitize error messages to avoid exposing internal details
+    let safeErrorMessage = 'Installation failed'
+    if (error instanceof Error) {
+      // Allow specific known error types through
+      if (
+        error.message.includes('already installed') ||
+        error.message.includes('Could not find SKILL.md') ||
+        error.message.includes('Invalid SKILL.md') ||
+        error.message.includes('Security scan failed') ||
+        error.message.includes('exceeds maximum length')
+      ) {
+        safeErrorMessage = error.message
+      } else {
+        // Log the full error for debugging, return sanitized message
+        console.error('[install] Error during installation:', error)
+        safeErrorMessage = 'Installation failed due to an internal error'
+      }
+    }
     return {
       success: false,
       skillId: input.skillId,
       installPath: '',
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: safeErrorMessage,
     }
   }
 }

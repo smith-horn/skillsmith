@@ -55,8 +55,10 @@ export {
 export {
   generateSubagent,
   generateMinimalSubagent,
+  CLAUDE_MODELS,
   type SubagentDefinition,
   type SubagentGenerationResult,
+  type ClaudeModel,
 } from './services/SubagentGenerator.js'
 
 export {

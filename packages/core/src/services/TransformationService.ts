@@ -1,5 +1,5 @@
 /**
- * SMI-XXX: TransformationService - Orchestrate skill optimization pipeline
+ * SMI-1788: TransformationService - Orchestrate skill optimization pipeline
  *
  * The central service for transforming community skills into optimized versions.
  * Coordinates the full pipeline:
@@ -17,6 +17,7 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3'
+import { createHash } from 'crypto'
 import { CacheRepository } from '../repositories/CacheRepository.js'
 import { analyzeSkill, quickTransformCheck, type SkillAnalysis } from './SkillAnalyzer.js'
 import {
@@ -122,6 +123,12 @@ const DEFAULT_OPTIONS: Required<TransformationServiceOptions> = {
   version: '1.0.0',
 }
 
+/**
+ * SMI-1791: Maximum content length to process (2MB)
+ * Prevents DoS from extremely large inputs
+ */
+const MAX_CONTENT_LENGTH = 2 * 1024 * 1024
+
 /** Cache key prefix for transformed skills */
 const CACHE_KEY_PREFIX = 'transform:'
 
@@ -163,6 +170,13 @@ export class TransformationService {
     content: string
   ): Promise<TransformationResult> {
     const startTime = Date.now()
+
+    // SMI-1791: Validate content length to prevent DoS
+    if (content.length > MAX_CONTENT_LENGTH) {
+      throw new Error(
+        `Content exceeds maximum length of ${MAX_CONTENT_LENGTH} bytes (got ${content.length})`
+      )
+    }
 
     // Check cache first (unless force transform)
     if (!this.options.forceTransform && this.cache) {
@@ -229,8 +243,24 @@ export class TransformationService {
    * @param content - The full SKILL.md content
    * @returns Transformation result
    */
-  transformSync(skillName: string, description: string, content: string): TransformationResult {
+  /**
+   * SMI-1798: Transform without caching (for testing or one-off transforms)
+   * Note: This is NOT a synchronous I/O operation - the name indicates
+   * it runs without async cache operations.
+   */
+  transformWithoutCache(
+    skillName: string,
+    description: string,
+    content: string
+  ): TransformationResult {
     const startTime = Date.now()
+
+    // SMI-1791: Validate content length to prevent DoS
+    if (content.length > MAX_CONTENT_LENGTH) {
+      throw new Error(
+        `Content exceeds maximum length of ${MAX_CONTENT_LENGTH} bytes (got ${content.length})`
+      )
+    }
 
     // Quick check if transformation is needed
     if (!quickTransformCheck(content)) {
@@ -326,17 +356,11 @@ export class TransformationService {
   }
 
   /**
-   * Simple hash function for content comparison
+   * SMI-1790: Compute SHA-256 hash for content comparison
+   * Uses cryptographic hash for reliable cache invalidation
    */
   private hashContent(content: string): string {
-    // Simple hash for content comparison
-    let hash = 0
-    for (let i = 0; i < content.length; i++) {
-      const char = content.charCodeAt(i)
-      hash = (hash << 5) - hash + char
-      hash = hash & hash // Convert to 32-bit integer
-    }
-    return hash.toString(16)
+    return createHash('sha256').update(content, 'utf8').digest('hex')
   }
 
   /**
@@ -452,7 +476,7 @@ export function transformSkill(
   content: string
 ): TransformationResult {
   const service = new TransformationService()
-  return service.transformSync(skillName, description, content)
+  return service.transformWithoutCache(skillName, description, content)
 }
 
 export default TransformationService

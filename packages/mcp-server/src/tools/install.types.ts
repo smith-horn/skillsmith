@@ -91,7 +91,7 @@ export const installInputSchema = z.object({
   skillId: z.string().min(1).describe('Skill ID or GitHub URL'),
   force: z.boolean().default(false).describe('Force reinstall if exists'),
   skipScan: z.boolean().default(false).describe('Skip security scan (not recommended)'),
-  /** SMI-XXX: Skip optimization transformation */
+  /** SMI-1788: Skip optimization transformation */
   skipOptimize: z.boolean().default(false).describe('Skip Skillsmith optimization'),
 })
 
@@ -107,7 +107,7 @@ export interface InstallResult {
   error?: string
   /** SMI-1533: Trust tier used for security scanning */
   trustTier?: TrustTier
-  /** SMI-XXX: Optimization info (Skillsmith Optimization Layer) */
+  /** SMI-1788: Optimization info (Skillsmith Optimization Layer) */
   optimization?: OptimizationInfo
 }
 

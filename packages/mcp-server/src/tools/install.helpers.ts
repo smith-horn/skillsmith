@@ -346,9 +346,10 @@ export function generateTips(skillName: string): string[] {
 }
 
 /**
- * SMI-XXX: Optimization info type for tips generation
+ * SMI-1788: Optimization info type for tips generation
+ * SMI-1803: Exported for external use
  */
-interface OptimizationInfoForTips {
+export interface OptimizationInfoForTips {
   optimized: boolean
   subSkills?: string[]
   subagentGenerated?: boolean
@@ -359,7 +360,7 @@ interface OptimizationInfoForTips {
 }
 
 /**
- * SMI-XXX: Generate post-install tips with optimization info
+ * SMI-1788: Generate post-install tips with optimization info
  */
 export function generateOptimizedTips(
   skillName: string,
@@ -374,7 +375,7 @@ export function generateOptimizedTips(
 
   if (optimizationInfo.optimized) {
     tips.push('')
-    tips.push('✨ Skillsmith Optimization Applied:')
+    tips.push('[Optimization] Skillsmith Optimization Applied:')
 
     if (optimizationInfo.tokenReductionPercent && optimizationInfo.tokenReductionPercent > 0) {
       tips.push(`  • Estimated ${optimizationInfo.tokenReductionPercent}% token reduction`)
@@ -393,7 +394,9 @@ export function generateOptimizedTips(
     if (optimizationInfo.subagentGenerated && optimizationInfo.subagentPath) {
       tips.push(`  • Companion subagent generated: ${optimizationInfo.subagentPath}`)
       tips.push('')
-      tips.push('💡 For parallel execution, delegate to the subagent instead of running directly.')
+      tips.push(
+        '[Tip] For parallel execution, delegate to the subagent instead of running directly.'
+      )
 
       if (claudeMdSnippet) {
         tips.push('')

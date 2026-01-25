@@ -1,5 +1,5 @@
 /**
- * SMI-XXX: SkillAnalyzer - Analyze skills for optimization patterns
+ * SMI-1788: SkillAnalyzer - Analyze skills for optimization patterns
  *
  * Detects optimization opportunities based on:
  * - Line count (>500 lines suggests decomposition)

@@ -1,5 +1,5 @@
 /**
- * SMI-XXX: SkillDecomposer - Decompose large skills into sub-skills
+ * SMI-1788: SkillDecomposer - Decompose large skills into sub-skills
  *
  * Transforms skills >500 lines into a main SKILL.md + sub-skills structure
  * following the Skillsmith optimization standard:
@@ -372,14 +372,26 @@ function createSubSkills(sections: ParsedSection[], skillName: string): SubSkill
 }
 
 /**
+ * SMI-1794: Sanitize and validate filename for sub-skill
+ * Prevents path traversal and invalid characters
+ */
+function sanitizeFilename(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]/g, '-') // Only allow alphanumeric, dash, underscore
+      .replace(/-+/g, '-') // Collapse multiple dashes
+      .replace(/^-|-$/g, '') // Remove leading/trailing dashes
+      .slice(0, 64) || 'sub-skill'
+  ) // Limit length, provide default
+}
+
+/**
  * Generate a filename for a sub-skill
+ * SMI-1794: Uses sanitized filename to prevent security issues
  */
 function generateSubSkillFilename(sectionTitle: string): string {
-  const slug = sectionTitle
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-
+  const slug = sanitizeFilename(sectionTitle)
   return `${slug}.md`
 }
 
