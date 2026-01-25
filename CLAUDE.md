@@ -115,6 +115,41 @@ varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'
 git worktree add ../worktrees/my-feature -b feature/my-feature
 ```
 
+### Automated Worktree Creation (SMI-1822)
+
+Use the automation script for creating worktrees in git-crypt encrypted repos:
+
+```bash
+# Create a new worktree with automatic git-crypt setup
+./scripts/create-worktree.sh worktrees/my-feature feature/my-feature
+
+# Show help
+./scripts/create-worktree.sh --help
+```
+
+The script handles:
+1. Validates git-crypt is unlocked in main repo
+2. Creates worktree with `--no-checkout` to avoid smudge filter errors
+3. Copies git-crypt keys to worktree's gitdir
+4. Checks out files with decryption working
+
+**Manual Method (if script unavailable):**
+
+```bash
+# Step 1: Create without checkout
+git worktree add --no-checkout worktrees/<name> -b <branch> main
+
+# Step 2: Find worktree's gitdir
+GIT_DIR=$(cat worktrees/<name>/.git | sed 's/gitdir: //')
+
+# Step 3: Copy git-crypt keys
+mkdir -p "$GIT_DIR/git-crypt/keys"
+cp -r .git/git-crypt/keys/* "$GIT_DIR/git-crypt/keys/"
+
+# Step 4: Checkout files
+cd worktrees/<name> && git reset --hard HEAD
+```
+
 ### Encrypted Paths
 
 | Path | Contains |
