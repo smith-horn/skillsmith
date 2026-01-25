@@ -110,13 +110,36 @@ export interface DecomposerOptions {
 
   /** Whether to add "Optimized by Skillsmith" attribution (default: true) */
   addAttribution?: boolean
+
+  /**
+   * Keywords that indicate a section should be extracted as a sub-skill.
+   * Sections with titles containing these keywords will be candidates for extraction.
+   * @default ['api', 'reference', 'example', 'usage', 'advanced', 'configuration', 'troubleshoot', 'appendix']
+   */
+  extractKeywords?: string[]
 }
+
+/**
+ * Default keywords that indicate a section should be extracted as a sub-skill.
+ * These are used when no custom extractKeywords are provided.
+ */
+const DEFAULT_EXTRACT_KEYWORDS = [
+  'api',
+  'reference',
+  'example',
+  'usage',
+  'advanced',
+  'configuration',
+  'troubleshoot',
+  'appendix',
+]
 
 const DEFAULT_OPTIONS: Required<DecomposerOptions> = {
   maxMainSkillLines: 400,
   minExtractableLines: 50,
   addNavigation: true,
   addAttribution: true,
+  extractKeywords: DEFAULT_EXTRACT_KEYWORDS,
 }
 
 /**
@@ -303,17 +326,8 @@ function determineSectionsToExtract(
   // Create a map of section names from analysis for quick lookup
   const extractableNames = new Set(extractableSections.map((s) => s.name.toLowerCase()))
 
-  // Keywords that indicate a section should be extracted
-  const extractKeywords = [
-    'api',
-    'reference',
-    'example',
-    'usage',
-    'advanced',
-    'configuration',
-    'troubleshoot',
-    'appendix',
-  ]
+  // Use configurable keywords (defaults provided via DEFAULT_OPTIONS)
+  const keywords = opts.extractKeywords ?? DEFAULT_EXTRACT_KEYWORDS
 
   for (const section of sections) {
     const lineCount = section.lines.length
@@ -330,7 +344,7 @@ function determineSectionsToExtract(
     // 3. Is a large section (>100 lines)
     const shouldExtract =
       extractableNames.has(titleLower) ||
-      extractKeywords.some((kw) => titleLower.includes(kw)) ||
+      keywords.some((kw) => titleLower.includes(kw)) ||
       lineCount > 100
 
     if (shouldExtract) {
