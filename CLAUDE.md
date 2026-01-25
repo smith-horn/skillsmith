@@ -289,6 +289,34 @@ docker exec skillsmith-dev-1 npm install
 docker exec skillsmith-dev-1 npm run build
 ```
 
+### Docker Container Rebuild (SMI-1781)
+
+The Docker volume `node_modules` persists across container restarts. Use the appropriate method based on change scope:
+
+**Restart (fast) - Minor changes, adding dependencies:**
+```bash
+docker compose --profile dev down
+docker compose --profile dev up -d
+docker exec skillsmith-dev-1 npm install
+```
+
+**Full Rebuild (thorough) - Major version upgrades, native module changes, dependency conflicts:**
+```bash
+docker compose --profile dev down
+docker volume rm skillsmith_node_modules  # Clear cached node_modules
+docker compose --profile dev build --no-cache
+docker compose --profile dev up -d
+```
+
+| Scenario | Use |
+|----------|-----|
+| Adding a new dependency | Restart |
+| Updating patch/minor versions | Restart |
+| Major version upgrade (e.g., Stripe v14→v20) | Full Rebuild |
+| Native module issues (better-sqlite3, onnxruntime) | Full Rebuild |
+| TypeScript errors after `npm install` | Full Rebuild |
+| `NODE_MODULE_VERSION` mismatch | Full Rebuild |
+
 ### Native Module Issues
 
 If you see `ERR_DLOPEN_FAILED` or `NODE_MODULE_VERSION` mismatch:
@@ -500,6 +528,27 @@ Set `SKILLSMITH_USE_MOCK_EMBEDDINGS=true` to force fallback mode globally.
 - **Neural Integration Tests**: See [docs/development/neural-testing.md](docs/development/neural-testing.md)
 - **V3 Migration Benchmarks**: See [docs/development/benchmarks.md](docs/development/benchmarks.md)
 - **Stripe CLI Testing**: See [docs/development/stripe-testing.md](docs/development/stripe-testing.md)
+
+### Test File Locations (SMI-1780)
+
+Vitest only runs tests matching these include patterns. Tests in other locations will be silently ignored.
+
+| Pattern | Example Location |
+|---------|------------------|
+| `packages/*/src/**/*.test.ts` | `packages/core/src/foo.test.ts` |
+| `packages/*/src/**/*.spec.ts` | `packages/mcp-server/src/bar.spec.ts` |
+| `packages/*/tests/**/*.test.ts` | `packages/core/tests/unit/foo.test.ts` |
+| `packages/*/tests/**/*.spec.ts` | `packages/enterprise/tests/integration/bar.spec.ts` |
+| `tests/**/*.test.ts` | `tests/unit/utils.test.ts` |
+| `supabase/functions/**/*.test.ts` | `supabase/functions/indexer/index.test.ts` |
+| `scripts/tests/**/*.test.ts` | `scripts/tests/validate-skills.test.ts` |
+
+**Common Mistakes:**
+- `scripts/__tests__/foo.test.ts` - Wrong directory name (use `scripts/tests/`)
+- `packages/core/test/foo.test.ts` - Wrong directory name (use `tests/` plural)
+- `src/foo.test.ts` - Must be inside a package
+
+> Reference: `vitest.config.ts` lines 7-19
 
 ---
 
