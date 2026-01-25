@@ -115,14 +115,19 @@ export class SearchService {
       params.push(maxRiskScore)
     }
 
-    // Category filter requires joining with skill_categories and categories tables
-    let categoryJoin = ''
+    // SMI-1787: Category filter - check both junction table AND tags JSON
+    // Junction table may be empty for locally indexed skills
     if (category) {
-      categoryJoin = `
-        INNER JOIN skill_categories sc ON s.id = sc.skill_id
-        INNER JOIN categories c ON sc.category_id = c.id`
-      filters.push('c.name = ?')
+      filters.push(`(
+        EXISTS (
+          SELECT 1 FROM skill_categories sc
+          INNER JOIN categories c ON sc.category_id = c.id
+          WHERE sc.skill_id = s.id AND c.name = ?
+        )
+        OR s.tags LIKE ?
+      )`)
       params.push(category)
+      params.push(`%"${category}"%`) // Match category in JSON tags array
     }
 
     const whereClause = filters.length > 0 ? `AND ${filters.join(' AND ')}` : ''
@@ -132,7 +137,6 @@ export class SearchService {
       SELECT COUNT(*) as total
       FROM skills s
       INNER JOIN skills_fts f ON s.rowid = f.rowid
-      ${categoryJoin}
       WHERE skills_fts MATCH ?
       ${whereClause}
     `
@@ -146,7 +150,6 @@ export class SearchService {
         bm25(skills_fts, 10.0, 5.0, 1.0, 2.0) as rank
       FROM skills s
       INNER JOIN skills_fts f ON s.rowid = f.rowid
-      ${categoryJoin}
       WHERE skills_fts MATCH ?
       ${whereClause}
       ORDER BY rank
@@ -315,15 +318,23 @@ export class SearchService {
     let searchSql: string
 
     if (category) {
-      // Category filter requires joining with skill_categories and categories tables
-      const baseJoin = `
+      // SMI-1787: Category filter - check both junction table AND tags JSON
+      // Junction table may be empty for locally indexed skills
+      // Tags array stores category from skill metadata
+      const baseWhere = `
         FROM skills s
-        INNER JOIN skill_categories sc ON s.id = sc.skill_id
-        INNER JOIN categories c ON sc.category_id = c.id
-        WHERE c.name = ?`
+        WHERE (
+          EXISTS (
+            SELECT 1 FROM skill_categories sc
+            INNER JOIN categories c ON sc.category_id = c.id
+            WHERE sc.skill_id = s.id AND c.name = ?
+          )
+          OR s.tags LIKE ?
+        )`
 
       const filters: string[] = []
       params.push(category)
+      params.push(`%"${category}"%`) // Match category in JSON tags array
 
       if (trustTier) {
         filters.push('s.trust_tier = ?')
@@ -347,10 +358,10 @@ export class SearchService {
 
       const whereClause = filters.length > 0 ? ` AND ${filters.join(' AND ')}` : ''
 
-      countSql = `SELECT COUNT(*) as total ${baseJoin}${whereClause}`
+      countSql = `SELECT COUNT(*) as total ${baseWhere}${whereClause}`
       searchSql = `
         SELECT s.*, 1.0 as rank
-        ${baseJoin}${whereClause}
+        ${baseWhere}${whereClause}
         ORDER BY s.quality_score DESC NULLS LAST
         LIMIT ? OFFSET ?`
     } else {

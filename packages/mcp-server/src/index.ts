@@ -235,7 +235,10 @@ async function runFirstTimeSetup(): Promise<void> {
   const registrySkills: string[] = []
   for (const skill of TIER1_SKILLS) {
     try {
-      await installSkill({ skillId: skill.id, force: false, skipScan: false }, toolContext)
+      await installSkill(
+        { skillId: skill.id, force: false, skipScan: false, skipOptimize: false },
+        toolContext
+      )
       registrySkills.push(skill.name)
       console.error(`[skillsmith] Installed: ${skill.name}`)
     } catch (error) {
