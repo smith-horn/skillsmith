@@ -9,10 +9,11 @@
     "skillsmith-mcp": "./dist/src/index.js"
   },
   "scripts": {
-    "prepublishOnly": "npm run build && npm run test",
+    "prepublishOnly": "npm run build && npm run test && chmod +x dist/src/index.js",
     "build": "tsc",
+    "postbuild": "chmod +x dist/src/index.js || true",
     "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js",
+    "start": "node dist/src/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.config.integration.ts"

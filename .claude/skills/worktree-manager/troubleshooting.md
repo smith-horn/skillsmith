@@ -68,16 +68,26 @@ git cherry-pick <commit1> <commit2>
 
 ### Issue: Encrypted files showing binary in worktree
 
-**Cause**: Main repo was not unlocked before creating the worktree
-**Solution**:
-```bash
-# Go to main repo and unlock
-cd /path/to/main/repo
-varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'
+**Cause**: Worktree doesn't have git-crypt keys in its gitdir
+**Solution** (recommended 4-step process for new worktrees):
 
-# Worktree will now inherit unlocked state
-cd ../worktrees/my-feature
-cat docs/architecture/standards.md  # Should be readable
+```bash
+# Step 1: Create worktree without checkout
+git worktree add --no-checkout ../worktrees/my-feature -b feature/my-feature
+
+# Step 2: Find the worktree's gitdir
+WORKTREE_GITDIR=$(cat ../worktrees/my-feature/.git)
+
+# Step 3: Copy git-crypt keys from main repo
+cp -r .git/git-crypt "${WORKTREE_GITDIR#gitdir: }/git-crypt"
+
+# Step 4: Checkout files (will be decrypted)
+cd ../worktrees/my-feature && git reset --hard
+```
+
+For existing worktrees, use the helper script:
+```bash
+./scripts/worktree-crypt.sh fix ../worktrees/my-feature
 ```
 
 ### Issue: Git-crypt unlock succeeds but files still encrypted
@@ -85,14 +95,29 @@ cat docs/architecture/standards.md  # Should be readable
 **Cause**: Git smudge filter not triggered for existing files
 **Solution**:
 ```bash
-# Force re-checkout of encrypted files
+# Option 1: Force re-checkout
 git checkout -- docs/
 
-# Or manually apply smudge filter
+# Option 2: Use helper script
+./scripts/worktree-crypt.sh fix ../worktrees/my-feature
+
+# Option 3: Manually apply smudge filter
 for f in docs/**/*.md; do
-  cat "$f" | git-crypt smudge > "/tmp/$(basename $f)"
-  mv "/tmp/$(basename $f)" "$f"
+  if [ -f "$f" ]; then
+    cat "$f" | git-crypt smudge > "/tmp/$(basename $f)" 2>/dev/null
+    mv "/tmp/$(basename $f)" "$f"
+  fi
 done
+```
+
+### Issue: git-crypt unlock fails with "already unlocked"
+
+**Cause**: Keys are already present, but smudge filter wasn't triggered
+**Solution**: Just checkout the files, no need to unlock again:
+```bash
+git checkout -- docs/
+# Or
+git reset --hard HEAD
 ```
 
 ### Issue: ESLint/Prettier failing in CI on encrypted files

@@ -4,9 +4,47 @@ Handling encrypted files in worktrees.
 
 ---
 
-## Key Principle: Unlock Main Repo First
+## Key Insight: How Git-Crypt Works with Worktrees
 
-**Git-crypt state is inherited by worktrees.** You must unlock in the main repository BEFORE creating worktrees:
+**Git worktrees share the `.git` directory with the main repo**, but each worktree has its own gitdir location. Git-crypt keys are stored in `.git/git-crypt/keys/`, and worktrees need access to these keys.
+
+When you create a worktree:
+- The worktree directory contains a `.git` **file** (not directory) pointing to the actual gitdir
+- The gitdir is typically at `.git/worktrees/<name>/`
+- Git-crypt looks for keys in the gitdir, not the main `.git` directory
+
+This is why simple `git-crypt unlock` in the main repo may not always work for worktrees.
+
+---
+
+## Recommended: 4-Step Worktree Creation for Encrypted Repos
+
+For repos with git-crypt encrypted files, use this process to ensure decryption works:
+
+```bash
+# Step 1: Create worktree WITHOUT checkout (avoids encrypted file issues)
+git worktree add --no-checkout ../worktrees/my-feature -b feature/my-feature
+
+# Step 2: Find the worktree's gitdir location
+WORKTREE_GITDIR=$(cat ../worktrees/my-feature/.git)
+
+# Step 3: Copy git-crypt keys from main repo to worktree's gitdir
+cp -r .git/git-crypt "${WORKTREE_GITDIR#gitdir: }/git-crypt"
+
+# Step 4: Now checkout files (they will be decrypted properly)
+cd ../worktrees/my-feature && git reset --hard
+```
+
+**Why this works:**
+- `--no-checkout` prevents git from checking out encrypted files before keys are available
+- Copying the keys ensures the worktree's gitdir has access to decryption
+- `git reset --hard` triggers the smudge filter with keys in place
+
+---
+
+## Alternative: Unlock Main Repo First (Simple Case)
+
+For fresh worktrees from an already-unlocked main repo, this simpler approach often works:
 
 ```bash
 # 1. Unlock in main repo FIRST
@@ -22,6 +60,25 @@ git worktree add ../worktrees/my-feature -b feature/my-feature
 # 4. Worktree inherits unlocked state automatically
 cd ../worktrees/my-feature
 head -5 docs/architecture/standards.md  # Should also be plaintext
+```
+
+**Note**: If files still appear encrypted after this approach, use the 4-step process above or the helper script.
+
+---
+
+## Helper Script: worktree-crypt.sh
+
+The project includes a helper script at `scripts/worktree-crypt.sh` that automates the 4-step process:
+
+```bash
+# Create a new encrypted-repo-aware worktree
+./scripts/worktree-crypt.sh create my-feature feature/my-feature
+
+# Fix an existing worktree with encryption issues
+./scripts/worktree-crypt.sh fix ../worktrees/my-feature
+
+# Check encryption status
+./scripts/worktree-crypt.sh status ../worktrees/my-feature
 ```
 
 ---
@@ -166,26 +223,58 @@ fi
 
 ## Troubleshooting Git-Crypt
 
-### Issue: Git-crypt unlock succeeds but files still encrypted
+### Issue: Files still show encrypted content in worktree
 
-**Cause**: Git smudge filter not triggered for existing files
+**Cause**: Git smudge filter not triggered, or keys not in worktree's gitdir
+**Solution** (in order of preference):
+
+```bash
+# Option 1: Use the helper script
+./scripts/worktree-crypt.sh fix ../worktrees/my-feature
+
+# Option 2: Copy keys manually and re-checkout
+WORKTREE_GITDIR=$(cat ../worktrees/my-feature/.git)
+cp -r .git/git-crypt "${WORKTREE_GITDIR#gitdir: }/git-crypt"
+cd ../worktrees/my-feature && git checkout -- docs/
+
+# Option 3: Manually apply smudge filter
+cd ../worktrees/my-feature
+for f in docs/**/*.md; do
+  if [ -f "$f" ]; then
+    cat "$f" | git-crypt smudge > "/tmp/$(basename $f)" 2>/dev/null
+    mv "/tmp/$(basename $f)" "$f"
+  fi
+done
+```
+
+### Issue: git-crypt unlock fails in worktree
+
+**Cause**: Keys may already be present in the worktree's gitdir
 **Solution**:
 
 ```bash
-# Force re-checkout of encrypted files
+# Check if keys exist
+WORKTREE_GITDIR=$(cat ../worktrees/my-feature/.git)
+ls -la "${WORKTREE_GITDIR#gitdir: }/git-crypt" 2>/dev/null
+
+# If keys exist, just checkout the files
+cd ../worktrees/my-feature
 git checkout -- docs/
 
-# Or manually apply smudge filter
-for f in docs/**/*.md; do
-  cat "$f" | git-crypt smudge > "/tmp/$(basename $f)"
-  mv "/tmp/$(basename $f)" "$f"
-done
+# Or force reset
+git reset --hard HEAD
 ```
 
 ### Issue: "git-crypt: this repository has already been unlocked"
 
 **Cause**: Git-crypt was previously unlocked
-**Solution**: This is fine, proceed with worktree creation
+**Solution**: This is fine. If files are still encrypted, the issue is the smudge filter. Run:
+
+```bash
+git checkout -- docs/
+# Or use the helper script
+./scripts/worktree-crypt.sh fix ../worktrees/my-feature
+```
 
 ### Issue: "fatal: not a git-crypt encrypted repository"
 
@@ -201,3 +290,14 @@ done
 1. Check `.env` file has `GIT_CRYPT_KEY_PATH` set
 2. Verify the key file exists at that path
 3. Use `varlock load` to validate environment
+
+### Issue: New worktree created but all files show as binary
+
+**Cause**: Worktree was created with checkout before keys were available
+**Solution**: Use the 4-step creation process for future worktrees. For existing:
+
+```bash
+# Fix existing worktree
+cd /path/to/main/repo
+./scripts/worktree-crypt.sh fix ../worktrees/my-feature
+```

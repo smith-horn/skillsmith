@@ -52,7 +52,8 @@
     "test:e2e:report": "npx tsx scripts/e2e/generate-report.ts",
     "test:e2e:create-issues": "npx tsx scripts/e2e/create-linear-issues.ts",
     "test:e2e:baseline": "npx tsx scripts/e2e/generate-report.ts --baseline",
-    "skillsmith": "node packages/cli/dist/src/index.js"
+    "skillsmith": "node packages/cli/dist/src/index.js",
+    "cleanup:orphans": "./scripts/cleanup-orphans.sh"
   },
   "engines": {
     "node": ">=22.0.0"

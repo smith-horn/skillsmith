@@ -16,6 +16,24 @@ author: Smith Horn
 
 Orchestrates complex task execution using claude-flow hive mind with automatic code review and documentation updates.
 
+## Quick Reference
+
+| Resource | Location |
+|----------|----------|
+| **Configuration Guide** | [.claude/hive-mind/README.md](../../hive-mind/README.md) |
+| **Example Configs** | [.claude/hive-mind/*.yaml](../../hive-mind/) |
+| **Wave Planning** | See [wave-planner spec](../../../docs/architecture/wave-planner-skill-spec.md) |
+
+### Execution Commands
+
+```bash
+# Execute a hive mind configuration
+npx claude-flow swarm --config .claude/hive-mind/your-config.yaml
+
+# Or use the launch script pattern
+./start-hive-mind.sh
+```
+
 ## CRITICAL: Tool Permissions for Background Agents (SMI-1823)
 
 **WARNING**: Background agents spawned with `Task()` can lose tool permissions mid-execution, causing "Permission to use Read has been auto-denied" errors.
@@ -783,6 +801,27 @@ See `skillsmith/.env.schema` for available variables.
 | Document | Contents |
 |----------|----------|
 | [Context Persistence](./context-persistence.md) | Maintaining context across sessions for long-running tasks |
+
+## Configuration Reference
+
+For detailed configuration options, see [.claude/hive-mind/README.md](../../hive-mind/README.md):
+
+| Topic | Description |
+|-------|-------------|
+| **Resource Profiles** | `laptop`, `workstation`, `server` with memory/agent limits |
+| **Topology Options** | `hierarchical`, `mesh`, `star`, `ring`, `hybrid` |
+| **Quality Gates** | Docker-based build, test, lint commands |
+| **allowed_tools** | Required tool permissions for each agent type |
+| **Linear Integration** | Auto-update issues on completion |
+
+### Creating New Configurations
+
+Copy the minimal template from [.claude/hive-mind/README.md](../../hive-mind/README.md) and customize:
+
+1. Update `name` and `description`
+2. Add your tasks with issue IDs
+3. List affected files
+4. Ensure `allowed_tools` is specified for all workers
 
 ## Related Skills
 

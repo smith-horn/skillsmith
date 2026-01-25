@@ -769,6 +769,18 @@ docker exec skillsmith-dev-1 npm rebuild esbuild
 
 > **Note**: The Dockerfile already handles this via `npm rebuild better-sqlite3 onnxruntime-node esbuild`
 
+### Orphaned Agent Processes
+
+If background agents don't terminate properly:
+
+```bash
+# Preview orphaned processes
+./scripts/cleanup-orphans.sh --dry-run
+
+# Kill orphaned processes
+./scripts/cleanup-orphans.sh
+```
+
 ---
 
 ## Support

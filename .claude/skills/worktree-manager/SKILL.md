@@ -1,6 +1,6 @@
 ---
 name: "Worktree Manager"
-version: 1.1.0
+version: 1.2.0
 description: "Manage git worktrees for parallel development with conflict prevention and wave-aware execution strategy. Use when creating feature branches, starting parallel work sessions, merging worktree PRs, or coordinating multiple Claude sessions. Includes dependency analysis for choosing single vs. multiple worktree patterns."
 category: development
 tags:
@@ -71,6 +71,22 @@ Creates and manages isolated git worktrees for parallel feature development whil
 
 ### Creating a New Worktree
 
+**For repositories with git-crypt encryption (recommended):**
+
+```bash
+# Use the helper script for encrypted repos
+cd /path/to/your/repo
+./scripts/worktree-crypt.sh create ../worktrees/feature-name feature/feature-name
+
+# Navigate to worktree
+cd ../worktrees/feature-name
+
+# Verify encrypted files are readable
+head -3 docs/architecture/standards.md
+```
+
+**Manual approach (if helper script not available):**
+
 ```bash
 # 1. Ensure you're on main and up-to-date
 cd /path/to/your/repo
@@ -90,6 +106,14 @@ cd ../worktrees/feature-name
 
 # 6. Verify encrypted files are readable (if applicable)
 head -3 docs/architecture/standards.md
+```
+
+**If encrypted files still show as binary after creation:**
+
+```bash
+# Fix the worktree's git-crypt setup
+cd /path/to/your/repo
+./scripts/worktree-crypt.sh fix ../worktrees/feature-name
 ```
 
 ### Before Starting Work
@@ -177,11 +201,25 @@ The skill includes helper scripts in `scripts/`:
 
 | Script | Purpose |
 |--------|---------|
-| `worktree-create.sh` | Create a new worktree with branch |
+| `create-worktree.sh` | Create a new worktree with git-crypt support (4-step process) |
+| `worktree-crypt.sh` | Git-crypt helper: create, fix, and status commands |
 | `worktree-status.sh` | Show status of all worktrees |
 | `worktree-sync.sh` | Sync all worktrees with main |
 | `worktree-cleanup.sh` | Clean up merged worktrees |
 | `generate-launch-script.sh` | Generate Claude Code launch script |
+
+### Git-Crypt Helper Usage
+
+```bash
+# Create a new worktree with git-crypt support
+./scripts/worktree-crypt.sh create ../worktrees/my-feature feature/my-feature
+
+# Fix an existing worktree with encrypted file issues
+./scripts/worktree-crypt.sh fix ../worktrees/my-feature
+
+# Check encryption status
+./scripts/worktree-crypt.sh status ../worktrees/my-feature
+```
 
 ---
 
@@ -194,6 +232,13 @@ The skill includes helper scripts in `scripts/`:
 ---
 
 ## Changelog
+
+### v1.2.0 (2026-01-25)
+- **New**: Enhanced git-crypt worktree documentation (SMI-1824)
+- Documented 4-step worktree creation process for encrypted repos
+- Added `worktree-crypt.sh` helper script with `create`, `fix`, and `status` commands
+- Expanded troubleshooting for encrypted file issues
+- Key insight: worktree gitdir needs git-crypt keys copied separately
 
 ### v1.1.0 (2026-01-22)
 - **New**: Wave-aware worktree strategy selection
@@ -209,6 +254,6 @@ The skill includes helper scripts in `scripts/`:
 ---
 
 **Created**: December 2025
-**Updated**: January 2026
+**Updated**: January 25, 2026
 **Scope**: Internal - Smith-Horn/skillsmith repository
 **Related**: [wave-planner](~/.claude/skills/wave-planner/SKILL.md), [hive-mind](../hive-mind/SKILL.md)
