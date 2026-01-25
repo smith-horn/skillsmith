@@ -473,7 +473,7 @@ cat .env                        # Exposes all secrets
 
 | Skill | Purpose | Trigger Phrases |
 |-------|---------|-----------------|
-| [governance](.claude/skills/governance/SKILL.md) | Engineering standards enforcement | "code review", "standards", "compliance" |
+| [governance](.claude/skills/governance/SKILL.md) | Engineering standards enforcement | "code review", "standards", "compliance", "retro" |
 | [worktree-manager](.claude/skills/worktree-manager/SKILL.md) | Git worktree parallel development | "create worktree", "parallel development" |
 
 **Quick Audit**: `docker exec skillsmith-dev-1 npm run audit:standards`
