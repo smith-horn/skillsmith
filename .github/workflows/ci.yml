@@ -500,6 +500,78 @@ jobs:
             skillsmith-ci:${{ github.sha }} \
             npm run audit:standards
 
+  # SMI-1826: Automated Code Review
+  # Runs standards audit after lint and test pass, uploads report as artifact
+  code-review:
+    name: Code Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [lint, test]
+    # Non-blocking initially while we stabilize
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Download node_modules
+        uses: actions/download-artifact@v4
+        with:
+          name: node-modules
+          path: /tmp
+
+      - name: Load Docker image
+        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+
+      - name: Extract node_modules
+        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+
+      - name: Run automated code review
+        id: code-review
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            bash scripts/ci-code-review.sh audit-report.json
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-review-report
+          path: audit-report.json
+          retention-days: 30
+
+      - name: Add review summary to job
+        if: always()
+        run: |
+          echo "## Code Review Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f audit-report.json ]; then
+            PASSED=$(jq -r '.summary.passed' audit-report.json)
+            WARNINGS=$(jq -r '.summary.warnings' audit-report.json)
+            FAILED=$(jq -r '.summary.failed' audit-report.json)
+            SCORE=$(jq -r '.summary.compliance_score' audit-report.json)
+            STATUS=$(jq -r '.status' audit-report.json)
+
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Status | ${STATUS} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Compliance Score | ${SCORE}% |" >> $GITHUB_STEP_SUMMARY
+            echo "| Passed | ${PASSED} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Warnings | ${WARNINGS} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Failed | ${FAILED} |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Audit report not generated" >> $GITHUB_STEP_SUMMARY
+          fi
+
   build:
     name: Build
     runs-on: ubuntu-latest

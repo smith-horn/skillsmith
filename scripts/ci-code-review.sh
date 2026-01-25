@@ -1,0 +1,80 @@
+#!/bin/bash
+# CI Code Review Script (SMI-1826)
+#
+# Runs the standards audit and outputs results to JSON format for CI artifacts.
+# Exit codes:
+#   0 - Passed (no errors, warnings allowed)
+#   1 - Failed (errors found)
+#
+# Usage: ./scripts/ci-code-review.sh [output-file]
+#   Default output: audit-report.json
+
+set -o pipefail
+
+OUTPUT_FILE="${1:-audit-report.json}"
+TEMP_OUTPUT=$(mktemp)
+
+echo "Running standards audit..."
+
+# Run the audit and capture output
+npm run audit:standards 2>&1 | tee "$TEMP_OUTPUT"
+AUDIT_EXIT_CODE=${PIPESTATUS[0]}
+
+# Strip ANSI color codes for parsing
+CLEAN_OUTPUT=$(sed 's/\x1b\[[0-9;]*m//g' "$TEMP_OUTPUT")
+
+# Parse results from output using portable grep/sed
+PASSED=$(echo "$CLEAN_OUTPUT" | grep -E '^Passed:' | sed 's/[^0-9]//g' || echo "0")
+WARNINGS=$(echo "$CLEAN_OUTPUT" | grep -E '^Warnings:' | sed 's/[^0-9]//g' || echo "0")
+FAILED=$(echo "$CLEAN_OUTPUT" | grep -E '^Failed:' | sed 's/[^0-9]//g' || echo "0")
+SCORE=$(echo "$CLEAN_OUTPUT" | grep -E 'Compliance Score:' | sed 's/[^0-9]//g' || echo "0")
+
+# Default to 0 if empty
+PASSED=${PASSED:-0}
+WARNINGS=${WARNINGS:-0}
+FAILED=${FAILED:-0}
+SCORE=${SCORE:-0}
+
+# Generate timestamp
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Determine status
+if [ "$AUDIT_EXIT_CODE" -eq 0 ]; then
+  STATUS="passed"
+else
+  STATUS="failed"
+fi
+
+# Escape output for JSON (replace special characters)
+# Using node for reliable JSON escaping
+ESCAPED_OUTPUT=$(node -e "
+  const fs = require('fs');
+  const content = fs.readFileSync('$TEMP_OUTPUT', 'utf8');
+  console.log(JSON.stringify(content));
+")
+
+# Generate JSON report
+cat > "$OUTPUT_FILE" << EOF
+{
+  "timestamp": "$TIMESTAMP",
+  "summary": {
+    "passed": $PASSED,
+    "warnings": $WARNINGS,
+    "failed": $FAILED,
+    "compliance_score": $SCORE
+  },
+  "status": "$STATUS",
+  "exit_code": $AUDIT_EXIT_CODE,
+  "output": $ESCAPED_OUTPUT
+}
+EOF
+
+# Cleanup
+rm -f "$TEMP_OUTPUT"
+
+echo ""
+echo "Report generated: $OUTPUT_FILE"
+echo "Summary: passed=$PASSED, warnings=$WARNINGS, failed=$FAILED, score=$SCORE%"
+
+# Exit with same code as audit
+exit $AUDIT_EXIT_CODE

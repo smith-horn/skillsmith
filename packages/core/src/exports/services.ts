@@ -52,6 +52,21 @@ export {
   type TransformationServiceOptions,
 } from '../services/TransformationService.js'
 
+export {
+  TaskRunner,
+  createTaskRunner,
+  getGlobalTaskRunner,
+  setGlobalTaskRunner,
+  disposeGlobalTaskRunner,
+  DEFAULT_TASK_TIMEOUT_MS,
+  SIGKILL_GRACE_PERIOD_MS,
+  WARNING_THRESHOLD_RATIO,
+  type TaskRunnerConfig,
+  type TaskStatus,
+  type TrackedTask,
+  type CleanupResult,
+} from '../services/TaskRunner.js'
+
 // ============================================================================
 // Session Management (SMI-641)
 // ============================================================================
