@@ -452,7 +452,9 @@ function findSkills(baseDir) {
       }
     }
   } catch (err) {
-    console.error(`${COLORS.yellow}Warning: Could not read directory ${baseDir}: ${err.message}${COLORS.reset}`)
+    console.error(
+      `${COLORS.yellow}Warning: Could not read directory ${baseDir}: ${err.message}${COLORS.reset}`
+    )
   }
 
   return skills
@@ -532,17 +534,23 @@ function main() {
 
   // Output results
   if (jsonOutput) {
-    console.log(JSON.stringify({
-      summary: {
-        total: allResults.length,
-        valid: allResults.filter(r => r.valid).length,
-        invalid: allResults.filter(r => !r.valid).length,
-        errors: totalErrors,
-        warnings: totalWarnings,
-        fixed: totalFixed,
-      },
-      skills: allResults,
-    }, null, 2))
+    console.log(
+      JSON.stringify(
+        {
+          summary: {
+            total: allResults.length,
+            valid: allResults.filter((r) => r.valid).length,
+            invalid: allResults.filter((r) => !r.valid).length,
+            errors: totalErrors,
+            warnings: totalWarnings,
+            fixed: totalFixed,
+          },
+          skills: allResults,
+        },
+        null,
+        2
+      )
+    )
     process.exit(totalErrors > 0 || (strict && totalWarnings > 0) ? 1 : 0)
   }
 
@@ -598,8 +606,8 @@ function main() {
 
   // Summary
   console.log('━'.repeat(60))
-  const validCount = allResults.filter(r => r.valid).length
-  const invalidCount = allResults.filter(r => !r.valid).length
+  const validCount = allResults.filter((r) => r.valid).length
+  const invalidCount = allResults.filter((r) => !r.valid).length
 
   console.log(`\n${COLORS.bold}Summary${COLORS.reset}`)
   console.log(`  Total skills: ${allResults.length}`)
