@@ -1,6 +1,6 @@
 ---
 name: "Governance"
-version: "1.1.0"
+version: "1.2.0"
 description: "Enforces engineering standards and code quality policies. Use during code reviews, before commits, when discussing standards or compliance, and for quality audits."
 triggers:
   keywords:
@@ -237,67 +237,11 @@ Before marking a code review complete:
 
 **Every code review MUST produce a written report** saved to `docs/code_review/`.
 
-**File naming**: `YYYY-MM-DD-<brief-slug>.md`
-**Example**: `2025-01-24-auth-refactor-review.md`
+📄 **Full template**: [code-review-template.md](code-review-template.md)
 
-**Template**:
-
-```markdown
-# Code Review: <Title>
-
-**Date**: YYYY-MM-DD
-**Reviewer**: Claude Code Review Agent
-**Related Issues**: SMI-XXX
-**Files Changed**: N files
-**Docker Validated**: Yes/No
-
-## Summary
-
-Brief description of what was reviewed.
-
-## Pre-Review Checks
-
-| Check | Status |
-|-------|--------|
-| `npm run typecheck` | PASS/FAIL |
-| `npm run lint` | PASS/FAIL |
-| `npm run test` | PASS/FAIL |
-| `npm run audit:standards` | PASS/FAIL |
-
-## Files Reviewed
-
-| File | Lines Changed | Status | Notes |
-|------|---------------|--------|-------|
-| `path/to/file.ts` | +X/-Y | PASS/FAIL | Brief note |
-
-## Findings
-
-| Finding | Severity | Standard | Status |
-|---------|----------|----------|--------|
-| Description | Critical/High/Medium/Low | §N | Fixed/SMI-XXX |
-
-## CI Impact Assessment
-
-- [ ] No new ESLint warnings introduced
-- [ ] TypeScript strict mode satisfied
-- [ ] Tests maintain >80% coverage
-- [ ] No native module changes requiring rebuild
-
-## Overall Result
-
-**PASS/FAIL**: Summary of review outcome.
-
-## Linear Issues Created
-
-| Issue | Title | Priority |
-|-------|-------|----------|
-| SMI-XXX | Description | P2/P3/P4 |
-
-## Recommendations (Non-Blocking)
-
-- Recommendation 1
-- Recommendation 2
-```
+**Quick reference**:
+- File naming: `YYYY-MM-DD-<brief-slug>.md`
+- Required sections: Summary, Pre-Review Checks, Files Reviewed, Findings, CI Impact Assessment
 
 ---
 
@@ -305,86 +249,11 @@ Brief description of what was reviewed.
 
 When running a retrospective ("retro"), **MUST produce a written report** saved to `docs/retros/`.
 
-**File naming**: `YYYY-MM-DD-<topic-slug>.md`
-**Example**: `2025-01-24-auth-migration-retro.md`
+📄 **Full template**: [retro-template.md](retro-template.md)
 
-**Template**:
-
-```markdown
-# <Topic> Retrospective
-
-**Date:** YYYY-MM-DD
-**Duration:** N waves / N sessions
-**Issues Completed:** SMI-XXX, SMI-YYY
-**PRs Updated:** #N
-**Branch:** `feature/branch-name` (worktree-based)
-
----
-
-## What Went Well
-
-1. (e.g., "Worktree isolation - Clean separation from main branch")
-2. (e.g., "Hive mind orchestration - Research agents gathered context before coding")
-3.
-
----
-
-## What Went Wrong
-
-1. (e.g., "Docker container needed rebuild after npm install")
-2. (e.g., "Context compaction mid-session")
-
----
-
-## Metrics
-
-| Metric | Value |
-|--------|-------|
-| Files modified | N |
-| Tests passing | N/N |
-| Code review issues found | N |
-| Code review issues fixed | N |
-
----
-
-## Breaking Changes (if applicable)
-
-| Component | Breaking Change | Resolution |
-|-----------|-----------------|------------|
-| Package/API | What changed | How we handled it |
-
----
-
-## Code Review Findings (per wave)
-
-### Wave N: <Description>
-
-| Finding | Severity | Resolution |
-|---------|----------|------------|
-| Description | Critical/High/Medium/Low | Fixed/Created SMI-XXX |
-
----
-
-## Waves Summary (if multi-wave)
-
-| Wave | Issue | Scope | Commits |
-|------|-------|-------|---------|
-| 1 | SMI-XXX | Description | abc1234 |
-
----
-
-## Key Lessons
-
-1. (Actionable, e.g., "Query npm registry for versions - Don't assume version numbers")
-2.
-
----
-
-## Recommendations for Future Work
-
-1. (Forward-looking, e.g., "Run preflight in Docker between waves")
-2.
-```
+**Quick reference**:
+- File naming: `YYYY-MM-DD-<topic-slug>.md`
+- Required sections: What Went Well, What Went Wrong, Metrics, Key Lessons
 
 ### Retrospective Completion Checklist
 
@@ -396,6 +265,15 @@ When running a retrospective ("retro"), **MUST produce a written report** saved 
 - [ ] Key lessons are actionable
 - [ ] Breaking changes documented (if applicable)
 - [ ] **Report written to `docs/retros/`**
+
+---
+
+## Sub-Documentation
+
+| Document | Contents |
+|----------|----------|
+| [code-review-template.md](code-review-template.md) | Full code review report template with field descriptions |
+| [retro-template.md](retro-template.md) | Full retrospective template with completion checklist |
 
 ---
 
@@ -446,6 +324,13 @@ See [scripts/git-hooks/README.md](../../../scripts/git-hooks/README.md) for deta
 ---
 
 ## Changelog
+
+### v1.2.0 (2026-01-24)
+- **Refactored**: Split templates into sub-documentation files (SMI-1783)
+- **Added**: `code-review-template.md` with full template and field descriptions
+- **Added**: `retro-template.md` with full template and completion checklist
+- **Added**: Sub-documentation table linking to template files
+- **Reduced**: Main SKILL.md from ~450 lines to ~350 lines
 
 ### v1.1.0 (2026-01-24)
 - **Enhanced**: Code review report template with Docker validation, pre-review checks, CI impact assessment
