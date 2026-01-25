@@ -236,17 +236,15 @@ export class TransformationService {
   }
 
   /**
-   * Quick transform without caching (for testing or one-off transforms)
+   * Transform without caching (for testing or one-off transforms)
+   *
+   * SMI-1798: Note that this is NOT a synchronous I/O operation - the name
+   * indicates it runs without async cache operations.
    *
    * @param skillName - Human-readable skill name
    * @param description - Skill description
    * @param content - The full SKILL.md content
    * @returns Transformation result
-   */
-  /**
-   * SMI-1798: Transform without caching (for testing or one-off transforms)
-   * Note: This is NOT a synchronous I/O operation - the name indicates
-   * it runs without async cache operations.
    */
   transformWithoutCache(
     skillName: string,
@@ -305,24 +303,30 @@ export class TransformationService {
   private getCachedTransformation(skillId: string, content: string): TransformationResult | null {
     if (!this.cache) return null
 
-    const cacheKey = this.buildCacheKey(skillId)
-    const cached = this.cache.get<CachedTransformation>(cacheKey)
+    try {
+      const cacheKey = this.buildCacheKey(skillId)
+      const cached = this.cache.get<CachedTransformation>(cacheKey)
 
-    if (!cached) return null
+      if (!cached) return null
 
-    // Validate cache entry
-    const contentHash = this.hashContent(content)
-    if (cached.skillHash !== contentHash) {
-      // Content changed, invalidate cache
+      // Validate cache entry
+      const contentHash = this.hashContent(content)
+      if (cached.skillHash !== contentHash) {
+        // Content changed, invalidate cache
+        return null
+      }
+
+      if (cached.version !== this.options.version) {
+        // Version mismatch, invalidate cache
+        return null
+      }
+
+      return cached.result
+    } catch (error) {
+      // Log error but continue with fresh transformation
+      console.warn(`Cache read failed for ${skillId}:`, error)
       return null
     }
-
-    if (cached.version !== this.options.version) {
-      // Version mismatch, invalidate cache
-      return null
-    }
-
-    return cached.result
   }
 
   /**
@@ -335,17 +339,22 @@ export class TransformationService {
   ): void {
     if (!this.cache) return
 
-    const cacheKey = this.buildCacheKey(skillId)
-    const contentHash = this.hashContent(content)
+    try {
+      const cacheKey = this.buildCacheKey(skillId)
+      const contentHash = this.hashContent(content)
 
-    const cacheEntry: CachedTransformation = {
-      result,
-      skillHash: contentHash,
-      cachedAt: new Date().toISOString(),
-      version: this.options.version,
+      const cacheEntry: CachedTransformation = {
+        result,
+        skillHash: contentHash,
+        cachedAt: new Date().toISOString(),
+        version: this.options.version,
+      }
+
+      this.cache.set(cacheKey, cacheEntry, this.options.cacheTtl)
+    } catch (error) {
+      // Log error but continue - caching is non-critical
+      console.warn(`Cache write failed for ${skillId}:`, error)
     }
-
-    this.cache.set(cacheKey, cacheEntry, this.options.cacheTtl)
   }
 
   /**
