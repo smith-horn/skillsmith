@@ -13,7 +13,20 @@
 import type { SkillAnalysis, ExtractableSection } from './SkillAnalyzer.js'
 
 /**
- * Result of skill decomposition
+ * Result of skill decomposition.
+ *
+ * Contains the decomposed main skill, extracted sub-skills, and statistics
+ * about the decomposition process. Used to understand what was extracted
+ * and the resulting token savings.
+ *
+ * @example
+ * ```typescript
+ * const result = decomposeSkill(content, analysis);
+ * if (result.wasDecomposed) {
+ *   console.log(`Created ${result.subSkills.length} sub-skills`);
+ *   console.log(`Token reduction: ${result.stats.tokenReductionPercent}%`);
+ * }
+ * ```
  */
 export interface DecompositionResult {
   /** The optimized main SKILL.md content */
@@ -30,7 +43,10 @@ export interface DecompositionResult {
 }
 
 /**
- * The main skill after decomposition
+ * The main skill after decomposition.
+ *
+ * Represents the optimized SKILL.md content after large sections have been
+ * extracted into sub-skills. Contains navigation links to the sub-skills.
  */
 export interface DecomposedSkill {
   /** Filename (always SKILL.md) */
@@ -47,7 +63,11 @@ export interface DecomposedSkill {
 }
 
 /**
- * An extracted sub-skill
+ * An extracted sub-skill.
+ *
+ * Represents a section that was extracted from the main skill into a
+ * separate file for on-demand loading. Includes metadata about the
+ * extraction and the full content.
  */
 export interface SubSkill {
   /** Filename (e.g., api.md, examples.md) */
@@ -67,7 +87,10 @@ export interface SubSkill {
 }
 
 /**
- * Statistics about the decomposition
+ * Statistics about the decomposition.
+ *
+ * Provides metrics comparing the original skill to the decomposed result,
+ * including line counts and estimated token reduction.
  */
 export interface DecompositionStats {
   /** Original line count */
@@ -96,7 +119,21 @@ interface SkillMetadata {
 }
 
 /**
- * Configuration for decomposition behavior
+ * Configuration for decomposition behavior.
+ *
+ * Allows customization of thresholds and features for the decomposition
+ * process. All options have sensible defaults.
+ *
+ * @example
+ * ```typescript
+ * const options: DecomposerOptions = {
+ *   maxMainSkillLines: 300,  // Stricter than default
+ *   minExtractableLines: 30, // Extract smaller sections
+ *   addNavigation: true,
+ *   addAttribution: true
+ * };
+ * const result = decomposeSkill(content, analysis, options);
+ * ```
  */
 export interface DecomposerOptions {
   /** Maximum lines for main skill (default: 400) */
@@ -120,12 +157,44 @@ const DEFAULT_OPTIONS: Required<DecomposerOptions> = {
 }
 
 /**
- * Decompose a skill into main + sub-skills based on analysis
+ * Decompose a skill into main + sub-skills based on analysis.
  *
- * @param content - The original SKILL.md content
- * @param analysis - Analysis from SkillAnalyzer
- * @param options - Decomposition options
- * @returns Decomposition result with main skill and sub-skills
+ * Transforms large skills (>500 lines) into a main SKILL.md plus separate
+ * sub-skill files that can be loaded on-demand. This reduces initial context
+ * size while preserving all content.
+ *
+ * The decomposition process:
+ * 1. Parses the skill content into sections
+ * 2. Identifies sections suitable for extraction (API refs, examples, etc.)
+ * 3. Creates sub-skill files with proper frontmatter
+ * 4. Updates main skill with navigation links to sub-skills
+ * 5. Adds Skillsmith attribution
+ *
+ * @param content - The original SKILL.md content to decompose
+ * @param analysis - Analysis result from `analyzeSkill()` containing optimization recommendations
+ * @param options - Optional configuration for decomposition behavior
+ * @returns Decomposition result containing main skill, sub-skills, and statistics
+ *
+ * @example
+ * ```typescript
+ * import { analyzeSkill } from './SkillAnalyzer';
+ * import { decomposeSkill } from './SkillDecomposer';
+ *
+ * const content = fs.readFileSync('SKILL.md', 'utf-8');
+ * const analysis = analyzeSkill(content);
+ *
+ * const result = decomposeSkill(content, analysis);
+ *
+ * // Write main skill
+ * fs.writeFileSync('SKILL.md', result.mainSkill.content);
+ *
+ * // Write sub-skills
+ * for (const sub of result.subSkills) {
+ *   fs.writeFileSync(sub.filename, sub.content);
+ * }
+ *
+ * console.log(`Reduced from ${result.stats.originalLines} to ${result.stats.mainSkillLines} lines`);
+ * ```
  */
 export function decomposeSkill(
   content: string,
@@ -507,10 +576,31 @@ function calculateStats(
 }
 
 /**
- * Parallelize sequential Task() calls in skill content
+ * Parallelize sequential Task() calls in skill content.
  *
- * @param content - The skill content
- * @returns Content with Task() calls batched for parallel execution
+ * Identifies consecutive Task() calls in code blocks and adds a comment
+ * indicating they can be batched for parallel execution. This optimization
+ * can reduce context overhead by 30-50% when multiple independent tasks
+ * are executed.
+ *
+ * @param content - The skill content containing Task() calls
+ * @returns Modified content with Task() calls marked for parallel execution
+ *
+ * @example
+ * ```typescript
+ * import { parallelizeTaskCalls } from './SkillDecomposer';
+ *
+ * const content = `
+ * \`\`\`javascript
+ * Task("agent1", "analyze code");
+ * Task("agent2", "run tests");
+ * Task("agent3", "check coverage");
+ * \`\`\`
+ * `;
+ *
+ * const optimized = parallelizeTaskCalls(content);
+ * // Result includes "// Batched for parallel execution" comment
+ * ```
  */
 export function parallelizeTaskCalls(content: string): string {
   const lines = content.split('\n')

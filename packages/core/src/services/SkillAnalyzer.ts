@@ -12,7 +12,19 @@
  */
 
 /**
- * Analysis result for a skill's optimization potential
+ * Analysis result for a skill's optimization potential.
+ *
+ * Contains detailed metrics about the skill content including line counts,
+ * tool usage patterns, task patterns, and recommendations for optimization.
+ *
+ * @example
+ * ```typescript
+ * const analysis: SkillAnalysis = analyzeSkill(skillContent);
+ * if (analysis.shouldTransform) {
+ *   console.log(`Optimization score: ${analysis.optimizationScore}`);
+ *   analysis.recommendations.forEach(r => console.log(r.description));
+ * }
+ * ```
  */
 export interface SkillAnalysis {
   /** Total line count of the skill content */
@@ -44,7 +56,19 @@ export interface SkillAnalysis {
 }
 
 /**
- * Tool usage analysis result
+ * Tool usage analysis result.
+ *
+ * Provides detailed breakdown of detected tools and their usage patterns
+ * within the skill content. Used to determine if a skill would benefit
+ * from subagent generation for context isolation.
+ *
+ * @example
+ * ```typescript
+ * const analysis = analyzeSkill(content);
+ * if (analysis.toolUsage.suggestsSubagent) {
+ *   console.log(`Detected tools: ${analysis.toolUsage.detectedTools.join(', ')}`);
+ * }
+ * ```
  */
 export interface ToolUsageAnalysis {
   /** List of detected tools */
@@ -67,7 +91,11 @@ export interface ToolUsageAnalysis {
 }
 
 /**
- * Task() call pattern analysis
+ * Task() call pattern analysis.
+ *
+ * Analyzes the usage of Task() calls within skill content to identify
+ * opportunities for batching and parallelization, which can reduce
+ * context overhead by 30-50%.
  */
 export interface TaskPatternAnalysis {
   /** Total number of Task() calls detected */
@@ -84,7 +112,11 @@ export interface TaskPatternAnalysis {
 }
 
 /**
- * Section that could be extracted as a sub-skill
+ * Section that could be extracted as a sub-skill.
+ *
+ * Represents a contiguous section of the skill content that could be
+ * moved to a separate sub-skill file for on-demand loading, reducing
+ * the initial context size.
  */
 export interface ExtractableSection {
   /** Section name/title */
@@ -107,7 +139,18 @@ export interface ExtractableSection {
 }
 
 /**
- * Optimization recommendation
+ * Optimization recommendation.
+ *
+ * Represents a specific optimization that could be applied to the skill,
+ * including the type of optimization, expected savings, and affected areas.
+ *
+ * @example
+ * ```typescript
+ * const analysis = analyzeSkill(content);
+ * analysis.recommendations
+ *   .filter(r => r.priority === 1)
+ *   .forEach(r => console.log(`${r.type}: ${r.estimatedSavings}% savings`));
+ * ```
  */
 export interface OptimizationRecommendation {
   /** Recommendation type */
@@ -212,10 +255,32 @@ const THRESHOLDS = {
 }
 
 /**
- * Analyze a skill's content for optimization opportunities
+ * Analyze a skill's content for optimization opportunities.
  *
- * @param content - The full SKILL.md content
- * @returns Analysis of optimization potential
+ * Performs comprehensive analysis of the skill content to identify:
+ * - Large sections suitable for decomposition
+ * - Heavy tool usage patterns suggesting subagent generation
+ * - Sequential Task() calls that can be parallelized
+ * - Large examples sections for progressive disclosure
+ *
+ * @param content - The full SKILL.md content to analyze
+ * @returns Analysis result containing metrics, patterns, and recommendations
+ *
+ * @example
+ * ```typescript
+ * import { analyzeSkill } from './SkillAnalyzer';
+ *
+ * const content = fs.readFileSync('SKILL.md', 'utf-8');
+ * const analysis = analyzeSkill(content);
+ *
+ * console.log(`Lines: ${analysis.lineCount}`);
+ * console.log(`Score: ${analysis.optimizationScore}/100`);
+ * console.log(`Should transform: ${analysis.shouldTransform}`);
+ *
+ * if (analysis.toolUsage.suggestsSubagent) {
+ *   console.log('Consider generating a companion subagent');
+ * }
+ * ```
  */
 export function analyzeSkill(content: string): SkillAnalysis {
   const lines = content.split('\n')
@@ -594,10 +659,34 @@ function calculateOptimizationScore(
 }
 
 /**
- * Quick check if a skill needs transformation without full analysis
+ * Quick check if a skill needs transformation without full analysis.
  *
- * @param content - The full SKILL.md content
- * @returns Whether quick transformation check passed
+ * Performs lightweight checks to determine if full analysis is worthwhile.
+ * Use this for fast filtering before running the more expensive `analyzeSkill`.
+ *
+ * Checks for:
+ * - Line count exceeding 500 lines
+ * - Heavy tool usage patterns (npm, npx, git, docker, Bash)
+ * - Multiple sequential Task() calls
+ *
+ * @param content - The full SKILL.md content to check
+ * @returns `true` if the skill likely needs transformation, `false` otherwise
+ *
+ * @example
+ * ```typescript
+ * import { quickTransformCheck, analyzeSkill } from './SkillAnalyzer';
+ *
+ * const content = fs.readFileSync('SKILL.md', 'utf-8');
+ *
+ * // Fast path: skip full analysis if not needed
+ * if (!quickTransformCheck(content)) {
+ *   console.log('Skill does not need transformation');
+ *   return;
+ * }
+ *
+ * // Full analysis only when needed
+ * const analysis = analyzeSkill(content);
+ * ```
  */
 export function quickTransformCheck(content: string): boolean {
   const lineCount = content.split('\n').length

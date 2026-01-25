@@ -254,4 +254,120 @@ More content.
       expect(result).toBe(content)
     })
   })
+
+  // SMI-1796: Error handling tests
+  describe('error handling', () => {
+    it('should handle empty content gracefully', () => {
+      const content = ''
+      const analysis = analyzeSkill(content)
+      const result = decomposeSkill(content, analysis)
+
+      expect(result.wasDecomposed).toBe(false)
+      expect(result.subSkills).toHaveLength(0)
+      expect(result.mainSkill.content).toBeDefined()
+      expect(result.stats.originalLines).toBe(1) // Empty string splits to ['']
+    })
+
+    it('should handle content with malformed sections', () => {
+      // Content with unclosed frontmatter and weird header patterns
+      const content = `---
+name: malformed-skill
+this line has no colon value
+description
+
+# No closing frontmatter marker
+
+##
+
+####### Too many hashes
+
+## Valid Section
+
+Some content.
+
+##
+`
+      const analysis = analyzeSkill(content)
+      const result = decomposeSkill(content, analysis)
+
+      // Should not throw, should produce a valid result
+      expect(result).toBeDefined()
+      expect(result.mainSkill.filename).toBe('SKILL.md')
+      expect(result.mainSkill.content).toBeDefined()
+    })
+
+    it('should handle content with only frontmatter and no body', () => {
+      const content = `---
+name: frontmatter-only
+description: A skill with only frontmatter
+---
+`
+      const analysis = analyzeSkill(content)
+      const result = decomposeSkill(content, analysis)
+
+      expect(result.wasDecomposed).toBe(false)
+      expect(result.mainSkill.content).toContain('name: frontmatter-only')
+    })
+
+    it('should handle analysis with empty extractableSections', () => {
+      const content = `# Small Skill
+
+Just a small amount of content.
+`
+      const analysis = analyzeSkill(content)
+      // Ensure analysis has empty extractable sections
+      expect(analysis.extractableSections).toHaveLength(0)
+
+      const result = decomposeSkill(content, analysis)
+
+      expect(result.wasDecomposed).toBe(false)
+      expect(result.subSkills).toHaveLength(0)
+    })
+
+    it('should handle analysis with shouldTransform=false', () => {
+      const content = `# Simple Skill
+
+Short content that does not need transformation.
+`
+      const analysis = analyzeSkill(content)
+      expect(analysis.shouldTransform).toBe(false)
+
+      const result = decomposeSkill(content, analysis)
+
+      expect(result.wasDecomposed).toBe(false)
+      expect(result.mainSkill.content).toContain('Optimized by Skillsmith')
+    })
+
+    it('should handle content with special characters in section names', () => {
+      const content = `---
+name: special-chars
+description: Test special characters
+---
+
+# Skill with special chars: <>&"' test
+
+## API Reference (v1.0)
+
+${'Content line\n'.repeat(100)}
+
+## Examples & Usage [beta]
+
+${'Example line\n'.repeat(100)}
+`
+      const analysis = analyzeSkill(content)
+      const result = decomposeSkill(content, analysis)
+
+      // Should handle special characters without throwing
+      expect(result).toBeDefined()
+      if (result.wasDecomposed) {
+        for (const subSkill of result.subSkills) {
+          // Filenames should be sanitized
+          expect(subSkill.filename).toMatch(/^[a-z0-9-]+\.md$/)
+          expect(subSkill.filename).not.toContain('<')
+          expect(subSkill.filename).not.toContain('>')
+          expect(subSkill.filename).not.toContain('&')
+        }
+      }
+    })
+  })
 })

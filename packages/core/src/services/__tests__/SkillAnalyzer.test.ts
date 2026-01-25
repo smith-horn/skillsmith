@@ -175,6 +175,81 @@ ${Array(60).fill('- endpoint').join('\n')}
     })
   })
 
+  /**
+   * SMI-1796: Error handling tests for edge cases
+   */
+  describe('error handling', () => {
+    it('should handle empty content gracefully', () => {
+      const analysis = analyzeSkill('')
+
+      expect(analysis.lineCount).toBe(1) // Empty string splits to ['']
+      expect(analysis.shouldTransform).toBe(false)
+      expect(analysis.optimizationScore).toBe(0)
+    })
+
+    it('should handle content with only whitespace', () => {
+      const content = '   \n\n   \n  '
+      const analysis = analyzeSkill(content)
+
+      expect(analysis.shouldTransform).toBe(false)
+      expect(analysis.toolUsage.detectedTools).toHaveLength(0)
+    })
+
+    it('should handle content without frontmatter', () => {
+      const content = `# Skill Without Frontmatter
+
+This skill has no YAML frontmatter.
+
+## Usage
+
+Just use it.
+`
+      const analysis = analyzeSkill(content)
+
+      expect(analysis.lineCount).toBeGreaterThan(0)
+      expect(analysis.recommendations).toBeDefined()
+    })
+
+    it('should handle malformed frontmatter gracefully', () => {
+      const content = `---
+name: broken
+description
+---
+
+# Broken Frontmatter
+
+Content here.
+`
+      // Should not throw, just analyze what it can
+      const analysis = analyzeSkill(content)
+
+      expect(analysis.lineCount).toBeGreaterThan(0)
+    })
+
+    it('should handle content with special characters', () => {
+      const content = `---
+name: special-chars
+description: Skill with émojis 🚀 and spëcial çharacters
+---
+
+# Spëcial Çharacters 🎉
+
+Content with unicode: 你好世界
+`
+      const analysis = analyzeSkill(content)
+
+      expect(analysis.lineCount).toBeGreaterThan(0)
+    })
+
+    it('should handle very long lines without hanging', () => {
+      const longLine = 'a'.repeat(10000)
+      const content = `# Skill\n\n${longLine}\n\nMore content.`
+      const analysis = analyzeSkill(content)
+
+      expect(analysis.lineCount).toBe(5)
+    })
+  })
+
   describe('quickTransformCheck', () => {
     it('should return false for small, simple skills', () => {
       const content = `# Simple Skill\n\nJust a simple skill.`

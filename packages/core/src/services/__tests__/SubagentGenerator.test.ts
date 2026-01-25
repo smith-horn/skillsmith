@@ -216,4 +216,112 @@ Write output files.
       expect(result.subagent?.tools).toContain('Read')
     })
   })
+
+  // SMI-1796: Error handling tests
+  describe('error handling', () => {
+    it('should handle empty skill name', () => {
+      const content = `# Skill\n\nRun npm commands.\nExecute git operations.`
+      const analysis = analyzeSkill(content)
+      const result = generateSubagent('', 'A skill with empty name', content, analysis)
+
+      // Should still generate (or not generate) without throwing
+      expect(result).toBeDefined()
+      if (result.generated) {
+        expect(result.subagent?.name).toBe('-specialist')
+      }
+    })
+
+    it('should handle empty content', () => {
+      const content = ''
+      const analysis = analyzeSkill(content)
+      const result = generateSubagent('empty-content-skill', 'A skill with empty content', content, analysis)
+
+      // Should not throw and should not generate subagent for empty content
+      expect(result).toBeDefined()
+      expect(result.generated).toBe(false)
+      expect(result.reason).toBeDefined()
+    })
+
+    it('should handle empty description', () => {
+      const content = `# Skill\n\nRun npm install.\nExecute git commands.\nUse docker.\nTerminal heavy.`
+      const analysis = analyzeSkill(content)
+      const result = generateSubagent('no-desc-skill', '', content, analysis)
+
+      // Should still work with empty description
+      expect(result).toBeDefined()
+      if (result.generated) {
+        // Should use fallback description
+        expect(result.subagent?.description).toContain('no-desc-skill')
+      }
+    })
+
+    it('should handle analysis with no tool usage detected', () => {
+      const content = `# Simple Skill
+
+This skill just provides documentation.
+No commands or tools mentioned here.
+Just text content.
+`
+      const analysis = analyzeSkill(content)
+      // Verify minimal tool usage
+      expect(analysis.toolUsage.detectedTools.length).toBeLessThanOrEqual(1)
+      expect(analysis.toolUsage.bashCommandCount).toBe(0)
+
+      const result = generateSubagent('doc-skill', 'Documentation only skill', content, analysis)
+
+      // Should not generate subagent for pure documentation
+      expect(result).toBeDefined()
+      expect(result.generated).toBe(false)
+    })
+
+    it('should handle generateMinimalSubagent with empty skill name', () => {
+      const content = `# Skill\n\nContent.`
+      const result = generateMinimalSubagent('', 'Description', content)
+
+      expect(result).toBeDefined()
+      expect(result.generated).toBe(true)
+      expect(result.subagent?.name).toBe('-specialist')
+    })
+
+    it('should handle generateMinimalSubagent with empty content', () => {
+      const content = ''
+      const result = generateMinimalSubagent('empty-skill', 'Empty skill', content)
+
+      expect(result).toBeDefined()
+      expect(result.generated).toBe(true)
+      // Should still have base tools
+      expect(result.subagent?.tools).toContain('Read')
+    })
+
+    it('should handle generateMinimalSubagent with empty description', () => {
+      const content = `# Skill\n\nContent.`
+      const result = generateMinimalSubagent('skill-name', '', content)
+
+      expect(result).toBeDefined()
+      expect(result.generated).toBe(true)
+      // Should use fallback description
+      expect(result.subagent?.description).toContain('skill-name')
+    })
+
+    it('should handle content with only whitespace', () => {
+      const content = '   \n\n   \t\t\n   '
+      const analysis = analyzeSkill(content)
+      const result = generateSubagent('whitespace-skill', 'Whitespace only', content, analysis)
+
+      expect(result).toBeDefined()
+      expect(result.generated).toBe(false)
+    })
+
+    it('should handle very long skill name', () => {
+      const longName = 'a'.repeat(500)
+      const content = `# Skill\n\nRun npm.\nUse git.\nDocker build.\nTerminal ops.\nShell script.`
+      const analysis = analyzeSkill(content)
+      const result = generateSubagent(longName, 'Description', content, analysis)
+
+      expect(result).toBeDefined()
+      if (result.generated) {
+        expect(result.subagent?.name).toBe(`${longName}-specialist`)
+      }
+    })
+  })
 })

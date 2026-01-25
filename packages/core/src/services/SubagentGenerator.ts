@@ -14,7 +14,24 @@
 import type { SkillAnalysis, ToolUsageAnalysis } from './SkillAnalyzer.js'
 
 /**
- * SMI-1795: Claude model constants for type safety and consistency
+ * Claude model constants for type safety and consistency.
+ *
+ * These constants represent the available Claude model tiers for subagent
+ * execution. The choice of model affects cost, speed, and capability.
+ *
+ * - `HAIKU`: Fast, cost-effective for simple operations
+ * - `SONNET`: Balanced performance for most workloads (default)
+ * - `OPUS`: Most capable for complex reasoning tasks
+ *
+ * @example
+ * ```typescript
+ * import { CLAUDE_MODELS, ClaudeModel } from './SubagentGenerator';
+ *
+ * const model: ClaudeModel = CLAUDE_MODELS.SONNET;
+ * console.log(model); // 'sonnet'
+ * ```
+ *
+ * @see SMI-1795 for implementation details
  */
 export const CLAUDE_MODELS = {
   HAIKU: 'haiku',
@@ -22,10 +39,28 @@ export const CLAUDE_MODELS = {
   OPUS: 'opus',
 } as const
 
+/**
+ * Type representing valid Claude model identifiers.
+ *
+ * Derived from the `CLAUDE_MODELS` constant to ensure type safety.
+ * Use this type when specifying which model a subagent should use.
+ */
 export type ClaudeModel = (typeof CLAUDE_MODELS)[keyof typeof CLAUDE_MODELS]
 
 /**
- * Generated subagent definition
+ * Generated subagent definition.
+ *
+ * Contains all the information needed to create a companion subagent
+ * for a skill, including the markdown content for `~/.claude/agents/`.
+ *
+ * @example
+ * ```typescript
+ * const result = generateSubagent(name, description, content, analysis);
+ * if (result.subagent) {
+ *   const agentPath = `~/.claude/agents/${result.subagent.name}.md`;
+ *   fs.writeFileSync(agentPath, result.subagent.content);
+ * }
+ * ```
  */
 export interface SubagentDefinition {
   /** Subagent name (e.g., "jest-helper-specialist") */
@@ -48,7 +83,21 @@ export interface SubagentDefinition {
 }
 
 /**
- * Result of subagent generation
+ * Result of subagent generation.
+ *
+ * Contains the generated subagent definition (if applicable), a CLAUDE.md
+ * integration snippet, or the reason why no subagent was generated.
+ *
+ * @example
+ * ```typescript
+ * const result = generateSubagent(name, description, content, analysis);
+ * if (result.generated) {
+ *   console.log(`Generated: ${result.subagent?.name}`);
+ *   console.log(`CLAUDE.md snippet:\n${result.claudeMdSnippet}`);
+ * } else {
+ *   console.log(`Skipped: ${result.reason}`);
+ * }
+ * ```
  */
 export interface SubagentGenerationResult {
   /** Whether a subagent was generated */
@@ -335,13 +384,46 @@ function detectTools(content: string): string[] {
 }
 
 /**
- * Generate a companion subagent for a skill
+ * Generate a companion subagent for a skill.
  *
- * @param skillName - The name of the skill
- * @param description - The skill's description
- * @param content - The full SKILL.md content
- * @param analysis - Analysis from SkillAnalyzer
- * @returns Subagent generation result
+ * Creates a subagent definition for skills that would benefit from parallel
+ * execution with context isolation. Subagents enable 37-97% token savings
+ * by delegating heavy operations to isolated contexts.
+ *
+ * The subagent is generated only if:
+ * - The skill has heavy tool usage (>5 bash commands or file operations)
+ * - The skill is complex (>300 lines)
+ *
+ * @param skillName - The name of the skill (used to generate subagent name)
+ * @param description - The skill's description (used for trigger phrase extraction)
+ * @param content - The full SKILL.md content to analyze for tools and patterns
+ * @param analysis - Analysis result from `analyzeSkill()` containing tool usage metrics
+ * @returns Generation result with subagent definition and CLAUDE.md snippet
+ *
+ * @example
+ * ```typescript
+ * import { analyzeSkill } from './SkillAnalyzer';
+ * import { generateSubagent } from './SubagentGenerator';
+ *
+ * const content = fs.readFileSync('SKILL.md', 'utf-8');
+ * const analysis = analyzeSkill(content);
+ *
+ * const result = generateSubagent(
+ *   'jest-helper',
+ *   'Helps write and run Jest tests',
+ *   content,
+ *   analysis
+ * );
+ *
+ * if (result.generated && result.subagent) {
+ *   // Write subagent to ~/.claude/agents/
+ *   const agentPath = path.join(os.homedir(), '.claude/agents', `${result.subagent.name}.md`);
+ *   fs.writeFileSync(agentPath, result.subagent.content);
+ *
+ *   // Optionally append CLAUDE.md snippet for delegation guidance
+ *   console.log(result.claudeMdSnippet);
+ * }
+ * ```
  */
 export function generateSubagent(
   skillName: string,
@@ -407,12 +489,37 @@ export function generateSubagent(
 }
 
 /**
- * Generate a minimal subagent for skills that don't need full analysis
+ * Generate a minimal subagent for skills that don't need full analysis.
  *
- * @param skillName - The name of the skill
- * @param description - The skill's description
- * @param content - The full SKILL.md content
- * @returns Subagent generation result
+ * Creates a basic subagent definition without requiring prior analysis.
+ * Useful for quick subagent generation when you know a skill needs a
+ * companion agent but don't need the full optimization analysis.
+ *
+ * Unlike `generateSubagent()`, this function:
+ * - Always generates a subagent (no threshold checks)
+ * - Uses Sonnet as the default model
+ * - Detects tools directly from content
+ *
+ * @param skillName - The name of the skill (used to generate subagent name)
+ * @param description - The skill's description (used for trigger phrase extraction)
+ * @param content - The full SKILL.md content to analyze for tools
+ * @returns Generation result with subagent definition (always generated)
+ *
+ * @example
+ * ```typescript
+ * import { generateMinimalSubagent } from './SubagentGenerator';
+ *
+ * // Quick generation without analysis
+ * const result = generateMinimalSubagent(
+ *   'docker-helper',
+ *   'Helps manage Docker containers',
+ *   content
+ * );
+ *
+ * // Result is always generated
+ * console.log(result.subagent?.name); // 'docker-helper-specialist'
+ * console.log(result.subagent?.model); // 'sonnet'
+ * ```
  */
 export function generateMinimalSubagent(
   skillName: string,
