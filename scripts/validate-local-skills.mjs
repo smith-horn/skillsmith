@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * SMI-1775: Local Skill Validation Script
+ * SMI-1778: Added --help flag and --fix implementation
  *
  * Validates skills in .claude/skills/ and ~/.claude/skills/ directories.
  * Checks for required YAML frontmatter (name, description) and other quality checks.
@@ -13,13 +14,69 @@
  *   --project-only  Only validate .claude/skills/ (project skills)
  *   --user-only     Only validate ~/.claude/skills/ (user skills)
  *   --strict        Treat warnings as errors
- *   --fix           Attempt to fix issues (not implemented yet)
+ *   --fix           Attempt to fix common issues (missing frontmatter, formatting)
  *   --json          Output results as JSON
+ *   --help, -h      Show this help message
  */
 
-import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'fs'
 import { join, basename, dirname } from 'path'
 import { homedir } from 'os'
+
+// =============================================================================
+// Help
+// =============================================================================
+
+function showHelp() {
+  console.log(`
+${COLORS.bold}Local Skill Validation Script${COLORS.reset}
+
+Validates skills in .claude/skills/ (project) and ~/.claude/skills/ (user) directories.
+Checks for required YAML frontmatter (name, description) and other quality checks.
+
+${COLORS.bold}USAGE${COLORS.reset}
+  npm run validate:skills [options]
+  node scripts/validate-local-skills.mjs [options]
+
+${COLORS.bold}OPTIONS${COLORS.reset}
+  --project-only    Only validate .claude/skills/ (project skills)
+  --user-only       Only validate ~/.claude/skills/ (user skills)
+  --strict          Treat warnings as errors (non-zero exit code)
+  --fix             Attempt to fix common issues:
+                    - Add missing YAML frontmatter with placeholder name/description
+                    - Format malformed frontmatter delimiters
+  --json            Output results as JSON (for CI integration)
+  --help, -h        Show this help message
+
+${COLORS.bold}EXAMPLES${COLORS.reset}
+  ${COLORS.blue}# Validate all skills${COLORS.reset}
+  npm run validate:skills
+
+  ${COLORS.blue}# Validate only project skills with strict mode${COLORS.reset}
+  npm run validate:skills -- --project-only --strict
+
+  ${COLORS.blue}# Auto-fix common issues${COLORS.reset}
+  npm run validate:skills -- --fix
+
+  ${COLORS.blue}# Output JSON for CI pipeline${COLORS.reset}
+  npm run validate:skills -- --json
+
+${COLORS.bold}REQUIRED FRONTMATTER${COLORS.reset}
+  ---
+  name: "Skill Name"           # Required, max 100 chars
+  description: "What it does"  # Required, max 500 chars
+  ---
+
+${COLORS.bold}EXIT CODES${COLORS.reset}
+  0  All skills valid
+  1  Validation errors found (or warnings with --strict)
+
+${COLORS.bold}SEE ALSO${COLORS.reset}
+  Skill Builder: .claude/skills/skill-builder/SKILL.md
+  Skill Locations: .claude/skills/skill-builder/skill-locations.md
+`)
+  process.exit(0)
+}
 
 // =============================================================================
 // Configuration
@@ -217,6 +274,95 @@ function validateMetadata(metadata, strict) {
 }
 
 /**
+ * Generate default frontmatter for a skill
+ */
+function generateDefaultFrontmatter(skillName) {
+  return `---
+name: "${skillName}"
+description: "TODO: Add a description of what this skill does and when to use it."
+---
+
+`
+}
+
+/**
+ * Fix common issues in a skill file
+ * Returns { fixed: boolean, changes: string[] }
+ */
+function fixSkill(skillPath, content) {
+  const changes = []
+  let newContent = content
+  const skillName = basename(dirname(skillPath))
+    .split('-')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+
+  // Check if frontmatter is missing entirely
+  const trimmed = content.trim()
+  if (!trimmed.startsWith('---')) {
+    // Add frontmatter at the beginning
+    newContent = generateDefaultFrontmatter(skillName) + content
+    changes.push('Added missing YAML frontmatter')
+  } else {
+    // Check if frontmatter is malformed (missing closing ---)
+    const endIndex = trimmed.indexOf('---', 3)
+    if (endIndex === -1) {
+      // Find the first blank line and insert closing ---
+      const lines = content.split('\n')
+      let insertIndex = -1
+      for (let i = 1; i < lines.length; i++) {
+        if (lines[i].trim() === '') {
+          insertIndex = i
+          break
+        }
+      }
+      if (insertIndex > 0) {
+        lines.splice(insertIndex, 0, '---')
+        newContent = lines.join('\n')
+        changes.push('Added missing frontmatter closing delimiter (---)')
+      }
+    } else {
+      // Frontmatter exists, check for missing required fields
+      const metadata = parseYamlFrontmatter(content)
+      if (metadata) {
+        let frontmatterLines = trimmed.slice(3, endIndex).trim().split('\n')
+        let needsUpdate = false
+
+        if (!metadata.name) {
+          frontmatterLines.push(`name: "${skillName}"`)
+          changes.push('Added missing "name" field')
+          needsUpdate = true
+        }
+
+        if (!metadata.description) {
+          frontmatterLines.push(
+            'description: "TODO: Add a description of what this skill does and when to use it."'
+          )
+          changes.push('Added missing "description" field')
+          needsUpdate = true
+        }
+
+        if (needsUpdate) {
+          const afterFrontmatter = trimmed.slice(endIndex + 3)
+          newContent = '---\n' + frontmatterLines.join('\n') + '\n---' + afterFrontmatter
+        }
+      }
+    }
+  }
+
+  if (changes.length > 0) {
+    try {
+      writeFileSync(skillPath, newContent, 'utf8')
+      return { fixed: true, changes }
+    } catch (err) {
+      return { fixed: false, changes: [`Failed to write file: ${err.message}`] }
+    }
+  }
+
+  return { fixed: false, changes: [] }
+}
+
+/**
  * Validate a single skill
  */
 function validateSkill(skillPath) {
@@ -318,10 +464,17 @@ function findSkills(baseDir) {
 
 function main() {
   const args = process.argv.slice(2)
+
+  // Handle --help flag first
+  if (args.includes('--help') || args.includes('-h')) {
+    showHelp()
+  }
+
   const projectOnly = args.includes('--project-only')
   const userOnly = args.includes('--user-only')
   const strict = args.includes('--strict')
   const jsonOutput = args.includes('--json')
+  const fix = args.includes('--fix')
 
   // Determine directories to scan
   const directories = []
@@ -344,12 +497,33 @@ function main() {
   const allResults = []
   let totalErrors = 0
   let totalWarnings = 0
+  let totalFixed = 0
 
   for (const dir of directories) {
     const skills = findSkills(dir.path)
     for (const skillPath of skills) {
-      const result = validateSkill(skillPath)
+      let result = validateSkill(skillPath)
       result.source = dir.name
+      result.fixes = []
+
+      // If --fix is enabled and there are errors, try to fix them
+      if (fix && !result.valid) {
+        try {
+          const content = readFileSync(skillPath, 'utf8')
+          const fixResult = fixSkill(skillPath, content)
+          if (fixResult.fixed) {
+            result.fixes = fixResult.changes
+            totalFixed++
+            // Re-validate after fix
+            result = validateSkill(skillPath)
+            result.source = dir.name
+            result.fixes = fixResult.changes
+          }
+        } catch (err) {
+          // Ignore fix errors, keep original validation result
+        }
+      }
+
       allResults.push(result)
       totalErrors += result.errors.length
       totalWarnings += result.warnings.length
@@ -365,6 +539,7 @@ function main() {
         invalid: allResults.filter(r => !r.valid).length,
         errors: totalErrors,
         warnings: totalWarnings,
+        fixed: totalFixed,
       },
       skills: allResults,
     }, null, 2))
@@ -411,6 +586,12 @@ function main() {
       for (const warning of result.warnings) {
         console.log(`  ${COLORS.yellow}⚠ [${warning.field}] ${warning.message}${COLORS.reset}`)
       }
+
+      if (result.fixes && result.fixes.length > 0) {
+        for (const fixMsg of result.fixes) {
+          console.log(`  ${COLORS.blue}🔧 ${fixMsg}${COLORS.reset}`)
+        }
+      }
     }
     console.log('')
   }
@@ -428,6 +609,9 @@ function main() {
   }
   if (totalWarnings > 0) {
     console.log(`  ${COLORS.yellow}Warnings: ${totalWarnings}${COLORS.reset}`)
+  }
+  if (totalFixed > 0) {
+    console.log(`  ${COLORS.blue}Fixed: ${totalFixed}${COLORS.reset}`)
   }
 
   // Exit code
