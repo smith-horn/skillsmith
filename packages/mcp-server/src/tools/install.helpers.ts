@@ -344,3 +344,74 @@ export function generateTips(skillName: string): string[] {
     'To uninstall: use the uninstall_skill tool',
   ]
 }
+
+/**
+ * SMI-XXX: Optimization info type for tips generation
+ */
+interface OptimizationInfoForTips {
+  optimized: boolean
+  subSkills?: string[]
+  subagentGenerated?: boolean
+  subagentPath?: string
+  tokenReductionPercent?: number
+  originalLines?: number
+  optimizedLines?: number
+}
+
+/**
+ * SMI-XXX: Generate post-install tips with optimization info
+ */
+export function generateOptimizedTips(
+  skillName: string,
+  optimizationInfo: OptimizationInfoForTips,
+  claudeMdSnippet?: string
+): string[] {
+  const tips = [
+    'Skill "' + skillName + '" installed successfully!',
+    'To use this skill, mention it in Claude Code: "Use the ' + skillName + ' skill to..."',
+    'View installed skills: ls ~/.claude/skills/',
+  ]
+
+  if (optimizationInfo.optimized) {
+    tips.push('')
+    tips.push('✨ Skillsmith Optimization Applied:')
+
+    if (optimizationInfo.tokenReductionPercent && optimizationInfo.tokenReductionPercent > 0) {
+      tips.push(`  • Estimated ${optimizationInfo.tokenReductionPercent}% token reduction`)
+    }
+
+    if (optimizationInfo.originalLines && optimizationInfo.optimizedLines) {
+      tips.push(
+        `  • Optimized from ${optimizationInfo.originalLines} to ${optimizationInfo.optimizedLines} lines`
+      )
+    }
+
+    if (optimizationInfo.subSkills && optimizationInfo.subSkills.length > 0) {
+      tips.push(`  • ${optimizationInfo.subSkills.length} sub-skills created for on-demand loading`)
+    }
+
+    if (optimizationInfo.subagentGenerated && optimizationInfo.subagentPath) {
+      tips.push(`  • Companion subagent generated: ${optimizationInfo.subagentPath}`)
+      tips.push('')
+      tips.push('💡 For parallel execution, delegate to the subagent instead of running directly.')
+
+      if (claudeMdSnippet) {
+        tips.push('')
+        tips.push('Add this to your CLAUDE.md for automatic delegation:')
+        tips.push('')
+        // Include a shortened version of the snippet
+        const shortSnippet = claudeMdSnippet
+          .split('\n')
+          .filter((line) => line.trim().length > 0)
+          .slice(0, 5)
+          .join('\n')
+        tips.push(shortSnippet + '\n...')
+      }
+    }
+  }
+
+  tips.push('')
+  tips.push('To uninstall: use the uninstall_skill tool')
+
+  return tips
+}

@@ -13,10 +13,11 @@
  * Skills are installed to ~/.claude/skills/ and tracked in ~/.skillsmith/manifest.json
  */
 
-import { SecurityScanner } from '@skillsmith/core'
+import { SecurityScanner, TransformationService } from '@skillsmith/core'
 import type { TrustTier } from '@skillsmith/core'
 import * as fs from 'fs/promises'
 import * as path from 'path'
+import * as os from 'os'
 import type { ToolContext } from '../context.js'
 import { getToolContext } from '../context.js'
 
@@ -26,6 +27,7 @@ import {
   CLAUDE_SKILLS_DIR,
   type InstallInput,
   type InstallResult,
+  type OptimizationInfo,
 } from './install.types.js'
 
 // Import helpers
@@ -37,7 +39,7 @@ import {
   lookupSkillFromRegistry,
   fetchFromGitHub,
   validateSkillMd,
-  generateTips,
+  generateOptimizedTips,
 } from './install.helpers.js'
 
 // Re-export only public API types (SMI-1718: trimmed internal exports)
@@ -231,11 +233,75 @@ export async function installSkill(
       }
     }
 
+    // SMI-XXX: Apply Skillsmith Optimization Layer (unless skipped)
+    let optimizationInfo: OptimizationInfo = { optimized: false }
+    let finalSkillContent = skillMdContent
+    let subSkillFiles: Array<{ filename: string; content: string }> = []
+    let subagentContent: string | undefined
+    let claudeMdSnippet: string | undefined
+
+    if (!input.skipOptimize) {
+      try {
+        const transformService = new TransformationService(context.db, {
+          cacheTtl: 3600, // 1 hour cache
+          version: '1.0.0',
+        })
+
+        // Extract skill name and description for transformation
+        const nameMatch = skillMdContent.match(/^name:\s*(.+)$/m)
+        const descMatch = skillMdContent.match(/^description:\s*(.+)$/m)
+        const extractedName = nameMatch ? nameMatch[1].trim() : skillName
+        const extractedDesc = descMatch ? descMatch[1].trim() : ''
+
+        const transformResult = await transformService.transform(
+          input.skillId,
+          extractedName,
+          extractedDesc,
+          skillMdContent
+        )
+
+        if (transformResult.transformed) {
+          finalSkillContent = transformResult.mainSkillContent
+          subSkillFiles = transformResult.subSkills
+          subagentContent = transformResult.subagent?.content
+          claudeMdSnippet = transformResult.claudeMdSnippet
+
+          optimizationInfo = {
+            optimized: true,
+            subSkills: subSkillFiles.map((s) => s.filename),
+            subagentGenerated: !!subagentContent,
+            tokenReductionPercent: transformResult.stats.tokenReductionPercent,
+            originalLines: transformResult.stats.originalLines,
+            optimizedLines: transformResult.stats.optimizedLines,
+          }
+        }
+      } catch (transformError) {
+        // Transformation failed - continue with original content
+        console.warn('[install] Optimization failed, using original content:', transformError)
+        finalSkillContent = skillMdContent
+        optimizationInfo = { optimized: false }
+      }
+    }
+
     // Create installation directory
     await fs.mkdir(installPath, { recursive: true })
 
-    // Write SKILL.md
-    await fs.writeFile(path.join(installPath, 'SKILL.md'), skillMdContent)
+    // Write SKILL.md (optimized or original)
+    await fs.writeFile(path.join(installPath, 'SKILL.md'), finalSkillContent)
+
+    // Write sub-skills if any
+    for (const subSkill of subSkillFiles) {
+      await fs.writeFile(path.join(installPath, subSkill.filename), subSkill.content)
+    }
+
+    // Write companion subagent if generated
+    if (subagentContent) {
+      const agentsDir = path.join(os.homedir(), '.claude', 'agents')
+      await fs.mkdir(agentsDir, { recursive: true })
+      const subagentPath = path.join(agentsDir, `${skillName}-specialist.md`)
+      await fs.writeFile(subagentPath, subagentContent)
+      optimizationInfo.subagentPath = subagentPath
+    }
 
     // Try to fetch optional files
     // SMI-1533: Use same trust-tier scanner for optional files
@@ -285,7 +351,8 @@ export async function installSkill(
       installPath,
       securityReport,
       trustTier, // SMI-1533: Include trust tier in result
-      tips: generateTips(skillName),
+      optimization: optimizationInfo,
+      tips: generateOptimizedTips(skillName, optimizationInfo, claudeMdSnippet),
     }
   } catch (error) {
     return {
@@ -303,7 +370,7 @@ export async function installSkill(
 export const installTool = {
   name: 'install_skill',
   description:
-    'Install a Claude Code skill from GitHub. Performs security scan before installation.',
+    'Install a Claude Code skill from GitHub. Performs security scan and Skillsmith optimization before installation.',
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -318,6 +385,10 @@ export const installTool = {
       skipScan: {
         type: 'boolean',
         description: 'Skip security scan (not recommended)',
+      },
+      skipOptimize: {
+        type: 'boolean',
+        description: 'Skip Skillsmith optimization (decomposition, subagent generation)',
       },
     },
     required: ['skillId'],
