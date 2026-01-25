@@ -19,22 +19,16 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
-import Stripe from 'stripe'
-import stripeEvents from './fixtures/stripe-events.json'
 
 // Test configuration
 const SUPABASE_URL = process.env.SUPABASE_URL || 'http://127.0.0.1:54321'
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || ''
-const WEBHOOK_URL = `${SUPABASE_URL}/functions/v1/stripe-webhook`
-
 // Test data
 const TEST_EMAIL = 'e2e-test-checkout@example.com'
 const TEST_USER_ID = '00000000-0000-0000-0000-000000000001'
 
 describe('Checkout → License Flow E2E', () => {
   let supabase: SupabaseClient
-  let stripe: Stripe
 
   beforeAll(() => {
     // Skip if no credentials
@@ -46,10 +40,6 @@ describe('Checkout → License Flow E2E', () => {
     supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
     })
-
-    if (STRIPE_SECRET_KEY) {
-      stripe = new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2023-10-16' })
-    }
   })
 
   beforeEach(async () => {
@@ -84,7 +74,8 @@ describe('Checkout → License Flow E2E', () => {
       expect(profileError).toBeNull()
 
       // Step 2: Simulate checkout.session.completed webhook
-      const event = createCheckoutEvent(TEST_EMAIL, 'individual')
+      // Note: createCheckoutEvent would be used when actually calling the webhook
+      // For now, we verify the database state directly
 
       // Verify the webhook would create the expected records
       // In a full E2E test, this would hit the actual webhook endpoint
@@ -358,21 +349,6 @@ describe('Checkout → License Flow E2E', () => {
 })
 
 // Helper functions
-
-function createCheckoutEvent(email: string, tier: string): object {
-  const base = stripeEvents.checkout_session_completed
-  return {
-    ...base,
-    data: {
-      object: {
-        ...base.data.object,
-        customer_email: email,
-        customer_details: { email, name: 'Test User' },
-        metadata: { ...base.data.object.metadata, tier },
-      },
-    },
-  }
-}
 
 async function cleanupTestData(supabase: SupabaseClient): Promise<void> {
   // Clean up in correct order (foreign key constraints)
