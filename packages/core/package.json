@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/core",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Core types and utilities for Skillsmith",
   "type": "module",
   "main": "./dist/src/index.js",
