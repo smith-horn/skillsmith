@@ -90,15 +90,15 @@ export default defineConfig({
         '**/setup.ts',
       ],
       thresholds: {
-        // SMI-1779: Adjusted thresholds for stability
-        // Branch coverage lowered to 55% to accommodate:
-        // - license.ts (57.37%): Enterprise package optional loading
-        // - get-skill.ts (40.27%): API fallback paths, optional fields
-        // - search.ts (54.54%): Filter combinations, edge cases
-        // TODO: Add targeted tests to raise back to 67%+ in future wave
+        // SMI-1785: Branch coverage restored to 67% after adding targeted tests
+        // Previous coverage (SMI-1779): branches 55%
+        // Current coverage after adding tests:
+        // - get-skill.ts: 58.33% (was 40.27%) - formatSkillDetails edge cases
+        // - search.ts: 63.63% (was 54.54%) - validation errors, filter-only search
+        // - license.ts: 57.37% - Enterprise package optional loading
         lines: 75,
         functions: 75,
-        branches: 55,
+        branches: 67,
         statements: 75,
       },
     },
