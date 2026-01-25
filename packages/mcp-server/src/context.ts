@@ -24,6 +24,7 @@ import { mkdirSync, existsSync } from 'fs'
 import type { Database as DatabaseType } from 'better-sqlite3'
 import {
   createDatabase,
+  openDatabase,
   SearchService,
   SkillRepository,
   validateDbPath,
@@ -224,8 +225,14 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
     ensureDbDirectory(dbPath)
   }
 
-  // Create database with schema
-  const db = createDatabase(dbPath)
+  // SMI-1784: Use openDatabase for existing files to run migrations
+  // createDatabase would skip migrations for existing tables without new columns
+  let db: DatabaseType
+  if (dbPath !== ':memory:' && existsSync(dbPath)) {
+    db = openDatabase(dbPath)
+  } else {
+    db = createDatabase(dbPath)
+  }
 
   // Initialize services
   const searchService = new SearchService(db, {
