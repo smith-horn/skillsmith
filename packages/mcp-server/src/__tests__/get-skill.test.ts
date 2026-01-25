@@ -198,3 +198,219 @@ describe('Get Skill Tool', () => {
     })
   })
 })
+
+/**
+ * SMI-1785: Tests for formatSkillDetails with various skill configurations
+ * Covers scoreBreakdown display, security status display, and trust tier formatting
+ */
+describe('formatSkillDetails branch coverage', () => {
+  it('should format skill with scoreBreakdown', () => {
+    const response = {
+      skill: {
+        id: 'test/skill',
+        name: 'test-skill',
+        description: 'A test skill',
+        author: 'test',
+        version: '1.0.0',
+        category: 'development' as const,
+        trustTier: 'verified' as const,
+        score: 90,
+        scoreBreakdown: {
+          quality: 95,
+          popularity: 80,
+          maintenance: 92,
+          security: 88,
+          documentation: 85,
+        },
+        tags: ['test'],
+        installCommand: 'claude skill add test/skill',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+      installCommand: 'claude skill add test/skill',
+      timing: { totalMs: 10 },
+    }
+
+    const formatted = formatSkillDetails(response)
+
+    expect(formatted).toContain('Score Breakdown:')
+    expect(formatted).toContain('Quality:')
+    expect(formatted).toContain('Popularity:')
+    expect(formatted).toContain('Maintenance:')
+    expect(formatted).toContain('Security:')
+    expect(formatted).toContain('Documentation:')
+    expect(formatted).toContain('[')
+    expect(formatted).toContain(']')
+  })
+
+  it('should format skill with security passed=null (not scanned)', () => {
+    const response = {
+      skill: {
+        id: 'test/skill',
+        name: 'test-skill',
+        description: 'A test skill',
+        author: 'test',
+        category: 'development' as const,
+        trustTier: 'community' as const,
+        score: 80,
+        tags: [] as string[],
+        installCommand: 'claude skill add test/skill',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        security: {
+          passed: null,
+          riskScore: null,
+          findingsCount: 0,
+          scannedAt: null,
+        },
+      },
+      installCommand: 'claude skill add test/skill',
+      timing: { totalMs: 10 },
+    }
+
+    const formatted = formatSkillDetails(response)
+
+    expect(formatted).toContain('Status: Not scanned')
+  })
+
+  it('should format skill with security passed=true', () => {
+    const response = {
+      skill: {
+        id: 'test/skill',
+        name: 'test-skill',
+        description: 'A test skill',
+        author: 'test',
+        category: 'development' as const,
+        trustTier: 'community' as const,
+        score: 80,
+        tags: [] as string[],
+        installCommand: 'claude skill add test/skill',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        security: {
+          passed: true,
+          riskScore: 15,
+          findingsCount: 0,
+          scannedAt: '2024-01-15T12:00:00.000Z',
+        },
+      },
+      installCommand: 'claude skill add test/skill',
+      timing: { totalMs: 10 },
+    }
+
+    const formatted = formatSkillDetails(response)
+
+    expect(formatted).toContain('Status: PASSED')
+    expect(formatted).toContain('Risk Score: 15/100')
+    expect(formatted).toContain('Findings: 0')
+    expect(formatted).toContain('Scanned:')
+  })
+
+  it('should format skill with security passed=false', () => {
+    const response = {
+      skill: {
+        id: 'test/skill',
+        name: 'test-skill',
+        description: 'A test skill',
+        author: 'test',
+        category: 'development' as const,
+        trustTier: 'experimental' as const,
+        score: 60,
+        tags: [] as string[],
+        installCommand: 'claude skill add test/skill',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        security: {
+          passed: false,
+          riskScore: 75,
+          findingsCount: 5,
+          scannedAt: '2024-01-15T12:00:00.000Z',
+        },
+      },
+      installCommand: 'claude skill add test/skill',
+      timing: { totalMs: 10 },
+    }
+
+    const formatted = formatSkillDetails(response)
+
+    expect(formatted).toContain('Status: FAILED')
+    expect(formatted).toContain('Risk Score: 75/100 (HIGH)')
+    expect(formatted).toContain('Findings: 5')
+    expect(formatted).toContain('WARNING')
+    expect(formatted).toContain('Scanned:')
+  })
+
+  it('should format skill without security info', () => {
+    const response = {
+      skill: {
+        id: 'test/skill',
+        name: 'test-skill',
+        description: 'A test skill',
+        author: 'test',
+        category: 'development' as const,
+        trustTier: 'unknown' as const,
+        score: 50,
+        tags: [] as string[],
+        installCommand: 'claude skill add test/skill',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+      installCommand: 'claude skill add test/skill',
+      timing: { totalMs: 10 },
+    }
+
+    const formatted = formatSkillDetails(response)
+
+    expect(formatted).toContain('Status: Not scanned')
+    expect(formatted).toContain('UNKNOWN')
+  })
+
+  it('should format skill without repository', () => {
+    const response = {
+      skill: {
+        id: 'test/skill',
+        name: 'test-skill',
+        description: 'A test skill',
+        author: 'test',
+        category: 'development' as const,
+        trustTier: 'community' as const,
+        score: 80,
+        tags: [] as string[],
+        installCommand: 'claude skill add test/skill',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        repository: undefined,
+      },
+      installCommand: 'claude skill add test/skill',
+      timing: { totalMs: 10 },
+    }
+
+    const formatted = formatSkillDetails(response)
+
+    expect(formatted).not.toContain('Repository:')
+  })
+
+  it('should format skill without tags', () => {
+    const response = {
+      skill: {
+        id: 'test/skill',
+        name: 'test-skill',
+        description: 'A test skill',
+        author: 'test',
+        category: 'development' as const,
+        trustTier: 'community' as const,
+        score: 80,
+        tags: [] as string[],
+        installCommand: 'claude skill add test/skill',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      },
+      installCommand: 'claude skill add test/skill',
+      timing: { totalMs: 10 },
+    }
+
+    const formatted = formatSkillDetails(response)
+
+    expect(formatted).not.toContain('Tags:')
+  })
+})

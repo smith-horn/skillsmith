@@ -118,3 +118,192 @@ describe('Search Tool', () => {
     })
   })
 })
+
+/**
+ * SMI-1785: Additional tests for search.ts branch coverage
+ * Covers validation errors, filter combinations, and edge cases
+ */
+describe('Search Tool branch coverage', () => {
+  let branchContext: ToolContext
+
+  beforeAll(() => {
+    branchContext = createSeededTestContext()
+  })
+
+  afterAll(() => {
+    branchContext.db.close()
+  })
+
+  describe('validation errors', () => {
+    it('should throw error for negative min_score', async () => {
+      await expect(executeSearch({ query: 'test', min_score: -10 }, branchContext)).rejects.toThrow(
+        SkillsmithError
+      )
+    })
+
+    it('should throw error for invalid trust_tier', async () => {
+      try {
+        await executeSearch({ query: 'test', trust_tier: 'invalid_tier' }, branchContext)
+        expect.fail('Should have thrown an error')
+      } catch (error) {
+        expect(error).toBeInstanceOf(SkillsmithError)
+        expect((error as SkillsmithError).message).toContain('Invalid trust_tier')
+        expect((error as SkillsmithError).message).toContain('invalid_tier')
+      }
+    })
+
+    it('should throw error for negative max_risk', async () => {
+      try {
+        await executeSearch({ query: 'test', max_risk: -5 }, branchContext)
+        expect.fail('Should have thrown an error')
+      } catch (error) {
+        expect(error).toBeInstanceOf(SkillsmithError)
+        expect((error as SkillsmithError).message).toContain('max_risk must be between 0 and 100')
+      }
+    })
+
+    it('should throw error for max_risk over 100', async () => {
+      try {
+        await executeSearch({ query: 'test', max_risk: 150 }, branchContext)
+        expect.fail('Should have thrown an error')
+      } catch (error) {
+        expect(error).toBeInstanceOf(SkillsmithError)
+        expect((error as SkillsmithError).message).toContain('max_risk must be between 0 and 100')
+      }
+    })
+  })
+
+  describe('security filters', () => {
+    it('should accept safe_only filter', async () => {
+      const result = await executeSearch(
+        {
+          query: 'commit',
+          safe_only: true,
+        },
+        branchContext
+      )
+
+      expect(result.results).toBeDefined()
+      expect(result.filters.safeOnly).toBe(true)
+    })
+
+    it('should accept max_risk filter', async () => {
+      const result = await executeSearch(
+        {
+          query: 'commit',
+          max_risk: 50,
+        },
+        branchContext
+      )
+
+      expect(result.results).toBeDefined()
+      expect(result.filters.maxRiskScore).toBe(50)
+    })
+  })
+
+  describe('filter-only search (no query)', () => {
+    it('should allow search with only category filter', async () => {
+      const result = await executeSearch(
+        {
+          category: 'testing',
+        },
+        branchContext
+      )
+
+      expect(result.results).toBeDefined()
+      expect(result.query).toBe('')
+      expect(result.filters.category).toBe('testing')
+    })
+
+    it('should allow search with only trust_tier filter', async () => {
+      const result = await executeSearch(
+        {
+          trust_tier: 'verified',
+        },
+        branchContext
+      )
+
+      expect(result.results).toBeDefined()
+      expect(result.query).toBe('')
+      expect(result.filters.trustTier).toBe('verified')
+    })
+
+    it('should allow search with only min_score filter', async () => {
+      const result = await executeSearch(
+        {
+          min_score: 90,
+        },
+        branchContext
+      )
+
+      expect(result.results).toBeDefined()
+      expect(result.query).toBe('')
+    })
+
+    it('should allow search with only safe_only filter', async () => {
+      const result = await executeSearch(
+        {
+          safe_only: true,
+        },
+        branchContext
+      )
+
+      expect(result.results).toBeDefined()
+      expect(result.query).toBe('')
+      expect(result.filters.safeOnly).toBe(true)
+    })
+
+    it('should allow search with only max_risk filter', async () => {
+      const result = await executeSearch(
+        {
+          max_risk: 30,
+        },
+        branchContext
+      )
+
+      expect(result.results).toBeDefined()
+      expect(result.query).toBe('')
+      expect(result.filters.maxRiskScore).toBe(30)
+    })
+
+    it('should allow search with multiple filters (no query)', async () => {
+      const result = await executeSearch(
+        {
+          category: 'testing',
+          trust_tier: 'community',
+          min_score: 70,
+          safe_only: true,
+        },
+        branchContext
+      )
+
+      expect(result.results).toBeDefined()
+      expect(result.query).toBe('')
+      expect(result.filters.category).toBe('testing')
+      expect(result.filters.trustTier).toBe('community')
+      expect(result.filters.safeOnly).toBe(true)
+    })
+  })
+
+  describe('combined query and filters', () => {
+    it('should accept all filters together', async () => {
+      const result = await executeSearch(
+        {
+          query: 'test',
+          category: 'testing',
+          trust_tier: 'community',
+          min_score: 70,
+          safe_only: true,
+          max_risk: 40,
+        },
+        branchContext
+      )
+
+      expect(result.results).toBeDefined()
+      expect(result.filters.category).toBe('testing')
+      expect(result.filters.trustTier).toBe('community')
+      expect(result.filters.safeOnly).toBe(true)
+      expect(result.filters.maxRiskScore).toBe(40)
+    })
+  })
+})
