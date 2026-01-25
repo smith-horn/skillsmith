@@ -232,10 +232,20 @@ Before marking a code review complete:
 **Reviewer**: Claude Code Review Agent
 **Related Issues**: SMI-XXX
 **Files Changed**: N files
+**Docker Validated**: Yes/No
 
 ## Summary
 
 Brief description of what was reviewed.
+
+## Pre-Review Checks
+
+| Check | Status |
+|-------|--------|
+| `npm run typecheck` | PASS/FAIL |
+| `npm run lint` | PASS/FAIL |
+| `npm run test` | PASS/FAIL |
+| `npm run audit:standards` | PASS/FAIL |
 
 ## Files Reviewed
 
@@ -245,13 +255,26 @@ Brief description of what was reviewed.
 
 ## Findings
 
-| Finding | Severity | Status |
-|---------|----------|--------|
-| Description | Critical/High/Medium/Low | Fixed/Created SMI-XXX |
+| Finding | Severity | Standard | Status |
+|---------|----------|----------|--------|
+| Description | Critical/High/Medium/Low | §N | Fixed/SMI-XXX |
+
+## CI Impact Assessment
+
+- [ ] No new ESLint warnings introduced
+- [ ] TypeScript strict mode satisfied
+- [ ] Tests maintain >80% coverage
+- [ ] No native module changes requiring rebuild
 
 ## Overall Result
 
 **PASS/FAIL**: Summary of review outcome.
+
+## Linear Issues Created
+
+| Issue | Title | Priority |
+|-------|-------|----------|
+| SMI-XXX | Description | P2/P3/P4 |
 
 ## Recommendations (Non-Blocking)
 
@@ -274,19 +297,27 @@ When running a retrospective ("retro"), **MUST produce a written report** saved 
 # <Topic> Retrospective
 
 **Date:** YYYY-MM-DD
-**Duration:** N sessions
+**Duration:** N waves / N sessions
 **Issues Completed:** SMI-XXX, SMI-YYY
-**Branch:** `branch-name`
+**PRs Updated:** #N
+**Branch:** `feature/branch-name` (worktree-based)
+
+---
 
 ## What Went Well
 
-1. Item 1
-2. Item 2
+1. (e.g., "Worktree isolation - Clean separation from main branch")
+2. (e.g., "Hive mind orchestration - Research agents gathered context before coding")
+3.
+
+---
 
 ## What Went Wrong
 
-1. Issue 1
-2. Issue 2
+1. (e.g., "Docker container needed rebuild after npm install")
+2. (e.g., "Context compaction mid-session")
+
+---
 
 ## Metrics
 
@@ -294,25 +325,59 @@ When running a retrospective ("retro"), **MUST produce a written report** saved 
 |--------|-------|
 | Files modified | N |
 | Tests passing | N/N |
-| Issues found | N |
+| Code review issues found | N |
+| Code review issues fixed | N |
+
+---
+
+## Breaking Changes (if applicable)
+
+| Component | Breaking Change | Resolution |
+|-----------|-----------------|------------|
+| Package/API | What changed | How we handled it |
+
+---
+
+## Code Review Findings (per wave)
+
+### Wave N: <Description>
+
+| Finding | Severity | Resolution |
+|---------|----------|------------|
+| Description | Critical/High/Medium/Low | Fixed/Created SMI-XXX |
+
+---
+
+## Waves Summary (if multi-wave)
+
+| Wave | Issue | Scope | Commits |
+|------|-------|-------|---------|
+| 1 | SMI-XXX | Description | abc1234 |
+
+---
 
 ## Key Lessons
 
-1. Lesson 1
-2. Lesson 2
+1. (Actionable, e.g., "Query npm registry for versions - Don't assume version numbers")
+2.
 
-## Recommendations
+---
 
-1. Recommendation for future work
+## Recommendations for Future Work
+
+1. (Forward-looking, e.g., "Run preflight in Docker between waves")
+2.
 ```
 
 ### Retrospective Completion Checklist
 
 - [ ] All completed issues listed with SMI numbers
+- [ ] PRs and branch documented
 - [ ] "What Went Well" has at least 2 items
 - [ ] "What Went Wrong" is honest (even if brief)
-- [ ] Metrics are accurate
+- [ ] Metrics are accurate (including code review findings)
 - [ ] Key lessons are actionable
+- [ ] Breaking changes documented (if applicable)
 - [ ] **Report written to `docs/retros/`**
 
 ---
