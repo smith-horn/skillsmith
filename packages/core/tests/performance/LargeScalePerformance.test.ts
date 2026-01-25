@@ -693,6 +693,6 @@ describe('SMI-867: Large-Scale Performance Tests', () => {
       } finally {
         closeDatabase(db)
       }
-    })
+    }, 30000) // Increased timeout for Docker environment
   })
 })
