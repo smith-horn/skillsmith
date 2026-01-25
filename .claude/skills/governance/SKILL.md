@@ -1,6 +1,25 @@
 ---
 name: "Governance"
+version: "1.1.0"
 description: "Enforces engineering standards and code quality policies. Use during code reviews, before commits, when discussing standards or compliance, and for quality audits."
+triggers:
+  keywords:
+    - code review
+    - review this
+    - commit
+    - before I merge
+    - standards
+    - compliance
+    - code quality
+    - best practices
+    - retro
+    - retrospective
+  explicit:
+    - /governance
+    - /review
+    - /retro
+composes:
+  - linear
 ---
 
 # Governance Skill
@@ -23,11 +42,9 @@ Enforces engineering standards from [standards.md](../../../docs/architecture/st
 
 ## Trigger Phrases
 
-- "code review", "review this"
-- "commit", "before I merge"
-- "standards", "compliance"
-- "code quality", "best practices"
-- "retro", "retrospective"
+See frontmatter `triggers` block for keyword and explicit command triggers.
+
+**Explicit Commands**: `/governance`, `/review`, `/retro`
 
 ## Quick Audit
 
@@ -425,3 +442,27 @@ chmod +x .git/hooks/pre-commit
 ```
 
 See [scripts/git-hooks/README.md](../../../scripts/git-hooks/README.md) for details.
+
+---
+
+## Changelog
+
+### v1.1.0 (2026-01-24)
+- **Enhanced**: Code review report template with Docker validation, pre-review checks, CI impact assessment
+- **Enhanced**: Retrospective report template with waves/sessions, breaking changes, per-wave findings
+- **Added**: Structured triggers in YAML frontmatter
+- **Added**: Explicit commands (`/governance`, `/review`, `/retro`)
+- **Added**: `composes: [linear]` for skill composition
+- **Added**: "retro", "retrospective" trigger phrases
+
+### v1.0.0 (2025-12)
+- Initial release
+- Code review workflow with severity guide
+- Pre-commit checklist
+- Standards reference from standards.md
+
+---
+
+**Created**: December 2025
+**Updated**: January 2026
+**Maintainer**: Skillsmith Team
