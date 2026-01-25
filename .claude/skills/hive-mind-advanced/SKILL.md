@@ -11,6 +11,57 @@ author: Claude Flow Team
 
 Master the advanced Hive Mind collective intelligence system for sophisticated multi-agent coordination using queen-led architecture, Byzantine consensus, and collective memory.
 
+## CRITICAL: Tool Permissions for Background Agents (SMI-1823)
+
+**WARNING**: Background agents spawned with `Task()` can lose tool permissions mid-execution, causing "Permission to use Read has been auto-denied" errors.
+
+**ALWAYS specify `allowed_tools` explicitly in ALL Task() calls:**
+
+```javascript
+// CORRECT - Always include allowed_tools
+Task({
+  description: "Implement feature",
+  prompt: "...",
+  allowed_tools: ["Read", "Edit", "Write", "Bash", "Grep", "Glob"],  // REQUIRED
+  run_in_background: true
+})
+
+// INCORRECT - Will fail with permission errors
+Task({
+  description: "Implement feature",
+  prompt: "...",
+  run_in_background: true  // Missing allowed_tools!
+})
+```
+
+### Default Tool Lists by Agent Type
+
+| Agent Type | Default `allowed_tools` |
+|------------|-------------------------|
+| `coder` | `["Read", "Edit", "Write", "Bash", "Grep", "Glob"]` |
+| `tester` | `["Read", "Bash", "Grep", "Glob"]` |
+| `reviewer` | `["Read", "Grep", "Glob"]` |
+| `researcher` | `["Read", "WebFetch", "WebSearch", "Grep", "Glob"]` |
+| `architect` | `["Read", "Write", "Grep", "Glob"]` |
+| `analyst` | `["Read", "Grep", "Glob"]` |
+| `optimizer` | `["Read", "Edit", "Bash", "Grep", "Glob"]` |
+| `documenter` | `["Read", "Write", "Grep", "Glob"]` |
+
+**Copy-paste ready tool arrays:**
+```javascript
+// Coder tools
+const CODER_TOOLS = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"];
+
+// Tester tools
+const TESTER_TOOLS = ["Read", "Bash", "Grep", "Glob"];
+
+// Reviewer tools
+const REVIEWER_TOOLS = ["Read", "Grep", "Glob"];
+
+// Researcher tools
+const RESEARCHER_TOOLS = ["Read", "WebFetch", "WebSearch", "Grep", "Glob"];
+```
+
 ## Overview
 
 The Hive Mind system represents the pinnacle of multi-agent coordination in Claude Flow, implementing a queen-led hierarchical architecture where a strategic queen coordinator directs specialized worker agents through collective decision-making and shared memory.
@@ -281,12 +332,32 @@ Generate Claude Code spawn commands directly:
 npx claude-flow hive-mind spawn "Build REST API" --claude
 ```
 
-Output:
+Output (with required allowed_tools):
 ```javascript
-Task("Queen Coordinator", "Orchestrate REST API development...", "coordinator")
-Task("Backend Developer", "Implement Express routes...", "backend-dev")
-Task("Database Architect", "Design PostgreSQL schema...", "code-analyzer")
-Task("Test Engineer", "Create Jest test suite...", "tester")
+Task({
+  description: "Queen Coordinator",
+  prompt: "Orchestrate REST API development...",
+  allowed_tools: ["Read", "Write", "Grep", "Glob"],  // REQUIRED
+  run_in_background: true
+})
+Task({
+  description: "Backend Developer",
+  prompt: "Implement Express routes...",
+  allowed_tools: ["Read", "Edit", "Write", "Bash", "Grep", "Glob"],  // REQUIRED
+  run_in_background: true
+})
+Task({
+  description: "Database Architect",
+  prompt: "Design PostgreSQL schema...",
+  allowed_tools: ["Read", "Write", "Grep", "Glob"],  // REQUIRED
+  run_in_background: true
+})
+Task({
+  description: "Test Engineer",
+  prompt: "Create Jest test suite...",
+  allowed_tools: ["Read", "Bash", "Grep", "Glob"],  // REQUIRED
+  run_in_background: true
+})
 ```
 
 ### With SPARC Methodology

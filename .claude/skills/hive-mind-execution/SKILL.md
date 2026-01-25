@@ -16,6 +16,55 @@ author: Smith Horn
 
 Orchestrates complex task execution using claude-flow hive mind with automatic code review and documentation updates.
 
+## CRITICAL: Tool Permissions for Background Agents (SMI-1823)
+
+**WARNING**: Background agents spawned with `Task()` can lose tool permissions mid-execution, causing "Permission to use Read has been auto-denied" errors.
+
+**ALWAYS specify `allowed_tools` explicitly in ALL Task() calls:**
+
+```javascript
+// CORRECT - Always include allowed_tools
+Task({
+  description: "Implement feature",
+  prompt: "...",
+  allowed_tools: ["Read", "Edit", "Write", "Bash", "Grep", "Glob"],  // REQUIRED
+  run_in_background: true
+})
+
+// INCORRECT - Will fail with permission errors
+Task({
+  description: "Implement feature",
+  prompt: "...",
+  run_in_background: true  // Missing allowed_tools!
+})
+```
+
+### Default Tool Lists by Agent Type
+
+| Agent Type | Default `allowed_tools` |
+|------------|-------------------------|
+| `coder` | `["Read", "Edit", "Write", "Bash", "Grep", "Glob"]` |
+| `tester` | `["Read", "Bash", "Grep", "Glob"]` |
+| `reviewer` | `["Read", "Grep", "Glob"]` |
+| `researcher` | `["Read", "WebFetch", "WebSearch", "Grep", "Glob"]` |
+| `architect` | `["Read", "Write", "Grep", "Glob"]` |
+| `planner` | `["Read", "Grep", "Glob", "TodoRead", "TodoWrite"]` |
+
+**Copy-paste ready tool arrays:**
+```javascript
+// Coder tools
+const CODER_TOOLS = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"];
+
+// Tester tools
+const TESTER_TOOLS = ["Read", "Bash", "Grep", "Glob"];
+
+// Reviewer tools
+const REVIEWER_TOOLS = ["Read", "Grep", "Glob"];
+
+// Researcher tools
+const RESEARCHER_TOOLS = ["Read", "WebFetch", "WebSearch", "Grep", "Glob"];
+```
+
 ## Trigger Phrases
 
 - "execute SMI-xxx with hive mind"
@@ -281,7 +330,8 @@ Task({
     - Include links to relevant files and line numbers
     - Provide PASS/WARN/FAIL status for each category
     - List specific action items with priorities`,
-  subagent_type: "general-purpose"
+  allowed_tools: ["Read", "Write", "Grep", "Glob"],  // REQUIRED for background agents
+  run_in_background: true
 })
 ```
 
@@ -357,7 +407,8 @@ Task({
 
     BLOCKING: Cannot proceed to Phase 6 until all checks PASS.
     If violations found, list specific files and fixes required.`,
-  subagent_type: "general-purpose"
+  allowed_tools: ["Read", "Bash", "Grep", "Glob"],  // REQUIRED for background agents
+  run_in_background: true
 })
 ```
 
@@ -597,7 +648,8 @@ Task({
     - [ ] Linear issues updated
 
     Provide: PASS, WARN (with items), or FAIL (with blockers)`,
-  subagent_type: "general-purpose"
+  allowed_tools: ["Read", "Grep", "Glob"],  // REQUIRED for background agents
+  run_in_background: true
 })
 ```
 
