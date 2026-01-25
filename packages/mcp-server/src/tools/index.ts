@@ -63,3 +63,16 @@ export type {
   AnalyzeDependency,
   AnalyzeResponse,
 } from './analyze.js'
+
+// Index local skills tool (SMI-1809)
+export {
+  indexLocalToolSchema,
+  indexLocalInputSchema,
+  executeIndexLocal,
+  formatIndexLocalResults,
+} from './index-local.js'
+export type {
+  IndexLocalInput,
+  IndexedSkillSummary,
+  IndexLocalResponse,
+} from './index-local.js'

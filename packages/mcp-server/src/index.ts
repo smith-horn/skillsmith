@@ -21,6 +21,7 @@ import { recommendToolSchema, recommendInputSchema, executeRecommend } from './t
 import { validateToolSchema, validateInputSchema, executeValidate } from './tools/validate.js'
 import { compareToolSchema, compareInputSchema, executeCompare } from './tools/compare.js'
 import { suggestToolSchema, suggestInputSchema, executeSuggest } from './tools/suggest.js'
+import { indexLocalToolSchema, indexLocalInputSchema, executeIndexLocal } from './tools/index-local.js'
 import {
   isFirstRun,
   markFirstRunComplete,
@@ -46,6 +47,7 @@ const toolDefinitions = [
   validateToolSchema,
   compareToolSchema,
   suggestToolSchema,
+  indexLocalToolSchema,
 ]
 
 // Create server
@@ -172,6 +174,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'skill_suggest': {
         const input = suggestInputSchema.parse(args)
         const result = await executeSuggest(input, toolContext)
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        }
+      }
+
+      case 'index_local': {
+        const input = indexLocalInputSchema.parse(args)
+        const result = await executeIndexLocal(input, toolContext)
         return {
           content: [
             {

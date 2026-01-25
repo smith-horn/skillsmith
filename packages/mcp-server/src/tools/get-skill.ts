@@ -325,6 +325,7 @@ export function formatSkillDetails(response: GetSkillResponse): string {
 
 /**
  * Format trust tier with visual indicator
+ * SMI-1809: Added 'local' tier
  */
 function formatTrustTier(tier: TrustTier): string {
   switch (tier) {
@@ -332,6 +333,8 @@ function formatTrustTier(tier: TrustTier): string {
       return '[*] VERIFIED'
     case 'community':
       return '[+] COMMUNITY'
+    case 'local':
+      return '[@] LOCAL' // SMI-1809: Local skills from ~/.claude/skills/
     case 'experimental':
       return '[~] EXPERIMENTAL'
     case 'unknown':

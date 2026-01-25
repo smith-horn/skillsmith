@@ -81,7 +81,8 @@ export function parseSkillId(id: string): { source?: string; author: string; nam
 /**
  * Map MCP trust tier to database trust tier.
  *
- * Types are now unified: verified, community, experimental, unknown
+ * Types are now unified: verified, community, experimental, unknown, local
+ * SMI-1809: Added 'local' for local skills from ~/.claude/skills/
  *
  * @param mcpTier - MCP trust tier
  * @returns Database trust tier
@@ -94,6 +95,8 @@ export function mapTrustTierToDb(mcpTier: MCPTrustTier): DBTrustTier {
       return 'community'
     case 'experimental':
       return 'experimental'
+    case 'local':
+      return 'local'
     case 'unknown':
       return 'unknown'
   }
@@ -103,7 +106,8 @@ export function mapTrustTierToDb(mcpTier: MCPTrustTier): DBTrustTier {
  * Map database trust tier to MCP trust tier.
  *
  * Accepts string input and validates, returning 'unknown' for invalid values.
- * Types are unified: verified, community, experimental, unknown
+ * Types are unified: verified, community, experimental, unknown, local
+ * SMI-1809: Added 'local' for local skills from ~/.claude/skills/
  *
  * @param dbTier - Database trust tier (string or typed)
  * @returns MCP trust tier
@@ -116,6 +120,8 @@ export function mapTrustTierFromDb(dbTier: DBTrustTier | string): MCPTrustTier {
       return 'community'
     case 'experimental':
       return 'experimental'
+    case 'local':
+      return 'local'
     case 'unknown':
     default:
       return 'unknown'
@@ -181,6 +187,7 @@ export function extractCategoryFromTags(tags: string[] | undefined | null): Skil
  *
  * Returns a formatted badge string for terminal/CLI display
  * based on the skill's trust tier.
+ * SMI-1809: Added 'local' badge for local skills.
  *
  * @param tier - Trust tier value
  * @returns Formatted badge string (e.g., '[VERIFIED]')
@@ -188,6 +195,7 @@ export function extractCategoryFromTags(tags: string[] | undefined | null): Skil
  * @example
  * getTrustBadge('verified') // '[VERIFIED]'
  * getTrustBadge('community') // '[COMMUNITY]'
+ * getTrustBadge('local') // '[LOCAL]'
  */
 export function getTrustBadge(tier: MCPTrustTier): string {
   const badges: Record<MCPTrustTier, string> = {
@@ -195,6 +203,7 @@ export function getTrustBadge(tier: MCPTrustTier): string {
     community: '[COMMUNITY]',
     experimental: '[EXPERIMENTAL]',
     unknown: '[UNKNOWN]',
+    local: '[LOCAL]',
   }
   return badges[tier] ?? '[UNKNOWN]'
 }

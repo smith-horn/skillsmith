@@ -514,9 +514,10 @@ Use this skill by mentioning it in Claude Code.
   describe('SMI-1533: Trust-Tier Security Scanning', () => {
     // Import the actual validateTrustTier function from install.types.ts
     // SMI-1718: Import from types file after re-export trimming
+    // SMI-1809: Added 'local' tier to return type
     let validateTrustTier: (
       value: string | null | undefined
-    ) => 'verified' | 'community' | 'experimental' | 'unknown'
+    ) => 'verified' | 'community' | 'experimental' | 'unknown' | 'local'
 
     beforeAll(async () => {
       const installTypesModule = await import('../../src/tools/install.types.js')
@@ -524,15 +525,18 @@ Use this skill by mentioning it in Claude Code.
     })
 
     // Type alias for trust tier (used in tests below)
-    type TrustTier = 'verified' | 'community' | 'experimental' | 'unknown'
+    // SMI-1809: Added 'local' tier for local skills
+    type TrustTier = 'verified' | 'community' | 'experimental' | 'unknown' | 'local'
 
     // Scanner options per trust tier (matching install.ts)
+    // SMI-1809: Added 'local' tier options
     const TRUST_TIER_SCANNER_OPTIONS: Record<
       TrustTier,
       { riskThreshold: number; maxContentLength: number }
     > = {
       verified: { riskThreshold: 70, maxContentLength: 2_000_000 },
       community: { riskThreshold: 40, maxContentLength: 1_000_000 },
+      local: { riskThreshold: 100, maxContentLength: 10_000_000 },
       experimental: { riskThreshold: 25, maxContentLength: 500_000 },
       unknown: { riskThreshold: 20, maxContentLength: 250_000 },
     }

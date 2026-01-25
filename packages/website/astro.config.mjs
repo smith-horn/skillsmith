@@ -49,11 +49,15 @@ export default defineConfig({
 
   // Image optimization
   image: {
-    domains: ['picsum.photos', 'api.skillsmith.app'],
+    domains: ['picsum.photos', 'api.skillsmith.app', 'avatars.githubusercontent.com'],
     remotePatterns: [
       {
         protocol: 'https',
         hostname: '**.picsum.photos',
+      },
+      {
+        protocol: 'https',
+        hostname: 'avatars.githubusercontent.com',
       },
     ],
   },

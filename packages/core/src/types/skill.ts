@@ -2,7 +2,10 @@
  * Core type definitions for Skillsmith skills
  */
 
-export type TrustTier = 'verified' | 'community' | 'experimental' | 'unknown'
+/**
+ * SMI-1809: Added 'local' for local skills from ~/.claude/skills/
+ */
+export type TrustTier = 'verified' | 'community' | 'experimental' | 'unknown' | 'local'
 
 /**
  * SMI-1631: Skill roles for role-based recommendations

@@ -3,9 +3,10 @@
  * Auth Callback Page
  *
  * SMI-1169: Email verification flow
+ * SMI-1715: GitHub OAuth callback
  *
  * Handles OAuth callbacks and email verification links.
- * Supabase Auth redirects here after email verification.
+ * Supabase Auth redirects here after email verification or OAuth.
  */
 
 // Disable prerendering - this page needs SSR to read env vars
@@ -15,6 +16,9 @@ import { getSupabaseConfig } from '../../lib/supabase-config';
 
 // Read env vars at SSR time to inject into client script
 const supabaseConfig = getSupabaseConfig();
+
+// Get redirect URL from query params (for OAuth flows)
+const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
 ---
 
 <!DOCTYPE html>
@@ -28,8 +32,9 @@ const supabaseConfig = getSupabaseConfig();
     <title>Verifying... | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
     <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
-    <script is:inline define:vars={{ supabaseConfig }}>
+    <script is:inline define:vars={{ supabaseConfig, redirectTo }}>
       window.__SUPABASE_CONFIG__ = supabaseConfig;
+      window.__AUTH_REDIRECT_TO__ = redirectTo;
     </script>
   </head>
   <body>
@@ -213,22 +218,29 @@ const supabaseConfig = getSupabaseConfig();
   import { createClient } from '@supabase/supabase-js'
 
   // Read config injected by SSR script in head
-  const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' };
+  const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } }).__SUPABASE_CONFIG__ || { url: '', anonKey: '' };
   const supabaseUrl = config.url;
   const supabaseAnonKey = config.anonKey;
+  const authRedirectTo = (window as unknown as { __AUTH_REDIRECT_TO__?: string }).__AUTH_REDIRECT_TO__ || '/account';
 
   document.addEventListener('DOMContentLoaded', async () => {
     const loadingState = document.getElementById('loading-state') as HTMLDivElement | null
     const successState = document.getElementById('success-state') as HTMLDivElement | null
     const errorState = document.getElementById('error-state') as HTMLDivElement | null
     const errorMessageEl = document.getElementById('error-message') as HTMLParagraphElement | null
+    const dashboardLink = successState?.querySelector('a[href="/account"]') as HTMLAnchorElement | null
+
+    // Update the dashboard link with the redirect URL
+    if (dashboardLink) {
+      dashboardLink.href = authRedirectTo
+    }
 
     function showSuccess() {
       if (loadingState) loadingState.style.display = 'none'
       if (successState) successState.style.display = 'block'
       // Auto-redirect after 2 seconds
       setTimeout(() => {
-        window.location.href = '/account'
+        window.location.href = authRedirectTo
       }, 2000)
     }
 

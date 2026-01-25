@@ -11,6 +11,9 @@ export const components = {
   SkillCard: './SkillCard.astro',
   PricingCard: './PricingCard.astro',
   FeatureCard: './FeatureCard.astro',
+  // Auth components (SMI-1715)
+  LoginButton: './auth/LoginButton.astro',
+  UserMenu: './auth/UserMenu.astro',
 } as const
 
 // Type exports for TypeScript support

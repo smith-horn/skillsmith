@@ -13,10 +13,12 @@ import type { TrustTierColors } from './search-types.js'
 
 /**
  * Trust tier color mapping
+ * SMI-1809: Added 'local' tier color
  */
 export const TRUST_TIER_COLORS: TrustTierColors = {
   verified: chalk.green,
   community: chalk.yellow,
+  local: chalk.cyan, // SMI-1809: Cyan for local skills
   experimental: chalk.red,
   unknown: chalk.gray,
 }

@@ -15,10 +15,12 @@ import * as os from 'os'
 
 /**
  * SMI-1533: Valid trust tier values
+ * SMI-1809: Added 'local' for local skills
  */
 export const VALID_TRUST_TIERS: readonly TrustTier[] = [
   'verified',
   'community',
+  'local',
   'experimental',
   'unknown',
 ]
@@ -53,11 +55,13 @@ export function validateTrustTier(value: string | null | undefined): TrustTier {
 
 /**
  * SMI-1533: Security scan configuration per trust tier
+ * SMI-1809: Added 'local' tier for local skills
  *
  * - verified: Minimal scanning (trust Anthropic-verified skills)
  * - community: Standard scanning (balanced security)
  * - experimental: Aggressive scanning (highest scrutiny for new/beta skills)
  * - unknown: Most aggressive scanning
+ * - local: No scanning (user's own local skills)
  */
 export const TRUST_TIER_SCANNER_OPTIONS: Record<TrustTier, ScannerOptions> = {
   verified: {
@@ -69,6 +73,11 @@ export const TRUST_TIER_SCANNER_OPTIONS: Record<TrustTier, ScannerOptions> = {
     // Standard scanning for community-reviewed skills
     riskThreshold: 40, // Default threshold
     maxContentLength: 1_000_000,
+  },
+  local: {
+    // SMI-1809: Local skills are user's own - minimal scanning
+    riskThreshold: 100, // No risk threshold for local skills
+    maxContentLength: 10_000_000, // No size limit for local skills
   },
   experimental: {
     // Aggressive scanning for new/beta skills

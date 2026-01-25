@@ -3,8 +3,9 @@
  * Skillsmith Login Page
  *
  * SMI-1168: User registration and login
+ * SMI-1715: GitHub OAuth authentication
  *
- * Handles email/password login with Supabase Auth.
+ * Handles email/password login and GitHub OAuth with Supabase Auth.
  * Redirects to account dashboard on success.
  */
 
@@ -12,9 +13,13 @@
 export const prerender = false;
 
 import { getSupabaseConfig } from '../lib/supabase-config';
+import LoginButton from '../components/auth/LoginButton.astro';
 
 // Read env vars at SSR time to inject into client script
 const supabaseConfig = getSupabaseConfig();
+
+// Get redirect URL from query params
+const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
 ---
 
 <!DOCTYPE html>
@@ -119,7 +124,11 @@ const supabaseConfig = getSupabaseConfig();
         </form>
 
         <div class="auth-divider">
-          <span>or</span>
+          <span>or continue with</span>
+        </div>
+
+        <div class="social-login">
+          <LoginButton variant="primary" size="md" redirectTo={redirectTo} />
         </div>
 
         <div class="auth-alternate">
@@ -384,9 +393,21 @@ const supabaseConfig = getSupabaseConfig();
     text-transform: lowercase;
   }
 
+  /* Social Login */
+  .social-login {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .social-login :global(.github-login-btn) {
+    width: 100%;
+  }
+
   /* Alternate Action */
   .auth-alternate {
     text-align: center;
+    margin-top: 1.5rem;
   }
 
   .auth-alternate p {

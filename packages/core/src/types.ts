@@ -4,13 +4,15 @@
 
 /**
  * Trust tier levels for skill quality assessment
- * NOTE: Must match database schema (packages/core/src/database/schema.ts)
+ * NOTE: Database tiers must match database schema (packages/core/src/database/schema.ts)
+ * SMI-1809: Added 'local' for local skills from ~/.claude/skills/
  */
 export type TrustTier =
   | 'verified' // Manually reviewed and verified
   | 'community' // High community ratings
   | 'experimental' // New or beta skills
   | 'unknown' // Not yet assessed
+  | 'local' // SMI-1809: Local skills from ~/.claude/skills/
 
 /**
  * Trust tier descriptions for user display
@@ -20,6 +22,7 @@ export const TrustTierDescriptions: Record<TrustTier, string> = {
   community: 'Highly rated by the community. Generally reliable.',
   experimental: 'New or beta skill. Use with caution.',
   unknown: 'Not yet assessed. Review carefully before using.',
+  local: 'Local skill from your ~/.claude/skills/ directory. You control this skill.',
 }
 
 /**
@@ -88,6 +91,7 @@ export interface Skill {
  * Skill search result (subset of full skill)
  * SMI-1491: Added repository field for transparency about installation source
  * SMI-825: Added security summary
+ * SMI-1809: Added source field to identify local vs registry skills
  */
 export interface SkillSearchResult {
   id: string
@@ -101,6 +105,8 @@ export interface SkillSearchResult {
   repository?: string
   /** SMI-825: Security scan summary */
   security?: SecuritySummary
+  /** SMI-1809: Source of the skill ('local' for ~/.claude/skills/, 'registry' for API) */
+  source?: 'local' | 'registry'
 }
 
 /**

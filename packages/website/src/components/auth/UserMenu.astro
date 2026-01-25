@@ -1,0 +1,346 @@
+---
+/**
+ * UserMenu Component
+ *
+ * SMI-1715: GitHub OAuth authentication
+ *
+ * Displays user avatar and dropdown menu when logged in.
+ * Shows login button when not authenticated.
+ * Uses client-side JavaScript to check auth state.
+ */
+
+import LoginButton from './LoginButton.astro';
+
+interface Props {
+  /**
+   * Where to redirect after login
+   */
+  loginRedirect?: string;
+}
+
+const { loginRedirect = '/account' } = Astro.props;
+---
+
+<div class="user-menu-container" id="user-menu-container">
+  <!-- Loading state (shown briefly while checking auth) -->
+  <div class="user-menu-loading" id="user-menu-loading">
+    <div class="avatar-skeleton"></div>
+  </div>
+
+  <!-- Logged out state -->
+  <div class="user-menu-logged-out" id="user-menu-logged-out" style="display: none;">
+    <LoginButton variant="secondary" size="sm" redirectTo={loginRedirect} />
+  </div>
+
+  <!-- Logged in state -->
+  <div class="user-menu-logged-in" id="user-menu-logged-in" style="display: none;">
+    <button type="button" class="user-menu-trigger" id="user-menu-trigger" aria-haspopup="true" aria-expanded="false">
+      <img
+        id="user-avatar"
+        src="/placeholder-avatar.svg"
+        alt="User avatar"
+        class="user-avatar"
+      />
+      <span class="user-name" id="user-name">User</span>
+      <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="6 9 12 15 18 9" />
+      </svg>
+    </button>
+
+    <!-- Dropdown menu -->
+    <div class="user-dropdown" id="user-dropdown" role="menu" aria-hidden="true">
+      <div class="dropdown-header">
+        <span class="dropdown-name" id="dropdown-name">User</span>
+        <span class="dropdown-email" id="dropdown-email">user@example.com</span>
+      </div>
+      <div class="dropdown-divider"></div>
+      <a href="/account" class="dropdown-item" role="menuitem">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+          <circle cx="12" cy="7" r="4" />
+        </svg>
+        Dashboard
+      </a>
+      <a href="/account/subscription" class="dropdown-item" role="menuitem">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+          <line x1="1" y1="10" x2="23" y2="10" />
+        </svg>
+        Subscription
+      </a>
+      <div class="dropdown-divider"></div>
+      <button type="button" class="dropdown-item logout-btn" id="logout-btn" role="menuitem">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <polyline points="16 17 21 12 16 7" />
+          <line x1="21" y1="12" x2="9" y2="12" />
+        </svg>
+        Sign out
+      </button>
+    </div>
+  </div>
+</div>
+
+<style>
+  .user-menu-container {
+    position: relative;
+  }
+
+  /* Loading skeleton */
+  .user-menu-loading {
+    display: flex;
+    align-items: center;
+  }
+
+  .avatar-skeleton {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    background: linear-gradient(90deg, #2a2a2f 0%, #3a3a3f 50%, #2a2a2f 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  /* Menu trigger */
+  .user-menu-trigger {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    color: #FAFAFA;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+
+  .user-menu-trigger:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: #2a2a2f;
+  }
+
+  .user-avatar {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid #2a2a2f;
+  }
+
+  .user-name {
+    font-size: 0.875rem;
+    font-weight: 500;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chevron {
+    width: 1rem;
+    height: 1rem;
+    color: #9ca3af;
+    transition: transform 0.2s;
+  }
+
+  .user-menu-trigger[aria-expanded="true"] .chevron {
+    transform: rotate(180deg);
+  }
+
+  /* Dropdown */
+  .user-dropdown {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    right: 0;
+    min-width: 220px;
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-0.5rem);
+    transition: all 0.2s;
+    z-index: 100;
+  }
+
+  .user-dropdown.open {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+
+  .dropdown-header {
+    padding: 0.75rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .dropdown-name {
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: #FAFAFA;
+  }
+
+  .dropdown-email {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dropdown-divider {
+    height: 1px;
+    background: #2a2a2f;
+    margin: 0.25rem 0;
+  }
+
+  .dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.625rem 1rem;
+    font-size: 0.875rem;
+    color: #FAFAFA;
+    text-decoration: none;
+    background: transparent;
+    border: none;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s;
+  }
+
+  .dropdown-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .dropdown-item svg {
+    width: 1rem;
+    height: 1rem;
+    color: #9ca3af;
+    flex-shrink: 0;
+  }
+
+  .logout-btn {
+    color: #f87171;
+  }
+
+  .logout-btn svg {
+    color: #f87171;
+  }
+
+  /* Hide on mobile for narrow screens */
+  @media (max-width: 640px) {
+    .user-name {
+      display: none;
+    }
+  }
+</style>
+
+<script>
+  import { createClient } from '@supabase/supabase-js';
+
+  // Initialize user menu
+  document.addEventListener('DOMContentLoaded', async () => {
+    const loadingState = document.getElementById('user-menu-loading');
+    const loggedOutState = document.getElementById('user-menu-logged-out');
+    const loggedInState = document.getElementById('user-menu-logged-in');
+    const menuTrigger = document.getElementById('user-menu-trigger');
+    const dropdown = document.getElementById('user-dropdown');
+    const logoutBtn = document.getElementById('logout-btn');
+
+    // Get config
+    const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } }).__SUPABASE_CONFIG__;
+
+    if (!config?.url || !config?.anonKey) {
+      // No config, show logged out state
+      if (loadingState) loadingState.style.display = 'none';
+      if (loggedOutState) loggedOutState.style.display = 'block';
+      return;
+    }
+
+    const supabase = createClient(config.url, config.anonKey);
+
+    // Check auth state
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (loadingState) loadingState.style.display = 'none';
+
+    if (session?.user) {
+      // User is logged in
+      if (loggedInState) loggedInState.style.display = 'block';
+
+      // Get profile data
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('full_name, avatar_url, github_username')
+        .eq('id', session.user.id)
+        .single();
+
+      // Update UI with user info
+      const userName = profile?.full_name || profile?.github_username || session.user.email?.split('@')[0] || 'User';
+      const userEmail = session.user.email || '';
+      const avatarUrl = profile?.avatar_url || session.user.user_metadata?.avatar_url;
+
+      const userNameEl = document.getElementById('user-name');
+      const dropdownNameEl = document.getElementById('dropdown-name');
+      const dropdownEmailEl = document.getElementById('dropdown-email');
+      const userAvatarEl = document.getElementById('user-avatar') as HTMLImageElement | null;
+
+      if (userNameEl) userNameEl.textContent = userName;
+      if (dropdownNameEl) dropdownNameEl.textContent = userName;
+      if (dropdownEmailEl) dropdownEmailEl.textContent = userEmail;
+      if (userAvatarEl && avatarUrl) {
+        userAvatarEl.src = avatarUrl;
+        userAvatarEl.alt = `${userName}'s avatar`;
+      }
+
+      // Toggle dropdown
+      menuTrigger?.addEventListener('click', () => {
+        const isOpen = dropdown?.classList.contains('open');
+        dropdown?.classList.toggle('open', !isOpen);
+        menuTrigger?.setAttribute('aria-expanded', (!isOpen).toString());
+        dropdown?.setAttribute('aria-hidden', isOpen ? 'true' : 'false');
+      });
+
+      // Close dropdown on outside click
+      document.addEventListener('click', (e) => {
+        if (!loggedInState?.contains(e.target as Node)) {
+          dropdown?.classList.remove('open');
+          menuTrigger?.setAttribute('aria-expanded', 'false');
+          dropdown?.setAttribute('aria-hidden', 'true');
+        }
+      });
+
+      // Close dropdown on Escape
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && dropdown?.classList.contains('open')) {
+          dropdown.classList.remove('open');
+          menuTrigger?.setAttribute('aria-expanded', 'false');
+          dropdown?.setAttribute('aria-hidden', 'true');
+          menuTrigger?.focus();
+        }
+      });
+
+      // Logout handler
+      logoutBtn?.addEventListener('click', async () => {
+        await supabase.auth.signOut();
+        window.location.href = '/';
+      });
+    } else {
+      // User is not logged in
+      if (loggedOutState) loggedOutState.style.display = 'block';
+    }
+  });
+</script>

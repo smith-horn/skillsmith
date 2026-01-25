@@ -24,6 +24,7 @@ interface SupabaseWindowConfig {
 declare global {
   interface Window {
     __SUPABASE_CONFIG__?: SupabaseWindowConfig;
+    __AUTH_REDIRECT_TO__?: string;
   }
 }
 

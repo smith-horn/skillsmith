@@ -114,10 +114,12 @@ export type ExtendedSkill = Skill & { dependencies: string[]; features: string[]
 
 /**
  * Trust tier ranking for comparison
+ * SMI-1809: Added 'local' tier for local skills
  */
 export const TRUST_TIER_RANK: Record<TrustTier, number> = {
   verified: 4,
   community: 3,
+  local: 3, // SMI-1809: Local skills rank same as community (user trusts their own skills)
   experimental: 2,
   unknown: 1,
 }
