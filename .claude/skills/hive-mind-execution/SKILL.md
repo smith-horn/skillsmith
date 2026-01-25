@@ -717,6 +717,12 @@ See `skillsmith/.env.schema` for available variables.
 
 **Never document env var values in markdown files.**
 
+## Sub-Documentation
+
+| Document | Contents |
+|----------|----------|
+| [Context Persistence](./context-persistence.md) | Maintaining context across sessions for long-running tasks |
+
 ## Related Skills
 
 - [Governance](../governance/SKILL.md) - Standards enforcement
