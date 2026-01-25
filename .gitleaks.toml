@@ -99,7 +99,7 @@ paths = [
   '''scripts/.*''',
   '''docs/.*\.md$''',
   '''docs/.*\.yaml$''',
-  '''\.claude/skills/.*/SKILL\.md$''',
+  '''\.claude/skills/.*\.md$''',
   # Hive-mind configs contain Linear project IDs (not secrets)
   '''\.claude/hive-mind/.*\.yaml$''',
   # Lock files contain integrity hashes, not secrets
