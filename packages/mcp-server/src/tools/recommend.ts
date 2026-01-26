@@ -4,6 +4,7 @@
  * @see SMI-741: Add MCP Tool skill_recommend
  * @see SMI-602: Integrate semantic matching with EmbeddingService
  * @see SMI-604: Add trigger phrase overlap detection
+ * @see SMI-1837: Include local skills in recommendations (parallel search)
  */
 
 import { SkillMatcher, OverlapDetector, trackEvent } from '@skillsmith/core'
@@ -27,6 +28,10 @@ import {
   isSkillCollection,
 } from './recommend.helpers.js'
 
+// SMI-1837: Import local skill search for parallel querying
+import { getLocalIndexer } from './LocalSkillSearch.js'
+import type { LocalSkill } from '../indexer/LocalIndexer.js'
+
 // Re-export only public API types (SMI-1718: trimmed internal exports)
 export {
   recommendInputSchema,
@@ -35,6 +40,122 @@ export {
   type RecommendResponse,
   type SkillRecommendation,
 } from './recommend.types.js'
+
+/**
+ * SMI-1837: Convert a LocalSkill to SkillRecommendation format
+ * @param skill - The local skill to convert
+ * @param matchReason - Reason for the recommendation
+ * @returns SkillRecommendation object
+ */
+function localSkillToRecommendation(skill: LocalSkill, matchReason: string): SkillRecommendation {
+  const roles = inferRolesFromTags(skill.tags)
+  return {
+    skill_id: skill.id,
+    name: skill.name,
+    reason: matchReason,
+    similarity_score: 0.7, // Local skills get a default similarity score
+    trust_tier: 'local',
+    quality_score: skill.qualityScore,
+    roles,
+  }
+}
+
+/**
+ * SMI-1837: Search local skills for recommendations
+ * @param query - Search query based on context and installed skills
+ * @param limit - Maximum number of results
+ * @returns Array of matching local skills as SkillRecommendation
+ */
+async function searchLocalSkillsForRecommend(
+  query: string,
+  limit: number
+): Promise<SkillRecommendation[]> {
+  try {
+    const indexer = getLocalIndexer()
+    const localSkills = await indexer.index()
+
+    if (localSkills.length === 0) {
+      return []
+    }
+
+    // Search local skills using the query
+    const matchingSkills = query ? indexer.search(query, localSkills) : localSkills
+
+    // Convert to recommendations and limit
+    return matchingSkills
+      .slice(0, limit)
+      .map((skill) =>
+        localSkillToRecommendation(
+          skill,
+          `Local skill matching: ${query.split(' ').slice(0, 3).join(', ')}`
+        )
+      )
+  } catch (error) {
+    // Log and return empty on error - don't break the main flow
+    console.warn('[skillsmith] Local skill search for recommend failed:', (error as Error).message)
+    return []
+  }
+}
+
+/**
+ * SMI-1837: Merge and deduplicate API and local skill recommendations
+ * API results take priority over local results with the same name
+ * @param apiResults - Results from API
+ * @param localResults - Results from local skill search
+ * @param limit - Maximum combined results
+ * @returns Merged and deduplicated recommendations
+ */
+function mergeAndDeduplicateRecommendations(
+  apiResults: SkillRecommendation[],
+  localResults: SkillRecommendation[],
+  limit: number
+): SkillRecommendation[] {
+  // Build a Set of names from API results for deduplication
+  const apiSkillNames = new Set(apiResults.map((r) => r.name.toLowerCase()))
+
+  // Also track skill IDs (without the author prefix)
+  const apiSkillIdNames = new Set(
+    apiResults.map((r) => r.skill_id.split('/').pop()?.toLowerCase() || '')
+  )
+
+  // Filter local results to exclude duplicates
+  const uniqueLocalResults = localResults.filter((local) => {
+    const localName = local.name.toLowerCase()
+    const localIdName = local.skill_id.split('/').pop()?.toLowerCase() || ''
+
+    // Exclude if name matches an API result
+    if (apiSkillNames.has(localName)) {
+      return false
+    }
+
+    // Exclude if ID name matches an API result
+    if (apiSkillIdNames.has(localIdName)) {
+      return false
+    }
+
+    // Exclude if local name is contained in or contains an API skill name
+    for (const apiName of apiSkillNames) {
+      if (localName.includes(apiName) || apiName.includes(localName)) {
+        return false
+      }
+    }
+
+    return true
+  })
+
+  // Combine API results first (higher priority), then unique local results
+  const combined = [...apiResults, ...uniqueLocalResults]
+
+  // Sort by quality score descending, then by similarity score
+  combined.sort((a, b) => {
+    if (b.quality_score !== a.quality_score) {
+      return b.quality_score - a.quality_score
+    }
+    return b.similarity_score - a.similarity_score
+  })
+
+  return combined.slice(0, limit)
+}
 
 /**
  * Execute skill recommendation based on installed skills and context.
@@ -60,44 +181,76 @@ export async function executeRecommend(
     installed_skills = await getInstalledSkills()
   }
 
-  // SMI-1183: Try API first, fall back to local semantic matching
+  // Build search query from installed skill names and project context keywords
+  const stack = [...installed_skills.map((id) => id.split('/').pop() || id)]
+  if (project_context) {
+    // Extract key terms from project context (simple word split)
+    const contextWords = project_context
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 3)
+      .slice(0, 5)
+    stack.push(...contextWords)
+  }
+
+  // Build query string for local skill search
+  const localSearchQuery = stack.join(' ') || 'development productivity tools'
+
+  // SMI-1183/SMI-1837: Try API and local skills in parallel
   if (!context.apiClient.isOffline()) {
     try {
-      // Build stack from installed skill names and project context keywords
-      const stack = [...installed_skills.map((id) => id.split('/').pop() || id)]
-      if (project_context) {
-        // Extract key terms from project context (simple word split)
-        const contextWords = project_context
-          .toLowerCase()
-          .split(/\s+/)
-          .filter((w) => w.length > 3)
-          .slice(0, 5)
-        stack.push(...contextWords)
+      // SMI-1837: Query API and local skills in parallel
+      const [apiResultSettled, localResultSettled] = await Promise.allSettled([
+        context.apiClient.getRecommendations({
+          stack: stack.slice(0, 10), // API limits to 10 stack items
+          limit,
+        }),
+        searchLocalSkillsForRecommend(localSearchQuery, limit),
+      ])
+
+      // Extract API results (may have failed)
+      let apiRecommendations: SkillRecommendation[] = []
+      if (apiResultSettled.status === 'fulfilled') {
+        apiRecommendations = apiResultSettled.value.data.map((skill) => {
+          const skillRoles = inferRolesFromTags(skill.tags || [])
+          return {
+            skill_id: skill.id,
+            name: skill.name,
+            reason: `Matches your stack: ${stack.slice(0, 3).join(', ')}`,
+            similarity_score: 0.8, // API doesn't return similarity score, use default
+            trust_tier: mapTrustTierFromDb(skill.trust_tier),
+            quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
+            roles: skillRoles,
+          }
+        })
+      } else {
+        console.warn(
+          '[skillsmith] API recommend failed:',
+          (apiResultSettled.reason as Error).message
+        )
       }
 
-      const apiResponse = await context.apiClient.getRecommendations({
-        stack: stack.slice(0, 10), // API limits to 10 stack items
-        limit,
-      })
+      // Extract local results (may have failed)
+      let localRecommendations: SkillRecommendation[] = []
+      if (localResultSettled.status === 'fulfilled') {
+        localRecommendations = localResultSettled.value
+      }
+
+      // SMI-1837: Merge and deduplicate results
+      let recommendations = mergeAndDeduplicateRecommendations(
+        apiRecommendations,
+        localRecommendations,
+        limit
+      )
 
       const endTime = performance.now()
 
-      // Convert API results to response format
-      // SMI-1631: Infer roles and apply role filtering for API results
-      let recommendations: SkillRecommendation[] = apiResponse.data.map((skill) => {
-        const skillRoles = inferRolesFromTags(skill.tags || [])
-        return {
-          skill_id: skill.id,
-          name: skill.name,
-          reason: `Matches your stack: ${stack.slice(0, 3).join(', ')}`,
-          similarity_score: 0.8, // API doesn't return similarity score, use default
-          trust_tier: mapTrustTierFromDb(skill.trust_tier),
-          quality_score: Math.round((skill.quality_score ?? 0.5) * 100),
-          roles: skillRoles,
-        }
-      })
+      // Filter out already installed skills
+      recommendations = recommendations.filter(
+        (rec) => !installed_skills.some((id) => id.toLowerCase() === rec.skill_id.toLowerCase())
+      )
 
-      // SMI-1631: Apply role filtering and score boosting for API results
+      // SMI-1631: Apply role filtering and score boosting
       let roleFiltered = 0
       if (role) {
         const originalCount = recommendations.length
@@ -113,9 +266,14 @@ export async function executeRecommend(
         recommendations.sort((a, b) => b.quality_score - a.quality_score)
       }
 
+      // Calculate total candidates considered
+      const apiCandidates =
+        apiResultSettled.status === 'fulfilled' ? apiResultSettled.value.data.length : 0
+      const localCandidates = localRecommendations.length
+
       const response: RecommendResponse = {
-        recommendations,
-        candidates_considered: apiResponse.data.length,
+        recommendations: recommendations.slice(0, limit),
+        candidates_considered: apiCandidates + localCandidates,
         overlap_filtered: 0,
         role_filtered: roleFiltered,
         context: {
@@ -149,8 +307,15 @@ export async function executeRecommend(
     }
   }
 
-  // Fallback: Load skills from database and use local semantic matching
-  const skillDatabase = await loadSkillsFromDatabase(context, 500)
+  // SMI-1837: Fallback - Load skills from database AND local skills in parallel
+  const [skillDatabaseResult, localSkillsResult] = await Promise.allSettled([
+    loadSkillsFromDatabase(context, 500),
+    searchLocalSkillsForRecommend(localSearchQuery, limit),
+  ])
+
+  const skillDatabase = skillDatabaseResult.status === 'fulfilled' ? skillDatabaseResult.value : []
+  const localRecommendations =
+    localSkillsResult.status === 'fulfilled' ? localSkillsResult.value : []
 
   // Initialize matcher with fallback mode for now
   const matcher = new SkillMatcher({
@@ -251,9 +416,9 @@ export async function executeRecommend(
   // Find similar skills using semantic matching
   const matchResults = await matcher.findSimilarSkills(query, filteredCandidates, limit)
 
-  // Transform to response format
+  // Transform database results to response format
   // SMI-1631: Include roles and apply +30 score boost for role matches
-  const recommendations: SkillRecommendation[] = matchResults.map((result) => {
+  const dbRecommendations: SkillRecommendation[] = matchResults.map((result) => {
     const skill = result.skill as SkillData
     const hasRoleMatch = role && skill.roles.includes(role)
     const boostedScore = hasRoleMatch
@@ -271,13 +436,27 @@ export async function executeRecommend(
     }
   })
 
+  // SMI-1837: Merge database and local results
+  let recommendations = mergeAndDeduplicateRecommendations(
+    dbRecommendations,
+    localRecommendations,
+    limit
+  )
+
+  // Apply role filtering to merged results if not already done
+  if (role && localRecommendations.length > 0) {
+    const beforeRoleFilter = recommendations.length
+    recommendations = recommendations.filter((rec) => rec.roles?.includes(role))
+    roleFiltered = beforeRoleFilter - recommendations.length
+  }
+
   const endTime = performance.now()
 
   matcher.close()
 
   const response: RecommendResponse = {
-    recommendations,
-    candidates_considered: candidates.length,
+    recommendations: recommendations.slice(0, limit),
+    candidates_considered: candidates.length + localRecommendations.length,
     overlap_filtered: overlapFiltered,
     role_filtered: roleFiltered,
     context: {
