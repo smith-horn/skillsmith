@@ -15,6 +15,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
+import { parseFrontmatter, type SkillFrontmatter } from './FrontmatterParser.js'
 
 /**
  * Local skill metadata extracted from SKILL.md
@@ -42,18 +43,6 @@ export interface LocalSkill {
   hasSkillMd: boolean
   /** Last modified timestamp */
   lastModified: string | null
-}
-
-/**
- * Parsed SKILL.md frontmatter fields
- */
-interface SkillFrontmatter {
-  name: string | null
-  description: string | null
-  author: string | null
-  tags: string[]
-  version: string | null
-  triggers: string[]
 }
 
 /**
@@ -86,116 +75,6 @@ export class LocalIndexer {
   constructor(skillsDir?: string, cacheTtl: number = 60000) {
     this.skillsDir = skillsDir || path.join(os.homedir(), '.claude', 'skills')
     this.cacheTtl = cacheTtl
-  }
-
-  /**
-   * Parse SKILL.md frontmatter to extract metadata.
-   *
-   * Supports YAML frontmatter delimited by `---` lines.
-   * Extracts name, description, author, tags, version, and triggers.
-   *
-   * @param content - Content of the SKILL.md file
-   * @returns Parsed frontmatter fields
-   */
-  parseFrontmatter(content: string): SkillFrontmatter {
-    const result: SkillFrontmatter = {
-      name: null,
-      description: null,
-      author: null,
-      tags: [],
-      version: null,
-      triggers: [],
-    }
-
-    // Check for frontmatter (starts with ---)
-    if (!content.startsWith('---')) {
-      return result
-    }
-
-    // Find the closing --- delimiter
-    const secondDelimiterIndex = content.indexOf('---', 3)
-    if (secondDelimiterIndex === -1) {
-      return result
-    }
-
-    // Extract frontmatter content
-    const frontmatter = content.substring(3, secondDelimiterIndex).trim()
-
-    // Parse YAML-like frontmatter (simple key: value parsing)
-    const lines = frontmatter.split('\n')
-    let currentKey: string | null = null
-    let inArray = false
-
-    for (const line of lines) {
-      const trimmedLine = line.trim()
-
-      // Skip empty lines
-      if (!trimmedLine) continue
-
-      // Check for array item (starts with -)
-      if (trimmedLine.startsWith('- ') && currentKey && inArray) {
-        const value = trimmedLine.substring(2).trim().replace(/^["']|["']$/g, '')
-        if (currentKey === 'tags' && value) {
-          result.tags.push(value)
-        } else if (currentKey === 'triggers' && value) {
-          result.triggers.push(value)
-        }
-        continue
-      }
-
-      // Check for key: value pair
-      const colonIndex = trimmedLine.indexOf(':')
-      if (colonIndex === -1) continue
-
-      const key = trimmedLine.substring(0, colonIndex).trim().toLowerCase()
-      const value = trimmedLine.substring(colonIndex + 1).trim()
-
-      // Handle empty value (might be start of array)
-      if (!value) {
-        currentKey = key
-        inArray = true
-        continue
-      }
-
-      // Parse inline arrays: tags: [testing, development]
-      if (value.startsWith('[') && value.endsWith(']')) {
-        const arrayContent = value.slice(1, -1)
-        const items = arrayContent.split(',').map((item) => item.trim().replace(/^["']|["']$/g, ''))
-
-        if (key === 'tags') {
-          result.tags = items.filter(Boolean)
-        } else if (key === 'triggers') {
-          result.triggers = items.filter(Boolean)
-        }
-        currentKey = null
-        inArray = false
-        continue
-      }
-
-      // Clean quoted values
-      const cleanValue = value.replace(/^["']|["']$/g, '')
-
-      // Assign to appropriate field
-      switch (key) {
-        case 'name':
-          result.name = cleanValue
-          break
-        case 'description':
-          result.description = cleanValue
-          break
-        case 'author':
-          result.author = cleanValue
-          break
-        case 'version':
-          result.version = cleanValue
-          break
-      }
-
-      currentKey = key
-      inArray = false
-    }
-
-    return result
   }
 
   /**
@@ -284,8 +163,8 @@ export class LocalIndexer {
       return null
     }
 
-    // Parse frontmatter
-    const frontmatter = this.parseFrontmatter(content)
+    // Parse frontmatter (using imported function from FrontmatterParser)
+    const frontmatter = parseFrontmatter(content)
 
     // Determine skill name
     const name = frontmatter.name || dirName
@@ -309,15 +188,14 @@ export class LocalIndexer {
   }
 
   /**
-   * Index all skills in the skills directory.
-   *
-   * Scans ~/.claude/skills/ for subdirectories, parses SKILL.md files,
-   * and returns an array of LocalSkill objects.
+   * Internal method that performs the actual indexing.
+   * Called by both index() and indexSync() to avoid code duplication.
    *
    * @param force - Force re-index even if cache is valid
-   * @returns Promise resolving to array of LocalSkill objects
+   * @returns Array of LocalSkill objects
+   * @see SMI-1834: Refactor to reduce code duplication
    */
-  async index(force: boolean = false): Promise<LocalSkill[]> {
+  private _performIndex(force: boolean): LocalSkill[] {
     // Check cache
     const now = Date.now()
     if (!force && this.cachedSkills && now - this.lastIndexTime < this.cacheTtl) {
@@ -368,59 +246,26 @@ export class LocalIndexer {
   }
 
   /**
+   * Index all skills in the skills directory.
+   *
+   * Scans ~/.claude/skills/ for subdirectories, parses SKILL.md files,
+   * and returns an array of LocalSkill objects.
+   *
+   * @param force - Force re-index even if cache is valid
+   * @returns Promise resolving to array of LocalSkill objects
+   */
+  async index(force: boolean = false): Promise<LocalSkill[]> {
+    return this._performIndex(force)
+  }
+
+  /**
    * Synchronous version of index for use in non-async contexts.
    *
    * @param force - Force re-index even if cache is valid
    * @returns Array of LocalSkill objects
    */
   indexSync(force: boolean = false): LocalSkill[] {
-    // Check cache
-    const now = Date.now()
-    if (!force && this.cachedSkills && now - this.lastIndexTime < this.cacheTtl) {
-      return this.cachedSkills
-    }
-
-    // Check if directory exists
-    if (!fs.existsSync(this.skillsDir)) {
-      this.cachedSkills = []
-      this.lastIndexTime = now
-      return []
-    }
-
-    const skills: LocalSkill[] = []
-
-    try {
-      const entries = fs.readdirSync(this.skillsDir, { withFileTypes: true })
-
-      for (const entry of entries) {
-        // Skip non-directories and hidden directories
-        if (!entry.isDirectory() || entry.name.startsWith('.')) {
-          continue
-        }
-
-        const skillDir = path.join(this.skillsDir, entry.name)
-        const skill = this.indexSkillDir(skillDir, entry.name)
-
-        if (skill) {
-          skills.push(skill)
-        }
-      }
-    } catch (error) {
-      console.warn(
-        '[LocalIndexer] Failed to read skills directory:',
-        this.skillsDir,
-        error instanceof Error ? error.message : String(error)
-      )
-    }
-
-    // Sort by name for consistent ordering
-    skills.sort((a, b) => a.name.localeCompare(b.name))
-
-    // Update cache
-    this.cachedSkills = skills
-    this.lastIndexTime = now
-
-    return skills
+    return this._performIndex(force)
   }
 
   /**

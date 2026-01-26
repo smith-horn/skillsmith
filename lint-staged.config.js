@@ -12,11 +12,12 @@
 
 export default {
   // TypeScript/JavaScript files: two-phase lint + format
+  // Exclude website (uses Astro's own ESLint config)
   '*.{ts,tsx,js,jsx}': [
     // Phase 1: Auto-fix what can be fixed
-    'eslint --fix',
+    'eslint --fix --no-warn-ignored',
     // Phase 2: Verify no errors remain (catches unfixable issues like unused imports)
-    'eslint --max-warnings=0',
+    'eslint --max-warnings=0 --no-warn-ignored',
     // Phase 3: Format
     'prettier --write',
   ],

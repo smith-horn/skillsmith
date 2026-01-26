@@ -41,80 +41,7 @@ import {
   mapTrustTierFromDb,
   getTrustBadge,
 } from '../utils/validation.js'
-import { LocalIndexer, type LocalSkill } from '../indexer/LocalIndexer.js'
-
-// Singleton local indexer for performance
-let localIndexer: LocalIndexer | null = null
-
-/**
- * Get or create the local indexer instance
- */
-function getLocalIndexer(): LocalIndexer {
-  if (!localIndexer) {
-    localIndexer = new LocalIndexer()
-  }
-  return localIndexer
-}
-
-/**
- * Convert a LocalSkill to SkillSearchResult format.
- * SMI-1809: Marks local skills with source: "local" for identification.
- */
-function localSkillToSearchResult(skill: LocalSkill): SkillSearchResult {
-  return {
-    id: skill.id,
-    name: skill.name,
-    description: skill.description || '',
-    author: skill.author,
-    category: extractCategoryFromTags(skill.tags),
-    trustTier: 'local' as TrustTier,
-    score: skill.qualityScore,
-    source: 'local',
-  }
-}
-
-/**
- * Search local skills and convert to SkillSearchResult format.
- * SMI-1809: Returns matching local skills for search integration.
- *
- * @param query - Search query string
- * @param filters - Search filters to apply
- * @returns Array of matching local skills as SkillSearchResult
- */
-async function searchLocalSkills(
-  query: string,
-  filters: SearchFilters
-): Promise<SkillSearchResult[]> {
-  const indexer = getLocalIndexer()
-
-  // Index local skills (uses cache if valid)
-  const localSkills = await indexer.index()
-
-  // If no local skills, return empty
-  if (localSkills.length === 0) {
-    return []
-  }
-
-  // Filter by query if provided
-  let matchingSkills: LocalSkill[] = query ? indexer.search(query, localSkills) : localSkills
-
-  // Apply min_score filter
-  if (filters.minScore !== undefined) {
-    const minScorePercent = filters.minScore * 100 // Convert from 0-1 to 0-100
-    matchingSkills = matchingSkills.filter((skill) => skill.qualityScore >= minScorePercent)
-  }
-
-  // Apply category filter
-  if (filters.category) {
-    matchingSkills = matchingSkills.filter((skill) => {
-      const skillCategory = extractCategoryFromTags(skill.tags)
-      return skillCategory === filters.category
-    })
-  }
-
-  // Convert to SkillSearchResult format
-  return matchingSkills.map(localSkillToSearchResult)
-}
+import { searchLocalSkills } from './LocalSkillSearch.js'
 
 /**
  * Search tool schema for MCP
@@ -323,10 +250,7 @@ export async function executeSearch(
         try {
           localResults = await searchLocalSkills(hasQuery ? input.query!.trim() : '', filters)
         } catch (localError) {
-          console.warn(
-            '[skillsmith] Local skill search failed:',
-            (localError as Error).message
-          )
+          console.warn('[skillsmith] Local skill search failed:', (localError as Error).message)
         }
       }
 
@@ -418,10 +342,7 @@ export async function executeSearch(
     try {
       localResults = await searchLocalSkills(searchQuery, filters)
     } catch (localError) {
-      console.warn(
-        '[skillsmith] Local skill search failed:',
-        (localError as Error).message
-      )
+      console.warn('[skillsmith] Local skill search failed:', (localError as Error).message)
     }
   }
 

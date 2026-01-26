@@ -11,13 +11,23 @@
 
 set -o pipefail
 
+# Environment Detection (SMI-1831)
+# This script runs in two contexts:
+#   1. GitHub Actions CI - Already inside a Docker container, use npm directly
+#   2. Local development - Must use docker exec per governance standards
+if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
+  NPM_CMD="npm"
+else
+  NPM_CMD="docker exec skillsmith-dev-1 npm"
+fi
+
 OUTPUT_FILE="${1:-audit-report.json}"
 TEMP_OUTPUT=$(mktemp)
 
 echo "Running standards audit..."
 
 # Run the audit and capture output
-npm run audit:standards 2>&1 | tee "$TEMP_OUTPUT"
+$NPM_CMD run audit:standards 2>&1 | tee "$TEMP_OUTPUT"
 AUDIT_EXIT_CODE=${PIPESTATUS[0]}
 
 # Strip ANSI color codes for parsing
