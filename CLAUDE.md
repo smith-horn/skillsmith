@@ -633,6 +633,10 @@ npx claude-flow swarm --config .claude/hive-mind/your-config.yaml
 | `early-access-signup` | Email waitlist signup with rate limiting, honeypot, Resend emails | Anonymous |
 | `contact-submit` | Contact form submissions with email notifications | Anonymous |
 | `checkout` | Stripe checkout session creation | Authenticated |
+| `stripe-webhook` | Stripe webhook handler (subscriptions, payments, license keys) | Anonymous |
+| `create-portal-session` | Stripe customer portal session creation | Authenticated |
+| `list-invoices` | List customer invoices from Stripe | Authenticated |
+| `update-seat-count` | Update subscription seat count | Authenticated |
 | `stats` | Public stats (skill count) for homepage | Anonymous |
 | `skills-search` | Skill search API | API Key |
 | `skills-get` | Get skill details | API Key |
@@ -656,6 +660,7 @@ npx supabase functions deploy stats --no-verify-jwt
 npx supabase functions deploy skills-search --no-verify-jwt
 npx supabase functions deploy skills-get --no-verify-jwt
 npx supabase functions deploy skills-recommend --no-verify-jwt
+npx supabase functions deploy stripe-webhook --no-verify-jwt
 npx supabase functions deploy events --no-verify-jwt
 ```
 
