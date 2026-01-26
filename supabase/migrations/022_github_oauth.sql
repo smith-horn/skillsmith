@@ -57,8 +57,12 @@ CREATE INDEX IF NOT EXISTS idx_profiles_auth_provider ON profiles(auth_provider)
 -- ============================================================================
 
 -- Update the handle_new_user function to handle GitHub OAuth metadata
+-- IMPORTANT: SET search_path = public is required for trigger to work on auth.users
 CREATE OR REPLACE FUNCTION handle_new_user()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+SECURITY DEFINER
+SET search_path = public
+AS $$
 DECLARE
   provider TEXT;
   github_username_val TEXT;
@@ -120,7 +124,7 @@ BEGIN
   );
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql;
 
 -- ============================================================================
 -- FUNCTION TO SYNC GITHUB PROFILE ON LOGIN
@@ -128,7 +132,10 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Function to update GitHub profile data on subsequent logins
 CREATE OR REPLACE FUNCTION sync_github_profile()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+SECURITY DEFINER
+SET search_path = public
+AS $$
 DECLARE
   provider TEXT;
 BEGIN
@@ -153,7 +160,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql;
 
 -- Trigger to sync profile on user update (login refreshes metadata)
 DROP TRIGGER IF EXISTS on_auth_user_updated ON auth.users;
