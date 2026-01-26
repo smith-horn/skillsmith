@@ -326,11 +326,75 @@ Before deploying payment page changes, verify:
 
 ---
 
+## Deno/Edge Function Patterns
+
+When running Stripe webhooks in Supabase Edge Functions (Deno runtime), use these patterns:
+
+### Signature Verification
+
+**Use `constructEventAsync`, NOT `constructEvent`:**
+
+```typescript
+// ❌ WRONG - Uses Node.js crypto (not available in Deno)
+event = stripe.webhooks.constructEvent(body, signature, secret)
+
+// ✅ CORRECT - Uses Web Crypto API (works in Deno)
+event = await stripe.webhooks.constructEventAsync(body, signature, secret)
+```
+
+The synchronous `constructEvent` relies on Node.js `crypto` module which isn't available in Deno. The async version uses the Web Crypto API.
+
+### Deployment Flags
+
+Stripe webhooks require anonymous access:
+
+```bash
+# ✅ CORRECT - Allow Stripe to call without authentication
+npx supabase functions deploy stripe-webhook --no-verify-jwt
+
+# ❌ WRONG - Stripe will get 401 Unauthorized
+npx supabase functions deploy stripe-webhook
+```
+
+### Error Handling
+
+See [Edge Function Patterns](edge-function-patterns.md) for Supabase query error handling.
+
+---
+
+## Production Webhook Deployment Checklist
+
+When deploying or migrating webhook handlers:
+
+- [ ] **Deploy with `--no-verify-jwt`** - Webhooks need anonymous access
+- [ ] **Update webhook URL in Stripe Dashboard** - Developers → Webhooks → Edit endpoint
+- [ ] **Copy new signing secret** - Revealed after saving endpoint changes
+- [ ] **Set secret in Supabase** - `npx supabase secrets set STRIPE_WEBHOOK_SECRET=whsec_xxx`
+- [ ] **Test with resend** - Use Stripe Dashboard to resend a recent event
+- [ ] **Verify 200 response** - Check webhook attempt shows "Delivered"
+- [ ] **Update CLAUDE.md** - Document the endpoint in Edge Functions table
+
+### Webhook URL Format
+
+```
+https://<project-ref>.supabase.co/functions/v1/stripe-webhook
+```
+
+### Required Secrets
+
+| Secret | Purpose |
+|--------|---------|
+| `STRIPE_SECRET_KEY` | API authentication |
+| `STRIPE_WEBHOOK_SECRET` | Signature verification (starts with `whsec_`) |
+
+---
+
 ## Related Documentation
 
 - [Stripe CLI Documentation](https://stripe.com/docs/stripe-cli)
 - [Stripe Webhooks Guide](https://stripe.com/docs/webhooks)
 - [Testing Stripe Integrations](https://stripe.com/docs/testing)
+- [Edge Function Patterns](edge-function-patterns.md)
 - [Checkout E2E Tests](../../tests/e2e/checkout-flow.spec.ts)
 - [Webhook E2E Tests](../../tests/e2e/webhook-handling.spec.ts)
 - [Pricing Configuration](../../packages/website/src/lib/pricing.ts)
