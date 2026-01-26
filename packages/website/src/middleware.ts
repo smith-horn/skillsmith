@@ -48,7 +48,6 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
 // Type augmentation for Astro locals
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace App {
     interface Locals {
       isProtectedRoute: boolean
