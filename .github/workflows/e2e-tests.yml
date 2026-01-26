@@ -281,7 +281,7 @@ jobs:
           path: |
             test-results/combined-*.json
             docs/testing/results/*.md
-          retention-days: 90
+          retention-days: 30
 
       - name: Post summary to PR
         if: github.event_name == 'pull_request'
@@ -360,7 +360,7 @@ jobs:
         with:
           name: performance-baselines
           path: test-results/combined-report.json
-          retention-days: 365
+          retention-days: 30
 
       - name: Create Linear issue for baselines
         run: |
