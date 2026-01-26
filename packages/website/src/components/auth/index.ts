@@ -11,4 +11,4 @@
 //   import LoginButton from '@/components/auth/LoginButton.astro'
 //   import UserMenu from '@/components/auth/UserMenu.astro'
 
-export {};
+export {}

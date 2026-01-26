@@ -178,7 +178,8 @@ export function formatIndexLocalResults(response: IndexLocalResponse): string {
     lines.push('')
   } else {
     for (const skill of response.skills) {
-      const quality = skill.qualityScore >= 80 ? '[HIGH]' : skill.qualityScore >= 50 ? '[MED]' : '[LOW]'
+      const quality =
+        skill.qualityScore >= 80 ? '[HIGH]' : skill.qualityScore >= 50 ? '[MED]' : '[LOW]'
       const skillMd = skill.hasSkillMd ? '' : ' (no SKILL.md)'
       lines.push(`  ${skill.name} ${quality} - Score: ${skill.qualityScore}/100${skillMd}`)
     }

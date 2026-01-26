@@ -138,10 +138,7 @@ describe('index_local Tool', () => {
     })
 
     it('should return empty array for non-existent directory', async () => {
-      const result = await executeIndexLocal(
-        { skillsDir: '/non/existent/path' },
-        context
-      )
+      const result = await executeIndexLocal({ skillsDir: '/non/existent/path' }, context)
 
       expect(result.count).toBe(0)
       expect(result.skills).toEqual([])
@@ -169,8 +166,20 @@ describe('index_local Tool', () => {
         count: 2,
         skillsDir: '/test/skills',
         skills: [
-          { id: 'local/skill-one', name: 'skill-one', qualityScore: 85, hasSkillMd: true, tagCount: 3 },
-          { id: 'local/skill-two', name: 'skill-two', qualityScore: 45, hasSkillMd: false, tagCount: 0 },
+          {
+            id: 'local/skill-one',
+            name: 'skill-one',
+            qualityScore: 85,
+            hasSkillMd: true,
+            tagCount: 3,
+          },
+          {
+            id: 'local/skill-two',
+            name: 'skill-two',
+            qualityScore: 45,
+            hasSkillMd: false,
+            tagCount: 0,
+          },
         ],
         timing: { indexMs: 10, totalMs: 15 },
         fromCache: false,
@@ -210,7 +219,9 @@ describe('index_local Tool', () => {
       const response: IndexLocalResponse = {
         count: 1,
         skillsDir: '/test/skills',
-        skills: [{ id: 'local/cached', name: 'cached', qualityScore: 70, hasSkillMd: true, tagCount: 1 }],
+        skills: [
+          { id: 'local/cached', name: 'cached', qualityScore: 70, hasSkillMd: true, tagCount: 1 },
+        ],
         timing: { indexMs: 1, totalMs: 2 },
         fromCache: true,
       }
@@ -224,7 +235,9 @@ describe('index_local Tool', () => {
       const response: IndexLocalResponse = {
         count: 1,
         skillsDir: '/test/skills',
-        skills: [{ id: 'local/medium', name: 'medium', qualityScore: 60, hasSkillMd: true, tagCount: 2 }],
+        skills: [
+          { id: 'local/medium', name: 'medium', qualityScore: 60, hasSkillMd: true, tagCount: 2 },
+        ],
         timing: { indexMs: 5, totalMs: 8 },
         fromCache: false,
       }
