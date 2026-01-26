@@ -3,6 +3,11 @@
 #
 # Schedule: Weekly on Sunday at 2 AM UTC
 # Manual trigger: workflow_dispatch
+#
+# Required secrets:
+#   - SUPABASE_URL
+#   - SUPABASE_SERVICE_ROLE_KEY
+#   - GITHUB_TOKEN (for 5,000 req/hr rate limit vs 60 req/hr anonymous)
 
 name: Batch Skill Transformation
 
@@ -51,6 +56,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 5,000 req/hr vs 60 req/hr anonymous
         run: |
           ARGS="--verbose"
 
