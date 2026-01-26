@@ -2,65 +2,57 @@
  * Astro Middleware
  *
  * SMI-1715: GitHub OAuth authentication
+ * SMI-1832: Extracted route logic for testability
  *
  * Handles authentication state for protected routes.
  * Note: Full auth validation is done client-side with Supabase.
  * This middleware adds helpers and basic redirect logic.
+ *
+ * TODO: E2E tests for auth flow (SMI-1832)
+ * - Test LoginButton initiates OAuth flow correctly
+ * - Test UserMenu shows user info when logged in
+ * - Test UserMenu dropdown menu appears on click
+ * - Test logout button redirects to home page
+ * - Test protected routes redirect unauthenticated users
+ * - Test auth routes redirect authenticated users to dashboard
+ * - Test cache headers are set correctly (use browser devtools assertions)
  */
 
-import { defineMiddleware } from 'astro:middleware';
-
-/**
- * Routes that require authentication.
- * Users visiting these routes without valid auth cookies
- * will be redirected to login (handled client-side).
- */
-const PROTECTED_ROUTES = ['/account', '/account/billing', '/account/subscription'];
-
-/**
- * Routes that should redirect to dashboard if already authenticated.
- * These are auth-related pages that don't make sense when logged in.
- */
-const AUTH_ROUTES = ['/login', '/signup'];
+import { defineMiddleware } from 'astro:middleware'
+import { isProtectedRoute, isAuthRoute, getAuthSecurityHeaders } from './middleware.utils'
 
 export const onRequest = defineMiddleware(async (context, next) => {
-  const { pathname } = context.url;
+  const { pathname } = context.url
 
-  // Add auth-related context for pages
-  // The actual auth state is managed client-side with Supabase JS
-  const isProtectedRoute = PROTECTED_ROUTES.some(
-    (route) => pathname === route || pathname.startsWith(`${route}/`)
-  );
-  const isAuthRoute = AUTH_ROUTES.includes(pathname);
+  // Check route type using extracted utility functions
+  const protectedRoute = isProtectedRoute(pathname)
+  const authRoute = isAuthRoute(pathname)
 
   // Store route info in locals for pages to access
-  context.locals.isProtectedRoute = isProtectedRoute;
-  context.locals.isAuthRoute = isAuthRoute;
+  context.locals.isProtectedRoute = protectedRoute
+  context.locals.isAuthRoute = authRoute
 
   // Continue to the next middleware or page
-  const response = await next();
+  const response = await next()
 
   // Add security headers for auth-related pages
-  if (isProtectedRoute || isAuthRoute) {
-    // Prevent caching of auth-related pages
-    response.headers.set(
-      'Cache-Control',
-      'private, no-cache, no-store, must-revalidate'
-    );
-    response.headers.set('Pragma', 'no-cache');
-    response.headers.set('Expires', '0');
+  if (protectedRoute || authRoute) {
+    const headers = getAuthSecurityHeaders()
+    for (const [key, value] of Object.entries(headers)) {
+      response.headers.set(key, value)
+    }
   }
 
-  return response;
-});
+  return response
+})
 
 // Type augmentation for Astro locals
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace App {
     interface Locals {
-      isProtectedRoute: boolean;
-      isAuthRoute: boolean;
+      isProtectedRoute: boolean
+      isAuthRoute: boolean
     }
   }
 }

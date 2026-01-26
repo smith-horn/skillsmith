@@ -12,6 +12,7 @@ import {
   resetLocalIndexer,
   type LocalSkill,
 } from '../indexer/LocalIndexer.js'
+import { parseFrontmatter } from '../indexer/FrontmatterParser.js'
 
 // Test fixtures directory
 let testSkillsDir: string
@@ -67,7 +68,6 @@ describe('LocalIndexer', () => {
 
   describe('parseFrontmatter', () => {
     it('should parse basic frontmatter fields', () => {
-      const indexer = new LocalIndexer(testSkillsDir)
       const content = `---
 name: test-skill
 description: A test skill for testing
@@ -77,7 +77,7 @@ version: 1.0.0
 
 # Test Skill`
 
-      const result = indexer.parseFrontmatter(content)
+      const result = parseFrontmatter(content)
 
       expect(result.name).toBe('test-skill')
       expect(result.description).toBe('A test skill for testing')
@@ -86,7 +86,6 @@ version: 1.0.0
     })
 
     it('should parse tags as array', () => {
-      const indexer = new LocalIndexer(testSkillsDir)
       const content = `---
 name: test-skill
 tags:
@@ -97,13 +96,12 @@ tags:
 
 # Test Skill`
 
-      const result = indexer.parseFrontmatter(content)
+      const result = parseFrontmatter(content)
 
       expect(result.tags).toEqual(['testing', 'development', 'automation'])
     })
 
     it('should parse inline array tags', () => {
-      const indexer = new LocalIndexer(testSkillsDir)
       const content = `---
 name: test-skill
 tags: [testing, development, automation]
@@ -111,16 +109,15 @@ tags: [testing, development, automation]
 
 # Test Skill`
 
-      const result = indexer.parseFrontmatter(content)
+      const result = parseFrontmatter(content)
 
       expect(result.tags).toEqual(['testing', 'development', 'automation'])
     })
 
     it('should handle missing frontmatter', () => {
-      const indexer = new LocalIndexer(testSkillsDir)
       const content = '# Test Skill\n\nNo frontmatter here.'
 
-      const result = indexer.parseFrontmatter(content)
+      const result = parseFrontmatter(content)
 
       expect(result.name).toBeNull()
       expect(result.description).toBeNull()
@@ -128,18 +125,16 @@ tags: [testing, development, automation]
     })
 
     it('should handle unclosed frontmatter', () => {
-      const indexer = new LocalIndexer(testSkillsDir)
       const content = `---
 name: test-skill
 # Missing closing delimiter`
 
-      const result = indexer.parseFrontmatter(content)
+      const result = parseFrontmatter(content)
 
       expect(result.name).toBeNull()
     })
 
     it('should handle quoted values', () => {
-      const indexer = new LocalIndexer(testSkillsDir)
       const content = `---
 name: "quoted-skill"
 description: 'Single quoted description'
@@ -147,7 +142,7 @@ description: 'Single quoted description'
 
 # Test`
 
-      const result = indexer.parseFrontmatter(content)
+      const result = parseFrontmatter(content)
 
       expect(result.name).toBe('quoted-skill')
       expect(result.description).toBe('Single quoted description')
