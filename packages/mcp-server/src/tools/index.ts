@@ -71,8 +71,4 @@ export {
   executeIndexLocal,
   formatIndexLocalResults,
 } from './index-local.js'
-export type {
-  IndexLocalInput,
-  IndexedSkillSummary,
-  IndexLocalResponse,
-} from './index-local.js'
+export type { IndexLocalInput, IndexedSkillSummary, IndexLocalResponse } from './index-local.js'

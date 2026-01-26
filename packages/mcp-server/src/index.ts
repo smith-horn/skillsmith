@@ -21,7 +21,11 @@ import { recommendToolSchema, recommendInputSchema, executeRecommend } from './t
 import { validateToolSchema, validateInputSchema, executeValidate } from './tools/validate.js'
 import { compareToolSchema, compareInputSchema, executeCompare } from './tools/compare.js'
 import { suggestToolSchema, suggestInputSchema, executeSuggest } from './tools/suggest.js'
-import { indexLocalToolSchema, indexLocalInputSchema, executeIndexLocal } from './tools/index-local.js'
+import {
+  indexLocalToolSchema,
+  indexLocalInputSchema,
+  executeIndexLocal,
+} from './tools/index-local.js'
 import {
   isFirstRun,
   markFirstRunComplete,

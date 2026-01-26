@@ -321,9 +321,7 @@ export function mergeSkillDatabases(
 // SMI-1452: Supabase Sync Utilities
 // ============================================================================
 
-export function getSyncStatus(
-  db: DatabaseType
-): Omit<
+export function getSyncStatus(db: DatabaseType): Omit<
   {
     connected: boolean
     lastSyncAt: string | null
