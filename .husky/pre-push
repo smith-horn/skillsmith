@@ -1,9 +1,11 @@
-# Pre-push hook: Uncommitted changes warning + Security checks
-# Issues: SMI-727, SMI-1342
+# Pre-push hook: Shift-left quality gates
+# Issues: SMI-727, SMI-1342, SMI-1835
 #
-# This hook runs two sets of checks before allowing a push to remote:
-#   1. Warns about uncommitted changes (SMI-1342) - prevents accidental loss
-#   2. Security checks (SMI-727) - prevents vulnerabilities in production
+# This hook runs quality checks before allowing a push to remote:
+#   1. Warns about uncommitted changes (SMI-1342)
+#   2. Security checks (SMI-727)
+#   3. Format check (SMI-1835) - catches Prettier issues before CI
+#   4. Coverage check (SMI-1602)
 #
 # Configuration:
 #   --no-verify  - Skip all hooks (use with caution): git push --no-verify
@@ -17,6 +19,10 @@
 #     - Security test suite (packages/core/tests/security/)
 #     - npm audit (high severity or above)
 #     - Hardcoded secrets pattern detection
+#   Phase 3 (SMI-1835): Format check
+#     - Prettier formatting across entire codebase
+#   Phase 4 (SMI-1602): Coverage check
+#     - Test coverage thresholds
 #
 # Exit codes:
 #   0 - All checks passed (or user confirmed)
@@ -40,17 +46,36 @@ if [ $SECURITY_STATUS -ne 0 ]; then
   exit 1
 fi
 
-# Phase 3: Coverage validation (SMI-1602 follow-up)
-# Catches coverage issues before code leaves local machine
-echo "🔍 Running pre-push coverage check..."
+# Phase 3: Format check (SMI-1835 follow-up)
+# Catches Prettier issues before they hit CI - shift left approach
+echo "🔍 Running pre-push format check..."
 
 # Check if Docker is available
 # SMI-1774: Use -w /app to support running from worktree directories
 if ! docker exec -w /app skillsmith-dev-1 echo "ok" > /dev/null 2>&1; then
-  echo "⚠️  Docker not running - skipping coverage check"
+  echo "⚠️  Docker not running - skipping format check"
   echo "   Run: docker compose --profile dev up -d"
   exit 0  # Don't block push, just warn
 fi
+
+# Run format check
+if docker exec -w /app skillsmith-dev-1 npm run format:check > /dev/null 2>&1; then
+  echo "✅ Format check passed"
+else
+  echo ""
+  echo "❌ Prettier formatting issues found!"
+  echo "   Run: docker exec skillsmith-dev-1 npm run format"
+  echo "   to auto-fix, then commit and push again"
+  echo ""
+  echo "   Bypass: git push --no-verify"
+  exit 1
+fi
+
+# Phase 4: Coverage validation (SMI-1602 follow-up)
+# Catches coverage issues before code leaves local machine
+echo "🔍 Running pre-push coverage check..."
+
+# Docker already confirmed available in Phase 3
 
 # Run coverage check (uses existing test:coverage script)
 # SMI-1774: Use -w /app to support running from worktree directories
