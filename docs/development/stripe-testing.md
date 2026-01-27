@@ -2,6 +2,12 @@
 
 This guide covers testing Stripe webhook integration using the Stripe CLI.
 
+> **Related Guides**:
+> - [Billing Portal Testing](stripe-billing-portal.md) - Portal session and cancellation flows
+> - [Troubleshooting](stripe-troubleshooting.md) - Known issues, Deno patterns, edge cases
+
+---
+
 ## Prerequisites
 
 ### Install Stripe CLI
@@ -165,42 +171,6 @@ SELECT * FROM payment_events ORDER BY created_at DESC LIMIT 5;
 
 ---
 
-## Troubleshooting
-
-### Webhook Not Received
-
-1. **Check `stripe listen` is running** - Ensure the CLI is actively forwarding
-2. **Verify endpoint URL** - Confirm the forward URL is correct
-3. **Check for errors** - The CLI displays HTTP responses
-
-### Signature Verification Failed
-
-- Ensure `STRIPE_WEBHOOK_SECRET` matches the secret from `stripe listen`
-- For production, use the webhook secret from the Stripe Dashboard
-
-### 400 Bad Request
-
-- Check the event payload is valid JSON
-- Verify the `stripe-signature` header is present
-- Ensure timestamp is within tolerance (default: 300 seconds)
-
-### Edge Function Not Invoked
-
-```bash
-# Check Supabase function logs
-supabase functions logs stripe-webhook
-```
-
-### Rate Limiting
-
-Stripe CLI respects rate limits. If testing rapidly, add delays between triggers:
-
-```bash
-stripe trigger checkout.session.completed && sleep 2 && stripe trigger customer.subscription.updated
-```
-
----
-
 ## CI/CD Integration
 
 For automated testing in CI, use Stripe's test mode API directly:
@@ -309,6 +279,7 @@ Before deploying payment page changes, verify:
 | `/functions/v1/checkout` | POST | Create Stripe checkout session |
 | `/functions/v1/stripe-webhook` | POST | Handle Stripe webhooks |
 | `/functions/v1/verify-subscription` | POST | Verify subscription status |
+| `/functions/v1/create-portal-session` | POST | Create billing portal session |
 
 ### Request Parameters
 
@@ -326,218 +297,13 @@ Before deploying payment page changes, verify:
 
 ---
 
-## Deno/Edge Function Patterns
-
-When running Stripe webhooks in Supabase Edge Functions (Deno runtime), use these patterns:
-
-### Signature Verification
-
-**Use `constructEventAsync`, NOT `constructEvent`:**
-
-```typescript
-// ❌ WRONG - Uses Node.js crypto (not available in Deno)
-event = stripe.webhooks.constructEvent(body, signature, secret)
-
-// ✅ CORRECT - Uses Web Crypto API (works in Deno)
-event = await stripe.webhooks.constructEventAsync(body, signature, secret)
-```
-
-The synchronous `constructEvent` relies on Node.js `crypto` module which isn't available in Deno. The async version uses the Web Crypto API.
-
-### Deployment Flags
-
-Stripe webhooks require anonymous access:
-
-```bash
-# ✅ CORRECT - Allow Stripe to call without authentication
-npx supabase functions deploy stripe-webhook --no-verify-jwt
-
-# ❌ WRONG - Stripe will get 401 Unauthorized
-npx supabase functions deploy stripe-webhook
-```
-
-### Error Handling
-
-See [Edge Function Patterns](edge-function-patterns.md) for Supabase query error handling.
-
----
-
-## Production Webhook Deployment Checklist
-
-When deploying or migrating webhook handlers:
-
-- [ ] **Deploy with `--no-verify-jwt`** - Webhooks need anonymous access
-- [ ] **Update webhook URL in Stripe Dashboard** - Developers → Webhooks → Edit endpoint
-- [ ] **Copy new signing secret** - Revealed after saving endpoint changes
-- [ ] **Set secret in Supabase** - `npx supabase secrets set STRIPE_WEBHOOK_SECRET=whsec_xxx`
-- [ ] **Test with resend** - Use Stripe Dashboard to resend a recent event
-- [ ] **Verify 200 response** - Check webhook attempt shows "Delivered"
-- [ ] **Update CLAUDE.md** - Document the endpoint in Edge Functions table
-
-### Webhook URL Format
-
-```
-https://<project-ref>.supabase.co/functions/v1/stripe-webhook
-```
-
-### Required Secrets
-
-| Secret | Purpose |
-|--------|---------|
-| `STRIPE_SECRET_KEY` | API authentication |
-| `STRIPE_WEBHOOK_SECRET` | Signature verification (starts with `whsec_`) |
-
----
-
-## Known Issues
-
-### Test Mode Webhook Signature Verification (SMI-1845)
-
-**Status:** Under Investigation
-
-Stripe webhook signature verification fails consistently in **test mode** when using Supabase Edge Functions (Deno runtime). The webhook endpoint is reachable but `stripe.webhooks.constructEventAsync()` never successfully verifies the signature.
-
-**Symptoms:**
-- Stripe events show `pending_webhooks: 1` indefinitely
-- No webhook processing occurs
-- Direct POST to endpoint returns correct errors (400 for missing signature)
-- **Live mode webhooks work correctly**
-
-**Workarounds:**
-
-1. **Use Stripe CLI for local development** (recommended):
-   ```bash
-   stripe listen --forward-to http://localhost:54321/functions/v1/stripe-webhook
-   ```
-
-2. **Use live mode for production testing** - Live mode webhooks process correctly
-
-3. **Manual verification** - Create subscriptions manually in database for E2E testing
-
-**Investigation Notes:**
-- Multiple fresh webhook endpoints tested with new secrets
-- Secrets verified to match between Stripe and Supabase
-- Function redeployed multiple times
-- Endpoint confirmed reachable
-- Potentially a Deno/Edge runtime incompatibility with Stripe's crypto signature verification
-
-**Tracking:** [SMI-1845](https://linear.app/smith-horn-group/issue/SMI-1845)
-
----
-
-## Test Mode vs Live Mode Configuration
-
-| Setting | Test Mode | Live Mode |
-|---------|-----------|-----------|
-| API Key prefix | `sk_test_` | `sk_live_` |
-| Webhook secret prefix | `whsec_` | `whsec_` |
-| Price IDs | Different | Different |
-| Webhook delivery | ⚠️ Signature fails | ✅ Works |
-
-**Important:** Test and live mode use completely separate:
-- API keys
-- Webhook endpoints and secrets
-- Products and prices
-- Customer data
-
-When switching modes, update ALL of these in Supabase secrets:
-```bash
-npx supabase secrets set \
-  STRIPE_SECRET_KEY=sk_test_xxx \
-  STRIPE_WEBHOOK_SECRET=whsec_xxx \
-  STRIPE_PRICE_INDIVIDUAL_MONTHLY=price_xxx \
-  STRIPE_PRICE_INDIVIDUAL_ANNUAL=price_xxx \
-  STRIPE_PRICE_TEAM_MONTHLY=price_xxx \
-  STRIPE_PRICE_TEAM_ANNUAL=price_xxx \
-  STRIPE_PRICE_ENTERPRISE_MONTHLY=price_xxx \
-  STRIPE_PRICE_ENTERPRISE_ANNUAL=price_xxx \
-  --project-ref <your-project-ref>
-```
-
----
-
-## Billing Portal Session Testing
-
-### Portal Session E2E Tests
-
-The portal session tests verify subscription management via Stripe's billing portal:
-
-```bash
-# Run portal session tests
-docker exec skillsmith-dev-1 npx vitest run tests/e2e/portal-session.test.ts
-```
-
-### Test Scenarios
-
-| Scenario | Expected Result |
-|----------|-----------------|
-| Active subscription | Portal access granted |
-| Canceled subscription | Portal access granted (customer still exists) |
-| No subscription | Clear error message |
-| Missing stripe_customer_id | Appropriate error handling |
-| Multiple subscriptions | Uses most recent |
-
-### Cancellation Flow Testing
-
-To test subscription cancellation end-to-end:
-
-1. **Create subscription via checkout**
-   ```bash
-   # Navigate to signup page and complete checkout
-   open https://www.skillsmith.app/signup?tier=individual
-   # Use test card: 4242 4242 4242 4242
-   ```
-
-2. **Access billing portal**
-   ```bash
-   # Create portal session via API (requires auth)
-   varlock run -- bash -c 'curl -X POST \
-     -H "Authorization: Bearer $USER_JWT" \
-     "$SUPABASE_URL/functions/v1/create-portal-session"'
-   ```
-
-3. **Cancel via portal**
-   - Click "Cancel subscription" in Stripe billing portal
-   - Confirm cancellation
-   - Portal shows "Cancels [date]" badge
-
-4. **Verify database state**
-   ```bash
-   # Check subscription status updated
-   varlock run -- bash -c 'curl -s "$SUPABASE_URL/rest/v1/subscriptions?user_id=eq.<user-id>" \
-     -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-     -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY"' | jq .
-   ```
-
-### Portal Session Error Handling
-
-The `create-portal-session` function handles these edge cases:
-
-| Error | HTTP Status | User Message |
-|-------|-------------|--------------|
-| No subscription found | 404 | "No billing account found" |
-| Stripe customer deleted | 404 | "Your billing account could not be found" |
-| Portal not configured | 500 | "Billing portal configuration error" |
-| API key missing permission | 500 | "Permission error" |
-
-### Required Stripe API Key Permissions
-
-For billing portal functionality, the restricted API key needs:
-
-| Permission | Scope |
-|------------|-------|
-| `rak_customer_portal_write` | Customer portal sessions |
-| `rak_checkout_sessions_write` | Checkout session creation |
-| `rak_customers_read` | Customer data access |
-| `rak_subscriptions_read` | Subscription data access |
-
----
-
 ## Related Documentation
 
 - [Stripe CLI Documentation](https://stripe.com/docs/stripe-cli)
 - [Stripe Webhooks Guide](https://stripe.com/docs/webhooks)
 - [Testing Stripe Integrations](https://stripe.com/docs/testing)
+- [Billing Portal Testing](stripe-billing-portal.md)
+- [Troubleshooting & Edge Cases](stripe-troubleshooting.md)
 - [Edge Function Patterns](edge-function-patterns.md)
 - [Checkout E2E Tests](../../tests/e2e/checkout-flow.spec.ts)
 - [Webhook E2E Tests](../../tests/e2e/webhook-handling.spec.ts)
