@@ -20,14 +20,7 @@ import {
   buildCorsHeaders,
 } from '../_shared/cors.ts'
 
-import {
-  checkRateLimit,
-  createRateLimitHeaders,
-  rateLimitExceededResponse,
-} from '../_shared/rate-limiter.ts'
-
-import { authenticateRequest, type AuthResult } from '../_shared/api-key-auth.ts'
-import { checkTrialLimit, trialExceededResponse } from '../_shared/trial-limiter.ts'
+import { runAuthMiddleware, addAuthHeaders } from '../_shared/auth-middleware.ts'
 
 import {
   createSupabaseClient,
@@ -112,23 +105,10 @@ Deno.serve(async (req: Request) => {
   const origin = req.headers.get('origin')
   logInvocation('skills-recommend', requestId)
 
-  // Check for API key authentication first
-  const authResult: AuthResult = await authenticateRequest(req)
-
-  // If not authenticated, check trial limit
-  let trialRemaining: number | undefined
-  if (!authResult.authenticated) {
-    const trialResult = await checkTrialLimit(req)
-    if (!trialResult.allowed) {
-      return trialExceededResponse(trialResult, origin)
-    }
-    trialRemaining = trialResult.remaining
-  }
-
-  // Check rate limit
-  const rateLimitResult = await checkRateLimit('skills-recommend', req)
-  if (!rateLimitResult.success) {
-    return rateLimitExceededResponse(rateLimitResult, buildCorsHeaders(origin))
+  // SMI-54: Use consolidated auth middleware
+  const middlewareResult = await runAuthMiddleware(req, 'skills-recommend', origin)
+  if (middlewareResult.earlyResponse) {
+    return middlewareResult.earlyResponse
   }
 
   try {
@@ -237,23 +217,15 @@ Deno.serve(async (req: Request) => {
       },
     })
 
-    // Add rate limit, CORS, and request ID headers
+    // Add CORS, auth, and rate limit headers
     const headers = new Headers(response.headers)
-    Object.entries(createRateLimitHeaders(rateLimitResult)).forEach(([key, value]) => {
-      headers.set(key, value)
-    })
     Object.entries(buildCorsHeaders(origin)).forEach(([key, value]) => {
       headers.set(key, value)
     })
     headers.set('X-Request-ID', requestId)
 
-    // Add auth-related headers
-    if (authResult.authenticated) {
-      headers.set('X-Authenticated', 'true')
-      headers.set('X-Tier', authResult.tier || 'community')
-    } else if (trialRemaining !== undefined) {
-      headers.set('X-Trial-Remaining', String(trialRemaining))
-    }
+    // SMI-54: Use consolidated header helper
+    addAuthHeaders(headers, middlewareResult)
 
     return new Response(response.body, {
       status: response.status,

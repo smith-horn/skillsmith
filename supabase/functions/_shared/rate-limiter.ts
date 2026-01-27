@@ -66,6 +66,17 @@ export interface RateLimitResult {
 }
 
 /**
+ * Options for tier-aware rate limiting
+ * SMI-55: Support authenticated user rate limits
+ */
+export interface RateLimitOptions {
+  /** Override rate limit based on user tier */
+  customLimit?: number
+  /** API key prefix for tracking by key instead of IP */
+  keyPrefix?: string
+}
+
+/**
  * Default rate limits per endpoint
  *
  * SMI-1613: Tightened rate limits for anti-scraping protection
@@ -104,19 +115,30 @@ function createRedisClient(): Redis | null {
 
 /**
  * Create rate limiter for an endpoint
+ * SMI-55: Updated to accept config for tier-aware rate limiting
+ *
  * @param endpoint - Endpoint name (e.g., 'skills-search')
+ * @param config - Rate limit configuration
+ * @param keyPrefix - Optional API key prefix for authenticated user tracking
  * @returns Ratelimit instance or null if Redis not configured
  */
-function createRateLimiter(endpoint: string): Ratelimit | null {
+function createRateLimiter(
+  endpoint: string,
+  config: RateLimitConfig,
+  keyPrefix?: string
+): Ratelimit | null {
   const redis = createRedisClient()
   if (!redis) return null
 
-  const config = RATE_LIMITS[endpoint] || { requests: 100, windowSeconds: 60 }
+  // SMI-55: Use different prefix for API key vs IP tracking
+  const prefix = keyPrefix
+    ? `skillsmith:ratelimit:${endpoint}:key`
+    : `skillsmith:ratelimit:${endpoint}`
 
   return new Ratelimit({
     redis,
     limiter: Ratelimit.slidingWindow(config.requests, `${config.windowSeconds}s`),
-    prefix: `skillsmith:ratelimit:${endpoint}`,
+    prefix,
     analytics: true,
   })
 }
@@ -322,13 +344,30 @@ export function isUsingFailClosedMode(): boolean {
  * - RATE_LIMIT_FAIL_CLOSED=true: Reject all requests (fail-closed)
  * - RATE_LIMIT_FAIL_CLOSED=false or not set: Use in-memory fallback
  *
+ * SMI-55: Tier-aware rate limiting
+ * - Pass options.customLimit to override the default rate limit for a tier
+ * - Pass options.keyPrefix to track by API key instead of IP (prevents NAT issues)
+ *
  * @param endpoint - Endpoint name
  * @param req - Request object
+ * @param options - Optional tier-aware rate limit options
  * @returns Rate limit result
  */
-export async function checkRateLimit(endpoint: string, req: Request): Promise<RateLimitResult> {
-  const config = RATE_LIMITS[endpoint] || { requests: 100, windowSeconds: 60 }
-  const identifier = getClientIdentifier(req)
+export async function checkRateLimit(
+  endpoint: string,
+  req: Request,
+  options?: RateLimitOptions
+): Promise<RateLimitResult> {
+  const baseConfig = RATE_LIMITS[endpoint] || { requests: 100, windowSeconds: 60 }
+
+  // SMI-55: Apply tier-specific rate limit if provided
+  const config: RateLimitConfig = options?.customLimit
+    ? { ...baseConfig, requests: options.customLimit }
+    : baseConfig
+
+  // SMI-55: Use API key prefix for authenticated users, IP for anonymous
+  const identifier = options?.keyPrefix ? `apikey:${options.keyPrefix}` : getClientIdentifier(req)
+
   const failClosed = isFailClosedMode()
 
   // If Redis is not configured, use fallback strategy
@@ -342,7 +381,8 @@ export async function checkRateLimit(endpoint: string, req: Request): Promise<Ra
     return checkInMemoryLimit(endpoint, identifier, config)
   }
 
-  const rateLimiter = createRateLimiter(endpoint)
+  // SMI-55: Pass config and keyPrefix to rate limiter
+  const rateLimiter = createRateLimiter(endpoint, config, options?.keyPrefix)
   if (!rateLimiter) {
     // Rate limiter creation failed, use fallback strategy
     console.error('Failed to create rate limiter, using fallback strategy')
