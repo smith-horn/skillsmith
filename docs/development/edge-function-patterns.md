@@ -221,6 +221,90 @@ if (!secret) {
 
 ---
 
+## Testing Edge Functions with Vitest
+
+### The Module-Load-Time Problem
+
+Edge Functions often access `Deno.env.get()` at module load time (via IIFE or top-level code):
+
+```typescript
+// In trial-limiter.ts
+const TRIAL_SALT = (() => {
+  const salt = Deno.env.get('TRIAL_SALT')  // Runs at import time!
+  if (!salt) console.warn('TRIAL_SALT not set')
+  return salt || 'default'
+})()
+```
+
+**Problem:** Standard Vitest mocking (`vi.stubGlobal` in `beforeAll`) runs *after* the module loads, so `Deno` is undefined when the IIFE executes.
+
+### Solution: `vi.hoisted()`
+
+Use `vi.hoisted()` to stub globals *before* any imports:
+
+```typescript
+// ✅ CORRECT - Stub runs before module loads
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+const { mockRpc } = vi.hoisted(() => {
+  // This runs BEFORE any imports
+  const mockGet = (key: string) => {
+    if (key === 'TRIAL_SALT') return 'test-salt'
+    return undefined
+  }
+  ;(globalThis as Record<string, unknown>).Deno = {
+    env: { get: mockGet },
+  }
+  return { mockRpc: vi.fn() }
+})
+
+// Mock dependencies with factory functions
+vi.mock('./supabase.ts', () => ({
+  createSupabaseAdminClient: () => ({ rpc: mockRpc }),
+}))
+
+// NOW import the module under test
+import { checkTrialLimit } from './trial-limiter.ts'
+
+describe('checkTrialLimit', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('should check trial limit', async () => {
+    mockRpc.mockResolvedValue({
+      data: [{ allowed: true, used: 1, remaining: 9 }],
+      error: null,
+    })
+
+    const req = new Request('https://example.com')
+    const result = await checkTrialLimit(req)
+
+    expect(result.allowed).toBe(true)
+  })
+})
+```
+
+### Why Other Approaches Fail
+
+| Approach | Why It Fails |
+|----------|--------------|
+| `vi.stubGlobal('Deno', ...)` in `beforeAll` | Runs after module loads |
+| `vi.mock` with inline Deno stub | Mock factory runs after imports |
+| Dynamic `import()` in each test | Verbose, cache issues |
+
+### Pattern Summary
+
+1. **Use `vi.hoisted()`** for Deno global stub
+2. **Return mock functions** from the hoisted block for later access
+3. **Use factory functions** in `vi.mock()` calls
+4. **Import module under test** after all mocks are set up
+5. **Clear mocks** in `beforeEach`
+
+**Reference:** SMI-1872, SMI-1874 - Auth module unit tests
+
+---
+
 ## Related Documentation
 
 - [Supabase Edge Functions Guide](https://supabase.com/docs/guides/functions)
