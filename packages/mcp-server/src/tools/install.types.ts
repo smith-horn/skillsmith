@@ -95,6 +95,61 @@ export const TRUST_TIER_SCANNER_OPTIONS: Record<TrustTier, ScannerOptions> = {
 // Input/Output Schemas
 // ============================================================================
 
+// ============================================================================
+// Conflict Resolution Types (SMI-1864)
+// ============================================================================
+
+/**
+ * SMI-1864: Action to take when a conflict is detected during skill update
+ */
+export type ConflictAction = 'overwrite' | 'merge' | 'cancel'
+
+/**
+ * SMI-1864: Information about detected conflicts during skill update
+ */
+export interface ConflictInfo {
+  /** Whether the local skill has been modified since installation */
+  hasLocalModifications: boolean
+  /** SHA-256 hash of the current local content */
+  localHash: string
+  /** SHA-256 hash of the upstream (new) content */
+  upstreamHash: string
+  /** SHA-256 hash of the original content at install time */
+  originalHash: string
+  /** List of files that have been modified */
+  modifiedFiles: string[]
+}
+
+/**
+ * SMI-1864: Represents a specific conflict within a file during merge
+ */
+export interface MergeConflict {
+  /** Line number where the conflict starts */
+  lineNumber: number
+  /** Local (user-modified) content */
+  local: string
+  /** Upstream (new version) content */
+  upstream: string
+  /** Base (original) content for three-way merge */
+  base: string
+}
+
+/**
+ * SMI-1864: Result of attempting to merge local and upstream changes
+ */
+export interface MergeResult {
+  /** Whether the merge was successful without conflicts */
+  success: boolean
+  /** The merged content if successful */
+  merged?: string
+  /** List of conflicts that require manual resolution */
+  conflicts?: MergeConflict[]
+}
+
+// ============================================================================
+// Input/Output Schemas
+// ============================================================================
+
 /** Input schema for install tool */
 export const installInputSchema = z.object({
   skillId: z.string().min(1).describe('Skill ID or GitHub URL'),
@@ -102,6 +157,11 @@ export const installInputSchema = z.object({
   skipScan: z.boolean().default(false).describe('Skip security scan (not recommended)'),
   /** SMI-1788: Skip optimization transformation */
   skipOptimize: z.boolean().default(false).describe('Skip Skillsmith optimization'),
+  /** SMI-1864: Action to take when a conflict is detected during update */
+  conflictAction: z
+    .enum(['overwrite', 'merge', 'cancel'])
+    .optional()
+    .describe('Action to take on conflict: overwrite local, merge changes, or cancel'),
 })
 
 export type InstallInput = z.infer<typeof installInputSchema>
@@ -118,6 +178,12 @@ export interface InstallResult {
   trustTier?: TrustTier
   /** SMI-1788: Optimization info (Skillsmith Optimization Layer) */
   optimization?: OptimizationInfo
+  /** SMI-1864: Conflict information when updating an existing skill */
+  conflict?: ConflictInfo
+  /** SMI-1864: Result of merge operation if conflictAction was 'merge' */
+  mergeResult?: MergeResult
+  /** SMI-1864: Available actions when a conflict requires user decision */
+  requiresAction?: ConflictAction[]
 }
 
 /** Optimization info included in install result */
@@ -150,20 +216,24 @@ export const MANIFEST_PATH = path.join(SKILLSMITH_DIR, 'manifest.json')
 // Manifest Types
 // ============================================================================
 
+/**
+ * SMI-1864: Entry for a single installed skill in the manifest
+ */
+export interface SkillManifestEntry {
+  id: string
+  name: string
+  version: string
+  source: string
+  installPath: string
+  installedAt: string
+  lastUpdated: string
+  /** SMI-1864: SHA-256 hash of SKILL.md at install time for modification detection */
+  originalContentHash?: string
+}
+
 export interface SkillManifest {
   version: string
-  installedSkills: Record<
-    string,
-    {
-      id: string
-      name: string
-      version: string
-      source: string
-      installPath: string
-      installedAt: string
-      lastUpdated: string
-    }
-  >
+  installedSkills: Record<string, SkillManifestEntry>
 }
 
 /** Parsed skill ID components */
