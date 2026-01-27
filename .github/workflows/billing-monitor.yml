@@ -26,7 +26,7 @@ env:
   # Free tier: 2000 minutes/month, 500MB packages
   # Current org settings: $20 each for Actions and Packages
   FAILURE_RATE_THRESHOLD: 20 # Percent - trigger warning if failure rate exceeds
-  ARTIFACT_COUNT_THRESHOLD: 50 # Count - trigger warning if artifact count exceeds
+  ARTIFACT_COUNT_THRESHOLD: 1000 # Count - realistic threshold for active CI (was 50)
   CACHE_SIZE_MB_THRESHOLD: 5000 # MB - trigger warning if cache size exceeds
 
 jobs:
