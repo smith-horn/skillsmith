@@ -4,6 +4,7 @@
  *
  * SMI-1177: Stripe webhook handlers
  * SMI-1164: License key delivery after payment
+ * SMI-1836: E2E testing verified
  *
  * Handles:
  * - checkout.session.completed: Create subscription and generate license key

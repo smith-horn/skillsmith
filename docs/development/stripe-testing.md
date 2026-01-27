@@ -389,6 +389,73 @@ https://<project-ref>.supabase.co/functions/v1/stripe-webhook
 
 ---
 
+## Known Issues
+
+### Test Mode Webhook Signature Verification (SMI-1845)
+
+**Status:** Under Investigation
+
+Stripe webhook signature verification fails consistently in **test mode** when using Supabase Edge Functions (Deno runtime). The webhook endpoint is reachable but `stripe.webhooks.constructEventAsync()` never successfully verifies the signature.
+
+**Symptoms:**
+- Stripe events show `pending_webhooks: 1` indefinitely
+- No webhook processing occurs
+- Direct POST to endpoint returns correct errors (400 for missing signature)
+- **Live mode webhooks work correctly**
+
+**Workarounds:**
+
+1. **Use Stripe CLI for local development** (recommended):
+   ```bash
+   stripe listen --forward-to http://localhost:54321/functions/v1/stripe-webhook
+   ```
+
+2. **Use live mode for production testing** - Live mode webhooks process correctly
+
+3. **Manual verification** - Create subscriptions manually in database for E2E testing
+
+**Investigation Notes:**
+- Multiple fresh webhook endpoints tested with new secrets
+- Secrets verified to match between Stripe and Supabase
+- Function redeployed multiple times
+- Endpoint confirmed reachable
+- Potentially a Deno/Edge runtime incompatibility with Stripe's crypto signature verification
+
+**Tracking:** [SMI-1845](https://linear.app/smith-horn-group/issue/SMI-1845)
+
+---
+
+## Test Mode vs Live Mode Configuration
+
+| Setting | Test Mode | Live Mode |
+|---------|-----------|-----------|
+| API Key prefix | `sk_test_` | `sk_live_` |
+| Webhook secret prefix | `whsec_` | `whsec_` |
+| Price IDs | Different | Different |
+| Webhook delivery | ⚠️ Signature fails | ✅ Works |
+
+**Important:** Test and live mode use completely separate:
+- API keys
+- Webhook endpoints and secrets
+- Products and prices
+- Customer data
+
+When switching modes, update ALL of these in Supabase secrets:
+```bash
+npx supabase secrets set \
+  STRIPE_SECRET_KEY=sk_test_xxx \
+  STRIPE_WEBHOOK_SECRET=whsec_xxx \
+  STRIPE_PRICE_INDIVIDUAL_MONTHLY=price_xxx \
+  STRIPE_PRICE_INDIVIDUAL_ANNUAL=price_xxx \
+  STRIPE_PRICE_TEAM_MONTHLY=price_xxx \
+  STRIPE_PRICE_TEAM_ANNUAL=price_xxx \
+  STRIPE_PRICE_ENTERPRISE_MONTHLY=price_xxx \
+  STRIPE_PRICE_ENTERPRISE_ANNUAL=price_xxx \
+  --project-ref <your-project-ref>
+```
+
+---
+
 ## Related Documentation
 
 - [Stripe CLI Documentation](https://stripe.com/docs/stripe-cli)
