@@ -123,6 +123,8 @@ export interface ApiClientConfig {
   baseUrl?: string
   /** Supabase anon key for authentication */
   anonKey?: string
+  /** API key for authenticated requests (X-API-Key header) */
+  apiKey?: string
   /** Request timeout in ms (default 30000) */
   timeout?: number
   /** Max retry attempts (default 3) */
@@ -153,6 +155,7 @@ export interface ApiClientConfig {
 export class SkillsmithApiClient {
   private baseUrl: string
   private anonKey: string | undefined
+  private apiKey: string | undefined
   private timeout: number
   private maxRetries: number
   private debug: boolean
@@ -168,6 +171,7 @@ export class SkillsmithApiClient {
 
     this.baseUrl = baseUrl || 'offline://not-configured'
     this.anonKey = config.anonKey || process.env.SUPABASE_ANON_KEY
+    this.apiKey = config.apiKey || process.env.SKILLSMITH_API_KEY
     this.timeout = config.timeout ?? 30000
     this.maxRetries = config.maxRetries ?? 3
     this.debug = config.debug ?? false
@@ -212,6 +216,7 @@ export class SkillsmithApiClient {
           ...options,
           headers: {
             ...buildRequestHeaders(this.anonKey),
+            ...(this.apiKey && { 'X-API-Key': this.apiKey }),
             ...options.headers,
           },
           signal: controller.signal,

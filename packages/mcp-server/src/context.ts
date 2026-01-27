@@ -20,7 +20,7 @@
 
 import { homedir } from 'os'
 import { join, dirname } from 'path'
-import { mkdirSync, existsSync } from 'fs'
+import { mkdirSync, existsSync, readFileSync } from 'fs'
 import type { Database as DatabaseType } from 'better-sqlite3'
 import {
   createDatabase,
@@ -113,6 +113,12 @@ export interface ToolContextOptions {
   /** API client configuration (SMI-1183) */
   apiClientConfig?: ApiClientConfig
   /**
+   * API key for authenticated requests
+   * Can also be set via SKILLSMITH_API_KEY env var
+   * SMI-XXXX: API Key Authentication
+   */
+  apiKey?: string
+  /**
    * Telemetry configuration (SMI-1184)
    * Privacy-first: telemetry is OPT-IN and disabled by default
    */
@@ -171,6 +177,28 @@ function ensureDbDirectory(dbPath: string): void {
   const dir = dirname(dbPath)
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true })
+  }
+}
+
+/**
+ * Load API key from ~/.skillsmith/config.json
+ * SMI-XXXX: API Key Authentication
+ * @returns API key or undefined if not found
+ */
+function loadApiKeyFromConfig(): string | undefined {
+  const configPath = join(homedir(), '.skillsmith', 'config.json')
+
+  if (!existsSync(configPath)) {
+    return undefined
+  }
+
+  try {
+    const configData = readFileSync(configPath, 'utf-8')
+    const config = JSON.parse(configData) as { apiKey?: string }
+    return config.apiKey
+  } catch {
+    // Silently ignore parse errors
+    return undefined
   }
 }
 
@@ -241,11 +269,15 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
 
   const skillRepository = new SkillRepository(db)
 
+  // SMI-XXXX: Get API key from options, env, or config file
+  const apiKey = options.apiKey || process.env.SKILLSMITH_API_KEY || loadApiKeyFromConfig()
+
   // SMI-1183: Initialize API client with configuration
   // API is primary data source; local DB is fallback
   const apiClient = new SkillsmithApiClient({
     baseUrl: options.apiClientConfig?.baseUrl,
     anonKey: options.apiClientConfig?.anonKey,
+    apiKey,
     timeout: options.apiClientConfig?.timeout ?? 10000, // 10s default
     maxRetries: options.apiClientConfig?.maxRetries ?? 3,
     debug: options.apiClientConfig?.debug,

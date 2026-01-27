@@ -420,3 +420,128 @@ export function safeFormatError(error: unknown): MCPErrorResponse {
 
   return formatGenericError(new Error(String(error)))
 }
+
+// ============================================================================
+// API Authentication Errors (SMI-XXXX)
+// ============================================================================
+
+/**
+ * Details from a 401 API authentication error
+ */
+export interface ApiAuthErrorDetails {
+  reason?: string
+  signupUrl?: string
+  docsUrl?: string
+  hint?: string
+  trialUsed?: number
+  trialLimit?: number
+}
+
+/**
+ * Format a 401 authentication error for MCP display
+ * Provides user-friendly instructions for getting an API key
+ *
+ * @param details - Error details from the API response
+ * @returns MCP-formatted error response with signup instructions
+ */
+export function formatAuthenticationError(details: ApiAuthErrorDetails = {}): MCPErrorResponse {
+  const signupUrl = details.signupUrl || 'https://skillsmith.app/signup'
+  const docsUrl = details.docsUrl || 'https://skillsmith.app/docs/getting-started#api-key'
+  const trialInfo =
+    details.trialUsed !== undefined && details.trialLimit !== undefined
+      ? `\n\n📊 **Trial Usage**: ${details.trialUsed}/${details.trialLimit} free requests used`
+      : ''
+
+  const message = `🔐 **Authentication Required**
+
+${details.reason || 'API key required for this request.'}
+
+**Get Started (Free - 1,000 requests/month):**
+1. Create account: ${signupUrl}
+2. Your API key will be generated automatically
+3. Add to your Claude settings:
+
+\`\`\`json
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "your_key_here"
+      }
+    }
+  }
+}
+\`\`\`${trialInfo}
+
+[Documentation](${docsUrl})
+`
+
+  return {
+    content: [
+      {
+        type: 'text',
+        text: message,
+      },
+    ],
+    isError: true,
+    _meta: {
+      errorCode: 'AUTHENTICATION_REQUIRED',
+      recoverable: true,
+      upgradeUrl: signupUrl,
+    },
+  }
+}
+
+/**
+ * Check if an API error is an authentication error (401)
+ */
+export function isAuthenticationError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false
+  }
+
+  const e = error as Record<string, unknown>
+
+  // Check for status code
+  if (e.statusCode === 401 || e.status === 401) {
+    return true
+  }
+
+  // Check for error message patterns
+  if (typeof e.message === 'string') {
+    const msg = e.message.toLowerCase()
+    if (msg.includes('authentication required') || msg.includes('free trial exhausted')) {
+      return true
+    }
+  }
+
+  // Check for error field
+  if (typeof e.error === 'string') {
+    const err = e.error.toLowerCase()
+    if (err.includes('authentication required')) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * Extract authentication error details from an API error response
+ */
+export function extractAuthErrorDetails(error: unknown): ApiAuthErrorDetails {
+  if (!error || typeof error !== 'object') {
+    return {}
+  }
+
+  const e = error as Record<string, unknown>
+
+  // Check for details object
+  if (e.details && typeof e.details === 'object') {
+    return e.details as ApiAuthErrorDetails
+  }
+
+  return {}
+}
