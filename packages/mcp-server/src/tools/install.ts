@@ -28,9 +28,6 @@ import {
   type InstallInput,
   type InstallResult,
   type OptimizationInfo,
-  type ConflictInfo,
-  type ConflictAction,
-  type SkillManifestEntry,
 } from './install.types.js'
 
 // Import helpers
@@ -43,17 +40,12 @@ import {
   fetchFromGitHub,
   validateSkillMd,
   generateOptimizedTips,
-  // SMI-1867: Conflict resolution helpers
   hashContent,
-  detectModifications,
-  createSkillBackup,
   storeOriginal,
-  loadOriginal,
-  cleanupOldBackups,
 } from './install.helpers.js'
 
-// SMI-1867: Three-way merge for conflict resolution
-import { threeWayMerge } from './merge.js'
+// SMI-1867: Conflict resolution logic (extracted per governance review)
+import { checkForConflicts, handleMergeAction } from './install.conflict.js'
 
 // Re-export only public API types (SMI-1718: trimmed internal exports)
 export { installInputSchema, type InstallInput, type InstallResult } from './install.types.js'
@@ -157,59 +149,19 @@ export async function installSkill(
     // SMI-1867: Check for local modifications on reinstall
     let backupPath: string | undefined
     if (manifest.installedSkills[skillName] && input.force) {
-      const existingEntry = manifest.installedSkills[skillName] as SkillManifestEntry
+      const conflictCheck = await checkForConflicts(
+        skillName,
+        installPath,
+        manifest,
+        input.conflictAction,
+        input.skillId
+      )
 
-      if (existingEntry.originalContentHash) {
-        const modResult = await detectModifications(installPath, existingEntry.originalContentHash)
-
-        if (modResult.modified) {
-          // Skill has local modifications - need conflictAction
-          if (!input.conflictAction) {
-            // Return conflict info, require user to choose action
-            const conflictInfo: ConflictInfo = {
-              hasLocalModifications: true,
-              localHash: modResult.currentHash,
-              upstreamHash: '', // Will be set after fetching upstream
-              originalHash: modResult.originalHash,
-              modifiedFiles: ['SKILL.md'],
-            }
-
-            return {
-              success: false,
-              skillId: input.skillId,
-              installPath,
-              conflict: conflictInfo,
-              requiresAction: ['overwrite', 'merge', 'cancel'] as ConflictAction[],
-              tips: [
-                'Skill "' + skillName + '" has local modifications.',
-                'Choose an action:',
-                '  - overwrite: Backup local changes, replace with new version',
-                '  - merge: Attempt three-way merge preserving your changes',
-                '  - cancel: Abort installation',
-              ],
-            }
-          }
-
-          // Handle conflictAction
-          if (input.conflictAction === 'cancel') {
-            return {
-              success: false,
-              skillId: input.skillId,
-              installPath,
-              error: 'Installation cancelled by user',
-            }
-          }
-
-          if (input.conflictAction === 'overwrite') {
-            // Create backup before overwriting
-            backupPath = await createSkillBackup(skillName, installPath, 'pre-update')
-            await cleanupOldBackups(skillName, 3)
-            // Continue with normal install flow, backup is created
-          }
-
-          // 'merge' action is handled after fetching upstream content (below)
-        }
+      if (!conflictCheck.shouldProceed) {
+        return conflictCheck.earlyReturn!
       }
+
+      backupPath = conflictCheck.backupPath
     }
 
     // Determine files to fetch
@@ -244,76 +196,25 @@ export async function installSkill(
 
     // SMI-1867: Handle merge action for conflict resolution
     if (input.conflictAction === 'merge') {
-      const existingEntry = manifest.installedSkills[skillName] as SkillManifestEntry
+      const mergeOp = await handleMergeAction(
+        skillName,
+        installPath,
+        skillMdContent,
+        manifest,
+        owner,
+        repo,
+        input.skillId
+      )
 
-      // Load original and current content
-      const originalContent = await loadOriginal(skillName)
-      let currentContent: string
-      try {
-        currentContent = await fs.readFile(path.join(installPath, 'SKILL.md'), 'utf-8')
-      } catch {
-        currentContent = '' // File deleted, treat as empty
+      if (!mergeOp.shouldProceed) {
+        return mergeOp.earlyReturn!
       }
 
-      if (originalContent) {
-        const mergeResult = threeWayMerge(originalContent, currentContent, skillMdContent)
-
-        if (mergeResult.success) {
-          // Clean merge - use merged content
-          skillMdContent = mergeResult.merged!
-        } else {
-          // Merge has conflicts - write with conflict markers
-          // Create backup before writing conflicted file
-          if (!backupPath) {
-            backupPath = await createSkillBackup(skillName, installPath, 'pre-merge')
-            await cleanupOldBackups(skillName, 3)
-          }
-
-          // Write the file with conflict markers so user can resolve
-          await fs.mkdir(installPath, { recursive: true })
-          await fs.writeFile(path.join(installPath, 'SKILL.md'), mergeResult.merged!)
-
-          // Store the new original for future conflict detection
-          const upstreamHash = hashContent(skillMdContent)
-          await storeOriginal(skillName, skillMdContent, {
-            version: existingEntry?.version || '1.0.0',
-            source: 'github:' + owner + '/' + repo,
-            installedAt: existingEntry?.installedAt || new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          })
-
-          // Update manifest with new hash (based on upstream, not merged)
-          await updateManifestSafely((currentManifest) => ({
-            ...currentManifest,
-            installedSkills: {
-              ...currentManifest.installedSkills,
-              [skillName]: {
-                ...currentManifest.installedSkills[skillName],
-                lastUpdated: new Date().toISOString(),
-                originalContentHash: upstreamHash,
-              },
-            },
-          }))
-
-          return {
-            success: true,
-            skillId: input.skillId,
-            installPath,
-            mergeResult: mergeResult,
-            tips: [
-              'Skill merged with ' + (mergeResult.conflicts?.length || 0) + ' conflict(s).',
-              'Open ' + path.join(installPath, 'SKILL.md') + ' to resolve conflicts manually.',
-              'Look for <<<<<<< LOCAL and >>>>>>> UPSTREAM markers.',
-              backupPath ? 'Backup created at: ' + backupPath : '',
-            ].filter(Boolean) as string[],
-          }
-        }
-      } else {
-        // No original content stored - fall back to overwrite behavior
-        console.warn(
-          '[install] No original content found for merge, falling back to overwrite for: ' +
-            skillName
-        )
+      if (mergeOp.mergedContent) {
+        skillMdContent = mergeOp.mergedContent
+      }
+      if (mergeOp.backupPath) {
+        backupPath = mergeOp.backupPath
       }
     }
 
