@@ -148,7 +148,7 @@ jobs:
           path: |
             test-results/cli-*.xml
             test-results/cli-*.json
-          retention-days: 30
+          retention-days: 7
 
   # Phase B: MCP E2E Tests (only runs after CLI passes)
   # SMI-969: Uses pre-built Docker image and node_modules from docker-build job
@@ -207,7 +207,7 @@ jobs:
           path: |
             test-results/mcp-*.xml
             test-results/mcp-*.json
-          retention-days: 30
+          retention-days: 7
 
   # Generate reports and create Linear issues for failures
   # SMI-969: Uses pre-built Docker image and node_modules from docker-build job
@@ -281,7 +281,7 @@ jobs:
           path: |
             test-results/combined-*.json
             docs/testing/results/*.md
-          retention-days: 30
+          retention-days: 7
 
       - name: Post summary to PR
         if: github.event_name == 'pull_request'
@@ -360,7 +360,7 @@ jobs:
         with:
           name: performance-baselines
           path: test-results/combined-report.json
-          retention-days: 30
+          retention-days: 7
 
       - name: Create Linear issue for baselines
         run: |

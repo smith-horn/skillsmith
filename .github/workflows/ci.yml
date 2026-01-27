@@ -547,7 +547,7 @@ jobs:
         with:
           name: code-review-report
           path: audit-report.json
-          retention-days: 30
+          retention-days: 7
 
       - name: Add review summary to job
         if: always()
