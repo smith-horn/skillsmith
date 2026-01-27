@@ -16,12 +16,6 @@
 #   cleanup     Remove worktrees and branches
 #   status      Show current status of all waves
 #
-# Examples:
-#   ./scripts/execute-conflict-waves.sh setup
-#   ./scripts/execute-conflict-waves.sh wave 1
-#   ./scripts/execute-conflict-waves.sh all
-#   ./scripts/execute-conflict-waves.sh cleanup
-#
 # Linear Issues:
 #   Parent: SMI-1863
 #   Wave 1: SMI-1864, SMI-1865 (Foundation)
@@ -37,30 +31,35 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKTREE_BASE="$PROJECT_ROOT/worktrees"
 HIVE_MIND_DIR="$PROJECT_ROOT/.claude/hive-mind"
 
-# Wave configuration
-declare -A WAVE_NAMES=(
-  [1]="Foundation"
-  [2]="Core Algorithm"
-  [3]="Integration"
-  [4]="Testing"
-  [5]="Documentation"
-)
+# Wave configuration functions (bash 3.x compatible)
+get_wave_name() {
+  case "$1" in
+    1) echo "Foundation" ;;
+    2) echo "Core Algorithm" ;;
+    3) echo "Integration" ;;
+    4) echo "Testing" ;;
+    5) echo "Documentation" ;;
+    *) echo "Unknown" ;;
+  esac
+}
 
-declare -A WAVE_STRATEGIES=(
-  [1]="development"
-  [2]="development"
-  [3]="development"
-  [4]="testing"
-  [5]="development"
-)
+get_wave_strategy() {
+  case "$1" in
+    4) echo "testing" ;;
+    *) echo "development" ;;
+  esac
+}
 
-declare -A WAVE_ISSUES=(
-  [1]="SMI-1864, SMI-1865"
-  [2]="SMI-1866"
-  [3]="SMI-1867"
-  [4]="SMI-1868, SMI-1869"
-  [5]="SMI-1870, SMI-1871"
-)
+get_wave_issues() {
+  case "$1" in
+    1) echo "SMI-1864, SMI-1865" ;;
+    2) echo "SMI-1866" ;;
+    3) echo "SMI-1867" ;;
+    4) echo "SMI-1868, SMI-1869" ;;
+    5) echo "SMI-1870, SMI-1871" ;;
+    *) echo "" ;;
+  esac
+}
 
 # Colors
 RED='\033[0;31m'
@@ -80,7 +79,7 @@ preflight_check() {
   log_info "Running pre-flight checks..."
 
   # Check Docker
-  if ! docker ps | grep -q skillsmith; then
+  if ! docker ps 2>/dev/null | grep -q skillsmith; then
     log_error "Docker container 'skillsmith' not running"
     log_info "Start with: docker compose --profile dev up -d"
     exit 1
@@ -105,13 +104,13 @@ preflight_check() {
   # Check hive-mind configs exist
   local missing_configs=0
   for i in 1 2 3 4 5; do
-    if [[ ! -f "$HIVE_MIND_DIR/skill-conflict-wave-$i.yaml" ]]; then
+    if [ ! -f "$HIVE_MIND_DIR/skill-conflict-wave-$i.yaml" ]; then
       log_error "Missing: skill-conflict-wave-$i.yaml"
       missing_configs=1
     fi
   done
 
-  if [[ $missing_configs -eq 0 ]]; then
+  if [ $missing_configs -eq 0 ]; then
     log_success "All hive-mind configs present"
   else
     exit 1
@@ -130,15 +129,15 @@ setup_worktrees() {
     local worktree="$WORKTREE_BASE/conflict-wave-$i"
     local branch="feature/conflict-wave-$i"
 
-    if [[ -d "$worktree" ]]; then
+    if [ -d "$worktree" ]; then
       log_warn "Worktree already exists: $worktree"
       continue
     fi
 
-    log_info "Creating worktree for Wave $i: ${WAVE_NAMES[$i]}..."
+    log_info "Creating worktree for Wave $i: $(get_wave_name $i)..."
 
     # Use create-worktree.sh if available, otherwise manual creation
-    if [[ -x "$PROJECT_ROOT/scripts/create-worktree.sh" ]]; then
+    if [ -x "$PROJECT_ROOT/scripts/create-worktree.sh" ]; then
       "$PROJECT_ROOT/scripts/create-worktree.sh" "$worktree" "$branch"
     else
       git worktree add "$worktree" -b "$branch" main
@@ -155,16 +154,16 @@ setup_worktrees() {
 execute_wave() {
   local wave_num=$1
 
-  if [[ -z "$wave_num" ]] || [[ $wave_num -lt 1 ]] || [[ $wave_num -gt 5 ]]; then
+  if [ -z "$wave_num" ] || [ "$wave_num" -lt 1 ] || [ "$wave_num" -gt 5 ]; then
     log_error "Invalid wave number. Use 1-5."
     exit 1
   fi
 
   local worktree="$WORKTREE_BASE/conflict-wave-$wave_num"
   local config="$HIVE_MIND_DIR/skill-conflict-wave-$wave_num.yaml"
-  local strategy="${WAVE_STRATEGIES[$wave_num]}"
-  local name="${WAVE_NAMES[$wave_num]}"
-  local issues="${WAVE_ISSUES[$wave_num]}"
+  local strategy=$(get_wave_strategy $wave_num)
+  local name=$(get_wave_name $wave_num)
+  local issues=$(get_wave_issues $wave_num)
 
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -174,17 +173,17 @@ execute_wave() {
   echo ""
 
   # Check worktree exists
-  if [[ ! -d "$worktree" ]]; then
+  if [ ! -d "$worktree" ]; then
     log_error "Worktree not found: $worktree"
     log_info "Run: ./scripts/execute-conflict-waves.sh setup"
     exit 1
   fi
 
   # Rebase on previous wave if needed
-  if [[ $wave_num -gt 1 ]]; then
+  if [ "$wave_num" -gt 1 ]; then
     local prev_wave=$((wave_num - 1))
     # Waves 4 and 5 both depend on wave 3
-    if [[ $wave_num -eq 5 ]]; then
+    if [ "$wave_num" -eq 5 ]; then
       prev_wave=3
     fi
 
@@ -251,7 +250,7 @@ execute_parallel() {
 
   # Check worktrees exist
   for wt in "$worktree4" "$worktree5"; do
-    if [[ ! -d "$wt" ]]; then
+    if [ ! -d "$wt" ]; then
       log_error "Worktree not found: $wt"
       exit 1
     fi
@@ -300,11 +299,11 @@ execute_parallel() {
   wait $pid5
   local exit5=$?
 
-  if [[ $exit4 -eq 0 ]] && [[ $exit5 -eq 0 ]]; then
+  if [ $exit4 -eq 0 ] && [ $exit5 -eq 0 ]; then
     log_success "Both waves completed successfully!"
   else
-    [[ $exit4 -ne 0 ]] && log_error "Wave 4 failed (exit: $exit4)"
-    [[ $exit5 -ne 0 ]] && log_error "Wave 5 failed (exit: $exit5)"
+    [ $exit4 -ne 0 ] && log_error "Wave 4 failed (exit: $exit4)"
+    [ $exit5 -ne 0 ] && log_error "Wave 5 failed (exit: $exit5)"
     exit 1
   fi
 }
@@ -320,12 +319,12 @@ show_status() {
   for i in 1 2 3 4 5; do
     local worktree="$WORKTREE_BASE/conflict-wave-$i"
     local branch="feature/conflict-wave-$i"
-    local name="${WAVE_NAMES[$i]}"
-    local issues="${WAVE_ISSUES[$i]}"
+    local name=$(get_wave_name $i)
+    local issues=$(get_wave_issues $i)
 
     printf "Wave %d: %-15s " "$i" "$name"
 
-    if [[ -d "$worktree" ]]; then
+    if [ -d "$worktree" ]; then
       echo -e "${GREEN}[READY]${NC}"
 
       # Show branch status
@@ -355,7 +354,7 @@ cleanup() {
   echo ""
 
   read -p "This will remove all worktrees and local branches. Continue? (y/N) " confirm
-  if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+  if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
     log_info "Cancelled."
     exit 0
   fi
@@ -366,7 +365,7 @@ cleanup() {
     local worktree="$WORKTREE_BASE/conflict-wave-$i"
     local branch="feature/conflict-wave-$i"
 
-    if [[ -d "$worktree" ]]; then
+    if [ -d "$worktree" ]; then
       log_info "Removing worktree: $worktree"
       git worktree remove "$worktree" --force 2>/dev/null || true
     fi
