@@ -185,6 +185,21 @@ export type {
   SourceIndexerOptions,
 } from './sources/index.js'
 
+// Configuration (SMI-1851)
+export {
+  loadConfig,
+  saveConfig,
+  getApiKey,
+  getApiBaseUrl,
+  getConfigDir,
+  getConfigPath,
+  ensureConfigDir,
+  isDebugEnabled,
+  isTelemetryEnabled,
+  isValidApiKeyFormat,
+  type SkillsmithConfig,
+} from './config/index.js'
+
 // ============================================================================
 // LIVE SERVICES WORKTREE STUBS (Phase 0 - Conflict Prevention)
 // ============================================================================

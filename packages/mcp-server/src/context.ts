@@ -20,7 +20,7 @@
 
 import { homedir } from 'os'
 import { join, dirname } from 'path'
-import { mkdirSync, existsSync, readFileSync } from 'fs'
+import { mkdirSync, existsSync } from 'fs'
 import type { Database as DatabaseType } from 'better-sqlite3'
 import {
   createDatabase,
@@ -36,6 +36,7 @@ import {
   SyncHistoryRepository,
   SyncEngine,
   BackgroundSyncService,
+  getApiKey,
   type ApiClientConfig,
 } from '@skillsmith/core'
 import { LLMFailoverChain, type LLMFailoverConfig } from './llm/failover.js'
@@ -180,27 +181,8 @@ function ensureDbDirectory(dbPath: string): void {
   }
 }
 
-/**
- * Load API key from ~/.skillsmith/config.json
- * SMI-XXXX: API Key Authentication
- * @returns API key or undefined if not found
- */
-function loadApiKeyFromConfig(): string | undefined {
-  const configPath = join(homedir(), '.skillsmith', 'config.json')
-
-  if (!existsSync(configPath)) {
-    return undefined
-  }
-
-  try {
-    const configData = readFileSync(configPath, 'utf-8')
-    const config = JSON.parse(configData) as { apiKey?: string }
-    return config.apiKey
-  } catch {
-    // Silently ignore parse errors
-    return undefined
-  }
-}
+// SMI-1851: API key loading moved to @skillsmith/core/config
+// Use getApiKey() which handles env var > config file precedence
 
 /**
  * Create the shared tool context with database and services
@@ -270,7 +252,8 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
   const skillRepository = new SkillRepository(db)
 
   // SMI-XXXX: Get API key from options, env, or config file
-  const apiKey = options.apiKey || process.env.SKILLSMITH_API_KEY || loadApiKeyFromConfig()
+  // SMI-1851: Use shared config module (handles env var > config file precedence)
+  const apiKey = options.apiKey || getApiKey()
 
   // SMI-1183: Initialize API client with configuration
   // API is primary data source; local DB is fallback
