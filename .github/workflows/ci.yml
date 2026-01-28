@@ -120,6 +120,41 @@ jobs:
           echo ""
           echo "All package configurations valid!"
 
+  # SMI-1903: Validate Edge Function structure and configuration
+  # Ensures all functions have proper structure and are categorized
+  edge-function-validation:
+    name: Edge Function Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Edge Functions
+        run: ./scripts/validate-edge-functions.sh
+
+      - name: Generate validation report
+        if: always()
+        run: |
+          echo "## Edge Function Validation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          FUNCTION_COUNT=$(ls -d supabase/functions/*/ 2>/dev/null | grep -v "_shared" | wc -l | tr -d ' ')
+          echo "Found **$FUNCTION_COUNT** Edge Functions" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Function | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          for fn in supabase/functions/*/; do
+            fn_name=$(basename "$fn")
+            if [[ "$fn_name" != _* ]]; then
+              if [ -f "$fn/index.ts" ]; then
+                echo "| $fn_name | ✅ Valid |" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "| $fn_name | ❌ Missing index.ts |" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          done
+
   # Build Docker image once, extract dependencies, use for all jobs
   # SMI-708: Optimized to extract node_modules once instead of running npm ci per job
   docker-build:
