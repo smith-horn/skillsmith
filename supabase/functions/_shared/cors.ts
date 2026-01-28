@@ -5,16 +5,42 @@
  * SMI-1180: API Development - Wave 3
  * SMI-1230: Production CORS configuration
  * SMI-1269: CORS documentation
+ * SMI-1904: Dynamic CORS configuration with Vercel pattern matching
  *
  * @see scripts/supabase/DEPLOYMENT.md for configuration guide
+ *
+ * Configuration:
+ * - Set CORS_ALLOWED_ORIGINS env var for additional origins (comma-separated)
+ * - Vercel preview URLs (*.vercel.app) are auto-allowed for our org
+ * - Default origins always included (skillsmith.app, localhost)
  */
 
 /**
- * Allowed origins for CORS
- * In production, restricts to known domains
- * Set CORS_ALLOWED_ORIGINS env var for custom domains (comma-separated)
+ * Default allowed origins (always included)
  */
-const ALLOWED_ORIGINS: string[] = (() => {
+const DEFAULT_ORIGINS = [
+  // Production domains
+  'https://skillsmith.app',
+  'https://www.skillsmith.app',
+  'https://skillsmith.dev',
+  'https://www.skillsmith.dev',
+  'https://app.skillsmith.dev',
+  'https://api.skillsmith.dev',
+  // Vercel production frontend (from CLAUDE.md)
+  'https://frontend-nine-bice-67.vercel.app',
+  // Localhost for development
+  'http://localhost:3000',
+  'http://localhost:4321',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:4321',
+  'http://127.0.0.1:5173',
+]
+
+/**
+ * Additional origins from environment variable (comma-separated)
+ */
+const ENV_ORIGINS: string[] = (() => {
   const envOrigins = Deno.env.get('CORS_ALLOWED_ORIGINS')
   if (envOrigins) {
     return envOrigins
@@ -22,41 +48,44 @@ const ALLOWED_ORIGINS: string[] = (() => {
       .map((o) => o.trim())
       .filter(Boolean)
   }
-  // Default production allowed origins
-  return [
-    // Production domains
-    'https://skillsmith.app',
-    'https://www.skillsmith.app',
-    'https://skillsmith.dev',
-    'https://www.skillsmith.dev',
-    'https://app.skillsmith.dev',
-    'https://api.skillsmith.dev',
-    // Vercel production frontend (from CLAUDE.md)
-    'https://frontend-nine-bice-67.vercel.app',
-    // Vercel preview deployments
-    'https://website-2j3tsgc7x-smithhorngroup.vercel.app',
-    'https://website-g4l4zfaag-smithhorngroup.vercel.app',
-    // Localhost for development
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:5173',
-  ]
+  return []
 })()
 
 /**
+ * Combined allowed origins list (defaults + env)
+ */
+const ALLOWED_ORIGINS = [...DEFAULT_ORIGINS, ...ENV_ORIGINS]
+
+/**
+ * Vercel preview URL pattern
+ * Matches: https://<project>-<hash>-<org>.vercel.app
+ * Only allows our organization's preview deployments
+ */
+const VERCEL_PREVIEW_PATTERN = /^https:\/\/[a-z0-9-]+-smithhorngroup\.vercel\.app$/
+
+/**
  * Check if origin is allowed
+ * SMI-1904: Enhanced with Vercel preview pattern matching
+ *
  * @param origin - Request origin header
  * @returns True if origin is allowed
  */
 export function isOriginAllowed(origin: string | null): boolean {
   if (!origin) return false
+
   // In development mode (local Supabase), allow all origins
   const isDev =
     Deno.env.get('SUPABASE_URL')?.includes('localhost') ||
     Deno.env.get('SUPABASE_URL')?.includes('127.0.0.1')
   if (isDev) return true
-  return ALLOWED_ORIGINS.includes(origin)
+
+  // Check explicit allowlist (defaults + env origins)
+  if (ALLOWED_ORIGINS.includes(origin)) return true
+
+  // Check Vercel preview pattern (auto-allow our org's preview deployments)
+  if (VERCEL_PREVIEW_PATTERN.test(origin)) return true
+
+  return false
 }
 
 /**
