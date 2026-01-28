@@ -147,6 +147,7 @@ export async function installSkill(
     }
 
     // SMI-1867: Check for local modifications on reinstall
+    // SMI-1895: Track backup path to include in result
     let backupPath: string | undefined
     if (manifest.installedSkills[skillName] && input.force) {
       const conflictCheck = await checkForConflicts(
@@ -160,7 +161,6 @@ export async function installSkill(
       if (!conflictCheck.shouldProceed) {
         return conflictCheck.earlyReturn!
       }
-
       backupPath = conflictCheck.backupPath
     }
 
@@ -213,6 +213,7 @@ export async function installSkill(
       if (mergeOp.mergedContent) {
         skillMdContent = mergeOp.mergedContent
       }
+      // SMI-1895: Capture backup path from merge operation
       if (mergeOp.backupPath) {
         backupPath = mergeOp.backupPath
       }
@@ -432,6 +433,7 @@ export async function installSkill(
       securityReport,
       trustTier, // SMI-1533: Include trust tier in result
       optimization: optimizationInfo,
+      backupPath, // SMI-1895: Include backup path if created during conflict resolution
       tips: generateOptimizedTips(skillName, optimizationInfo, claudeMdSnippet),
     }
   } catch (error) {
