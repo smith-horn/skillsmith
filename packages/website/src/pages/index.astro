@@ -1,9 +1,9 @@
 ---
 /**
- * Skillsmith Beta Landing Page
+ * Skillsmith Landing Page
  *
  * Bold & Confident dark theme with Neural S branding
- * Primary goal: Email capture for early access
+ * Primary goal: Drive signups and MCP adoption
  */
 ---
 
@@ -23,7 +23,7 @@
   </script>
 
   <title>Skillsmith - AI Skill Discovery for Claude Code</title>
-  <meta name="description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get early access." />
+  <meta name="description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
 
   <!-- Fonts: Satoshi + JetBrains Mono -->
   <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
@@ -40,9 +40,15 @@
 
   <!-- Open Graph -->
   <meta property="og:title" content="Skillsmith - AI Skill Discovery for Claude Code" />
-  <meta property="og:description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable." />
+  <meta property="og:description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://skillsmith.app" />
+  <!-- TODO: Add og:image once design creates /public/og-image.png (1200x630) -->
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Skillsmith - AI Skill Discovery for Claude Code" />
+  <meta name="twitter:description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
 
   <!-- JSON-LD Structured Data -->
   <script type="application/ld+json">
@@ -59,7 +65,7 @@
           "url": "https://skillsmith.app/logo-icon.svg"
         },
         "sameAs": [
-          "https://github.com/Smith-Horn-Group/skillsmith",
+          "https://github.com/smith-horn/skillsmith",
           "https://twitter.com/skillsmith"
         ]
       },
@@ -166,8 +172,8 @@
         <a href="/docs/api" class="text-[#A1A1AA] hover:text-[#E07A5F] transition-colors text-sm font-medium">
           API Docs
         </a>
-        <a href="#early-access-hero" class="px-4 py-2 border border-white/10 rounded-xl text-sm font-medium hover:border-white/20 transition-colors">
-          Get Early Access
+        <a href="/signup" class="px-4 py-2 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl text-sm font-medium hover:scale-[1.02] transition-all focus-visible:ring-2 focus-visible:ring-[#E07A5F] focus-visible:outline-none">
+          Get Started
         </a>
       </div>
     </div>
@@ -187,34 +193,26 @@
         Get stack-aware recommendations before anyone else.
       </p>
 
-      <!-- Email Capture Form -->
-      <form id="early-access-hero" class="max-w-[500px] mx-auto mb-4 opacity-0 animate-fade-up" style="animation-delay: 0.3s;">
-        <!-- Honeypot field for bot detection (hidden from humans) -->
-        <input type="text" name="website" autocomplete="off" tabindex="-1" class="absolute -left-[9999px] opacity-0 h-0 w-0" aria-hidden="true" />
-        <div class="flex flex-col sm:flex-row gap-3">
-          <input
-            type="email"
-            name="email"
-            placeholder="Enter your email"
-            required
-            aria-label="Email address for early access"
-            class="flex-1 px-5 py-4 bg-[#18181B] border border-white/10 rounded-xl text-base placeholder:text-[#71717A] focus:outline-none focus:border-[#E07A5F] focus:ring-1 focus:ring-[#E07A5F]/20 transition-colors"
-          />
-          <button
-            type="submit"
-            class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Get Early Access →
-          </button>
-        </div>
-      </form>
-      <!-- Status message for hero form -->
-      <div id="early-access-hero-status" class="max-w-[500px] mx-auto mb-2 text-sm opacity-0 animate-fade-up" style="animation-delay: 0.4s;" aria-live="polite"></div>
+      <!-- CTA Buttons -->
+      <div class="flex flex-col sm:flex-row gap-4 justify-center mb-6 opacity-0 animate-fade-up" style="animation-delay: 0.3s;">
+        <a
+          href="/signup"
+          class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+        >
+          Get Started Free →
+        </a>
+        <a
+          href="#mcp-install-block"
+          class="px-8 py-4 border border-white/10 rounded-xl font-medium text-white hover:border-white/20 transition-colors text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+        >
+          Install MCP Server
+        </a>
+      </div>
 
       <!-- Social Proof -->
-      <p class="text-sm text-[#71717A] opacity-0 animate-fade-up" style="animation-delay: 0.5s;">
-        <span class="inline-block w-2 h-2 bg-[#E07A5F] rounded-full mr-2"></span>
-        Early access now open
+      <p class="text-sm text-[#71717A] opacity-0 animate-fade-up" style="animation-delay: 0.4s;">
+        <span class="inline-block w-2 h-2 bg-[#81B29A] rounded-full mr-2 animate-pulse"></span>
+        Free tier available — no credit card required
       </p>
     </div>
   </section>
@@ -244,15 +242,15 @@
         <button
           type="button"
           id="copy-mcp-config"
-          class="absolute top-4 right-4 px-5 py-2.5 bg-[#E07A5F] hover:bg-[#D4694E] text-white text-sm font-semibold rounded-lg transition-all duration-200 flex items-center gap-2 shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98]"
+          class="absolute top-4 right-4 px-5 py-2.5 bg-[#E07A5F] hover:bg-[#D4694E] text-white text-sm font-semibold rounded-lg transition-all duration-200 flex items-center gap-2 shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
           aria-label="Copy configuration to clipboard"
         >
           <!-- Copy icon -->
-          <svg id="copy-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <svg id="copy-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
           </svg>
           <!-- Checkmark icon (hidden by default) -->
-          <svg id="check-icon" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <svg id="check-icon" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
           </svg>
           <span id="copy-text">Copy to Clipboard</span>
@@ -294,7 +292,7 @@
         <!-- Semantic Search -->
         <div class="text-center">
           <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
-            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               <path stroke-linecap="round" stroke-linejoin="round" d="M10 10l4 4" />
             </svg>
@@ -306,7 +304,7 @@
         <!-- Quality Scores -->
         <div class="text-center">
           <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
-            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
             </svg>
           </div>
@@ -317,7 +315,7 @@
         <!-- Stack-Aware -->
         <div class="text-center">
           <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
-            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
             </svg>
           </div>
@@ -328,7 +326,7 @@
         <!-- One-Click Install -->
         <div class="text-center">
           <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
-            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
           </div>
@@ -401,35 +399,27 @@
     <div class="absolute inset-0 bg-gradient-to-b from-transparent via-[#E07A5F]/[0.03] to-transparent"></div>
     <div class="relative max-w-[600px] mx-auto px-6 text-center">
       <h2 class="text-3xl sm:text-4xl font-bold mb-4">
-        Get early access now
+        Start building for free
       </h2>
       <p class="text-lg text-[#A1A1AA] mb-10">
-        Be first to discover skills that fit your workflow.
+        Discover skills that fit your workflow. No credit card required.
       </p>
 
-      <!-- Email Capture (CTA) -->
-      <form id="early-access-cta" class="max-w-[500px] mx-auto mb-4">
-        <!-- Honeypot field for bot detection (hidden from humans) -->
-        <input type="text" name="website" autocomplete="off" tabindex="-1" class="absolute -left-[9999px] opacity-0 h-0 w-0" aria-hidden="true" />
-        <div class="flex flex-col sm:flex-row gap-3">
-          <input
-            type="email"
-            name="email"
-            placeholder="Enter your email"
-            required
-            aria-label="Email address for early access"
-            class="flex-1 px-5 py-4 bg-[#18181B] border border-white/10 rounded-xl text-base placeholder:text-[#71717A] focus:outline-none focus:border-[#E07A5F] focus:ring-1 focus:ring-[#E07A5F]/20 transition-colors"
-          />
-          <button
-            type="submit"
-            class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Get Early Access →
-          </button>
-        </div>
-      </form>
-      <!-- Status message for CTA form -->
-      <div id="early-access-cta-status" class="max-w-[500px] mx-auto text-sm" aria-live="polite"></div>
+      <!-- CTA Buttons -->
+      <div class="flex flex-col sm:flex-row gap-4 justify-center">
+        <a
+          href="/signup"
+          class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+        >
+          Create Free Account →
+        </a>
+        <a
+          href="/pricing"
+          class="px-8 py-4 border border-white/10 rounded-xl font-medium text-white hover:border-white/20 transition-colors text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+        >
+          View Pricing
+        </a>
+      </div>
     </div>
   </section>
 
@@ -590,106 +580,5 @@
     })();
   </script>
 
-  <!-- Early Access Form Handler -->
-  <script define:vars={{ signupApiUrl: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1/early-access-signup` }}>
-    (function() {
-      const API_URL = signupApiUrl;
-
-      // Get UTM parameters from URL
-      function getUtmParams() {
-        const params = new URLSearchParams(window.location.search);
-        return {
-          utm_source: params.get('utm_source') || undefined,
-          utm_medium: params.get('utm_medium') || undefined,
-          utm_campaign: params.get('utm_campaign') || undefined,
-        };
-      }
-
-      // Show status message
-      function showStatus(statusEl, message, isError) {
-        statusEl.textContent = message;
-        statusEl.className = statusEl.className.replace(/text-\[\#[A-Fa-f0-9]+\]/g, '');
-        statusEl.classList.add(isError ? 'text-[#EF4444]' : 'text-[#81B29A]');
-        statusEl.style.opacity = '1';
-      }
-
-      // Handle form submission
-      async function handleSubmit(e, source) {
-        e.preventDefault();
-
-        const form = e.target;
-        const button = form.querySelector('button[type="submit"]');
-        const emailInput = form.querySelector('input[name="email"]');
-        const honeypotInput = form.querySelector('input[name="website"]');
-        const statusEl = document.getElementById(form.id + '-status');
-
-        // Honeypot check - if filled, silently "succeed" (bot detected)
-        if (honeypotInput && honeypotInput.value) {
-          showStatus(statusEl, "You're on the list! Check your email for confirmation.", false);
-          emailInput.value = '';
-          return;
-        }
-
-        const email = emailInput.value.trim();
-        if (!email) return;
-
-        // Disable button and show loading state
-        const originalText = button.textContent;
-        button.disabled = true;
-        button.textContent = 'Joining...';
-        statusEl.textContent = '';
-        statusEl.style.opacity = '0';
-
-        try {
-          const utmParams = getUtmParams();
-
-          const response = await fetch(API_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              email,
-              source,
-              ...utmParams,
-            }),
-          });
-
-          const data = await response.json();
-
-          if (response.ok && data.success) {
-            showStatus(statusEl, data.message, false);
-            emailInput.value = '';
-            // Track conversion in GA
-            if (typeof gtag === 'function') {
-              gtag('event', 'sign_up', {
-                method: 'early_access',
-                source: source,
-              });
-            }
-          } else {
-            showStatus(statusEl, data.error || 'Something went wrong. Please try again.', true);
-          }
-        } catch (err) {
-          console.error('Signup error:', err);
-          showStatus(statusEl, 'Network error. Please try again.', true);
-        } finally {
-          button.disabled = false;
-          button.textContent = originalText;
-        }
-      }
-
-      // Attach event listeners
-      const heroForm = document.getElementById('early-access-hero');
-      const ctaForm = document.getElementById('early-access-cta');
-
-      if (heroForm) {
-        heroForm.addEventListener('submit', (e) => handleSubmit(e, 'homepage_hero'));
-      }
-      if (ctaForm) {
-        ctaForm.addEventListener('submit', (e) => handleSubmit(e, 'homepage_cta'));
-      }
-    })();
-  </script>
 </body>
 </html>
