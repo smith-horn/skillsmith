@@ -1,4 +1,4 @@
--- SMI-HOTFIX: Fix gen_random_bytes not found error
+-- SMI-1916: Fix gen_random_bytes not found error
 -- The generate_api_key_for_user function was missing 'extensions' in search_path
 -- This caused signup to fail with "function gen_random_bytes(integer) does not exist"
 -- Created: 2026-01-28

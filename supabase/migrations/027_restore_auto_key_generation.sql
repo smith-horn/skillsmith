@@ -10,7 +10,7 @@
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
   provider TEXT;
