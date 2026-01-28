@@ -31,6 +31,8 @@ const ALLOWED_ORIGINS: string[] = (() => {
     'https://www.skillsmith.dev',
     'https://app.skillsmith.dev',
     'https://api.skillsmith.dev',
+    // Vercel production frontend (from CLAUDE.md)
+    'https://frontend-nine-bice-67.vercel.app',
     // Vercel preview deployments
     'https://website-2j3tsgc7x-smithhorngroup.vercel.app',
     'https://website-g4l4zfaag-smithhorngroup.vercel.app',
