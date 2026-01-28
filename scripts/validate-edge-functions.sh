@@ -42,6 +42,7 @@ AUTHENTICATED_FUNCTIONS=(
   "list-invoices"
   "update-seat-count"
   "generate-license"
+  "regenerate-license"
 )
 
 # Service role functions (scheduled jobs, internal)
@@ -91,7 +92,8 @@ for fn in "${ANONYMOUS_FUNCTIONS[@]}"; do
     # Check if function has verify_jwt = false in config.toml
     if grep -q "\[functions.$fn\]" "$CONFIG_FILE" 2>/dev/null; then
       # Function is configured, check verify_jwt
-      SECTION=$(awk "/\[functions.$fn\]/,/\[/" "$CONFIG_FILE" | head -5)
+      # Use sed to extract section - awk range pattern fails because [functions.x] matches both start and end patterns
+      SECTION=$(sed -n "/\[functions\.$fn\]/,/^\[/p" "$CONFIG_FILE" | head -5)
       if echo "$SECTION" | grep -q "verify_jwt = false"; then
         echo -e "${GREEN}  ✓ $fn: verify_jwt = false${NC}"
       else

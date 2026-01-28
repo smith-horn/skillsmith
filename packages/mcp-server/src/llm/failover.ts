@@ -240,12 +240,9 @@ export class LLMFailoverChain {
         }
       )
 
-      this.provider.on(
-        'provider_error',
-        (data: { provider: LLMProviderType; error: Error }) => {
-          console.log('[LLMFailoverChain] Provider error:', data)
-        }
-      )
+      this.provider.on('provider_error', (data: { provider: LLMProviderType; error: Error }) => {
+        console.log('[LLMFailoverChain] Provider error:', data)
+      })
 
       this.provider.on('metrics', (metrics: ProviderMetrics) => {
         console.log('[LLMFailoverChain] Metrics:', metrics)
