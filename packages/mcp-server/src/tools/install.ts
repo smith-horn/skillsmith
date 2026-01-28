@@ -40,7 +40,12 @@ import {
   fetchFromGitHub,
   validateSkillMd,
   generateOptimizedTips,
+  hashContent,
+  storeOriginal,
 } from './install.helpers.js'
+
+// SMI-1867: Conflict resolution logic (extracted per governance review)
+import { checkForConflicts, handleMergeAction } from './install.conflict.js'
 
 // Re-export only public API types (SMI-1718: trimmed internal exports)
 export { installInputSchema, type InstallInput, type InstallResult } from './install.types.js'
@@ -141,6 +146,24 @@ export async function installSkill(
       }
     }
 
+    // SMI-1867: Check for local modifications on reinstall
+    let backupPath: string | undefined
+    if (manifest.installedSkills[skillName] && input.force) {
+      const conflictCheck = await checkForConflicts(
+        skillName,
+        installPath,
+        manifest,
+        input.conflictAction,
+        input.skillId
+      )
+
+      if (!conflictCheck.shouldProceed) {
+        return conflictCheck.earlyReturn!
+      }
+
+      backupPath = conflictCheck.backupPath
+    }
+
     // Determine files to fetch
     const skillMdPath = basePath + 'SKILL.md'
 
@@ -168,6 +191,30 @@ export async function installSkill(
           'You can manually install by: 1) Clone the repo, 2) Create a SKILL.md, 3) Copy to ~/.claude/skills/',
           'Check if the skill has a SKILL.md in a subdirectory and use the full path',
         ],
+      }
+    }
+
+    // SMI-1867: Handle merge action for conflict resolution
+    if (input.conflictAction === 'merge') {
+      const mergeOp = await handleMergeAction(
+        skillName,
+        installPath,
+        skillMdContent,
+        manifest,
+        owner,
+        repo,
+        input.skillId
+      )
+
+      if (!mergeOp.shouldProceed) {
+        return mergeOp.earlyReturn!
+      }
+
+      if (mergeOp.mergedContent) {
+        skillMdContent = mergeOp.mergedContent
+      }
+      if (mergeOp.backupPath) {
+        backupPath = mergeOp.backupPath
       }
     }
 
@@ -295,6 +342,14 @@ export async function installSkill(
       await fs.writeFile(mainSkillPath, finalSkillContent)
       writtenFiles.push(mainSkillPath)
 
+      // SMI-1867: Store original content for future conflict detection
+      const contentHash = hashContent(finalSkillContent)
+      await storeOriginal(skillName, finalSkillContent, {
+        version: '1.0.0',
+        source: 'github:' + owner + '/' + repo,
+        installedAt: new Date().toISOString(),
+      })
+
       // Write sub-skills in parallel (SMI-1804: Performance optimization)
       if (subSkillFiles.length > 0) {
         await Promise.all(
@@ -363,6 +418,7 @@ export async function installSkill(
           installPath,
           installedAt: new Date().toISOString(),
           lastUpdated: new Date().toISOString(),
+          originalContentHash: contentHash, // SMI-1867: Track original hash
         },
       },
     }))
@@ -429,6 +485,12 @@ export const installTool = {
       skipOptimize: {
         type: 'boolean',
         description: 'Skip Skillsmith optimization (decomposition, subagent generation)',
+      },
+      conflictAction: {
+        type: 'string',
+        enum: ['overwrite', 'merge', 'cancel'],
+        description:
+          'Action when local modifications detected: overwrite (backup + replace), merge (three-way), or cancel',
       },
     },
     required: ['skillId'],
