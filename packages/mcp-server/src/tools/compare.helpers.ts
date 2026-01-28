@@ -124,8 +124,8 @@ export function generateDifferences(
   }
 
   // Tags difference
-  const tagsOnlyInA = skillA.tags.filter((t) => !skillB.tags.includes(t))
-  const tagsOnlyInB = skillB.tags.filter((t) => !skillA.tags.includes(t))
+  const tagsOnlyInA = skillA.tags.filter((t: string) => !skillB.tags.includes(t))
+  const tagsOnlyInB = skillB.tags.filter((t: string) => !skillA.tags.includes(t))
   if (tagsOnlyInA.length > 0 || tagsOnlyInB.length > 0) {
     differences.push({
       field: 'unique_tags',
@@ -215,11 +215,11 @@ export function generateRecommendation(
 
     if (skillA.category === skillB.category) {
       recommendation += `Choose ${skillA.name} for ${skillA.tags
-        .filter((t) => !skillB.tags.includes(t))
+        .filter((t: string) => !skillB.tags.includes(t))
         .slice(0, 2)
         .join('/')} workflows, `
       recommendation += `or ${skillB.name} for ${skillB.tags
-        .filter((t) => !skillA.tags.includes(t))
+        .filter((t: string) => !skillA.tags.includes(t))
         .slice(0, 2)
         .join('/')} workflows.`
     } else {
