@@ -14,11 +14,7 @@ import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync, readdirSync
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { checkForConflicts, handleMergeAction } from '../../src/tools/install.conflict.js'
-import {
-  hashContent,
-  storeOriginal,
-  loadOriginal,
-} from '../../src/tools/install.helpers.js'
+import { hashContent, storeOriginal, loadOriginal } from '../../src/tools/install.helpers.js'
 import type { SkillManifest } from '../../src/tools/install.types.js'
 
 // Test configuration
@@ -250,10 +246,7 @@ describe('E2E: conflict resolution merge flow', () => {
       // Find the backup and verify content preserved
       const backupDir = backupDirs.find((d) => d.startsWith('test-skill'))
       expect(backupDir).toBeDefined()
-      const backupContent = readFileSync(
-        join(TEST_BACKUPS_DIR, backupDir!, 'SKILL.md'),
-        'utf-8'
-      )
+      const backupContent = readFileSync(join(TEST_BACKUPS_DIR, backupDir!, 'SKILL.md'), 'utf-8')
       expect(backupContent).toBe(MODIFIED_SKILL_CONTENT)
     })
   })
