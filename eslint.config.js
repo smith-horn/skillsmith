@@ -19,6 +19,8 @@ const globalIgnores = {
     // Git-crypt encrypted TS files - templates excluded via .gitattributes
     'docs/**/*.ts',
     '!docs/templates/*.ts',
+    // Git worktrees - lint separately within each worktree context
+    'worktrees/**',
   ],
 }
 
