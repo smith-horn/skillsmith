@@ -661,6 +661,7 @@ npx supabase functions deploy skills-search --no-verify-jwt
 npx supabase functions deploy skills-get --no-verify-jwt
 npx supabase functions deploy skills-recommend --no-verify-jwt
 npx supabase functions deploy stripe-webhook --no-verify-jwt
+npx supabase functions deploy checkout --no-verify-jwt
 npx supabase functions deploy events --no-verify-jwt
 ```
 
