@@ -14,7 +14,12 @@ import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync, readdirSync
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { checkForConflicts, handleMergeAction } from '../../src/tools/install.conflict.js'
-import { hashContent, storeOriginal, loadOriginal } from '../../src/tools/install.helpers.js'
+import {
+  hashContent,
+  storeOriginal,
+  loadOriginal,
+  getBackupsDir,
+} from '../../src/tools/install.helpers.js'
 import type { SkillManifest } from '../../src/tools/install.types.js'
 
 // Test configuration
@@ -22,8 +27,12 @@ const TEST_DIR = join(tmpdir(), 'skillsmith-e2e-conflict')
 const TEST_HOME = join(TEST_DIR, 'home')
 const TEST_SKILLS_DIR = join(TEST_HOME, '.claude', 'skills')
 const TEST_SKILLSMITH_DIR = join(TEST_HOME, '.skillsmith')
-const TEST_BACKUPS_DIR = join(TEST_SKILLSMITH_DIR, 'backups')
-const TEST_ORIGINALS_DIR = join(TEST_SKILLSMITH_DIR, 'originals')
+
+// Dynamic paths - computed after HOME is set
+// Note: getBackupsDir() returns ~/.claude/skills/.backups, not ~/.skillsmith/backups
+function getTestBackupsDir(): string {
+  return getBackupsDir()
+}
 
 // Mock skill content for testing
 const ORIGINAL_SKILL_CONTENT = `---
@@ -101,17 +110,20 @@ describe('E2E: conflict resolution merge flow', () => {
     // Save original HOME
     originalHome = process.env['HOME']
 
+    // Override HOME for tests FIRST, so getBackupsDir() returns correct path
+    process.env['HOME'] = TEST_HOME
+
     // Create test environment
     if (existsSync(TEST_DIR)) {
       rmSync(TEST_DIR, { recursive: true, force: true })
     }
     mkdirSync(TEST_DIR, { recursive: true })
     mkdirSync(TEST_SKILLS_DIR, { recursive: true })
-    mkdirSync(TEST_BACKUPS_DIR, { recursive: true })
-    mkdirSync(TEST_ORIGINALS_DIR, { recursive: true })
+    mkdirSync(TEST_SKILLSMITH_DIR, { recursive: true })
 
-    // Override HOME for tests
-    process.env['HOME'] = TEST_HOME
+    // Create the actual backup directory where the code writes
+    // getBackupsDir() returns ~/.claude/skills/.backups
+    mkdirSync(getTestBackupsDir(), { recursive: true })
   })
 
   afterAll(() => {
@@ -132,19 +144,12 @@ describe('E2E: conflict resolution merge flow', () => {
       rmSync(skillPath, { recursive: true, force: true })
     }
 
-    // Clean backups
-    if (existsSync(TEST_BACKUPS_DIR)) {
-      const backups = readdirSync(TEST_BACKUPS_DIR)
+    // Clean backups - use the actual backup directory
+    const backupsDir = getTestBackupsDir()
+    if (existsSync(backupsDir)) {
+      const backups = readdirSync(backupsDir)
       for (const backup of backups) {
-        rmSync(join(TEST_BACKUPS_DIR, backup), { recursive: true, force: true })
-      }
-    }
-
-    // Clean originals
-    if (existsSync(TEST_ORIGINALS_DIR)) {
-      const originals = readdirSync(TEST_ORIGINALS_DIR)
-      for (const original of originals) {
-        rmSync(join(TEST_ORIGINALS_DIR, original), { recursive: true, force: true })
+        rmSync(join(backupsDir, backup), { recursive: true, force: true })
       }
     }
   })
@@ -212,9 +217,16 @@ describe('E2E: conflict resolution merge flow', () => {
       const currentContent = readFileSync(join(installPath, 'SKILL.md'), 'utf-8')
       expect(currentContent).toBe(MODIFIED_SKILL_CONTENT)
 
-      // Verify no backup was created (cancel doesn't backup)
-      const backups = existsSync(TEST_BACKUPS_DIR) ? readdirSync(TEST_BACKUPS_DIR) : []
-      expect(backups.length).toBe(0)
+      // Verify no timestamped backup was created (cancel doesn't backup)
+      // Note: .original directory may exist from storeOriginal() call, but no timestamped backups
+      const backupsDir = getTestBackupsDir()
+      const skillBackupDir = join(backupsDir, 'test-skill')
+      if (existsSync(skillBackupDir)) {
+        const entries = readdirSync(skillBackupDir)
+        // Only .original should exist, no timestamped backups
+        const timestampedBackups = entries.filter((e) => e !== '.original')
+        expect(timestampedBackups.length).toBe(0)
+      }
     })
   })
 
@@ -240,13 +252,17 @@ describe('E2E: conflict resolution merge flow', () => {
       expect(existsSync(result.backupPath!)).toBe(true)
 
       // Verify backup directory contains backup files
-      const backupDirs = readdirSync(TEST_BACKUPS_DIR)
+      const backupsDir = getTestBackupsDir()
+      const backupDirs = readdirSync(backupsDir)
       expect(backupDirs.length).toBeGreaterThan(0)
 
       // Find the backup and verify content preserved
-      const backupDir = backupDirs.find((d) => d.startsWith('test-skill'))
-      expect(backupDir).toBeDefined()
-      const backupContent = readFileSync(join(TEST_BACKUPS_DIR, backupDir!, 'SKILL.md'), 'utf-8')
+      // Backups are stored in ~/.claude/skills/.backups/test-skill/<timestamp>_<reason>/
+      const skillBackupDir = join(backupsDir, 'test-skill')
+      expect(existsSync(skillBackupDir)).toBe(true)
+      const skillBackups = readdirSync(skillBackupDir).filter((d) => d !== '.original')
+      expect(skillBackups.length).toBeGreaterThan(0)
+      const backupContent = readFileSync(join(skillBackupDir, skillBackups[0], 'SKILL.md'), 'utf-8')
       expect(backupContent).toBe(MODIFIED_SKILL_CONTENT)
     })
   })

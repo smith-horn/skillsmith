@@ -16,6 +16,14 @@ import { createHash } from 'crypto'
 // ============================================================================
 
 /**
+ * SMI-1865: Get base directory for skill backups
+ * Uses a function instead of constant to support HOME overrides in tests
+ */
+export function getBackupsDir(): string {
+  return path.join(os.homedir(), '.claude', 'skills', '.backups')
+}
+
+/**
  * SMI-1865: Compute SHA-256 hash of content for modification detection
  */
 export function hashContent(content: string): string {
@@ -69,11 +77,6 @@ export async function detectModifications(
 }
 
 /**
- * SMI-1865: Base directory for skill backups
- */
-const BACKUPS_DIR = path.join(os.homedir(), '.claude', 'skills', '.backups')
-
-/**
  * SMI-1865: Create a timestamped backup of a skill before update
  * @param skillName - Name of the skill (used for directory naming)
  * @param installPath - Current install path of the skill
@@ -86,7 +89,7 @@ export async function createSkillBackup(
   reason: string
 ): Promise<string> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const backupDir = path.join(BACKUPS_DIR, skillName, `${timestamp}_${reason}`)
+  const backupDir = path.join(getBackupsDir(), skillName, `${timestamp}_${reason}`)
 
   // Create backup directory
   await fs.mkdir(backupDir, { recursive: true })
@@ -140,7 +143,7 @@ export async function storeOriginal(
   content: string,
   metadata: Record<string, unknown>
 ): Promise<void> {
-  const originalDir = path.join(BACKUPS_DIR, skillName, '.original')
+  const originalDir = path.join(getBackupsDir(), skillName, '.original')
 
   // Create directory
   await fs.mkdir(originalDir, { recursive: true })
@@ -158,7 +161,7 @@ export async function storeOriginal(
  * @returns Original content, or null if not found
  */
 export async function loadOriginal(skillName: string): Promise<string | null> {
-  const originalPath = path.join(BACKUPS_DIR, skillName, '.original', 'SKILL.md')
+  const originalPath = path.join(getBackupsDir(), skillName, '.original', 'SKILL.md')
 
   try {
     return await fs.readFile(originalPath, 'utf-8')
@@ -177,7 +180,7 @@ export async function loadOriginal(skillName: string): Promise<string | null> {
  * @param keepCount - Number of most recent backups to keep (default: 3)
  */
 export async function cleanupOldBackups(skillName: string, keepCount: number = 3): Promise<void> {
-  const skillBackupDir = path.join(BACKUPS_DIR, skillName)
+  const skillBackupDir = path.join(getBackupsDir(), skillName)
 
   try {
     const entries = await fs.readdir(skillBackupDir, { withFileTypes: true })
