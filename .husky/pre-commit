@@ -72,10 +72,43 @@ echo "${YELLOW}[1/3] Clearing TypeScript build cache...${NC}"
 run_cmd npx tsc --build --clean > /dev/null 2>&1 || true
 echo "${GREEN}  ✓ Build cache cleared${NC}"
 
-# Phase 2: TypeScript Type Checking
+# Phase 2: TypeScript Type Checking (SMI-1886: Optimized to check only changed packages)
 echo "${YELLOW}[2/3] Running TypeScript type check...${NC}"
-if run_cmd npm run typecheck; then
-    echo "${GREEN}  ✓ TypeScript check passed${NC}"
+
+# Detect which packages have staged changes
+CHANGED_PACKAGES=$(git diff --cached --name-only | grep '^packages/' | cut -d'/' -f2 | sort -u)
+NON_PACKAGE_CHANGES=$(git diff --cached --name-only | grep -v '^packages/' | grep -E '\.(ts|tsx)$' | head -1)
+
+TYPECHECK_FAILED=0
+PACKAGES_CHECKED=""
+
+# If we have non-package TypeScript changes OR no package-specific changes, run full typecheck
+if [ -n "$NON_PACKAGE_CHANGES" ] || [ -z "$CHANGED_PACKAGES" ]; then
+    echo "  Running full typecheck (non-package changes detected)..."
+    if ! run_cmd npm run typecheck; then
+        TYPECHECK_FAILED=1
+    fi
+    PACKAGES_CHECKED="all"
+else
+    # Only typecheck packages with staged changes
+    for pkg in $CHANGED_PACKAGES; do
+        PKG_TSCONFIG="packages/$pkg/tsconfig.json"
+        if [ -f "$PKG_TSCONFIG" ]; then
+            echo "  Checking packages/$pkg..."
+            if ! run_cmd npx tsc --noEmit --project "$PKG_TSCONFIG"; then
+                TYPECHECK_FAILED=1
+            fi
+            PACKAGES_CHECKED="$PACKAGES_CHECKED $pkg"
+        fi
+    done
+fi
+
+if [ $TYPECHECK_FAILED -eq 0 ]; then
+    if [ "$PACKAGES_CHECKED" = "all" ]; then
+        echo "${GREEN}  ✓ TypeScript check passed (full)${NC}"
+    else
+        echo "${GREEN}  ✓ TypeScript check passed (packages:$PACKAGES_CHECKED)${NC}"
+    fi
 else
     echo ""
     echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
