@@ -719,6 +719,17 @@ All scheduled jobs log to the `audit_logs` table:
 
 ---
 
+## Process Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [Context Compaction](docs/process/context-compaction.md) | AI context window management, session recovery, hive mind coordination |
+| [Linear Hygiene Guide](docs/process/linear-hygiene-guide.md) | Issue management and workflow standards |
+| [Wave Completion Checklist](docs/process/wave-completion-checklist.md) | Quality gates for wave-based development |
+| [Exploration Phase Template](docs/process/exploration-phase-template.md) | Template for exploration/discovery phases |
+
+---
+
 ## Website Documentation (skillsmith.app)
 
 Public documentation pages at https://skillsmith.app/docs:
