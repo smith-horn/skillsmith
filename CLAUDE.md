@@ -672,6 +672,29 @@ npx supabase functions deploy events --no-verify-jwt
 2. Add deploy command to the anonymous functions list above
 3. Add function name to `ANONYMOUS_FUNCTIONS` array in `scripts/audit-standards.mjs`
 
+### CORS Configuration (SMI-1904)
+
+CORS is configured in `supabase/functions/_shared/cors.ts`:
+
+| Origin Type | Handling |
+|-------------|----------|
+| Production domains | Always allowed (`skillsmith.app`, `skillsmith.dev`) |
+| Vercel preview URLs | Auto-allowed via pattern (`*-smithhorngroup.vercel.app`) |
+| Localhost | Always allowed for development |
+| Custom domains | Add via `CORS_ALLOWED_ORIGINS` env var |
+
+**Adding custom origins:**
+
+Set in Supabase Dashboard → Edge Functions → Secrets:
+```
+CORS_ALLOWED_ORIGINS=https://custom.example.com,https://staging.skillsmith.app
+```
+
+Or via CLI:
+```bash
+npx supabase secrets set CORS_ALLOWED_ORIGINS="https://custom.example.com"
+```
+
 CI will fail if any anonymous function is missing from config.toml or CLAUDE.md.
 
 ---
