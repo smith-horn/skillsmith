@@ -38,6 +38,7 @@ import {
   BackgroundSyncService,
   getApiKey,
   type ApiClientConfig,
+  type SyncResult,
 } from '@skillsmith/core'
 import { LLMFailoverChain, type LLMFailoverConfig } from './llm/failover.js'
 
@@ -308,14 +309,14 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
       backgroundSync = new BackgroundSyncService(syncEngine, syncConfigRepo, {
         syncOnStart: true,
         debug: options.backgroundSyncConfig?.debug ?? false,
-        onSyncComplete: (result) => {
+        onSyncComplete: (result: SyncResult) => {
           if (options.backgroundSyncConfig?.debug) {
             console.log(
               `[skillsmith] Background sync complete: ${result.skillsAdded} added, ${result.skillsUpdated} updated`
             )
           }
         },
-        onSyncError: (error) => {
+        onSyncError: (error: Error) => {
           if (options.backgroundSyncConfig?.debug) {
             console.error(`[skillsmith] Background sync error: ${error.message}`)
           }

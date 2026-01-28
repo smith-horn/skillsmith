@@ -87,12 +87,21 @@ export interface LLMFailoverConfig extends MultiLLMProviderConfig {
 }
 
 /**
+ * LLMFailover-specific config properties (not from MultiLLMProviderConfig)
+ */
+type LLMFailoverOwnConfig = {
+  enabled: boolean
+  failoverTimeoutMs: number
+  circuitOpenThreshold: number
+  circuitResetTimeoutMs: number
+  debug: boolean
+}
+
+/**
  * Default configuration for MCP server LLM failover
  * Tuned for SMI-1524 acceptance criteria
  */
-export const DEFAULT_LLM_FAILOVER_CONFIG: Required<
-  Omit<LLMFailoverConfig, keyof MultiLLMProviderConfig>
-> = {
+export const DEFAULT_LLM_FAILOVER_CONFIG: LLMFailoverOwnConfig = {
   enabled: true,
   failoverTimeoutMs: 3000, // 3 seconds per acceptance criteria
   circuitOpenThreshold: 5, // 5 failures per acceptance criteria
@@ -156,8 +165,7 @@ export interface FailoverHealthStatus {
  */
 export class LLMFailoverChain {
   private provider: MultiLLMProvider | null = null
-  private config: Required<Omit<LLMFailoverConfig, keyof MultiLLMProviderConfig>> &
-    MultiLLMProviderConfig
+  private config: LLMFailoverOwnConfig & MultiLLMProviderConfig
   private initialized = false
   private enabled: boolean
   private initializationPromise: Promise<void> | null = null
@@ -225,15 +233,21 @@ export class LLMFailoverChain {
 
     // Set up event listeners for debugging
     if (this.config.debug) {
-      this.provider.on('initialized', (data) => {
-        console.log('[LLMFailoverChain] Provider initialized:', data)
-      })
+      this.provider.on(
+        'initialized',
+        (data: { providers: LLMProviderType[]; defaultProvider: LLMProviderType }) => {
+          console.log('[LLMFailoverChain] Provider initialized:', data)
+        }
+      )
 
-      this.provider.on('provider_error', (data) => {
-        console.log('[LLMFailoverChain] Provider error:', data)
-      })
+      this.provider.on(
+        'provider_error',
+        (data: { provider: LLMProviderType; error: Error }) => {
+          console.log('[LLMFailoverChain] Provider error:', data)
+        }
+      )
 
-      this.provider.on('metrics', (metrics) => {
+      this.provider.on('metrics', (metrics: ProviderMetrics) => {
         console.log('[LLMFailoverChain] Metrics:', metrics)
       })
     }
