@@ -9,7 +9,12 @@
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import type { SkillManifest } from './install.types.js'
-import type { ConflictInfo, ConflictAction, InstallResult, SkillManifestEntry } from './install.types.js'
+import type {
+  ConflictInfo,
+  ConflictAction,
+  InstallResult,
+  SkillManifestEntry,
+} from './install.types.js'
 import {
   detectModifications,
   createSkillBackup,
