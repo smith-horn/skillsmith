@@ -842,6 +842,29 @@ const supabaseConfig = getSupabaseConfig();
         }
       }
 
+      // Check for pending key from signup (one-time display)
+      // This calls decrypt_pending_key RPC which auto-deletes after retrieval
+      try {
+        const { data: pendingKey, error: pendingKeyError } = await supabase.rpc(
+          'decrypt_pending_key',
+          { user_id_input: user.id }
+        )
+
+        if (pendingKey && !pendingKeyError) {
+          // Show the pending key in modal (same modal used for new key generation)
+          newKeyValue.textContent = pendingKey
+          // Update modal header to indicate this is from signup
+          const modalHeader = document.querySelector('#new-key-modal .modal-header h3')
+          if (modalHeader) {
+            modalHeader.textContent = 'Your API Key'
+          }
+          newKeyModal.style.display = 'flex'
+        }
+      } catch {
+        // Non-fatal: pending key may not exist or already retrieved
+        // Silently ignore - this is expected for users without pending keys
+      }
+
       // License keys list
       const keysList = document.getElementById('keys-list')
       if (keysList && licenseKeys && licenseKeys.length > 0) {
