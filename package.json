@@ -20,6 +20,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --build",
+    "posttypecheck": "chmod +x packages/mcp-server/dist/src/index.js 2>/dev/null || true",
     "typecheck:watch": "tsc --build --watch",
     "audit:standards": "node scripts/audit-standards.mjs",
     "validate:skills": "node scripts/validate-local-skills.mjs",
