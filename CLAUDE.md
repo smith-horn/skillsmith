@@ -723,7 +723,7 @@ All scheduled jobs log to the `audit_logs` table:
 | [Engineering Standards](docs/architecture/standards.md) | Authoritative engineering policy |
 | [MCP Decision Engine](docs/architecture/mcp-decision-engine-architecture.md) | Skill vs MCP decision framework |
 | [Indexer Infrastructure](docs/architecture/indexer-infrastructure.md) | GitHub skill indexing with App authentication |
-| [Astro Script Patterns](docs/architecture/standards.md#8-astro-script-patterns-smi-1596) | Module vs inline scripts, server-to-client data passing |
+| [Astro Script Patterns](docs/architecture/standards-astro.md) | Module vs inline scripts, server-to-client data passing |
 
 ---
 
