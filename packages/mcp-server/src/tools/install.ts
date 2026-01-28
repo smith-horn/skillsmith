@@ -330,6 +330,9 @@ export async function installSkill(
       }
     }
 
+    // SMI-1867: Compute hash before file operations (needed in manifest update)
+    const contentHash = hashContent(finalSkillContent)
+
     // SMI-1792, SMI-1797: Atomic file installation with transaction pattern
     // SMI-1804: Parallelize file writes for better performance
     const writtenFiles: string[] = []
@@ -343,7 +346,6 @@ export async function installSkill(
       writtenFiles.push(mainSkillPath)
 
       // SMI-1867: Store original content for future conflict detection
-      const contentHash = hashContent(finalSkillContent)
       await storeOriginal(skillName, finalSkillContent, {
         version: '1.0.0',
         source: 'github:' + owner + '/' + repo,
