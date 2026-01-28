@@ -8,6 +8,7 @@ import * as path from 'path'
 import type { ToolContext } from '../context.js'
 import {
   MANIFEST_PATH,
+  SKILLSMITH_DIR,
   validateTrustTier,
   type SkillManifest,
   type ParsedSkillId,
@@ -32,6 +33,10 @@ const LOCK_RETRY_INTERVAL_MS = 100
  */
 export async function acquireManifestLock(): Promise<void> {
   const startTime = Date.now()
+
+  // Ensure the skillsmith directory exists before attempting to create lock file
+  // This fixes ENOENT errors in CI environments where ~/.skillsmith doesn't exist
+  await fs.mkdir(SKILLSMITH_DIR, { recursive: true })
 
   while (Date.now() - startTime < LOCK_TIMEOUT_MS) {
     try {
@@ -433,4 +438,5 @@ export {
   storeOriginal,
   loadOriginal,
   cleanupOldBackups,
+  getBackupsDir,
 } from './install.conflict-helpers.js'
