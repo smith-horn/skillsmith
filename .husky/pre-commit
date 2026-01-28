@@ -67,10 +67,17 @@ else
 fi
 
 # Phase 1: Clear TypeScript build cache (SMI-1348)
-# Prevents stale .tsbuildinfo from causing false positive type errors
-echo "${YELLOW}[1/3] Clearing TypeScript build cache...${NC}"
-run_cmd npx tsc --build --clean > /dev/null 2>&1 || true
-echo "${GREEN}  ✓ Build cache cleared${NC}"
+# Only clear cache if FULL_TYPECHECK=1 (e.g., CI or explicit request)
+# Clearing cache causes ALL packages to rebuild, surfacing pre-existing errors
+# in unchanged files. Incremental builds are safer for developer workflow.
+if [ "$FULL_TYPECHECK" = "1" ]; then
+  echo "${YELLOW}[1/3] Clearing TypeScript build cache (FULL_TYPECHECK=1)...${NC}"
+  run_cmd npx tsc --build --clean > /dev/null 2>&1 || true
+  echo "${GREEN}  ✓ Build cache cleared${NC}"
+else
+  echo "${YELLOW}[1/3] Using incremental TypeScript build cache...${NC}"
+  echo "${GREEN}  ✓ Cache preserved (set FULL_TYPECHECK=1 for full rebuild)${NC}"
+fi
 
 # Phase 2: TypeScript Type Checking (SMI-1886: Optimized to check only changed packages)
 echo "${YELLOW}[2/3] Running TypeScript type check...${NC}"
