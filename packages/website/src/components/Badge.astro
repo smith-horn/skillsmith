@@ -1,5 +1,6 @@
 ---
-export type TrustTier = 'verified' | 'community' | 'experimental' | 'unknown';
+import type { TrustTier } from './types';
+export type { TrustTier };
 
 interface Props {
   tier: TrustTier;

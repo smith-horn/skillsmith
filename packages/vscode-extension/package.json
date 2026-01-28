@@ -165,12 +165,12 @@
     "package": "vsce package"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
-    "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^2.22.0",
+    "@types/node": "20.19.30",
+    "@types/vscode": "1.108.1",
+    "@vscode/vsce": "2.32.0",
     "esbuild": "0.27.2",
     "eslint": "^8.56.0",
-    "typescript": "^5.3.3",
+    "typescript": "5.9.3",
     "vitest": "4.0.16"
   }
 }

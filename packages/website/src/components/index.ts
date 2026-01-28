@@ -17,4 +17,4 @@ export const components = {
 } as const
 
 // Type exports for TypeScript support
-export type { TrustTier } from './Badge.astro'
+export type { TrustTier } from './types'

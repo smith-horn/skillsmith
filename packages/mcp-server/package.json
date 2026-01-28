@@ -19,12 +19,12 @@
     "test:integration": "vitest run --config vitest.config.integration.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.4",
-    "@skillsmith/core": "*",
+    "@modelcontextprotocol/sdk": "1.25.3",
+    "@skillsmith/core": "0.4.1",
     "esbuild": "0.27.2"
   },
   "devDependencies": {
-    "tsx": "^4.6.0",
+    "tsx": "4.21.0",
     "vitest": "4.0.16",
     "zod": "^3.25.0"
   },

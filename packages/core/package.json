@@ -54,11 +54,11 @@
     "@opentelemetry/sdk-trace-base": "2.5.0",
     "@opentelemetry/semantic-conventions": "1.39.0",
     "@xenova/transformers": "2.17.2",
-    "better-sqlite3": "^12.6.2",
-    "lru-cache": "^10.1.0",
+    "better-sqlite3": "12.6.2",
+    "lru-cache": "10.4.3",
     "posthog-node": "^5.21.0",
     "stripe": "^20.2.0",
-    "typescript": "^5.0.0",
+    "typescript": "5.9.3",
     "zod": "4.2.1"
   },
   "devDependencies": {
