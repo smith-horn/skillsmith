@@ -180,6 +180,8 @@ export interface InstallResult {
   mergeResult?: MergeResult
   /** SMI-1864: Available actions when a conflict requires user decision */
   requiresAction?: ConflictAction[]
+  /** SMI-1895: Path to backup file created during conflict resolution */
+  backupPath?: string
 }
 
 /** Optimization info included in install result */
