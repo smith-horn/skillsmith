@@ -147,7 +147,6 @@ export async function installSkill(
     }
 
     // SMI-1867: Check for local modifications on reinstall
-    let _backupPath: string | undefined
     if (manifest.installedSkills[skillName] && input.force) {
       const conflictCheck = await checkForConflicts(
         skillName,
@@ -160,8 +159,8 @@ export async function installSkill(
       if (!conflictCheck.shouldProceed) {
         return conflictCheck.earlyReturn!
       }
-
-      _backupPath = conflictCheck.backupPath
+      // Note: conflictCheck.backupPath is available if backup was created
+      // but not currently included in InstallResult
     }
 
     // Determine files to fetch
@@ -213,9 +212,8 @@ export async function installSkill(
       if (mergeOp.mergedContent) {
         skillMdContent = mergeOp.mergedContent
       }
-      if (mergeOp.backupPath) {
-        _backupPath = mergeOp.backupPath
-      }
+      // Note: mergeOp.backupPath is available if backup was created
+      // but not currently included in InstallResult
     }
 
     // Validate SKILL.md
