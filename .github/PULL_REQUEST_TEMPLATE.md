@@ -43,6 +43,10 @@ Describe how this was tested:
 - [ ] Integration tests
 - [ ] Manual testing (describe steps)
 
+### E2E Tests (Required for MCP/Install changes)
+- [ ] E2E tests pass locally: `docker exec skillsmith-dev-1 npm run test:e2e:mcp`
+- [ ] No environment-specific paths (use runtime functions like `getBackupsDir()` instead of module-level constants)
+
 ## Screenshots (if applicable)
 
 [Add screenshots for UI changes]
