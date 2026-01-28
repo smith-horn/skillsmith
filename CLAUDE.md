@@ -632,7 +632,7 @@ npx claude-flow swarm --config .claude/hive-mind/your-config.yaml
 |----------|---------|------|
 | `early-access-signup` | Email waitlist signup with rate limiting, honeypot, Resend emails | Anonymous |
 | `contact-submit` | Contact form submissions with email notifications | Anonymous |
-| `checkout` | Stripe checkout session creation | Authenticated |
+| `checkout` | Stripe checkout session creation | Anonymous |
 | `stripe-webhook` | Stripe webhook handler (subscriptions, payments, license keys) | Anonymous |
 | `create-portal-session` | Stripe customer portal session creation | Authenticated |
 | `list-invoices` | List customer invoices from Stripe | Authenticated |
@@ -666,6 +666,13 @@ npx supabase functions deploy events --no-verify-jwt
 ```
 
 > **Note**: The `verify_jwt` setting is also configured in `supabase/config.toml` for local development. When deploying to production, you must use the `--no-verify-jwt` flag explicitly.
+
+**CI Protection (SMI-1900):** Anonymous functions are validated by `npm run audit:standards`. If you add a new anonymous function:
+1. Add `[functions.<name>]` with `verify_jwt = false` to `supabase/config.toml`
+2. Add deploy command to the anonymous functions list above
+3. Add function name to `ANONYMOUS_FUNCTIONS` array in `scripts/audit-standards.mjs`
+
+CI will fail if any anonymous function is missing from config.toml or CLAUDE.md.
 
 ---
 

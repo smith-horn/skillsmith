@@ -24,6 +24,7 @@
     "typecheck:watch": "tsc --build --watch",
     "audit:standards": "node scripts/audit-standards.mjs",
     "validate:skills": "node scripts/validate-local-skills.mjs",
+    "validate:anon-functions": "npx tsx scripts/validate-anonymous-functions.ts",
     "ci:local": "npm run lint && npm run typecheck && npm run test:coverage",
     "ci:quick": "npm run lint -- --cache && npm run typecheck && npm run test",
     "preflight": "npx tsx scripts/preflight-check.ts",

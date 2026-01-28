@@ -314,6 +314,74 @@ if (existsSync(scriptsDir)) {
   warn('No scripts directory found')
 }
 
+// 10. SMI-1900: Supabase Anonymous Functions
+console.log(`\n${BOLD}10. Supabase Anonymous Functions (SMI-1900)${RESET}`)
+
+// Canonical list of functions that must be anonymous (no JWT verification)
+const ANONYMOUS_FUNCTIONS = [
+  'early-access-signup',
+  'contact-submit',
+  'stats',
+  'skills-search',
+  'skills-get',
+  'skills-recommend',
+  'stripe-webhook',
+  'checkout',
+  'events',
+]
+
+const CONFIG_TOML_PATH = 'supabase/config.toml'
+const CLAUDE_MD_PATH = 'CLAUDE.md'
+
+if (existsSync(CONFIG_TOML_PATH) && existsSync(CLAUDE_MD_PATH)) {
+  const configToml = readFileSync(CONFIG_TOML_PATH, 'utf8')
+  const claudeMd = readFileSync(CLAUDE_MD_PATH, 'utf8')
+
+  // Parse config.toml for [functions.X] with verify_jwt = false
+  const configFunctions = new Set()
+  const configRegex = /\[functions\.([^\]]+)\]\s*\n\s*verify_jwt\s*=\s*false/g
+  let match
+  while ((match = configRegex.exec(configToml)) !== null) {
+    configFunctions.add(match[1])
+  }
+
+  // Parse CLAUDE.md for documented deploy commands
+  const docFunctions = new Set()
+  const docRegex = /npx supabase functions deploy ([a-z][a-z0-9-]+) --no-verify-jwt/g
+  while ((match = docRegex.exec(claudeMd)) !== null) {
+    docFunctions.add(match[1])
+  }
+
+  let anonFailed = false
+
+  // Check all canonical functions are in config.toml
+  for (const fn of ANONYMOUS_FUNCTIONS) {
+    if (!configFunctions.has(fn)) {
+      fail(`Missing from config.toml: [functions.${fn}] with verify_jwt = false`)
+      anonFailed = true
+    }
+  }
+
+  // Check all canonical functions are documented
+  for (const fn of ANONYMOUS_FUNCTIONS) {
+    if (!docFunctions.has(fn)) {
+      fail(`Missing from CLAUDE.md: npx supabase functions deploy ${fn} --no-verify-jwt`)
+      anonFailed = true
+    }
+  }
+
+  if (!anonFailed) {
+    pass(`All ${ANONYMOUS_FUNCTIONS.length} anonymous functions properly configured`)
+  }
+} else {
+  if (!existsSync(CONFIG_TOML_PATH)) {
+    warn('supabase/config.toml not found - skipping anonymous function check')
+  }
+  if (!existsSync(CLAUDE_MD_PATH)) {
+    warn('CLAUDE.md not found - skipping anonymous function check')
+  }
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)
