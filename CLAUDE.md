@@ -448,6 +448,34 @@ packages/
 | `community` | Community-reviewed skills |
 | `experimental` | New/beta skills |
 
+### API Authentication (SMI-1950)
+
+The MCP server supports three authentication modes:
+
+| Mode | Header | Rate Limit | Usage Tracking |
+|------|--------|------------|----------------|
+| Personal API Key | `X-API-Key: sk_live_*` | Tier-based (60-300/min) | ✅ Account dashboard |
+| Supabase Anon Key | `Authorization: Bearer eyJ...` | 30/min (community) | ❌ Not tracked |
+| No Auth | None | 10 total (trial) | ❌ Not tracked |
+
+**To track usage on your account**, configure your personal API key:
+
+```json
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_your_key_here"
+      }
+    }
+  }
+}
+```
+
+Get your API key from https://skillsmith.app/account after signing up.
+
 ---
 
 ## Skillsmith CLI Commands
