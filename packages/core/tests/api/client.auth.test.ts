@@ -71,13 +71,14 @@ describe('SMI-1953: API Client Authentication', () => {
       expect(client.getAuthMode()).toBe('anonymous')
     })
 
-    it('should return "none" when no authentication is configured', () => {
-      // Force no anon key by providing explicit undefined
+    it('should return "anonymous" even with explicit undefined anonKey due to fallback', () => {
+      // Explicit undefined doesn't prevent PRODUCTION_ANON_KEY fallback
+      // because the constructor uses: config.anonKey || process.env.SUPABASE_ANON_KEY || PRODUCTION_ANON_KEY
+      // The || operator treats undefined as falsy, so fallback still applies
       const client = new SkillsmithApiClient({ anonKey: undefined })
 
-      // With explicit undefined anonKey, the client won't use PRODUCTION_ANON_KEY
-      // This tests the edge case where auth is completely disabled
-      expect(client.getAuthMode()).toBe('anonymous') // Still gets PRODUCTION_ANON_KEY fallback
+      // PRODUCTION_ANON_KEY fallback ensures users always have authenticated access
+      expect(client.getAuthMode()).toBe('anonymous')
     })
   })
 
