@@ -95,6 +95,16 @@ export function buildRequestHeaders(anonKey?: string): Record<string, string> {
 export const PRODUCTION_API_URL = 'https://api.skillsmith.app/functions/v1'
 
 /**
+ * Production Supabase anon key for authenticated API access.
+ * This key is safe to expose - it only provides RLS-based access, not admin access.
+ * Without this, users hit the 10-request trial limit and get 0 results.
+ *
+ * SMI-1949: SMI-1948 fix was incomplete - added URL but not anon key.
+ */
+export const PRODUCTION_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZyY256cG1uZHRyb3F4eG9xa3p5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc4MzgwNzQsImV4cCI6MjA4MzQxNDA3NH0.WNK5jaNG3twxApOva5A1ZlCaZb5hVqBYtNJezRrR4t8'
+
+/**
  * Default base URL for API client.
  *
  * Priority order:

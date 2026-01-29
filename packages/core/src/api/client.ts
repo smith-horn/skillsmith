@@ -22,7 +22,12 @@ import {
   SingleSkillResponseSchema,
   TelemetryResponseSchema,
 } from './schemas.js'
-import { calculateBackoff, buildRequestHeaders, DEFAULT_BASE_URL } from './utils.js'
+import {
+  calculateBackoff,
+  buildRequestHeaders,
+  DEFAULT_BASE_URL,
+  PRODUCTION_ANON_KEY,
+} from './utils.js'
 
 // Re-export for backwards compatibility
 export { generateAnonymousId } from './utils.js'
@@ -172,7 +177,8 @@ export class SkillsmithApiClient {
     this.offlineMode = explicitOfflineMode
 
     this.baseUrl = baseUrl
-    this.anonKey = config.anonKey || process.env.SUPABASE_ANON_KEY
+    // SMI-1949: Use production anon key as final fallback so users get authenticated access
+    this.anonKey = config.anonKey || process.env.SUPABASE_ANON_KEY || PRODUCTION_ANON_KEY
     this.apiKey = config.apiKey || process.env.SKILLSMITH_API_KEY
     this.timeout = config.timeout ?? 30000
     this.maxRetries = config.maxRetries ?? 3

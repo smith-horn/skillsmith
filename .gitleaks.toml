@@ -84,6 +84,9 @@ regexes = [
   '''msk_live_xxx''',
   '''ghp_xxx''',
   '''lin_api_xxx''',
+  # SMI-1949: Production Supabase anon key (safe to expose - provides RLS access only)
+  # This is intentionally bundled with the MCP server for authenticated API access
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZyY256cG1uZHRyb3F4eG9xa3p5.*''',
 ]
 
 # Allow specific files that contain examples or tests
