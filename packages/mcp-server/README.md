@@ -36,7 +36,7 @@ Claude will automatically update your `~/.claude/settings.json`. After restartin
 
 ## Live Skill Registry
 
-Version 0.2.3 includes the live skill registry with 9,717+ skills.
+Version 0.3.5 includes the live skill registry with 14,000+ skills.
 
 Skills are served from `api.skillsmith.app` and cached locally for 24 hours.
 

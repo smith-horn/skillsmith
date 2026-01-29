@@ -24,7 +24,7 @@ Command-line interface for Skillsmith - discover, manage, and author Claude Code
 - **Skill Transform**: Upgrade existing skills with subagent configuration
 - **Dynamic Version**: Version now reads from package.json automatically
 - **Tool Detection**: Automatic analysis of required tools from skill content
-- **Live Skills**: Search and install from 9,717+ real skills
+- **Live Skills**: Search and install from 14,000+ real skills
 - **Faster Search**: Full-text search with quality ranking
 - **Privacy First**: Opt-out telemetry, no PII collected
 

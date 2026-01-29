@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/mcp-server",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "MCP server for Skillsmith skill discovery",
   "type": "module",
   "main": "./dist/src/index.js",
