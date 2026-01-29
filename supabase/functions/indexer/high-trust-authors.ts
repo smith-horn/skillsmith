@@ -13,6 +13,9 @@
  * @see https://github.com/anthropics/skills - Mixed (Apache 2.0 + Source-Available)
  * @see https://github.com/huggingface/skills - Apache 2.0
  * @see https://github.com/vercel-labs/agent-skills - MIT
+ * @see https://github.com/resend/email-best-practices - MIT
+ * @see https://github.com/resend/react-email - MIT
+ * @see https://github.com/resend/resend-skills - MIT
  */
 
 export interface HighTrustAuthor {
@@ -66,6 +69,27 @@ export const HIGH_TRUST_AUTHORS: HighTrustAuthor[] = [
     license: 'MIT',
     baseQualityScore: 0.94,
     description: 'Official Vercel development and deployment skills',
+  },
+  {
+    owner: 'resend',
+    repo: 'email-best-practices',
+    license: 'MIT',
+    baseQualityScore: 0.94,
+    description: 'Resend email best practices - SPF/DKIM/DMARC, compliance, deliverability',
+  },
+  {
+    owner: 'resend',
+    repo: 'react-email',
+    license: 'MIT',
+    baseQualityScore: 0.94,
+    description: 'React Email - build production-ready HTML emails with React components',
+  },
+  {
+    owner: 'resend',
+    repo: 'resend-skills',
+    license: 'MIT',
+    baseQualityScore: 0.94,
+    description: 'Resend API skills - send emails, batch operations, webhooks',
   },
 ]
 
