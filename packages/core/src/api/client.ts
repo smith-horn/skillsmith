@@ -162,14 +162,16 @@ export class SkillsmithApiClient {
   private offlineMode: boolean
 
   constructor(config: ApiClientConfig = {}) {
-    const baseUrl = config.baseUrl || process.env.SKILLSMITH_API_URL || DEFAULT_BASE_URL
+    // SMI-1948: DEFAULT_BASE_URL now always has a value (production URL fallback)
+    // Priority: config.baseUrl > DEFAULT_BASE_URL (which checks env vars internally)
+    const baseUrl = config.baseUrl || DEFAULT_BASE_URL
 
-    // Auto-enable offline mode if no URL is configured (graceful degradation)
-    // This allows the client to work in test/dev environments without explicit configuration
+    // Offline mode must now be explicitly enabled via config or env var
+    // SMI-1948: Previously, missing SUPABASE_URL caused implicit offline mode
     const explicitOfflineMode = config.offlineMode ?? process.env.SKILLSMITH_OFFLINE_MODE === 'true'
-    this.offlineMode = explicitOfflineMode || !baseUrl
+    this.offlineMode = explicitOfflineMode
 
-    this.baseUrl = baseUrl || 'offline://not-configured'
+    this.baseUrl = baseUrl
     this.anonKey = config.anonKey || process.env.SUPABASE_ANON_KEY
     this.apiKey = config.apiKey || process.env.SKILLSMITH_API_KEY
     this.timeout = config.timeout ?? 30000

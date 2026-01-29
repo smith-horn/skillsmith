@@ -90,6 +90,7 @@
     "vitest": "4.0.16"
   },
   "dependencies": {
+    "@claude-flow/aidefence": "3.0.2",
     "esbuild": "0.27.2"
   },
   "overrides": {

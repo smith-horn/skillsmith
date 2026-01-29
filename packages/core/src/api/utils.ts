@@ -89,9 +89,21 @@ export function buildRequestHeaders(anonKey?: string): Record<string, string> {
 // ============================================================================
 
 /**
- * Default base URL constructed from SUPABASE_URL environment variable.
- * Falls back to undefined to fail explicitly if not configured.
+ * Production API URL for Skillsmith registry.
+ * This is the public API endpoint that all users should use.
  */
-export const DEFAULT_BASE_URL = process.env.SUPABASE_URL
-  ? `${process.env.SUPABASE_URL}/functions/v1`
-  : undefined
+export const PRODUCTION_API_URL = 'https://api.skillsmith.app/functions/v1'
+
+/**
+ * Default base URL for API client.
+ *
+ * Priority order:
+ * 1. SKILLSMITH_API_URL env var (for custom deployments)
+ * 2. SUPABASE_URL env var (for development with local Supabase)
+ * 3. Production API URL (default for all users)
+ *
+ * SMI-1948: Previously fell back to undefined, causing offline mode for all users.
+ */
+export const DEFAULT_BASE_URL =
+  process.env.SKILLSMITH_API_URL ||
+  (process.env.SUPABASE_URL ? `${process.env.SUPABASE_URL}/functions/v1` : PRODUCTION_API_URL)

@@ -31,6 +31,7 @@ export {
   createCache,
   getGlobalCache,
   DEFAULT_TTL,
+  type ApiClientConfig,
 } from './api/index.js'
 
 // Search
