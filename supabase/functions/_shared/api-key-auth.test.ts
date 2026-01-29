@@ -166,6 +166,65 @@ describe('authenticateRequest', () => {
     expect(result).toEqual({ authenticated: false })
   })
 
+  // SMI-1950: Anon key authentication tests
+  describe('Supabase anon key authentication', () => {
+    const ANON_KEY =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZyY256cG1uZHRyb3F4eG9xa3p5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc4MzgwNzQsImV4cCI6MjA4MzQxNDA3NH0.WNK5jaNG3twxApOva5A1ZlCaZb5hVqBYtNJezRrR4t8'
+
+    it('should return community-tier authenticated for anon key', async () => {
+      const req = new Request('https://example.com', {
+        headers: { Authorization: `Bearer ${ANON_KEY}` },
+      })
+
+      const result = await authenticateRequest(req)
+
+      expect(result.authenticated).toBe(true)
+      expect(result.tier).toBe('community')
+      expect(result.rateLimit).toBe(30)
+      expect(result.keyPrefix).toBe('anon_key')
+    })
+
+    it('should return unauthenticated for non-matching JWT', async () => {
+      const req = new Request('https://example.com', {
+        headers: { Authorization: 'Bearer eyJsomeotherinvalidjwt' },
+      })
+
+      const result = await authenticateRequest(req)
+
+      expect(result.authenticated).toBe(false)
+    })
+
+    it('should prefer sk_live_ API key over anon key', async () => {
+      const mockRpc = vi.fn().mockResolvedValue({
+        data: [
+          {
+            is_valid: true,
+            tier: 'team',
+            rate_limit: 120,
+            user_id: 'user-123',
+          },
+        ],
+        error: null,
+      })
+      vi.mocked(createSupabaseAdminClient).mockReturnValue({
+        rpc: mockRpc,
+      } as ReturnType<typeof createSupabaseAdminClient>)
+
+      const req = new Request('https://example.com', {
+        headers: {
+          'X-API-Key': 'sk_live_valid',
+          Authorization: `Bearer ${ANON_KEY}`,
+        },
+      })
+
+      const result = await authenticateRequest(req)
+
+      // Should use the sk_live_ key, not the anon key
+      expect(result.tier).toBe('team')
+      expect(result.rateLimit).toBe(120)
+    })
+  })
+
   it('should return authenticated with tier info for valid key', async () => {
     const mockRpc = vi.fn().mockResolvedValue({
       data: [

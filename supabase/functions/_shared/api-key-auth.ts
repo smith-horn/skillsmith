@@ -3,13 +3,25 @@
  * @module _shared/api-key-auth
  *
  * SMI-XXXX: API Key Authentication
+ * SMI-1950: Recognize Supabase anon key as community-tier access
  *
  * Validates X-API-Key headers against license_keys table.
+ * Also recognizes the Supabase anon key for MCP server users.
  * Uses the existing validate_license_key RPC function.
  */
 
 import { createSupabaseAdminClient } from './supabase.ts'
 import { hashLicenseKey, isValidKeyFormat } from './license.ts'
+
+/**
+ * Production Supabase anon key for authenticated API access.
+ * This key is safe to expose - it only provides RLS-based access, not admin access.
+ * MCP server users send this key to bypass trial limits.
+ *
+ * SMI-1950: Backend must recognize this key to prevent trial limit errors.
+ */
+const PRODUCTION_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZyY256cG1uZHRyb3F4eG9xa3p5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc4MzgwNzQsImV4cCI6MjA4MzQxNDA3NH0.WNK5jaNG3twxApOva5A1ZlCaZb5hVqBYtNJezRrR4t8'
 
 /**
  * Authentication result
@@ -54,7 +66,32 @@ export function extractApiKey(req: Request): string | null {
 }
 
 /**
+ * Check if request contains the Supabase anon key
+ * SMI-1950: MCP server users send anon key for authenticated access
+ *
+ * @param req - The incoming request
+ * @returns True if the anon key is present
+ */
+function hasAnonKey(req: Request): boolean {
+  const authHeader = req.headers.get('Authorization')
+  if (!authHeader) return false
+
+  // Check for Bearer token with the anon key
+  if (authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7)
+    return token === PRODUCTION_ANON_KEY
+  }
+
+  return false
+}
+
+/**
  * Authenticate a request using API key
+ *
+ * Authentication priority:
+ * 1. sk_live_* API key (personal user key) - full tier-based access
+ * 2. Supabase anon key (MCP server) - community-tier access
+ * 3. No authentication - trial limits apply
  *
  * @param req - The incoming request
  * @returns Authentication result with tier and rate limit info
@@ -62,7 +99,17 @@ export function extractApiKey(req: Request): string | null {
 export async function authenticateRequest(req: Request): Promise<AuthResult> {
   const apiKey = extractApiKey(req)
 
+  // SMI-1950: Check for anon key if no API key found
+  // This allows MCP server users to bypass trial limits
   if (!apiKey) {
+    if (hasAnonKey(req)) {
+      return {
+        authenticated: true,
+        tier: 'community',
+        rateLimit: 30, // Community rate limit
+        keyPrefix: 'anon_key',
+      }
+    }
     return { authenticated: false }
   }
 
