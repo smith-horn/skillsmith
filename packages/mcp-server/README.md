@@ -36,7 +36,9 @@ Claude will automatically update your `~/.claude/settings.json`. After restartin
 
 ## Live Skill Registry
 
-Version 0.3.6 includes the live skill registry with 14,000+ skills.
+Version 0.3.8 includes the live skill registry with 14,000+ skills.
+
+> **Note (v0.3.8):** Fixed critical bug where the MCP server defaulted to offline mode for all users. Search now correctly connects to the production API. See [SMI-1948](https://linear.app/smith-horn-group/issue/SMI-1948).
 
 Skills are served from `api.skillsmith.app` and cached locally for 24 hours.
 
