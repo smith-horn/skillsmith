@@ -10,6 +10,8 @@ Reusable templates for common documentation and development tasks.
 | [linear-issue-template.md](linear-issue-template.md) | Standard template for Linear issues |
 | [pre-implementation-checklist.md](pre-implementation-checklist.md) | Checklist before starting implementation |
 | [blog-accessibility-checklist.md](blog-accessibility-checklist.md) | Accessibility checklist for blog posts |
+| [migration-template.sql](migration-template.sql) | SQL migration template with security patterns |
+| [migration-review-checklist.md](migration-review-checklist.md) | Migration code review checklist |
 
 ## Usage
 

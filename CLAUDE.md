@@ -652,8 +652,12 @@ npx supabase functions deploy <function-name> --no-verify-jwt  # Anonymous acces
 npx supabase functions deploy <function-name>                   # Requires auth
 ```
 
-**Anonymous functions (MUST use `--no-verify-jwt`):**
+**Functions requiring `--no-verify-jwt`:**
+
+These functions bypass Supabase gateway JWT validation and handle auth internally:
+
 ```bash
+# Anonymous functions (no auth required)
 npx supabase functions deploy early-access-signup --no-verify-jwt
 npx supabase functions deploy contact-submit --no-verify-jwt
 npx supabase functions deploy stats --no-verify-jwt
@@ -663,7 +667,16 @@ npx supabase functions deploy skills-recommend --no-verify-jwt
 npx supabase functions deploy stripe-webhook --no-verify-jwt
 npx supabase functions deploy checkout --no-verify-jwt
 npx supabase functions deploy events --no-verify-jwt
+
+# Authenticated functions with internal JWT validation
+# These validate the user token in function code, not at gateway
+npx supabase functions deploy generate-license --no-verify-jwt
+npx supabase functions deploy regenerate-license --no-verify-jwt
+npx supabase functions deploy create-portal-session --no-verify-jwt
+npx supabase functions deploy list-invoices --no-verify-jwt
 ```
+
+> **Why these functions use `--no-verify-jwt`:** The Supabase gateway rejects user JWTs from the frontend auth flow. These functions validate tokens internally using `supabase.auth.getUser()`. See SMI-1906 for details.
 
 > **Note**: The `verify_jwt` setting is also configured in `supabase/config.toml` for local development. When deploying to production, you must use the `--no-verify-jwt` flag explicitly.
 
@@ -744,9 +757,10 @@ All scheduled jobs log to the `audit_logs` table:
 | [System Overview](docs/architecture/system-design/system-overview.md) | High-level system architecture |
 | [Architecture Index](docs/architecture/index.md) | Complete architecture documentation index |
 | [Engineering Standards](docs/architecture/standards.md) | Authoritative engineering policy |
+| [Database Standards](docs/architecture/standards-database.md) | Migration patterns, function security, RLS |
 | [MCP Decision Engine](docs/architecture/mcp-decision-engine-architecture.md) | Skill vs MCP decision framework |
 | [Indexer Infrastructure](docs/architecture/indexer-infrastructure.md) | GitHub skill indexing with App authentication |
-| [Astro Script Patterns](docs/architecture/standards-astro.md) | Module vs inline scripts, server-to-client data passing |
+| [Astro Script Patterns](docs/architecture/standards-astro.md) | Module vs inline scripts, server-to-client data passing, **layout consistency & auth navigation** |
 
 ---
 

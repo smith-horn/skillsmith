@@ -317,8 +317,10 @@ if (existsSync(scriptsDir)) {
 // 10. SMI-1900: Supabase Anonymous Functions
 console.log(`\n${BOLD}10. Supabase Anonymous Functions (SMI-1900)${RESET}`)
 
-// Canonical list of functions that must be anonymous (no JWT verification)
-const ANONYMOUS_FUNCTIONS = [
+// Canonical list of functions that require --no-verify-jwt deployment
+// Includes both anonymous functions and authenticated functions with internal JWT validation
+const NO_VERIFY_JWT_FUNCTIONS = [
+  // Anonymous functions (no auth required)
   'early-access-signup',
   'contact-submit',
   'stats',
@@ -328,6 +330,10 @@ const ANONYMOUS_FUNCTIONS = [
   'stripe-webhook',
   'checkout',
   'events',
+  // Authenticated functions with internal JWT validation
+  // These validate tokens in function code, not at Supabase gateway
+  'generate-license',
+  'regenerate-license',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'
@@ -355,7 +361,7 @@ if (existsSync(CONFIG_TOML_PATH) && existsSync(CLAUDE_MD_PATH)) {
   let anonFailed = false
 
   // Check all canonical functions are in config.toml
-  for (const fn of ANONYMOUS_FUNCTIONS) {
+  for (const fn of NO_VERIFY_JWT_FUNCTIONS) {
     if (!configFunctions.has(fn)) {
       fail(`Missing from config.toml: [functions.${fn}] with verify_jwt = false`)
       anonFailed = true
@@ -363,7 +369,7 @@ if (existsSync(CONFIG_TOML_PATH) && existsSync(CLAUDE_MD_PATH)) {
   }
 
   // Check all canonical functions are documented
-  for (const fn of ANONYMOUS_FUNCTIONS) {
+  for (const fn of NO_VERIFY_JWT_FUNCTIONS) {
     if (!docFunctions.has(fn)) {
       fail(`Missing from CLAUDE.md: npx supabase functions deploy ${fn} --no-verify-jwt`)
       anonFailed = true
@@ -371,7 +377,7 @@ if (existsSync(CONFIG_TOML_PATH) && existsSync(CLAUDE_MD_PATH)) {
   }
 
   if (!anonFailed) {
-    pass(`All ${ANONYMOUS_FUNCTIONS.length} anonymous functions properly configured`)
+    pass(`All ${NO_VERIFY_JWT_FUNCTIONS.length} --no-verify-jwt functions properly configured`)
   }
 } else {
   if (!existsSync(CONFIG_TOML_PATH)) {
@@ -380,6 +386,144 @@ if (existsSync(CONFIG_TOML_PATH) && existsSync(CLAUDE_MD_PATH)) {
   if (!existsSync(CLAUDE_MD_PATH)) {
     warn('CLAUDE.md not found - skipping anonymous function check')
   }
+}
+
+// 11. Database Migration Standards (SMI-1944)
+console.log(`\n${BOLD}11. Database Migration Standards${RESET}`)
+
+const MIGRATIONS_DIR = 'supabase/migrations'
+// Only check migrations >= 030 (new standard applies from this number)
+const MIN_MIGRATION_NUMBER = 30
+
+if (existsSync(MIGRATIONS_DIR)) {
+  const migrationFiles = readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith('.sql'))
+    .filter((f) => {
+      const num = parseInt(f.substring(0, 3), 10)
+      return !isNaN(num) && num >= MIN_MIGRATION_NUMBER
+    })
+    .sort()
+
+  if (migrationFiles.length === 0) {
+    pass('No migrations >= 030 to check')
+  } else {
+    let headerIssues = 0
+    let doBlockIssues = 0
+    const filesWithIssues = []
+
+    for (const file of migrationFiles) {
+      const filePath = join(MIGRATIONS_DIR, file)
+      const content = readFileSync(filePath, 'utf8')
+      const lines = content.split('\n')
+      const headerLines = lines.slice(0, 10).join('\n')
+
+      // Check 1: SMI reference in header
+      const hasSmiRef = /--\s*SMI-\d+/i.test(headerLines)
+
+      // Check 2: Date in header (YYYY-MM-DD format)
+      const hasDate = /--.*\d{4}-\d{2}-\d{2}/.test(headerLines) ||
+                      /--.*Created:\s*\d{4}-\d{2}-\d{2}/.test(headerLines)
+
+      if (!hasSmiRef || !hasDate) {
+        headerIssues++
+        if (!filesWithIssues.some(f => f.file === file)) {
+          filesWithIssues.push({
+            file,
+            issues: [
+              !hasSmiRef ? 'missing SMI reference' : null,
+              !hasDate ? 'missing date' : null
+            ].filter(Boolean)
+          })
+        }
+      }
+
+      // Check 3: ALTER FUNCTION without DO block wrapper (warn only)
+      // Look for ALTER FUNCTION that's not inside a DO block
+      const hasAlterFunction = /^\s*ALTER\s+FUNCTION\s+/mi.test(content)
+      const hasDoBlock = /DO\s+\$\$/i.test(content)
+
+      if (hasAlterFunction && !hasDoBlock) {
+        doBlockIssues++
+        const existing = filesWithIssues.find(f => f.file === file)
+        if (existing) {
+          existing.issues.push('ALTER FUNCTION without DO block')
+        } else {
+          filesWithIssues.push({ file, issues: ['ALTER FUNCTION without DO block'] })
+        }
+      }
+    }
+
+    // Report header issues
+    if (headerIssues === 0) {
+      pass(`All ${migrationFiles.length} migrations have proper headers (SMI ref + date)`)
+    } else {
+      warn(
+        `${headerIssues} migrations missing header info`,
+        'Add "-- SMI-XXXX: Description" and "-- Created: YYYY-MM-DD"'
+      )
+      filesWithIssues
+        .filter(f => f.issues.some(i => i.includes('SMI') || i.includes('date')))
+        .slice(0, 3)
+        .forEach(({ file, issues }) => {
+          console.log(`    ${file}: ${issues.filter(i => i.includes('SMI') || i.includes('date')).join(', ')}`)
+        })
+    }
+
+    // Report DO block issues (warning only - gradual adoption)
+    if (doBlockIssues === 0) {
+      pass('All ALTER FUNCTION statements use DO block wrappers')
+    } else {
+      warn(
+        `${doBlockIssues} migrations have ALTER FUNCTION without DO block`,
+        'Wrap in DO $$ BEGIN ... END $$; for idempotency'
+      )
+      filesWithIssues
+        .filter(f => f.issues.some(i => i.includes('DO block')))
+        .slice(0, 3)
+        .forEach(({ file }) => {
+          console.log(`    ${file}`)
+        })
+    }
+
+    // Check 4: Functions without search_path (static analysis)
+    // Look for CREATE OR REPLACE FUNCTION without SET search_path
+    let searchPathIssues = 0
+    const filesWithSearchPathIssues = []
+
+    for (const file of migrationFiles) {
+      const filePath = join(MIGRATIONS_DIR, file)
+      const content = readFileSync(filePath, 'utf8')
+
+      // Find CREATE OR REPLACE FUNCTION blocks
+      const funcMatches = content.match(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+[\w.]+\s*\([^)]*\)[^;]+?LANGUAGE\s+plpgsql[^;]*;/gis)
+
+      if (funcMatches) {
+        for (const funcBlock of funcMatches) {
+          // Check if it has SET search_path
+          if (!/SET\s+search_path\s*=/i.test(funcBlock)) {
+            searchPathIssues++
+            if (!filesWithSearchPathIssues.includes(file)) {
+              filesWithSearchPathIssues.push(file)
+            }
+          }
+        }
+      }
+    }
+
+    if (searchPathIssues === 0) {
+      pass('All new functions have explicit search_path')
+    } else {
+      warn(
+        `${searchPathIssues} functions in migrations lack search_path`,
+        'Add "SET search_path = public, extensions" after LANGUAGE clause'
+      )
+      filesWithSearchPathIssues.slice(0, 3).forEach((file) => {
+        console.log(`    ${file}`)
+      })
+    }
+  }
+} else {
+  warn('supabase/migrations directory not found - skipping migration checks')
 }
 
 // Summary
