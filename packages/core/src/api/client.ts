@@ -193,6 +193,28 @@ export class SkillsmithApiClient {
   }
 
   /**
+   * Check if a personal API key is configured
+   * SMI-1953: Allows users to verify their API key is being used
+   *
+   * @returns True if SKILLSMITH_API_KEY env var or config.apiKey is set
+   */
+  hasPersonalApiKey(): boolean {
+    return !!this.apiKey
+  }
+
+  /**
+   * Get the authentication mode being used
+   * SMI-1953: Helps users understand which auth method is active
+   *
+   * @returns 'personal' if API key configured, 'anonymous' if using anon key, 'none' if no auth
+   */
+  getAuthMode(): 'personal' | 'anonymous' | 'none' {
+    if (this.apiKey) return 'personal'
+    if (this.anonKey) return 'anonymous'
+    return 'none'
+  }
+
+  /**
    * Log debug message
    */
   private log(message: string, data?: unknown): void {
@@ -215,7 +237,11 @@ export class SkillsmithApiClient {
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
-        this.log(`Request attempt ${attempt + 1}:`, { url, method: options.method || 'GET' })
+        this.log(`Request attempt ${attempt + 1}:`, {
+          url,
+          method: options.method || 'GET',
+          authMode: this.getAuthMode(),
+        })
 
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), this.timeout)

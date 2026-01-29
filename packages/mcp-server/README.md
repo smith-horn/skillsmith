@@ -42,10 +42,37 @@ Version 0.3.8 includes the live skill registry with 14,000+ skills.
 
 Skills are served from `api.skillsmith.app` and cached locally for 24 hours.
 
+### API Key Configuration (SMI-1953)
+
+For usage tracking and higher rate limits, configure your personal API key:
+
+```json
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_your_key_here"
+      }
+    }
+  }
+}
+```
+
+Get your API key from https://skillsmith.app/account after signing up.
+
+| Auth Mode | Rate Limit | Usage Tracking |
+|-----------|------------|----------------|
+| Personal API Key | Tier-based (60-300/min) | ✅ Dashboard |
+| Anonymous (default) | 30/min | ❌ Not tracked |
+| No auth | 10 total | ❌ Trial only |
+
 ### API Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `SKILLSMITH_API_KEY` | - | Personal API key for usage tracking |
 | `SKILLSMITH_API_URL` | `https://api.skillsmith.app/functions/v1` | API endpoint |
 | `SKILLSMITH_OFFLINE_MODE` | `false` | Use local database instead |
 | `SKILLSMITH_TELEMETRY` | `true` | Enable anonymous telemetry |
