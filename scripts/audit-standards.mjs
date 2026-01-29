@@ -421,30 +421,31 @@ if (existsSync(MIGRATIONS_DIR)) {
       const hasSmiRef = /--\s*SMI-\d+/i.test(headerLines)
 
       // Check 2: Date in header (YYYY-MM-DD format)
-      const hasDate = /--.*\d{4}-\d{2}-\d{2}/.test(headerLines) ||
-                      /--.*Created:\s*\d{4}-\d{2}-\d{2}/.test(headerLines)
+      const hasDate =
+        /--.*\d{4}-\d{2}-\d{2}/.test(headerLines) ||
+        /--.*Created:\s*\d{4}-\d{2}-\d{2}/.test(headerLines)
 
       if (!hasSmiRef || !hasDate) {
         headerIssues++
-        if (!filesWithIssues.some(f => f.file === file)) {
+        if (!filesWithIssues.some((f) => f.file === file)) {
           filesWithIssues.push({
             file,
             issues: [
               !hasSmiRef ? 'missing SMI reference' : null,
-              !hasDate ? 'missing date' : null
-            ].filter(Boolean)
+              !hasDate ? 'missing date' : null,
+            ].filter(Boolean),
           })
         }
       }
 
       // Check 3: ALTER FUNCTION without DO block wrapper (warn only)
       // Look for ALTER FUNCTION that's not inside a DO block
-      const hasAlterFunction = /^\s*ALTER\s+FUNCTION\s+/mi.test(content)
+      const hasAlterFunction = /^\s*ALTER\s+FUNCTION\s+/im.test(content)
       const hasDoBlock = /DO\s+\$\$/i.test(content)
 
       if (hasAlterFunction && !hasDoBlock) {
         doBlockIssues++
-        const existing = filesWithIssues.find(f => f.file === file)
+        const existing = filesWithIssues.find((f) => f.file === file)
         if (existing) {
           existing.issues.push('ALTER FUNCTION without DO block')
         } else {
@@ -462,10 +463,12 @@ if (existsSync(MIGRATIONS_DIR)) {
         'Add "-- SMI-XXXX: Description" and "-- Created: YYYY-MM-DD"'
       )
       filesWithIssues
-        .filter(f => f.issues.some(i => i.includes('SMI') || i.includes('date')))
+        .filter((f) => f.issues.some((i) => i.includes('SMI') || i.includes('date')))
         .slice(0, 3)
         .forEach(({ file, issues }) => {
-          console.log(`    ${file}: ${issues.filter(i => i.includes('SMI') || i.includes('date')).join(', ')}`)
+          console.log(
+            `    ${file}: ${issues.filter((i) => i.includes('SMI') || i.includes('date')).join(', ')}`
+          )
         })
     }
 
@@ -478,7 +481,7 @@ if (existsSync(MIGRATIONS_DIR)) {
         'Wrap in DO $$ BEGIN ... END $$; for idempotency'
       )
       filesWithIssues
-        .filter(f => f.issues.some(i => i.includes('DO block')))
+        .filter((f) => f.issues.some((i) => i.includes('DO block')))
         .slice(0, 3)
         .forEach(({ file }) => {
           console.log(`    ${file}`)
@@ -495,7 +498,9 @@ if (existsSync(MIGRATIONS_DIR)) {
       const content = readFileSync(filePath, 'utf8')
 
       // Find CREATE OR REPLACE FUNCTION blocks
-      const funcMatches = content.match(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+[\w.]+\s*\([^)]*\)[^;]+?LANGUAGE\s+plpgsql[^;]*;/gis)
+      const funcMatches = content.match(
+        /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+[\w.]+\s*\([^)]*\)[^;]+?LANGUAGE\s+plpgsql[^;]*;/gis
+      )
 
       if (funcMatches) {
         for (const funcBlock of funcMatches) {
