@@ -3,6 +3,7 @@
  * Billing History Page
  *
  * SMI-1166: Billing history and invoice download
+ * SMI-2043: Unified navigation with auth-state awareness
  *
  * Shows:
  * - Current subscription details
@@ -10,6 +11,15 @@
  * - Download links for past invoices
  * - Payment method management
  */
+
+// Disable prerendering - this page needs SSR to inject Supabase config for auth nav
+export const prerender = false;
+
+import Nav from '../../components/Nav.astro';
+import { getSupabaseConfig } from '../../lib/supabase-config';
+
+// Read env vars at SSR time to inject into client script
+const supabaseConfig = getSupabaseConfig();
 ---
 
 <!DOCTYPE html>
@@ -23,29 +33,12 @@
     <title>Billing History | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
     <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig;
+    </script>
   </head>
   <body>
-    <header class="header">
-      <nav class="nav">
-        <a href="/" class="logo">
-          <svg width="32" height="32" viewBox="0 0 64 64" class="logo-icon-svg">
-            <rect width="64" height="64" fill="transparent" rx="8"/>
-            <g transform="translate(32, 32)">
-              <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
-                    stroke="currentColor" stroke-width="1.5" stroke-opacity="0.3" fill="none"/>
-              <circle cx="10" cy="-18" r="5" fill="#E07A5F"/>
-              <circle cx="-10" cy="-4" r="5" fill="#E07A5F"/>
-              <circle cx="10" cy="8" r="5" fill="#E07A5F"/>
-              <circle cx="-10" cy="20" r="5" fill="#E07A5F"/>
-            </g>
-          </svg>
-          <span class="logo-text">Skillsmith</span>
-        </a>
-        <div class="nav-links">
-          <a href="/account">&larr; Back to Dashboard</a>
-        </div>
-      </nav>
-    </header>
+    <Nav activePath="/account/billing" />
 
     <main class="billing-container">
       <!-- Loading State -->
@@ -501,8 +494,10 @@
 <script>
   import { createClient } from '@supabase/supabase-js'
 
-  const supabaseUrl = import.meta.env.PUBLIC_SUPABASE_URL
-  const supabaseAnonKey = import.meta.env.PUBLIC_SUPABASE_ANON_KEY
+  // Get config from SSR-injected window global (consistent with other auth pages)
+  const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } }).__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+  const supabaseUrl = config.url
+  const supabaseAnonKey = config.anonKey
 
   // Escape HTML to prevent XSS
   function escapeHtml(text: string): string {

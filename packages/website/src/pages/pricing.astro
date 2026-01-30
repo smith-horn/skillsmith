@@ -1,8 +1,21 @@
 ---
-// Skillsmith Pricing Page
-// Pricing tiers from ADR-013 (Open Core Licensing) and ADR-017 (Quota Enforcement)
-// License: Elastic License 2.0
-// SMI-1071: Annual billing toggle support
+/**
+ * Skillsmith Pricing Page
+ *
+ * Pricing tiers from ADR-013 (Open Core Licensing) and ADR-017 (Quota Enforcement)
+ * License: Elastic License 2.0
+ * SMI-1071: Annual billing toggle support
+ * SMI-2043: Unified navigation with auth-state awareness
+ */
+
+// Disable prerendering - this page needs SSR to inject Supabase config for auth nav
+export const prerender = false;
+
+import Nav from '../components/Nav.astro';
+import { getSupabaseConfig } from '../lib/supabase-config';
+
+// Get Supabase config for auth-aware navigation
+const supabaseConfig = getSupabaseConfig();
 
 interface PricingTier {
   name: string;
@@ -142,6 +155,11 @@ const faqs = [
     <title>Pricing | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
     <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+
+    <!-- Supabase config for auth-aware navigation -->
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig;
+    </script>
 
     <!-- Tailwind CSS -->
     <script is:inline src="https://cdn.tailwindcss.com"></script>
@@ -301,35 +319,7 @@ const faqs = [
     </script>
   </head>
   <body>
-    <header class="header">
-      <nav class="nav">
-        <a href="/" class="logo">
-          <!-- Neural S Icon -->
-          <svg width="32" height="32" viewBox="0 0 64 64" class="logo-icon-svg">
-            <rect width="64" height="64" fill="transparent" rx="8"/>
-            <g transform="translate(32, 32)">
-              <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
-                    stroke="currentColor" stroke-width="1.5" stroke-opacity="0.3" fill="none"/>
-              <circle cx="10" cy="-18" r="5" fill="#E07A5F"/>
-              <circle cx="-10" cy="-4" r="5" fill="#E07A5F"/>
-              <circle cx="10" cy="8" r="5" fill="#E07A5F"/>
-              <circle cx="-10" cy="20" r="5" fill="#E07A5F"/>
-            </g>
-          </svg>
-          <span class="logo-text">Skillsmith</span>
-        </a>
-        <div class="nav-links">
-          <a href="/docs">Features</a>
-          <a href="/pricing" class="active">Pricing</a>
-          <a href="/docs">Docs</a>
-          <a href="/blog">Blog</a>
-        </div>
-        <div class="nav-actions">
-          <a href="/login" class="btn btn-ghost">Log in</a>
-          <a href="/signup?tier=community" class="btn btn-primary">Get Started</a>
-        </div>
-      </nav>
-    </header>
+    <Nav activePath="/pricing" />
 
     <main>
       <section class="hero">

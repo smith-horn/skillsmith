@@ -1,10 +1,27 @@
 ---
+/**
+ * BaseLayout
+ *
+ * SMI-2043: Unified navigation with auth-state awareness
+ *
+ * Shared layout for pages using the standard navigation pattern.
+ * Includes Supabase config injection for UserMenu auth state.
+ */
+
+import Nav from '../components/Nav.astro';
+import { getSupabaseConfig } from '../lib/supabase-config';
+
 interface Props {
   title: string;
   description?: string;
+  /** Current page path for nav highlighting */
+  activePath?: string;
 }
 
-const { title, description = "Skillsmith - AI-powered skill discovery and management for Claude Code" } = Astro.props;
+const { title, description = "Skillsmith - AI-powered skill discovery and management for Claude Code", activePath = '' } = Astro.props;
+
+// Get Supabase config for auth-aware navigation
+const supabaseConfig = getSupabaseConfig();
 ---
 
 <!DOCTYPE html>
@@ -39,6 +56,11 @@ const { title, description = "Skillsmith - AI-powered skill discovery and manage
 
     <!-- Slot for page-specific head content (JSON-LD, etc.) -->
     <slot name="head" />
+
+    <!-- Supabase config for auth-aware navigation -->
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig;
+    </script>
 
     <script is:inline src="https://cdn.tailwindcss.com"></script>
     <script is:inline>
@@ -85,40 +107,7 @@ const { title, description = "Skillsmith - AI-powered skill discovery and manage
       Skip to main content
     </a>
 
-    <nav class="border-b border-dark-800 bg-dark-900/80 backdrop-blur-sm sticky top-0 z-50" aria-label="Main navigation">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex justify-between items-center h-16">
-          <a href="/" class="flex items-center space-x-2" aria-label="Skillsmith home">
-            <!-- Neural S Icon -->
-            <svg width="32" height="32" viewBox="0 0 64 64" class="flex-shrink-0" aria-hidden="true">
-              <rect width="64" height="64" fill="transparent" rx="8"/>
-              <g transform="translate(32, 32)">
-                <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
-                      stroke="currentColor" stroke-width="1.5" stroke-opacity="0.3" fill="none" class="text-white"/>
-                <circle cx="10" cy="-18" r="5" fill="#E07A5F"/>
-                <circle cx="-10" cy="-4" r="5" fill="#E07A5F"/>
-                <circle cx="10" cy="8" r="5" fill="#E07A5F"/>
-                <circle cx="-10" cy="20" r="5" fill="#E07A5F"/>
-              </g>
-            </svg>
-            <span class="text-xl font-bold text-white">Skillsmith</span>
-          </a>
-          <div class="flex items-center space-x-6">
-            <a href="/skills" class="text-dark-300 hover:text-white transition-colors">Skills</a>
-            <a href="/blog" class="text-dark-300 hover:text-white transition-colors">Blog</a>
-            <a href="/docs" class="text-dark-300 hover:text-white transition-colors">Docs</a>
-            <a href="/pricing" class="text-dark-300 hover:text-white transition-colors">Pricing</a>
-            <a href="https://github.com/Smith-Horn-Group/skillsmith" class="text-dark-300 hover:text-white transition-colors" target="_blank" rel="noopener noreferrer" aria-label="Skillsmith on GitHub">
-              <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.115 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z" />
-              </svg>
-            </a>
-            <a href="/login" class="text-dark-300 hover:text-white transition-colors">Log in</a>
-            <a href="/signup?tier=community" class="ml-2 px-4 py-2 bg-gradient-to-br from-primary-500 to-primary-600 text-white rounded-lg text-sm font-medium hover:opacity-90 transition-opacity">Get Started</a>
-          </div>
-        </div>
-      </div>
-    </nav>
+    <Nav activePath={activePath} />
 
     <main id="main-content">
       <slot />

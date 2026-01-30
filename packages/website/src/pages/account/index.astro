@@ -12,6 +12,7 @@
 export const prerender = false;
 
 import { getSupabaseConfig } from '../../lib/supabase-config';
+import Nav from '../../components/Nav.astro';
 
 // Read env vars at SSR time to inject into client script
 const supabaseConfig = getSupabaseConfig();
@@ -33,29 +34,7 @@ const supabaseConfig = getSupabaseConfig();
     </script>
   </head>
   <body>
-    <header class="header">
-      <nav class="nav">
-        <a href="/" class="logo">
-          <svg width="32" height="32" viewBox="0 0 64 64" class="logo-icon-svg">
-            <rect width="64" height="64" fill="transparent" rx="8"/>
-            <g transform="translate(32, 32)">
-              <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
-                    stroke="currentColor" stroke-width="1.5" stroke-opacity="0.3" fill="none"/>
-              <circle cx="10" cy="-18" r="5" fill="#E07A5F"/>
-              <circle cx="-10" cy="-4" r="5" fill="#E07A5F"/>
-              <circle cx="10" cy="8" r="5" fill="#E07A5F"/>
-              <circle cx="-10" cy="20" r="5" fill="#E07A5F"/>
-            </g>
-          </svg>
-          <span class="logo-text">Skillsmith</span>
-        </a>
-        <div class="nav-links">
-          <a href="/docs">Docs</a>
-          <a href="/pricing">Pricing</a>
-          <button id="logout-btn" class="btn btn-secondary btn-sm">Sign Out</button>
-        </div>
-      </nav>
-    </header>
+    <Nav activePath="/account" />
 
     <main class="dashboard-container">
       <!-- Loading State -->
@@ -726,7 +705,7 @@ const supabaseConfig = getSupabaseConfig();
   document.addEventListener('DOMContentLoaded', async () => {
     const loadingState = document.getElementById('loading-state') as HTMLDivElement
     const dashboardContent = document.getElementById('dashboard-content') as HTMLDivElement
-    const logoutBtn = document.getElementById('logout-btn') as HTMLButtonElement
+    // Note: Logout is now handled by Nav component's UserMenu dropdown
     const generateKeyBtn = document.getElementById('generate-key-btn') as HTMLButtonElement
     const newKeyModal = document.getElementById('new-key-modal') as HTMLDivElement
     const closeModalBtn = document.getElementById('close-modal') as HTMLButtonElement
@@ -929,12 +908,6 @@ const supabaseConfig = getSupabaseConfig();
       console.error('Failed to load account data:', error)
       loadingState.innerHTML = '<p>Failed to load account data. Please refresh.</p>'
     }
-
-    // Logout handler
-    logoutBtn.addEventListener('click', async () => {
-      await supabase.auth.signOut()
-      window.location.href = '/login'
-    })
 
     // Generate key handler
     generateKeyBtn.addEventListener('click', async () => {

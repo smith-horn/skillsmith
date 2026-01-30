@@ -1,0 +1,435 @@
+---
+/**
+ * Nav Component
+ *
+ * SMI-2043: Unified navigation with auth-state awareness
+ *
+ * Shared navigation component for all pages. Integrates UserMenu
+ * for logged-in/logged-out state handling.
+ *
+ * IMPORTANT: Pages using variant="default" (the default) must inject
+ * Supabase config into window.__SUPABASE_CONFIG__ for auth to work.
+ * Use getSupabaseConfig() from lib/supabase-config.ts in the page's
+ * frontmatter and inject via <script is:inline define:vars={{ supabaseConfig }}>.
+ */
+
+import UserMenu from './auth/UserMenu.astro';
+
+interface Props {
+  /**
+   * Current page path for active state highlighting
+   */
+  activePath?: string;
+  /**
+   * Navigation variant:
+   * - 'default': Full nav with UserMenu (auth-aware)
+   * - 'minimal': Simplified nav without auth section (for login/signup pages)
+   */
+  variant?: 'default' | 'minimal';
+  /**
+   * Where to redirect after login (passed to UserMenu)
+   */
+  loginRedirect?: string;
+}
+
+const {
+  activePath = '',
+  variant = 'default',
+  loginRedirect = '/account'
+} = Astro.props;
+
+const navLinks = [
+  { href: '/skills', label: 'Skills' },
+  { href: '/blog', label: 'Blog' },
+  { href: '/docs', label: 'Docs' },
+  { href: '/pricing', label: 'Pricing' },
+];
+
+const isActive = (href: string) => {
+  if (href === '/') return activePath === '/';
+  return activePath.startsWith(href);
+};
+---
+
+<nav class="nav-container" aria-label="Main navigation">
+  <div class="nav-inner">
+    <!-- Logo -->
+    <a href="/" class="nav-logo" aria-label="Skillsmith home">
+      <svg width="32" height="32" viewBox="0 0 64 64" class="nav-logo-icon" aria-hidden="true">
+        <rect width="64" height="64" fill="transparent" rx="8"/>
+        <g transform="translate(32, 32)">
+          <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
+                stroke="currentColor" stroke-width="1.5" stroke-opacity="0.3" fill="none" class="nav-logo-path"/>
+          <circle cx="10" cy="-18" r="5" fill="#E07A5F"/>
+          <circle cx="-10" cy="-4" r="5" fill="#E07A5F"/>
+          <circle cx="10" cy="8" r="5" fill="#E07A5F"/>
+          <circle cx="-10" cy="20" r="5" fill="#E07A5F"/>
+        </g>
+      </svg>
+      <span class="nav-logo-text">Skillsmith</span>
+    </a>
+
+    <!-- Desktop Navigation -->
+    <div class="nav-links-desktop">
+      {navLinks.map((link) => (
+        <a
+          href={link.href}
+          class:list={['nav-link', { 'nav-link-active': isActive(link.href) }]}
+        >
+          {link.label}
+        </a>
+      ))}
+      <a
+        href="https://github.com/Smith-Horn-Group/skillsmith"
+        class="nav-link nav-link-github"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Skillsmith on GitHub"
+      >
+        <svg class="nav-github-icon" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.115 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z" />
+        </svg>
+      </a>
+    </div>
+
+    <!-- Auth Section (Desktop) -->
+    <div class="nav-auth-desktop">
+      {variant === 'default' ? (
+        <UserMenu loginRedirect={loginRedirect} />
+      ) : (
+        <a href="/login" class="nav-link">Log in</a>
+      )}
+      {variant === 'minimal' && (
+        <a href="/signup?tier=community" class="nav-cta">Get Started</a>
+      )}
+    </div>
+
+    <!-- Mobile Menu Button -->
+    <button
+      type="button"
+      class="nav-mobile-button"
+      aria-label="Open menu"
+      aria-expanded="false"
+      id="nav-mobile-button"
+    >
+      <svg class="nav-mobile-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+      </svg>
+    </button>
+  </div>
+
+  <!-- Mobile Navigation -->
+  <div class="nav-mobile-menu" id="nav-mobile-menu" aria-hidden="true">
+    <div class="nav-mobile-links">
+      {navLinks.map((link) => (
+        <a
+          href={link.href}
+          class:list={['nav-mobile-link', { 'nav-mobile-link-active': isActive(link.href) }]}
+        >
+          {link.label}
+        </a>
+      ))}
+      <a
+        href="https://github.com/Smith-Horn-Group/skillsmith"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="nav-mobile-link"
+      >
+        GitHub
+      </a>
+      <div class="nav-mobile-divider"></div>
+      {variant === 'default' ? (
+        <div class="nav-mobile-auth" id="nav-mobile-auth">
+          <!-- Auth state handled by JavaScript -->
+          <a href="/login" class="nav-mobile-link" id="nav-mobile-login">Log in</a>
+          <a href="/signup?tier=community" class="nav-mobile-cta" id="nav-mobile-signup">Get Started</a>
+        </div>
+      ) : (
+        <>
+          <a href="/login" class="nav-mobile-link">Log in</a>
+          <a href="/signup?tier=community" class="nav-mobile-cta">Get Started</a>
+        </>
+      )}
+    </div>
+  </div>
+</nav>
+
+<style>
+  .nav-container {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    border-bottom: 1px solid #1f1f23;
+    background: rgba(18, 18, 20, 0.8);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  .nav-inner {
+    max-width: 80rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    height: 4rem;
+  }
+
+  @media (min-width: 640px) {
+    .nav-inner {
+      padding: 0 1.5rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .nav-inner {
+      padding: 0 2rem;
+    }
+  }
+
+  /* Logo */
+  .nav-logo {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-decoration: none;
+  }
+
+  .nav-logo-icon {
+    flex-shrink: 0;
+  }
+
+  .nav-logo-path {
+    color: white;
+  }
+
+  .nav-logo-text {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: white;
+  }
+
+  /* Desktop Nav Links */
+  .nav-links-desktop {
+    display: none;
+    align-items: center;
+    gap: 1.5rem;
+  }
+
+  @media (min-width: 768px) {
+    .nav-links-desktop {
+      display: flex;
+    }
+  }
+
+  .nav-link {
+    color: #cbd5e1;
+    text-decoration: none;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: color 0.15s;
+  }
+
+  .nav-link:hover {
+    color: white;
+  }
+
+  .nav-link-active {
+    color: white;
+  }
+
+  .nav-link-github {
+    display: flex;
+    align-items: center;
+  }
+
+  .nav-github-icon {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+
+  /* Auth Section */
+  .nav-auth-desktop {
+    display: none;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  @media (min-width: 768px) {
+    .nav-auth-desktop {
+      display: flex;
+    }
+  }
+
+  .nav-cta {
+    padding: 0.5rem 1rem;
+    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
+    color: white;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+    transition: opacity 0.15s;
+  }
+
+  .nav-cta:hover {
+    opacity: 0.9;
+  }
+
+  /* Mobile Menu Button */
+  .nav-mobile-button {
+    display: flex;
+    padding: 0.5rem;
+    border-radius: 0.5rem;
+    background: transparent;
+    border: none;
+    color: #9ca3af;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .nav-mobile-button:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  @media (min-width: 768px) {
+    .nav-mobile-button {
+      display: none;
+    }
+  }
+
+  .nav-mobile-icon {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+
+  /* Mobile Menu */
+  .nav-mobile-menu {
+    display: none;
+    border-top: 1px solid #1f1f23;
+  }
+
+  .nav-mobile-menu.open {
+    display: block;
+  }
+
+  @media (min-width: 768px) {
+    .nav-mobile-menu {
+      display: none !important;
+    }
+  }
+
+  .nav-mobile-links {
+    padding: 0.5rem;
+  }
+
+  .nav-mobile-link {
+    display: block;
+    padding: 0.75rem 1rem;
+    color: #cbd5e1;
+    text-decoration: none;
+    font-size: 1rem;
+    font-weight: 500;
+    border-radius: 0.5rem;
+    transition: all 0.15s;
+  }
+
+  .nav-mobile-link:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .nav-mobile-link-active {
+    color: white;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .nav-mobile-divider {
+    height: 1px;
+    background: #1f1f23;
+    margin: 0.5rem 0;
+  }
+
+  .nav-mobile-auth {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .nav-mobile-cta {
+    display: block;
+    margin: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
+    color: white;
+    border-radius: 0.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+    text-decoration: none;
+    text-align: center;
+    transition: opacity 0.15s;
+  }
+
+  .nav-mobile-cta:hover {
+    opacity: 0.9;
+  }
+
+  /* Hide mobile auth links when logged in (controlled by JS) */
+  .nav-mobile-auth.logged-in #nav-mobile-login,
+  .nav-mobile-auth.logged-in #nav-mobile-signup {
+    display: none;
+  }
+</style>
+
+<script>
+  import { createClient } from '@supabase/supabase-js';
+
+  // Mobile menu toggle
+  const menuButton = document.getElementById('nav-mobile-button');
+  const mobileMenu = document.getElementById('nav-mobile-menu');
+
+  menuButton?.addEventListener('click', () => {
+    const isOpen = mobileMenu?.classList.contains('open');
+    mobileMenu?.classList.toggle('open', !isOpen);
+    menuButton?.setAttribute('aria-expanded', (!isOpen).toString());
+    mobileMenu?.setAttribute('aria-hidden', isOpen ? 'true' : 'false');
+  });
+
+  // Close mobile menu when clicking a link
+  mobileMenu?.querySelectorAll('a').forEach(link => {
+    link.addEventListener('click', () => {
+      mobileMenu?.classList.remove('open');
+      menuButton?.setAttribute('aria-expanded', 'false');
+      mobileMenu?.setAttribute('aria-hidden', 'true');
+    });
+  });
+
+  // Update mobile auth state based on logged in status
+  document.addEventListener('DOMContentLoaded', async () => {
+    const mobileAuth = document.getElementById('nav-mobile-auth');
+    if (!mobileAuth) return;
+
+    const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } }).__SUPABASE_CONFIG__;
+    if (!config?.url || !config?.anonKey) return;
+
+    const supabase = createClient(config.url, config.anonKey);
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (session?.user) {
+      // User is logged in - show account link instead
+      mobileAuth.classList.add('logged-in');
+      mobileAuth.innerHTML = `
+        <a href="/account" class="nav-mobile-link">Dashboard</a>
+        <a href="/account/subscription" class="nav-mobile-link">Subscription</a>
+        <button type="button" class="nav-mobile-link" style="color: #f87171; text-align: left; width: 100%; background: none; border: none; cursor: pointer;" id="nav-mobile-logout">Sign out</button>
+      `;
+
+      // Handle mobile logout
+      document.getElementById('nav-mobile-logout')?.addEventListener('click', async () => {
+        await supabase.auth.signOut();
+        window.location.href = '/';
+      });
+    }
+  });
+</script>

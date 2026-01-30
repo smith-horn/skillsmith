@@ -4,7 +4,18 @@
  *
  * Bold & Confident dark theme with Neural S branding
  * Primary goal: Drive signups and MCP adoption
+ *
+ * SMI-2043: Unified navigation with auth-state awareness
  */
+
+// Disable prerendering - this page needs SSR to inject Supabase config for auth nav
+export const prerender = false;
+
+import Nav from '../components/Nav.astro';
+import { getSupabaseConfig } from '../lib/supabase-config';
+
+// Get Supabase config for auth-aware navigation
+const supabaseConfig = getSupabaseConfig();
 ---
 
 <!DOCTYPE html>
@@ -34,6 +45,11 @@
 
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+
+  <!-- Supabase config for auth-aware navigation -->
+  <script is:inline define:vars={{ supabaseConfig }}>
+    window.__SUPABASE_CONFIG__ = supabaseConfig;
+  </script>
 
   <!-- Tailwind CSS -->
   <script is:inline src="https://cdn.tailwindcss.com"></script>
@@ -145,42 +161,7 @@
   </div>
 
   <!-- Navigation -->
-  <nav class="fixed top-0 left-0 right-0 z-50 h-[72px] bg-[#0D0D0F]/80 backdrop-blur-lg border-b border-white/[0.06]">
-    <div class="max-w-[1200px] mx-auto px-6 h-full flex items-center justify-between">
-      <!-- Logo -->
-      <a href="/" class="flex items-center gap-3">
-        <!-- Neural S Icon -->
-        <svg width="32" height="32" viewBox="0 0 64 64" class="flex-shrink-0">
-          <rect width="64" height="64" fill="transparent" rx="8"/>
-          <g transform="translate(32, 32)">
-            <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
-                  stroke="#FFFFFF" stroke-width="1.5" stroke-opacity="0.3" fill="none"/>
-            <circle cx="10" cy="-18" r="5" fill="#E07A5F"/>
-            <circle cx="-10" cy="-4" r="5" fill="#E07A5F"/>
-            <circle cx="10" cy="8" r="5" fill="#E07A5F"/>
-            <circle cx="-10" cy="20" r="5" fill="#E07A5F"/>
-          </g>
-        </svg>
-        <span class="text-xl font-bold tracking-tight">skillsmith</span>
-      </a>
-
-      <!-- Nav Links -->
-      <div class="flex items-center gap-6">
-        <a href="/blog" class="text-[#A1A1AA] hover:text-[#E07A5F] transition-colors text-sm font-medium">
-          Blog
-        </a>
-        <a href="/docs/api" class="text-[#A1A1AA] hover:text-[#E07A5F] transition-colors text-sm font-medium">
-          API Docs
-        </a>
-        <a href="/login" class="text-[#A1A1AA] hover:text-[#E07A5F] transition-colors text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#E07A5F] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F]">
-          Log in
-        </a>
-        <a href="/signup?tier=community" class="px-4 py-2 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl text-sm font-medium hover:scale-[1.02] transition-all focus-visible:ring-2 focus-visible:ring-[#E07A5F] focus-visible:outline-none">
-          Get Started
-        </a>
-      </div>
-    </div>
-  </nav>
+  <Nav activePath="/" />
 
   <!-- Hero Section -->
   <section class="relative min-h-screen flex items-center justify-center pt-[72px]">

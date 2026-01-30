@@ -3,7 +3,8 @@
 
 // Re-export component paths for documentation
 export const components = {
-  Header: './Header.astro',
+  Nav: './Nav.astro', // SMI-2043: Primary navigation component
+  Header: './Header.astro', // Deprecated: Use Nav.astro instead
   Footer: './Footer.astro',
   Button: './Button.astro',
   Card: './Card.astro',
