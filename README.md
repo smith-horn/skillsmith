@@ -69,6 +69,36 @@ Add this MCP server to my settings.json:
 
 Claude will automatically update your `~/.claude/settings.json`. After restarting Claude Code (Cmd/Ctrl+Shift+P → "Claude Code: Restart"), you can immediately ask Claude to search for skills.
 
+### API Key Configuration (Optional)
+
+For higher rate limits and usage tracking, add your API key:
+
+```json
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_your_key_here"
+      }
+    }
+  }
+}
+```
+
+Get your API key at [skillsmith.app/account](https://skillsmith.app/account).
+
+| Tier | Rate Limit | Cost |
+|------|------------|------|
+| Trial | 10 total | Free |
+| Community | 30/min | Free |
+| Individual | 60/min | $9.99/mo |
+| Team | 120/min | $25/user/mo |
+| Enterprise | 300/min | $55/user/mo |
+
+> **Note:** Never paste API keys in chat. Configure via settings.json only.
+
 ### CLI Installation (Development)
 
 The CLI is available for local development:
