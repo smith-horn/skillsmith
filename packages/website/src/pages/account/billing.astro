@@ -55,6 +55,19 @@ const supabaseConfig = getSupabaseConfig();
         <p>Loading billing history...</p>
       </div>
 
+      <!-- Error State -->
+      <div id="error-state" class="error-state" style="display: none;">
+        <div class="error-content">
+          <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <h3>Failed to load billing data</h3>
+          <p id="error-message">Something went wrong</p>
+          <button onclick="location.reload()" class="btn btn-primary">Try Again</button>
+        </div>
+      </div>
+
       <!-- Content -->
       <div id="billing-content" style="display: none;">
         <h1>Billing History</h1>
@@ -223,6 +236,36 @@ const supabaseConfig = getSupabaseConfig();
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+  }
+
+  /* Error State */
+  .error-state {
+    text-align: center;
+    padding: 3rem 1rem;
+  }
+
+  .error-content {
+    max-width: 400px;
+    margin: 0 auto;
+  }
+
+  .error-icon {
+    width: 4rem;
+    height: 4rem;
+    color: #ef4444;
+    margin: 0 auto 1rem;
+  }
+
+  .error-state h3 {
+    color: #FAFAFA;
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+  }
+
+  .error-state p {
+    color: #9ca3af;
+    margin-bottom: 1.5rem;
   }
 
   .section {
@@ -512,9 +555,23 @@ const supabaseConfig = getSupabaseConfig();
   document.addEventListener('DOMContentLoaded', async () => {
     const loadingState = document.getElementById('loading-state') as HTMLDivElement
     const content = document.getElementById('billing-content') as HTMLDivElement
+    const errorState = document.getElementById('error-state') as HTMLDivElement
+    const errorMessage = document.getElementById('error-message') as HTMLParagraphElement
+
+    // State management function for consistent UI transitions
+    function showState(state: 'loading' | 'content' | 'error') {
+      loadingState.style.display = 'none'
+      content.style.display = 'none'
+      errorState.style.display = 'none'
+
+      if (state === 'loading') loadingState.style.display = 'flex'
+      if (state === 'content') content.style.display = 'block'
+      if (state === 'error') errorState.style.display = 'block'
+    }
 
     if (!supabaseUrl || !supabaseAnonKey) {
-      loadingState.innerHTML = '<p>Configuration error.</p>'
+      errorMessage.textContent = 'Configuration error. Please try again later.'
+      showState('error')
       return
     }
 
@@ -678,12 +735,12 @@ const supabaseConfig = getSupabaseConfig();
       })
 
       // Show content
-      loadingState.style.display = 'none'
-      content.style.display = 'block'
+      showState('content')
 
     } catch (error) {
       console.error('Failed to load billing data:', error)
-      loadingState.innerHTML = '<p>Failed to load billing data.</p>'
+      errorMessage.textContent = error instanceof Error ? error.message : 'Please try again'
+      showState('error')
     }
   })
 </script>
