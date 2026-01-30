@@ -106,7 +106,19 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   }
 }`}</code></pre>
 
-  <h3>2. Start Using Skillsmith</h3>
+  <h3>2. Configure Your API Key (Optional)</h3>
+
+  <p>For usage tracking and higher rate limits, add your API key. Create <code>~/.skillsmith/config.json</code>:</p>
+
+  <pre><code>{`mkdir -p ~/.skillsmith && cat > ~/.skillsmith/config.json << 'EOF'
+{
+  "apiKey": "sk_live_your_key_here"
+}
+EOF`}</code></pre>
+
+  <p>Get your API key from your <a href="/account">Account Dashboard</a> after signing up.</p>
+
+  <h3>3. Start Using Skillsmith</h3>
 
   <p>Once configured, ask Claude to find and install skills:</p>
 

@@ -103,21 +103,21 @@ skillsmith --help
 
   <h3>Configure Your API Key</h3>
 
-  <p><strong>Option 1: Environment Variable</strong> (recommended for CI/CD)</p>
+  <p><strong>Option 1: Config File</strong> (Recommended - Cross-Platform)</p>
 
-  <pre><code>{`export SKILLSMITH_API_KEY="sk_live_your_key_here"`}</code></pre>
+  <p>Create <code>~/.skillsmith/config.json</code> with your API key:</p>
 
-  <p><strong>Option 2: Config File</strong> (recommended for local development)</p>
-
-  <p>Create <code>~/.skillsmith/config.json</code>:</p>
-
-  <pre><code>{`{
+  <pre><code>{`mkdir -p ~/.skillsmith && cat > ~/.skillsmith/config.json << 'EOF'
+{
   "apiKey": "sk_live_your_key_here"
-}`}</code></pre>
+}
+EOF`}</code></pre>
 
-  <p><strong>Option 3: Claude Code Settings</strong> (MCP server only)</p>
+  <p>This method works on Mac, Linux, and Windows (via Git Bash or WSL) and doesn't require modifying Claude settings.</p>
 
-  <p>Add the API key to your <code>~/.claude/settings.json</code>:</p>
+  <p><strong>Option 2: Claude Code Settings</strong> (MCP server only)</p>
+
+  <p>Add the API key directly to your <code>~/.claude/settings.json</code>:</p>
 
   <pre><code>{`{
   "mcpServers": {
@@ -130,6 +130,15 @@ skillsmith --help
     }
   }
 }`}</code></pre>
+
+  <div class="callout callout-warning">
+    <h4>Shell Exports Don't Work</h4>
+    <p>
+      Running <code>export SKILLSMITH_API_KEY=...</code> in your terminal does NOT pass the variable
+      to MCP servers. MCP servers run as subprocesses spawned by Claude Code and don't inherit your
+      shell environment. Use one of the methods above instead.
+    </p>
+  </div>
 
   <h3>Rate Limits by Tier</h3>
 

@@ -71,7 +71,21 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 
   <p><strong>Step 1:</strong> Create an account and get your API key at <a href="https://skillsmith.app/account">skillsmith.app/account</a></p>
 
-  <p><strong>Step 2:</strong> Add your API key to the MCP server configuration:</p>
+  <p><strong>Step 2:</strong> Configure your API key using one of these methods:</p>
+
+  <p><strong>Method A: Config File (Recommended)</strong></p>
+
+  <p>Create <code>~/.skillsmith/config.json</code> - works on all platforms:</p>
+
+  <pre><code>{`mkdir -p ~/.skillsmith && cat > ~/.skillsmith/config.json << 'EOF'
+{
+  "apiKey": "sk_live_your_key_here"
+}
+EOF`}</code></pre>
+
+  <p><strong>Method B: Claude Settings</strong></p>
+
+  <p>Add to your <code>~/.claude/settings.json</code>:</p>
 
   <pre><code>{`{
   "mcpServers": {
@@ -90,18 +104,18 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <div class="callout">
     <h4>Security Note</h4>
     <p>
-      Never paste your API key directly in chat. Always configure it via the settings file above.
+      Never paste your API key directly in chat. Always configure it via one of the methods above.
       Your key will be used automatically for all Skillsmith API requests.
     </p>
+  </div>
+
+  <div class="callout callout-warning">
+    <h4>Shell Exports Don't Work</h4>
     <p>
-      For testing, set the env var using the appropriate command for your platform (the <code>!</code> prefix
-      in Claude Code runs the command without exposing the output):
+      Running <code>export SKILLSMITH_API_KEY=...</code> in your terminal does NOT pass the variable
+      to MCP servers. MCP servers run as subprocesses spawned by Claude Code and don't inherit your
+      shell environment. Use the config file or settings.json method above.
     </p>
-    <ul>
-      <li><strong>Mac/Linux:</strong> <code>!export SKILLSMITH_API_KEY='your-key-here'</code></li>
-      <li><strong>Windows PowerShell:</strong> <code>!$env:SKILLSMITH_API_KEY='your-key-here'</code></li>
-      <li><strong>Windows CMD:</strong> <code>!set SKILLSMITH_API_KEY=your-key-here</code></li>
-    </ul>
   </div>
 
   <h4>Rate Limits by Tier</h4>
