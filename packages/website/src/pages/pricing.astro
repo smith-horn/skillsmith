@@ -11,6 +11,7 @@
 // Disable prerendering - this page needs SSR to inject Supabase config for auth nav
 export const prerender = false;
 
+import { ViewTransitions } from 'astro:transitions';
 import Nav from '../components/Nav.astro';
 import { getSupabaseConfig } from '../lib/supabase-config';
 
@@ -155,6 +156,9 @@ const faqs = [
     <title>Pricing | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
     <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+
+    <!-- Enable smooth page transitions without full reload (SMI-2066) -->
+    <ViewTransitions />
 
     <!-- Supabase config for auth-aware navigation -->
     <script is:inline define:vars={{ supabaseConfig }}>
