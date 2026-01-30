@@ -170,6 +170,12 @@ const { id } = Astro.params;
   <script define:vars={{ skillId: id, apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1` }}>
     const API_BASE = apiBase;
 
+    // Use astro:page-load for View Transitions compatibility
+    document.addEventListener('astro:page-load', () => {
+      // Get Supabase config for API authentication
+      const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' };
+      const supabaseAnonKey = config.anonKey;
+
     // Trust tier badge colors
     const trustBadgeClasses = {
       verified: 'bg-green-500/10 text-green-400 border-green-500/20',
@@ -326,7 +332,12 @@ const { id } = Astro.params;
       try {
         // Decode first to normalize (Astro params may already be URL-encoded), then re-encode
         const decodedSkillId = decodeURIComponent(skillId);
-        const response = await fetch(`${API_BASE}/skills-get/${encodeURIComponent(decodedSkillId)}`);
+        const response = await fetch(`${API_BASE}/skills-get/${encodeURIComponent(decodedSkillId)}`, {
+          headers: {
+            'Authorization': `Bearer ${supabaseAnonKey}`,
+            'Content-Type': 'application/json'
+          }
+        });
 
         if (!response.ok) {
           if (response.status === 404) {
@@ -374,5 +385,6 @@ const { id } = Astro.params;
 
     // Initialize
     fetchSkill();
+    }); // End astro:page-load handler
   </script>
 </BaseLayout>
