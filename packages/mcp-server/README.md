@@ -79,7 +79,15 @@ Without an API key, you're limited to **10 total requests** (trial mode). With a
 
 **Step 3:** Restart Claude Code (Cmd/Ctrl+Shift+P → "Claude Code: Restart")
 
-> **Security Note:** Never paste your API key in chat. Configure it via the settings file above, then reference it via `$SKILLSMITH_API_KEY` in commands. See [SMI-1956](https://linear.app/smith-horn-group/issue/SMI-1956).
+> **Security Note:** Never paste your API key in chat. Configure it via the settings file above. For testing, set the env var using the appropriate command for your platform:
+>
+> | Platform | Command |
+> |----------|---------|
+> | Mac/Linux | `!export SKILLSMITH_API_KEY='your-key-here'` |
+> | Windows PowerShell | `!$env:SKILLSMITH_API_KEY='your-key-here'` |
+> | Windows CMD | `!set SKILLSMITH_API_KEY=your-key-here` |
+>
+> The `!` prefix in Claude Code runs the command without exposing the output. See [SMI-1956](https://linear.app/smith-horn-group/issue/SMI-1956).
 
 ### Rate Limits by Tier
 

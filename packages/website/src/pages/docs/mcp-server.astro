@@ -93,6 +93,15 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
       Never paste your API key directly in chat. Always configure it via the settings file above.
       Your key will be used automatically for all Skillsmith API requests.
     </p>
+    <p>
+      For testing, set the env var using the appropriate command for your platform (the <code>!</code> prefix
+      in Claude Code runs the command without exposing the output):
+    </p>
+    <ul>
+      <li><strong>Mac/Linux:</strong> <code>!export SKILLSMITH_API_KEY='your-key-here'</code></li>
+      <li><strong>Windows PowerShell:</strong> <code>!$env:SKILLSMITH_API_KEY='your-key-here'</code></li>
+      <li><strong>Windows CMD:</strong> <code>!set SKILLSMITH_API_KEY=your-key-here</code></li>
+    </ul>
   </div>
 
   <h4>Rate Limits by Tier</h4>
