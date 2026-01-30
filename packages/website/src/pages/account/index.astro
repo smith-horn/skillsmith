@@ -94,7 +94,7 @@ const supabaseConfig = getSupabaseConfig();
           <div class="stat-card">
             <div class="stat-label">API Usage</div>
             <div class="stat-value" id="api-usage">0 / 1,000</div>
-            <span class="stat-subtext">calls this month</span>
+            <span class="stat-subtext">total API calls</span>
           </div>
 
           <div class="stat-card">
@@ -764,10 +764,10 @@ const supabaseConfig = getSupabaseConfig();
       const { data: subscriptions } = await supabase
         .rpc('get_user_subscription', { user_uuid: user.id })
 
-      // Get license keys
+      // Get license keys (include usage_count for API usage display)
       const { data: licenseKeys } = await supabase
         .from('license_keys')
-        .select('id, key_prefix, name, tier, status, created_at, last_used_at')
+        .select('id, key_prefix, name, tier, status, created_at, last_used_at, usage_count')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
 
@@ -799,6 +799,24 @@ const supabaseConfig = getSupabaseConfig();
       const maxKeys = tier === 'community' ? 1 : tier === 'individual' ? 3 : tier === 'team' ? 10 : 50
       const keyCountEl = document.getElementById('key-count')
       if (keyCountEl) keyCountEl.textContent = `${activeKeys.length} / ${maxKeys}`
+
+      // API usage (sum usage_count across all license keys - this is lifetime cumulative)
+      const totalUsage = licenseKeys?.reduce((sum, k) => sum + (k.usage_count || 0), 0) || 0
+      const quotaLimits: Record<string, number> = {
+        community: 1000,
+        individual: 10000,
+        team: 100000,
+        enterprise: -1  // unlimited
+      }
+      const quota = quotaLimits[tier] || 1000
+      const apiUsageEl = document.getElementById('api-usage')
+      if (apiUsageEl) {
+        if (quota === -1) {
+          apiUsageEl.textContent = `${totalUsage.toLocaleString()} / Unlimited`
+        } else {
+          apiUsageEl.textContent = `${totalUsage.toLocaleString()} / ${quota.toLocaleString()}`
+        }
+      }
 
       // Tier badge
       const tierBadge = document.getElementById('tier-badge')
@@ -865,10 +883,10 @@ const supabaseConfig = getSupabaseConfig();
         // Silently ignore - this is expected for users without pending keys
       }
 
-      // License keys list
+      // License keys list (only show active keys)
       const keysList = document.getElementById('keys-list')
-      if (keysList && licenseKeys && licenseKeys.length > 0) {
-        keysList.innerHTML = licenseKeys.map(key => `
+      if (keysList && activeKeys.length > 0) {
+        keysList.innerHTML = activeKeys.map(key => `
           <div class="key-item" data-key-id="${escapeHtml(key.id)}">
             <div class="key-info">
               <div class="key-name">${escapeHtml(key.name)}</div>
@@ -880,10 +898,7 @@ const supabaseConfig = getSupabaseConfig();
             </div>
             <div class="key-actions">
               <span class="tier-badge ${escapeHtml(key.tier)}">${escapeHtml(key.tier)}</span>
-              ${key.status === 'active'
-                ? `<button class="btn btn-danger btn-sm revoke-btn" data-key-id="${escapeHtml(key.id)}">Revoke</button>`
-                : `<span class="text-muted">Revoked</span>`
-              }
+              <button class="btn btn-danger btn-sm revoke-btn" data-key-id="${escapeHtml(key.id)}">Revoke</button>
             </div>
           </div>
         `).join('')
