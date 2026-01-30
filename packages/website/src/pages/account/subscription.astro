@@ -645,7 +645,8 @@ const supabaseConfig = getSupabaseConfig();
   const supabaseUrl = config.url;
   const supabaseAnonKey = config.anonKey;
 
-  document.addEventListener('DOMContentLoaded', async () => {
+  // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation)
+  document.addEventListener('astro:page-load', async () => {
     const loadingState = document.getElementById('loading-state') as HTMLDivElement
     const content = document.getElementById('subscription-content') as HTMLDivElement
     const errorState = document.getElementById('error-state') as HTMLDivElement
