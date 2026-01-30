@@ -458,7 +458,18 @@ The MCP server supports three authentication modes:
 | Supabase Anon Key | `Authorization: Bearer eyJ...` | 30/min (community) | ❌ Not tracked |
 | No Auth | None | 10 total (trial) | ❌ Not tracked |
 
-**To track usage on your account**, configure your personal API key:
+**To track usage on your account**, configure your personal API key using one of these methods:
+
+**Method 1: Config File (Recommended - Cross-Platform)**
+
+```bash
+mkdir -p ~/.skillsmith
+echo '{"apiKey": "sk_live_your_key_here"}' > ~/.skillsmith/config.json
+```
+
+**Method 2: Claude Settings (Per-Server)**
+
+Add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -473,6 +484,8 @@ The MCP server supports three authentication modes:
   }
 }
 ```
+
+**Important**: Shell environment exports (`export SKILLSMITH_API_KEY=...`) do NOT reach MCP server subprocesses. Use one of the methods above.
 
 Get your API key from https://skillsmith.app/account after signing up.
 
