@@ -1,5 +1,16 @@
 # @skillsmith/mcp-server
 
+## Auto-Update Notifications
+
+The MCP server checks for updates on startup and notifies you when a newer version is available:
+
+```
+[skillsmith] Update available: 0.3.10 → 0.3.13
+Restart Claude Code to use the latest version.
+```
+
+To disable update checks, set `SKILLSMITH_AUTO_UPDATE_CHECK=false` in your environment.
+
 MCP (Model Context Protocol) server for Claude Code skill discovery, installation, and management.
 
 ## Installation
