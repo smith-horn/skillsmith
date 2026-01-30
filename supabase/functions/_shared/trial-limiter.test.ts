@@ -173,7 +173,7 @@ describe('checkTrialLimit', () => {
 
     it('should return allowed=false when limit exceeded', async () => {
       mockRpc.mockResolvedValue({
-        data: [{ allowed: false, used: 10, remaining: 0 }],
+        data: [{ allowed: false, used: 100, remaining: 0 }],
         error: null,
       })
 
@@ -184,7 +184,7 @@ describe('checkTrialLimit', () => {
       const result = await checkTrialLimit(req)
 
       expect(result.allowed).toBe(false)
-      expect(result.used).toBe(10)
+      expect(result.used).toBe(100)
       expect(result.remaining).toBe(0)
     })
   })
@@ -204,7 +204,7 @@ describe('checkTrialLimit', () => {
 
       expect(result.allowed).toBe(true)
       expect(result.used).toBe(0)
-      expect(result.remaining).toBe(10)
+      expect(result.remaining).toBe(100)
     })
 
     it('should be permissive on empty data', async () => {
@@ -221,7 +221,7 @@ describe('checkTrialLimit', () => {
 
       expect(result.allowed).toBe(true)
       expect(result.used).toBe(0)
-      expect(result.remaining).toBe(10)
+      expect(result.remaining).toBe(100)
     })
 
     it('should be permissive on exception', async () => {
@@ -235,7 +235,7 @@ describe('checkTrialLimit', () => {
 
       expect(result.allowed).toBe(true)
       expect(result.used).toBe(0)
-      expect(result.remaining).toBe(10)
+      expect(result.remaining).toBe(100)
     })
   })
 
@@ -272,15 +272,15 @@ describe('checkTrialLimit', () => {
 
 describe('trialExceededResponse', () => {
   it('should return 401 response with details', async () => {
-    const result = { allowed: false, used: 10, remaining: 0 }
+    const result = { allowed: false, used: 100, remaining: 0 }
 
     const response = trialExceededResponse(result, 'https://app.example.com')
 
     expect(response.status).toBe(401)
     const body = await response.json()
     expect(body.error).toBe('Authentication required')
-    expect(body.details.trialUsed).toBe(10)
-    expect(body.details.trialLimit).toBe(10)
+    expect(body.details.trialUsed).toBe(100)
+    expect(body.details.trialLimit).toBe(100)
     expect(body.details.signupUrl).toBe('https://skillsmith.app/signup')
   })
 
@@ -305,7 +305,7 @@ describe('trialExceededResponse', () => {
 })
 
 describe('getTrialLimit', () => {
-  it('should return 10', () => {
-    expect(getTrialLimit()).toBe(10)
+  it('should return 100', () => {
+    expect(getTrialLimit()).toBe(100)
   })
 })

@@ -117,7 +117,7 @@ describe('runAuthMiddleware', () => {
         success: true,
         remaining: 9,
         reset: 1234567890,
-        limit: 10,
+        limit: 100,
       })
 
       const req = new Request('https://example.com')
@@ -128,7 +128,7 @@ describe('runAuthMiddleware', () => {
       expect(result.trialResult?.remaining).toBe(7)
       expect(checkTrialLimit).toHaveBeenCalled()
       expect(checkRateLimit).toHaveBeenCalledWith('skills-search', req, {
-        customLimit: 10, // Trial tier
+        customLimit: 100, // Trial tier
       })
     })
 
@@ -186,7 +186,7 @@ describe('runAuthMiddleware', () => {
         success: false,
         remaining: 0,
         reset: 1234567890,
-        limit: 10,
+        limit: 100,
       })
       const mockResponse = new Response('Rate limit exceeded', { status: 429 })
       vi.mocked(rateLimitExceededResponse).mockReturnValue(mockResponse)
@@ -236,7 +236,7 @@ describe('addAuthHeaders', () => {
         success: true,
         remaining: 9,
         reset: 1234567890,
-        limit: 10,
+        limit: 100,
       },
       earlyResponse: null,
     }
@@ -255,7 +255,7 @@ describe('addAuthHeaders', () => {
         success: true,
         remaining: 5,
         reset: 1234567890,
-        limit: 10,
+        limit: 100,
       },
       earlyResponse: null,
     }
@@ -290,9 +290,9 @@ describe('addAuthHeaders', () => {
 })
 
 describe('getTierRateLimit', () => {
-  it('should return 10 for trial (undefined tier)', () => {
-    expect(getTierRateLimit()).toBe(10)
-    expect(getTierRateLimit(undefined)).toBe(10)
+  it('should return 100 for trial (undefined tier)', () => {
+    expect(getTierRateLimit()).toBe(100)
+    expect(getTierRateLimit(undefined)).toBe(100)
   })
 
   it('should return 30 for community tier', () => {

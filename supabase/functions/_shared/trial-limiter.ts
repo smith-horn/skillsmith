@@ -4,15 +4,15 @@
  *
  * SMI-XXXX: API Key Authentication
  *
- * Tracks trial usage per IP hash. Users get 10 requests TOTAL
+ * Tracks trial usage per IP hash. Users get 100 requests TOTAL
  * before requiring authentication.
  */
 
 import { createSupabaseAdminClient } from './supabase.ts'
 import { errorResponse } from './cors.ts'
 
-/** Trial limit: 10 requests TOTAL (not per day) */
-const TRIAL_LIMIT = 10
+/** Trial limit: 100 requests TOTAL (not per day) */
+const TRIAL_LIMIT = 100
 
 /** Default salt value (used when TRIAL_SALT env var is not set) */
 const DEFAULT_TRIAL_SALT = 'skillsmith-trial-2026'

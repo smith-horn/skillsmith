@@ -23,7 +23,7 @@ import {
  * Default rate limits per tier (requests per minute)
  */
 const TIER_RATE_LIMITS: Record<string, number> = {
-  trial: 10, // Unauthenticated
+  trial: 100, // Unauthenticated
   community: 30,
   individual: 60,
   team: 120,
