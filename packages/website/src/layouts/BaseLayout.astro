@@ -8,6 +8,7 @@
  * Includes Supabase config injection for UserMenu auth state.
  */
 
+import { ViewTransitions } from 'astro:transitions';
 import Nav from '../components/Nav.astro';
 import { getSupabaseConfig } from '../lib/supabase-config';
 
@@ -56,6 +57,9 @@ const supabaseConfig = getSupabaseConfig();
 
     <!-- Slot for page-specific head content (JSON-LD, etc.) -->
     <slot name="head" />
+
+    <!-- Enable smooth page transitions without full reload -->
+    <ViewTransitions />
 
     <!-- Supabase config for auth-aware navigation -->
     <script is:inline define:vars={{ supabaseConfig }}>
