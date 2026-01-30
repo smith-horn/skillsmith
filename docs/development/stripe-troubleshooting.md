@@ -105,6 +105,20 @@ https://<project-ref>.supabase.co/functions/v1/stripe-webhook
 
 ---
 
+## Multi-Product Stripe Account Filtering (SMI-2069)
+
+If your Stripe account is used by multiple products (e.g., Skillsmith + Substack), the webhook will receive events from ALL products. The webhook filters events by:
+
+| Event Type | Filter Method |
+|------------|---------------|
+| `checkout.session.completed` | `metadata.source === 'skillsmith-website'` |
+| `customer.subscription.*` | Subscription exists in `subscriptions` table |
+| `invoice.*` | Associated subscription exists in `subscriptions` table |
+
+Non-Skillsmith events are logged and acknowledged with 200 OK (so Stripe doesn't retry).
+
+---
+
 ## Webhook Idempotency (SMI-2068)
 
 Stripe retries webhook events when endpoints return non-2xx responses or time out. The webhook handler MUST be idempotent to handle these retries gracefully.
