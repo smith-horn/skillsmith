@@ -748,7 +748,8 @@ const supabaseConfig = getSupabaseConfig();
     return div.innerHTML
   }
 
-  document.addEventListener('DOMContentLoaded', async () => {
+  // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation)
+  document.addEventListener('astro:page-load', async () => {
     const loadingState = document.getElementById('loading-state') as HTMLDivElement
     const dashboardContent = document.getElementById('dashboard-content') as HTMLDivElement
     const errorState = document.getElementById('error-state') as HTMLDivElement
