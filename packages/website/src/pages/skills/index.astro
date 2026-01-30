@@ -259,16 +259,17 @@ const trustTiers = [
   <script define:vars={{ apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1` }}>
     const API_BASE = apiBase;
     const ITEMS_PER_PAGE = 12;
-
-    let currentPage = 1;
-    let totalPages = 1;
-    let allResults = [];
-    let debounceTimer = null;
-
     const MIN_QUERY_LENGTH = 3; // SMI-1613: Minimum characters for search
 
-    // DOM Elements
-    const searchInput = document.getElementById('search-input');
+    // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation)
+    document.addEventListener('astro:page-load', () => {
+      let currentPage = 1;
+      let totalPages = 1;
+      let allResults = [];
+      let debounceTimer = null;
+
+      // DOM Elements
+      const searchInput = document.getElementById('search-input');
     const categoryFilter = document.getElementById('category-filter');
     const trustFilter = document.getElementById('trust-filter');
     const sortSelect = document.getElementById('sort-select');
@@ -534,6 +535,7 @@ const trustTiers = [
     // Initial load - show search prompt instead of calling API
     showState('search-prompt');
     resultsCount.textContent = 'Enter a search term or select a filter';
+    }); // End astro:page-load handler
   </script>
 
   <style>
