@@ -32,6 +32,11 @@ import {
   getWelcomeMessage,
   TIER1_SKILLS,
 } from './onboarding/first-run.js'
+import { checkForUpdates, formatUpdateNotification } from '@skillsmith/core'
+
+// Package version - keep in sync with package.json
+const PACKAGE_VERSION = '0.3.10'
+const PACKAGE_NAME = '@skillsmith/mcp-server'
 import {
   installBundledSkills,
   installUserDocs,
@@ -294,6 +299,19 @@ async function main() {
   // Run first-time setup if needed
   if (isFirstRun()) {
     await runFirstTimeSetup()
+  }
+
+  // SMI-1952: Auto-update check (non-blocking)
+  if (process.env.SKILLSMITH_AUTO_UPDATE_CHECK !== 'false') {
+    checkForUpdates(PACKAGE_NAME, PACKAGE_VERSION)
+      .then((result) => {
+        if (result?.updateAvailable) {
+          console.error(formatUpdateNotification(result))
+        }
+      })
+      .catch(() => {
+        // Silent failure - don't block server startup
+      })
   }
 
   const transport = new StdioServerTransport()

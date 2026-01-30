@@ -201,6 +201,13 @@ export {
   type SkillsmithConfig,
 } from './config/index.js'
 
+// Version Check (SMI-1952)
+export {
+  checkForUpdates,
+  formatUpdateNotification,
+  type VersionCheckResult,
+} from './utils/version-check.js'
+
 // ============================================================================
 // LIVE SERVICES WORKTREE STUBS (Phase 0 - Conflict Prevention)
 // ============================================================================

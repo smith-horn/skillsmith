@@ -590,6 +590,14 @@ Set `SKILLSMITH_USE_MOCK_EMBEDDINGS=true` to force fallback mode globally.
 
 > See [ADR-009: Embedding Service Fallback Strategy](docs/adr/009-embedding-service-fallback.md)
 
+### Auto-Update Check (SMI-1952)
+
+The MCP server checks for updates on startup and notifies via stderr if a newer version is available.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SKILLSMITH_AUTO_UPDATE_CHECK` | `true` | Set to `false` to disable update notifications |
+
 ---
 
 ## Testing & Benchmarks
