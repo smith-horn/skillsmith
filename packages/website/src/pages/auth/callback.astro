@@ -12,6 +12,7 @@
 // Disable prerendering - this page needs SSR to read env vars
 export const prerender = false;
 
+import { ViewTransitions } from 'astro:transitions';
 import { getSupabaseConfig } from '../../lib/supabase-config';
 
 // Read env vars at SSR time to inject into client script
@@ -36,6 +37,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
       window.__SUPABASE_CONFIG__ = supabaseConfig;
       window.__AUTH_REDIRECT_TO__ = redirectTo;
     </script>
+    <ViewTransitions />
   </head>
   <body>
     <main class="callback-container">

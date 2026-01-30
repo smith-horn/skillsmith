@@ -17,6 +17,7 @@
 // Disable prerendering - this page needs SSR to read query params
 export const prerender = false;
 
+import { ViewTransitions } from 'astro:transitions';
 import { PRICING_TIERS } from '../lib/pricing.ts';
 import { getSupabaseConfig } from '../lib/supabase-config';
 import LoginButton from '../components/auth/LoginButton.astro';
@@ -65,6 +66,7 @@ const savingsPercent = period === 'annual' ? 17 : 0; // ~17% savings
     <script is:inline define:vars={{ supabaseConfig }}>
       window.__SUPABASE_CONFIG__ = supabaseConfig;
     </script>
+    <ViewTransitions />
   </head>
   <body>
     <Nav variant="minimal" activePath="/signup" />
