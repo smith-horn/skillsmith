@@ -11,6 +11,7 @@
 // Disable prerendering - this page needs SSR to read env vars and handle auth
 export const prerender = false;
 
+import { ViewTransitions } from 'astro:transitions';
 import { getSupabaseConfig } from '../../lib/supabase-config';
 import Nav from '../../components/Nav.astro';
 
@@ -32,6 +33,8 @@ const supabaseConfig = getSupabaseConfig();
     <script is:inline define:vars={{ supabaseConfig }}>
       window.__SUPABASE_CONFIG__ = supabaseConfig;
     </script>
+    <!-- Enable smooth page transitions without full reload (SMI-2066) -->
+    <ViewTransitions />
   </head>
   <body>
     <Nav activePath="/account" />
