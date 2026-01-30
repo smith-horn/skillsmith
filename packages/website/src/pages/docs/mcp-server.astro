@@ -50,7 +50,97 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   }
 }`}</code></pre>
 
-  <h3>Environment Variables</h3>
+  <h3>API Key Configuration</h3>
+
+  <p>
+    The Skillsmith API provides access to <strong>14,000+ skills</strong> that are indexed daily
+    from GitHub and security screened hourly for vulnerabilities. Configure your API key for
+    higher rate limits and usage tracking.
+  </p>
+
+  <h4>Why Use an API Key?</h4>
+
+  <ul>
+    <li><strong>Live indexed skills</strong> - Access skills as they're discovered and screened</li>
+    <li><strong>Higher rate limits</strong> - Up to 300 requests/minute on Enterprise tier</li>
+    <li><strong>Usage dashboard</strong> - Track your API usage at skillsmith.app/account</li>
+    <li><strong>Priority access</strong> - During high-traffic periods</li>
+  </ul>
+
+  <h4>Setup</h4>
+
+  <p><strong>Step 1:</strong> Create an account and get your API key at <a href="https://skillsmith.app/account">skillsmith.app/account</a></p>
+
+  <p><strong>Step 2:</strong> Add your API key to the MCP server configuration:</p>
+
+  <pre><code>{`{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_your_key_here"
+      }
+    }
+  }
+}`}</code></pre>
+
+  <p><strong>Step 3:</strong> Restart Claude Code (Cmd/Ctrl+Shift+P → "Claude Code: Restart")</p>
+
+  <div class="callout">
+    <h4>Security Note</h4>
+    <p>
+      Never paste your API key directly in chat. Always configure it via the settings file above.
+      Your key will be used automatically for all Skillsmith API requests.
+    </p>
+  </div>
+
+  <h4>Rate Limits by Tier</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Tier</th>
+        <th>Rate Limit</th>
+        <th>Monthly Cost</th>
+        <th>Best For</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Trial</td>
+        <td>10 total</td>
+        <td>Free</td>
+        <td>Quick evaluation</td>
+      </tr>
+      <tr>
+        <td>Community</td>
+        <td>30/min</td>
+        <td>Free</td>
+        <td>Personal projects</td>
+      </tr>
+      <tr>
+        <td>Individual</td>
+        <td>60/min</td>
+        <td>$9.99/mo</td>
+        <td>Active developers</td>
+      </tr>
+      <tr>
+        <td>Team</td>
+        <td>120/min</td>
+        <td>$25/user/mo</td>
+        <td>Development teams</td>
+      </tr>
+      <tr>
+        <td>Enterprise</td>
+        <td>300/min</td>
+        <td>$55/user/mo</td>
+        <td>Large organizations</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Other Environment Variables</h3>
 
   <table>
     <thead>
@@ -78,7 +168,7 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
       </tr>
       <tr>
         <td><code>SKILLSMITH_API_KEY</code></td>
-        <td>API key for premium features</td>
+        <td>Personal API key for usage tracking</td>
         <td>-</td>
       </tr>
     </tbody>

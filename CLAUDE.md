@@ -528,6 +528,12 @@ echo $LINEAR_API_KEY            # Exposes to terminal
 cat .env                        # Exposes all secrets
 ```
 
+### AI Agent Secret Handling (SMI-1956)
+
+**Never ask users to paste secrets in chat.** Guide them to configure secrets via settings files, then reference via `$VAR` syntax.
+
+See [§4.11 AI Agent Secret Handling](docs/architecture/standards-security.md#411-ai-agent-secret-handling-smi-1956) for the full pattern.
+
 ---
 
 ## Skills Configuration

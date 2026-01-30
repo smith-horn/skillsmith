@@ -36,15 +36,32 @@ Claude will automatically update your `~/.claude/settings.json`. After restartin
 
 ## Live Skill Registry
 
-Version 0.3.8 includes the live skill registry with 14,000+ skills.
+The Skillsmith API provides access to **14,000+ skills** that are:
 
-> **Note (v0.3.8):** Fixed critical bug where the MCP server defaulted to offline mode for all users. Search now correctly connects to the production API. See [SMI-1948](https://linear.app/smith-horn-group/issue/SMI-1948).
+- **Indexed daily** from GitHub repositories
+- **Security screened hourly** for vulnerabilities and malicious patterns
+- **Quality scored** based on documentation, structure, and community feedback
+- **Categorized** by trust tier (Verified, Community, Experimental)
 
 Skills are served from `api.skillsmith.app` and cached locally for 24 hours.
 
+> **Note (v0.3.8):** Fixed critical bug where the MCP server defaulted to offline mode for all users. Search now correctly connects to the production API. See [SMI-1948](https://linear.app/smith-horn-group/issue/SMI-1948).
+
+### Why Configure an API Key?
+
+Without an API key, you're limited to **10 total requests** (trial mode). With a free Community account, you get **30 requests/minute** with access to all live skills.
+
+**Benefits of API key:**
+- Access to live indexed skills (not just cached)
+- Higher rate limits based on your tier
+- Usage tracking on your dashboard
+- Priority during high-traffic periods
+
 ### API Key Configuration (SMI-1953)
 
-For usage tracking and higher rate limits, configure your personal API key:
+**Step 1:** Get your API key from https://skillsmith.app/account
+
+**Step 2:** Add to your Claude settings at `~/.claude/settings.json`:
 
 ```json
 {
@@ -60,13 +77,24 @@ For usage tracking and higher rate limits, configure your personal API key:
 }
 ```
 
-Get your API key from https://skillsmith.app/account after signing up.
+**Step 3:** Restart Claude Code (Cmd/Ctrl+Shift+P → "Claude Code: Restart")
 
-| Auth Mode | Rate Limit | Usage Tracking |
-|-----------|------------|----------------|
-| Personal API Key | Tier-based (60-300/min) | ✅ Dashboard |
-| Anonymous (default) | 30/min | ❌ Not tracked |
-| No auth | 10 total | ❌ Trial only |
+> **Security Note:** Never paste your API key in chat. Configure it via the settings file above, then reference it via `$SKILLSMITH_API_KEY` in commands. See [SMI-1956](https://linear.app/smith-horn-group/issue/SMI-1956).
+
+### Rate Limits by Tier
+
+| Tier | Rate Limit | Monthly Cost | Best For |
+|------|------------|--------------|----------|
+| Trial | 10 total | Free | Quick evaluation |
+| Community | 30/min | Free | Personal projects |
+| Individual | 60/min | $9.99/mo | Active developers |
+| Team | 120/min | $25/user/mo | Development teams |
+| Enterprise | 300/min | $55/user/mo | Large organizations |
+
+All tiers include:
+- Full access to skill search, details, and recommendations
+- Security screening results
+- Quality scores and trust tier information
 
 ### API Configuration
 
