@@ -927,11 +927,19 @@ const supabaseConfig = getSupabaseConfig();
       generateKeyBtn.textContent = 'Generating...'
 
       try {
+        // Refresh session to get a fresh access token (fixes stale token after 1hr+ on page)
+        const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession()
+        if (refreshError || !refreshData.session) {
+          // Session expired and couldn't be refreshed - redirect to login
+          window.location.href = '/login?redirect=/account&reason=session_expired'
+          return
+        }
+
         const response = await fetch(`${supabaseUrl}/functions/v1/generate-license`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`,
+            'Authorization': `Bearer ${refreshData.session.access_token}`,
           },
           body: JSON.stringify({ name: 'API Key' }),
         })
