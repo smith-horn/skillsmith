@@ -105,6 +105,55 @@ https://<project-ref>.supabase.co/functions/v1/stripe-webhook
 
 ---
 
+## Webhook Idempotency (SMI-2068)
+
+Stripe retries webhook events when endpoints return non-2xx responses or time out. The webhook handler MUST be idempotent to handle these retries gracefully.
+
+### Implementation Pattern
+
+```typescript
+// ✅ CORRECT - Check before insert
+const { data: existing } = await supabase
+  .from('subscriptions')
+  .select('id')
+  .eq('stripe_subscription_id', subscriptionId)
+  .single()
+
+if (existing) {
+  console.log('Subscription already exists (duplicate event), skipping')
+} else {
+  await supabase.from('subscriptions').insert({ ... })
+}
+
+// ❌ WRONG - Insert without checking (fails on UNIQUE constraint)
+await supabase.from('subscriptions').insert({ ... })
+```
+
+### Why This Matters
+
+When Stripe retries events, a non-idempotent handler will:
+1. Attempt to INSERT duplicate records
+2. Fail on UNIQUE constraints (`stripe_subscription_id`, `key_hash`)
+3. Return 500 error
+4. Trigger MORE retries from Stripe
+5. Cascade into 50+ failed webhook attempts
+
+### Current Idempotency Checks
+
+| Check | Table | Column(s) |
+|-------|-------|-----------|
+| Subscription exists | `subscriptions` | `stripe_subscription_id` |
+| License key exists | `license_keys` | `user_id` + `tier` + `status='active'` |
+| Pending checkout | `pending_checkouts` | `email` (uses upsert) |
+
+### Monitoring Retries
+
+Check Stripe Dashboard → Developers → Webhooks → select endpoint → view attempts:
+- `wasIdempotent: true` in logs = duplicate event handled gracefully
+- HTTP 200 for all retries = idempotency working correctly
+
+---
+
 ## Known Issues
 
 ### Test Mode Webhook Signature Verification (SMI-1845)
