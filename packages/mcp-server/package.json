@@ -1,6 +1,7 @@
 {
   "name": "@skillsmith/mcp-server",
   "version": "0.3.13",
+  "mcpName": "io.github.smith-horn/skillsmith",
   "description": "MCP server for Skillsmith skill discovery",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -38,7 +39,8 @@
   },
   "files": [
     "dist",
-    "src/assets"
+    "src/assets",
+    "server.json"
   ],
   "license": "Elastic-2.0",
   "repository": {
