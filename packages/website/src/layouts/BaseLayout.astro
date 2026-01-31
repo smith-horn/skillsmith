@@ -3,6 +3,7 @@
  * BaseLayout
  *
  * SMI-2043: Unified navigation with auth-state awareness
+ * SMI-2150: Rate limit toast for 429 errors
  *
  * Shared layout for pages using the standard navigation pattern.
  * Includes Supabase config injection for UserMenu auth state.
@@ -10,6 +11,7 @@
 
 import { ViewTransitions } from 'astro:transitions';
 import Nav from '../components/Nav.astro';
+import RateLimitToast from '../components/RateLimitToast.astro';
 import { getSupabaseConfig } from '../lib/supabase-config';
 
 interface Props {
@@ -138,6 +140,9 @@ const supabaseConfig = getSupabaseConfig();
         </div>
       </div>
     </footer>
+
+    <!-- SMI-2150: Rate limit toast for 429 errors -->
+    <RateLimitToast />
   </body>
 </html>
 

@@ -1,0 +1,221 @@
+---
+interface Props {
+  pageTitle: string;
+  pageDescription?: string;
+}
+
+const { pageTitle, pageDescription } = Astro.props;
+---
+
+<div class="docs-copy-buttons" data-title={pageTitle} data-description={pageDescription || ''}>
+  <!-- Live region for screen reader announcements -->
+  <span class="sr-only" role="status" aria-live="polite" id="copy-status"></span>
+
+  <button
+    type="button"
+    class="copy-btn copy-llm-btn"
+    aria-label="Copy page content optimized for LLM"
+  >
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+    </svg>
+    <span class="btn-text">Copy for LLM</span>
+  </button>
+
+  <button
+    type="button"
+    class="copy-btn copy-md-btn"
+    aria-label="Copy page content as Markdown"
+  >
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+      <polyline points="14 2 14 8 20 8"></polyline>
+      <line x1="16" y1="13" x2="8" y2="13"></line>
+      <line x1="16" y1="17" x2="8" y2="17"></line>
+      <polyline points="10 9 9 9 8 9"></polyline>
+    </svg>
+    <span class="btn-text">Markdown</span>
+  </button>
+</div>
+
+<style>
+  .docs-copy-buttons {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .copy-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem 0.75rem;
+    font-size: 0.875rem;
+    color: #94a3b8;
+    background-color: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .copy-btn:hover {
+    border-color: #0ea5e9;
+    color: #e2e8f0;
+  }
+
+  .copy-btn:focus-visible {
+    outline: 2px solid #0ea5e9;
+    outline-offset: 2px;
+  }
+
+  .copy-btn.copied {
+    border-color: #22c55e;
+    color: #22c55e;
+  }
+
+  .copy-btn.failed {
+    border-color: #ef4444;
+    color: #ef4444;
+  }
+
+  .icon {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+  }
+
+  .btn-text {
+    white-space: nowrap;
+  }
+
+  /* Screen reader only - for live announcements */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* Mobile: stack vertically on very small screens */
+  @media (max-width: 400px) {
+    .docs-copy-buttons {
+      flex-direction: column;
+    }
+
+    .copy-btn {
+      justify-content: center;
+    }
+  }
+</style>
+
+<script>
+  import TurndownService from 'turndown';
+  import { gfm } from 'turndown-plugin-gfm';
+
+  function initCopyButtons() {
+    // Initialize Turndown with GFM tables support
+    const turndown = new TurndownService({
+      headingStyle: 'atx',
+      codeBlockStyle: 'fenced',
+      bulletListMarker: '-'
+    });
+    turndown.use(gfm);
+
+    // Custom rule for callout divs
+    turndown.addRule('callout', {
+      filter: (node: Node): boolean => {
+        return node instanceof HTMLElement && node.classList?.contains('callout');
+      },
+      replacement: (content: string, node: Node): string => {
+        const element = node as HTMLElement;
+        const isWarning = element.classList.contains('warning');
+        return `\n> ${isWarning ? '⚠️' : 'ℹ️'} ${content.trim()}\n`;
+      }
+    });
+
+    // Custom rule to skip the copy buttons container
+    turndown.addRule('skipCopyButtons', {
+      filter: (node: Node): boolean => {
+        return node instanceof HTMLElement && node.classList?.contains('docs-copy-buttons');
+      },
+      replacement: (): string => ''
+    });
+
+    document.querySelectorAll<HTMLElement>('.docs-copy-buttons').forEach(container => {
+      const article = document.querySelector('.docs-content');
+      if (!article) return;
+
+      const title = container.dataset.title || 'Documentation';
+      const description = container.dataset.description;
+
+      // Copy for LLM handler
+      const llmBtn = container.querySelector('.copy-llm-btn');
+      llmBtn?.addEventListener('click', async (e) => {
+        const markdown = turndown.turndown(article.innerHTML);
+        const llmContent = `# ${title} | Skillsmith Docs\n\n${description ? `> ${description}\n\n` : ''}${markdown}`;
+        await copyWithFeedback(e.currentTarget as HTMLButtonElement, llmContent, 'llm');
+      });
+
+      // Copy Markdown handler
+      const mdBtn = container.querySelector('.copy-md-btn');
+      mdBtn?.addEventListener('click', async (e) => {
+        const markdown = turndown.turndown(article.innerHTML);
+        await copyWithFeedback(e.currentTarget as HTMLButtonElement, markdown, 'markdown');
+      });
+    });
+  }
+
+  async function copyWithFeedback(button: HTMLButtonElement, content: string, format: string): Promise<void> {
+    const textSpan = button.querySelector('.btn-text');
+    const statusRegion = document.getElementById('copy-status');
+    if (!textSpan) return;
+
+    const originalText = textSpan.textContent;
+    const formatLabel = format === 'llm' ? 'LLM-optimized' : 'Markdown';
+
+    try {
+      await navigator.clipboard.writeText(content);
+      textSpan.textContent = 'Copied!';
+      button.classList.add('copied');
+      button.classList.remove('failed');
+
+      // Announce to screen readers
+      if (statusRegion) {
+        statusRegion.textContent = `${formatLabel} content copied to clipboard`;
+      }
+
+      // GA tracking - verify gtag is a function before calling
+      if (typeof window !== 'undefined' && 'gtag' in window && typeof (window as Record<string, unknown>).gtag === 'function') {
+        (window as unknown as { gtag: (cmd: string, action: string, params: object) => void }).gtag('event', 'copy_docs', { format });
+      }
+    } catch (error) {
+      // Log error for debugging
+      console.error('Failed to copy to clipboard:', error);
+
+      textSpan.textContent = 'Failed';
+      button.classList.add('failed');
+      button.classList.remove('copied');
+
+      // Announce failure to screen readers
+      if (statusRegion) {
+        statusRegion.textContent = `Failed to copy ${formatLabel} content`;
+      }
+    }
+
+    setTimeout(() => {
+      textSpan.textContent = originalText;
+      button.classList.remove('copied', 'failed');
+    }, 2000);
+  }
+
+  // Initialize on page load and after Astro page transitions
+  document.addEventListener('DOMContentLoaded', initCopyButtons);
+  document.addEventListener('astro:page-load', initCopyButtons);
+</script>

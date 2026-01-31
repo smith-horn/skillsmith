@@ -267,6 +267,30 @@ const trustTiers = [
       const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' };
       const supabaseAnonKey = config.anonKey;
 
+      // SMI-2081: Get authenticated user's JWT if available
+      // JWT auth provides tier-based rate limits vs anon key's community limits
+      let authToken = supabaseAnonKey; // Default to anon key
+      let authMethod = 'anon_key';
+
+      async function initAuth() {
+        try {
+          // Check for logged-in user's session token
+          const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
+          const supabase = createClient(config.url, config.anonKey);
+          const { data: { session } } = await supabase.auth.getSession();
+
+          if (session?.access_token) {
+            authToken = session.access_token;
+            authMethod = 'jwt';
+            console.debug('[Skills] Using JWT auth for tier-based rate limits');
+          } else {
+            console.debug('[Skills] Using anon key (community rate limits)');
+          }
+        } catch (e) {
+          console.warn('[Skills] Auth init failed, using anon key:', e.message);
+        }
+      }
+
       let currentPage = 1;
       let totalPages = 1;
       let allResults = [];
@@ -423,10 +447,11 @@ const trustTiers = [
         if (category) params.set('category', category);
         if (trustTier) params.set('trust_tier', trustTier);
 
+        // SMI-2081: Use JWT if available for tier-based rate limits
         const response = await fetch(`${API_BASE}/skills-search?${params.toString()}`, {
           signal: controller.signal,
           headers: {
-            'Authorization': `Bearer ${supabaseAnonKey}`,
+            'Authorization': `Bearer ${authToken}`,
             'Content-Type': 'application/json'
           }
         });
@@ -540,9 +565,11 @@ const trustTiers = [
       });
     });
 
-    // Initial load - show search prompt instead of calling API
-    showState('search-prompt');
-    resultsCount.textContent = 'Enter a search term or select a filter';
+    // SMI-2081: Initialize auth then show search prompt
+    initAuth().then(() => {
+      showState('search-prompt');
+      resultsCount.textContent = 'Enter a search term or select a filter';
+    });
     }); // End astro:page-load handler
   </script>
 

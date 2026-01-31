@@ -10,24 +10,40 @@
 
 /**
  * Pricing tier structure
+ *
+ * Represents a single pricing tier in the Skillsmith subscription model.
+ * @see ADR-013 for tier definitions
  */
 export interface PricingTier {
+  /** Display name of the tier (e.g., "Community", "Team") */
   name: string
-  monthlyPrice: number // Price in dollars (0 for free)
+  /** Price in dollars per month (0 for free tier) */
+  monthlyPrice: number
+  /** Billing period label (e.g., "/month", "/user/month") */
   period?: string
+  /** Short description of the tier */
   description: string
+  /** API call quota description (e.g., "1,000 API calls/month") */
   apiCalls: string
+  /** List of features included in this tier */
   features: string[]
+  /** Call-to-action button text */
   cta: string
+  /** CTA button destination URL */
   ctaHref: string
+  /** Whether this tier should be visually highlighted as recommended */
   highlighted?: boolean
 }
 
 /**
  * FAQ item structure
+ *
+ * Represents a single FAQ entry on the pricing page.
  */
 export interface PricingFaq {
+  /** The FAQ question */
   question: string
+  /** The FAQ answer */
   answer: string
 }
 
