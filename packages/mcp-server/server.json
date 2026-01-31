@@ -1,0 +1,26 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.smith-horn/skillsmith",
+  "title": "Skillsmith",
+  "description": "MCP server for Claude Code skill discovery, installation, and management.",
+  "websiteUrl": "https://skillsmith.app",
+  "repository": {
+    "url": "https://github.com/smith-horn/skillsmith",
+    "source": "github"
+  },
+  "version": "0.3.13",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@skillsmith/mcp-server",
+      "version": "0.3.13",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtime": {
+        "type": "node",
+        "minVersion": "22.0.0"
+      }
+    }
+  ]
+}
