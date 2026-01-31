@@ -1,4 +1,4 @@
-# git-crypt encryption for sensitive documentation
+# git-crypt encryption for sensitive documentation and IP
 # Files matching these patterns will be encrypted in the repo
 
 # Encrypt all docs (ADRs, implementation plans, architecture)
@@ -9,5 +9,8 @@ docs/development/*.md !filter !diff
 docs/templates/*.md !filter !diff
 docs/templates/*.ts !filter !diff
 
-# Encrypt hive-mind configurations
-.claude/hive-mind/** filter=git-crypt diff=git-crypt
+# Encrypt .claude directory (agents, skills, commands - IP)
+.claude/** filter=git-crypt diff=git-crypt
+
+# Encrypt supabase directory (edge functions, migrations - IP)
+supabase/** filter=git-crypt diff=git-crypt
