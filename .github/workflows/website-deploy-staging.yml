@@ -226,3 +226,82 @@ jobs:
         if: steps.parse.outputs.external-errors != '0'
         run: |
           echo "::warning::Found ${{ steps.parse.outputs.external-errors }} broken external links (non-blocking)"
+
+  # Production deployment with approval gate
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [deploy-staging, lighthouse, link-check]
+    if: ${{ needs.lighthouse.result == 'success' && needs.link-check.result == 'success' }}
+    environment:
+      name: production
+      url: https://www.skillsmith.app
+
+    outputs:
+      deployment-url: ${{ steps.deploy.outputs.deployment-url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build website
+        working-directory: packages/website
+        run: npm run build
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      - name: Deploy to Vercel (Production)
+        id: deploy
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          # Deploy to production (with --prod flag)
+          # Redirect stderr to stdout, then filter for URL only to avoid leaking logs
+          DEPLOYMENT_URL=$(vercel deploy --prod --yes --token="$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
+
+          if [ -z "$DEPLOYMENT_URL" ]; then
+            echo "::error::Failed to capture deployment URL. Check Vercel configuration."
+            exit 1
+          fi
+
+          echo "deployment-url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
+          echo "Deployed to production: $DEPLOYMENT_URL"
+
+      - name: Generate deployment summary
+        run: |
+          echo "## Production Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | production |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL | https://www.skillsmith.app |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deployment URL | ${{ steps.deploy.outputs.deployment-url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered by | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Staging URL | ${{ needs.deploy-staging.outputs.deployment-url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Validation Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Lighthouse CI: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "- Link Check: Passed" >> $GITHUB_STEP_SUMMARY
