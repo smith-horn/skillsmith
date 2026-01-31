@@ -1,0 +1,96 @@
+name: Website Deploy (Staging)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/website/**'
+  workflow_dispatch:
+
+concurrency:
+  group: website-staging-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  # Wait for CI to pass before deploying
+  wait-for-ci:
+    name: Wait for CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Only wait on push events; skip for manual dispatch
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Wait for CI workflow
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.sha }}
+          check-name: 'Build'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 30
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: wait-for-ci
+    # Run if wait-for-ci succeeded OR was skipped (manual dispatch)
+    if: ${{ !cancelled() && (needs.wait-for-ci.result == 'success' || needs.wait-for-ci.result == 'skipped') }}
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.deployment-url }}
+
+    outputs:
+      deployment-url: ${{ steps.deploy.outputs.deployment-url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build website
+        working-directory: packages/website
+        run: npm run build
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      - name: Deploy to Vercel (Staging)
+        id: deploy
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          # Deploy to staging (no --prod flag)
+          DEPLOYMENT_URL=$(vercel deploy --yes --token=$VERCEL_TOKEN 2>&1 | grep -E '^https://' | tail -1)
+
+          if [ -z "$DEPLOYMENT_URL" ]; then
+            echo "::error::Failed to capture deployment URL"
+            exit 1
+          fi
+
+          echo "deployment-url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
+          echo "Deployed to: $DEPLOYMENT_URL"
+
+      - name: Generate deployment summary
+        run: |
+          echo "## Staging Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | staging |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL | ${{ steps.deploy.outputs.deployment-url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered by | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
