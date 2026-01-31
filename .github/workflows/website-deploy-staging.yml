@@ -94,3 +94,126 @@ jobs:
           echo "| URL | ${{ steps.deploy.outputs.deployment-url }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Triggered by | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+
+  lighthouse:
+    name: Lighthouse CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: deploy-staging
+    if: ${{ needs.deploy-staging.result == 'success' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Lighthouse CI
+        uses: treosh/lighthouse-ci-action@v12
+        with:
+          urls: ${{ needs.deploy-staging.outputs.deployment-url }}
+          configPath: packages/website/lighthouserc.cjs
+          uploadArtifacts: true
+          temporaryPublicStorage: true
+
+      - name: Generate Lighthouse summary
+        if: always()
+        run: |
+          echo "## Lighthouse CI Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Threshold |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Performance | > 90 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Accessibility | > 95 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Best Practices | > 90 |" >> $GITHUB_STEP_SUMMARY
+          echo "| SEO | > 90 |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "URL tested: ${{ needs.deploy-staging.outputs.deployment-url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Full results available in the artifacts." >> $GITHUB_STEP_SUMMARY
+
+  # Link checker runs in parallel with lighthouse
+  link-check:
+    name: Link Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: deploy-staging
+    if: ${{ needs.deploy-staging.result == 'success' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check links on staging deployment
+        uses: lycheeverse/lychee-action@v2
+        id: lychee
+        with:
+          # Check the deployed staging URL
+          args: >-
+            --config packages/website/.lychee.toml
+            --base ${{ needs.deploy-staging.outputs.deployment-url }}
+            --verbose
+            ${{ needs.deploy-staging.outputs.deployment-url }}
+          # Don't fail the action on link errors - we handle it ourselves
+          fail: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Parse link check results
+        id: parse
+        run: |
+          # Count errors from lychee output
+          DEPLOYMENT_URL="${{ needs.deploy-staging.outputs.deployment-url }}"
+          DOMAIN=$(echo "$DEPLOYMENT_URL" | sed 's|https://||' | cut -d'/' -f1)
+
+          if [ -f ./lychee/out.md ]; then
+            # Internal errors: links pointing to our deployment domain that failed
+            INTERNAL_ERRORS=$(grep -E "^\[ERROR\].*$DOMAIN" ./lychee/out.md 2>/dev/null | wc -l || echo "0")
+            # Total errors
+            TOTAL_ERRORS=$(grep -c "^\[ERROR\]" ./lychee/out.md 2>/dev/null || echo "0")
+            # External errors
+            EXTERNAL_ERRORS=$((TOTAL_ERRORS - INTERNAL_ERRORS))
+
+            # Ensure non-negative
+            if [ "$EXTERNAL_ERRORS" -lt 0 ]; then EXTERNAL_ERRORS=0; fi
+
+            echo "internal-errors=$INTERNAL_ERRORS" >> $GITHUB_OUTPUT
+            echo "external-errors=$EXTERNAL_ERRORS" >> $GITHUB_OUTPUT
+
+            echo "Internal link errors: $INTERNAL_ERRORS"
+            echo "External link errors: $EXTERNAL_ERRORS"
+          else
+            echo "internal-errors=0" >> $GITHUB_OUTPUT
+            echo "external-errors=0" >> $GITHUB_OUTPUT
+            echo "No lychee output file found - assuming success"
+          fi
+
+      - name: Generate link check summary
+        run: |
+          echo "## Link Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Target:** ${{ needs.deploy-staging.outputs.deployment-url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Category | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Internal Errors | ${{ steps.parse.outputs.internal-errors }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| External Errors | ${{ steps.parse.outputs.external-errors }} (non-blocking) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f ./lychee/out.md ]; then
+            echo "<details>" >> $GITHUB_STEP_SUMMARY
+            echo "<summary>Full Report</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            cat ./lychee/out.md >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Fail on internal link errors
+        if: steps.parse.outputs.internal-errors != '0'
+        run: |
+          echo "::error::Found ${{ steps.parse.outputs.internal-errors }} broken internal links"
+          exit 1
+
+      - name: Warn on external link errors
+        if: steps.parse.outputs.external-errors != '0'
+        run: |
+          echo "::warning::Found ${{ steps.parse.outputs.external-errors }} broken external links (non-blocking)"
