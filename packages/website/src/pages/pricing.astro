@@ -6,6 +6,7 @@
  * License: Elastic License 2.0
  * SMI-1071: Annual billing toggle support
  * SMI-2043: Unified navigation with auth-state awareness
+ * SMI-2081: Refactored to comply with 500-line limit - styles extracted to pricing.css
  */
 
 // Disable prerendering - this page needs SSR to inject Supabase config for auth nav
@@ -13,127 +14,65 @@ export const prerender = false;
 
 import { ViewTransitions } from 'astro:transitions';
 import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
 import { getSupabaseConfig } from '../lib/supabase-config';
+import { pricingTiers, pricingFaqs, formatPrice, getAnnualPrice } from '../lib/pricing-data';
+import type { PricingTier } from '../lib/pricing-data';
 
 // Get Supabase config for auth-aware navigation
 const supabaseConfig = getSupabaseConfig();
 
-interface PricingTier {
-  name: string;
-  monthlyPrice: number;  // Price in dollars (0 for free)
-  period?: string;
-  description: string;
-  apiCalls: string;
-  features: string[];
-  cta: string;
-  ctaHref: string;
-  highlighted?: boolean;
+// Generate JSON-LD structured data
+function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; answer: string }>) {
+  return {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebPage",
+        "@id": "https://skillsmith.app/pricing",
+        "url": "https://skillsmith.app/pricing",
+        "name": "Skillsmith Pricing - Plans for Individuals and Teams",
+        "description": "Choose the Skillsmith plan that fits your needs. From free community access to enterprise-grade features.",
+        "isPartOf": { "@id": "https://skillsmith.app/#website" }
+      },
+      {
+        "@type": "Product",
+        "name": "Skillsmith",
+        "description": "AI-powered skill discovery and management for Claude Code",
+        "brand": { "@type": "Brand", "name": "Skillsmith" },
+        "offers": tiers.map(tier => ({
+          "@type": "Offer",
+          "name": tier.name,
+          "price": tier.monthlyPrice.toString(),
+          "priceCurrency": "USD",
+          ...(tier.monthlyPrice > 0 && { "billingDuration": "P1M" }),
+          "description": `${tier.apiCalls}. ${tier.features.join(', ')}.`,
+          "availability": "https://schema.org/InStock",
+          "url": `https://skillsmith.app${tier.ctaHref}`,
+          ...((tier.period?.includes('/user')) && {
+            "priceSpecification": {
+              "@type": "UnitPriceSpecification",
+              "price": tier.monthlyPrice.toString(),
+              "priceCurrency": "USD",
+              "billingDuration": "P1M",
+              "unitText": "user"
+            }
+          })
+        }))
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": faqs.map(faq => ({
+          "@type": "Question",
+          "name": faq.question,
+          "acceptedAnswer": { "@type": "Answer", "text": faq.answer }
+        }))
+      }
+    ]
+  };
 }
 
-// Annual pricing: Pay for 10 months, get 12 (17% savings)
-const ANNUAL_DISCOUNT_MONTHS = 10;
-
-function formatPrice(price: number): string {
-  if (price === 0) return "Free";
-  return `$${price}`;
-}
-
-function getAnnualPrice(monthlyPrice: number): number {
-  return monthlyPrice * ANNUAL_DISCOUNT_MONTHS;
-}
-
-const tiers: PricingTier[] = [
-  {
-    name: "Community",
-    monthlyPrice: 0,
-    description: "Perfect for exploring Skillsmith and personal projects.",
-    apiCalls: "1,000 API calls/month",
-    features: [
-      "Skill search and discovery",
-      "Skill installation",
-      "Basic recommendations",
-      "Community support",
-      "Public skill access",
-    ],
-    cta: "Get Started",
-    ctaHref: "/signup?tier=community",
-  },
-  {
-    name: "Individual",
-    monthlyPrice: 9.99,
-    period: "/month",
-    description: "For developers who want deeper insights into their skill usage.",
-    apiCalls: "10,000 API calls/month",
-    features: [
-      "Everything in Community",
-      "Basic analytics dashboard",
-      "Usage statistics",
-      "Email support",
-      "Priority skill indexing",
-    ],
-    cta: "Start Trial",
-    ctaHref: "/signup?tier=individual",
-  },
-  {
-    name: "Team",
-    monthlyPrice: 25,
-    period: "/user/month",
-    description: "Collaborate on skills with your entire team.",
-    apiCalls: "100,000 API calls/month",
-    features: [
-      "Everything in Individual",
-      "Team workspaces",
-      "Private skills",
-      "Team dashboard",
-      "Skill sharing controls",
-      "Priority support",
-    ],
-    cta: "Start Trial",
-    ctaHref: "/signup?tier=team",
-    highlighted: true,
-  },
-  {
-    name: "Enterprise",
-    monthlyPrice: 55,
-    period: "/user/month",
-    description: "Advanced security, compliance, and dedicated support for organizations.",
-    apiCalls: "Unlimited API calls",
-    features: [
-      "Everything in Team",
-      "SSO / SAML integration",
-      "Role-based access control",
-      "Audit logging",
-      "99.9% SLA guarantee",
-      "Dedicated support",
-      "Custom integrations",
-    ],
-    cta: "Contact Sales",
-    ctaHref: "/contact?tier=enterprise",
-  },
-];
-
-const faqs = [
-  {
-    question: "What counts as an API call?",
-    answer: "Each skill search, recommendation request, or skill installation counts as one API call. Viewing cached results does not count against your quota.",
-  },
-  {
-    question: "Can I change plans at any time?",
-    answer: "Yes, you can upgrade or downgrade your plan at any time. Changes take effect at the start of your next billing cycle.",
-  },
-  {
-    question: "What happens if I exceed my API limit?",
-    answer: "You'll receive a notification when approaching your limit. Once exceeded, API calls will be rate-limited until the next billing cycle or until you upgrade.",
-  },
-  {
-    question: "Is there a free trial for paid plans?",
-    answer: "Yes, Individual and Team plans include a 14-day free trial. Enterprise trials are available upon request.",
-  },
-  {
-    question: "What's included in the SLA?",
-    answer: "Enterprise customers receive a 99.9% uptime guarantee with service credits if we fail to meet this commitment.",
-  },
-];
+const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
 ---
 
 <!DOCTYPE html>
@@ -174,29 +113,14 @@ const faqs = [
           extend: {
             colors: {
               primary: {
-                50: '#fef7f5',
-                100: '#fdeee9',
-                200: '#fbd5cc',
-                300: '#f5b5a5',
-                400: '#ed9580',
-                500: '#E07A5F',
-                600: '#D4694E',
-                700: '#b8573f',
-                800: '#994634',
-                900: '#7a3829',
+                50: '#fef7f5', 100: '#fdeee9', 200: '#fbd5cc', 300: '#f5b5a5',
+                400: '#ed9580', 500: '#E07A5F', 600: '#D4694E', 700: '#b8573f',
+                800: '#994634', 900: '#7a3829',
               },
               dark: {
-                50: '#FAFAFA',
-                100: '#f1f5f9',
-                200: '#e2e8f0',
-                300: '#cbd5e1',
-                400: '#94a3b8',
-                500: '#64748b',
-                600: '#475569',
-                700: '#334155',
-                800: '#1f1f23',
-                900: '#121214',
-                950: '#0D0D0F',
+                50: '#FAFAFA', 100: '#f1f5f9', 200: '#e2e8f0', 300: '#cbd5e1',
+                400: '#94a3b8', 500: '#64748b', 600: '#475569', 700: '#334155',
+                800: '#1f2937', 900: '#111827', 950: '#0D0D0F',
               }
             }
           }
@@ -205,140 +129,18 @@ const faqs = [
     </script>
 
     <!-- JSON-LD Structured Data -->
-    <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@graph": [
-        {
-          "@type": "WebPage",
-          "@id": "https://skillsmith.app/pricing",
-          "url": "https://skillsmith.app/pricing",
-          "name": "Skillsmith Pricing - Plans for Individuals and Teams",
-          "description": "Choose the Skillsmith plan that fits your needs. From free community access to enterprise-grade features.",
-          "isPartOf": {
-            "@id": "https://skillsmith.app/#website"
-          }
-        },
-        {
-          "@type": "Product",
-          "name": "Skillsmith",
-          "description": "AI-powered skill discovery and management for Claude Code",
-          "brand": {
-            "@type": "Brand",
-            "name": "Skillsmith"
-          },
-          "offers": [
-            {
-              "@type": "Offer",
-              "name": "Community",
-              "price": "0",
-              "priceCurrency": "USD",
-              "description": "Free tier - 1,000 API calls/month. Skill search, installation, basic recommendations, community support.",
-              "availability": "https://schema.org/InStock",
-              "url": "https://skillsmith.app/signup?tier=community"
-            },
-            {
-              "@type": "Offer",
-              "name": "Individual",
-              "price": "9.99",
-              "priceCurrency": "USD",
-              "billingDuration": "P1M",
-              "description": "10,000 API calls/month. Everything in Community plus analytics dashboard, usage statistics, email support.",
-              "availability": "https://schema.org/InStock",
-              "url": "https://skillsmith.app/signup?tier=individual"
-            },
-            {
-              "@type": "Offer",
-              "name": "Team",
-              "price": "25",
-              "priceCurrency": "USD",
-              "billingDuration": "P1M",
-              "priceSpecification": {
-                "@type": "UnitPriceSpecification",
-                "price": "25",
-                "priceCurrency": "USD",
-                "billingDuration": "P1M",
-                "unitText": "user"
-              },
-              "description": "100,000 API calls/month. Team workspaces, private skills, team dashboard, skill sharing controls, priority support.",
-              "availability": "https://schema.org/InStock",
-              "url": "https://skillsmith.app/signup?tier=team"
-            },
-            {
-              "@type": "Offer",
-              "name": "Enterprise",
-              "price": "55",
-              "priceCurrency": "USD",
-              "billingDuration": "P1M",
-              "priceSpecification": {
-                "@type": "UnitPriceSpecification",
-                "price": "55",
-                "priceCurrency": "USD",
-                "billingDuration": "P1M",
-                "unitText": "user"
-              },
-              "description": "Unlimited API calls. SSO/SAML, role-based access control, audit logging, 99.9% SLA, dedicated support, custom integrations.",
-              "availability": "https://schema.org/InStock",
-              "url": "https://skillsmith.app/contact?tier=enterprise"
-            }
-          ]
-        },
-        {
-          "@type": "FAQPage",
-          "mainEntity": [
-            {
-              "@type": "Question",
-              "name": "What counts as an API call?",
-              "acceptedAnswer": {
-                "@type": "Answer",
-                "text": "Each skill search, recommendation request, or skill installation counts as one API call. Viewing cached results does not count against your quota."
-              }
-            },
-            {
-              "@type": "Question",
-              "name": "Can I change plans at any time?",
-              "acceptedAnswer": {
-                "@type": "Answer",
-                "text": "Yes, you can upgrade or downgrade your plan at any time. Changes take effect at the start of your next billing cycle."
-              }
-            },
-            {
-              "@type": "Question",
-              "name": "What happens if I exceed my API limit?",
-              "acceptedAnswer": {
-                "@type": "Answer",
-                "text": "You'll receive a notification when approaching your limit. Once exceeded, API calls will be rate-limited until the next billing cycle or until you upgrade."
-              }
-            },
-            {
-              "@type": "Question",
-              "name": "Is there a free trial for paid plans?",
-              "acceptedAnswer": {
-                "@type": "Answer",
-                "text": "Yes, Individual and Team plans include a 14-day free trial. Enterprise trials are available upon request."
-              }
-            },
-            {
-              "@type": "Question",
-              "name": "What's included in the SLA?",
-              "acceptedAnswer": {
-                "@type": "Answer",
-                "text": "Enterprise customers receive a 99.9% uptime guarantee with service credits if we fail to meet this commitment."
-              }
-            }
-          ]
-        }
-      ]
-    }
-    </script>
+    <script type="application/ld+json" set:html={JSON.stringify(jsonLdData)} />
+
+    <!-- Pricing page styles -->
+    <link rel="stylesheet" href="/styles/pricing.css" />
   </head>
-  <body>
+  <body class="font-sans bg-[#0D0D0F] text-[#FAFAFA] leading-relaxed">
     <Nav activePath="/pricing" />
 
     <main>
-      <section class="hero">
+      <section class="pricing-hero">
         <h1>Simple, transparent pricing</h1>
-        <p class="hero-subtitle">
+        <p class="pricing-hero-subtitle">
           Start free and scale as you grow. No hidden fees, no surprises.
         </p>
 
@@ -353,14 +155,14 @@ const faqs = [
       </section>
 
       <section class="pricing-grid">
-        {tiers.map((tier) => (
+        {pricingTiers.map((tier) => (
           <div
             class:list={["pricing-card", { highlighted: tier.highlighted }]}
             data-tier={tier.name.toLowerCase()}
             data-monthly-price={tier.monthlyPrice}
             data-annual-price={getAnnualPrice(tier.monthlyPrice)}
           >
-            {tier.highlighted && <div class="badge">Recommended</div>}
+            {tier.highlighted && <div class="pricing-badge">Recommended</div>}
             <div class="card-header">
               <h2 class="tier-name">{tier.name}</h2>
               <div class="price-container">
@@ -387,7 +189,7 @@ const faqs = [
             </ul>
             <a
               href={tier.ctaHref}
-              class:list={["btn", "btn-cta", { "btn-primary": tier.highlighted, "btn-secondary": !tier.highlighted }]}
+              class:list={["btn btn-cta", { "btn-primary": tier.highlighted, "btn-secondary": !tier.highlighted }]}
               data-cta-link
               data-base-href={tier.ctaHref}
             >
@@ -500,10 +302,10 @@ const faqs = [
         </div>
       </section>
 
-      <section class="faq">
+      <section class="pricing-faq">
         <h2>Frequently asked questions</h2>
         <div class="faq-grid">
-          {faqs.map((faq) => (
+          {pricingFaqs.map((faq) => (
             <div class="faq-item">
               <h3>{faq.question}</h3>
               <p>{faq.answer}</p>
@@ -512,7 +314,7 @@ const faqs = [
         </div>
       </section>
 
-      <section class="cta-section">
+      <section class="pricing-cta">
         <h2>Ready to supercharge your Claude Code workflow?</h2>
         <p>Join thousands of developers using Skillsmith to discover and manage skills.</p>
         <div class="cta-buttons">
@@ -522,62 +324,12 @@ const faqs = [
       </section>
     </main>
 
-    <footer class="footer">
-      <div class="footer-content">
-        <div class="footer-brand">
-          <a href="/" class="logo">
-            <!-- Neural S Icon -->
-            <svg width="32" height="32" viewBox="0 0 64 64" class="logo-icon-svg">
-              <rect width="64" height="64" fill="transparent" rx="8"/>
-              <g transform="translate(32, 32)">
-                <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
-                      stroke="currentColor" stroke-width="1.5" stroke-opacity="0.3" fill="none"/>
-                <circle cx="10" cy="-18" r="5" fill="#E07A5F"/>
-                <circle cx="-10" cy="-4" r="5" fill="#E07A5F"/>
-                <circle cx="10" cy="8" r="5" fill="#E07A5F"/>
-                <circle cx="-10" cy="20" r="5" fill="#E07A5F"/>
-              </g>
-            </svg>
-            <span class="logo-text">Skillsmith</span>
-          </a>
-          <p>Skill discovery and management for Claude Code.</p>
-        </div>
-        <div class="footer-links">
-          <div class="footer-column">
-            <h4>Product</h4>
-            <a href="/docs">Features</a>
-            <a href="/pricing">Pricing</a>
-            <a href="/changelog">Changelog</a>
-          </div>
-          <div class="footer-column">
-            <h4>Resources</h4>
-            <a href="/docs">Documentation</a>
-            <a href="/blog">Blog</a>
-            <a href="/support">Support</a>
-          </div>
-          <div class="footer-column">
-            <h4>Company</h4>
-            <a href="/about">About</a>
-            <a href="/contact">Contact</a>
-          </div>
-          <div class="footer-column">
-            <h4>Legal</h4>
-            <a href="/privacy">Privacy</a>
-            <a href="/terms">Terms</a>
-            <a href="/license">License</a>
-          </div>
-        </div>
-      </div>
-      <div class="footer-bottom">
-        <p>&copy; 2026 Smith Horn Group Ltd. All rights reserved.</p>
-        <p class="license-note">Licensed under <a href="https://www.elastic.co/licensing/elastic-license">Elastic License 2.0</a></p>
-      </div>
-    </footer>
+    <Footer />
   </body>
 </html>
 
 <style>
-  /* Reset and base styles */
+  /* Base reset and body - required inline for dark mode */
   *,
   *::before,
   *::after {
@@ -591,78 +343,7 @@ const faqs = [
     scroll-behavior: smooth;
   }
 
-  body {
-    font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    line-height: 1.6;
-    color: #FAFAFA;
-    background: #0D0D0F;
-  }
-
-  /* Header */
-  .header {
-    position: sticky;
-    top: 0;
-    background: rgba(13, 13, 15, 0.95);
-    backdrop-filter: blur(8px);
-    border-bottom: 1px solid #1f1f23;
-    z-index: 100;
-  }
-
-  .nav {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 1rem 2rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 2rem;
-  }
-
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    text-decoration: none;
-    font-weight: 700;
-    font-size: 1.25rem;
-    color: #FAFAFA;
-  }
-
-  .logo-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 2rem;
-    height: 2rem;
-    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
-    color: white;
-    border-radius: 0.5rem;
-    font-weight: 700;
-  }
-
-  .nav-links {
-    display: flex;
-    gap: 2rem;
-  }
-
-  .nav-links a {
-    text-decoration: none;
-    color: #9ca3af;
-    font-weight: 500;
-    transition: color 0.2s;
-  }
-
-  .nav-links a:hover,
-  .nav-links a.active {
-    color: #E07A5F;
-  }
-
-  .nav-actions {
-    display: flex;
-    gap: 0.75rem;
-  }
-
-  /* Buttons */
+  /* Button base styles (minimal, rest in pricing.css) */
   .btn {
     display: inline-flex;
     align-items: center;
@@ -688,9 +369,9 @@ const faqs = [
   }
 
   .btn-secondary {
-    background: #1a1a1f;
+    background: #18181b;
     color: #FAFAFA;
-    border: 1px solid #2a2a2f;
+    border: 1px solid #27272a;
   }
 
   .btn-secondary:hover {
@@ -705,495 +386,12 @@ const faqs = [
 
   .btn-ghost:hover {
     color: #E07A5F;
-    background: #1a1a1f;
+    background: #18181b;
   }
 
   .btn-large {
     padding: 0.875rem 2rem;
     font-size: 1rem;
-  }
-
-  .btn-cta {
-    width: 100%;
-    margin-top: auto;
-  }
-
-  /* Hero */
-  .hero {
-    text-align: center;
-    padding: 4rem 2rem;
-    max-width: 800px;
-    margin: 0 auto;
-  }
-
-  .hero h1 {
-    font-size: 3rem;
-    font-weight: 700;
-    line-height: 1.2;
-    margin-bottom: 1rem;
-    background: linear-gradient(135deg, #FAFAFA 0%, #E07A5F 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  .hero-subtitle {
-    font-size: 1.25rem;
-    color: #9ca3af;
-    max-width: 600px;
-    margin: 0 auto;
-  }
-
-  /* Billing Toggle */
-  .billing-toggle {
-    display: inline-flex;
-    gap: 0.25rem;
-    padding: 0.25rem;
-    background: #1a1a1f;
-    border-radius: 0.75rem;
-    margin-top: 1.5rem;
-  }
-
-  .toggle-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1.5rem;
-    font-size: 0.9375rem;
-    font-weight: 500;
-    background: transparent;
-    border: none;
-    border-radius: 0.5rem;
-    color: #9ca3af;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .toggle-btn:hover {
-    color: #FAFAFA;
-  }
-
-  .toggle-btn.active {
-    background: #2a2a2f;
-    color: #FAFAFA;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-  }
-
-  .savings-badge {
-    display: inline-block;
-    padding: 0.125rem 0.5rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    color: white;
-    border-radius: 1rem;
-  }
-
-  /* Pricing Grid */
-  .pricing-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1.5rem;
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 0 2rem 4rem;
-  }
-
-  .pricing-card {
-    display: flex;
-    flex-direction: column;
-    background: #121214;
-    border-radius: 1rem;
-    padding: 2rem;
-    border: 1px solid #2a2a2f;
-    position: relative;
-    transition: all 0.3s;
-  }
-
-  .pricing-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.3);
-  }
-
-  .pricing-card.highlighted {
-    border: 2px solid #E07A5F;
-    box-shadow: 0 8px 24px rgba(224, 122, 95, 0.15);
-  }
-
-  .badge {
-    position: absolute;
-    top: -0.75rem;
-    left: 50%;
-    transform: translateX(-50%);
-    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
-    color: white;
-    padding: 0.25rem 1rem;
-    border-radius: 1rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .card-header {
-    margin-bottom: 1.5rem;
-  }
-
-  .tier-name {
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin-bottom: 0.75rem;
-  }
-
-  .price-container {
-    display: flex;
-    align-items: baseline;
-    gap: 0.25rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .price {
-    font-size: 2.5rem;
-    font-weight: 700;
-    color: #FAFAFA;
-  }
-
-  .period {
-    color: #9ca3af;
-    font-size: 0.9375rem;
-  }
-
-  .tier-description {
-    color: #9ca3af;
-    font-size: 0.875rem;
-    line-height: 1.5;
-  }
-
-  .api-calls {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    background: #1a1a1f;
-    border-radius: 0.5rem;
-    margin-bottom: 1.5rem;
-    font-weight: 500;
-    font-size: 0.875rem;
-  }
-
-  .icon {
-    width: 1rem;
-    height: 1rem;
-    color: #E07A5F;
-  }
-
-  .features-list {
-    list-style: none;
-    flex-grow: 1;
-    margin-bottom: 1.5rem;
-  }
-
-  .features-list li {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 0.5rem 0;
-    font-size: 0.875rem;
-    color: #9ca3af;
-  }
-
-  .check-icon {
-    width: 1.25rem;
-    height: 1.25rem;
-    color: #10b981;
-    flex-shrink: 0;
-    margin-top: 0.125rem;
-  }
-
-  /* Features Comparison */
-  .features-comparison {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 4rem 2rem;
-  }
-
-  .features-comparison h2 {
-    text-align: center;
-    font-size: 2rem;
-    font-weight: 700;
-    margin-bottom: 2rem;
-  }
-
-  .comparison-table-wrapper {
-    overflow-x: auto;
-    border-radius: 1rem;
-    border: 1px solid #2a2a2f;
-    background: #121214;
-  }
-
-  .comparison-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.875rem;
-  }
-
-  .comparison-table th,
-  .comparison-table td {
-    padding: 1rem 1.5rem;
-    text-align: center;
-    border-bottom: 1px solid #2a2a2f;
-  }
-
-  .comparison-table th:first-child,
-  .comparison-table td:first-child {
-    text-align: left;
-    font-weight: 500;
-  }
-
-  .comparison-table thead th {
-    background: #1a1a1f;
-    font-weight: 600;
-    color: #FAFAFA;
-  }
-
-  .comparison-table th.highlighted,
-  .comparison-table td.highlighted {
-    background: rgba(224, 122, 95, 0.05);
-  }
-
-  .comparison-table thead th.highlighted {
-    background: rgba(224, 122, 95, 0.1);
-    color: #E07A5F;
-  }
-
-  .comparison-table tbody tr:last-child td {
-    border-bottom: none;
-  }
-
-  .comparison-table .check {
-    color: #10b981;
-    font-weight: 700;
-  }
-
-  .comparison-table .dash {
-    color: #4a4a4f;
-  }
-
-  /* FAQ */
-  .faq {
-    max-width: 1000px;
-    margin: 0 auto;
-    padding: 4rem 2rem;
-  }
-
-  .faq h2 {
-    text-align: center;
-    font-size: 2rem;
-    font-weight: 700;
-    margin-bottom: 2.5rem;
-  }
-
-  .faq-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 2rem;
-  }
-
-  .faq-item {
-    background: #121214;
-    padding: 1.5rem;
-    border-radius: 0.75rem;
-    border: 1px solid #2a2a2f;
-  }
-
-  .faq-item h3 {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 0.75rem;
-    color: #FAFAFA;
-  }
-
-  .faq-item p {
-    color: #9ca3af;
-    font-size: 0.875rem;
-    line-height: 1.6;
-  }
-
-  /* CTA Section */
-  .cta-section {
-    text-align: center;
-    padding: 5rem 2rem;
-    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
-    color: white;
-  }
-
-  .cta-section h2 {
-    font-size: 2rem;
-    font-weight: 700;
-    margin-bottom: 0.75rem;
-  }
-
-  .cta-section p {
-    font-size: 1.125rem;
-    opacity: 0.9;
-    margin-bottom: 2rem;
-  }
-
-  .cta-buttons {
-    display: flex;
-    gap: 1rem;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-
-  .cta-section .btn-primary {
-    background: white;
-    color: #D4694E;
-  }
-
-  .cta-section .btn-primary:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  }
-
-  .cta-section .btn-ghost {
-    color: white;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-  }
-
-  .cta-section .btn-ghost:hover {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  /* Footer */
-  .footer {
-    background: #1a1a2e;
-    color: white;
-    padding: 4rem 2rem 2rem;
-  }
-
-  .footer-content {
-    max-width: 1280px;
-    margin: 0 auto;
-    display: grid;
-    grid-template-columns: 2fr 3fr;
-    gap: 4rem;
-    margin-bottom: 3rem;
-  }
-
-  .footer-brand p {
-    color: #9ca3af;
-    margin-top: 1rem;
-    font-size: 0.875rem;
-  }
-
-  .footer-brand .logo {
-    color: white;
-  }
-
-  .footer-brand .logo-icon {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .footer-links {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 2rem;
-  }
-
-  .footer-column h4 {
-    font-size: 0.875rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-    color: white;
-  }
-
-  .footer-column a {
-    display: block;
-    color: #9ca3af;
-    text-decoration: none;
-    font-size: 0.875rem;
-    padding: 0.25rem 0;
-    transition: color 0.2s;
-  }
-
-  .footer-column a:hover {
-    color: white;
-  }
-
-  .footer-bottom {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding-top: 2rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.875rem;
-    color: #9ca3af;
-  }
-
-  .license-note a {
-    color: #9ca3af;
-    text-decoration: underline;
-  }
-
-  .license-note a:hover {
-    color: white;
-  }
-
-  /* Responsive */
-  @media (max-width: 1024px) {
-    .pricing-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
-
-    .footer-content {
-      grid-template-columns: 1fr;
-      gap: 2rem;
-    }
-
-    .footer-links {
-      grid-template-columns: repeat(2, 1fr);
-    }
-  }
-
-  @media (max-width: 768px) {
-    .nav-links {
-      display: none;
-    }
-
-    .hero h1 {
-      font-size: 2rem;
-    }
-
-    .pricing-grid {
-      grid-template-columns: 1fr;
-      max-width: 400px;
-    }
-
-    .faq-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .footer-bottom {
-      flex-direction: column;
-      gap: 0.5rem;
-      text-align: center;
-    }
-  }
-
-  @media (max-width: 480px) {
-    .nav {
-      padding: 1rem;
-    }
-
-    .hero {
-      padding: 2rem 1rem;
-    }
-
-    .pricing-grid {
-      padding: 0 1rem 2rem;
-    }
   }
 </style>
 
@@ -1204,7 +402,6 @@ const faqs = [
     const pricingCards = document.querySelectorAll('.pricing-card');
 
     function updatePrices(period: string) {
-
       // Update toggle button states
       toggleBtns.forEach(btn => {
         btn.classList.toggle('active', btn.getAttribute('data-period') === period);

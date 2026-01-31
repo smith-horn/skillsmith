@@ -3,10 +3,16 @@
  * @module lib/github-releases
  *
  * SMI-2071: Fetch changelog from GitHub Releases at build time
+ * SMI-2073: Parse CHANGELOG.md for structured changelog entries
  *
  * Fetches public releases from GitHub API (no auth required for public repos).
  * Parses release body markdown into structured changelog format.
+ * Also parses local CHANGELOG.md file for complete history.
  */
+
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 
 const GITHUB_REPO = 'smith-horn/skillsmith'
 const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases`
@@ -30,6 +36,199 @@ interface GitHubRelease {
   body: string | null
   draft: boolean
   prerelease: boolean
+}
+
+/**
+ * Parse CHANGELOG.md content into structured ChangelogEntry objects
+ *
+ * Handles Keep a Changelog format:
+ * - Version headers: ## [0.3.6] - 2026-01-18
+ * - Optional title: ### CLI Hotfix Release (SMI-1575)
+ * - Sections: ### Added, ### Changed, ### Fixed, #### Bug Fixes, etc.
+ * - Nested bullets with bold text: - **Feature** (SMI-XXX)
+ */
+export function parseChangelogFile(content: string): ChangelogEntry[] {
+  const entries: ChangelogEntry[] = []
+
+  // Match version headers: ## [0.3.6] - 2026-01-18
+  const versionRegex = /^## \[(\d+\.\d+\.\d+)\] - (\d{4}-\d{2}-\d{2})/gm
+  const matches = [...content.matchAll(versionRegex)]
+
+  for (let i = 0; i < matches.length; i++) {
+    const match = matches[i]
+    const version = match[1]
+    const dateStr = match[2]
+    const startIndex = match.index!
+    const endIndex = i < matches.length - 1 ? matches[i + 1].index! : content.length
+
+    // Extract content for this version
+    const versionContent = content.slice(startIndex, endIndex)
+
+    // Parse date
+    const date = formatDate(new Date(dateStr).toISOString())
+
+    // Extract optional title (first ### heading after version)
+    let title: string | undefined
+    const titleMatch = versionContent.match(/^###\s+(.+?)(?:\s+\(SMI-\d+\))?$/m)
+    if (
+      titleMatch &&
+      !titleMatch[1]
+        .toLowerCase()
+        .match(
+          /^(added|changed|fixed|deprecated|removed|security|bug fixes?|documentation|infrastructure|performance|testing)/
+        )
+    ) {
+      title = titleMatch[1].trim()
+    }
+
+    // Parse sections
+    const entry: ChangelogEntry = {
+      version,
+      date,
+    }
+
+    if (title) {
+      entry.title = title
+    }
+
+    // Map section headers to entry fields
+    const sectionMappings: Record<
+      string,
+      keyof Omit<ChangelogEntry, 'version' | 'date' | 'title'>
+    > = {
+      added: 'added',
+      changed: 'changed',
+      fixed: 'fixed',
+      'bug fixes': 'fixed',
+      deprecated: 'deprecated',
+      removed: 'removed',
+      security: 'security',
+    }
+
+    // Parse each section type
+    for (const [pattern, field] of Object.entries(sectionMappings)) {
+      const items = extractSectionItems(versionContent, pattern)
+      if (items.length > 0) {
+        entry[field] = items
+      }
+    }
+
+    entries.push(entry)
+  }
+
+  return entries
+}
+
+/**
+ * Extract bullet items from a section in CHANGELOG.md
+ * Handles both ### and #### headers
+ */
+function extractSectionItems(content: string, sectionName: string): string[] {
+  const items: string[] = []
+
+  // Match ### or #### section headers (case-insensitive)
+  const headerRegex = new RegExp(`^#{3,4}\\s+${sectionName}\\s*$`, 'im')
+  const headerMatch = content.match(headerRegex)
+
+  if (!headerMatch) return items
+
+  const headerIndex = content.indexOf(headerMatch[0])
+  const afterHeader = content.slice(headerIndex + headerMatch[0].length)
+
+  // Find the end of this section (next header or end)
+  const nextHeaderMatch = afterHeader.match(/^#{2,4}\s+/m)
+  const sectionEnd = nextHeaderMatch ? afterHeader.indexOf(nextHeaderMatch[0]) : afterHeader.length
+  const sectionContent = afterHeader.slice(0, sectionEnd)
+
+  // Extract bullet points
+  const lines = sectionContent.split('\n')
+  let currentItem = ''
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+
+    // Top-level bullet (starts with -)
+    if (trimmed.startsWith('- ')) {
+      // Save previous item if exists
+      if (currentItem) {
+        items.push(cleanItem(currentItem))
+      }
+      currentItem = trimmed.slice(2).trim()
+    }
+    // Nested bullet (indented)
+    else if (trimmed.startsWith('-') && currentItem) {
+      // Append nested content to current item
+      const nestedText = trimmed.slice(1).trim()
+      currentItem += ' ' + nestedText
+    }
+    // Continuation line (not a bullet)
+    else if (trimmed && currentItem && !trimmed.startsWith('#')) {
+      currentItem += ' ' + trimmed
+    }
+  }
+
+  // Add last item
+  if (currentItem) {
+    items.push(cleanItem(currentItem))
+  }
+
+  return items
+}
+
+/**
+ * Clean and normalize changelog item text
+ * - Remove excessive whitespace
+ * - Remove markdown bold/italic markers
+ * - Preserve issue references like (SMI-XXX)
+ */
+function cleanItem(item: string): string {
+  return item
+    .replace(/\*\*([^*]+)\*\*/g, '$1') // Remove bold markers
+    .replace(/\s+/g, ' ') // Normalize whitespace
+    .trim()
+}
+
+/**
+ * Parse local CHANGELOG.md file
+ */
+export async function parseChangelogFromFile(): Promise<ChangelogEntry[]> {
+  try {
+    // Get path to CHANGELOG.md from project root
+    // From packages/website/src/lib/ or dist location, traverse up to find root
+    const __filename = fileURLToPath(import.meta.url)
+    const __dirname = dirname(__filename)
+
+    // Try multiple possible paths (handles both src and dist locations)
+    const possiblePaths = [
+      join(__dirname, '../../../..', 'CHANGELOG.md'), // From src/lib
+      join(__dirname, '../../../../..', 'CHANGELOG.md'), // From dist location
+      join(__dirname, '../../../../../..', 'CHANGELOG.md'), // Deep dist nesting
+    ]
+
+    let content: string | null = null
+    let changelogPath = ''
+
+    for (const path of possiblePaths) {
+      try {
+        content = await readFile(path, 'utf-8')
+        changelogPath = path
+        break
+      } catch {
+        // Try next path
+      }
+    }
+
+    if (!content) {
+      console.error('CHANGELOG.md not found in any expected location')
+      return []
+    }
+
+    console.log(`Loaded CHANGELOG.md from: ${changelogPath}`)
+    return parseChangelogFile(content)
+  } catch (error) {
+    console.error('Failed to parse CHANGELOG.md:', error)
+    return []
+  }
 }
 
 /**
@@ -176,8 +375,9 @@ export async function fetchGitHubReleases(limit = 20): Promise<ChangelogEntry[]>
 
 /**
  * Hardcoded fallback entries for pre-release history
- * These are kept for historical context when there were no GitHub releases
+ * These fictional entries are commented out and replaced by CHANGELOG.md parsing (SMI-2073)
  */
+/*
 export const fallbackEntries: ChangelogEntry[] = [
   {
     version: '1.0.0',
@@ -230,41 +430,32 @@ export const fallbackEntries: ChangelogEntry[] = [
     ],
   },
 ]
+*/
 
 /**
- * Get changelog entries, fetching from GitHub with fallback to hardcoded entries
+ * Get changelog entries from CHANGELOG.md with GitHub releases as supplementary
  *
- * @returns Array of ChangelogEntry objects (GitHub releases + historical fallback)
+ * @returns Array of ChangelogEntry objects (CHANGELOG.md + GitHub releases)
  */
 export async function getChangelogEntries(): Promise<ChangelogEntry[]> {
+  // Primary source: CHANGELOG.md
+  const changelogEntries = await parseChangelogFromFile()
+
+  // Secondary source: GitHub releases
   const githubReleases = await fetchGitHubReleases()
 
-  if (githubReleases.length === 0) {
-    console.warn('No GitHub releases found, using fallback entries')
-    return fallbackEntries
+  if (changelogEntries.length === 0 && githubReleases.length === 0) {
+    console.warn('No changelog sources found')
+    return []
   }
 
-  // Get versions from GitHub releases
-  const githubVersions = new Set(githubReleases.map((r) => r.version))
+  // Use CHANGELOG.md as primary source
+  if (changelogEntries.length > 0) {
+    console.log(`Loaded ${changelogEntries.length} entries from CHANGELOG.md`)
+    return changelogEntries
+  }
 
-  // Add historical entries that aren't in GitHub releases
-  const historicalEntries = fallbackEntries.filter((entry) => !githubVersions.has(entry.version))
-
-  // Combine and sort by version (newest first)
-  const allEntries = [...githubReleases, ...historicalEntries]
-
-  // Sort by semver (simple string comparison works for x.y.z format)
-  allEntries.sort((a, b) => {
-    const aParts = a.version.split('.').map(Number)
-    const bParts = b.version.split('.').map(Number)
-
-    for (let i = 0; i < 3; i++) {
-      if ((bParts[i] || 0) !== (aParts[i] || 0)) {
-        return (bParts[i] || 0) - (aParts[i] || 0)
-      }
-    }
-    return 0
-  })
-
-  return allEntries
+  // Fallback to GitHub releases if CHANGELOG.md parsing failed
+  console.warn('CHANGELOG.md parsing failed, using GitHub releases')
+  return githubReleases
 }
