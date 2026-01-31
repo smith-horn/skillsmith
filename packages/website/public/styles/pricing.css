@@ -18,7 +18,7 @@
   font-weight: 700;
   line-height: 1.2;
   margin-bottom: 1rem;
-  background: linear-gradient(135deg, #FAFAFA 0%, var(--color-coral, #E07A5F) 100%);
+  background: linear-gradient(135deg, #fafafa 0%, var(--color-coral, #e07a5f) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -57,12 +57,12 @@
 }
 
 .toggle-btn:hover {
-  color: #FAFAFA;
+  color: #fafafa;
 }
 
 .toggle-btn.active {
   background: #27272a;
-  color: #FAFAFA;
+  color: #fafafa;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
@@ -103,7 +103,7 @@
 }
 
 .pricing-card.highlighted {
-  border: 2px solid var(--color-coral, #E07A5F);
+  border: 2px solid var(--color-coral, #e07a5f);
   box-shadow: 0 8px 24px rgba(224, 122, 95, 0.15);
 }
 
@@ -112,7 +112,11 @@
   top: -0.75rem;
   left: 50%;
   transform: translateX(-50%);
-  background: linear-gradient(135deg, var(--color-coral, #E07A5F) 0%, var(--color-coral-dark, #D4694E) 100%);
+  background: linear-gradient(
+    135deg,
+    var(--color-coral, #e07a5f) 0%,
+    var(--color-coral-dark, #d4694e) 100%
+  );
   color: white;
   padding: 0.25rem 1rem;
   border-radius: 1rem;
@@ -142,7 +146,7 @@
 .price {
   font-size: 2.5rem;
   font-weight: 700;
-  color: #FAFAFA;
+  color: #fafafa;
 }
 
 .period {
@@ -171,7 +175,7 @@
 .api-calls .icon {
   width: 1rem;
   height: 1rem;
-  color: var(--color-coral, #E07A5F);
+  color: var(--color-coral, #e07a5f);
 }
 
 .features-list {
@@ -247,7 +251,7 @@
 .comparison-table thead th {
   background: #18181b;
   font-weight: 600;
-  color: #FAFAFA;
+  color: #fafafa;
 }
 
 .comparison-table th.highlighted,
@@ -257,7 +261,7 @@
 
 .comparison-table thead th.highlighted {
   background: rgba(224, 122, 95, 0.1);
-  color: var(--color-coral, #E07A5F);
+  color: var(--color-coral, #e07a5f);
 }
 
 .comparison-table tbody tr:last-child td {
@@ -304,7 +308,7 @@
   font-size: 1rem;
   font-weight: 600;
   margin-bottom: 0.75rem;
-  color: #FAFAFA;
+  color: #fafafa;
 }
 
 .faq-item p {
@@ -317,7 +321,11 @@
 .pricing-cta {
   text-align: center;
   padding: 5rem 2rem;
-  background: linear-gradient(135deg, var(--color-coral, #E07A5F) 0%, var(--color-coral-dark, #D4694E) 100%);
+  background: linear-gradient(
+    135deg,
+    var(--color-coral, #e07a5f) 0%,
+    var(--color-coral-dark, #d4694e) 100%
+  );
   color: white;
 }
 
@@ -342,7 +350,7 @@
 
 .pricing-cta .btn-primary {
   background: white;
-  color: var(--color-coral-dark, #D4694E);
+  color: var(--color-coral-dark, #d4694e);
 }
 
 .pricing-cta .btn-primary:hover {

@@ -17,15 +17,29 @@ import { dirname, join } from 'node:path'
 const GITHUB_REPO = 'smith-horn/skillsmith'
 const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases`
 
+/**
+ * Changelog entry structure following Keep a Changelog format
+ *
+ * @see https://keepachangelog.com/
+ */
 export interface ChangelogEntry {
+  /** Semantic version string (e.g., "1.0.0") */
   version: string
+  /** Human-readable date (e.g., "January 17, 2026") */
   date: string
+  /** Optional release title */
   title?: string
+  /** New features added in this version */
   added?: string[]
+  /** Changes to existing functionality */
   changed?: string[]
+  /** Bug fixes */
   fixed?: string[]
+  /** Features marked for removal in future versions */
   deprecated?: string[]
+  /** Features removed in this version */
   removed?: string[]
+  /** Security vulnerability fixes */
   security?: string[]
 }
 
