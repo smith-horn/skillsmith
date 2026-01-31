@@ -6,6 +6,11 @@ on:
     paths:
       - 'packages/website/**'
   workflow_dispatch:
+    inputs:
+      smoke_test_timeout:
+        description: 'Page load timeout in seconds'
+        default: '3'
+        type: string
 
 concurrency:
   group: website-staging-${{ github.ref }}
@@ -318,6 +323,9 @@ jobs:
       - name: Test critical pages
         id: smoke
         run: |
+          # Record test start time (SMI-2142)
+          START_TIME=$(date +%s.%N)
+
           # Define critical pages to test
           PAGES=(
             "https://www.skillsmith.app"
@@ -326,12 +334,18 @@ jobs:
             "https://www.skillsmith.app/skills"
           )
 
-          # Threshold in seconds
-          THRESHOLD=3
+          # Threshold in seconds (SMI-2143: configurable via workflow_dispatch)
+          THRESHOLD=${{ inputs.smoke_test_timeout || '3' }}
 
           # Track results
           FAILED=0
           RESULTS=""
+
+          # Track response times for metrics (SMI-2142)
+          declare -a RESPONSE_TIMES
+          MIN_TIME=""
+          MAX_TIME=""
+          TOTAL_TIME=0
 
           for PAGE in "${PAGES[@]}"; do
             echo "Testing: $PAGE"
@@ -343,6 +357,16 @@ jobs:
 
             # Round time to 2 decimal places
             TIME_ROUNDED=$(printf "%.2f" "$TIME")
+
+            # Track response times for metrics (SMI-2142)
+            RESPONSE_TIMES+=("$TIME")
+            TOTAL_TIME=$(echo "$TOTAL_TIME + $TIME" | bc)
+            if [ -z "$MIN_TIME" ] || [ "$(echo "$TIME < $MIN_TIME" | bc)" -eq 1 ]; then
+              MIN_TIME=$TIME
+            fi
+            if [ -z "$MAX_TIME" ] || [ "$(echo "$TIME > $MAX_TIME" | bc)" -eq 1 ]; then
+              MAX_TIME=$TIME
+            fi
 
             # Check status code
             if [ "$STATUS" != "200" ]; then
@@ -365,16 +389,35 @@ jobs:
               TIME_RESULT="${TIME_ROUNDED}s"
             fi
 
-            # Build results table row
+            # Build results table row (SMI-2141: use printf instead of echo -e)
             RESULTS="${RESULTS}| ${PAGE} | ${STATUS_RESULT} | ${TIME_RESULT} |\n"
 
             echo "  Status: $STATUS, Time: ${TIME_ROUNDED}s"
           done
 
-          # Output results for summary
+          # Record test end time and calculate duration (SMI-2142)
+          END_TIME=$(date +%s.%N)
+          TOTAL_DURATION=$(echo "$END_TIME - $START_TIME" | bc)
+          TOTAL_DURATION_ROUNDED=$(printf "%.2f" "$TOTAL_DURATION")
+
+          # Calculate average response time (SMI-2142)
+          PAGE_COUNT=${#PAGES[@]}
+          AVG_TIME=$(echo "scale=3; $TOTAL_TIME / $PAGE_COUNT" | bc)
+          AVG_TIME_ROUNDED=$(printf "%.2f" "$AVG_TIME")
+          MIN_TIME_ROUNDED=$(printf "%.2f" "$MIN_TIME")
+          MAX_TIME_ROUNDED=$(printf "%.2f" "$MAX_TIME")
+
+          # Output results for summary (SMI-2141: use printf instead of echo -e)
           echo "results<<EOF" >> $GITHUB_OUTPUT
-          echo -e "$RESULTS" >> $GITHUB_OUTPUT
+          printf "%s" "$RESULTS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+
+          # Output runtime metrics (SMI-2142)
+          echo "total-duration=${TOTAL_DURATION_ROUNDED}" >> $GITHUB_OUTPUT
+          echo "avg-response-time=${AVG_TIME_ROUNDED}" >> $GITHUB_OUTPUT
+          echo "min-response-time=${MIN_TIME_ROUNDED}" >> $GITHUB_OUTPUT
+          echo "max-response-time=${MAX_TIME_ROUNDED}" >> $GITHUB_OUTPUT
+          echo "threshold=${THRESHOLD}" >> $GITHUB_OUTPUT
 
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
 
@@ -411,11 +454,22 @@ jobs:
           echo "## Smoke Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Target:** https://www.skillsmith.app" >> $GITHUB_STEP_SUMMARY
-          echo "**Threshold:** < 3 seconds" >> $GITHUB_STEP_SUMMARY
+          echo "**Threshold:** < ${{ steps.smoke.outputs.threshold }} seconds" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Page | Status | Response Time |" >> $GITHUB_STEP_SUMMARY
           echo "|------|--------|---------------|" >> $GITHUB_STEP_SUMMARY
-          echo -e "${{ steps.smoke.outputs.results }}" >> $GITHUB_STEP_SUMMARY
+          printf "%s\n" "${{ steps.smoke.outputs.results }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Runtime metrics (SMI-2142)
+          echo "### Runtime Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Test Duration | ${{ steps.smoke.outputs.total-duration }}s |" >> $GITHUB_STEP_SUMMARY
+          echo "| Average Response Time | ${{ steps.smoke.outputs.avg-response-time }}s |" >> $GITHUB_STEP_SUMMARY
+          echo "| Min Response Time | ${{ steps.smoke.outputs.min-response-time }}s |" >> $GITHUB_STEP_SUMMARY
+          echo "| Max Response Time | ${{ steps.smoke.outputs.max-response-time }}s |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ "${{ steps.smoke.outcome }}" == "success" ]; then
