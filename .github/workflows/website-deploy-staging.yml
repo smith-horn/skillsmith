@@ -19,6 +19,12 @@ concurrency:
 env:
   NODE_VERSION: '22'
 
+# Explicit permissions for security (CodeQL alert #41)
+permissions:
+  contents: read
+  deployments: write
+  statuses: write
+
 jobs:
   # Wait for CI to pass before deploying
   wait-for-ci:
