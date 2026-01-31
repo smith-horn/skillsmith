@@ -305,3 +305,230 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- Lighthouse CI: Passed" >> $GITHUB_STEP_SUMMARY
           echo "- Link Check: Passed" >> $GITHUB_STEP_SUMMARY
+
+  # Post-deployment smoke tests (SMI-2122)
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [deploy-production]
+    if: ${{ needs.deploy-production.result == 'success' }}
+
+    steps:
+      - name: Test critical pages
+        id: smoke
+        run: |
+          # Define critical pages to test
+          PAGES=(
+            "https://www.skillsmith.app"
+            "https://www.skillsmith.app/pricing"
+            "https://www.skillsmith.app/docs"
+            "https://www.skillsmith.app/skills"
+          )
+
+          # Threshold in seconds
+          THRESHOLD=3
+
+          # Track results
+          FAILED=0
+          RESULTS=""
+
+          for PAGE in "${PAGES[@]}"; do
+            echo "Testing: $PAGE"
+
+            # Make request and capture status code and time
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code},%{time_total}" --max-time 10 "$PAGE" 2>/dev/null || echo "000,0")
+            STATUS=$(echo "$RESPONSE" | cut -d',' -f1)
+            TIME=$(echo "$RESPONSE" | cut -d',' -f2)
+
+            # Round time to 2 decimal places
+            TIME_ROUNDED=$(printf "%.2f" "$TIME")
+
+            # Check status code
+            if [ "$STATUS" != "200" ]; then
+              echo "::error::$PAGE returned status $STATUS (expected 200)"
+              STATUS_RESULT="FAIL ($STATUS)"
+              FAILED=1
+            else
+              STATUS_RESULT="OK (200)"
+            fi
+
+            # Check response time (compare as integers to avoid float issues)
+            TIME_MS=$(echo "$TIME * 1000" | bc | cut -d'.' -f1)
+            THRESHOLD_MS=$((THRESHOLD * 1000))
+
+            if [ "$TIME_MS" -gt "$THRESHOLD_MS" ]; then
+              echo "::error::$PAGE took ${TIME_ROUNDED}s (threshold: ${THRESHOLD}s)"
+              TIME_RESULT="SLOW (${TIME_ROUNDED}s)"
+              FAILED=1
+            else
+              TIME_RESULT="${TIME_ROUNDED}s"
+            fi
+
+            # Build results table row
+            RESULTS="${RESULTS}| ${PAGE} | ${STATUS_RESULT} | ${TIME_RESULT} |\n"
+
+            echo "  Status: $STATUS, Time: ${TIME_ROUNDED}s"
+          done
+
+          # Output results for summary
+          echo "results<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$RESULTS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::Smoke tests failed"
+            exit 1
+          fi
+
+          echo "All smoke tests passed!"
+
+      - name: Update deployment status
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ steps.smoke.outcome }}' === 'success' ? 'success' : 'failure';
+            const description = status === 'success'
+              ? 'Smoke tests passed - all critical pages responding'
+              : 'Smoke tests failed - check workflow logs';
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: status,
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              description: description,
+              context: 'smoke-test/production'
+            });
+
+      - name: Generate smoke test summary
+        if: always()
+        run: |
+          echo "## Smoke Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Target:** https://www.skillsmith.app" >> $GITHUB_STEP_SUMMARY
+          echo "**Threshold:** < 3 seconds" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Page | Status | Response Time |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|---------------|" >> $GITHUB_STEP_SUMMARY
+          echo -e "${{ steps.smoke.outputs.results }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.smoke.outcome }}" == "success" ]; then
+            echo "**Result:** All critical pages are responding correctly." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Result:** One or more smoke tests failed. Check the workflow logs for details." >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Staging Deploy | Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Lighthouse CI | Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Link Check | Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Production Deploy | Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Smoke Tests | ${{ steps.smoke.outcome == 'success' && 'Passed' || 'Failed' }} |" >> $GITHUB_STEP_SUMMARY
+
+      # Optional Slack notification (uncomment and add SLACK_WEBHOOK_URL secret to enable)
+      # - name: Notify Slack on success
+      #   if: success()
+      #   env:
+      #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      #   run: |
+      #     curl -X POST -H 'Content-type: application/json' \
+      #       --data '{
+      #         "blocks": [
+      #           {
+      #             "type": "header",
+      #             "text": {
+      #               "type": "plain_text",
+      #               "text": "Production Deployment Successful",
+      #               "emoji": true
+      #             }
+      #           },
+      #           {
+      #             "type": "section",
+      #             "fields": [
+      #               {"type": "mrkdwn", "text": "*Environment:*\nProduction"},
+      #               {"type": "mrkdwn", "text": "*URL:*\nhttps://www.skillsmith.app"},
+      #               {"type": "mrkdwn", "text": "*Commit:*\n${{ github.sha }}"},
+      #               {"type": "mrkdwn", "text": "*Triggered by:*\n${{ github.actor }}"}
+      #             ]
+      #           },
+      #           {
+      #             "type": "section",
+      #             "text": {
+      #               "type": "mrkdwn",
+      #               "text": "All smoke tests passed. Critical pages are responding correctly."
+      #             }
+      #           },
+      #           {
+      #             "type": "actions",
+      #             "elements": [
+      #               {
+      #                 "type": "button",
+      #                 "text": {"type": "plain_text", "text": "View Workflow"},
+      #                 "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      #               },
+      #               {
+      #                 "type": "button",
+      #                 "text": {"type": "plain_text", "text": "View Site"},
+      #                 "url": "https://www.skillsmith.app"
+      #               }
+      #             ]
+      #           }
+      #         ]
+      #       }' \
+      #       "$SLACK_WEBHOOK_URL"
+
+      # - name: Notify Slack on failure
+      #   if: failure()
+      #   env:
+      #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      #   run: |
+      #     curl -X POST -H 'Content-type: application/json' \
+      #       --data '{
+      #         "blocks": [
+      #           {
+      #             "type": "header",
+      #             "text": {
+      #               "type": "plain_text",
+      #               "text": "Production Smoke Tests Failed",
+      #               "emoji": true
+      #             }
+      #           },
+      #           {
+      #             "type": "section",
+      #             "fields": [
+      #               {"type": "mrkdwn", "text": "*Environment:*\nProduction"},
+      #               {"type": "mrkdwn", "text": "*URL:*\nhttps://www.skillsmith.app"},
+      #               {"type": "mrkdwn", "text": "*Commit:*\n${{ github.sha }}"},
+      #               {"type": "mrkdwn", "text": "*Triggered by:*\n${{ github.actor }}"}
+      #             ]
+      #           },
+      #           {
+      #             "type": "section",
+      #             "text": {
+      #               "type": "mrkdwn",
+      #               "text": "One or more critical pages failed smoke tests. Please investigate immediately."
+      #             }
+      #           },
+      #           {
+      #             "type": "actions",
+      #             "elements": [
+      #               {
+      #                 "type": "button",
+      #                 "text": {"type": "plain_text", "text": "View Workflow"},
+      #                 "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+      #                 "style": "danger"
+      #               }
+      #             ]
+      #           }
+      #         ]
+      #       }' \
+      #       "$SLACK_WEBHOOK_URL"
