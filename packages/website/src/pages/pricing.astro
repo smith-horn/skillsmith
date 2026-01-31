@@ -328,16 +328,8 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
   </body>
 </html>
 
-<style>
-  /* Base reset and body - required inline for dark mode */
-  *,
-  *::before,
-  *::after {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-  }
-
+<style is:global>
+  /* Base styles - using is:global to avoid scoped attribute conflicts with pricing.css */
   html {
     font-size: 16px;
     scroll-behavior: smooth;
