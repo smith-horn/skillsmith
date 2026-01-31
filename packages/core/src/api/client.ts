@@ -230,7 +230,8 @@ export class SkillsmithApiClient {
   private async request<T>(
     endpoint: string,
     options: RequestInit = {},
-    schema?: z.ZodType<ApiResponse<T>>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    schema?: z.ZodType<ApiResponse<T>, z.ZodTypeDef, any>
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseUrl}${endpoint}`
     let lastError: Error | undefined

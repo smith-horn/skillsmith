@@ -31,7 +31,7 @@ export const ApiSearchResultSchema = z.object({
   author: z.string().nullable(),
   repo_url: z.string().nullable().optional(),
   quality_score: z.number().nullable(),
-  trust_tier: TrustTierSchema.default('unknown'),
+  trust_tier: TrustTierSchema.optional().default('unknown'),
   tags: z.array(z.string()).default([]),
   stars: z.number().nullable().optional(),
   installable: z.boolean().nullable().optional(),
