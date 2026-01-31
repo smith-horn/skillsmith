@@ -172,6 +172,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # SMI-2159: Decrypt git-crypt encrypted files before Docker build
+      # Required for supabase/**, docs/**, .claude/** (encrypted for IP protection)
+      - name: Unlock git-crypt
+        if: ${{ secrets.GIT_CRYPT_KEY != '' }}
+        run: |
+          # Install git-crypt
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          # Decode and write key file
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          # Unlock repository
+          git-crypt unlock /tmp/git-crypt-key
+          # Clean up key file
+          rm -f /tmp/git-crypt-key
+          echo "✓ git-crypt unlocked successfully"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -235,6 +250,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ secrets.GIT_CRYPT_KEY != '' }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -279,6 +303,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ secrets.GIT_CRYPT_KEY != '' }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -314,6 +347,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ secrets.GIT_CRYPT_KEY != '' }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
 
       - name: Download Docker image
         uses: actions/download-artifact@v4
@@ -362,6 +404,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ secrets.GIT_CRYPT_KEY != '' }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
 
       - name: Download Docker image
         uses: actions/download-artifact@v4
@@ -438,6 +489,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ secrets.GIT_CRYPT_KEY != '' }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -509,6 +569,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ secrets.GIT_CRYPT_KEY != '' }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -557,6 +626,15 @@ jobs:
       - name: Checkout
         if: steps.changes.outputs.website == 'true'
         uses: actions/checkout@v4
+
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: steps.changes.outputs.website == 'true' && secrets.GIT_CRYPT_KEY != ''
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
 
       - name: Download Docker image
         if: steps.changes.outputs.website == 'true'
