@@ -175,7 +175,9 @@ jobs:
       # SMI-2159: Decrypt git-crypt encrypted files before Docker build
       # Required for supabase/**, docs/**, .claude/** (encrypted for IP protection)
       - name: Unlock git-crypt
-        if: ${{ secrets.GIT_CRYPT_KEY != '' }}
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
           # Install git-crypt
           sudo apt-get update && sudo apt-get install -y git-crypt
@@ -252,7 +254,9 @@ jobs:
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
-        if: ${{ secrets.GIT_CRYPT_KEY != '' }}
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
           sudo apt-get update && sudo apt-get install -y git-crypt
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
@@ -305,7 +309,9 @@ jobs:
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
-        if: ${{ secrets.GIT_CRYPT_KEY != '' }}
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
           sudo apt-get update && sudo apt-get install -y git-crypt
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
@@ -350,7 +356,9 @@ jobs:
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
-        if: ${{ secrets.GIT_CRYPT_KEY != '' }}
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
           sudo apt-get update && sudo apt-get install -y git-crypt
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
@@ -407,7 +415,9 @@ jobs:
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
-        if: ${{ secrets.GIT_CRYPT_KEY != '' }}
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
           sudo apt-get update && sudo apt-get install -y git-crypt
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
@@ -491,7 +501,9 @@ jobs:
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
-        if: ${{ secrets.GIT_CRYPT_KEY != '' }}
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
           sudo apt-get update && sudo apt-get install -y git-crypt
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
@@ -571,7 +583,9 @@ jobs:
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
-        if: ${{ secrets.GIT_CRYPT_KEY != '' }}
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
           sudo apt-get update && sudo apt-get install -y git-crypt
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
@@ -629,7 +643,9 @@ jobs:
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
-        if: steps.changes.outputs.website == 'true' && secrets.GIT_CRYPT_KEY != ''
+        if: steps.changes.outputs.website == 'true' && env.GIT_CRYPT_KEY != ''
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
           sudo apt-get update && sudo apt-get install -y git-crypt
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
