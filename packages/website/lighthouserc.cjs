@@ -7,10 +7,10 @@ module.exports = {
     collect: {
       // Number of runs per URL for stability (median is used)
       numberOfRuns: 3,
-      // Use temporary directory for output
+      // Settings for Chrome/Lighthouse
       settings: {
-        output: 'html',
-        outputPath: './lighthouse-results',
+        // Use mobile preset for realistic performance testing
+        preset: 'desktop',
       },
     },
     assert: {

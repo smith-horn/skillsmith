@@ -55,6 +55,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
+
       - name: Install dependencies
         run: npm ci
 
@@ -74,10 +82,11 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
           # Deploy to staging (no --prod flag)
-          DEPLOYMENT_URL=$(vercel deploy --yes --token=$VERCEL_TOKEN 2>&1 | grep -E '^https://' | tail -1)
+          # Redirect stderr to stdout, then filter for URL only to avoid leaking logs
+          DEPLOYMENT_URL=$(vercel deploy --yes --token="$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
 
           if [ -z "$DEPLOYMENT_URL" ]; then
-            echo "::error::Failed to capture deployment URL"
+            echo "::error::Failed to capture deployment URL. Check Vercel configuration."
             exit 1
           fi
 
