@@ -535,6 +535,87 @@ jobs:
             skillsmith-ci:${{ github.sha }} \
             npm run audit:standards
 
+  # SMI-2116: Website Build Verification
+  # Ensures website builds successfully when website files change
+  website-build:
+    name: Website Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: docker-build
+    # Only run when website files change (PRs only)
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Check for website changes
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            website:
+              - 'packages/website/**'
+
+      - name: Checkout
+        if: steps.changes.outputs.website == 'true'
+        uses: actions/checkout@v4
+
+      - name: Download Docker image
+        if: steps.changes.outputs.website == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Download node_modules
+        if: steps.changes.outputs.website == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: node-modules
+          path: /tmp
+
+      - name: Load Docker image
+        if: steps.changes.outputs.website == 'true'
+        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+
+      - name: Extract node_modules
+        if: steps.changes.outputs.website == 'true'
+        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+
+      - name: Build website in Docker
+        if: steps.changes.outputs.website == 'true'
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app/packages/website \
+            skillsmith-ci:${{ github.sha }} \
+            npm run build
+
+      - name: Verify dist directory exists
+        if: steps.changes.outputs.website == 'true'
+        run: |
+          if [ ! -d "packages/website/dist" ]; then
+            echo "::error::Website build failed - dist/ directory not created"
+            exit 1
+          fi
+          FILE_COUNT=$(find packages/website/dist -type f | wc -l)
+          echo "Website build successful: $FILE_COUNT files generated"
+
+      - name: Generate build summary
+        if: always()
+        run: |
+          echo "## Website Build Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.changes.outputs.website }}" != "true" ]; then
+            echo "Skipped - no changes to packages/website/**" >> $GITHUB_STEP_SUMMARY
+          elif [ -d "packages/website/dist" ]; then
+            FILE_COUNT=$(find packages/website/dist -type f | wc -l)
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Status | Build Successful |" >> $GITHUB_STEP_SUMMARY
+            echo "| Files Generated | $FILE_COUNT |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Build Failed - dist/ directory not created" >> $GITHUB_STEP_SUMMARY
+          fi
+
   # SMI-1826: Automated Code Review
   # Runs standards audit after lint and test pass, uploads report as artifact
   code-review:
