@@ -66,6 +66,7 @@ regex = '''sk_test_[a-zA-Z0-9]{32,}'''
 tags = ["api", "clerk"]
 
 # Allowlist for false positives
+# See docs/security/intentionally-exposed-keys.md for detailed rationale
 [allowlist]
 description = "Global allowlist"
 
@@ -84,9 +85,20 @@ regexes = [
   '''msk_live_xxx''',
   '''ghp_xxx''',
   '''lin_api_xxx''',
+  # ============================================================================
+  # INTENTIONALLY EXPOSED KEYS
+  # See SMI-2128 and docs/security/intentionally-exposed-keys.md for full details
+  # ============================================================================
+
   # SMI-1949: Production Supabase anon key (safe to expose - provides RLS access only)
   # This is intentionally bundled with the MCP server for authenticated API access
+  # Rationale: Anon keys are designed to be public; all protection comes from RLS policies
   '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZyY256cG1uZHRyb3F4eG9xa3p5.*''',
+
+  # Test API key patterns used in unit tests
+  # These are NOT real keys - they follow our test key format for validation
+  '''sk_live_test_[a-zA-Z0-9]{32}''',
+  '''sk_test_[a-zA-Z0-9]{32}''',
 ]
 
 # Allow specific files that contain examples or tests
