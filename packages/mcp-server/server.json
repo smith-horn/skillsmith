@@ -1,7 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.smith-horn/skillsmith",
-  "description": "MCP server for Claude Code skill discovery, installation, and management. Search verified skills, get recommendations, compare alternatives, and install with confidence.",
+  "title": "Skillsmith",
+  "description": "MCP server for Claude Code skill discovery, installation, and management.",
+  "websiteUrl": "https://skillsmith.app",
   "repository": {
     "url": "https://github.com/smith-horn/skillsmith",
     "source": "github"
