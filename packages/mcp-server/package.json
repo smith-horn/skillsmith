@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.25.3",
-    "@skillsmith/core": "workspace:*",
+    "@skillsmith/core": "0.4.9",
     "esbuild": "0.27.2"
   },
   "devDependencies": {
