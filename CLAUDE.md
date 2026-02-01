@@ -304,6 +304,7 @@ Skillsmith is published to the official MCP Registry for discovery by Claude CoW
 
 - **Registry**: [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/)
 - **Server Name**: `io.github.smith-horn/skillsmith`
+- **Version**: `0.3.14`
 - **npm Package**: `@skillsmith/mcp-server`
 
 Verify listing:
