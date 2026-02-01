@@ -64,9 +64,18 @@ npm run build
 3. **Create Linear issue** - If fix is non-trivial, track it
 4. **Fix locally first** - Run `docker exec skillsmith-dev-1 npm run preflight` before pushing
 
-### CI Skip Patterns (SMI-2188)
+### CI Change Classification (SMI-2186)
 
-The CI workflow skips for documentation-only commits to save compute time (~11 min per commit). The following patterns trigger a CI skip:
+The CI system classifies changes into tiers to run appropriate checks:
+
+| Tier | Trigger | Workflow | Jobs Run |
+|------|---------|----------|----------|
+| `docs` | Only `docs/**`, `*.md` | `docs-only.yml` | Secret scan, markdown lint (~30s) |
+| `config` | Only config files | `ci.yml` | Validation jobs |
+| `code` | `packages/**`, `supabase/**` | `ci.yml` | Full pipeline (~11 min) |
+| `deps` | `package*.json` changes | `ci.yml` | Docker rebuild, security audit |
+
+**Path Patterns (docs tier)**:
 
 | Pattern | Examples |
 |---------|----------|
@@ -77,9 +86,35 @@ The CI workflow skips for documentation-only commits to save compute time (~11 m
 | `.github/CODEOWNERS` | Code owners file |
 
 **Important**:
-- Mixed commits (docs + code) still trigger full CI
-- Security scans run on schedule regardless of path changes
+- Mixed commits (docs + code) trigger full CI (code tier)
+- Docs-only commits run lightweight `docs-only.yml` (not skipped entirely)
 - See [ADR-105](docs/adr/105-ci-path-filtering.md) for decision rationale
+
+### Turborepo Build Orchestration (SMI-2196)
+
+`npm run build` uses Turborepo for intelligent build orchestration:
+
+```bash
+# Normal build (uses Turbo - recommended)
+docker exec skillsmith-dev-1 npm run build
+
+# Legacy build (manual ordering, for debugging)
+docker exec skillsmith-dev-1 npm run build:legacy
+```
+
+**Benefits**:
+- Dependency-aware task scheduling (builds packages in correct order)
+- Incremental builds with content hashing (10x faster on cache hit)
+- Local cache in `.turbo/` directory (gitignored)
+
+See [ADR-106](docs/adr/106-turborepo-build-orchestration.md) for decision rationale.
+
+### CI Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/ci/classify-changes.ts` | Classifies commits into tiers (docs/config/code/deps) |
+| `scripts/ci/detect-affected.ts` | Detects affected packages from changed files |
 
 ---
 
