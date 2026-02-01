@@ -56,8 +56,17 @@ import {
 
 /**
  * SMI-2204: Progress mode types
+ * Exported for use in tests
  */
-type ProgressMode = 'dots' | 'bar' | 'json'
+export type ProgressMode = 'dots' | 'bar' | 'json'
+
+/**
+ * Validate that a string is a valid progress mode
+ * Exported for use in tests
+ */
+export function validateProgressMode(mode: string): boolean {
+  return ['dots', 'bar', 'json'].includes(mode)
+}
 
 interface CliOptions {
   limit: number
@@ -425,15 +434,17 @@ function createProgressReporter(options: CliOptions): ProgressReporter {
 
 /**
  * Detect if running in TTY (interactive terminal) vs CI/pipe
+ * Exported for use in tests
  */
-function isTTY(): boolean {
+export function isTTY(): boolean {
   return process.stdout.isTTY === true
 }
 
 /**
  * Get default progress mode based on environment
+ * Exported for use in tests
  */
-function getDefaultProgressMode(): ProgressMode {
+export function getDefaultProgressMode(): ProgressMode {
   // In TTY, use bar; in CI/pipe, use dots
   return isTTY() ? 'bar' : 'dots'
 }
@@ -465,9 +476,9 @@ function parseCliArgs(): CliOptions {
     allowPositionals: false,
   })
 
-  // Validate progress mode
+  // Validate progress mode using exported function
   const progressMode = values.progress as ProgressMode | undefined
-  if (progressMode && !['dots', 'bar', 'json'].includes(progressMode)) {
+  if (progressMode && !validateProgressMode(progressMode)) {
     console.error(`Error: Invalid progress mode '${progressMode}'. Valid modes: dots, bar, json`)
     process.exit(1)
   }
@@ -629,8 +640,10 @@ function loadBatchTransformCheckpoint(): BatchTransformCheckpoint | null {
         return parsed
       }
     }
-  } catch {
-    console.warn('Invalid checkpoint format, starting fresh')
+  } catch (error) {
+    // Log error details for debugging (SMI-2204: Fix silent catch)
+    const errorMsg = error instanceof Error ? error.message : String(error)
+    console.warn(`Invalid checkpoint format, starting fresh: ${errorMsg}`)
   }
   return null
 }
@@ -1518,7 +1531,12 @@ async function main(): Promise<void> {
   process.exit(stats.failed > 0 ? 1 : 0)
 }
 
-main().catch((error) => {
-  console.error('\nFatal error:', error)
-  process.exit(1)
-})
+// Only run main() when executed directly, not when imported as a module
+// This allows the exports to be used in tests without triggering execution
+const isMainModule = import.meta.url === `file://${process.argv[1]}`
+if (isMainModule) {
+  main().catch((error) => {
+    console.error('\nFatal error:', error)
+    process.exit(1)
+  })
+}
