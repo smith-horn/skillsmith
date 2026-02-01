@@ -172,6 +172,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # SMI-2159: Decrypt git-crypt encrypted files before Docker build
+      # Required for supabase/**, docs/**, .claude/** (encrypted for IP protection)
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          # Install git-crypt
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          # Decode and write key file
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          # Unlock repository
+          git-crypt unlock /tmp/git-crypt-key
+          # Clean up key file
+          rm -f /tmp/git-crypt-key
+          echo "✓ git-crypt unlocked successfully"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -206,14 +223,36 @@ jobs:
 
       # SMI-708: Extract pre-compiled node_modules from Docker image
       # This eliminates the need for npm ci in each job (saves ~30-60s per job)
+      # SMI-2159: Also extract nested workspace node_modules (for non-hoisted deps like @aws-sdk)
       - name: Extract node_modules from Docker image
         run: |
-          # Create a container and copy out the pre-compiled node_modules
+          # Create a container (not running) and copy out node_modules
           docker create --name extract-deps skillsmith-ci:${{ github.sha }}
+
+          # Copy root node_modules
           docker cp extract-deps:/app/node_modules /tmp/node_modules
+
+          # Copy nested workspace node_modules (for non-hoisted dependencies)
+          # docker cp works on stopped containers - no need for docker exec
+          for pkg in core enterprise mcp-server cli website; do
+            mkdir -p /tmp/packages/$pkg
+            if docker cp extract-deps:/app/packages/$pkg/node_modules /tmp/packages/$pkg/ 2>/dev/null; then
+              echo "✓ Copied packages/$pkg/node_modules"
+              # Show first few items for verification
+              ls /tmp/packages/$pkg/node_modules/ 2>/dev/null | head -5 || true
+            else
+              echo "- No node_modules in packages/$pkg (hoisted or doesn't exist)"
+            fi
+          done
+
           docker rm extract-deps
-          # Compress for faster artifact transfer
-          tar -czf /tmp/node_modules.tar.gz -C /tmp node_modules
+
+          # Compress for faster artifact transfer (include packages dir)
+          tar -czf /tmp/node_modules.tar.gz -C /tmp node_modules packages
+
+          # Show tar contents for debugging
+          echo "=== Tar contents (packages only) ==="
+          tar -tzf /tmp/node_modules.tar.gz | grep "^packages/" | head -20
 
       - name: Upload node_modules artifact
         uses: actions/upload-artifact@v4
@@ -234,6 +273,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
 
       - name: Download Docker image
         uses: actions/download-artifact@v4
@@ -279,6 +329,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -295,7 +356,22 @@ jobs:
         run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
 
       - name: Extract node_modules
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: |
+          # Extract to workspace - tar will merge with existing packages/ directory
+          tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+
+          # Verify AWS SDK was extracted for enterprise package (required for typecheck)
+          echo "=== Verifying nested node_modules extraction ==="
+          if [ -d "${{ github.workspace }}/packages/enterprise/node_modules/@aws-sdk" ]; then
+            echo "✓ AWS SDK found in packages/enterprise/node_modules"
+            ls ${{ github.workspace }}/packages/enterprise/node_modules/@aws-sdk/ | head -5
+          else
+            echo "✗ AWS SDK NOT found - checking what happened"
+            echo "Contents of packages/enterprise/:"
+            ls -la ${{ github.workspace }}/packages/enterprise/ || true
+            echo "Checking tar contents:"
+            tar -tzf /tmp/node_modules.tar.gz | grep "enterprise" | head -10 || echo "No enterprise in tar"
+          fi
 
       - name: Run TypeScript type check in Docker
         run: |
@@ -315,6 +391,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -331,7 +418,22 @@ jobs:
         run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
 
       - name: Extract node_modules
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: |
+          # Extract to workspace - tar will merge with existing packages/ directory
+          tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+
+          # Verify AWS SDK was extracted for enterprise package
+          echo "=== Verifying nested node_modules extraction ==="
+          if [ -d "${{ github.workspace }}/packages/enterprise/node_modules/@aws-sdk" ]; then
+            echo "✓ AWS SDK found in packages/enterprise/node_modules"
+            ls ${{ github.workspace }}/packages/enterprise/node_modules/@aws-sdk/ | head -5
+          else
+            echo "✗ AWS SDK NOT found in packages/enterprise/node_modules"
+            echo "Contents of packages/enterprise/:"
+            ls -la ${{ github.workspace }}/packages/enterprise/ || true
+            echo "Checking if node_modules exists:"
+            ls -la ${{ github.workspace }}/packages/enterprise/node_modules/ 2>/dev/null | head -10 || echo "No node_modules dir"
+          fi
 
       - name: Run tests with coverage in Docker
         run: |
@@ -362,6 +464,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
 
       - name: Download Docker image
         uses: actions/download-artifact@v4
@@ -438,6 +551,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -509,6 +633,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -534,6 +669,98 @@ jobs:
             -w /app \
             skillsmith-ci:${{ github.sha }} \
             npm run audit:standards
+
+  # SMI-2116: Website Build Verification
+  # Ensures website builds successfully when website files change
+  website-build:
+    name: Website Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: docker-build
+    # Only run when website files change (PRs only)
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Check for website changes
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            website:
+              - 'packages/website/**'
+
+      - name: Checkout
+        if: steps.changes.outputs.website == 'true'
+        uses: actions/checkout@v4
+
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: steps.changes.outputs.website == 'true' && env.GIT_CRYPT_KEY != ''
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+
+      - name: Download Docker image
+        if: steps.changes.outputs.website == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Download node_modules
+        if: steps.changes.outputs.website == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: node-modules
+          path: /tmp
+
+      - name: Load Docker image
+        if: steps.changes.outputs.website == 'true'
+        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+
+      - name: Extract node_modules
+        if: steps.changes.outputs.website == 'true'
+        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+
+      - name: Build website in Docker
+        if: steps.changes.outputs.website == 'true'
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app/packages/website \
+            skillsmith-ci:${{ github.sha }} \
+            npm run build
+
+      - name: Verify dist directory exists
+        if: steps.changes.outputs.website == 'true'
+        run: |
+          if [ ! -d "packages/website/dist" ]; then
+            echo "::error::Website build failed - dist/ directory not created"
+            exit 1
+          fi
+          FILE_COUNT=$(find packages/website/dist -type f | wc -l)
+          echo "Website build successful: $FILE_COUNT files generated"
+
+      - name: Generate build summary
+        if: always()
+        run: |
+          echo "## Website Build Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.changes.outputs.website }}" != "true" ]; then
+            echo "Skipped - no changes to packages/website/**" >> $GITHUB_STEP_SUMMARY
+          elif [ -d "packages/website/dist" ]; then
+            FILE_COUNT=$(find packages/website/dist -type f | wc -l)
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Status | Build Successful |" >> $GITHUB_STEP_SUMMARY
+            echo "| Files Generated | $FILE_COUNT |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Build Failed - dist/ directory not created" >> $GITHUB_STEP_SUMMARY
+          fi
 
   # SMI-1826: Automated Code Review
   # Runs standards audit after lint and test pass, uploads report as artifact

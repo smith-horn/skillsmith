@@ -1,0 +1,54 @@
+# Lychee link checker configuration
+# https://lychee.cli.rs/
+
+# Request timeout in seconds
+timeout = 10
+
+# Maximum number of concurrent requests
+max_concurrency = 8
+
+# User agent to identify as a real browser
+user_agent = "Mozilla/5.0 (compatible; Skillsmith-LinkChecker/1.0; +https://skillsmith.app)"
+
+# Accept 2xx and 3xx status codes as valid
+accept = ["2xx", "3xx"]
+
+# Exclude patterns for flaky external links
+exclude = [
+  # Social media sites block automated requests
+  "https?://twitter\\.com/.*",
+  "https?://x\\.com/.*",
+  "https?://linkedin\\.com/.*",
+  # GitHub issues/PRs can be rate-limited
+  "https?://github\\.com/.*/issues/.*",
+  "https?://github\\.com/.*/pull/.*",
+  # GitHub actions badges are often slow
+  "https?://github\\.com/.*/actions/.*\\.svg",
+  "https?://github\\.com/.*/workflows/.*\\.svg",
+]
+
+# Include file patterns to check
+include = [
+  "**/*.html",
+  "**/*.md",
+]
+
+# Exclude paths from scanning
+exclude_path = [
+  "_astro/**",
+  "node_modules/**",
+]
+
+# Skip mail links (mailto:)
+exclude_mail = true
+
+# Include fragment identifiers (#anchor)
+include_fragments = true
+
+# Retry configuration
+max_retries = 2
+retry_wait_time = 2
+
+# Cache settings (speeds up repeated runs)
+cache = true
+max_cache_age = "1d"

@@ -43,6 +43,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # SMI-2159: Decrypt git-crypt encrypted files before Docker build
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+          echo "✓ git-crypt unlocked successfully"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -77,14 +89,34 @@ jobs:
 
       # SMI-969: Extract pre-compiled node_modules from Docker image
       # This eliminates the need for npm ci in each job (saves ~30-60s per job)
+      # SMI-2159: Also extract nested workspace node_modules (for non-hoisted deps like @aws-sdk)
       - name: Extract node_modules from Docker image
         run: |
-          # Create a container and copy out the pre-compiled node_modules
+          # Create a container (not running) and copy out node_modules
           docker create --name extract-deps skillsmith-e2e:${{ github.sha }}
+
+          # Copy root node_modules
           docker cp extract-deps:/app/node_modules /tmp/node_modules
+
+          # Copy nested workspace node_modules (for non-hoisted dependencies)
+          for pkg in core enterprise mcp-server cli website; do
+            mkdir -p /tmp/packages/$pkg
+            if docker cp extract-deps:/app/packages/$pkg/node_modules /tmp/packages/$pkg/ 2>/dev/null; then
+              echo "✓ Copied packages/$pkg/node_modules"
+              ls /tmp/packages/$pkg/node_modules/ 2>/dev/null | head -5 || true
+            else
+              echo "- No node_modules in packages/$pkg (hoisted or doesn't exist)"
+            fi
+          done
+
           docker rm extract-deps
-          # Compress for faster artifact transfer
-          tar -czf /tmp/node_modules.tar.gz -C /tmp node_modules
+
+          # Compress for faster artifact transfer (include packages dir)
+          tar -czf /tmp/node_modules.tar.gz -C /tmp node_modules packages
+
+          # Show tar contents for debugging
+          echo "=== Tar contents (packages only) ==="
+          tar -tzf /tmp/node_modules.tar.gz | grep "^packages/" | head -20
 
       - name: Upload node_modules artifact
         uses: actions/upload-artifact@v4
@@ -104,6 +136,17 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
 
       - name: Download Docker image
         uses: actions/download-artifact@v4
@@ -164,6 +207,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -220,6 +274,17 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
 
       - name: Download Docker image
         uses: actions/download-artifact@v4
@@ -323,6 +388,17 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # SMI-2159: Decrypt git-crypt encrypted files
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
 
       - name: Download Docker image
         uses: actions/download-artifact@v4

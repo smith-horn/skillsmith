@@ -1,0 +1,594 @@
+name: Website Deploy (Staging)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/website/**'
+  workflow_dispatch:
+    inputs:
+      smoke_test_timeout:
+        description: 'Page load timeout in seconds'
+        default: '3'
+        type: string
+
+concurrency:
+  group: website-staging-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+# Explicit permissions for security (CodeQL alert #41)
+permissions:
+  contents: read
+  deployments: write
+  statuses: write
+
+jobs:
+  # Wait for CI to pass before deploying
+  wait-for-ci:
+    name: Wait for CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Only wait on push events; skip for manual dispatch
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Wait for CI workflow
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.sha }}
+          check-name: 'Build'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 30
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: wait-for-ci
+    # Run if wait-for-ci succeeded OR was skipped (manual dispatch)
+    if: ${{ !cancelled() && (needs.wait-for-ci.result == 'success' || needs.wait-for-ci.result == 'skipped') }}
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.deployment-url }}
+
+    outputs:
+      deployment-url: ${{ steps.deploy.outputs.deployment-url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build website
+        working-directory: packages/website
+        run: npm run build
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      - name: Deploy to Vercel (Staging)
+        id: deploy
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          # Deploy to staging (no --prod flag)
+          # Redirect stderr to stdout, then filter for URL only to avoid leaking logs
+          DEPLOYMENT_URL=$(vercel deploy --yes --token="$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
+
+          if [ -z "$DEPLOYMENT_URL" ]; then
+            echo "::error::Failed to capture deployment URL. Check Vercel configuration."
+            exit 1
+          fi
+
+          echo "deployment-url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
+          echo "Deployed to: $DEPLOYMENT_URL"
+
+      - name: Generate deployment summary
+        run: |
+          echo "## Staging Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | staging |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL | ${{ steps.deploy.outputs.deployment-url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered by | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+
+  lighthouse:
+    name: Lighthouse CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: deploy-staging
+    if: ${{ needs.deploy-staging.result == 'success' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Lighthouse CI
+        uses: treosh/lighthouse-ci-action@v12
+        with:
+          urls: ${{ needs.deploy-staging.outputs.deployment-url }}
+          configPath: packages/website/lighthouserc.cjs
+          uploadArtifacts: true
+          temporaryPublicStorage: true
+
+      - name: Generate Lighthouse summary
+        if: always()
+        run: |
+          echo "## Lighthouse CI Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Threshold |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Performance | > 90 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Accessibility | > 95 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Best Practices | > 90 |" >> $GITHUB_STEP_SUMMARY
+          echo "| SEO | > 90 |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "URL tested: ${{ needs.deploy-staging.outputs.deployment-url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Full results available in the artifacts." >> $GITHUB_STEP_SUMMARY
+
+  # Link checker runs in parallel with lighthouse
+  link-check:
+    name: Link Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: deploy-staging
+    if: ${{ needs.deploy-staging.result == 'success' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check links on staging deployment
+        uses: lycheeverse/lychee-action@v2
+        id: lychee
+        with:
+          # Check the deployed staging URL
+          args: >-
+            --config packages/website/.lychee.toml
+            --base ${{ needs.deploy-staging.outputs.deployment-url }}
+            --verbose
+            ${{ needs.deploy-staging.outputs.deployment-url }}
+          # Don't fail the action on link errors - we handle it ourselves
+          fail: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Parse link check results
+        id: parse
+        run: |
+          # Count errors from lychee output
+          DEPLOYMENT_URL="${{ needs.deploy-staging.outputs.deployment-url }}"
+          DOMAIN=$(echo "$DEPLOYMENT_URL" | sed 's|https://||' | cut -d'/' -f1)
+
+          if [ -f ./lychee/out.md ]; then
+            # Internal errors: links pointing to our deployment domain that failed
+            INTERNAL_ERRORS=$(grep -E "^\[ERROR\].*$DOMAIN" ./lychee/out.md 2>/dev/null | wc -l || echo "0")
+            # Total errors
+            TOTAL_ERRORS=$(grep -c "^\[ERROR\]" ./lychee/out.md 2>/dev/null || echo "0")
+            # External errors
+            EXTERNAL_ERRORS=$((TOTAL_ERRORS - INTERNAL_ERRORS))
+
+            # Ensure non-negative
+            if [ "$EXTERNAL_ERRORS" -lt 0 ]; then EXTERNAL_ERRORS=0; fi
+
+            echo "internal-errors=$INTERNAL_ERRORS" >> $GITHUB_OUTPUT
+            echo "external-errors=$EXTERNAL_ERRORS" >> $GITHUB_OUTPUT
+
+            echo "Internal link errors: $INTERNAL_ERRORS"
+            echo "External link errors: $EXTERNAL_ERRORS"
+          else
+            echo "internal-errors=0" >> $GITHUB_OUTPUT
+            echo "external-errors=0" >> $GITHUB_OUTPUT
+            echo "No lychee output file found - assuming success"
+          fi
+
+      - name: Generate link check summary
+        run: |
+          echo "## Link Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Target:** ${{ needs.deploy-staging.outputs.deployment-url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Category | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Internal Errors | ${{ steps.parse.outputs.internal-errors }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| External Errors | ${{ steps.parse.outputs.external-errors }} (non-blocking) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f ./lychee/out.md ]; then
+            echo "<details>" >> $GITHUB_STEP_SUMMARY
+            echo "<summary>Full Report</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            cat ./lychee/out.md >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Fail on internal link errors
+        if: steps.parse.outputs.internal-errors != '0'
+        run: |
+          echo "::error::Found ${{ steps.parse.outputs.internal-errors }} broken internal links"
+          exit 1
+
+      - name: Warn on external link errors
+        if: steps.parse.outputs.external-errors != '0'
+        run: |
+          echo "::warning::Found ${{ steps.parse.outputs.external-errors }} broken external links (non-blocking)"
+
+  # Production deployment with approval gate
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [deploy-staging, lighthouse, link-check]
+    if: ${{ needs.lighthouse.result == 'success' && needs.link-check.result == 'success' }}
+    environment:
+      name: production
+      url: https://www.skillsmith.app
+
+    outputs:
+      deployment-url: ${{ steps.deploy.outputs.deployment-url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build website
+        working-directory: packages/website
+        run: npm run build
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      - name: Deploy to Vercel (Production)
+        id: deploy
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          # Deploy to production (with --prod flag)
+          # Redirect stderr to stdout, then filter for URL only to avoid leaking logs
+          DEPLOYMENT_URL=$(vercel deploy --prod --yes --token="$VERCEL_TOKEN" 2>/dev/null | grep -E '^https://' | tail -1)
+
+          if [ -z "$DEPLOYMENT_URL" ]; then
+            echo "::error::Failed to capture deployment URL. Check Vercel configuration."
+            exit 1
+          fi
+
+          echo "deployment-url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
+          echo "Deployed to production: $DEPLOYMENT_URL"
+
+      - name: Generate deployment summary
+        run: |
+          echo "## Production Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | production |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL | https://www.skillsmith.app |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deployment URL | ${{ steps.deploy.outputs.deployment-url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered by | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Staging URL | ${{ needs.deploy-staging.outputs.deployment-url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Validation Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Lighthouse CI: Passed" >> $GITHUB_STEP_SUMMARY
+          echo "- Link Check: Passed" >> $GITHUB_STEP_SUMMARY
+
+  # Post-deployment smoke tests (SMI-2122)
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [deploy-production]
+    if: ${{ needs.deploy-production.result == 'success' }}
+
+    steps:
+      - name: Test critical pages
+        id: smoke
+        run: |
+          # Record test start time (SMI-2142)
+          START_TIME=$(date +%s.%N)
+
+          # Define critical pages to test
+          PAGES=(
+            "https://www.skillsmith.app"
+            "https://www.skillsmith.app/pricing"
+            "https://www.skillsmith.app/docs"
+            "https://www.skillsmith.app/skills"
+          )
+
+          # Threshold in seconds (SMI-2143: configurable via workflow_dispatch)
+          THRESHOLD=${{ inputs.smoke_test_timeout || '3' }}
+
+          # Track results
+          FAILED=0
+          RESULTS=""
+
+          # Track response times for metrics (SMI-2142)
+          declare -a RESPONSE_TIMES
+          MIN_TIME=""
+          MAX_TIME=""
+          TOTAL_TIME=0
+
+          for PAGE in "${PAGES[@]}"; do
+            echo "Testing: $PAGE"
+
+            # Make request and capture status code and time
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code},%{time_total}" --max-time 10 "$PAGE" 2>/dev/null || echo "000,0")
+            STATUS=$(echo "$RESPONSE" | cut -d',' -f1)
+            TIME=$(echo "$RESPONSE" | cut -d',' -f2)
+
+            # Round time to 2 decimal places
+            TIME_ROUNDED=$(printf "%.2f" "$TIME")
+
+            # Track response times for metrics (SMI-2142)
+            RESPONSE_TIMES+=("$TIME")
+            TOTAL_TIME=$(echo "$TOTAL_TIME + $TIME" | bc)
+            if [ -z "$MIN_TIME" ] || [ "$(echo "$TIME < $MIN_TIME" | bc)" -eq 1 ]; then
+              MIN_TIME=$TIME
+            fi
+            if [ -z "$MAX_TIME" ] || [ "$(echo "$TIME > $MAX_TIME" | bc)" -eq 1 ]; then
+              MAX_TIME=$TIME
+            fi
+
+            # Check status code
+            if [ "$STATUS" != "200" ]; then
+              echo "::error::$PAGE returned status $STATUS (expected 200)"
+              STATUS_RESULT="FAIL ($STATUS)"
+              FAILED=1
+            else
+              STATUS_RESULT="OK (200)"
+            fi
+
+            # Check response time (compare as integers to avoid float issues)
+            TIME_MS=$(echo "$TIME * 1000" | bc | cut -d'.' -f1)
+            THRESHOLD_MS=$((THRESHOLD * 1000))
+
+            if [ "$TIME_MS" -gt "$THRESHOLD_MS" ]; then
+              echo "::error::$PAGE took ${TIME_ROUNDED}s (threshold: ${THRESHOLD}s)"
+              TIME_RESULT="SLOW (${TIME_ROUNDED}s)"
+              FAILED=1
+            else
+              TIME_RESULT="${TIME_ROUNDED}s"
+            fi
+
+            # Build results table row (SMI-2141: use printf instead of echo -e)
+            RESULTS="${RESULTS}| ${PAGE} | ${STATUS_RESULT} | ${TIME_RESULT} |\n"
+
+            echo "  Status: $STATUS, Time: ${TIME_ROUNDED}s"
+          done
+
+          # Record test end time and calculate duration (SMI-2142)
+          END_TIME=$(date +%s.%N)
+          TOTAL_DURATION=$(echo "$END_TIME - $START_TIME" | bc)
+          TOTAL_DURATION_ROUNDED=$(printf "%.2f" "$TOTAL_DURATION")
+
+          # Calculate average response time (SMI-2142)
+          PAGE_COUNT=${#PAGES[@]}
+          AVG_TIME=$(echo "scale=3; $TOTAL_TIME / $PAGE_COUNT" | bc)
+          AVG_TIME_ROUNDED=$(printf "%.2f" "$AVG_TIME")
+          MIN_TIME_ROUNDED=$(printf "%.2f" "$MIN_TIME")
+          MAX_TIME_ROUNDED=$(printf "%.2f" "$MAX_TIME")
+
+          # Output results for summary (SMI-2141: use printf instead of echo -e)
+          echo "results<<EOF" >> $GITHUB_OUTPUT
+          printf "%s" "$RESULTS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # Output runtime metrics (SMI-2142)
+          echo "total-duration=${TOTAL_DURATION_ROUNDED}" >> $GITHUB_OUTPUT
+          echo "avg-response-time=${AVG_TIME_ROUNDED}" >> $GITHUB_OUTPUT
+          echo "min-response-time=${MIN_TIME_ROUNDED}" >> $GITHUB_OUTPUT
+          echo "max-response-time=${MAX_TIME_ROUNDED}" >> $GITHUB_OUTPUT
+          echo "threshold=${THRESHOLD}" >> $GITHUB_OUTPUT
+
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::Smoke tests failed"
+            exit 1
+          fi
+
+          echo "All smoke tests passed!"
+
+      - name: Update deployment status
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ steps.smoke.outcome }}' === 'success' ? 'success' : 'failure';
+            const description = status === 'success'
+              ? 'Smoke tests passed - all critical pages responding'
+              : 'Smoke tests failed - check workflow logs';
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: status,
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              description: description,
+              context: 'smoke-test/production'
+            });
+
+      - name: Generate smoke test summary
+        if: always()
+        run: |
+          echo "## Smoke Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Target:** https://www.skillsmith.app" >> $GITHUB_STEP_SUMMARY
+          echo "**Threshold:** < ${{ steps.smoke.outputs.threshold }} seconds" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Page | Status | Response Time |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|---------------|" >> $GITHUB_STEP_SUMMARY
+          printf "%s\n" "${{ steps.smoke.outputs.results }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Runtime metrics (SMI-2142)
+          echo "### Runtime Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Test Duration | ${{ steps.smoke.outputs.total-duration }}s |" >> $GITHUB_STEP_SUMMARY
+          echo "| Average Response Time | ${{ steps.smoke.outputs.avg-response-time }}s |" >> $GITHUB_STEP_SUMMARY
+          echo "| Min Response Time | ${{ steps.smoke.outputs.min-response-time }}s |" >> $GITHUB_STEP_SUMMARY
+          echo "| Max Response Time | ${{ steps.smoke.outputs.max-response-time }}s |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.smoke.outcome }}" == "success" ]; then
+            echo "**Result:** All critical pages are responding correctly." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Result:** One or more smoke tests failed. Check the workflow logs for details." >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Staging Deploy | Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Lighthouse CI | Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Link Check | Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Production Deploy | Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Smoke Tests | ${{ steps.smoke.outcome == 'success' && 'Passed' || 'Failed' }} |" >> $GITHUB_STEP_SUMMARY
+
+      # Optional Slack notification (uncomment and add SLACK_WEBHOOK_URL secret to enable)
+      # - name: Notify Slack on success
+      #   if: success()
+      #   env:
+      #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      #   run: |
+      #     curl -X POST -H 'Content-type: application/json' \
+      #       --data '{
+      #         "blocks": [
+      #           {
+      #             "type": "header",
+      #             "text": {
+      #               "type": "plain_text",
+      #               "text": "Production Deployment Successful",
+      #               "emoji": true
+      #             }
+      #           },
+      #           {
+      #             "type": "section",
+      #             "fields": [
+      #               {"type": "mrkdwn", "text": "*Environment:*\nProduction"},
+      #               {"type": "mrkdwn", "text": "*URL:*\nhttps://www.skillsmith.app"},
+      #               {"type": "mrkdwn", "text": "*Commit:*\n${{ github.sha }}"},
+      #               {"type": "mrkdwn", "text": "*Triggered by:*\n${{ github.actor }}"}
+      #             ]
+      #           },
+      #           {
+      #             "type": "section",
+      #             "text": {
+      #               "type": "mrkdwn",
+      #               "text": "All smoke tests passed. Critical pages are responding correctly."
+      #             }
+      #           },
+      #           {
+      #             "type": "actions",
+      #             "elements": [
+      #               {
+      #                 "type": "button",
+      #                 "text": {"type": "plain_text", "text": "View Workflow"},
+      #                 "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      #               },
+      #               {
+      #                 "type": "button",
+      #                 "text": {"type": "plain_text", "text": "View Site"},
+      #                 "url": "https://www.skillsmith.app"
+      #               }
+      #             ]
+      #           }
+      #         ]
+      #       }' \
+      #       "$SLACK_WEBHOOK_URL"
+
+      # - name: Notify Slack on failure
+      #   if: failure()
+      #   env:
+      #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      #   run: |
+      #     curl -X POST -H 'Content-type: application/json' \
+      #       --data '{
+      #         "blocks": [
+      #           {
+      #             "type": "header",
+      #             "text": {
+      #               "type": "plain_text",
+      #               "text": "Production Smoke Tests Failed",
+      #               "emoji": true
+      #             }
+      #           },
+      #           {
+      #             "type": "section",
+      #             "fields": [
+      #               {"type": "mrkdwn", "text": "*Environment:*\nProduction"},
+      #               {"type": "mrkdwn", "text": "*URL:*\nhttps://www.skillsmith.app"},
+      #               {"type": "mrkdwn", "text": "*Commit:*\n${{ github.sha }}"},
+      #               {"type": "mrkdwn", "text": "*Triggered by:*\n${{ github.actor }}"}
+      #             ]
+      #           },
+      #           {
+      #             "type": "section",
+      #             "text": {
+      #               "type": "mrkdwn",
+      #               "text": "One or more critical pages failed smoke tests. Please investigate immediately."
+      #             }
+      #           },
+      #           {
+      #             "type": "actions",
+      #             "elements": [
+      #               {
+      #                 "type": "button",
+      #                 "text": {"type": "plain_text", "text": "View Workflow"},
+      #                 "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+      #                 "style": "danger"
+      #               }
+      #             ]
+      #           }
+      #         ]
+      #       }' \
+      #       "$SLACK_WEBHOOK_URL"
