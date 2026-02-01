@@ -15,10 +15,20 @@ set -o pipefail
 # This script runs in two contexts:
 #   1. GitHub Actions CI - Already inside a Docker container, use npm directly
 #   2. Local development - Must use docker exec per governance standards
+#
+# Detection priority:
+#   1. CI/GITHUB_ACTIONS env vars (explicit CI context)
+#   2. docker command not found (inside container without env vars)
+#   3. Default to docker exec (local development)
 if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
   NPM_CMD="npm"
+  echo "ℹ️  CI environment detected, using npm directly"
+elif ! command -v docker &> /dev/null; then
+  NPM_CMD="npm"
+  echo "ℹ️  Docker not found (likely inside container), using npm directly"
 else
   NPM_CMD="docker exec skillsmith-dev-1 npm"
+  echo "ℹ️  Local development detected, using docker exec"
 fi
 
 OUTPUT_FILE="${1:-audit-report.json}"
