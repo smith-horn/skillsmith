@@ -3,7 +3,7 @@
  * @module billing/BillingService.types
  */
 
-import type { Database as BetterSqliteDatabase } from 'better-sqlite3'
+import type { Database as BetterSqliteDatabase } from '../db/database-interface.js'
 import type { StripeClient } from './StripeClient.js'
 
 /**

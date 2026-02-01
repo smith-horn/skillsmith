@@ -69,6 +69,9 @@ async function loadSqlJs(): Promise<SqlJs> {
 class SqlJsStatementAdapter<T = unknown> implements Statement<T> {
   private stmt: SqlJsStatement
   private columnNames: string[] = []
+  // Cached statement for changes() and last_insert_rowid() queries
+  // Created once per adapter instance, reused on every run() call
+  private changesStmt: SqlJsStatement
 
   constructor(
     private readonly db: SqlJsDatabase,
@@ -77,6 +80,8 @@ class SqlJsStatementAdapter<T = unknown> implements Statement<T> {
     this.stmt = db.prepare(sql)
     // Get column names from the statement
     this.columnNames = this.stmt.getColumnNames()
+    // Cache the changes query statement for performance
+    this.changesStmt = db.prepare('SELECT changes() as changes, last_insert_rowid() as lastId')
   }
 
   private rowToObject(row: unknown[] | null): T | undefined {
@@ -100,14 +105,12 @@ class SqlJsStatementAdapter<T = unknown> implements Statement<T> {
     this.stmt.step()
     this.stmt.reset()
 
-    // sql.js doesn't provide lastInsertRowid from statements
-    // We need to query it separately
-    const changesStmt = this.db.prepare(
-      'SELECT changes() as changes, last_insert_rowid() as lastId'
-    )
-    changesStmt.step()
-    const result = changesStmt.get() as [number, number] | null
-    changesStmt.free()
+    // Query changes() and last_insert_rowid() using cached statement
+    // This avoids creating a new prepared statement on every run() call
+    this.changesStmt.reset()
+    this.changesStmt.step()
+    const result = this.changesStmt.get() as [number, number] | null
+    this.changesStmt.reset()
 
     return {
       changes: result?.[0] ?? 0,
@@ -168,6 +171,7 @@ class SqlJsStatementAdapter<T = unknown> implements Statement<T> {
 
   finalize(): void {
     this.stmt.free()
+    this.changesStmt.free()
   }
 
   bind(...params: unknown[]): this {
@@ -183,6 +187,8 @@ export class SqlJsDatabaseAdapter implements Database {
   private _open = true
   private readonly _memory: boolean
   private readonly _readonly: boolean
+  // Track transaction nesting depth for SAVEPOINT-based nested transactions
+  private _transactionDepth = 0
 
   constructor(
     private readonly db: SqlJsDatabase,
@@ -201,16 +207,65 @@ export class SqlJsDatabaseAdapter implements Database {
     return new SqlJsStatementAdapter<T>(this.db, sql)
   }
 
-  transaction<T>(fn: () => T): T {
-    this.db.run('BEGIN TRANSACTION')
-    try {
-      const result = fn()
-      this.db.run('COMMIT')
-      return result
-    } catch (error) {
-      this.db.run('ROLLBACK')
-      throw error
+  transaction<T, Args extends unknown[] = []>(
+    fn: (...args: Args) => T
+  ): Args extends [] ? T : (...args: Args) => T {
+    // Determine execution mode based on function arity.
+    //
+    // IMPORTANT LIMITATION: fn.length only counts required parameters, not:
+    // - Rest parameters (...args)
+    // - Optional parameters (arg?: T)
+    // - Parameters with default values (arg = value)
+    //
+    // For functions with these patterns, fn.length may be 0 even when
+    // arguments are expected. This causes immediate execution instead
+    // of returning a callable.
+    //
+    // WORKAROUND: If you need deferred execution for a function with
+    // optional/rest params, wrap it: transaction((x) => myFn(x))
+    //
+    // Helper to execute transaction with proper nesting support
+    const executeTransaction = (...args: Args): T => {
+      const depth = this._transactionDepth++
+      const savepoint = `sp_${depth}`
+
+      try {
+        if (depth === 0) {
+          // Outermost transaction: use BEGIN TRANSACTION
+          this.db.run('BEGIN TRANSACTION')
+        } else {
+          // Nested transaction: use SAVEPOINT
+          this.db.run(`SAVEPOINT ${savepoint}`)
+        }
+
+        const result = fn(...args)
+
+        if (depth === 0) {
+          this.db.run('COMMIT')
+        } else {
+          this.db.run(`RELEASE SAVEPOINT ${savepoint}`)
+        }
+
+        return result
+      } catch (error) {
+        if (depth === 0) {
+          this.db.run('ROLLBACK')
+        } else {
+          this.db.run(`ROLLBACK TO SAVEPOINT ${savepoint}`)
+        }
+        throw error
+      } finally {
+        this._transactionDepth--
+      }
     }
+
+    // For functions with explicit parameters, return a wrapped function
+    if (fn.length > 0) {
+      return executeTransaction as Args extends [] ? T : (...args: Args) => T
+    }
+
+    // For functions with no parameters, execute immediately
+    return executeTransaction() as Args extends [] ? T : (...args: Args) => T
   }
 
   pragma(pragma: string): unknown {
@@ -314,8 +369,11 @@ export async function createSqlJsDatabase(
 
   const db = new SQL.Database(data)
 
-  // Set default pragmas similar to better-sqlite3
-  db.run('PRAGMA journal_mode = WAL')
+  // Set default pragmas for consistency
+  // Note: WAL mode is intentionally NOT set for sql.js because:
+  // 1. sql.js operates fully in-memory with manual file persistence
+  // 2. Journal modes are meaningless without filesystem integration
+  // 3. Setting WAL would create false parity expectations with better-sqlite3
   db.run('PRAGMA foreign_keys = ON')
 
   return new SqlJsDatabaseAdapter(db, path, options)

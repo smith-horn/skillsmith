@@ -9,7 +9,7 @@
  * - Time-period filtering
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import type { SkillMetrics } from './types.js'
 
 /**

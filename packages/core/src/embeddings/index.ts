@@ -9,7 +9,8 @@
  * @see ADR-009: Embedding Service Fallback Strategy
  */
 
-import Database from 'better-sqlite3'
+import type { Database } from '../db/database-interface.js'
+import { createDatabaseSync } from '../db/createDatabase.js'
 
 // Import types and utilities from extracted modules
 export type {
@@ -43,7 +44,7 @@ export class EmbeddingService {
   private model: FeatureExtractionPipeline | null = null
   private modelPromise: Promise<FeatureExtractionPipeline> | null = null
   private modelLoadFailed = false
-  private db: Database.Database | null = null
+  private db: Database | null = null
   private readonly modelName = 'Xenova/all-MiniLM-L6-v2'
   private readonly embeddingDim = 384
   private readonly useFallback: boolean
@@ -60,7 +61,7 @@ export class EmbeddingService {
     this.useFallback = shouldUseFallback(options.useFallback)
 
     if (options.dbPath) {
-      this.db = new Database(options.dbPath)
+      this.db = createDatabaseSync(options.dbPath)
       this.initEmbeddingTable()
     }
   }

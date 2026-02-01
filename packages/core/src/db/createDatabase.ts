@@ -110,7 +110,7 @@ export function createDatabaseSync(path: string = ':memory:', options?: Database
         'Solutions:\n' +
         '  - Run in Docker: docker compose --profile dev up -d\n' +
         '  - Rebuild native module: npm rebuild better-sqlite3\n' +
-        '  - Use async API which will fall back to WASM (coming soon)'
+        '  - Use createDatabaseAsync() for automatic WASM fallback'
     )
   }
 
@@ -156,7 +156,20 @@ export async function createDatabaseAsync(
 }
 
 /**
- * @deprecated Use createDatabaseAsync for cross-platform support
- * This is kept for backward compatibility with existing code.
+ * @deprecated Use createDatabaseAsync() instead for cross-platform support.
+ *
+ * createDatabase() only works with native better-sqlite3 and will fail on
+ * platforms where native modules aren't available (e.g., macOS without Docker).
+ *
+ * Migration:
+ * ```typescript
+ * // Before (synchronous, native only)
+ * const db = createDatabase(path)
+ *
+ * // After (async, with automatic WASM fallback)
+ * const db = await createDatabaseAsync(path)
+ * ```
+ *
+ * This alias is maintained for backward compatibility with existing code.
  */
 export const createDatabase = createDatabaseSync

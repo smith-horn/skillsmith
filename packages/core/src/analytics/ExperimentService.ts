@@ -8,7 +8,7 @@
  * - Experiment lifecycle management
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import { AnalyticsRepository } from './AnalyticsRepository.js'
 import type {
   Experiment,

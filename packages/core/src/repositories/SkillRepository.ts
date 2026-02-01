@@ -8,7 +8,7 @@
  * - Type-safe queries
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import { randomUUID } from 'crypto'
 import type { Skill, SkillCreateInput, SkillUpdateInput, PaginatedResults } from '../types/skill.js'
 

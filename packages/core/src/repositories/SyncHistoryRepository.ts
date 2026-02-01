@@ -4,7 +4,7 @@
  * Records each sync run with timing, counts, and status for monitoring.
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 
 /**
  * Sync run status

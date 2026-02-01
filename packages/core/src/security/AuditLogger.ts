@@ -7,7 +7,7 @@
  * Schema defined in docs/security/index.md §3.2
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import { randomUUID } from 'crypto'
 import { createLogger } from '../utils/logger.js'
 import type {

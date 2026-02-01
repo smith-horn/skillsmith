@@ -9,10 +9,10 @@
  * - Indexes for common query patterns
  */
 
-import Database from 'better-sqlite3'
-import type { Database as BetterSqliteDatabase } from 'better-sqlite3'
+import type { Database } from './database-interface.js'
+import { createDatabaseSync } from './createDatabase.js'
 
-export type DatabaseType = BetterSqliteDatabase
+export type DatabaseType = Database
 
 export const SCHEMA_VERSION = 4
 
@@ -320,7 +320,7 @@ export function runMigrations(db: DatabaseType): number {
  * This initializes the full schema - use openDatabase for existing databases
  */
 export function createDatabase(path: string = ':memory:'): DatabaseType {
-  const db = new Database(path)
+  const db = createDatabaseSync(path)
 
   // Enable foreign keys
   db.pragma('foreign_keys = ON')
@@ -336,7 +336,7 @@ export function createDatabase(path: string = ':memory:'): DatabaseType {
  * Use this for databases that may have been created by different versions
  */
 export function openDatabase(path: string): DatabaseType {
-  const db = new Database(path)
+  const db = createDatabaseSync(path)
 
   // Enable foreign keys
   db.pragma('foreign_keys = ON')

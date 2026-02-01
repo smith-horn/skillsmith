@@ -7,7 +7,7 @@
 
 import type Stripe from 'stripe'
 import { createHash, randomUUID } from 'crypto'
-import type { Database as BetterSqliteDatabase } from 'better-sqlite3'
+import type { Database as BetterSqliteDatabase } from '../db/database-interface.js'
 import { createLogger } from '../utils/logger.js'
 import { StripeClient } from './StripeClient.js'
 import type { BillingService } from './BillingService.js'

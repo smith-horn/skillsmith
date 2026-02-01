@@ -4,7 +4,8 @@
  */
 
 import { LRUCache } from 'lru-cache'
-import Database from 'better-sqlite3'
+import type { Database, Statement } from '../db/database-interface.js'
+import { createDatabaseSync } from '../db/createDatabase.js'
 import type { SearchResult } from './lru.js'
 import {
   type CacheEntry,
@@ -83,7 +84,7 @@ interface ResolvedCacheConfig {
  */
 export class EnhancedTieredCache {
   private l1: LRUCache<string, CacheEntry>
-  private db: Database.Database | null = null
+  private db: Database | null = null
   private readonly config: ResolvedCacheConfig
   private pruneTimer: ReturnType<typeof setInterval> | null = null
 
@@ -100,14 +101,14 @@ export class EnhancedTieredCache {
 
   // Prepared statements for L2
   private stmts: {
-    get: Database.Statement<[string, number]>
-    set: Database.Statement<unknown[]>
-    has: Database.Statement<[string, number]>
-    delete: Database.Statement<[string]>
-    prune: Database.Statement<[number]>
-    count: Database.Statement<[number]>
-    updateHit: Database.Statement<[number, number, number, string]>
-    countByTier: Database.Statement<[number, number]>
+    get: Statement<SerializedCacheEntry>
+    set: Statement<unknown>
+    has: Statement<{ count: number }>
+    delete: Statement<unknown>
+    prune: Statement<unknown>
+    count: Statement<{ count: number }>
+    updateHit: Statement<unknown>
+    countByTier: Statement<{ count: number }>
   } | null = null
 
   constructor(config: TieredCacheConfig = {}) {
@@ -150,7 +151,7 @@ export class EnhancedTieredCache {
   }
 
   private initL2(dbPath: string): void {
-    this.db = new Database(dbPath)
+    this.db = createDatabaseSync(dbPath)
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('cache_size = -16000') // 16MB cache
 

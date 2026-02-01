@@ -8,7 +8,7 @@
  * - FTS5 index maintenance
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import { createDatabase, closeDatabase } from '../db/schema.js'
 import { SkillRepository } from '../repositories/SkillRepository.js'
 import { BenchmarkRunner, type BenchmarkReport, type BenchmarkConfig } from './BenchmarkRunner.js'

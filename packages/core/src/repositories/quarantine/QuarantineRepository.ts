@@ -14,7 +14,7 @@
  * - LOW_QUALITY: Can import with reduced quality score
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../../db/database-interface.js'
 import { randomUUID } from 'crypto'
 import type { QuarantineSeverity, QuarantineReviewStatus } from '../../db/quarantine-schema.js'
 import {

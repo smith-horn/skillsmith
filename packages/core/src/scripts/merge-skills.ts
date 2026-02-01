@@ -26,7 +26,7 @@
  *     --dry-run
  */
 
-import Database from 'better-sqlite3'
+import Database, { type Statement as BetterSqlite3Statement } from 'better-sqlite3'
 import { resolve } from 'path'
 
 import type {
@@ -144,7 +144,7 @@ export async function mergeSkills(options: MergeOptions): Promise<MergeReport> {
     // ========================================================================
     // Prepare Insert (if not dry-run)
     // ========================================================================
-    let insert: Database.Statement | null = null
+    let insert: BetterSqlite3Statement | null = null
     if (!options.dryRun) {
       insert = db.prepare(`
         INSERT OR IGNORE INTO skills (id, name, description, author, repo_url, quality_score, trust_tier, tags, source, stars, created_at)

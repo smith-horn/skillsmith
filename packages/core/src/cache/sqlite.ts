@@ -3,7 +3,8 @@
  * Persistent cache layer with configurable TTL
  */
 
-import Database from 'better-sqlite3'
+import type { Database, Statement } from '../db/database-interface.js'
+import { createDatabaseSync } from '../db/createDatabase.js'
 import type { SearchResult, SearchCacheEntry, CacheStats } from './lru.js'
 import { isValidCacheKey } from './CacheEntry.js'
 
@@ -13,23 +14,24 @@ export interface L2CacheOptions {
 }
 
 export class L2Cache {
-  private db: Database.Database
+  private db: Database
   private readonly ttlSeconds: number
   private hits = 0
   private misses = 0
 
   // Prepared statements (created once, reused for performance)
+  // Type parameter represents the return type of get()/all() queries
   private stmts: {
-    get: Database.Statement<[string, number]>
-    set: Database.Statement<[string, string, number, number, number]>
-    has: Database.Statement<[string, number]>
-    delete: Database.Statement<[string]>
-    prune: Database.Statement<[number]>
-    stats: Database.Statement<[number]>
+    get: Statement<{ results_json: string; total_count: number; created_at: number }>
+    set: Statement<unknown>
+    has: Statement<{ '1': number }>
+    delete: Statement<unknown>
+    prune: Statement<unknown>
+    stats: Statement<{ total: number; valid: number }>
   }
 
   constructor(options: L2CacheOptions) {
-    this.db = new Database(options.dbPath)
+    this.db = createDatabaseSync(options.dbPath)
     this.ttlSeconds = options.ttlSeconds ?? 3600 // 1 hour default
     this.initTable()
     this.stmts = this.prepareStatements()
