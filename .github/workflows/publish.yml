@@ -435,6 +435,21 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.SKILLSMITH_NPM_TOKEN }}
 
+      # SMI-2158: Publish to MCP Registry after npm publish
+      - name: Install mcp-publisher
+        if: steps.version-check.outputs.exists != 'true'
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz
+          chmod +x mcp-publisher
+
+      - name: Publish to MCP Registry
+        if: steps.version-check.outputs.exists != 'true'
+        run: |
+          cd packages/mcp-server
+          ../../mcp-publisher publish
+        env:
+          MCP_REGISTRY_TOKEN: ${{ secrets.MCP_REGISTRY_TOKEN }}
+
   # SMI-1319: Use pre-publish-check outputs to skip already-published packages
   publish-cli:
     name: Publish @skillsmith/cli
