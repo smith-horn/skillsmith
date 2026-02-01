@@ -3,12 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import {
-  classifyChanges,
-  matchesPatterns,
-  type Tier,
-  type ClassificationResult,
-} from '../ci/classify-changes'
+import { classifyChanges, matchesPatterns } from '../ci/classify-changes'
 
 describe('SMI-2187: CI Change Classifier', () => {
   describe('matchesPatterns', () => {
