@@ -35,7 +35,7 @@ import {
 import { checkForUpdates, formatUpdateNotification } from '@skillsmith/core'
 
 // Package version - keep in sync with package.json
-const PACKAGE_VERSION = '0.3.13'
+const PACKAGE_VERSION = '0.3.17'
 const PACKAGE_NAME = '@skillsmith/mcp-server'
 import {
   installBundledSkills,
@@ -63,7 +63,7 @@ const toolDefinitions = [
 const server = new Server(
   {
     name: 'skillsmith',
-    version: '0.2.0',
+    version: '0.3.17',
   },
   {
     capabilities: {
