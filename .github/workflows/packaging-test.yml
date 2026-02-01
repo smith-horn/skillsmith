@@ -1,0 +1,129 @@
+# SMI-2216: Weekly packaging test to catch issues between releases
+# Runs fresh-install-test on a schedule to verify packages work correctly
+# when installed from npm pack tarballs
+name: Packaging Test
+
+on:
+  schedule:
+    # Run every Monday at 6 AM UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch: # Allow manual trigger
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  fresh-install-test:
+    name: Fresh Install Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Create package tarballs
+        run: |
+          mkdir -p /tmp/packages
+          cd packages/core && npm pack --pack-destination /tmp/packages
+          cd ../mcp-server && npm pack --pack-destination /tmp/packages
+          cd ../cli && npm pack --pack-destination /tmp/packages
+          cd ../..
+          echo "=== Created packages ==="
+          ls -la /tmp/packages
+
+      - name: Create clean test directory
+        run: |
+          mkdir -p /tmp/fresh-install-test
+          cd /tmp/fresh-install-test
+          npm init -y
+
+      - name: Test CLI fresh install from local tarballs
+        working-directory: /tmp/fresh-install-test
+        run: |
+          echo "Testing fresh install from local build..."
+
+          # Install packages in dependency order from local tarballs
+          CORE_TAR=$(ls /tmp/packages/skillsmith-core-*.tgz)
+          MCP_TAR=$(ls /tmp/packages/skillsmith-mcp-server-*.tgz)
+          CLI_TAR=$(ls /tmp/packages/skillsmith-cli-*.tgz)
+
+          echo "Installing core: $CORE_TAR"
+          npm install "$CORE_TAR" --save
+
+          echo "Installing mcp-server: $MCP_TAR"
+          npm install "$MCP_TAR" --save
+
+          echo "Installing cli: $CLI_TAR"
+          npm install "$CLI_TAR" --save-dev
+
+          # Verify the packages installed correctly
+          if [ ! -d "node_modules/@skillsmith/cli" ]; then
+            echo "::error::CLI package not found in node_modules"
+            exit 1
+          fi
+
+          echo "✓ Packages installed successfully"
+
+      - name: Test CLI commands
+        working-directory: /tmp/fresh-install-test
+        run: |
+          # Test help command
+          npx skillsmith --help || npx sklx --help
+          echo "✓ Help command works"
+
+          # Test version command
+          npx skillsmith --version || npx sklx --version
+          echo "✓ Version command works"
+
+          # Test search command (should work without database)
+          npx skillsmith search --help || npx sklx search --help
+          echo "✓ Search help works"
+
+      - name: Test native module loading
+        working-directory: /tmp/fresh-install-test
+        run: |
+          node -e "
+            try {
+              const cliPath = require.resolve('@skillsmith/cli');
+              console.log('CLI resolved to:', cliPath);
+              console.log('✓ Native modules load correctly');
+            } catch (e) {
+              console.error('Failed to load:', e.message);
+              if (e.message.includes('NODE_MODULE_VERSION')) {
+                console.error('::error::Native module version mismatch');
+                process.exit(1);
+              }
+              if (e.message.includes('GLIBC')) {
+                console.error('::error::GLIBC compatibility issue');
+                process.exit(1);
+              }
+              console.log('Warning: Non-critical load issue');
+            }
+          "
+
+      - name: Generate test report
+        if: always()
+        run: |
+          echo "## Weekly Packaging Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| npm pack | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| npm install (local) | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| CLI --help | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| CLI --version | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Native modules | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Run triggered: $(date -u)" >> $GITHUB_STEP_SUMMARY

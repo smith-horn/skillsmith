@@ -143,7 +143,11 @@ export function requiresAllPackages(changedFiles: string[]): { required: boolean
     }
   }
 
-  // Supabase changes affect all packages (shared infrastructure)
+  // SMI-2217: Supabase changes affect all packages
+  // Rationale: Edge functions can import from any workspace package (@skillsmith/core,
+  // @smith-horn/enterprise, etc.) and share TypeScript types/interfaces. Changes to
+  // supabase/ should trigger full test suite to catch breaking changes in shared
+  // interface contracts between packages and Edge Functions.
   const hasSupabaseChanges = changedFiles.some((f) => f.startsWith('supabase/'))
   if (hasSupabaseChanges) {
     return { required: true, reason: 'Supabase infrastructure changed' }
