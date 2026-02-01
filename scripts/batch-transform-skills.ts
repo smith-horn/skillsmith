@@ -593,7 +593,9 @@ async function main(): Promise<void> {
   console.log(`  Dry Run:    ${options.dryRun}`)
   console.log(`  Verbose:    ${options.verbose}`)
   console.log(`  GitHub:     ${config.githubToken ? 'authenticated' : 'anonymous'}`)
-  console.log(`  Rate Limit: ${options.noRateLimit ? 'disabled (50ms)' : `dynamic (base: ${GITHUB_API_BASE_DELAY}ms)`}`)
+  console.log(
+    `  Rate Limit: ${options.noRateLimit ? 'disabled (50ms)' : `dynamic (base: ${GITHUB_API_BASE_DELAY}ms)`}`
+  )
   console.log(`  Checkpoint: every ${options.checkpointInterval} skills`)
   console.log('-'.repeat(50))
 
