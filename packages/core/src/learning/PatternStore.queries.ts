@@ -5,7 +5,7 @@
  * Database operations extracted for file size reduction.
  */
 
-import type Database from 'better-sqlite3'
+import type { Database } from '../db/database-interface.js'
 import type { StoredPattern, PatternRow, PatternOutcomeType } from './PatternStore.types.js'
 import { rowToStoredPattern } from './PatternStore.helpers.js'
 
@@ -16,7 +16,7 @@ import { rowToStoredPattern } from './PatternStore.helpers.js'
 /**
  * Get total pattern count from database
  */
-export function getPatternCount(db: Database.Database): number {
+export function getPatternCount(db: Database): number {
   const stmt = db.prepare('SELECT COUNT(*) as count FROM patterns')
   const result = stmt.get() as { count: number }
   return result.count
@@ -25,7 +25,7 @@ export function getPatternCount(db: Database.Database): number {
 /**
  * Get database size in bytes
  */
-export function getDatabaseSize(db: Database.Database): number {
+export function getDatabaseSize(db: Database): number {
   const stmt = db.prepare(
     'SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()'
   )
@@ -41,7 +41,7 @@ export function getDatabaseSize(db: Database.Database): number {
  * Get sample patterns for Fisher estimation
  */
 export function getSamplePatterns(
-  db: Database.Database,
+  db: Database,
   limit: number,
   dimensions: number
 ): StoredPattern[] {
@@ -53,7 +53,7 @@ export function getSamplePatterns(
 /**
  * Get all patterns from database
  */
-export function getAllPatterns(db: Database.Database, dimensions: number): StoredPattern[] {
+export function getAllPatterns(db: Database, dimensions: number): StoredPattern[] {
   const stmt = db.prepare('SELECT * FROM patterns')
   const rows = stmt.all() as PatternRow[]
   return rows.map((row) => rowToStoredPattern(row, dimensions))
@@ -67,7 +67,7 @@ export function getAllPatterns(db: Database.Database, dimensions: number): Store
  * Update pattern in database
  */
 export function updatePatternInDB(
-  db: Database.Database,
+  db: Database,
   patternId: string,
   updates: { importance?: number; accessCount?: number }
 ): void {
@@ -93,11 +93,7 @@ export function updatePatternInDB(
 /**
  * Update pattern importance
  */
-export function updatePatternImportance(
-  db: Database.Database,
-  patternId: string,
-  importance: number
-): void {
+export function updatePatternImportance(db: Database, patternId: string, importance: number): void {
   const stmt = db.prepare('UPDATE patterns SET importance = ? WHERE pattern_id = ?')
   stmt.run(importance, patternId)
 }
@@ -105,7 +101,7 @@ export function updatePatternImportance(
 /**
  * Update pattern access count
  */
-export function updateAccessCount(db: Database.Database, patternId: string): void {
+export function updateAccessCount(db: Database, patternId: string): void {
   const stmt = db.prepare(
     'UPDATE patterns SET access_count = access_count + 1, last_accessed_at = unixepoch() WHERE pattern_id = ?'
   )
@@ -115,7 +111,7 @@ export function updateAccessCount(db: Database.Database, patternId: string): voi
 /**
  * Delete pattern from database
  */
-export function deletePattern(db: Database.Database, patternId: string): void {
+export function deletePattern(db: Database, patternId: string): void {
   const stmt = db.prepare('DELETE FROM patterns WHERE pattern_id = ?')
   stmt.run(patternId)
 }
@@ -127,7 +123,7 @@ export function deletePattern(db: Database.Database, patternId: string): void {
 /**
  * Load Fisher matrix data from database
  */
-export function loadFisherMatrixData(db: Database.Database): Buffer | null {
+export function loadFisherMatrixData(db: Database): Buffer | null {
   const stmt = db.prepare('SELECT matrix_data FROM fisher_info WHERE id = 1')
   const result = stmt.get() as { matrix_data: Buffer } | undefined
   return result?.matrix_data ?? null
@@ -136,11 +132,7 @@ export function loadFisherMatrixData(db: Database.Database): Buffer | null {
 /**
  * Save Fisher matrix data to database
  */
-export function saveFisherMatrixData(
-  db: Database.Database,
-  matrixData: Buffer,
-  updateCount: number
-): void {
+export function saveFisherMatrixData(db: Database, matrixData: Buffer, updateCount: number): void {
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO fisher_info (id, matrix_data, update_count, last_decay_at, updated_at)
     VALUES (1, ?, ?, unixepoch(), unixepoch())
@@ -156,7 +148,7 @@ export function saveFisherMatrixData(
  * Record consolidation in history
  */
 export function recordConsolidation(
-  db: Database.Database,
+  db: Database,
   patternsProcessed: number,
   patternsPreserved: number,
   patternsPruned: number,
@@ -187,7 +179,7 @@ export function recordConsolidation(
 /**
  * Get pattern counts by outcome type
  */
-export function getPatternsByOutcome(db: Database.Database): Record<PatternOutcomeType, number> {
+export function getPatternsByOutcome(db: Database): Record<PatternOutcomeType, number> {
   const stmt = db.prepare(
     'SELECT outcome_type, COUNT(*) as count FROM patterns GROUP BY outcome_type'
   )
@@ -212,7 +204,7 @@ export function getPatternsByOutcome(db: Database.Database): Record<PatternOutco
 /**
  * Get average pattern importance
  */
-export function getAverageImportance(db: Database.Database): number {
+export function getAverageImportance(db: Database): number {
   const stmt = db.prepare('SELECT AVG(importance) as avg FROM patterns')
   const result = stmt.get() as { avg: number | null }
   return result?.avg ?? 0
@@ -221,7 +213,7 @@ export function getAverageImportance(db: Database.Database): number {
 /**
  * Get count of high importance patterns (top 10%)
  */
-export function getHighImportanceCount(db: Database.Database): number {
+export function getHighImportanceCount(db: Database): number {
   const stmt = db.prepare(`
     SELECT importance FROM patterns ORDER BY importance DESC
     LIMIT CAST((SELECT COUNT(*) FROM patterns) * 0.1 AS INTEGER)
@@ -232,7 +224,7 @@ export function getHighImportanceCount(db: Database.Database): number {
 /**
  * Get consolidation statistics
  */
-export function getConsolidationStats(db: Database.Database): {
+export function getConsolidationStats(db: Database): {
   total: number
   lastTimestamp: number | null
   avgRate: number | null
@@ -262,7 +254,7 @@ export function getConsolidationStats(db: Database.Database): {
  * Get context embeddings for average calculation
  */
 export function getContextEmbeddings(
-  db: Database.Database,
+  db: Database,
   limit: number
 ): Array<{ context_embedding: Buffer }> {
   const stmt = db.prepare('SELECT context_embedding FROM patterns LIMIT ?')

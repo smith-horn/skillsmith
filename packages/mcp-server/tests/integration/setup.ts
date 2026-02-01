@@ -4,7 +4,6 @@
  * Provides test utilities for integration testing with real database and filesystem
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
@@ -14,6 +13,7 @@ import {
   SkillRepository,
   SearchService,
   SkillsmithApiClient,
+  type DatabaseType,
 } from '@skillsmith/core'
 import { seedTestSkills } from './fixtures/test-skills.js'
 

@@ -10,7 +10,7 @@
  * - Search caching
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import type {
   Skill,
   SearchOptions,

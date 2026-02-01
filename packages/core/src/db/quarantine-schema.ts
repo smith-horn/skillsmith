@@ -13,7 +13,7 @@
  * - LOW_QUALITY: Can import with reduced quality score
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from './database-interface.js'
 
 /**
  * Severity levels for quarantined skills

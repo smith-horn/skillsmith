@@ -3,7 +3,8 @@
  * Persistent cache layer with configurable TTL
  */
 
-import Database from 'better-sqlite3'
+import type { Database, Statement } from '../db/database-interface.js'
+import { createDatabaseSync } from '../db/createDatabase.js'
 import type { SearchResult, SearchCacheEntry, CacheStats } from './lru.js'
 import { isValidCacheKey } from './CacheEntry.js'
 
@@ -13,23 +14,24 @@ export interface L2CacheOptions {
 }
 
 export class L2Cache {
-  private db: Database.Database
+  private db: Database
   private readonly ttlSeconds: number
   private hits = 0
   private misses = 0
 
   // Prepared statements (created once, reused for performance)
+  // Type parameter represents the return type of get()/all() queries
   private stmts: {
-    get: Database.Statement<[string, number]>
-    set: Database.Statement<[string, string, number, number, number]>
-    has: Database.Statement<[string, number]>
-    delete: Database.Statement<[string]>
-    prune: Database.Statement<[number]>
-    stats: Database.Statement<[number]>
+    get: Statement<{ results_json: string; total_count: number; created_at: number }>
+    set: Statement<unknown>
+    has: Statement<{ '1': number }>
+    delete: Statement<unknown>
+    prune: Statement<unknown>
+    stats: Statement<{ total: number; expired: number }>
   }
 
   constructor(options: L2CacheOptions) {
-    this.db = new Database(options.dbPath)
+    this.db = createDatabaseSync(options.dbPath)
     this.ttlSeconds = options.ttlSeconds ?? 3600 // 1 hour default
     this.initTable()
     this.stmts = this.prepareStatements()
@@ -52,29 +54,29 @@ export class L2Cache {
     `)
   }
 
-  private prepareStatements() {
+  private prepareStatements(): typeof this.stmts {
     return {
-      get: this.db.prepare(`
+      get: this.db.prepare<{ results_json: string; total_count: number; created_at: number }>(`
         SELECT results_json, total_count, created_at
         FROM search_cache
         WHERE cache_key = ? AND expires_at > ?
       `),
-      set: this.db.prepare(`
+      set: this.db.prepare<unknown>(`
         INSERT OR REPLACE INTO search_cache
         (cache_key, results_json, total_count, created_at, expires_at)
         VALUES (?, ?, ?, ?, ?)
       `),
-      has: this.db.prepare(`
+      has: this.db.prepare<{ '1': number }>(`
         SELECT 1 FROM search_cache
         WHERE cache_key = ? AND expires_at > ?
       `),
-      delete: this.db.prepare(`
+      delete: this.db.prepare<unknown>(`
         DELETE FROM search_cache WHERE cache_key = ?
       `),
-      prune: this.db.prepare(`
+      prune: this.db.prepare<unknown>(`
         DELETE FROM search_cache WHERE expires_at <= ?
       `),
-      stats: this.db.prepare(`
+      stats: this.db.prepare<{ total: number; expired: number }>(`
         SELECT
           COUNT(*) as total,
           SUM(CASE WHEN expires_at <= ? THEN 1 ELSE 0 END) as expired
@@ -175,15 +177,15 @@ export class L2Cache {
   getStats(): CacheStats & { expiredCount: number } {
     const total = this.hits + this.misses
     const now = Math.floor(Date.now() / 1000)
-    const counts = this.stmts.stats.get(now) as { total: number; expired: number }
+    const counts = this.stmts.stats.get(now)
 
     return {
       hits: this.hits,
       misses: this.misses,
       hitRate: total > 0 ? this.hits / total : 0,
-      size: counts.total - (counts.expired ?? 0),
+      size: (counts?.total ?? 0) - (counts?.expired ?? 0),
       maxSize: -1, // -1 indicates no limit for L2
-      expiredCount: counts.expired ?? 0,
+      expiredCount: counts?.expired ?? 0,
     }
   }
 

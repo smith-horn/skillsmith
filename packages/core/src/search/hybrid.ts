@@ -3,7 +3,8 @@
  * Combines FTS5 keyword search with vector similarity using RRF
  */
 
-import Database from 'better-sqlite3'
+import type { Database } from '../db/database-interface.js'
+import { createDatabaseSync } from '../db/createDatabase.js'
 import { EmbeddingService } from '../embeddings/index.js'
 import { TieredCache, L1Cache, type SearchResult } from '../cache/index.js'
 
@@ -58,7 +59,7 @@ function reciprocalRankFusion(
 }
 
 export class HybridSearch {
-  private db: Database.Database
+  private db: Database
   private embeddings: EmbeddingService
   private cache: TieredCache
   private readonly k: number
@@ -66,7 +67,7 @@ export class HybridSearch {
   private readonly semanticWeight: number
 
   constructor(options: HybridSearchOptions) {
-    this.db = new Database(options.dbPath)
+    this.db = createDatabaseSync(options.dbPath)
     this.embeddings = new EmbeddingService(options.dbPath)
     this.k = options.k ?? 60
     this.ftsWeight = options.ftsWeight ?? 0.5

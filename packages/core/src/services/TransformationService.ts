@@ -16,7 +16,7 @@
  * Part of the Skillsmith Optimization Layer.
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import { createHash } from 'crypto'
 import { CacheRepository } from '../repositories/CacheRepository.js'
 import { analyzeSkill, quickTransformCheck, type SkillAnalysis } from './SkillAnalyzer.js'

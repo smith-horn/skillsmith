@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, writeFileSync, unlinkSync, rmSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { importToDatabase, saveReport } from '../../src/scripts/import-to-database.js'
-import { createDatabase } from '../../src/db/schema.js'
+import { createDatabase, openDatabase } from '../../src/db/schema.js'
 import { SkillRepository } from '../../src/repositories/SkillRepository.js'
 import { SearchService } from '../../src/services/SearchService.js'
 
@@ -251,7 +251,7 @@ describe('SMI-866: import-to-database', () => {
     it('should find skills by name via FTS5', async () => {
       await importToDatabase(TEST_INPUT, TEST_DB)
 
-      const db = (await import('better-sqlite3')).default(TEST_DB)
+      const db = openDatabase(TEST_DB)
       const searchService = new SearchService(db)
 
       const results = searchService.search({
@@ -268,7 +268,7 @@ describe('SMI-866: import-to-database', () => {
     it('should find skills by description via FTS5', async () => {
       await importToDatabase(TEST_INPUT, TEST_DB)
 
-      const db = (await import('better-sqlite3')).default(TEST_DB)
+      const db = openDatabase(TEST_DB)
       const searchService = new SearchService(db)
 
       const results = searchService.search({
@@ -284,7 +284,7 @@ describe('SMI-866: import-to-database', () => {
     it('should find skills by tags via FTS5', async () => {
       await importToDatabase(TEST_INPUT, TEST_DB)
 
-      const db = (await import('better-sqlite3')).default(TEST_DB)
+      const db = openDatabase(TEST_DB)
       const searchService = new SearchService(db)
 
       const results = searchService.search({
@@ -300,7 +300,7 @@ describe('SMI-866: import-to-database', () => {
     it('should return results with BM25 ranking', async () => {
       await importToDatabase(TEST_INPUT, TEST_DB)
 
-      const db = (await import('better-sqlite3')).default(TEST_DB)
+      const db = openDatabase(TEST_DB)
       const searchService = new SearchService(db)
 
       const results = searchService.search({
@@ -348,7 +348,7 @@ describe('SMI-866: import-to-database', () => {
       expect(report.stats.qualityScoresCalculated).toBe(3) // All 3 should have calculated scores
 
       // Verify scores are present in database
-      const db = (await import('better-sqlite3')).default(TEST_DB)
+      const db = openDatabase(TEST_DB)
       const repo = new SkillRepository(db)
       const allSkills = repo.findAll({ limit: 10 })
 
@@ -392,7 +392,7 @@ describe('SMI-866: import-to-database', () => {
       expect(report.errors).toHaveLength(0)
 
       // Verify both old and new skills exist
-      const newDb = (await import('better-sqlite3')).default(TEST_DB)
+      const newDb = openDatabase(TEST_DB)
       const newRepo = new SkillRepository(newDb)
       const total = newRepo.count()
 

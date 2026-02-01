@@ -9,7 +9,8 @@
  * - Secure path validation to prevent path traversal attacks
  */
 
-import Database from 'better-sqlite3'
+import type { Database } from '../db/database-interface.js'
+import { createDatabaseSync } from '../db/createDatabase.js'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
 import { existsSync, mkdirSync } from 'fs'
@@ -31,7 +32,7 @@ const ANALYTICS_DB = join(ANALYTICS_DIR, 'analytics.db')
  * SQLite storage for skill usage analytics
  */
 export class AnalyticsStorage {
-  private db: Database.Database
+  private db: Database
 
   /**
    * Create an analytics storage instance
@@ -71,7 +72,7 @@ export class AnalyticsStorage {
       }
     }
 
-    this.db = new Database(resolvedPath)
+    this.db = createDatabaseSync(resolvedPath)
     this.initSchema()
   }
 

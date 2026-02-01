@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from 'crypto'
-import type { Database as BetterSqliteDatabase } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import { createLogger } from '../utils/logger.js'
 import type { StripeClient } from './StripeClient.js'
 import type {
@@ -64,7 +64,7 @@ const logger = createLogger('BillingService')
  */
 export class BillingService {
   private readonly stripe: StripeClient
-  private readonly db: BetterSqliteDatabase
+  private readonly db: DatabaseType
 
   constructor(config: BillingServiceConfig) {
     this.stripe = config.stripeClient

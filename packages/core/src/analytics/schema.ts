@@ -264,7 +264,7 @@ CREATE INDEX IF NOT EXISTS idx_invoices_subscription ON invoices(subscription_id
 /**
  * Apply analytics schema to a database
  */
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 
 export function initializeAnalyticsSchema(db: DatabaseType): void {
   db.exec(ANALYTICS_SCHEMA)

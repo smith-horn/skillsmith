@@ -9,13 +9,14 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import Database from 'better-sqlite3'
+import { createDatabaseSync } from '../../src/db/createDatabase.js'
+import type { Database } from '../../src/db/database-interface.js'
 import { MetricsAggregator } from '../../src/analytics/metrics-aggregator.js'
 import type { AggregationPeriod } from '../../src/analytics/metrics-aggregator.js'
 import type { SkillUsageOutcome } from '../../src/analytics/types.js'
 
 describe('MetricsAggregator', () => {
-  let db: Database.Database
+  let db: Database
   let aggregator: MetricsAggregator
 
   // Helper to insert test events
@@ -37,7 +38,7 @@ describe('MetricsAggregator', () => {
 
   beforeEach(() => {
     // Create in-memory database with schema
-    db = new Database(':memory:')
+    db = createDatabaseSync(':memory:')
     db.exec(`
       CREATE TABLE usage_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

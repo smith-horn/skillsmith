@@ -8,7 +8,7 @@
  * - Batch operations for efficient bulk indexing
  */
 
-import type { Database as DatabaseType, Statement } from 'better-sqlite3'
+import type { Database as DatabaseType, Statement } from '../db/database-interface.js'
 import { randomUUID } from 'crypto'
 import type { Skill, TrustTier } from '../types/skill.js'
 import type { SkillMetadata } from '../indexer/GitHubIndexer.js'

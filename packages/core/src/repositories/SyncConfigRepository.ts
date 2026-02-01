@@ -4,7 +4,7 @@
  * Handles the singleton sync_config record for registry sync settings.
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 
 /**
  * Sync frequency options

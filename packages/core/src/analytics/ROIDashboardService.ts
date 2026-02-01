@@ -8,7 +8,7 @@
  * - Export to JSON/CSV (PDF planned for future)
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import { AnalyticsRepository } from './AnalyticsRepository.js'
 import type { ROIDashboard, ROIMetrics, ExportFormat, UsageEvent } from './types.js'
 

@@ -8,7 +8,7 @@
  * @see migration-types.ts for type definitions
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from './database-interface.js'
 import { SCHEMA_VERSION, getSchemaVersion, runMigrationsSafe, MIGRATIONS } from './schema.js'
 
 // Re-export types

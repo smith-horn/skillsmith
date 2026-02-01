@@ -9,10 +9,10 @@
  * - Indexes for common query patterns
  */
 
-import Database from 'better-sqlite3'
-import type { Database as BetterSqliteDatabase } from 'better-sqlite3'
+import type { Database } from './database-interface.js'
+import { createDatabaseSync } from './createDatabase.js'
 
-export type DatabaseType = BetterSqliteDatabase
+export type DatabaseType = Database
 
 export const SCHEMA_VERSION = 4
 
@@ -320,7 +320,7 @@ export function runMigrations(db: DatabaseType): number {
  * This initializes the full schema - use openDatabase for existing databases
  */
 export function createDatabase(path: string = ':memory:'): DatabaseType {
-  const db = new Database(path)
+  const db = createDatabaseSync(path)
 
   // Enable foreign keys
   db.pragma('foreign_keys = ON')
@@ -336,7 +336,7 @@ export function createDatabase(path: string = ':memory:'): DatabaseType {
  * Use this for databases that may have been created by different versions
  */
 export function openDatabase(path: string): DatabaseType {
-  const db = new Database(path)
+  const db = createDatabaseSync(path)
 
   // Enable foreign keys
   db.pragma('foreign_keys = ON')
@@ -411,4 +411,68 @@ export function runMigrationsSafe(db: DatabaseType): number {
  */
 export function closeDatabase(db: DatabaseType): void {
   db.close()
+}
+
+// ============================================================================
+// SMI-2206: Async Schema Functions with WASM Fallback
+// ============================================================================
+
+import { createDatabaseAsync as createDatabaseAsyncFactory } from './createDatabase.js'
+
+/**
+ * Create a new database connection asynchronously with WASM fallback
+ * This initializes the full schema - use openDatabaseAsync for existing databases
+ *
+ * @param path - Path to database file, or ':memory:' for in-memory
+ * @returns Promise resolving to initialized database
+ * @throws Error if database creation fails (e.g., invalid path, permission denied)
+ * @throws Error if WASM module fails to load when native SQLite is unavailable
+ */
+export async function createDatabaseAsync(path: string = ':memory:'): Promise<DatabaseType> {
+  const db = await createDatabaseAsyncFactory(path)
+
+  // Enable foreign keys
+  db.pragma('foreign_keys = ON')
+
+  // Initialize schema
+  initializeSchema(db)
+
+  return db
+}
+
+/**
+ * Open an existing database asynchronously with WASM fallback
+ * Runs any pending migrations
+ *
+ * @param path - Path to existing database file
+ * @returns Promise resolving to database with migrations applied
+ * @throws Error if file does not exist (SQLITE_CANTOPEN)
+ * @throws Error if WASM module fails to load when native SQLite is unavailable
+ */
+export async function openDatabaseAsync(path: string): Promise<DatabaseType> {
+  const db = await createDatabaseAsyncFactory(path, { fileMustExist: true })
+
+  // Enable foreign keys
+  db.pragma('foreign_keys = ON')
+
+  // Check if schema_version table exists
+  const hasSchemaVersion = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'")
+    .get()
+
+  if (!hasSchemaVersion) {
+    // Database has no version tracking - assume it's a legacy import
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+    `)
+  }
+
+  // Run pending migrations safely
+  runMigrationsSafe(db)
+
+  return db
 }

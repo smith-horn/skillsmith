@@ -11,7 +11,7 @@ import { AuditLogger } from '../../../src/security/AuditLogger.js'
 import { RateLimiter, RATE_LIMIT_PRESETS } from '../../../src/security/index.js'
 import { validateUrl } from '../../../src/validation/index.js'
 import { validateDbPathOrThrow } from '../../../src/security/pathValidation.js'
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../../../src/db/database-interface.js'
 
 describe('E2E: Security Integration Tests', () => {
   describe('SSRF Prevention', () => {

@@ -6,8 +6,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import Database from 'better-sqlite3'
-import type { Database as DatabaseType } from 'better-sqlite3'
+import { createDatabaseSync } from '../src/db/createDatabase.js'
+import type { Database } from '../src/db/database-interface.js'
 import { initializeAnalyticsSchema } from '../src/analytics/schema.js'
 import { AnalyticsRepository } from '../src/analytics/AnalyticsRepository.js'
 import type { UsageEventInput, ExperimentInput, OutcomeInput } from '../src/analytics/types.js'
@@ -20,12 +20,12 @@ import {
 } from './test-utils.js'
 
 describe('AnalyticsRepository', () => {
-  let db: DatabaseType
+  let db: Database
   let repo: AnalyticsRepository
 
   beforeEach(() => {
     setupFakeTimers()
-    db = new Database(':memory:')
+    db = createDatabaseSync(':memory:')
     initializeAnalyticsSchema(db)
     repo = new AnalyticsRepository(db)
   })

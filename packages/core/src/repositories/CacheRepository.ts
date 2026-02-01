@@ -2,7 +2,7 @@
  * SMI-578: CacheRepository - Cache storage for search results and API responses
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import type { CacheEntry } from '../types/skill.js'
 
 interface CacheRow {
