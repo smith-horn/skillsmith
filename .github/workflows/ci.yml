@@ -329,14 +329,13 @@ jobs:
           docker save skillsmith-ci:${{ github.sha }} | gzip > /tmp/docker-cache/skillsmith-ci.tar.gz
           echo "✓ Docker image saved to cache"
 
+      # SMI-2240: Always save the re-tagged image from memory, not the cached tarball
+      # The cached tarball contains the OLD commit SHA tag, causing downstream jobs to fail
+      # with "pull access denied" when they try to run with the current SHA
       - name: Save Docker image for artifact
         run: |
-          # Always save to artifact location (either from cache or fresh build)
-          if [ -f /tmp/docker-cache/skillsmith-ci.tar.gz ]; then
-            cp /tmp/docker-cache/skillsmith-ci.tar.gz /tmp/skillsmith-ci.tar.gz
-          else
-            docker save skillsmith-ci:${{ github.sha }} | gzip > /tmp/skillsmith-ci.tar.gz
-          fi
+          docker save skillsmith-ci:${{ github.sha }} | gzip > /tmp/skillsmith-ci.tar.gz
+          echo "✓ Saved image with tag: ${{ github.sha }}"
 
       - name: Upload Docker image artifact
         uses: actions/upload-artifact@v4
@@ -487,23 +486,51 @@ jobs:
 
       - name: Download Docker image
         uses: actions/download-artifact@v4
+        id: download-docker
+        continue-on-error: true
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
         uses: actions/download-artifact@v4
+        id: download-modules
+        continue-on-error: true
         with:
           name: node-modules
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
-        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+        id: load-image
+        if: steps.download-docker.outcome == 'success'
+        continue-on-error: true
+        run: |
+          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+          fi
+
+      # SMI-2240: Fallback to native npm ci when Docker unavailable
+      - name: Setup Node.js (fallback)
+        if: steps.load-image.outcome != 'success'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies (fallback)
+        if: steps.load-image.outcome != 'success'
+        run: npm ci
 
       - name: Extract node_modules
+        if: steps.load-image.outcome == 'success'
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
 
-      - name: Run ESLint in Docker
+      - name: Run ESLint (Docker)
+        if: steps.load-image.outcome == 'success'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
@@ -511,13 +538,22 @@ jobs:
             skillsmith-ci:${{ github.sha }} \
             npm run lint
 
-      - name: Check formatting in Docker
+      - name: Run ESLint (fallback)
+        if: steps.load-image.outcome != 'success'
+        run: npm run lint
+
+      - name: Check formatting (Docker)
+        if: steps.load-image.outcome == 'success'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
             npm run format:check
+
+      - name: Check formatting (fallback)
+        if: steps.load-image.outcome != 'success'
+        run: npm run format:check
 
   typecheck:
     name: Type Check
@@ -544,20 +580,47 @@ jobs:
 
       - name: Download Docker image
         uses: actions/download-artifact@v4
+        id: download-docker
+        continue-on-error: true
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
         uses: actions/download-artifact@v4
+        id: download-modules
+        continue-on-error: true
         with:
           name: node-modules
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
-        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+        id: load-image
+        if: steps.download-docker.outcome == 'success'
+        continue-on-error: true
+        run: |
+          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+          fi
+
+      # SMI-2240: Fallback to native npm ci when Docker unavailable
+      - name: Setup Node.js (fallback)
+        if: steps.load-image.outcome != 'success'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies (fallback)
+        if: steps.load-image.outcome != 'success'
+        run: npm ci
 
       - name: Extract node_modules
+        if: steps.load-image.outcome == 'success'
         run: |
           # Extract to workspace - tar will merge with existing packages/ directory
           tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
@@ -575,13 +638,18 @@ jobs:
             tar -tzf /tmp/node_modules.tar.gz | grep "enterprise" | head -10 || echo "No enterprise in tar"
           fi
 
-      - name: Run TypeScript type check in Docker
+      - name: Run TypeScript type check (Docker)
+        if: steps.load-image.outcome == 'success'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
             npm run typecheck
+
+      - name: Run TypeScript type check (fallback)
+        if: steps.load-image.outcome != 'success'
+        run: npm run typecheck
 
   # SMI-2192: Matrix-based test execution for affected packages
   # Runs tests in parallel per package, only for packages affected by changes
@@ -617,20 +685,47 @@ jobs:
 
       - name: Download Docker image
         uses: actions/download-artifact@v4
+        id: download-docker
+        continue-on-error: true
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
         uses: actions/download-artifact@v4
+        id: download-modules
+        continue-on-error: true
         with:
           name: node-modules
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
-        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+        id: load-image
+        if: steps.download-docker.outcome == 'success'
+        continue-on-error: true
+        run: |
+          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+          fi
+
+      # SMI-2240: Fallback to native npm ci when Docker unavailable
+      - name: Setup Node.js (fallback)
+        if: steps.load-image.outcome != 'success'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies (fallback)
+        if: steps.load-image.outcome != 'success'
+        run: npm ci
 
       - name: Extract node_modules
+        if: steps.load-image.outcome == 'success'
         run: |
           # Extract to workspace - tar will merge with existing packages/ directory
           tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
@@ -644,7 +739,8 @@ jobs:
             echo "✗ AWS SDK NOT found in packages/enterprise/node_modules"
           fi
 
-      - name: Build project
+      - name: Build project (Docker)
+        if: steps.load-image.outcome == 'success'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
@@ -652,7 +748,12 @@ jobs:
             skillsmith-ci:${{ github.sha }} \
             npm run build
 
-      - name: Run tests for ${{ matrix.package }}
+      - name: Build project (fallback)
+        if: steps.load-image.outcome != 'success'
+        run: npm run build
+
+      - name: Run tests for ${{ matrix.package }} (Docker)
+        if: steps.load-image.outcome == 'success'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
@@ -660,14 +761,22 @@ jobs:
             skillsmith-ci:${{ github.sha }} \
             npm test --workspace=packages/${{ matrix.package }}
 
-      - name: Generate coverage for ${{ matrix.package }}
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Run tests for ${{ matrix.package }} (fallback)
+        if: steps.load-image.outcome != 'success'
+        run: npm test --workspace=packages/${{ matrix.package }}
+
+      - name: Generate coverage for ${{ matrix.package }} (Docker)
+        if: steps.load-image.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
             npm run test:coverage --workspace=packages/${{ matrix.package }} || true
+
+      - name: Generate coverage for ${{ matrix.package }} (fallback)
+        if: steps.load-image.outcome != 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: npm run test:coverage --workspace=packages/${{ matrix.package }} || true
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -706,8 +815,15 @@ jobs:
           name: node-modules
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
-        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+        run: |
+          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+          fi
 
       - name: Extract node_modules
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
@@ -764,8 +880,15 @@ jobs:
           name: node-modules
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
-        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+        run: |
+          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+          fi
 
       - name: Extract node_modules
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
@@ -854,8 +977,15 @@ jobs:
           name: node-modules
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
-        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+        run: |
+          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+          fi
 
       - name: Extract node_modules
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
@@ -936,8 +1066,15 @@ jobs:
           name: node-modules
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
-        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+        run: |
+          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+          fi
 
       - name: Extract node_modules
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
@@ -998,9 +1135,16 @@ jobs:
           name: node-modules
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
         if: steps.changes.outputs.website == 'true'
-        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+        run: |
+          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+          fi
 
       - name: Extract node_modules
         if: steps.changes.outputs.website == 'true'
@@ -1071,8 +1215,15 @@ jobs:
           name: node-modules
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
-        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+        run: |
+          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+          fi
 
       - name: Extract node_modules
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
@@ -1129,33 +1280,65 @@ jobs:
 
       - name: Download Docker image
         uses: actions/download-artifact@v4
+        id: download-docker
+        continue-on-error: true
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
         uses: actions/download-artifact@v4
+        id: download-modules
+        continue-on-error: true
         with:
           name: node-modules
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
-        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+        id: load-image
+        if: steps.download-docker.outcome == 'success'
+        continue-on-error: true
+        run: |
+          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+          fi
+
+      # SMI-2240: Fallback to native npm ci when Docker unavailable
+      - name: Setup Node.js (fallback)
+        if: steps.load-image.outcome != 'success'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies (fallback)
+        if: steps.load-image.outcome != 'success'
+        run: npm ci
 
       - name: Extract node_modules
+        if: steps.load-image.outcome == 'success'
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
 
       # SMI-970: This build is intentional, not a duplicate
       # The Test job builds for test execution, but that output is discarded
       # when the job ends. GitHub Actions jobs have isolated workspaces, so
       # we must rebuild here to generate artifacts for upload.
-      - name: Build all packages in Docker
+      - name: Build all packages (Docker)
+        if: steps.load-image.outcome == 'success'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
             npm run build
+
+      - name: Build all packages (fallback)
+        if: steps.load-image.outcome != 'success'
+        run: npm run build
 
       - name: Copy build artifacts
         run: |
@@ -1207,8 +1390,15 @@ jobs:
           name: node-modules
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
-        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+        run: |
+          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+          fi
 
       - name: Extract node_modules
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
