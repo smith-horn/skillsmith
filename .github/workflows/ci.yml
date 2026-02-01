@@ -61,7 +61,8 @@ jobs:
           fi
 
   # SMI-2187: Classify changes to determine which jobs to run
-  # Outputs tier (docs/config/deps/code) and skip flags for downstream jobs
+  # SMI-2190/2191: Detect affected packages for matrix-based testing
+  # Outputs tier (docs/config/deps/code), skip flags, and affected packages
   classify:
     name: Classify Changes
     runs-on: ubuntu-latest
@@ -71,6 +72,9 @@ jobs:
       skip_docker: ${{ steps.classify.outputs.skip_docker }}
       skip_tests: ${{ steps.classify.outputs.skip_tests }}
       changed_count: ${{ steps.classify.outputs.changed_count }}
+      affected_packages: ${{ steps.affected.outputs.affected_packages || '[]' }}
+      affected_dirs: ${{ steps.affected.outputs.affected_dirs || '[]' }}
+      affected_count: ${{ steps.affected.outputs.affected_count || '0' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -88,6 +92,21 @@ jobs:
       - name: Classify changes
         id: classify
         run: npx tsx scripts/ci/classify-changes.ts
+
+      # SMI-2190: Detect which packages are affected by changes
+      - name: Detect affected packages
+        id: affected
+        if: steps.classify.outputs.tier == 'code' || steps.classify.outputs.tier == 'deps'
+        run: |
+          # Get changed files from git
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          else
+            CHANGED_FILES=$(git diff --name-only HEAD~1)
+          fi
+
+          # Detect affected packages (outputs written to GITHUB_OUTPUT by script)
+          echo "$CHANGED_FILES" | npx tsx scripts/ci/detect-affected.ts > /dev/null
 
   # SMI-1300: Validate package configurations before expensive Docker build
   # Catches scope mismatches for GitHub Packages early
@@ -434,13 +453,22 @@ jobs:
             skillsmith-ci:${{ github.sha }} \
             npm run typecheck
 
+  # SMI-2192: Matrix-based test execution for affected packages
+  # Runs tests in parallel per package, only for packages affected by changes
+  # When affected_dirs is empty (docs-only), this job is skipped entirely
   test:
-    name: Test
+    name: Test (${{ matrix.package }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     needs: [docker-build, classify]
-    # Skip tests if classifier determines no code changes
-    if: needs.classify.outputs.skip_tests != 'true'
+    # Skip tests if classifier determines no code changes OR no affected packages
+    if: |
+      needs.classify.outputs.skip_tests != 'true' &&
+      needs.classify.outputs.affected_count != '0'
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJson(needs.classify.outputs.affected_dirs) }}
 
     steps:
       - name: Checkout
@@ -484,31 +512,91 @@ jobs:
             ls ${{ github.workspace }}/packages/enterprise/node_modules/@aws-sdk/ | head -5
           else
             echo "✗ AWS SDK NOT found in packages/enterprise/node_modules"
-            echo "Contents of packages/enterprise/:"
-            ls -la ${{ github.workspace }}/packages/enterprise/ || true
-            echo "Checking if node_modules exists:"
-            ls -la ${{ github.workspace }}/packages/enterprise/node_modules/ 2>/dev/null | head -10 || echo "No node_modules dir"
           fi
 
-      - name: Run tests with coverage in Docker
+      - name: Build project
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            sh -c "npm run build && npm run test:coverage"
+            npm run build
 
-      - name: Copy coverage from container
+      - name: Run tests for ${{ matrix.package }}
         run: |
-          cp coverage/coverage-final.json coverage.json 2>/dev/null || true
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm test --workspace=packages/${{ matrix.package }}
+
+      - name: Generate coverage for ${{ matrix.package }}
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run test:coverage --workspace=packages/${{ matrix.package }} || true
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
-          files: ./coverage.json
+          files: ./packages/${{ matrix.package }}/coverage/coverage-final.json
+          flags: ${{ matrix.package }}
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Run root-level tests (scripts/tests, supabase/functions) when affected
+  # These tests don't belong to any package but need to run
+  test-root:
+    name: Test (root)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [docker-build, classify]
+    # Run when code/deps tier and changes include non-package files
+    if: |
+      needs.classify.outputs.skip_tests != 'true' &&
+      (needs.classify.outputs.tier == 'code' || needs.classify.outputs.tier == 'deps')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Download node_modules
+        uses: actions/download-artifact@v4
+        with:
+          name: node-modules
+          path: /tmp
+
+      - name: Load Docker image
+        run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+
+      - name: Extract node_modules
+        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+
+      - name: Build project
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run build
+
+      - name: Run root-level tests
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npx vitest run scripts/tests supabase/functions --passWithNoTests
 
   # Security audit always runs regardless of change classification.
   # Rationale: Security vulnerabilities can be introduced by any change type,
