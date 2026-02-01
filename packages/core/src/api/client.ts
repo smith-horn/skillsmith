@@ -230,8 +230,8 @@ export class SkillsmithApiClient {
   private async request<T>(
     endpoint: string,
     options: RequestInit = {},
-    // Zod v4: simplified type signature (ZodTypeDef removed)
-    schema?: z.ZodType<ApiResponse<T>>
+    // SMI-2167: Use structural type for Zod v3/v4 compatibility
+    schema?: { safeParse(data: unknown): z.SafeParseReturnType<unknown, ApiResponse<T>> }
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseUrl}${endpoint}`
     let lastError: Error | undefined
