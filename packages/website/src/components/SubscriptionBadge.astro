@@ -1,0 +1,100 @@
+---
+/**
+ * SubscriptionBadge Component
+ * SMI-2153: Distinct visual language from TrustTier badges
+ * Uses WCAG AA compliant colors
+ *
+ * Subscription tiers represent payment/plan levels (community, individual, team, enterprise)
+ * while TrustTier badges represent skill verification status (verified, community, experimental).
+ */
+interface Props {
+  tier: 'community' | 'individual' | 'team' | 'enterprise';
+  size?: 'sm' | 'md';
+  class?: string;
+}
+
+const { tier, size = 'md', class: className = '' } = Astro.props;
+
+const tierConfig = {
+  community: {
+    label: 'Community',
+    class: 'subscription-badge--community',
+  },
+  individual: {
+    label: 'Individual',
+    class: 'subscription-badge--individual',
+  },
+  team: {
+    label: 'Team',
+    class: 'subscription-badge--team',
+  },
+  enterprise: {
+    label: 'Enterprise',
+    class: 'subscription-badge--enterprise',
+  },
+};
+
+const config = tierConfig[tier] || tierConfig.community;
+
+const sizeStyles = {
+  sm: 'subscription-badge--sm',
+  md: 'subscription-badge--md',
+};
+---
+
+<span class:list={['subscription-badge', config.class, sizeStyles[size], className]}>
+  {config.label}
+</span>
+
+<style>
+  .subscription-badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 9999px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+  }
+
+  /* Size variants */
+  .subscription-badge--sm {
+    padding: 0.125rem 0.5rem;
+    font-size: 0.625rem;
+  }
+
+  .subscription-badge--md {
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+  }
+
+  /* Community - Gray (neutral) */
+  .subscription-badge--community {
+    background: #374151;
+    color: #d1d5db;
+  }
+
+  /* Individual - Purple gradient */
+  .subscription-badge--individual {
+    background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+    color: white;
+  }
+
+  /* Team - Green (not coral to avoid brand confusion) */
+  .subscription-badge--team {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+  }
+
+  /* Enterprise - Gold/Amber with dark text for contrast */
+  .subscription-badge--enterprise {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    color: #111827;
+  }
+
+  @media (max-width: 640px) {
+    .subscription-badge--md {
+      padding: 0.125rem 0.5rem;
+      font-size: 0.625rem;
+    }
+  }
+</style>

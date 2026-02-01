@@ -296,6 +296,62 @@ Once configured, you can ask Claude:
 
 ---
 
+## MCP Registry (SMI-2158)
+
+Skillsmith is published to the official MCP Registry for discovery by Claude CoWork and other MCP clients.
+
+### Registry Listing
+
+- **Registry**: [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/)
+- **Server Name**: `io.github.smith-horn/skillsmith`
+- **npm Package**: `@skillsmith/mcp-server`
+
+Verify listing:
+```bash
+curl -s "https://registry.modelcontextprotocol.io/v0.1/servers?search=skillsmith" | jq '.servers[0].server.name'
+```
+
+### Publishing to MCP Registry
+
+The MCP Registry is updated automatically when `@skillsmith/mcp-server` is published via the CI workflow. For manual publishing:
+
+```bash
+# 1. Install mcp-publisher
+brew install mcp-publisher
+
+# 2. Authenticate with GitHub (org membership must be public)
+mcp-publisher login github
+
+# 3. Publish from packages/mcp-server/
+cd packages/mcp-server
+mcp-publisher publish
+```
+
+### Version Sync Requirement
+
+When bumping the npm version, **both files must be updated**:
+
+| File | Field |
+|------|-------|
+| `packages/mcp-server/package.json` | `version` |
+| `packages/mcp-server/server.json` | `version` AND `packages[0].version` |
+
+### CI Automation
+
+The `publish.yml` workflow automatically publishes to MCP Registry after npm publish. Requires:
+
+| Secret | Purpose |
+|--------|---------|
+| `MCP_REGISTRY_TOKEN` | JWT token from `mcp-publisher login` |
+
+To generate token for CI:
+```bash
+mcp-publisher login github
+cat ~/.mcpregistry_registry_token  # Copy this to GitHub Secrets
+```
+
+---
+
 ## Developer Guide
 
 ### Build Commands
