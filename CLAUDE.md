@@ -171,6 +171,22 @@ If required checks are stuck or GitHub Actions is down:
 - **Cause**: Required check name no longer exists in workflows
 - **Fix**: Use emergency bypass, then update branch protection configuration
 
+#### Configuration Drift Detection
+
+Validate that GitHub branch protection matches the IaC file:
+
+```bash
+./scripts/validate-branch-protection.sh
+```
+
+#### Applying Changes
+
+To apply branch protection from the IaC file (after modifying `.github/branch-protection.json`):
+
+```bash
+gh api repos/Smith-Horn/skillsmith/branches/main/protection -X PUT --input .github/branch-protection.json
+```
+
 ---
 
 ## Git-Crypt (Encrypted Documentation)
