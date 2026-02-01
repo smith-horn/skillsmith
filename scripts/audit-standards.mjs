@@ -531,6 +531,52 @@ if (existsSync(MIGRATIONS_DIR)) {
   warn('supabase/migrations directory not found - skipping migration checks')
 }
 
+// 12. Exact Dependency Versions (SMI-2162)
+console.log(`\n${BOLD}12. Exact Dependency Versions (SMI-2162)${RESET}`)
+
+const PACKAGES_DIR = 'packages'
+if (existsSync(PACKAGES_DIR)) {
+  const packageDirs = readdirSync(PACKAGES_DIR).filter((d) => {
+    const pkgPath = join(PACKAGES_DIR, d, 'package.json')
+    return existsSync(pkgPath)
+  })
+
+  const violations = []
+
+  for (const dir of packageDirs) {
+    const pkgPath = join(PACKAGES_DIR, dir, 'package.json')
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
+      const deps = pkg.dependencies || {}
+
+      for (const [name, version] of Object.entries(deps)) {
+        if (typeof version === 'string' && (version.startsWith('^') || version.startsWith('~'))) {
+          violations.push({ package: dir, dep: name, version })
+        }
+      }
+    } catch (e) {
+      warn(`Could not parse ${pkgPath}: ${e.message}`)
+    }
+  }
+
+  if (violations.length === 0) {
+    pass('All production dependencies use exact versions')
+  } else {
+    fail(
+      `${violations.length} dependencies use semver ranges (^ or ~)`,
+      'Pin to exact versions for reproducibility'
+    )
+    violations.slice(0, 5).forEach(({ package: pkg, dep, version }) => {
+      console.log(`    packages/${pkg}: ${dep}@${version}`)
+    })
+    if (violations.length > 5) {
+      console.log(`    ... and ${violations.length - 5} more`)
+    }
+  }
+} else {
+  warn('packages directory not found - skipping dependency check')
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)

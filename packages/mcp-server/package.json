@@ -27,7 +27,7 @@
   "devDependencies": {
     "tsx": "4.21.0",
     "vitest": "4.0.16",
-    "zod": "^3.25.0"
+    "zod": "3.25.76"
   },
   "peerDependencies": {
     "@skillsmith/enterprise": "*"

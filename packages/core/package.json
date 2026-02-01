@@ -57,7 +57,7 @@
     "better-sqlite3": "12.6.2",
     "lru-cache": "10.4.3",
     "posthog-node": "5.21.0",
-    "stripe": "^20.2.0",
+    "stripe": "20.3.0",
     "typescript": "5.9.3",
     "zod": "4.2.1"
   },

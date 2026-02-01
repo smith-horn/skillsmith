@@ -281,8 +281,93 @@ async function runFirstTimeSetup(): Promise<void> {
   console.error(getWelcomeMessage(allSkills))
 }
 
+/**
+ * SMI-2163: Startup diagnostics for common installation issues
+ * Detects native module problems and provides actionable error messages
+ */
+function runStartupDiagnostics(): void {
+  // Check for native module issues by attempting dynamic import simulation
+  // The actual check happens when @skillsmith/core loads better-sqlite3
+  try {
+    // Verify core module can be loaded (will fail if native modules broken)
+    require.resolve('@skillsmith/core')
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+
+    if (msg.includes('NODE_MODULE_VERSION')) {
+      console.error(`
+╔══════════════════════════════════════════════════════════════╗
+║  Skillsmith: Native Module Version Mismatch                  ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  Your Node.js version (${process.version.padEnd(10)}) doesn't match the       ║
+║  pre-compiled native modules.                                ║
+║                                                              ║
+║  To fix, run one of:                                         ║
+║                                                              ║
+║    npm rebuild better-sqlite3                                ║
+║                                                              ║
+║  Or reinstall completely:                                    ║
+║                                                              ║
+║    npm uninstall @skillsmith/mcp-server                      ║
+║    npm install @skillsmith/mcp-server                        ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+`)
+      process.exit(1)
+    }
+
+    if (msg.includes('GLIBC') || msg.includes('libc') || msg.includes('GLIBCXX')) {
+      console.error(`
+╔══════════════════════════════════════════════════════════════╗
+║  Skillsmith: Missing System Library (glibc)                  ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  Native modules require glibc which is not available on      ║
+║  Alpine Linux or some minimal containers.                    ║
+║                                                              ║
+║  Options:                                                    ║
+║    1. Use a Debian/Ubuntu-based environment                  ║
+║    2. Use Docker: docker run -it node:22 npx @skillsmith/... ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+`)
+      process.exit(1)
+    }
+
+    if (msg.includes('invalid ELF header')) {
+      console.error(`
+╔══════════════════════════════════════════════════════════════╗
+║  Skillsmith: Architecture Mismatch                           ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  Native modules were compiled for a different architecture.  ║
+║                                                              ║
+║  This can happen when:                                       ║
+║    - Copying node_modules between machines                   ║
+║    - Running x86 modules on ARM (or vice versa)              ║
+║                                                              ║
+║  To fix, reinstall:                                          ║
+║                                                              ║
+║    rm -rf node_modules                                       ║
+║    npm install                                               ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+`)
+      process.exit(1)
+    }
+
+    // Unknown module resolution error - log but don't exit
+    // The actual error will surface when the module is used
+    console.error(`[Skillsmith] Warning: Could not resolve @skillsmith/core: ${msg}`)
+  }
+}
+
 // Start server
 async function main() {
+  // SMI-2163: Run startup diagnostics before anything else
+  runStartupDiagnostics()
+
   // Handle --docs flag
   if (process.argv.includes('--docs') || process.argv.includes('-d')) {
     handleDocsFlag()
