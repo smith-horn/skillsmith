@@ -56,6 +56,35 @@ jobs:
             gitleaks detect --source . --config .gitleaks.toml --verbose
           fi
 
+  # SMI-2187: Classify changes to determine which jobs to run
+  # Outputs tier (docs/config/deps/code) and skip flags for downstream jobs
+  classify:
+    name: Classify Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      tier: ${{ steps.classify.outputs.tier }}
+      skip_docker: ${{ steps.classify.outputs.skip_docker }}
+      skip_tests: ${{ steps.classify.outputs.skip_tests }}
+      changed_count: ${{ steps.classify.outputs.changed_count }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm install minimatch
+
+      - name: Classify changes
+        id: classify
+        run: npx tsx scripts/ci/classify-changes.ts
+
   # SMI-1300: Validate package configurations before expensive Docker build
   # Catches scope mismatches for GitHub Packages early
   # Only runs on upstream repo (smith-horn) - skipped on forks
@@ -170,9 +199,13 @@ jobs:
   # Build Docker image once, extract dependencies, use for all jobs
   # SMI-708: Optimized to extract node_modules once instead of running npm ci per job
   docker-build:
-    needs: [secret-scan, package-validation]
-    # Run if both jobs succeeded OR were skipped (package-validation skips on forks)
-    if: ${{ !cancelled() && needs.secret-scan.result == 'success' && (needs.package-validation.result == 'success' || needs.package-validation.result == 'skipped') }}
+    needs: [secret-scan, package-validation, classify]
+    # Run if: classifier says don't skip AND both jobs succeeded OR were skipped
+    if: |
+      !cancelled() &&
+      needs.classify.outputs.skip_docker != 'true' &&
+      needs.secret-scan.result == 'success' &&
+      (needs.package-validation.result == 'success' || needs.package-validation.result == 'skipped')
     name: Build Docker Image
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -280,7 +313,9 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: docker-build
+    needs: [docker-build, classify]
+    # Skip lint if classifier determines no code changes
+    if: needs.classify.outputs.skip_tests != 'true'
 
     steps:
       - name: Checkout
@@ -335,7 +370,9 @@ jobs:
     name: Type Check
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: docker-build
+    needs: [docker-build, classify]
+    # Skip typecheck if classifier determines no code changes
+    if: needs.classify.outputs.skip_tests != 'true'
 
     steps:
       - name: Checkout
@@ -397,7 +434,9 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: docker-build
+    needs: [docker-build, classify]
+    # Skip tests if classifier determines no code changes
+    if: needs.classify.outputs.skip_tests != 'true'
 
     steps:
       - name: Checkout
