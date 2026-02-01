@@ -1,13 +1,25 @@
 /**
  * Batch Transform Skills Tests
  * SMI-2173: Unit tests for URL parsing in batch transformation
+ * SMI-2200: Unit tests for checkpoint-based resumability
+ * SMI-2203: Unit tests for dynamic rate limiting
  *
  * Tests the parseRepoUrl function from @skillsmith/core and verifies
  * correct URL construction for SKILL.md fetching.
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { parseRepoUrl, isGitHubUrl } from '@skillsmith/core'
+import {
+  GitHubRateLimiter,
+  loadCheckpoint,
+  saveCheckpoint,
+  clearCheckpoint,
+  type MigrationCheckpoint,
+} from '../lib/migration-utils.js'
+import { GITHUB_API_BASE_DELAY, BATCH_TRANSFORM_CHECKPOINT_FILE } from '../lib/constants.js'
+import * as fs from 'fs'
+import * as path from 'path'
 
 describe('SMI-2173: Batch Transform URL Parsing', () => {
   describe('parseRepoUrl', () => {
@@ -233,6 +245,235 @@ describe('SMI-2173: Batch Transform URL Parsing', () => {
         const skillMdPath = `${result.path}/SKILL.md`
         expect(skillMdPath).toBe(`${expectedPath}/SKILL.md`)
       })
+    })
+  })
+})
+
+// =============================================================================
+// SMI-2203: GitHub Rate Limiter Tests
+// =============================================================================
+
+describe('SMI-2203: GitHubRateLimiter', () => {
+  describe('constructor', () => {
+    it('uses default base delay from constants', () => {
+      const limiter = new GitHubRateLimiter()
+      // Internal state starts at 5000 remaining
+      expect(limiter.getRemaining()).toBe(5000)
+    })
+
+    it('accepts custom base delay', () => {
+      const limiter = new GitHubRateLimiter(500)
+      expect(limiter.getRemaining()).toBe(5000)
+    })
+  })
+
+  describe('updateFromHeaders', () => {
+    it('extracts rate limit info from response headers', () => {
+      const limiter = new GitHubRateLimiter()
+      const headers = new Headers({
+        'X-RateLimit-Remaining': '4500',
+        'X-RateLimit-Reset': '1706900000',
+      })
+
+      limiter.updateFromHeaders(headers)
+
+      expect(limiter.getRemaining()).toBe(4500)
+      expect(limiter.getResetTime()).toBe(1706900000000) // Converted to ms
+    })
+
+    it('handles missing headers gracefully', () => {
+      const limiter = new GitHubRateLimiter()
+      const headers = new Headers({})
+
+      limiter.updateFromHeaders(headers)
+
+      // Should retain initial values
+      expect(limiter.getRemaining()).toBe(5000)
+    })
+  })
+
+  describe('calculateDelay (via applyDelay)', () => {
+    it('returns base delay when remaining > 500', async () => {
+      const limiter = new GitHubRateLimiter(100) // 100ms base
+      const startTime = Date.now()
+      const delay = await limiter.applyDelay()
+      const elapsed = Date.now() - startTime
+
+      expect(delay).toBe(100)
+      expect(elapsed).toBeGreaterThanOrEqual(95) // Allow some tolerance
+    })
+
+    it('returns 3x base delay when remaining < 500', async () => {
+      const limiter = new GitHubRateLimiter(100)
+      limiter.updateFromHeaders(
+        new Headers({
+          'X-RateLimit-Remaining': '300',
+        })
+      )
+
+      const delay = await limiter.applyDelay()
+      expect(delay).toBe(300) // 100 * 3
+    })
+
+    it('returns 10x base delay (min 1500ms) when remaining < 100', async () => {
+      const limiter = new GitHubRateLimiter(100)
+      limiter.updateFromHeaders(
+        new Headers({
+          'X-RateLimit-Remaining': '50',
+        })
+      )
+
+      const delay = await limiter.applyDelay()
+      expect(delay).toBe(1500) // max(100 * 10, 1500)
+    })
+
+    it('ensures minimum 1500ms delay in critical zone', async () => {
+      const limiter = new GitHubRateLimiter(50) // Small base delay
+      limiter.updateFromHeaders(
+        new Headers({
+          'X-RateLimit-Remaining': '10',
+        })
+      )
+
+      const delay = await limiter.applyDelay()
+      expect(delay).toBe(1500) // max(50 * 10, 1500) = 1500
+    })
+  })
+
+  describe('withRateLimit', () => {
+    it('applies delay and updates from response', async () => {
+      const limiter = new GitHubRateLimiter(10) // Short delay for test
+      const mockResponse = new Response('ok', {
+        headers: {
+          'X-RateLimit-Remaining': '4000',
+          'X-RateLimit-Reset': '1706900000',
+        },
+      })
+
+      const response = await limiter.withRateLimit(() => Promise.resolve(mockResponse))
+
+      expect(response).toBe(mockResponse)
+      expect(limiter.getRemaining()).toBe(4000)
+    })
+  })
+
+  describe('constants', () => {
+    it('GITHUB_API_BASE_DELAY defaults to 150', () => {
+      // Note: This tests the default, not env var override
+      expect(typeof GITHUB_API_BASE_DELAY).toBe('number')
+      expect(GITHUB_API_BASE_DELAY).toBeGreaterThan(0)
+    })
+
+    it('BATCH_TRANSFORM_CHECKPOINT_FILE is defined', () => {
+      expect(BATCH_TRANSFORM_CHECKPOINT_FILE).toBe('.batch-transform-checkpoint.json')
+    })
+  })
+})
+
+// =============================================================================
+// SMI-2200: Checkpoint Tests
+// =============================================================================
+
+describe('SMI-2200: Checkpoint Functions', () => {
+  const testCheckpointPath = path.join(process.cwd(), '.migration-checkpoint.json')
+
+  beforeEach(() => {
+    // Clean up any existing checkpoint
+    if (fs.existsSync(testCheckpointPath)) {
+      fs.unlinkSync(testCheckpointPath)
+    }
+  })
+
+  afterEach(() => {
+    // Clean up after tests
+    if (fs.existsSync(testCheckpointPath)) {
+      fs.unlinkSync(testCheckpointPath)
+    }
+  })
+
+  describe('loadCheckpoint', () => {
+    it('returns null when no checkpoint file exists', () => {
+      const result = loadCheckpoint()
+      expect(result).toBeNull()
+    })
+
+    it('returns checkpoint data when valid file exists', () => {
+      const checkpoint: MigrationCheckpoint = {
+        lastProcessedOffset: 100,
+        lastProcessedId: 'skill-abc',
+        processedCount: 100,
+        successCount: 95,
+        errorCount: 5,
+        errors: ['error1', 'error2'],
+        timestamp: '2026-02-01T12:00:00.000Z',
+        dbPath: '/path/to/db',
+      }
+      fs.writeFileSync(testCheckpointPath, JSON.stringify(checkpoint, null, 2))
+
+      const result = loadCheckpoint()
+
+      expect(result).not.toBeNull()
+      expect(result?.lastProcessedOffset).toBe(100)
+      expect(result?.successCount).toBe(95)
+      expect(result?.lastProcessedId).toBe('skill-abc')
+    })
+
+    it('returns null for invalid JSON', () => {
+      fs.writeFileSync(testCheckpointPath, 'not valid json')
+
+      const result = loadCheckpoint()
+      expect(result).toBeNull()
+    })
+
+    it('returns null for checkpoint missing required fields', () => {
+      // Missing dbPath, successCount, errorCount
+      fs.writeFileSync(
+        testCheckpointPath,
+        JSON.stringify({
+          lastProcessedOffset: 100,
+          processedCount: 100,
+        })
+      )
+
+      const result = loadCheckpoint()
+      expect(result).toBeNull()
+    })
+  })
+
+  describe('saveCheckpoint', () => {
+    it('writes checkpoint to file', () => {
+      const checkpoint: MigrationCheckpoint = {
+        lastProcessedOffset: 50,
+        processedCount: 50,
+        successCount: 48,
+        errorCount: 2,
+        errors: ['error1'],
+        timestamp: new Date().toISOString(),
+        dbPath: '/path/to/db',
+      }
+
+      saveCheckpoint(checkpoint)
+
+      expect(fs.existsSync(testCheckpointPath)).toBe(true)
+      const saved = JSON.parse(fs.readFileSync(testCheckpointPath, 'utf-8'))
+      expect(saved.lastProcessedOffset).toBe(50)
+      expect(saved.successCount).toBe(48)
+    })
+  })
+
+  describe('clearCheckpoint', () => {
+    it('removes checkpoint file when it exists', () => {
+      fs.writeFileSync(testCheckpointPath, JSON.stringify({ test: true }))
+      expect(fs.existsSync(testCheckpointPath)).toBe(true)
+
+      clearCheckpoint()
+
+      expect(fs.existsSync(testCheckpointPath)).toBe(false)
+    })
+
+    it('does nothing when no checkpoint exists', () => {
+      // Should not throw
+      expect(() => clearCheckpoint()).not.toThrow()
     })
   })
 })

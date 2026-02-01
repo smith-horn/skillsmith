@@ -469,3 +469,96 @@ export function compareSkills(
 
   return { match: mismatches.length === 0, mismatches }
 }
+
+// =============================================================================
+// SMI-2203: GitHub Rate Limiter
+// =============================================================================
+
+import { GITHUB_API_BASE_DELAY } from './constants'
+
+/**
+ * SMI-2203: Dynamic rate limiter for GitHub API
+ * Adapts delay based on X-RateLimit-Remaining header
+ */
+export class GitHubRateLimiter {
+  private remaining = 5000
+  private resetTime = 0
+  private baseDelay: number
+
+  constructor(baseDelay: number = GITHUB_API_BASE_DELAY) {
+    this.baseDelay = baseDelay
+  }
+
+  /**
+   * Calculate delay based on remaining quota
+   * - remaining < 100: delay = baseDelay * 10 (min 1500ms) - critical
+   * - remaining < 500: delay = baseDelay * 3 - warning
+   * - otherwise: delay = baseDelay - normal
+   */
+  private calculateDelay(): number {
+    if (this.remaining < 100) {
+      return Math.max(this.baseDelay * 10, 1500)
+    }
+    if (this.remaining < 500) {
+      return this.baseDelay * 3
+    }
+    return this.baseDelay
+  }
+
+  /**
+   * Update rate limit info from response headers
+   */
+  updateFromHeaders(headers: Headers): void {
+    const remaining = headers.get('X-RateLimit-Remaining')
+    const reset = headers.get('X-RateLimit-Reset')
+
+    if (remaining !== null) {
+      this.remaining = parseInt(remaining, 10)
+    }
+    if (reset !== null) {
+      this.resetTime = parseInt(reset, 10) * 1000
+    }
+
+    if (DEBUG && this.remaining < 500) {
+      console.debug(`Rate limit: ${this.remaining} remaining, resets at ${new Date(this.resetTime).toISOString()}`)
+    }
+  }
+
+  /**
+   * Get current remaining quota
+   */
+  getRemaining(): number {
+    return this.remaining
+  }
+
+  /**
+   * Get reset time (Unix timestamp in ms)
+   */
+  getResetTime(): number {
+    return this.resetTime
+  }
+
+  /**
+   * Execute a function with rate limiting
+   * Applies delay before execution and updates from response headers
+   */
+  async withRateLimit(fn: () => Promise<Response>): Promise<Response> {
+    const delay = this.calculateDelay()
+    await sleep(delay)
+
+    const response = await fn()
+    this.updateFromHeaders(response.headers)
+
+    return response
+  }
+
+  /**
+   * Just apply the delay without making a request
+   * Useful when you need to handle the response separately
+   */
+  async applyDelay(): Promise<number> {
+    const delay = this.calculateDelay()
+    await sleep(delay)
+    return delay
+  }
+}

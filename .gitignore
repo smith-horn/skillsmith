@@ -103,6 +103,8 @@ packages/web/
 docs/site/
 .env.registry
 .migration-checkpoint.json
+.batch-transform-checkpoint.json
+.batch-transform-checkpoint.json.bak
 .hive-mind/
 .vercel
 
