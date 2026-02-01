@@ -65,6 +65,25 @@ interface CliOptions {
   checkpointInterval: number
   force: boolean
   noRateLimit: boolean
+  // SMI-2201: Filter flags
+  retryFailed: boolean
+  retrySkipped: boolean
+  onlyMissing: boolean
+  since: string | undefined
+  trustTier: string | undefined
+  monorepoSkills: boolean
+}
+
+/**
+ * SMI-2201: Filter configuration for targeted backfills
+ */
+interface SkillFilters {
+  retryFailed: boolean
+  retrySkipped: boolean
+  onlyMissing: boolean
+  since: string | undefined
+  trustTier: string | undefined
+  monorepoSkills: boolean
 }
 
 interface SkillRecord {
@@ -112,6 +131,13 @@ function parseCliArgs(): CliOptions {
       'checkpoint-interval': { type: 'string', short: 'C' },
       force: { type: 'boolean', short: 'f' },
       'no-rate-limit': { type: 'boolean' },
+      // SMI-2201: Filter flags
+      'retry-failed': { type: 'boolean' },
+      'retry-skipped': { type: 'boolean' },
+      'only-missing': { type: 'boolean' },
+      since: { type: 'string' },
+      'trust-tier': { type: 'string' },
+      'monorepo-skills': { type: 'boolean' },
     },
     allowPositionals: false,
   })
@@ -129,6 +155,13 @@ function parseCliArgs(): CliOptions {
       : DEFAULT_CHECKPOINT_INTERVAL,
     force: values.force ?? false,
     noRateLimit: values['no-rate-limit'] ?? false,
+    // SMI-2201: Filter flags
+    retryFailed: values['retry-failed'] ?? false,
+    retrySkipped: values['retry-skipped'] ?? false,
+    onlyMissing: values['only-missing'] ?? false,
+    since: values.since,
+    trustTier: values['trust-tier'],
+    monorepoSkills: values['monorepo-skills'] ?? false,
   }
 }
 
@@ -137,6 +170,7 @@ function printHelp(): void {
 Batch Skill Transformation CLI
 SMI-1840: Pre-transform skills using TransformationService
 SMI-2200: Checkpoint-based resumability
+SMI-2201: Targeted backfill modes
 SMI-2203: Dynamic rate limiting
 
 Usage:
@@ -153,6 +187,14 @@ Options:
   --force, -f                  Skip confirmation prompts (for CI/scripted use)
   --no-rate-limit              Bypass dynamic rate limiting (fixed 50ms delay)
   --help, -h                   Show this help message
+
+Filter Flags (SMI-2201):
+  --retry-failed               Only process skills where previous transform failed
+  --retry-skipped              Only process skills that were skipped (SKILL.md not found)
+  --only-missing               Only process skills without existing transformation
+  --since <YYYY-MM-DD>         Only process skills indexed after date (ISO-8601)
+  --trust-tier <tier>          Filter by trust tier (verified, community, experimental, unknown)
+  --monorepo-skills            Only process monorepo subdirectory skills (tree URLs)
 
 Environment Variables:
   SUPABASE_URL                 Supabase project URL (required)
@@ -172,6 +214,18 @@ Examples:
 
   # Reset checkpoint and start fresh
   varlock run -- npx tsx scripts/batch-transform-skills.ts --reset --force
+
+  # Retry only failed skills
+  varlock run -- npx tsx scripts/batch-transform-skills.ts --retry-failed --verbose
+
+  # Process only missing transformations for verified tier
+  varlock run -- npx tsx scripts/batch-transform-skills.ts --only-missing --trust-tier verified
+
+  # Process skills indexed since January 25, 2026
+  varlock run -- npx tsx scripts/batch-transform-skills.ts --since 2026-01-25
+
+  # Dry-run with filter preview
+  varlock run -- npx tsx scripts/batch-transform-skills.ts --dry-run --only-missing --monorepo-skills
 `)
 }
 
@@ -265,6 +319,170 @@ async function promptConfirmation(message: string): Promise<boolean> {
       resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes')
     })
   })
+}
+
+// =============================================================================
+// SMI-2201: Filter Validation and Preview
+// =============================================================================
+
+const VALID_TRUST_TIERS = ['verified', 'community', 'experimental', 'unknown'] as const
+
+/**
+ * Validate ISO-8601 date format (YYYY-MM-DD)
+ */
+function isValidIsoDate(dateStr: string): boolean {
+  const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/
+  if (!isoDateRegex.test(dateStr)) return false
+
+  const date = new Date(dateStr)
+  return !isNaN(date.getTime())
+}
+
+/**
+ * Validate filter options and return errors if any
+ */
+function validateFilters(options: CliOptions): string[] {
+  const errors: string[] = []
+
+  // Validate --since format
+  if (options.since && !isValidIsoDate(options.since)) {
+    errors.push(`Invalid date format '${options.since}'. Use ISO-8601: --since 2026-01-25`)
+  }
+
+  // Validate --trust-tier value
+  if (options.trustTier && !VALID_TRUST_TIERS.includes(options.trustTier as typeof VALID_TRUST_TIERS[number])) {
+    errors.push(
+      `Invalid trust tier '${options.trustTier}'. Valid values: ${VALID_TRUST_TIERS.join(', ')}`
+    )
+  }
+
+  // Warn about incompatible combinations
+  if (options.retryFailed && options.retrySkipped) {
+    errors.push('--retry-failed and --retry-skipped are mutually exclusive')
+  }
+
+  if ((options.retryFailed || options.retrySkipped) && options.onlyMissing) {
+    errors.push('--retry-failed/--retry-skipped and --only-missing are mutually exclusive')
+  }
+
+  return errors
+}
+
+/**
+ * Check if any filters are active
+ */
+function hasActiveFilters(options: CliOptions): boolean {
+  return (
+    options.retryFailed ||
+    options.retrySkipped ||
+    options.onlyMissing ||
+    !!options.since ||
+    !!options.trustTier ||
+    options.monorepoSkills
+  )
+}
+
+/**
+ * Get filter counts for preview (dry-run)
+ */
+async function getFilterPreview(
+  supabase: SupabaseClient,
+  options: CliOptions
+): Promise<{ total: number; breakdown: Record<string, number> }> {
+  const breakdown: Record<string, number> = {}
+
+  // Get total skills with repo_url
+  const { count: totalCount } = await supabase
+    .from('skills')
+    .select('id', { count: 'exact', head: true })
+    .not('repo_url', 'is', null)
+
+  breakdown['Total skills (with repo_url)'] = totalCount ?? 0
+
+  // Filter: --trust-tier
+  if (options.trustTier) {
+    const { count } = await supabase
+      .from('skills')
+      .select('id', { count: 'exact', head: true })
+      .not('repo_url', 'is', null)
+      .eq('trust_tier', options.trustTier)
+    breakdown[`Trust tier = ${options.trustTier}`] = count ?? 0
+  }
+
+  // Filter: --since
+  if (options.since) {
+    const { count } = await supabase
+      .from('skills')
+      .select('id', { count: 'exact', head: true })
+      .not('repo_url', 'is', null)
+      .gte('created_at', options.since)
+    breakdown[`Indexed since ${options.since}`] = count ?? 0
+  }
+
+  // Filter: --monorepo-skills (URLs containing /tree/)
+  if (options.monorepoSkills) {
+    const { count } = await supabase
+      .from('skills')
+      .select('id', { count: 'exact', head: true })
+      .not('repo_url', 'is', null)
+      .like('repo_url', '%/tree/%')
+    breakdown['Monorepo skills (/tree/ URLs)'] = count ?? 0
+  }
+
+  // Filter: --only-missing
+  if (options.onlyMissing) {
+    const { count } = await supabase
+      .from('skills')
+      .select('id', { count: 'exact', head: true })
+      .not('repo_url', 'is', null)
+      .is('skill_transformations.skill_id', null)
+    breakdown['Missing transformations'] = count ?? 0
+  }
+
+  // Filter: --retry-failed (from checkpoint)
+  if (options.retryFailed) {
+    const checkpoint = loadBatchTransformCheckpoint()
+    if (checkpoint?.failedSkillIds?.length) {
+      breakdown['Failed in previous run'] = checkpoint.failedSkillIds.length
+    } else {
+      breakdown['Failed in previous run'] = 0
+    }
+  }
+
+  // Filter: --retry-skipped (from checkpoint)
+  if (options.retrySkipped) {
+    const checkpoint = loadBatchTransformCheckpoint()
+    if (checkpoint?.skippedSkillIds?.length) {
+      breakdown['Skipped in previous run'] = checkpoint.skippedSkillIds.length
+    } else {
+      breakdown['Skipped in previous run'] = 0
+    }
+  }
+
+  // Calculate combined count (simplified - actual query does intersection)
+  let combinedCount = totalCount ?? 0
+  if (options.trustTier) combinedCount = Math.min(combinedCount, breakdown[`Trust tier = ${options.trustTier}`])
+  if (options.since) combinedCount = Math.min(combinedCount, breakdown[`Indexed since ${options.since}`])
+  if (options.monorepoSkills) combinedCount = Math.min(combinedCount, breakdown['Monorepo skills (/tree/ URLs)'])
+  if (options.onlyMissing) combinedCount = Math.min(combinedCount, breakdown['Missing transformations'])
+  if (options.retryFailed) combinedCount = breakdown['Failed in previous run']
+  if (options.retrySkipped) combinedCount = breakdown['Skipped in previous run']
+
+  return { total: combinedCount, breakdown }
+}
+
+/**
+ * Print filter preview for dry-run mode
+ */
+function printFilterPreview(breakdown: Record<string, number>, total: number): void {
+  console.log('\nFilters applied:')
+  console.log('-'.repeat(50))
+  for (const [filter, count] of Object.entries(breakdown)) {
+    console.log(`  ${filter}: ${count} skills`)
+  }
+  console.log('-'.repeat(50))
+  console.log(`  Combined: ${total} skills to process`)
+  console.log('')
 }
 
 // =============================================================================
@@ -373,26 +591,96 @@ async function fetchSkillContent(
 // =============================================================================
 
 /**
- * Fetch skills from Supabase with pagination
+ * Fetch skills from Supabase with pagination and filters (SMI-2201)
  */
 async function* fetchSkillsBatch(
   supabase: SupabaseClient,
   batchSize: number,
   offset: number,
-  limit: number
+  limit: number,
+  filters?: SkillFilters
 ): AsyncGenerator<SkillRecord[], void, unknown> {
+  // Handle --only-missing: Get existing transformation skill IDs to exclude
+  let existingTransformationIds: Set<string> | null = null
+  if (filters?.onlyMissing) {
+    const { data: existingData, error: existingError } = await supabase
+      .from('skill_transformations')
+      .select('skill_id')
+
+    if (existingError) {
+      throw new Error(`Failed to fetch existing transformations: ${existingError.message}`)
+    }
+
+    existingTransformationIds = new Set((existingData ?? []).map((r) => r.skill_id))
+    console.log(`Found ${existingTransformationIds.size} existing transformations to exclude`)
+  }
+
+  // Handle --retry-failed and --retry-skipped (ID-based filters)
+  if (filters?.retryFailed || filters?.retrySkipped) {
+    const checkpoint = loadBatchTransformCheckpoint()
+    const targetIds = filters.retryFailed
+      ? checkpoint?.failedSkillIds ?? []
+      : checkpoint?.skippedSkillIds ?? []
+
+    if (targetIds.length === 0) {
+      console.log(`No ${filters.retryFailed ? 'failed' : 'skipped'} skills found in checkpoint`)
+      return
+    }
+
+    // Process in batches by ID
+    for (let i = offset; i < Math.min(targetIds.length, offset + limit); i += batchSize) {
+      const batchIds = targetIds.slice(i, Math.min(i + batchSize, offset + limit))
+      const { data, error } = await supabase
+        .from('skills')
+        .select('id, name, description, author, repo_url, trust_tier')
+        .in('id', batchIds)
+
+      if (error) {
+        throw new Error(`Supabase query failed: ${error.message}`)
+      }
+
+      if (data && data.length > 0) {
+        yield data as SkillRecord[]
+      }
+
+      if (!data || data.length < batchIds.length) {
+        break
+      }
+    }
+    return
+  }
+
   let currentOffset = offset
   let remaining = limit
 
   while (remaining > 0) {
     const fetchSize = Math.min(batchSize, remaining)
 
-    const { data, error } = await supabase
+    // Build query with filters
+    let query = supabase
       .from('skills')
       .select('id, name, description, author, repo_url, trust_tier')
       .not('repo_url', 'is', null)
-      .order('id')
-      .range(currentOffset, currentOffset + fetchSize - 1)
+
+    // Filter: --trust-tier
+    if (filters?.trustTier) {
+      query = query.eq('trust_tier', filters.trustTier)
+    }
+
+    // Filter: --since
+    if (filters?.since) {
+      query = query.gte('created_at', filters.since)
+    }
+
+    // Filter: --monorepo-skills (URLs containing /tree/)
+    if (filters?.monorepoSkills) {
+      query = query.like('repo_url', '%/tree/%')
+    }
+
+    // Apply pagination
+    query = query.order('id').range(currentOffset, currentOffset + fetchSize - 1)
+
+    const { data, error } = await query
 
     if (error) {
       throw new Error(`Supabase query failed: ${error.message}`)
@@ -402,7 +690,14 @@ async function* fetchSkillsBatch(
       break
     }
 
-    yield data as SkillRecord[]
+    // Filter out skills with existing transformations (--only-missing)
+    const filteredData = existingTransformationIds
+      ? data.filter((skill) => !existingTransformationIds.has(skill.id))
+      : data
+
+    if (filteredData.length > 0) {
+      yield filteredData as SkillRecord[]
+    }
 
     currentOffset += data.length
     remaining -= data.length
@@ -538,6 +833,14 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
+  // SMI-2201: Validate filter options
+  const filterErrors = validateFilters(options)
+  if (filterErrors.length > 0) {
+    console.error('\nError: Invalid filter options:')
+    filterErrors.forEach((e) => console.error(`  - ${e}`))
+    process.exit(1)
+  }
+
   const config = validateEnv()
 
   // Handle --reset
@@ -597,12 +900,35 @@ async function main(): Promise<void> {
     `  Rate Limit: ${options.noRateLimit ? 'disabled (50ms)' : `dynamic (base: ${GITHUB_API_BASE_DELAY}ms)`}`
   )
   console.log(`  Checkpoint: every ${options.checkpointInterval} skills`)
+
+  // SMI-2201: Show active filters
+  if (hasActiveFilters(options)) {
+    console.log('')
+    console.log('Active Filters:')
+    if (options.retryFailed) console.log('  --retry-failed')
+    if (options.retrySkipped) console.log('  --retry-skipped')
+    if (options.onlyMissing) console.log('  --only-missing')
+    if (options.since) console.log(`  --since ${options.since}`)
+    if (options.trustTier) console.log(`  --trust-tier ${options.trustTier}`)
+    if (options.monorepoSkills) console.log('  --monorepo-skills')
+  }
   console.log('-'.repeat(50))
 
   // Create Supabase client
   const supabase = createClient(config.supabaseUrl, config.supabaseServiceKey, {
     auth: { persistSession: false },
   })
+
+  // SMI-2201: Show filter preview in dry-run mode
+  if (options.dryRun && hasActiveFilters(options)) {
+    const { total, breakdown } = await getFilterPreview(supabase, options)
+    printFilterPreview(breakdown, total)
+
+    if (total === 0) {
+      console.log('No skills match the specified filters. Nothing to process.')
+      process.exit(0)
+    }
+  }
 
   // Create transformation service (no database caching)
   const service = new TransformationService(undefined, {
@@ -646,9 +972,19 @@ async function main(): Promise<void> {
 
   console.log('\nProcessing skills...\n')
 
+  // SMI-2201: Build filter configuration
+  const filters: SkillFilters = {
+    retryFailed: options.retryFailed,
+    retrySkipped: options.retrySkipped,
+    onlyMissing: options.onlyMissing,
+    since: options.since,
+    trustTier: options.trustTier,
+    monorepoSkills: options.monorepoSkills,
+  }
+
   try {
     // Process skills in batches
-    for await (const batch of fetchSkillsBatch(supabase, batchSize, startOffset, options.limit)) {
+    for await (const batch of fetchSkillsBatch(supabase, batchSize, startOffset, options.limit, filters)) {
       batchNumber++
       const batchStart = (batchNumber - 1) * batchSize + startOffset + 1
       const batchEnd = batchStart + batch.length - 1

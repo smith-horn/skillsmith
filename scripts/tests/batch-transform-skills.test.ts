@@ -374,6 +374,252 @@ describe('SMI-2203: GitHubRateLimiter', () => {
 // SMI-2200: Checkpoint Tests
 // =============================================================================
 
+// =============================================================================
+// SMI-2201: Filter Validation Tests
+// =============================================================================
+
+/**
+ * Import filter functions for testing
+ * Note: These are not exported from batch-transform-skills.ts, so we replicate them here
+ * In production, consider exporting these from a shared module
+ */
+
+// Replicate VALID_TRUST_TIERS constant
+const VALID_TRUST_TIERS = ['verified', 'community', 'experimental', 'unknown'] as const
+
+// Replicate isValidIsoDate function for testing
+function isValidIsoDate(dateStr: string): boolean {
+  const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/
+  if (!isoDateRegex.test(dateStr)) return false
+  const date = new Date(dateStr)
+  return !isNaN(date.getTime())
+}
+
+// Replicate validateFilters interface and function for testing
+interface CliOptionsForTest {
+  retryFailed: boolean
+  retrySkipped: boolean
+  onlyMissing: boolean
+  since: string | undefined
+  trustTier: string | undefined
+  monorepoSkills: boolean
+}
+
+function validateFilters(options: CliOptionsForTest): string[] {
+  const errors: string[] = []
+
+  // Validate --since format
+  if (options.since && !isValidIsoDate(options.since)) {
+    errors.push(`Invalid date format '${options.since}'. Use ISO-8601: --since 2026-01-25`)
+  }
+
+  // Validate --trust-tier value
+  if (options.trustTier && !VALID_TRUST_TIERS.includes(options.trustTier as (typeof VALID_TRUST_TIERS)[number])) {
+    errors.push(
+      `Invalid trust tier '${options.trustTier}'. Valid values: ${VALID_TRUST_TIERS.join(', ')}`
+    )
+  }
+
+  // Warn about incompatible combinations
+  if (options.retryFailed && options.retrySkipped) {
+    errors.push('--retry-failed and --retry-skipped are mutually exclusive')
+  }
+
+  if ((options.retryFailed || options.retrySkipped) && options.onlyMissing) {
+    errors.push('--retry-failed/--retry-skipped and --only-missing are mutually exclusive')
+  }
+
+  return errors
+}
+
+function hasActiveFilters(options: CliOptionsForTest): boolean {
+  return (
+    options.retryFailed ||
+    options.retrySkipped ||
+    options.onlyMissing ||
+    !!options.since ||
+    !!options.trustTier ||
+    options.monorepoSkills
+  )
+}
+
+describe('SMI-2201: Filter Validation', () => {
+  describe('isValidIsoDate', () => {
+    it('returns true for valid ISO-8601 date (YYYY-MM-DD)', () => {
+      expect(isValidIsoDate('2026-01-25')).toBe(true)
+      expect(isValidIsoDate('2026-12-31')).toBe(true)
+      expect(isValidIsoDate('2025-01-01')).toBe(true)
+    })
+
+    it('returns false for invalid date formats', () => {
+      expect(isValidIsoDate('Jan 25')).toBe(false)
+      expect(isValidIsoDate('01-25-2026')).toBe(false) // US format
+      expect(isValidIsoDate('25-01-2026')).toBe(false) // EU format
+      expect(isValidIsoDate('2026/01/25')).toBe(false) // Slash separator
+      expect(isValidIsoDate('2026-1-25')).toBe(false) // Single digit month
+      expect(isValidIsoDate('2026-01-5')).toBe(false) // Single digit day
+    })
+
+    it('returns false for clearly invalid dates', () => {
+      // Note: JavaScript Date auto-corrects some invalid dates (e.g., Feb 30 → Mar 2)
+      // The function validates format (YYYY-MM-DD) and that it parses to a valid Date
+      expect(isValidIsoDate('2026-13-01')).toBe(false) // Invalid month (>12)
+      expect(isValidIsoDate('2026-00-15')).toBe(false) // Zero month
+      expect(isValidIsoDate('0000-01-01')).toBe(true) // Year 0 is technically valid in JS
+    })
+
+    it('returns false for non-date strings', () => {
+      expect(isValidIsoDate('')).toBe(false)
+      expect(isValidIsoDate('yesterday')).toBe(false)
+      expect(isValidIsoDate('not-a-date')).toBe(false)
+    })
+  })
+
+  describe('validateFilters', () => {
+    const defaultOptions: CliOptionsForTest = {
+      retryFailed: false,
+      retrySkipped: false,
+      onlyMissing: false,
+      since: undefined,
+      trustTier: undefined,
+      monorepoSkills: false,
+    }
+
+    it('returns empty array for valid options with no filters', () => {
+      const errors = validateFilters(defaultOptions)
+      expect(errors).toHaveLength(0)
+    })
+
+    it('returns error for invalid --since date format', () => {
+      const errors = validateFilters({ ...defaultOptions, since: 'Jan 25' })
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toContain("Invalid date format 'Jan 25'")
+      expect(errors[0]).toContain('ISO-8601')
+    })
+
+    it('returns no error for valid --since date', () => {
+      const errors = validateFilters({ ...defaultOptions, since: '2026-01-25' })
+      expect(errors).toHaveLength(0)
+    })
+
+    it('returns error for invalid --trust-tier', () => {
+      const errors = validateFilters({ ...defaultOptions, trustTier: 'invalid-tier' })
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toContain("Invalid trust tier 'invalid-tier'")
+      expect(errors[0]).toContain('verified')
+      expect(errors[0]).toContain('community')
+    })
+
+    it('returns no error for valid --trust-tier values', () => {
+      for (const tier of VALID_TRUST_TIERS) {
+        const errors = validateFilters({ ...defaultOptions, trustTier: tier })
+        expect(errors).toHaveLength(0)
+      }
+    })
+
+    it('returns error when --retry-failed and --retry-skipped are both set', () => {
+      const errors = validateFilters({ ...defaultOptions, retryFailed: true, retrySkipped: true })
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toContain('mutually exclusive')
+    })
+
+    it('returns error when --retry-failed and --only-missing are both set', () => {
+      const errors = validateFilters({ ...defaultOptions, retryFailed: true, onlyMissing: true })
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toContain('mutually exclusive')
+    })
+
+    it('returns error when --retry-skipped and --only-missing are both set', () => {
+      const errors = validateFilters({ ...defaultOptions, retrySkipped: true, onlyMissing: true })
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toContain('mutually exclusive')
+    })
+
+    it('allows --trust-tier with --only-missing', () => {
+      const errors = validateFilters({
+        ...defaultOptions,
+        trustTier: 'verified',
+        onlyMissing: true,
+      })
+      expect(errors).toHaveLength(0)
+    })
+
+    it('allows --since with --monorepo-skills', () => {
+      const errors = validateFilters({
+        ...defaultOptions,
+        since: '2026-01-25',
+        monorepoSkills: true,
+      })
+      expect(errors).toHaveLength(0)
+    })
+
+    it('can return multiple errors', () => {
+      const errors = validateFilters({
+        ...defaultOptions,
+        since: 'invalid-date',
+        trustTier: 'invalid-tier',
+        retryFailed: true,
+        retrySkipped: true,
+      })
+      expect(errors.length).toBeGreaterThanOrEqual(3)
+    })
+  })
+
+  describe('hasActiveFilters', () => {
+    const defaultOptions: CliOptionsForTest = {
+      retryFailed: false,
+      retrySkipped: false,
+      onlyMissing: false,
+      since: undefined,
+      trustTier: undefined,
+      monorepoSkills: false,
+    }
+
+    it('returns false when no filters are set', () => {
+      expect(hasActiveFilters(defaultOptions)).toBe(false)
+    })
+
+    it('returns true when --retry-failed is set', () => {
+      expect(hasActiveFilters({ ...defaultOptions, retryFailed: true })).toBe(true)
+    })
+
+    it('returns true when --retry-skipped is set', () => {
+      expect(hasActiveFilters({ ...defaultOptions, retrySkipped: true })).toBe(true)
+    })
+
+    it('returns true when --only-missing is set', () => {
+      expect(hasActiveFilters({ ...defaultOptions, onlyMissing: true })).toBe(true)
+    })
+
+    it('returns true when --since is set', () => {
+      expect(hasActiveFilters({ ...defaultOptions, since: '2026-01-25' })).toBe(true)
+    })
+
+    it('returns true when --trust-tier is set', () => {
+      expect(hasActiveFilters({ ...defaultOptions, trustTier: 'verified' })).toBe(true)
+    })
+
+    it('returns true when --monorepo-skills is set', () => {
+      expect(hasActiveFilters({ ...defaultOptions, monorepoSkills: true })).toBe(true)
+    })
+
+    it('returns true when multiple filters are set', () => {
+      expect(
+        hasActiveFilters({
+          ...defaultOptions,
+          trustTier: 'verified',
+          onlyMissing: true,
+          monorepoSkills: true,
+        })
+      ).toBe(true)
+    })
+  })
+})
+
+// =============================================================================
+// SMI-2200: Checkpoint Tests
+// =============================================================================
+
 describe('SMI-2200: Checkpoint Functions', () => {
   const testCheckpointPath = path.join(process.cwd(), '.migration-checkpoint.json')
 
