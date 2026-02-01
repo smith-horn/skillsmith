@@ -391,6 +391,12 @@ export async function createSqlJsDatabase(
 /**
  * Check if fts5-sql-bundle (sql.js with FTS5) is available
  * This always returns true in Node.js since it's a pure JS/WASM module
+ *
+ * Note: We use require.resolve() here instead of dynamic import() because:
+ * 1. This is a synchronous availability check - dynamic import would require async
+ * 2. require.resolve() is fast and doesn't load the module, just checks resolvability
+ * 3. The actual loading in loadSqlJs() uses dynamic import() for proper ESM support
+ *
  * @returns true if fts5-sql-bundle is loadable in Node.js
  */
 export function isSqlJsAvailable(): boolean {

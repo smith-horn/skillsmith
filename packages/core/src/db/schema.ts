@@ -425,6 +425,8 @@ import { createDatabaseAsync as createDatabaseAsyncFactory } from './createDatab
  *
  * @param path - Path to database file, or ':memory:' for in-memory
  * @returns Promise resolving to initialized database
+ * @throws Error if database creation fails (e.g., invalid path, permission denied)
+ * @throws Error if WASM module fails to load when native SQLite is unavailable
  */
 export async function createDatabaseAsync(path: string = ':memory:'): Promise<DatabaseType> {
   const db = await createDatabaseAsyncFactory(path)
@@ -444,6 +446,8 @@ export async function createDatabaseAsync(path: string = ':memory:'): Promise<Da
  *
  * @param path - Path to existing database file
  * @returns Promise resolving to database with migrations applied
+ * @throws Error if file does not exist (SQLITE_CANTOPEN)
+ * @throws Error if WASM module fails to load when native SQLite is unavailable
  */
 export async function openDatabaseAsync(path: string): Promise<DatabaseType> {
   const db = await createDatabaseAsyncFactory(path, { fileMustExist: true })
