@@ -8,12 +8,12 @@
     "url": "https://github.com/smith-horn/skillsmith",
     "source": "github"
   },
-  "version": "0.3.17",
+  "version": "0.3.18",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@skillsmith/mcp-server",
-      "version": "0.3.17",
+      "version": "0.3.18",
       "transport": {
         "type": "stdio"
       },
