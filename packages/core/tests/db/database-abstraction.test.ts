@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import type { Database, Statement, RunResult } from '../../src/db/database-interface.js'
+import type { Database } from '../../src/db/database-interface.js'
 import {
   createDatabaseSync,
   createDatabaseAsync,
@@ -105,9 +105,7 @@ describe('Database Abstraction Layer', () => {
       db.exec('CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)')
       db.exec("INSERT INTO test (name) VALUES ('Alice'), ('Bob')")
 
-      const stmt = db.prepare<{ id: number; name: string }>(
-        'SELECT * FROM test WHERE name = ?'
-      )
+      const stmt = db.prepare<{ id: number; name: string }>('SELECT * FROM test WHERE name = ?')
       const row = stmt.get('Alice')
 
       expect(row).toEqual({ id: 1, name: 'Alice' })
@@ -118,9 +116,7 @@ describe('Database Abstraction Layer', () => {
 
       db.exec('CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)')
 
-      const stmt = db.prepare<{ id: number; name: string }>(
-        'SELECT * FROM test WHERE name = ?'
-      )
+      const stmt = db.prepare<{ id: number; name: string }>('SELECT * FROM test WHERE name = ?')
       const row = stmt.get('NonExistent')
 
       expect(row).toBeUndefined()
@@ -173,7 +169,9 @@ describe('Database Abstraction Layer', () => {
         return 'success'
       }
 
-      const result = db.transaction(transfer)
+      // transaction() returns a callable function
+      const txn = db.transaction(transfer)
+      const result = txn()
       expect(result).toBe('success')
 
       // Verify balances

@@ -6,7 +6,7 @@
  */
 
 // ============================================================================
-// Database (SMI-577, SMI-974)
+// Database (SMI-577, SMI-974, SMI-2180)
 // ============================================================================
 
 export {
@@ -21,6 +21,10 @@ export {
 } from '../db/schema.js'
 
 export type { DatabaseType } from '../db/schema.js'
+
+// SMI-2180: Database abstraction layer exports
+export { createDatabaseSync, createDatabaseAsync } from '../db/createDatabase.js'
+export type { Database } from '../db/database-interface.js'
 
 // ============================================================================
 // Repositories (SMI-578, SMI-628)

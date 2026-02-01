@@ -21,7 +21,6 @@
 import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { mkdirSync, existsSync } from 'fs'
-import type { Database as DatabaseType } from 'better-sqlite3'
 import {
   createDatabase,
   openDatabase,
@@ -39,6 +38,7 @@ import {
   getApiKey,
   type ApiClientConfig,
   type SyncResult,
+  type DatabaseType,
 } from '@skillsmith/core'
 import { LLMFailoverChain, type LLMFailoverConfig } from './llm/failover.js'
 

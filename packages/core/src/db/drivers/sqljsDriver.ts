@@ -17,22 +17,41 @@
 
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import type initSqlJsType from 'fts5-sql-bundle'
-import type { BindParams } from 'fts5-sql-bundle'
 
-// Type for the sql.js module
-type SqlJs = Awaited<ReturnType<typeof initSqlJsType>>
-type SqlJsDatabase = InstanceType<SqlJs['Database']>
-type SqlJsStatement = ReturnType<SqlJsDatabase['prepare']>
+// sql.js types - fts5-sql-bundle exports a factory function
+// that returns a Promise<SqlJs>
+interface SqlJsStatic {
+  Database: new (data?: ArrayLike<number> | Buffer | null) => SqlJsDatabase
+}
+
+interface SqlJsDatabase {
+  run(sql: string): void
+  prepare(sql: string): SqlJsStatement
+  export(): Uint8Array
+  close(): void
+}
+
+interface SqlJsStatement {
+  bind(params?: SqlJsBindParams): boolean
+  step(): boolean
+  get(): SqlJsValue[]
+  getColumnNames(): string[]
+  reset(): void
+  free(): void
+}
+
+// sql.js bind parameters type
+type SqlJsValue = string | number | null | Uint8Array
+type SqlJsBindParams = SqlJsValue[] | Record<string, SqlJsValue>
 
 // Cached sql.js module to avoid reloading WASM
-let sqlJsModule: SqlJs | null = null
+let sqlJsModule: SqlJsStatic | null = null
 
 /**
  * Load sql.js WASM module (cached)
  * @throws Error with user-friendly message if WASM fails to load
  */
-async function loadSqlJs(): Promise<SqlJs> {
+async function loadSqlJs(): Promise<SqlJsStatic> {
   if (sqlJsModule) {
     return sqlJsModule
   }
@@ -40,11 +59,14 @@ async function loadSqlJs(): Promise<SqlJs> {
   try {
     // Dynamic import to avoid loading at module evaluation time
     // Using fts5-sql-bundle for FTS5 full-text search support
-    const initSqlJs = (await import('fts5-sql-bundle')).default
+    // Handle both ESM and CJS module formats
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const module = (await import('fts5-sql-bundle')) as any
+    const initSqlJs = module.default || module
 
     // Initialize with bundled WASM - fts5-sql-bundle has a built-in locateFile
     // that correctly resolves the WASM file in its dist/ directory
-    sqlJsModule = await initSqlJs()
+    sqlJsModule = (await initSqlJs()) as SqlJsStatic
 
     return sqlJsModule
   } catch (error) {
@@ -84,10 +106,10 @@ class SqlJsStatementAdapter<T = unknown> implements Statement<T> {
     this.changesStmt = db.prepare('SELECT changes() as changes, last_insert_rowid() as lastId')
   }
 
-  private rowToObject(row: unknown[] | null): T | undefined {
+  private rowToObject(row: SqlJsValue[] | null): T | undefined {
     if (!row) return undefined
 
-    const obj: Record<string, unknown> = {}
+    const obj: Record<string, SqlJsValue> = {}
     for (let i = 0; i < this.columnNames.length; i++) {
       obj[this.columnNames[i]] = row[i]
     }
@@ -98,7 +120,7 @@ class SqlJsStatementAdapter<T = unknown> implements Statement<T> {
     // Reset and bind parameters
     this.stmt.reset()
     if (params.length > 0) {
-      this.stmt.bind(params as BindParams)
+      this.stmt.bind(params as SqlJsBindParams)
     }
 
     // Execute without fetching results
@@ -109,19 +131,19 @@ class SqlJsStatementAdapter<T = unknown> implements Statement<T> {
     // This avoids creating a new prepared statement on every run() call
     this.changesStmt.reset()
     this.changesStmt.step()
-    const result = this.changesStmt.get() as [number, number] | null
+    const result = this.changesStmt.get()
     this.changesStmt.reset()
 
     return {
-      changes: result?.[0] ?? 0,
-      lastInsertRowid: result?.[1] ?? 0,
+      changes: (result?.[0] as number) ?? 0,
+      lastInsertRowid: (result?.[1] as number) ?? 0,
     }
   }
 
   get(...params: unknown[]): T | undefined {
     this.stmt.reset()
     if (params.length > 0) {
-      this.stmt.bind(params as BindParams)
+      this.stmt.bind(params as SqlJsBindParams)
     }
 
     const hasRow = this.stmt.step()
@@ -138,7 +160,7 @@ class SqlJsStatementAdapter<T = unknown> implements Statement<T> {
   all(...params: unknown[]): T[] {
     this.stmt.reset()
     if (params.length > 0) {
-      this.stmt.bind(params as BindParams)
+      this.stmt.bind(params as SqlJsBindParams)
     }
 
     const results: T[] = []
@@ -156,7 +178,7 @@ class SqlJsStatementAdapter<T = unknown> implements Statement<T> {
   *iterate(...params: unknown[]): IterableIterator<T> {
     this.stmt.reset()
     if (params.length > 0) {
-      this.stmt.bind(params as BindParams)
+      this.stmt.bind(params as SqlJsBindParams)
     }
 
     while (this.stmt.step()) {
@@ -175,7 +197,7 @@ class SqlJsStatementAdapter<T = unknown> implements Statement<T> {
   }
 
   bind(...params: unknown[]): this {
-    this.stmt.bind(params as BindParams)
+    this.stmt.bind(params as SqlJsBindParams)
     return this
   }
 }
@@ -207,24 +229,8 @@ export class SqlJsDatabaseAdapter implements Database {
     return new SqlJsStatementAdapter<T>(this.db, sql)
   }
 
-  transaction<T, Args extends unknown[] = []>(
-    fn: (...args: Args) => T
-  ): Args extends [] ? T : (...args: Args) => T {
-    // Determine execution mode based on function arity.
-    //
-    // IMPORTANT LIMITATION: fn.length only counts required parameters, not:
-    // - Rest parameters (...args)
-    // - Optional parameters (arg?: T)
-    // - Parameters with default values (arg = value)
-    //
-    // For functions with these patterns, fn.length may be 0 even when
-    // arguments are expected. This causes immediate execution instead
-    // of returning a callable.
-    //
-    // WORKAROUND: If you need deferred execution for a function with
-    // optional/rest params, wrap it: transaction((x) => myFn(x))
-    //
-    // Helper to execute transaction with proper nesting support
+  transaction<T, Args extends unknown[] = []>(fn: (...args: Args) => T): (...args: Args) => T {
+    // Return a callable function that executes the transaction
     const executeTransaction = (...args: Args): T => {
       const depth = this._transactionDepth++
       const savepoint = `sp_${depth}`
@@ -259,13 +265,7 @@ export class SqlJsDatabaseAdapter implements Database {
       }
     }
 
-    // For functions with explicit parameters, return a wrapped function
-    if (fn.length > 0) {
-      return executeTransaction as Args extends [] ? T : (...args: Args) => T
-    }
-
-    // For functions with no parameters, execute immediately
-    return executeTransaction() as Args extends [] ? T : (...args: Args) => T
+    return executeTransaction
   }
 
   pragma(pragma: string): unknown {

@@ -12,13 +12,14 @@
 import { Command } from 'commander'
 import { resolve } from 'path'
 import { existsSync } from 'fs'
-import Database from 'better-sqlite3'
 import {
   mergeSkillDatabases,
   checkSchemaCompatibility,
+  createDatabaseSync,
   type MergeStrategy,
   type MergeOptions,
   type MergeConflict,
+  type Database,
 } from '@skillsmith/core'
 import { getDefaultDbPath } from '../config.js'
 
@@ -112,12 +113,12 @@ export function createMergeCommand(): Command {
       }
 
       // Open databases
-      let sourceDb: ReturnType<typeof Database> | null = null
-      let targetDb: ReturnType<typeof Database> | null = null
+      let sourceDb: Database | null = null
+      let targetDb: Database | null = null
 
       try {
-        sourceDb = new Database(resolvedSource, { readonly: true })
-        targetDb = new Database(resolvedTarget)
+        sourceDb = createDatabaseSync(resolvedSource, { readonly: true })
+        targetDb = createDatabaseSync(resolvedTarget)
 
         // Check schema compatibility
         if (!force) {

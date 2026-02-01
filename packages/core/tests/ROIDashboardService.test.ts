@@ -5,22 +5,22 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import Database from 'better-sqlite3'
-import type { Database as DatabaseType } from 'better-sqlite3'
+import { createDatabaseSync } from '../src/db/createDatabase.js'
+import type { Database } from '../src/db/database-interface.js'
 import { initializeAnalyticsSchema } from '../src/analytics/schema.js'
 import { ROIDashboardService } from '../src/analytics/ROIDashboardService.js'
 import { AnalyticsRepository } from '../src/analytics/AnalyticsRepository.js'
 import type { UsageEventInput } from '../src/analytics/types.js'
 
 describe('ROIDashboardService', () => {
-  let db: DatabaseType
+  let db: Database
   let service: ROIDashboardService
   let repo: AnalyticsRepository
 
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-15T12:00:00.000Z'))
-    db = new Database(':memory:')
+    db = createDatabaseSync(':memory:')
     initializeAnalyticsSchema(db)
     service = new ROIDashboardService(db)
     repo = new AnalyticsRepository(db)

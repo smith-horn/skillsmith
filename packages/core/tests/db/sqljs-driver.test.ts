@@ -163,10 +163,12 @@ describe('sql.js Driver', () => {
       db.exec('INSERT INTO accounts (balance) VALUES (100), (200)')
 
       const transfer = (from: number, to: number, amount: number) => {
-        db.transaction(() => {
+        // transaction() returns a callable function
+        const txn = db.transaction(() => {
           db.prepare('UPDATE accounts SET balance = balance - ? WHERE id = ?').run(amount, from)
           db.prepare('UPDATE accounts SET balance = balance + ? WHERE id = ?').run(amount, to)
         })
+        txn() // Execute the transaction
       }
 
       transfer(1, 2, 50)
@@ -183,11 +185,14 @@ describe('sql.js Driver', () => {
       db.exec('CREATE TABLE test (value INTEGER)')
       db.exec('INSERT INTO test (value) VALUES (1)')
 
+      // transaction() returns a callable function
+      const txn = db.transaction(() => {
+        db.exec('UPDATE test SET value = 2')
+        throw new Error('Intentional failure')
+      })
+
       expect(() => {
-        db.transaction(() => {
-          db.exec('UPDATE test SET value = 2')
-          throw new Error('Intentional failure')
-        })
+        txn() // Execute the transaction - should throw
       }).toThrow('Intentional failure')
 
       const stmt = db.prepare<{ value: number }>('SELECT value FROM test')
@@ -354,16 +359,17 @@ describe('Driver Parity Tests', () => {
       sqlJsDb.exec("INSERT INTO skills (name, author, score) VALUES ('skill', 'author', 50)")
       betterSqliteDb.exec("INSERT INTO skills (name, author, score) VALUES ('skill', 'author', 50)")
 
-      // Transaction that modifies and reads
-      const transactionFn = (db: Database) => {
-        return db.transaction(() => {
+      // Transaction that modifies and reads - transaction() returns a callable
+      const executeTransaction = (db: Database) => {
+        const txn = db.transaction(() => {
           db.prepare('UPDATE skills SET score = score + 10').run()
           return db.prepare<{ score: number }>('SELECT score FROM skills').get()
         })
+        return txn() // Call the transaction function
       }
 
-      const sqlJsResult = transactionFn(sqlJsDb)
-      const betterResult = transactionFn(betterSqliteDb)
+      const sqlJsResult = executeTransaction(sqlJsDb)
+      const betterResult = executeTransaction(betterSqliteDb)
 
       expect(sqlJsResult).toEqual(betterResult)
       expect(sqlJsResult?.score).toBe(60)

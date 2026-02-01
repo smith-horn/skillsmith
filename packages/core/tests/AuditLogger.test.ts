@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { AuditLogger } from '../src/security/AuditLogger.js'
 import { createDatabase, closeDatabase } from '../src/db/schema.js'
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database } from '../src/db/database-interface.js'
 import {
   FIXED_DATE,
   FIXED_TIMESTAMP,
@@ -18,7 +18,7 @@ import {
 } from './test-utils.js'
 
 describe('AuditLogger', () => {
-  let db: DatabaseType
+  let db: Database
   let auditLogger: AuditLogger
 
   beforeEach(() => {

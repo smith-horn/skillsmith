@@ -64,32 +64,9 @@ export class BetterSqlite3Database implements Database {
     return new BetterSqlite3Statement<T>(stmt)
   }
 
-  transaction<T, Args extends unknown[] = []>(
-    fn: (...args: Args) => T
-  ): Args extends [] ? T : (...args: Args) => T {
+  transaction<T, Args extends unknown[] = []>(fn: (...args: Args) => T): (...args: Args) => T {
     // better-sqlite3 transaction returns a wrapped function
-    const transactionFn = this.db.transaction(fn) as (...args: Args) => T
-
-    // Determine execution mode based on function arity.
-    //
-    // IMPORTANT LIMITATION: fn.length only counts required parameters, not:
-    // - Rest parameters (...args)
-    // - Optional parameters (arg?: T)
-    // - Parameters with default values (arg = value)
-    //
-    // For functions with these patterns, fn.length may be 0 even when
-    // arguments are expected. This causes immediate execution instead
-    // of returning a callable.
-    //
-    // WORKAROUND: If you need deferred execution for a function with
-    // optional/rest params, wrap it: transaction((x) => myFn(x))
-    //
-    // For functions with no parameters, execute immediately
-    // For functions with parameters, return the callable
-    if (fn.length === 0) {
-      return transactionFn() as Args extends [] ? T : (...args: Args) => T
-    }
-    return transactionFn as Args extends [] ? T : (...args: Args) => T
+    return this.db.transaction(fn) as (...args: Args) => T
   }
 
   pragma(pragma: string): unknown {

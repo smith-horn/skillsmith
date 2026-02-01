@@ -5,21 +5,21 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import Database from 'better-sqlite3'
-import type { Database as DatabaseType } from 'better-sqlite3'
+import { createDatabaseSync } from '../src/db/createDatabase.js'
+import type { Database } from '../src/db/database-interface.js'
 import { initializeAnalyticsSchema } from '../src/analytics/schema.js'
 import { UsageAnalyticsService } from '../src/analytics/UsageAnalyticsService.js'
 import { ExperimentService } from '../src/analytics/ExperimentService.js'
 import { ROIDashboardService } from '../src/analytics/ROIDashboardService.js'
 
 describe('Analytics Integration Tests', () => {
-  let db: DatabaseType
+  let db: Database
   let usageService: UsageAnalyticsService
   let experimentService: ExperimentService
   let roiService: ROIDashboardService
 
   beforeEach(() => {
-    db = new Database(':memory:')
+    db = createDatabaseSync(':memory:')
     initializeAnalyticsSchema(db)
     usageService = new UsageAnalyticsService(db)
     experimentService = new ExperimentService(db)

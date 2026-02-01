@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import Database from 'better-sqlite3'
+import type { Database } from '../src/db/database-interface.js'
 import {
   createDatabase,
   closeDatabase,
@@ -13,7 +13,7 @@ import {
 } from '../src/db/schema.js'
 
 describe('Database Schema', () => {
-  let db: ReturnType<typeof Database>
+  let db: Database
 
   beforeEach(() => {
     db = createDatabase(':memory:')

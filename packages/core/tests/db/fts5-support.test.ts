@@ -12,11 +12,25 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import type initSqlJsType from 'fts5-sql-bundle'
 
-// Type for the sql.js module
-type SqlJs = Awaited<ReturnType<typeof initSqlJsType>>
-type SqlJsDatabase = InstanceType<SqlJs['Database']>
+// sql.js types for this test
+interface SqlJsStatic {
+  Database: new (data?: ArrayLike<number> | Buffer | null) => SqlJsDatabase
+}
+
+interface SqlJsDatabase {
+  run(sql: string): void
+  prepare(sql: string): SqlJsStatement
+  close(): void
+}
+
+interface SqlJsStatement {
+  step(): boolean
+  get(): SqlJsValue[]
+  free(): void
+}
+
+type SqlJsValue = string | number | null | Uint8Array
 
 // Track database for cleanup
 let db: SqlJsDatabase | null = null
@@ -25,9 +39,11 @@ let db: SqlJsDatabase | null = null
  * Load fts5-sql-bundle WASM module directly for this test
  * fts5-sql-bundle has a built-in locateFile that correctly resolves the WASM file
  */
-async function loadSqlJs(): Promise<SqlJs> {
-  const initSqlJs = (await import('fts5-sql-bundle')).default
-  return initSqlJs()
+async function loadSqlJs(): Promise<SqlJsStatic> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const module = (await import('fts5-sql-bundle')) as any
+  const initSqlJs = module.default || module
+  return initSqlJs() as Promise<SqlJsStatic>
 }
 
 describe('FTS5 Support Detection', () => {

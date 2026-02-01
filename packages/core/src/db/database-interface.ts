@@ -96,17 +96,13 @@ export interface Database {
    * Execute a function within a transaction
    * If the function throws, the transaction is rolled back
    *
-   * Supports two patterns:
-   * 1. Immediate execution: transaction(() => { ... }) - executes immediately
-   * 2. Deferred execution: transaction((args) => { ... })(args) - returns callable function
+   * Returns a callable function that executes the transaction when called.
+   * For zero-argument functions, call as: db.transaction(fn)()
    *
    * @param fn - Function to execute within transaction
-   * @returns For immediate pattern: the return value of the function
-   *          For deferred pattern: a callable transaction function
+   * @returns A callable transaction function
    */
-  transaction<T, Args extends unknown[] = []>(
-    fn: (...args: Args) => T
-  ): Args extends [] ? T : (...args: Args) => T
+  transaction<T, Args extends unknown[] = []>(fn: (...args: Args) => T): (...args: Args) => T
 
   /**
    * Execute a PRAGMA statement and return the result

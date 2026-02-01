@@ -9,7 +9,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import Database from 'better-sqlite3'
+import { createDatabaseSync } from '../../src/db/createDatabase.js'
+import type { Database } from '../../src/db/database-interface.js'
 import { existsSync, mkdirSync, rmSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -19,7 +20,7 @@ import type { AggregationPeriod } from '../../src/analytics/metrics-aggregator.j
 import type { SkillUsageOutcome } from '../../src/analytics/types.js'
 
 describe('MetricsExporter', () => {
-  let db: Database.Database
+  let db: Database
   let aggregator: MetricsAggregator
   let exporter: MetricsExporter
   let testDir: string
@@ -43,7 +44,7 @@ describe('MetricsExporter', () => {
 
   beforeEach(() => {
     // Create in-memory database with schema
-    db = new Database(':memory:')
+    db = createDatabaseSync(':memory:')
     db.exec(`
       CREATE TABLE usage_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
