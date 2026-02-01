@@ -8,7 +8,8 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @skillsmith/core && npm run build -w @smith-horn/enterprise && npm run build -w @skillsmith/mcp-server -w @skillsmith/cli -w @skillsmith/vscode-extension --if-present",
+    "build": "turbo run build",
+    "build:legacy": "npm run build -w @skillsmith/core && npm run build -w @smith-horn/enterprise && npm run build -w @skillsmith/mcp-server -w @skillsmith/cli -w @skillsmith/vscode-extension --if-present",
     "dev": "npm run dev --workspace=packages/mcp-server",
     "pretest": "bash scripts/docker-health.sh 2>/dev/null || true",
     "test": "vitest run",
@@ -16,6 +17,7 @@
     "test:coverage": "vitest run --coverage",
     "docker:health": "bash scripts/docker-health.sh",
     "lint": "eslint .",
+    "lint:turbo": "turbo run lint",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -61,6 +63,7 @@
   "engines": {
     "node": ">=22.0.0"
   },
+  "packageManager": "npm@10.9.4",
   "author": "Smith Horn Group Ltd",
   "license": "Elastic-2.0",
   "devDependencies": {
@@ -83,6 +86,7 @@
     "stripe": "20.2.0",
     "supabase": "2.71.3",
     "tsx": "4.21.0",
+    "turbo": "2.5.4",
     "typescript": "5.9.3",
     "typescript-eslint": "8.54.0",
     "varlock": "0.1.4",

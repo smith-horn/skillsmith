@@ -391,9 +391,10 @@ jobs:
           compression-level: 1 # Minimal - content already gzipped
 
       # SMI-2193: Cache package build outputs (dist/ directories)
+      # SMI-2198: Also cache Turbo's .turbo directory for faster hash computation
       # Key includes: package source files, tsconfig, and lockfile
       # This allows downstream jobs to skip rebuilding unchanged packages
-      - name: Cache package builds
+      - name: Cache package builds and Turbo
         uses: actions/cache@v4
         with:
           path: |
@@ -403,11 +404,14 @@ jobs:
             packages/enterprise/dist
             packages/vscode-extension/dist
             packages/website/.astro
-          key: pkg-builds-${{ hashFiles('packages/*/src/**/*.ts', 'packages/*/src/**/*.tsx', 'packages/*/package.json', 'tsconfig*.json') }}
+            .turbo
+            packages/*/.turbo
+          key: pkg-builds-turbo-${{ hashFiles('packages/*/src/**/*.ts', 'packages/*/src/**/*.tsx', 'packages/*/package.json', 'tsconfig*.json', 'turbo.json') }}
           restore-keys: |
-            pkg-builds-
+            pkg-builds-turbo-
 
       # SMI-2193: Extract dist/ directories from Docker image and save to cache
+      # SMI-2198: Also extract Turbo cache for faster subsequent builds
       - name: Extract package builds from Docker image
         run: |
           # Cleanup any leftover containers from previous failed runs
@@ -435,11 +439,23 @@ jobs:
             echo "- No .astro cache in packages/website"
           fi
 
+          # SMI-2198: Extract Turbo cache directories
+          if docker cp extract-builds:/app/.turbo ./ 2>/dev/null; then
+            echo "✓ Extracted root .turbo cache"
+          fi
+          for pkg in core mcp-server cli enterprise vscode-extension website; do
+            if docker cp extract-builds:/app/packages/$pkg/.turbo packages/$pkg/ 2>/dev/null; then
+              echo "✓ Extracted packages/$pkg/.turbo"
+            fi
+          done
+
           docker rm extract-builds
 
           # Show summary
           echo "=== Extracted package builds ==="
           du -sh packages/*/dist 2>/dev/null || true
+          echo "=== Turbo cache ==="
+          du -sh .turbo packages/*/.turbo 2>/dev/null || echo "No turbo cache yet"
 
       # NOTE: Package builds are cached (line 392) for future runs, not uploaded as artifact
       # The cache provides cross-run benefits without the per-run upload overhead (~30-60s)
