@@ -12,7 +12,7 @@ import { SkillParser } from '../src/indexer/SkillParser.js'
 import { GitHubIndexer } from '../src/indexer/GitHubIndexer.js'
 import { IndexerRepository } from '../src/repositories/IndexerRepository.js'
 import { createDatabase, closeDatabase } from '../src/db/schema.js'
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../src/db/database-interface.js'
 
 // ============================================================
 // SkillParser Tests

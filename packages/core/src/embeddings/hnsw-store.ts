@@ -8,8 +8,8 @@
  * @see ADR-009: Embedding Service Fallback Strategy
  */
 
-import Database from 'better-sqlite3'
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
+import { createDatabaseSync } from '../db/createDatabase.js'
 // IMPORTANT: Keep this type-only import here (prevents circular runtime dependency)
 import type { SimilarityResult } from './index.js'
 
@@ -353,7 +353,7 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
 
   // Private methods
   private initDatabase(dbPath: string): void {
-    this.db = new Database(dbPath)
+    this.db = createDatabaseSync(dbPath)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS skill_embeddings (
         skill_id TEXT PRIMARY KEY,

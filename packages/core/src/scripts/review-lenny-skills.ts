@@ -14,7 +14,7 @@
  * Blog: https://sidbharath.com/blog/building-lenny-skills-database/
  */
 
-import Database from 'better-sqlite3'
+import { createDatabaseAsync } from '../db/createDatabase.js'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 
 import {
@@ -211,7 +211,7 @@ export async function reviewLennySkills(options: {
 
     // Update database if approve flag is set
     if (approve && existsSync(dbPath)) {
-      const db = new Database(dbPath)
+      const db = await createDatabaseAsync(dbPath)
 
       // Update skills table
       const updateSkill = db.prepare(`

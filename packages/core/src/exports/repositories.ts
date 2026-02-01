@@ -6,7 +6,7 @@
  */
 
 // ============================================================================
-// Database (SMI-577, SMI-974)
+// Database (SMI-577, SMI-974, SMI-2180)
 // ============================================================================
 
 export {
@@ -18,9 +18,19 @@ export {
   getSchemaVersion,
   runMigrations,
   runMigrationsSafe,
+  // SMI-2206: Async schema functions with WASM fallback
+  createDatabaseAsync,
+  openDatabaseAsync,
 } from '../db/schema.js'
 
 export type { DatabaseType } from '../db/schema.js'
+
+// SMI-2180: Database abstraction layer exports (low-level factory)
+export { createDatabaseSync } from '../db/createDatabase.js'
+export type { Database } from '../db/database-interface.js'
+
+// SMI-2180: Driver detection utilities
+export { isBetterSqlite3Available } from '../db/drivers/betterSqlite3Driver.js'
 
 // ============================================================================
 // Repositories (SMI-578, SMI-628)

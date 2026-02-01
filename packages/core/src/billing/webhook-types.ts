@@ -4,7 +4,7 @@
  * Configuration and type definitions for the webhook handler.
  */
 
-import type { Database as BetterSqliteDatabase } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import type { StripeClient } from './StripeClient.js'
 import type { BillingService } from './BillingService.js'
 import type { LicenseTier } from './types.js'
@@ -27,7 +27,7 @@ export interface StripeWebhookHandlerConfig {
   /**
    * Database connection (for license key storage)
    */
-  db: BetterSqliteDatabase
+  db: DatabaseType
 
   /**
    * Callback for license key generation

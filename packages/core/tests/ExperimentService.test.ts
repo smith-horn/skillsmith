@@ -5,18 +5,18 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import Database from 'better-sqlite3'
-import type { Database as DatabaseType } from 'better-sqlite3'
+import { createDatabaseSync } from '../src/db/createDatabase.js'
+import type { Database } from '../src/db/database-interface.js'
 import { initializeAnalyticsSchema } from '../src/analytics/schema.js'
 import { ExperimentService } from '../src/analytics/ExperimentService.js'
 import type { ExperimentInput, OutcomeInput } from '../src/analytics/types.js'
 
 describe('ExperimentService', () => {
-  let db: DatabaseType
+  let db: Database
   let service: ExperimentService
 
   beforeEach(() => {
-    db = new Database(':memory:')
+    db = createDatabaseSync(':memory:')
     initializeAnalyticsSchema(db)
     service = new ExperimentService(db)
   })

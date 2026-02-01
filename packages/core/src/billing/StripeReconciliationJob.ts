@@ -12,7 +12,7 @@
  * - Detailed reporting
  */
 
-import type { Database as BetterSqliteDatabase } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import { createLogger } from '../utils/logger.js'
 import type { StripeClient } from './StripeClient.js'
 import type { StripeSubscriptionId } from './types.js'
@@ -57,7 +57,7 @@ const logger = createLogger('StripeReconciliation')
  */
 export class StripeReconciliationJob {
   private readonly stripe: StripeClient
-  private readonly db: BetterSqliteDatabase
+  private readonly db: DatabaseType
   private readonly autoFix: boolean
   private readonly batchSize: number
 

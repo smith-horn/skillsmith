@@ -7,12 +7,17 @@
  * @see SMI-XXXX: First-run integration and documentation delivery
  */
 
+import { createRequire } from 'node:module'
 import { exec } from 'child_process'
+
+// ESM-compatible require for dynamic module resolution
+const require = createRequire(import.meta.url)
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 
-import { getToolContext, type ToolContext } from './context.js'
+// SMI-2208: Use async context for WASM fallback support
+import { getToolContextAsync, type ToolContext } from './context.js'
 import { searchToolSchema, executeSearch, type SearchInput } from './tools/search.js'
 import { getSkillToolSchema, executeGetSkill, type GetSkillInput } from './tools/get-skill.js'
 import { installTool, installSkill, installInputSchema } from './tools/install.js'
@@ -374,12 +379,25 @@ async function main() {
     return
   }
 
-  // Initialize database and services
-  toolContext = getToolContext()
-  console.error(
-    'Database initialized at:',
-    process.env.SKILLSMITH_DB_PATH || '~/.skillsmith/skills.db'
-  )
+  // SMI-2208: Initialize database asynchronously with WASM fallback
+  // CRITICAL: Must complete before any tool handlers access toolContext
+  try {
+    toolContext = await getToolContextAsync()
+    console.error(
+      'Database initialized at:',
+      process.env.SKILLSMITH_DB_PATH || '~/.skillsmith/skills.db'
+    )
+  } catch (error) {
+    console.error('[skillsmith] Failed to initialize database:')
+    console.error(error instanceof Error ? error.message : error)
+    console.error('')
+    console.error('Troubleshooting:')
+    console.error('  - In Docker: Ensure container is running')
+    console.error('  - On macOS: sql.js WASM should load automatically')
+    console.error('  - Run: npm rebuild better-sqlite3 (if using native)')
+    console.error('')
+    process.exit(1)
+  }
 
   // Run first-time setup if needed
   if (isFirstRun()) {

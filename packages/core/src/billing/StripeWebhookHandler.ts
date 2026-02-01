@@ -14,7 +14,7 @@
  */
 
 import type Stripe from 'stripe'
-import type { Database as BetterSqliteDatabase } from 'better-sqlite3'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import { createLogger } from '../utils/logger.js'
 import type { StripeClient } from './StripeClient.js'
 import type { BillingService } from './BillingService.js'
@@ -60,7 +60,7 @@ const logger = createLogger('StripeWebhookHandler')
 export class StripeWebhookHandler {
   private readonly stripe: StripeClient
   private readonly billing: BillingService
-  private readonly db: BetterSqliteDatabase
+  private readonly db: DatabaseType
   private readonly onLicenseKeyNeeded?: StripeWebhookHandlerConfig['onLicenseKeyNeeded']
   private readonly onEmailNeeded?: StripeWebhookHandlerConfig['onEmailNeeded']
 

@@ -5,18 +5,19 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import Database from 'better-sqlite3'
+import { createDatabaseSync } from '../../src/db/createDatabase.js'
+import type { Database } from '../../src/db/database-interface.js'
 import { GDPRComplianceService } from '../../src/billing/GDPRComplianceService.js'
 import { initializeAnalyticsSchema } from '../../src/analytics/schema.js'
 import { randomUUID } from 'crypto'
 
 describe('GDPRComplianceService', () => {
-  let db: Database.Database
+  let db: Database
   let gdprService: GDPRComplianceService
 
   beforeEach(() => {
     // Create in-memory database
-    db = new Database(':memory:')
+    db = createDatabaseSync(':memory:')
     initializeAnalyticsSchema(db)
 
     gdprService = new GDPRComplianceService({ db })

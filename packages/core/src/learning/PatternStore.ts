@@ -3,7 +3,8 @@
  * @module @skillsmith/core/learning/PatternStore
  * @see https://arxiv.org/abs/1801.10112 (Progress & Compress)
  */
-import Database from 'better-sqlite3'
+import type { Database } from '../db/database-interface.js'
+import { createDatabaseSync } from '../db/createDatabase.js'
 import { randomUUID } from 'crypto'
 import { EmbeddingService } from '../embeddings/index.js'
 
@@ -79,7 +80,7 @@ import {
 
 /** PatternStore - EWC++ pattern storage for successful recommendation matches */
 export class PatternStore {
-  private db!: Database.Database
+  private db!: Database
   private fisherMatrix!: FisherInformationMatrix
   private embeddingService!: EmbeddingService
   private consolidationState: ConsolidationState
@@ -106,7 +107,7 @@ export class PatternStore {
   async initialize(): Promise<void> {
     if (this.initialized) return
 
-    this.db = new Database(this.config.dbPath || ':memory:')
+    this.db = createDatabaseSync(this.config.dbPath || ':memory:')
     this.db.exec(PATTERN_STORE_SCHEMA)
     this.fisherMatrix = new FisherInformationMatrix(this.config.dimensions)
     this.loadFisherMatrix()

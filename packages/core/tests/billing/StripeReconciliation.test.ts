@@ -5,7 +5,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import Database from 'better-sqlite3'
+import { createDatabaseSync } from '../../src/db/createDatabase.js'
+import type { Database } from '../../src/db/database-interface.js'
 import type Stripe from 'stripe'
 import { StripeReconciliationJob } from '../../src/billing/StripeReconciliationJob.js'
 import type { StripeClient } from '../../src/billing/StripeClient.js'
@@ -36,12 +37,12 @@ function createMockStripeClient(): StripeClient {
 }
 
 describe('StripeReconciliationJob', () => {
-  let db: Database.Database
+  let db: Database
   let mockStripeClient: StripeClient
 
   beforeEach(() => {
     // Create in-memory database
-    db = new Database(':memory:')
+    db = createDatabaseSync(':memory:')
     initializeAnalyticsSchema(db)
     mockStripeClient = createMockStripeClient()
   })
