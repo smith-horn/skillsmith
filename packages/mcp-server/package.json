@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/mcp-server",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "mcpName": "io.github.smith-horn/skillsmith",
   "description": "MCP server for Skillsmith skill discovery",
   "type": "module",
