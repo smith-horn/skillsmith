@@ -221,6 +221,14 @@ jobs:
 
   # Build Docker image once, extract dependencies, use for all jobs
   # SMI-708: Optimized to extract node_modules once instead of running npm ci per job
+  #
+  # Caching Strategy (SMI-2193, SMI-2194):
+  # 1. Docker Image Cache: Key = Dockerfile + lockfile + .dockerignore
+  #    - Cache hit: Load pre-built image (~30s) instead of rebuild (~6min)
+  #    - Cache miss: Full build with GHA layer caching
+  # 2. Package Build Cache: Key = source files + tsconfig
+  #    - Extracts dist/ directories for potential reuse
+  #    - Benefits future runs when only non-code files change
   docker-build:
     needs: [secret-scan, package-validation, classify]
     # Run if: classifier says don't skip AND both jobs succeeded OR were skipped
@@ -235,6 +243,7 @@ jobs:
 
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
+      docker-cache-hit: ${{ steps.docker-image-cache.outputs.cache-hit }}
 
     steps:
       - name: Checkout
@@ -257,7 +266,38 @@ jobs:
           rm -f /tmp/git-crypt-key
           echo "✓ git-crypt unlocked successfully"
 
+      # SMI-2194: Cache Docker image to skip rebuild when only TS source changes
+      # Key includes: Dockerfile, lockfile, .dockerignore, and Node version
+      # NOTE: No restore-keys - we only want exact matches to avoid loading stale images
+      - name: Restore Docker image from cache
+        id: docker-image-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/docker-cache
+          key: docker-image-${{ hashFiles('Dockerfile', 'package-lock.json', '.dockerignore', '.nvmrc') }}-v${{ env.NODE_VERSION }}
+
+      # SMI-2194: Load cached Docker image if available
+      - name: Load cached Docker image
+        id: load-cached-image
+        if: steps.docker-image-cache.outputs.cache-hit == 'true'
+        run: |
+          echo "Loading Docker image from cache..."
+          if [ -f /tmp/docker-cache/skillsmith-ci.tar.gz ]; then
+            gunzip -c /tmp/docker-cache/skillsmith-ci.tar.gz | docker load
+            # Re-tag with current SHA for downstream jobs
+            CACHED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+            if [ -n "$CACHED_TAG" ] && [ "$CACHED_TAG" != "${{ github.sha }}" ]; then
+              docker tag skillsmith-ci:$CACHED_TAG skillsmith-ci:${{ github.sha }}
+            fi
+            echo "✓ Docker image loaded from cache"
+            echo "loaded=true" >> $GITHUB_OUTPUT
+          else
+            echo "Cache hit but no image file found, will rebuild"
+            echo "loaded=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Set up Docker Buildx
+        if: steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Docker meta
@@ -268,7 +308,9 @@ jobs:
           tags: |
             type=sha,prefix=
 
+      # SMI-2194: Only build if cache miss or load failed
       - name: Build and cache Docker image
+        if: steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -279,8 +321,22 @@ jobs:
           cache-to: type=gha,mode=max
           target: dev
 
-      - name: Save Docker image
-        run: docker save skillsmith-ci:${{ github.sha }} | gzip > /tmp/skillsmith-ci.tar.gz
+      # SMI-2194: Save image to cache directory for future runs
+      - name: Save Docker image to cache
+        if: steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true'
+        run: |
+          mkdir -p /tmp/docker-cache
+          docker save skillsmith-ci:${{ github.sha }} | gzip > /tmp/docker-cache/skillsmith-ci.tar.gz
+          echo "✓ Docker image saved to cache"
+
+      - name: Save Docker image for artifact
+        run: |
+          # Always save to artifact location (either from cache or fresh build)
+          if [ -f /tmp/docker-cache/skillsmith-ci.tar.gz ]; then
+            cp /tmp/docker-cache/skillsmith-ci.tar.gz /tmp/skillsmith-ci.tar.gz
+          else
+            docker save skillsmith-ci:${{ github.sha }} | gzip > /tmp/skillsmith-ci.tar.gz
+          fi
 
       - name: Upload Docker image artifact
         uses: actions/upload-artifact@v4
@@ -294,6 +350,9 @@ jobs:
       # SMI-2159: Also extract nested workspace node_modules (for non-hoisted deps like @aws-sdk)
       - name: Extract node_modules from Docker image
         run: |
+          # Cleanup any leftover containers from previous failed runs
+          docker rm -f extract-deps 2>/dev/null || true
+
           # Create a container (not running) and copy out node_modules
           docker create --name extract-deps skillsmith-ci:${{ github.sha }}
 
@@ -302,7 +361,8 @@ jobs:
 
           # Copy nested workspace node_modules (for non-hoisted dependencies)
           # docker cp works on stopped containers - no need for docker exec
-          for pkg in core enterprise mcp-server cli website; do
+          # NOTE: Package list must stay consistent with extract-builds step below
+          for pkg in core mcp-server cli enterprise vscode-extension website; do
             mkdir -p /tmp/packages/$pkg
             if docker cp extract-deps:/app/packages/$pkg/node_modules /tmp/packages/$pkg/ 2>/dev/null; then
               echo "✓ Copied packages/$pkg/node_modules"
@@ -328,7 +388,61 @@ jobs:
           name: node-modules
           path: /tmp/node_modules.tar.gz
           retention-days: 1
-          compression-level: 1 # Already compressed with tar
+          compression-level: 1 # Minimal - content already gzipped
+
+      # SMI-2193: Cache package build outputs (dist/ directories)
+      # Key includes: package source files, tsconfig, and lockfile
+      # This allows downstream jobs to skip rebuilding unchanged packages
+      - name: Cache package builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            packages/core/dist
+            packages/mcp-server/dist
+            packages/cli/dist
+            packages/enterprise/dist
+            packages/vscode-extension/dist
+            packages/website/.astro
+          key: pkg-builds-${{ hashFiles('packages/*/src/**/*.ts', 'packages/*/src/**/*.tsx', 'packages/*/package.json', 'tsconfig*.json') }}
+          restore-keys: |
+            pkg-builds-
+
+      # SMI-2193: Extract dist/ directories from Docker image and save to cache
+      - name: Extract package builds from Docker image
+        run: |
+          # Cleanup any leftover containers from previous failed runs
+          docker rm -f extract-builds 2>/dev/null || true
+
+          # Create a container to extract dist directories
+          docker create --name extract-builds skillsmith-ci:${{ github.sha }}
+
+          # Extract dist/ from each package (consistent list with node_modules extraction)
+          for pkg in core mcp-server cli enterprise vscode-extension website; do
+            mkdir -p packages/$pkg
+            if docker cp extract-builds:/app/packages/$pkg/dist packages/$pkg/ 2>/dev/null; then
+              echo "✓ Extracted packages/$pkg/dist"
+              ls packages/$pkg/dist/ 2>/dev/null | head -3 || true
+            else
+              echo "- No dist in packages/$pkg"
+            fi
+          done
+
+          # Extract website .astro cache if exists
+          mkdir -p packages/website
+          if docker cp extract-builds:/app/packages/website/.astro packages/website/ 2>/dev/null; then
+            echo "✓ Extracted packages/website/.astro"
+          else
+            echo "- No .astro cache in packages/website"
+          fi
+
+          docker rm extract-builds
+
+          # Show summary
+          echo "=== Extracted package builds ==="
+          du -sh packages/*/dist 2>/dev/null || true
+
+      # NOTE: Package builds are cached (line 392) for future runs, not uploaded as artifact
+      # The cache provides cross-run benefits without the per-run upload overhead (~30-60s)
 
   # Parallel quality checks using Docker container
   # SMI-708: All jobs now use pre-extracted node_modules instead of npm ci
