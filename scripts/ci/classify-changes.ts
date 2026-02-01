@@ -77,11 +77,7 @@ const TIER_PATTERNS: Record<Tier, string[]> = {
 }
 
 // Files that always require full CI regardless of tier
-const ALWAYS_FULL_CI: string[] = [
-  '.github/workflows/ci.yml',
-  'Dockerfile',
-  'package-lock.json',
-]
+const ALWAYS_FULL_CI: string[] = ['.github/workflows/ci.yml', 'Dockerfile', 'package-lock.json']
 
 /**
  * Get changed files between two commits or for a PR
