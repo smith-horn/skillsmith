@@ -13,22 +13,42 @@
  *   tier=code|deps|config|docs
  *   skip_docker=true|false
  *   skip_tests=true|false
- *   affected_packages=["@skillsmith/core","@skillsmith/mcp-server"]
+ *   changed_count=<number>
  */
 
 import { execSync } from 'child_process'
 import { existsSync, appendFileSync } from 'fs'
+import { dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { minimatch } from 'minimatch'
 
-// Classification tiers in priority order (higher = more compute needed)
+// Constants
+const MAX_FILES_IN_SUMMARY = 50
+
+// Validation patterns for git refs (prevent command injection)
+const SHA_PATTERN = /^[a-f0-9]{4,40}$/i
+const REF_PATTERN = /^[a-zA-Z0-9._/-]+$/
+
+/**
+ * Classification tier representing the type of changes detected.
+ * Tiers are ordered by CI compute requirements: docs < config < deps < code
+ */
 export type Tier = 'docs' | 'config' | 'deps' | 'code'
 
+/**
+ * Result of classifying changed files.
+ * Used to determine which CI jobs should run.
+ */
 export interface ClassificationResult {
+  /** Highest tier among all changed files */
   tier: Tier
+  /** Whether Docker build can be skipped */
   skipDocker: boolean
+  /** Whether tests can be skipped */
   skipTests: boolean
+  /** List of files that were classified */
   changedFiles: string[]
+  /** Human-readable explanation of the classification */
   reason: string
 }
 
@@ -61,6 +81,9 @@ const TIER_PATTERNS: Record<Tier, string[]> = {
     'packages/*/package.json',
     'Dockerfile',
     'docker-compose*.yml',
+    'docker-compose*.yaml',
+    'compose.yml',
+    'compose.yaml',
     '.nvmrc',
     '.node-version',
   ],
@@ -80,18 +103,34 @@ const TIER_PATTERNS: Record<Tier, string[]> = {
 const ALWAYS_FULL_CI: string[] = ['.github/workflows/ci.yml', 'Dockerfile', 'package-lock.json']
 
 /**
- * Get changed files between two commits or for a PR
+ * Validate that a string is a safe git ref (SHA or branch/tag name).
+ * Prevents command injection attacks.
+ */
+export function isValidGitRef(ref: string): boolean {
+  return SHA_PATTERN.test(ref) || REF_PATTERN.test(ref)
+}
+
+/**
+ * Get changed files between two commits or for a PR.
+ * Uses git diff to determine which files have changed.
  */
 export function getChangedFiles(base?: string, head?: string): string[] {
   try {
     let cmd: string
 
     if (base && head) {
+      // Validate refs to prevent command injection
+      if (!isValidGitRef(base) || !isValidGitRef(head)) {
+        throw new Error(`Invalid git ref format: base="${base}", head="${head}"`)
+      }
       // Compare two specific commits
       cmd = `git diff --name-only ${base}...${head}`
     } else if (process.env.GITHUB_EVENT_NAME === 'pull_request') {
       // PR: compare against base branch
       const baseSha = process.env.GITHUB_BASE_REF || 'main'
+      if (!isValidGitRef(baseSha)) {
+        throw new Error(`Invalid GITHUB_BASE_REF: "${baseSha}"`)
+      }
       cmd = `git diff --name-only origin/${baseSha}...HEAD`
     } else {
       // Push: compare against parent commit
@@ -99,10 +138,21 @@ export function getChangedFiles(base?: string, head?: string): string[] {
     }
 
     const output = execSync(cmd, { encoding: 'utf-8' })
-    return output.trim().split('\n').filter(Boolean)
-  } catch {
+    return output
+      .trim()
+      .split('\n')
+      .filter((f) => f.length > 0)
+  } catch (error) {
     // Fallback: if git diff fails, assume all files changed
-    console.error('Warning: Could not determine changed files, assuming full CI needed')
+    const message = `Warning: Could not determine changed files (${error instanceof Error ? error.message : 'unknown error'}), assuming full CI needed`
+    console.error(message)
+
+    // Add warning to GitHub summary if available
+    const summaryFile = process.env.GITHUB_STEP_SUMMARY
+    if (summaryFile && existsSync(dirname(summaryFile))) {
+      appendFileSync(summaryFile, `\n> **Warning:** ${message}\n`)
+    }
+
     return ['**/*']
   }
 }
@@ -115,11 +165,15 @@ export function matchesPatterns(file: string, patterns: string[]): boolean {
 }
 
 /**
- * Classify a list of changed files into a tier
+ * Classify a list of changed files into a tier.
+ * Returns the highest tier among all changed files.
  */
 export function classifyChanges(changedFiles: string[]): ClassificationResult {
+  // Filter out empty strings that might come from git output
+  const files = changedFiles.filter((f) => f.length > 0)
+
   // Handle empty changes (shouldn't happen, but be safe)
-  if (changedFiles.length === 0) {
+  if (files.length === 0) {
     return {
       tier: 'docs',
       skipDocker: true,
@@ -130,7 +184,7 @@ export function classifyChanges(changedFiles: string[]): ClassificationResult {
   }
 
   // Check for files that always require full CI
-  const requiresFullCI = changedFiles.some((file) =>
+  const requiresFullCI = files.some((file) =>
     ALWAYS_FULL_CI.some((pattern) => minimatch(file, pattern, { dot: true }))
   )
 
@@ -139,8 +193,8 @@ export function classifyChanges(changedFiles: string[]): ClassificationResult {
       tier: 'code',
       skipDocker: false,
       skipTests: false,
-      changedFiles,
-      reason: `Critical file changed: ${changedFiles.find((f) =>
+      changedFiles: files,
+      reason: `Critical file changed: ${files.find((f) =>
         ALWAYS_FULL_CI.some((p) => minimatch(f, p, { dot: true }))
       )}`,
     }
@@ -149,11 +203,15 @@ export function classifyChanges(changedFiles: string[]): ClassificationResult {
   // Classify each file and find the highest tier
   let highestTier: Tier = 'docs'
   const tierPriority: Tier[] = ['docs', 'config', 'deps', 'code']
+  const unmatchedFiles: string[] = []
 
-  for (const file of changedFiles) {
+  for (const file of files) {
+    let matched = false
+
     // Check tiers in reverse priority order (code first)
     for (const tier of [...tierPriority].reverse()) {
       if (matchesPatterns(file, TIER_PATTERNS[tier])) {
+        matched = true
         if (tierPriority.indexOf(tier) > tierPriority.indexOf(highestTier)) {
           highestTier = tier
         }
@@ -161,8 +219,21 @@ export function classifyChanges(changedFiles: string[]): ClassificationResult {
       }
     }
 
+    // Track unmatched files - they will trigger code tier for safety
+    if (!matched) {
+      unmatchedFiles.push(file)
+    }
+
     // If we hit code tier, no need to check more files
     if (highestTier === 'code') break
+  }
+
+  // Unknown files should trigger full CI for safety
+  if (unmatchedFiles.length > 0 && highestTier !== 'code') {
+    console.warn(
+      `Warning: Unmatched files detected, defaulting to code tier: ${unmatchedFiles.slice(0, 5).join(', ')}${unmatchedFiles.length > 5 ? '...' : ''}`
+    )
+    highestTier = 'code'
   }
 
   // Determine skip flags based on tier
@@ -172,17 +243,20 @@ export function classifyChanges(changedFiles: string[]): ClassificationResult {
   // Build reason string
   const reasons: string[] = []
   for (const tier of tierPriority) {
-    const matchingFiles = changedFiles.filter((f) => matchesPatterns(f, TIER_PATTERNS[tier]))
+    const matchingFiles = files.filter((f) => matchesPatterns(f, TIER_PATTERNS[tier]))
     if (matchingFiles.length > 0) {
       reasons.push(`${tier}: ${matchingFiles.length} file(s)`)
     }
+  }
+  if (unmatchedFiles.length > 0) {
+    reasons.push(`unmatched: ${unmatchedFiles.length} file(s)`)
   }
 
   return {
     tier: highestTier,
     skipDocker,
     skipTests,
-    changedFiles,
+    changedFiles: files,
     reason: reasons.join(', ') || 'Unclassified files',
   }
 }
@@ -201,7 +275,8 @@ function outputForGitHub(result: ClassificationResult): void {
     `changed_count=${result.changedFiles.length}`,
   ]
 
-  if (outputFile && existsSync(outputFile.replace(/[^/]+$/, ''))) {
+  // Use dirname for safe path handling (fixes path traversal concern)
+  if (outputFile && existsSync(dirname(outputFile))) {
     // Write to GITHUB_OUTPUT file
     for (const output of outputs) {
       appendFileSync(outputFile, `${output}\n`)
@@ -233,13 +308,13 @@ ${result.reason}
 <summary>Show ${result.changedFiles.length} files</summary>
 
 \`\`\`
-${result.changedFiles.slice(0, 50).join('\n')}
-${result.changedFiles.length > 50 ? `\n... and ${result.changedFiles.length - 50} more` : ''}
+${result.changedFiles.slice(0, MAX_FILES_IN_SUMMARY).join('\n')}
+${result.changedFiles.length > MAX_FILES_IN_SUMMARY ? `\n... and ${result.changedFiles.length - MAX_FILES_IN_SUMMARY} more` : ''}
 \`\`\`
 </details>
 `
 
-  if (summaryFile) {
+  if (summaryFile && existsSync(dirname(summaryFile))) {
     appendFileSync(summaryFile, summary)
   } else {
     console.log(summary)
@@ -277,9 +352,6 @@ function main(): void {
   console.log(`Reason: ${result.reason}`)
 
   outputForGitHub(result)
-
-  // Exit with appropriate code
-  process.exit(0)
 }
 
 // Run if executed directly (ES module compatible)

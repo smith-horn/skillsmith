@@ -1,5 +1,9 @@
 name: CI
 
+# Trigger configuration:
+# - paths-ignore: Skip CI entirely for pure docs-only commits (fast path)
+# - classify job: Further categorizes changes for conditional job execution
+# These work together: paths-ignore handles the simple case, classify handles mixed commits
 on:
   push:
     branches: [main]
@@ -506,6 +510,9 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  # Security audit always runs regardless of change classification.
+  # Rationale: Security vulnerabilities can be introduced by any change type,
+  # and the audit is relatively fast compared to the cost of missing a vulnerability.
   security:
     name: Security Audit
     runs-on: ubuntu-latest

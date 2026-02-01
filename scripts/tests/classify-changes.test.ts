@@ -3,9 +3,44 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { classifyChanges, matchesPatterns } from '../ci/classify-changes'
+import { classifyChanges, matchesPatterns, isValidGitRef } from '../ci/classify-changes'
 
 describe('SMI-2187: CI Change Classifier', () => {
+  describe('isValidGitRef', () => {
+    it('should accept valid SHA hashes', () => {
+      expect(isValidGitRef('abc123')).toBe(true)
+      expect(isValidGitRef('1234567890abcdef1234567890abcdef12345678')).toBe(true)
+      expect(isValidGitRef('ABCDEF')).toBe(true) // uppercase
+    })
+
+    it('should accept valid branch/tag names', () => {
+      expect(isValidGitRef('main')).toBe(true)
+      expect(isValidGitRef('feature/my-branch')).toBe(true)
+      expect(isValidGitRef('v1.0.0')).toBe(true)
+      expect(isValidGitRef('refs/heads/main')).toBe(true)
+      expect(isValidGitRef('HEAD')).toBe(true)
+    })
+
+    it('should reject malicious input', () => {
+      expect(isValidGitRef('$(rm -rf /)')).toBe(false)
+      expect(isValidGitRef('main; rm -rf /')).toBe(false)
+      expect(isValidGitRef('`whoami`')).toBe(false)
+      expect(isValidGitRef('main && echo pwned')).toBe(false)
+      expect(isValidGitRef('main | cat /etc/passwd')).toBe(false)
+    })
+
+    it('should reject empty or whitespace refs', () => {
+      expect(isValidGitRef('')).toBe(false)
+      expect(isValidGitRef('   ')).toBe(false)
+    })
+
+    it('should accept short branch names', () => {
+      // Short names like 'v1' or 'ab' are valid branch names
+      expect(isValidGitRef('ab')).toBe(true)
+      expect(isValidGitRef('v1')).toBe(true)
+    })
+  })
+
   describe('matchesPatterns', () => {
     it('should match glob patterns', () => {
       expect(matchesPatterns('docs/adr/001.md', ['docs/**'])).toBe(true)
@@ -97,6 +132,21 @@ describe('SMI-2187: CI Change Classifier', () => {
         const result = classifyChanges(['.nvmrc'])
         expect(result.tier).toBe('deps')
       })
+
+      it('should classify compose.yml as deps', () => {
+        const result = classifyChanges(['compose.yml'])
+        expect(result.tier).toBe('deps')
+      })
+
+      it('should classify compose.yaml as deps', () => {
+        const result = classifyChanges(['compose.yaml'])
+        expect(result.tier).toBe('deps')
+      })
+
+      it('should classify docker-compose.yaml as deps', () => {
+        const result = classifyChanges(['docker-compose.prod.yaml'])
+        expect(result.tier).toBe('deps')
+      })
     })
 
     describe('code tier', () => {
@@ -137,6 +187,16 @@ describe('SMI-2187: CI Change Classifier', () => {
         expect(result.skipDocker).toBe(true)
         expect(result.skipTests).toBe(false)
       })
+
+      it('should include file counts in reason for mixed changes', () => {
+        const result = classifyChanges([
+          'README.md',
+          'packages/core/src/a.ts',
+          'packages/core/src/b.ts',
+        ])
+        expect(result.reason).toContain('docs: 1 file(s)')
+        expect(result.reason).toContain('code: 2 file(s)')
+      })
     })
 
     describe('always full CI files', () => {
@@ -157,6 +217,39 @@ describe('SMI-2187: CI Change Classifier', () => {
         const result = classifyChanges(['README.md', '.github/workflows/ci.yml'])
         expect(result.tier).toBe('code')
       })
+
+      it('should require full CI when multiple critical files change', () => {
+        const result = classifyChanges([
+          'Dockerfile',
+          'package-lock.json',
+          '.github/workflows/ci.yml',
+        ])
+        expect(result.tier).toBe('code')
+        expect(result.skipDocker).toBe(false)
+        expect(result.skipTests).toBe(false)
+        expect(result.reason).toContain('Critical file changed')
+      })
+    })
+
+    describe('unmatched files (safety behavior)', () => {
+      it('should default to code tier for unknown file types', () => {
+        const result = classifyChanges(['random-file.xyz'])
+        // Unknown files trigger code tier for safety
+        expect(result.tier).toBe('code')
+        expect(result.skipDocker).toBe(false)
+        expect(result.skipTests).toBe(false)
+      })
+
+      it('should include unmatched count in reason', () => {
+        const result = classifyChanges(['Makefile', 'terraform/main.tf'])
+        expect(result.tier).toBe('code')
+        expect(result.reason).toContain('unmatched: 2 file(s)')
+      })
+
+      it('should escalate from docs to code when unknown file present', () => {
+        const result = classifyChanges(['README.md', 'unknown.xyz'])
+        expect(result.tier).toBe('code')
+      })
     })
 
     describe('edge cases', () => {
@@ -168,16 +261,25 @@ describe('SMI-2187: CI Change Classifier', () => {
         expect(result.reason).toBe('No files changed')
       })
 
-      it('should handle unclassified files', () => {
-        const result = classifyChanges(['random-file.xyz'])
-        // Unclassified files don't match any tier, so stays at docs
+      it('should handle file list with empty strings', () => {
+        const result = classifyChanges(['', 'README.md', ''])
         expect(result.tier).toBe('docs')
+        // Verify empty strings are filtered
+        expect(result.changedFiles).toHaveLength(1)
+        expect(result.changedFiles[0]).toBe('README.md')
       })
 
       it('should include changed file count in result', () => {
         const files = ['a.ts', 'b.ts', 'c.ts'].map((f) => `packages/core/src/${f}`)
         const result = classifyChanges(files)
         expect(result.changedFiles).toHaveLength(3)
+      })
+
+      it('should handle wildcard pattern from git failure gracefully', () => {
+        // When git fails, getChangedFiles returns ['**/*']
+        // This doesn't match any tier, so should trigger code for safety
+        const result = classifyChanges(['**/*'])
+        expect(result.tier).toBe('code')
       })
     })
   })
