@@ -7,7 +7,7 @@
 
 import type Stripe from 'stripe'
 import { createHash, randomUUID } from 'crypto'
-import type { Database as BetterSqliteDatabase } from '../db/database-interface.js'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import { createLogger } from '../utils/logger.js'
 import { StripeClient } from './StripeClient.js'
 import type { BillingService } from './BillingService.js'
@@ -23,7 +23,7 @@ const logger = createLogger('WebhookHandlers')
 export interface WebhookHandlerContext {
   stripe: StripeClient
   billing: BillingService
-  db: BetterSqliteDatabase
+  db: DatabaseType
   onLicenseKeyNeeded?: (params: {
     customerId: string
     tier: LicenseTier
@@ -303,7 +303,7 @@ export function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session)
 // ============================================================================
 
 export function storeLicenseKey(
-  db: BetterSqliteDatabase,
+  db: DatabaseType,
   params: {
     subscriptionId: string
     organizationId: string
@@ -336,11 +336,7 @@ export function storeLicenseKey(
   })
 }
 
-export function revokeLicenseKey(
-  db: BetterSqliteDatabase,
-  subscriptionId: string,
-  reason: string
-): void {
+export function revokeLicenseKey(db: DatabaseType, subscriptionId: string, reason: string): void {
   const now = new Date().toISOString()
 
   db.prepare(

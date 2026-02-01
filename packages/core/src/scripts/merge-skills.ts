@@ -26,7 +26,8 @@
  *     --dry-run
  */
 
-import Database, { type Statement as BetterSqlite3Statement } from 'better-sqlite3'
+import type { Statement } from '../db/database-interface.js'
+import { createDatabaseAsync } from '../db/createDatabase.js'
 import { resolve } from 'path'
 
 import type {
@@ -129,7 +130,7 @@ export async function mergeSkills(options: MergeOptions): Promise<MergeReport> {
     // ========================================================================
     console.log(`${modeLabel} Opening database: ${options.databasePath}`)
 
-    const db = new Database(options.databasePath, {
+    const db = await createDatabaseAsync(options.databasePath, {
       readonly: options.dryRun,
     })
 
@@ -144,7 +145,7 @@ export async function mergeSkills(options: MergeOptions): Promise<MergeReport> {
     // ========================================================================
     // Prepare Insert (if not dry-run)
     // ========================================================================
-    let insert: BetterSqlite3Statement | null = null
+    let insert: Statement | null = null
     if (!options.dryRun) {
       insert = db.prepare(`
         INSERT OR IGNORE INTO skills (id, name, description, author, repo_url, quality_score, trust_tier, tags, source, stars, created_at)

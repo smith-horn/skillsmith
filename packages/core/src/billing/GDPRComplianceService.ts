@@ -8,7 +8,7 @@
  * All operations are logged for audit purposes.
  */
 
-import type { Database as BetterSqliteDatabase } from '../db/database-interface.js'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import { createLogger } from '../utils/logger.js'
 import type { StripeClient } from './StripeClient.js'
 import type {
@@ -56,7 +56,7 @@ const logger = createLogger('GDPRComplianceService')
  * ```
  */
 export class GDPRComplianceService {
-  private readonly db: BetterSqliteDatabase
+  private readonly db: DatabaseType
   private readonly stripe?: StripeClient
 
   constructor(config: GDPRComplianceServiceConfig) {

@@ -4,7 +4,7 @@
  * Type definitions for the reconciliation job.
  */
 
-import type { Database as BetterSqliteDatabase } from '../db/database-interface.js'
+import type { Database as DatabaseType } from '../db/database-interface.js'
 import type { StripeClient } from './StripeClient.js'
 
 // ============================================================================
@@ -20,7 +20,7 @@ export interface StripeReconciliationJobConfig {
   /**
    * Database connection
    */
-  db: BetterSqliteDatabase
+  db: DatabaseType
 
   /**
    * Whether to automatically fix discrepancies
