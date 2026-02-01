@@ -223,14 +223,27 @@ jobs:
 
       # SMI-708: Extract pre-compiled node_modules from Docker image
       # This eliminates the need for npm ci in each job (saves ~30-60s per job)
+      # SMI-2159: Also extract nested workspace node_modules (for non-hoisted deps like @aws-sdk)
       - name: Extract node_modules from Docker image
         run: |
-          # Create a container and copy out the pre-compiled node_modules
+          # Create a container and copy out node_modules
           docker create --name extract-deps skillsmith-ci:${{ github.sha }}
+
+          # Copy root node_modules
           docker cp extract-deps:/app/node_modules /tmp/node_modules
+
+          # Copy nested workspace node_modules (for non-hoisted dependencies)
+          mkdir -p /tmp/packages
+          for pkg in core enterprise mcp-server cli website; do
+            if docker cp extract-deps:/app/packages/$pkg/node_modules /tmp/packages/$pkg/ 2>/dev/null; then
+              echo "Copied packages/$pkg/node_modules"
+            fi
+          done
+
           docker rm extract-deps
-          # Compress for faster artifact transfer
-          tar -czf /tmp/node_modules.tar.gz -C /tmp node_modules
+
+          # Compress for faster artifact transfer (include packages dir)
+          tar -czf /tmp/node_modules.tar.gz -C /tmp node_modules packages
 
       - name: Upload node_modules artifact
         uses: actions/upload-artifact@v4
