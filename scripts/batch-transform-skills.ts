@@ -2,6 +2,8 @@
 /**
  * Batch Skill Transformation CLI
  * SMI-1840: Pre-transform skills using TransformationService
+ * SMI-2200: Checkpoint-based resumability
+ * SMI-2203: Dynamic rate limiting
  *
  * Processes skills through the transformation pipeline:
  * 1. Fetches skills from Supabase in batches
@@ -12,25 +14,41 @@
  * Usage:
  *   varlock run -- npx tsx scripts/batch-transform-skills.ts --dry-run --limit 10
  *   varlock run -- npx tsx scripts/batch-transform-skills.ts --verbose
+ *   varlock run -- npx tsx scripts/batch-transform-skills.ts --resume
  *   docker exec skillsmith-dev-1 varlock run -- npx tsx scripts/batch-transform-skills.ts
  *
  * Options:
- *   --limit <n>    Maximum skills to process (default: all)
- *   --offset <n>   Skip first n skills (default: 0)
- *   --dry-run      Preview transformations without saving
- *   --verbose      Show detailed output
- *   --help         Show this help message
+ *   --limit <n>              Maximum skills to process (default: all)
+ *   --offset <n>             Skip first n skills (default: 0)
+ *   --dry-run, -d            Preview transformations without saving
+ *   --verbose, -v            Show detailed output
+ *   --resume, -r             Continue from last checkpoint
+ *   --reset                  Clear checkpoint and start over (prompts for confirmation)
+ *   --checkpoint-interval, -C  Save checkpoint every N skills (default: 50)
+ *   --force, -f              Skip confirmation prompts (for CI/scripted use)
+ *   --no-rate-limit          Bypass dynamic rate limiting (fixed 50ms delay)
+ *   --help, -h               Show this help message
  *
  * Environment Variables:
  *   SUPABASE_URL                 Supabase project URL (required)
  *   SUPABASE_SERVICE_ROLE_KEY    Supabase service role key (required)
  *   GITHUB_TOKEN                 GitHub token for fetching SKILL.md (optional, higher rate limits)
+ *   GITHUB_API_BASE_DELAY        Base delay between GitHub requests in ms (default: 150)
  */
 
 import { parseArgs } from 'node:util'
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
+import * as fs from 'fs'
+import * as path from 'path'
+import * as readline from 'readline'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { TransformationService, type TransformationResult, parseRepoUrl } from '@skillsmith/core'
+import { type MigrationCheckpoint, GitHubRateLimiter } from './lib/migration-utils'
+import {
+  GITHUB_API_BASE_DELAY,
+  DEFAULT_CHECKPOINT_INTERVAL,
+  BATCH_TRANSFORM_CHECKPOINT_FILE,
+} from './lib/constants'
 
 // =============================================================================
 // Types
@@ -42,6 +60,11 @@ interface CliOptions {
   dryRun: boolean
   verbose: boolean
   help: boolean
+  resume: boolean
+  reset: boolean
+  checkpointInterval: number
+  force: boolean
+  noRateLimit: boolean
 }
 
 interface SkillRecord {
@@ -59,6 +82,17 @@ interface TransformStats {
   skipped: number
   failed: number
   errors: string[]
+  failedSkillIds: string[]
+  skippedSkillIds: string[]
+}
+
+/**
+ * SMI-2200: Extended checkpoint for batch-transform
+ */
+interface BatchTransformCheckpoint extends MigrationCheckpoint {
+  failedSkillIds: string[]
+  skippedSkillIds: string[]
+  runId: string
 }
 
 // =============================================================================
@@ -73,6 +107,11 @@ function parseCliArgs(): CliOptions {
       'dry-run': { type: 'boolean', short: 'd' },
       verbose: { type: 'boolean', short: 'v' },
       help: { type: 'boolean', short: 'h' },
+      resume: { type: 'boolean', short: 'r' },
+      reset: { type: 'boolean' },
+      'checkpoint-interval': { type: 'string', short: 'C' },
+      force: { type: 'boolean', short: 'f' },
+      'no-rate-limit': { type: 'boolean' },
     },
     allowPositionals: false,
   })
@@ -83,6 +122,13 @@ function parseCliArgs(): CliOptions {
     dryRun: values['dry-run'] ?? false,
     verbose: values.verbose ?? false,
     help: values.help ?? false,
+    resume: values.resume ?? false,
+    reset: values.reset ?? false,
+    checkpointInterval: values['checkpoint-interval']
+      ? parseInt(values['checkpoint-interval'], 10)
+      : DEFAULT_CHECKPOINT_INTERVAL,
+    force: values.force ?? false,
+    noRateLimit: values['no-rate-limit'] ?? false,
   }
 }
 
@@ -90,21 +136,29 @@ function printHelp(): void {
   console.log(`
 Batch Skill Transformation CLI
 SMI-1840: Pre-transform skills using TransformationService
+SMI-2200: Checkpoint-based resumability
+SMI-2203: Dynamic rate limiting
 
 Usage:
   varlock run -- npx tsx scripts/batch-transform-skills.ts [options]
 
 Options:
-  --limit, -l <n>    Maximum skills to process (default: all)
-  --offset, -o <n>   Skip first n skills (default: 0)
-  --dry-run, -d      Preview transformations without saving
-  --verbose, -v      Show detailed output
-  --help, -h         Show this help message
+  --limit, -l <n>              Maximum skills to process (default: all)
+  --offset, -o <n>             Skip first n skills (default: 0)
+  --dry-run, -d                Preview transformations without saving
+  --verbose, -v                Show detailed output
+  --resume, -r                 Continue from last checkpoint
+  --reset                      Clear checkpoint and start over (prompts for confirmation)
+  --checkpoint-interval, -C <n> Save checkpoint every N skills (default: ${DEFAULT_CHECKPOINT_INTERVAL})
+  --force, -f                  Skip confirmation prompts (for CI/scripted use)
+  --no-rate-limit              Bypass dynamic rate limiting (fixed 50ms delay)
+  --help, -h                   Show this help message
 
 Environment Variables:
   SUPABASE_URL                 Supabase project URL (required)
   SUPABASE_SERVICE_ROLE_KEY    Supabase service role key (required)
   GITHUB_TOKEN                 GitHub token for higher rate limits (optional)
+  GITHUB_API_BASE_DELAY        Base delay between GitHub requests in ms (default: 150)
 
 Examples:
   # Dry-run first 10 skills
@@ -113,8 +167,11 @@ Examples:
   # Transform all skills with verbose output
   varlock run -- npx tsx scripts/batch-transform-skills.ts --verbose
 
-  # Resume from offset 500
-  varlock run -- npx tsx scripts/batch-transform-skills.ts --offset 500 --limit 100
+  # Resume from last checkpoint
+  varlock run -- npx tsx scripts/batch-transform-skills.ts --resume
+
+  # Reset checkpoint and start fresh
+  varlock run -- npx tsx scripts/batch-transform-skills.ts --reset --force
 `)
 }
 
@@ -153,22 +210,98 @@ function validateEnv(): EnvConfig {
 }
 
 // =============================================================================
-// GitHub Content Fetching
+// Checkpoint Management (SMI-2200)
 // =============================================================================
 
-const GITHUB_API_DELAY = 150 // ms between requests
+const CHECKPOINT_PATH = path.join(process.cwd(), BATCH_TRANSFORM_CHECKPOINT_FILE)
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+function loadBatchTransformCheckpoint(): BatchTransformCheckpoint | null {
+  try {
+    if (fs.existsSync(CHECKPOINT_PATH)) {
+      const data = fs.readFileSync(CHECKPOINT_PATH, 'utf-8')
+      const parsed = JSON.parse(data) as BatchTransformCheckpoint
+      if (typeof parsed.processedCount === 'number' && parsed.runId) {
+        console.log(`\n📍 Found checkpoint: ${parsed.processedCount} skills processed`)
+        console.log(`   Run ID: ${parsed.runId}`)
+        console.log(`   Last offset: ${parsed.lastProcessedOffset}`)
+        console.log(`   Timestamp: ${parsed.timestamp}`)
+        return parsed
+      }
+    }
+  } catch {
+    console.warn('Invalid checkpoint format, starting fresh')
+  }
+  return null
 }
+
+function saveBatchTransformCheckpoint(checkpoint: BatchTransformCheckpoint): void {
+  // Create backup before saving
+  if (fs.existsSync(CHECKPOINT_PATH)) {
+    fs.copyFileSync(CHECKPOINT_PATH, CHECKPOINT_PATH + '.bak')
+  }
+  fs.writeFileSync(CHECKPOINT_PATH, JSON.stringify(checkpoint, null, 2))
+}
+
+function clearBatchTransformCheckpoint(): void {
+  if (fs.existsSync(CHECKPOINT_PATH)) {
+    fs.unlinkSync(CHECKPOINT_PATH)
+    console.log('✓ Checkpoint cleared.')
+  }
+  // Also remove backup
+  if (fs.existsSync(CHECKPOINT_PATH + '.bak')) {
+    fs.unlinkSync(CHECKPOINT_PATH + '.bak')
+  }
+}
+
+async function promptConfirmation(message: string): Promise<boolean> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  })
+
+  return new Promise((resolve) => {
+    rl.question(`${message} [y/N] `, (answer) => {
+      rl.close()
+      resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes')
+    })
+  })
+}
+
+// =============================================================================
+// Audit Logging (SMI-2200)
+// =============================================================================
+
+interface AuditLogEntry {
+  event_type: string
+  result?: 'success' | 'partial' | 'failed'
+  metadata: Record<string, unknown>
+}
+
+async function writeAuditLog(supabase: SupabaseClient, entry: AuditLogEntry): Promise<void> {
+  try {
+    await supabase.from('audit_logs').insert({
+      event_type: entry.event_type,
+      result: entry.result,
+      metadata: entry.metadata,
+    })
+  } catch (error) {
+    console.warn(`Failed to write audit log: ${error instanceof Error ? error.message : 'Unknown'}`)
+  }
+}
+
+// =============================================================================
+// GitHub Content Fetching
+// =============================================================================
 
 /**
  * Fetch SKILL.md content from a GitHub repository
  * SMI-2172: Updated to use parseRepoUrl from @skillsmith/core to correctly
  * handle /tree/branch/path URLs from high-trust monorepo skills
+ * SMI-2203: Uses GitHubRateLimiter for dynamic rate limiting
  */
 async function fetchSkillContent(
   repoUrl: string,
+  rateLimiter: GitHubRateLimiter,
   githubToken?: string,
   verbose?: boolean
 ): Promise<{ content: string | null; error?: string }> {
@@ -207,8 +340,10 @@ async function fetchSkillContent(
     for (const tryBranch of branchesToTry) {
       const url = `https://raw.githubusercontent.com/${owner}/${cleanRepo}/${tryBranch}/${pathPrefix}SKILL.md`
 
-      await delay(GITHUB_API_DELAY)
-      const response = await fetch(url, { headers })
+      // SMI-2203: Use rate limiter
+      const response = await rateLimiter.withRateLimit(async () => {
+        return fetch(url, { headers })
+      })
 
       if (response.ok) {
         const content = await response.text()
@@ -302,7 +437,8 @@ async function saveTransformation(
       ? {
           name: result.subagent.name,
           description: result.subagent.description,
-          triggers: result.subagent.triggers,
+          triggerPhrases: result.subagent.triggerPhrases,
+          tools: result.subagent.tools,
           model: result.subagent.model,
           content: result.subagent.content,
         }
@@ -340,6 +476,7 @@ async function processSkill(
   skill: SkillRecord,
   service: TransformationService,
   supabase: SupabaseClient,
+  rateLimiter: GitHubRateLimiter,
   options: CliOptions,
   config: EnvConfig
 ): Promise<{ status: 'transformed' | 'skipped' | 'failed'; error?: string }> {
@@ -350,6 +487,7 @@ async function processSkill(
   // Fetch SKILL.md content (pass verbose for subdirectory logging)
   const { content, error: fetchError } = await fetchSkillContent(
     skill.repo_url,
+    rateLimiter,
     config.githubToken,
     options.verbose
   )
@@ -394,7 +532,54 @@ async function main(): Promise<void> {
     process.exit(0)
   }
 
+  // Validate flag combinations
+  if (options.resume && options.offset > 0) {
+    console.error('Error: --resume and --offset are mutually exclusive')
+    process.exit(1)
+  }
+
   const config = validateEnv()
+
+  // Handle --reset
+  if (options.reset) {
+    const checkpoint = loadBatchTransformCheckpoint()
+    if (checkpoint) {
+      if (!options.force) {
+        const confirmed = await promptConfirmation(
+          `This will clear checkpoint with ${checkpoint.processedCount} processed records. Continue?`
+        )
+        if (!confirmed) {
+          console.log('Aborted.')
+          process.exit(0)
+        }
+      }
+    }
+    clearBatchTransformCheckpoint()
+    if (!options.resume) {
+      // If just --reset without other operations, exit
+      process.exit(0)
+    }
+  }
+
+  // Handle --resume
+  let checkpoint: BatchTransformCheckpoint | null = null
+  let startOffset = options.offset
+  const runId = randomUUID()
+
+  if (options.resume) {
+    checkpoint = loadBatchTransformCheckpoint()
+    if (checkpoint) {
+      startOffset = checkpoint.lastProcessedOffset
+      console.log(`\n🔄 Resuming from offset ${startOffset}`)
+    } else {
+      console.log('\n📍 No checkpoint found, starting fresh')
+    }
+  }
+
+  // Create rate limiter
+  const rateLimiter = options.noRateLimit
+    ? new GitHubRateLimiter(50) // Fixed 50ms for testing
+    : new GitHubRateLimiter(GITHUB_API_BASE_DELAY)
 
   console.log('\n' + '='.repeat(60))
   console.log('Skillsmith Batch Transformation')
@@ -402,11 +587,14 @@ async function main(): Promise<void> {
   console.log('')
   console.log('Configuration:')
   console.log('-'.repeat(50))
-  console.log(`  Limit:    ${options.limit === Infinity ? 'all' : options.limit}`)
-  console.log(`  Offset:   ${options.offset}`)
-  console.log(`  Dry Run:  ${options.dryRun}`)
-  console.log(`  Verbose:  ${options.verbose}`)
-  console.log(`  GitHub:   ${config.githubToken ? 'authenticated' : 'anonymous'}`)
+  console.log(`  Run ID:     ${runId.slice(0, 8)}...`)
+  console.log(`  Limit:      ${options.limit === Infinity ? 'all' : options.limit}`)
+  console.log(`  Offset:     ${startOffset}`)
+  console.log(`  Dry Run:    ${options.dryRun}`)
+  console.log(`  Verbose:    ${options.verbose}`)
+  console.log(`  GitHub:     ${config.githubToken ? 'authenticated' : 'anonymous'}`)
+  console.log(`  Rate Limit: ${options.noRateLimit ? 'disabled (50ms)' : `dynamic (base: ${GITHUB_API_BASE_DELAY}ms)`}`)
+  console.log(`  Checkpoint: every ${options.checkpointInterval} skills`)
   console.log('-'.repeat(50))
 
   // Create Supabase client
@@ -422,66 +610,177 @@ async function main(): Promise<void> {
 
   // Statistics
   const stats: TransformStats = {
-    processed: 0,
-    transformed: 0,
+    processed: checkpoint?.processedCount ?? 0,
+    transformed: checkpoint?.successCount ?? 0,
     skipped: 0,
-    failed: 0,
-    errors: [],
+    failed: checkpoint?.errorCount ?? 0,
+    errors: checkpoint?.errors ?? [],
+    failedSkillIds: checkpoint?.failedSkillIds ?? [],
+    skippedSkillIds: checkpoint?.skippedSkillIds ?? [],
+  }
+
+  const startTime = Date.now()
+
+  // Write audit log: start
+  if (!options.dryRun) {
+    await writeAuditLog(supabase, {
+      event_type: 'batch-transform:start',
+      metadata: {
+        run_id: runId,
+        options: {
+          limit: options.limit === Infinity ? 'all' : options.limit,
+          offset: startOffset,
+          dry_run: options.dryRun,
+          checkpoint_interval: options.checkpointInterval,
+          resumed_from: checkpoint?.runId,
+        },
+      },
+    })
   }
 
   const batchSize = 100
   let batchNumber = 0
+  let skillsSinceCheckpoint = 0
 
   console.log('\nProcessing skills...\n')
 
-  // Process skills in batches
-  for await (const batch of fetchSkillsBatch(supabase, batchSize, options.offset, options.limit)) {
-    batchNumber++
-    const batchStart = (batchNumber - 1) * batchSize + options.offset + 1
-    const batchEnd = batchStart + batch.length - 1
+  try {
+    // Process skills in batches
+    for await (const batch of fetchSkillsBatch(supabase, batchSize, startOffset, options.limit)) {
+      batchNumber++
+      const batchStart = (batchNumber - 1) * batchSize + startOffset + 1
+      const batchEnd = batchStart + batch.length - 1
 
-    console.log(`Batch ${batchNumber}: Skills ${batchStart}-${batchEnd}`)
+      console.log(`Batch ${batchNumber}: Skills ${batchStart}-${batchEnd}`)
 
-    for (const skill of batch) {
-      stats.processed++
+      for (const skill of batch) {
+        stats.processed++
+        skillsSinceCheckpoint++
 
-      if (options.verbose) {
-        console.log(`\n  [${stats.processed}] ${skill.id}`)
-        console.log(`    Name: ${skill.name}`)
-        console.log(`    Author: ${skill.author ?? 'unknown'}`)
+        if (options.verbose) {
+          console.log(`\n  [${stats.processed}] ${skill.id}`)
+          console.log(`    Name: ${skill.name}`)
+          console.log(`    Author: ${skill.author ?? 'unknown'}`)
+        }
+
+        const result = await processSkill(skill, service, supabase, rateLimiter, options, config)
+
+        switch (result.status) {
+          case 'transformed':
+            stats.transformed++
+            if (!options.verbose) {
+              process.stdout.write('.')
+            }
+            break
+          case 'skipped':
+            stats.skipped++
+            stats.skippedSkillIds.push(skill.id)
+            if (options.verbose) {
+              console.log(`    Skipped: ${result.error}`)
+            } else {
+              process.stdout.write('s')
+            }
+            break
+          case 'failed':
+            stats.failed++
+            stats.failedSkillIds.push(skill.id)
+            stats.errors.push(`${skill.id}: ${result.error}`)
+            if (options.verbose) {
+              console.log(`    FAILED: ${result.error}`)
+            } else {
+              process.stdout.write('F')
+            }
+            break
+        }
+
+        // Save checkpoint at intervals
+        if (skillsSinceCheckpoint >= options.checkpointInterval && !options.dryRun) {
+          const checkpointData: BatchTransformCheckpoint = {
+            lastProcessedOffset: startOffset + stats.processed,
+            lastProcessedId: skill.id,
+            processedCount: stats.processed,
+            successCount: stats.transformed,
+            errorCount: stats.failed,
+            errors: stats.errors.slice(-100), // Keep last 100 errors
+            timestamp: new Date().toISOString(),
+            dbPath: 'supabase',
+            failedSkillIds: stats.failedSkillIds.slice(-500),
+            skippedSkillIds: stats.skippedSkillIds.slice(-500),
+            runId,
+          }
+          saveBatchTransformCheckpoint(checkpointData)
+
+          // Write audit log: progress
+          await writeAuditLog(supabase, {
+            event_type: 'batch-transform:progress',
+            metadata: {
+              run_id: runId,
+              stats: {
+                processed: stats.processed,
+                transformed: stats.transformed,
+                skipped: stats.skipped,
+                failed: stats.failed,
+              },
+              checkpoint_offset: startOffset + stats.processed,
+            },
+          })
+
+          skillsSinceCheckpoint = 0
+
+          if (options.verbose) {
+            console.log(`    📍 Checkpoint saved at offset ${startOffset + stats.processed}`)
+          }
+        }
       }
 
-      const result = await processSkill(skill, service, supabase, options, config)
-
-      switch (result.status) {
-        case 'transformed':
-          stats.transformed++
-          if (!options.verbose) {
-            process.stdout.write('.')
-          }
-          break
-        case 'skipped':
-          stats.skipped++
-          if (options.verbose) {
-            console.log(`    Skipped: ${result.error}`)
-          } else {
-            process.stdout.write('s')
-          }
-          break
-        case 'failed':
-          stats.failed++
-          stats.errors.push(`${skill.id}: ${result.error}`)
-          if (options.verbose) {
-            console.log(`    FAILED: ${result.error}`)
-          } else {
-            process.stdout.write('F')
-          }
-          break
+      if (!options.verbose) {
+        console.log('') // Newline after progress dots
       }
     }
+  } catch (error) {
+    // Save checkpoint on error
+    if (!options.dryRun) {
+      const checkpointData: BatchTransformCheckpoint = {
+        lastProcessedOffset: startOffset + stats.processed,
+        processedCount: stats.processed,
+        successCount: stats.transformed,
+        errorCount: stats.failed,
+        errors: stats.errors.slice(-100),
+        timestamp: new Date().toISOString(),
+        dbPath: 'supabase',
+        failedSkillIds: stats.failedSkillIds.slice(-500),
+        skippedSkillIds: stats.skippedSkillIds.slice(-500),
+        runId,
+      }
+      saveBatchTransformCheckpoint(checkpointData)
+      console.log(`\n📍 Checkpoint saved after error at offset ${startOffset + stats.processed}`)
+    }
+    throw error
+  }
 
-    if (!options.verbose) {
-      console.log('') // Newline after progress dots
+  const duration = Date.now() - startTime
+
+  // Write audit log: complete
+  if (!options.dryRun) {
+    await writeAuditLog(supabase, {
+      event_type: 'batch-transform:complete',
+      result: stats.failed === 0 ? 'success' : 'partial',
+      metadata: {
+        run_id: runId,
+        stats: {
+          processed: stats.processed,
+          transformed: stats.transformed,
+          skipped: stats.skipped,
+          failed: stats.failed,
+        },
+        duration_ms: duration,
+        failed_skill_ids: stats.failedSkillIds,
+      },
+    })
+
+    // Clear checkpoint on successful completion
+    if (stats.failed === 0) {
+      clearBatchTransformCheckpoint()
     }
   }
 
@@ -492,10 +791,13 @@ async function main(): Promise<void> {
   console.log('')
   console.log('Results:')
   console.log('-'.repeat(50))
+  console.log(`  Run ID:      ${runId.slice(0, 8)}...`)
+  console.log(`  Duration:    ${(duration / 1000).toFixed(1)}s`)
   console.log(`  Processed:   ${stats.processed}`)
   console.log(`  Transformed: ${stats.transformed}`)
   console.log(`  Skipped:     ${stats.skipped}`)
   console.log(`  Failed:      ${stats.failed}`)
+  console.log(`  Rate Limit:  ${rateLimiter.getRemaining()} remaining`)
   console.log('-'.repeat(50))
 
   if (stats.errors.length > 0) {
