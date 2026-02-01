@@ -18,6 +18,7 @@
 
 import { execSync } from 'child_process'
 import { existsSync, appendFileSync } from 'fs'
+import { fileURLToPath } from 'url'
 import { minimatch } from 'minimatch'
 
 // Classification tiers in priority order (higher = more compute needed)
@@ -285,7 +286,8 @@ function main(): void {
   process.exit(0)
 }
 
-// Run if executed directly
-if (require.main === module) {
+// Run if executed directly (ES module compatible)
+const isMainModule = process.argv[1] === fileURLToPath(import.meta.url)
+if (isMainModule) {
   main()
 }
