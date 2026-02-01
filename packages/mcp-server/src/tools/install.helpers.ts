@@ -6,15 +6,19 @@
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import type { ToolContext } from '../context.js'
+// SMI-2171: Import parseRepoUrl from @skillsmith/core for shared use
+import { parseRepoUrl, type ParsedRepoUrl } from '@skillsmith/core'
 import {
   MANIFEST_PATH,
   SKILLSMITH_DIR,
   validateTrustTier,
   type SkillManifest,
   type ParsedSkillId,
-  type ParsedRepoUrl,
   type RegistrySkillInfo,
 } from './install.types.js'
+
+// Re-export for backward compatibility
+export { parseRepoUrl, type ParsedRepoUrl }
 
 // ============================================================================
 // Manifest Locking
@@ -132,6 +136,9 @@ export async function updateManifestSafely(
 // Parsing Functions
 // ============================================================================
 
+// parseRepoUrl is now imported from @skillsmith/core (SMI-2171)
+// and re-exported above for backward compatibility
+
 /**
  * Parse skill ID or URL to get components
  * SMI-1491: Added isRegistryId flag to detect registry skill IDs vs direct GitHub URLs
@@ -174,51 +181,6 @@ export function parseSkillId(input: string): ParsedSkillId {
 
   // Handle skill ID from registry
   throw new Error('Invalid skill ID format: ' + input + '. Use owner/repo or GitHub URL.')
-}
-
-/**
- * Allowed hostnames for skill installation
- * SMI-1533: Restrict to trusted code hosting platforms
- */
-const ALLOWED_HOSTS = ['github.com', 'www.github.com']
-
-/**
- * Parse repo_url from registry to extract GitHub components
- * SMI-1491: Handles various GitHub URL formats stored in registry
- */
-export function parseRepoUrl(repoUrl: string): ParsedRepoUrl {
-  const url = new URL(repoUrl)
-
-  // SMI-1533: Validate hostname to prevent fetching from malicious sources
-  if (!ALLOWED_HOSTS.includes(url.hostname.toLowerCase())) {
-    throw new Error(
-      `Invalid repository host: ${url.hostname}. ` +
-        `Only GitHub repositories are supported (${ALLOWED_HOSTS.join(', ')})`
-    )
-  }
-
-  const parts = url.pathname.split('/').filter(Boolean)
-
-  const owner = parts[0]
-  const repo = parts[1]
-
-  // /owner/repo (skill at repo root)
-  if (parts.length === 2) {
-    return { owner, repo, path: '', branch: 'main' }
-  }
-
-  // /owner/repo/tree/branch/path... or /owner/repo/blob/branch/path...
-  if (parts[2] === 'tree' || parts[2] === 'blob') {
-    return {
-      owner,
-      repo,
-      branch: parts[3],
-      path: parts.slice(4).join('/'),
-    }
-  }
-
-  // Unknown format - assume path starts at index 2, default to main branch
-  return { owner, repo, path: parts.slice(2).join('/'), branch: 'main' }
 }
 
 // ============================================================================

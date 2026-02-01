@@ -19,3 +19,6 @@ export {
   formatUpdateNotification,
   type VersionCheckResult,
 } from './version-check.js'
+
+// SMI-2171: GitHub URL parsing utilities
+export { parseRepoUrl, isGitHubUrl, type ParsedRepoUrl } from './github-url.js'

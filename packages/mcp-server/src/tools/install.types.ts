@@ -242,13 +242,9 @@ export interface ParsedSkillId {
   isRegistryId: boolean
 }
 
-/** Parsed repository URL components */
-export interface ParsedRepoUrl {
-  owner: string
-  repo: string
-  path: string
-  branch: string
-}
+// SMI-2171: ParsedRepoUrl moved to @skillsmith/core
+// Re-export for backward compatibility
+export type { ParsedRepoUrl } from '@skillsmith/core'
 
 /** Registry lookup result */
 export interface RegistrySkillInfo {

@@ -208,6 +208,9 @@ export {
   type VersionCheckResult,
 } from './utils/version-check.js'
 
+// GitHub URL Parsing (SMI-2171)
+export { parseRepoUrl, isGitHubUrl, type ParsedRepoUrl } from './utils/github-url.js'
+
 // ============================================================================
 // LIVE SERVICES WORKTREE STUBS (Phase 0 - Conflict Prevention)
 // ============================================================================
