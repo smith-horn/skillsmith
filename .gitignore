@@ -13,6 +13,8 @@ packages/**/*.d.ts
 packages/**/*.d.ts.map
 # Allow config files (not build artifacts)
 !packages/**/vitest.config.ts
+# Allow hand-written type declarations (not generated)
+!packages/**/src/types/*.d.ts
 !packages/**/eslint.config.js
 !packages/**/astro.config.mjs
 vitest.config.js
