@@ -17,8 +17,8 @@
 
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import type initSqlJsType from 'sql.js'
-import type { BindParams } from 'sql.js'
+import type initSqlJsType from 'fts5-sql-bundle'
+import type { BindParams } from 'fts5-sql-bundle'
 
 // Type for the sql.js module
 type SqlJs = Awaited<ReturnType<typeof initSqlJsType>>
@@ -39,18 +39,12 @@ async function loadSqlJs(): Promise<SqlJs> {
 
   try {
     // Dynamic import to avoid loading at module evaluation time
-    const initSqlJs = (await import('sql.js')).default
+    // Using fts5-sql-bundle for FTS5 full-text search support
+    const initSqlJs = (await import('fts5-sql-bundle')).default
 
-    // Initialize with bundled WASM (works offline)
-    sqlJsModule = await initSqlJs({
-      // Use Node.js path resolution for WASM file
-      locateFile: (file: string) => {
-        // In production, the WASM file is in node_modules/sql.js/dist/
-        const sqlJsPath = require.resolve('sql.js')
-        const distPath = sqlJsPath.replace(/sql-wasm\.js$/, file)
-        return distPath
-      },
-    })
+    // Initialize with bundled WASM - fts5-sql-bundle has a built-in locateFile
+    // that correctly resolves the WASM file in its dist/ directory
+    sqlJsModule = await initSqlJs()
 
     return sqlJsModule
   } catch (error) {
@@ -58,8 +52,8 @@ async function loadSqlJs(): Promise<SqlJs> {
     throw new Error(
       `[Skillsmith] Failed to load sql.js WASM module: ${message}\n\n` +
         'This may indicate a corrupted installation. Try:\n' +
-        '  npm rebuild sql.js\n' +
-        '  npm install sql.js'
+        '  npm rebuild fts5-sql-bundle\n' +
+        '  npm install fts5-sql-bundle'
     )
   }
 }
@@ -328,13 +322,13 @@ export async function createSqlJsDatabase(
 }
 
 /**
- * Check if sql.js is available
- * This always returns true in Node.js since sql.js is a pure JS/WASM module
- * @returns true (sql.js is always loadable in Node.js)
+ * Check if fts5-sql-bundle (sql.js with FTS5) is available
+ * This always returns true in Node.js since it's a pure JS/WASM module
+ * @returns true if fts5-sql-bundle is loadable in Node.js
  */
 export function isSqlJsAvailable(): boolean {
   try {
-    require.resolve('sql.js')
+    require.resolve('fts5-sql-bundle')
     return true
   } catch {
     return false
