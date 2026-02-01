@@ -30,7 +30,7 @@
 import { parseArgs } from 'node:util'
 import { createHash } from 'crypto'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { TransformationService, type TransformationResult } from '@skillsmith/core'
+import { TransformationService, type TransformationResult, parseRepoUrl } from '@skillsmith/core'
 
 // =============================================================================
 // Types
@@ -164,22 +164,32 @@ function delay(ms: number): Promise<void> {
 
 /**
  * Fetch SKILL.md content from a GitHub repository
+ * SMI-2172: Updated to use parseRepoUrl from @skillsmith/core to correctly
+ * handle /tree/branch/path URLs from high-trust monorepo skills
  */
 async function fetchSkillContent(
   repoUrl: string,
-  githubToken?: string
+  githubToken?: string,
+  verbose?: boolean
 ): Promise<{ content: string | null; error?: string }> {
   try {
-    // Parse repo URL: https://github.com/owner/repo
-    const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/)
-    if (!match) {
-      return { content: null, error: 'Invalid GitHub URL format' }
-    }
+    // SMI-2172: Use parseRepoUrl to correctly handle /tree/ URLs
+    const parsed = parseRepoUrl(repoUrl)
+    const { owner, repo, branch, path: skillPath } = parsed
 
-    const [, owner, repo] = match
+    // Clean repo name (remove .git suffix if present)
     const cleanRepo = repo.replace(/\.git$/, '')
 
-    // Fetch SKILL.md from default branch (try main, then master)
+    // Construct path prefix for subdirectory skills
+    const pathPrefix = skillPath ? `${skillPath}/` : ''
+
+    // Log detected subdirectory for debugging
+    if (verbose && skillPath) {
+      console.log(`    Detected subdirectory skill: ${skillPath}`)
+      console.log(`    Will fetch: ${owner}/${cleanRepo}/${branch}/${pathPrefix}SKILL.md`)
+    }
+
+    // Fetch SKILL.md from detected branch (fallback to main, then master)
     const headers: Record<string, string> = {
       Accept: 'application/vnd.github.v3.raw',
       'User-Agent': 'Skillsmith-Batch-Transform/1.0',
@@ -189,9 +199,13 @@ async function fetchSkillContent(
       headers['Authorization'] = `Bearer ${githubToken}`
     }
 
-    // Try main branch first
-    for (const branch of ['main', 'master']) {
-      const url = `https://raw.githubusercontent.com/${owner}/${cleanRepo}/${branch}/SKILL.md`
+    // Try detected branch first, then main, then master
+    const branchesToTry = [branch]
+    if (branch !== 'main') branchesToTry.push('main')
+    if (branch !== 'master') branchesToTry.push('master')
+
+    for (const tryBranch of branchesToTry) {
+      const url = `https://raw.githubusercontent.com/${owner}/${cleanRepo}/${tryBranch}/${pathPrefix}SKILL.md`
 
       await delay(GITHUB_API_DELAY)
       const response = await fetch(url, { headers })
@@ -204,8 +218,14 @@ async function fetchSkillContent(
       }
     }
 
-    return { content: null, error: 'SKILL.md not found' }
+    // SMI-2175: Distinct error message including path
+    const pathDesc = skillPath || 'repo root'
+    return { content: null, error: `SKILL.md not found at ${pathDesc}` }
   } catch (error) {
+    // SMI-2175: Distinct error for URL parsing failures
+    if (error instanceof Error && error.message.includes('Invalid repository host')) {
+      return { content: null, error: `Invalid URL format: ${repoUrl}` }
+    }
     return {
       content: null,
       error: `Fetch failed: ${error instanceof Error ? error.message : 'Unknown'}`,
@@ -327,8 +347,12 @@ async function processSkill(
     return { status: 'skipped', error: 'No repo URL' }
   }
 
-  // Fetch SKILL.md content
-  const { content, error: fetchError } = await fetchSkillContent(skill.repo_url, config.githubToken)
+  // Fetch SKILL.md content (pass verbose for subdirectory logging)
+  const { content, error: fetchError } = await fetchSkillContent(
+    skill.repo_url,
+    config.githubToken,
+    options.verbose
+  )
 
   if (!content) {
     return { status: 'skipped', error: fetchError ?? 'No content' }
