@@ -15,11 +15,11 @@ import { existsSync } from 'fs'
 import {
   mergeSkillDatabases,
   checkSchemaCompatibility,
-  createDatabaseSync,
+  openDatabase,
   type MergeStrategy,
   type MergeOptions,
   type MergeConflict,
-  type Database,
+  type DatabaseType,
 } from '@skillsmith/core'
 import { getDefaultDbPath } from '../config.js'
 
@@ -113,12 +113,12 @@ export function createMergeCommand(): Command {
       }
 
       // Open databases
-      let sourceDb: Database | null = null
-      let targetDb: Database | null = null
+      let sourceDb: DatabaseType | null = null
+      let targetDb: DatabaseType | null = null
 
       try {
-        sourceDb = createDatabaseSync(resolvedSource, { readonly: true })
-        targetDb = createDatabaseSync(resolvedTarget)
+        sourceDb = openDatabase(resolvedSource)
+        targetDb = openDatabase(resolvedTarget)
 
         // Check schema compatibility
         if (!force) {
