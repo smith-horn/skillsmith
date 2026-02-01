@@ -226,17 +226,22 @@ jobs:
       # SMI-2159: Also extract nested workspace node_modules (for non-hoisted deps like @aws-sdk)
       - name: Extract node_modules from Docker image
         run: |
-          # Create a container and copy out node_modules
+          # Create a container (not running) and copy out node_modules
           docker create --name extract-deps skillsmith-ci:${{ github.sha }}
 
           # Copy root node_modules
           docker cp extract-deps:/app/node_modules /tmp/node_modules
 
           # Copy nested workspace node_modules (for non-hoisted dependencies)
-          mkdir -p /tmp/packages
+          # docker cp works on stopped containers - no need for docker exec
           for pkg in core enterprise mcp-server cli website; do
+            mkdir -p /tmp/packages/$pkg
             if docker cp extract-deps:/app/packages/$pkg/node_modules /tmp/packages/$pkg/ 2>/dev/null; then
-              echo "Copied packages/$pkg/node_modules"
+              echo "✓ Copied packages/$pkg/node_modules"
+              # Show first few items for verification
+              ls /tmp/packages/$pkg/node_modules/ 2>/dev/null | head -5 || true
+            else
+              echo "- No node_modules in packages/$pkg (hoisted or doesn't exist)"
             fi
           done
 
@@ -244,6 +249,10 @@ jobs:
 
           # Compress for faster artifact transfer (include packages dir)
           tar -czf /tmp/node_modules.tar.gz -C /tmp node_modules packages
+
+          # Show tar contents for debugging
+          echo "=== Tar contents (packages only) ==="
+          tar -tzf /tmp/node_modules.tar.gz | grep "^packages/" | head -20
 
       - name: Upload node_modules artifact
         uses: actions/upload-artifact@v4
@@ -347,7 +356,22 @@ jobs:
         run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
 
       - name: Extract node_modules
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: |
+          # Extract to workspace - tar will merge with existing packages/ directory
+          tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+
+          # Verify AWS SDK was extracted for enterprise package (required for typecheck)
+          echo "=== Verifying nested node_modules extraction ==="
+          if [ -d "${{ github.workspace }}/packages/enterprise/node_modules/@aws-sdk" ]; then
+            echo "✓ AWS SDK found in packages/enterprise/node_modules"
+            ls ${{ github.workspace }}/packages/enterprise/node_modules/@aws-sdk/ | head -5
+          else
+            echo "✗ AWS SDK NOT found - checking what happened"
+            echo "Contents of packages/enterprise/:"
+            ls -la ${{ github.workspace }}/packages/enterprise/ || true
+            echo "Checking tar contents:"
+            tar -tzf /tmp/node_modules.tar.gz | grep "enterprise" | head -10 || echo "No enterprise in tar"
+          fi
 
       - name: Run TypeScript type check in Docker
         run: |
@@ -394,7 +418,22 @@ jobs:
         run: gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
 
       - name: Extract node_modules
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: |
+          # Extract to workspace - tar will merge with existing packages/ directory
+          tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+
+          # Verify AWS SDK was extracted for enterprise package
+          echo "=== Verifying nested node_modules extraction ==="
+          if [ -d "${{ github.workspace }}/packages/enterprise/node_modules/@aws-sdk" ]; then
+            echo "✓ AWS SDK found in packages/enterprise/node_modules"
+            ls ${{ github.workspace }}/packages/enterprise/node_modules/@aws-sdk/ | head -5
+          else
+            echo "✗ AWS SDK NOT found in packages/enterprise/node_modules"
+            echo "Contents of packages/enterprise/:"
+            ls -la ${{ github.workspace }}/packages/enterprise/ || true
+            echo "Checking if node_modules exists:"
+            ls -la ${{ github.workspace }}/packages/enterprise/node_modules/ 2>/dev/null | head -10 || echo "No node_modules dir"
+          fi
 
       - name: Run tests with coverage in Docker
         run: |
