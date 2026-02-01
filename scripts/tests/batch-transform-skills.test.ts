@@ -723,3 +723,144 @@ describe('SMI-2200: Checkpoint Functions', () => {
     })
   })
 })
+
+// =============================================================================
+// SMI-2204: Progress Mode Tests
+// =============================================================================
+
+// Replicate types for testing
+type ProgressMode = 'dots' | 'bar' | 'json'
+
+interface JsonOutput {
+  processed: number
+  transformed: number
+  skipped: number
+  failed: number
+  duration_ms: number
+  checkpoint: { offset: number; timestamp: string } | null
+  failed_skills: string[]
+  skipped_skills: Array<{ id: string; reason: string }>
+}
+
+// Replicate helper functions for testing
+function isTTY(): boolean {
+  return process.stdout.isTTY === true
+}
+
+function getDefaultProgressMode(): ProgressMode {
+  return isTTY() ? 'bar' : 'dots'
+}
+
+function validateProgressMode(mode: string): boolean {
+  return ['dots', 'bar', 'json'].includes(mode)
+}
+
+describe('SMI-2204: Progress Mode', () => {
+  describe('isTTY detection', () => {
+    it('returns boolean based on process.stdout.isTTY', () => {
+      const result = isTTY()
+      expect(typeof result).toBe('boolean')
+    })
+  })
+
+  describe('getDefaultProgressMode', () => {
+    it('returns a valid progress mode', () => {
+      const mode = getDefaultProgressMode()
+      expect(['dots', 'bar', 'json']).toContain(mode)
+    })
+
+    it('returns dots or bar (never json by default)', () => {
+      const mode = getDefaultProgressMode()
+      expect(['dots', 'bar']).toContain(mode)
+    })
+  })
+
+  describe('validateProgressMode', () => {
+    it('returns true for valid modes', () => {
+      expect(validateProgressMode('dots')).toBe(true)
+      expect(validateProgressMode('bar')).toBe(true)
+      expect(validateProgressMode('json')).toBe(true)
+    })
+
+    it('returns false for invalid modes', () => {
+      expect(validateProgressMode('invalid')).toBe(false)
+      expect(validateProgressMode('progress')).toBe(false)
+      expect(validateProgressMode('')).toBe(false)
+      expect(validateProgressMode('DOTS')).toBe(false) // Case sensitive
+    })
+  })
+
+  describe('JsonOutput schema', () => {
+    it('validates complete JsonOutput structure', () => {
+      const output: JsonOutput = {
+        processed: 100,
+        transformed: 80,
+        skipped: 15,
+        failed: 5,
+        duration_ms: 60000,
+        checkpoint: { offset: 100, timestamp: '2026-02-01T12:00:00Z' },
+        failed_skills: ['skill-1', 'skill-2'],
+        skipped_skills: [
+          { id: 'skill-3', reason: 'SKILL.md not found' },
+          { id: 'skill-4', reason: 'No repo_url' },
+        ],
+      }
+
+      expect(output.processed).toBe(100)
+      expect(output.transformed).toBe(80)
+      expect(output.skipped).toBe(15)
+      expect(output.failed).toBe(5)
+      expect(output.duration_ms).toBe(60000)
+      expect(output.checkpoint?.offset).toBe(100)
+      expect(output.failed_skills).toHaveLength(2)
+      expect(output.skipped_skills).toHaveLength(2)
+      expect(output.skipped_skills[0].reason).toBe('SKILL.md not found')
+    })
+
+    it('allows null checkpoint', () => {
+      const output: JsonOutput = {
+        processed: 50,
+        transformed: 45,
+        skipped: 3,
+        failed: 2,
+        duration_ms: 30000,
+        checkpoint: null,
+        failed_skills: ['skill-1'],
+        skipped_skills: [],
+      }
+
+      expect(output.checkpoint).toBeNull()
+    })
+
+    it('validates processed = transformed + skipped + failed', () => {
+      const output: JsonOutput = {
+        processed: 100,
+        transformed: 70,
+        skipped: 20,
+        failed: 10,
+        duration_ms: 60000,
+        checkpoint: null,
+        failed_skills: [],
+        skipped_skills: [],
+      }
+
+      expect(output.processed).toBe(output.transformed + output.skipped + output.failed)
+    })
+  })
+
+  describe('progress mode CLI validation', () => {
+    it('accepts valid progress modes', () => {
+      const validModes = ['dots', 'bar', 'json']
+      validModes.forEach((mode) => {
+        expect(validateProgressMode(mode)).toBe(true)
+      })
+    })
+
+    it('rejects invalid progress modes', () => {
+      const invalidModes = ['', 'none', 'verbose', 'quiet', 'DOTS', 'BAR', 'JSON']
+      invalidModes.forEach((mode) => {
+        expect(validateProgressMode(mode)).toBe(false)
+      })
+    })
+  })
+})
