@@ -230,8 +230,10 @@ export class SkillsmithApiClient {
   private async request<T>(
     endpoint: string,
     options: RequestInit = {},
-    // SMI-2167: Use structural type for Zod v3/v4 compatibility
-    schema?: { safeParse(data: unknown): z.SafeParseReturnType<unknown, ApiResponse<T>> }
+    // Use structural typing for Zod v3/v4 compatibility
+    schema?: {
+      safeParse(data: unknown): { success: boolean; data?: ApiResponse<T>; error?: z.ZodError }
+    }
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseUrl}${endpoint}`
     let lastError: Error | undefined
@@ -291,24 +293,33 @@ export class SkillsmithApiClient {
         // SMI-1258: Validate response against schema if provided
         if (schema) {
           const validated = schema.safeParse(rawData)
-          if (!validated.success) {
-            const errorMessage = validated.error.issues
-              .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+          if (!validated.success && validated.error) {
+            const issues = validated.error.issues
+            const errorMessage = issues
+              .map((issue: z.ZodIssue) => `${issue.path.join('.')}: ${issue.message}`)
               .join(', ')
-            this.log('Response validation failed:', validated.error.issues)
+            this.log('Response validation failed:', issues)
             throw new SkillsmithError(
               ErrorCodes.NETWORK_INVALID_RESPONSE,
               `Invalid API response: ${errorMessage}`,
               {
                 details: {
                   endpoint,
-                  validationErrors: validated.error.issues,
+                  validationErrors: issues,
                 },
               }
             )
           }
-          this.log('Response received and validated:', { status: response.status })
-          return validated.data
+          if (validated.success && validated.data) {
+            this.log('Response received and validated:', { status: response.status })
+            return validated.data
+          }
+          // Fallback if validation passed but no data (shouldn't happen, but type-safe)
+          throw new SkillsmithError(
+            ErrorCodes.NETWORK_INVALID_RESPONSE,
+            'Validation passed but no data returned',
+            { details: { endpoint } }
+          )
         }
 
         // Fallback: return unvalidated data (for backwards compatibility)

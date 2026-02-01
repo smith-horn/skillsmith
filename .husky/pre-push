@@ -1,5 +1,5 @@
 # Pre-push hook: Shift-left quality gates
-# Issues: SMI-727, SMI-1342, SMI-1835
+# Issues: SMI-727, SMI-1342, SMI-1835, SMI-2166
 #
 # This hook runs quality checks before allowing a push to remote:
 #   1. Warns about uncommitted changes (SMI-1342)
@@ -71,21 +71,43 @@ else
   exit 1
 fi
 
-# Phase 4: Coverage validation (SMI-1602 follow-up)
+# Phase 4: Coverage validation (SMI-1602 follow-up, SMI-2166 improvements)
 # Catches coverage issues before code leaves local machine
 echo "🔍 Running pre-push coverage check..."
 
 # Docker already confirmed available in Phase 3
 
-# Run coverage check (uses existing test:coverage script)
+# Run coverage check and capture output for better diagnostics (SMI-2166)
 # SMI-1774: Use -w /app to support running from worktree directories
-if docker exec -w /app skillsmith-dev-1 npm run test:coverage > /dev/null 2>&1; then
+COVERAGE_OUTPUT=$(docker exec -w /app skillsmith-dev-1 npm run test:coverage 2>&1)
+COVERAGE_STATUS=$?
+
+if [ $COVERAGE_STATUS -eq 0 ]; then
   echo "✅ Coverage check passed"
 else
   echo ""
-  echo "❌ Coverage threshold not met!"
-  echo "   Run: docker exec skillsmith-dev-1 npm run test:coverage"
-  echo "   to see detailed report"
+
+  # SMI-2166: Detect specific failure types and provide targeted help
+  if echo "$COVERAGE_OUTPUT" | grep -q "better_sqlite3\|ERR_DLOPEN_FAILED\|NODE_MODULE_VERSION"; then
+    echo "❌ Native module error detected!"
+    echo "   The better-sqlite3 module needs to be rebuilt."
+    echo ""
+    echo "   Fix: docker exec skillsmith-dev-1 npm rebuild better-sqlite3"
+    echo "   Then try pushing again."
+  elif echo "$COVERAGE_OUTPUT" | grep -q "FAIL.*test\|failed.*test"; then
+    echo "❌ Tests failed!"
+    echo "   Run: docker exec skillsmith-dev-1 npm test"
+    echo "   to see which tests are failing"
+  elif echo "$COVERAGE_OUTPUT" | grep -q "threshold\|below.*%"; then
+    echo "❌ Coverage threshold not met!"
+    echo "   Run: docker exec skillsmith-dev-1 npm run test:coverage"
+    echo "   to see detailed coverage report"
+  else
+    echo "❌ Coverage check failed!"
+    echo "   Run: docker exec skillsmith-dev-1 npm run test:coverage"
+    echo "   to see detailed report"
+  fi
+
   echo ""
   echo "   Bypass: git push --no-verify"
   exit 1

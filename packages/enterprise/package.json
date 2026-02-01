@@ -38,7 +38,7 @@
     "zod": "4.2.1"
   },
   "devDependencies": {
-    "@smithy/config-resolver": "4.1.4",
+    "@smithy/config-resolver": "4.4.6",
     "@smithy/core": "3.5.3",
     "@smithy/middleware-endpoint": "4.1.10",
     "@smithy/middleware-retry": "4.1.11",
