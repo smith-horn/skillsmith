@@ -77,8 +77,11 @@ jobs:
           cache-to: type=gha,mode=max
           target: dev
 
+      # SMI-2240: Save image with current SHA tag for downstream jobs
       - name: Save Docker image
-        run: docker save skillsmith-e2e:${{ github.sha }} | gzip > /tmp/skillsmith-e2e.tar.gz
+        run: |
+          docker save skillsmith-e2e:${{ github.sha }} | gzip > /tmp/skillsmith-e2e.tar.gz
+          echo "✓ Saved image with tag: ${{ github.sha }}"
 
       - name: Upload Docker image artifact
         uses: actions/upload-artifact@v4
@@ -160,8 +163,15 @@ jobs:
           name: node-modules-e2e
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected
       - name: Load Docker image
-        run: gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+        run: |
+          gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-e2e --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-e2e:$LOADED_TAG skillsmith-e2e:${{ github.sha }}
+          fi
 
       - name: Extract node_modules
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
@@ -230,8 +240,15 @@ jobs:
           name: node-modules-e2e
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected
       - name: Load Docker image
-        run: gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+        run: |
+          gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-e2e --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-e2e:$LOADED_TAG skillsmith-e2e:${{ github.sha }}
+          fi
 
       - name: Extract node_modules
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
@@ -298,8 +315,15 @@ jobs:
           name: node-modules-e2e
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected
       - name: Load Docker image
-        run: gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+        run: |
+          gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-e2e --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-e2e:$LOADED_TAG skillsmith-e2e:${{ github.sha }}
+          fi
 
       - name: Extract node_modules
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
@@ -412,8 +436,15 @@ jobs:
           name: node-modules-e2e
           path: /tmp
 
+      # SMI-2240: Re-tag if loaded tag differs from expected
       - name: Load Docker image
-        run: gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+        run: |
+          gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+          LOADED_TAG=$(docker images skillsmith-e2e --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
+            docker tag skillsmith-e2e:$LOADED_TAG skillsmith-e2e:${{ github.sha }}
+          fi
 
       - name: Extract node_modules
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
