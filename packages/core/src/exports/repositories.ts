@@ -18,12 +18,15 @@ export {
   getSchemaVersion,
   runMigrations,
   runMigrationsSafe,
+  // SMI-2206: Async schema functions with WASM fallback
+  createDatabaseAsync,
+  openDatabaseAsync,
 } from '../db/schema.js'
 
 export type { DatabaseType } from '../db/schema.js'
 
-// SMI-2180: Database abstraction layer exports
-export { createDatabaseSync, createDatabaseAsync } from '../db/createDatabase.js'
+// SMI-2180: Database abstraction layer exports (low-level factory)
+export { createDatabaseSync } from '../db/createDatabase.js'
 export type { Database } from '../db/database-interface.js'
 
 // ============================================================================

@@ -9,8 +9,12 @@
  * @see https://github.com/WiseLibs/better-sqlite3
  */
 
+import { createRequire } from 'node:module'
 import type BetterSqlite3 from 'better-sqlite3'
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
+
+// ESM-compatible require for native modules
+const require = createRequire(import.meta.url)
 
 /**
  * Wraps a better-sqlite3 Statement to implement our Statement interface
@@ -116,7 +120,7 @@ export function createBetterSqlite3Database(
 ): BetterSqlite3Database {
   // Dynamic import to avoid loading native module at module evaluation time
   // This is synchronous because better-sqlite3 is synchronous
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+
   const Database = require('better-sqlite3') as typeof BetterSqlite3
 
   // Build options object, only including defined values
@@ -148,7 +152,7 @@ export function isBetterSqlite3Available(): boolean {
   try {
     require.resolve('better-sqlite3')
     // Also try to actually load it to catch binary incompatibility
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+
     require('better-sqlite3')
     return true
   } catch {

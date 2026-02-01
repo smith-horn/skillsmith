@@ -487,7 +487,9 @@ let asyncGlobalContext: ToolContext | null = null
  * @throws Error if dbPath contains path traversal attempt
  * @throws Error if no database driver is available
  */
-export async function createToolContextAsync(options: ToolContextOptions = {}): Promise<ToolContext> {
+export async function createToolContextAsync(
+  options: ToolContextOptions = {}
+): Promise<ToolContext> {
   let dbPath: string
 
   if (options.dbPath) {

@@ -7,7 +7,11 @@
  * @see SMI-XXXX: First-run integration and documentation delivery
  */
 
+import { createRequire } from 'node:module'
 import { exec } from 'child_process'
+
+// ESM-compatible require for dynamic module resolution
+const require = createRequire(import.meta.url)
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'

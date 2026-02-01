@@ -15,8 +15,12 @@
  * @see https://github.com/sql-js/sql.js
  */
 
+import { createRequire } from 'node:module'
 import type { Database, Statement, RunResult, DatabaseOptions } from '../database-interface.js'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+
+// ESM-compatible require for dynamic module loading
+const require = createRequire(import.meta.url)
 
 // sql.js types - fts5-sql-bundle exports a factory function
 // that returns a Promise<SqlJs>
@@ -62,7 +66,12 @@ async function loadSqlJs(): Promise<SqlJsStatic> {
     // Handle both ESM and CJS module formats
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const module = (await import('fts5-sql-bundle')) as any
-    const initSqlJs = module.default || module
+    // Extract initSqlJs function from various export shapes:
+    // - ESM named export: module.initSqlJs
+    // - ESM default with named: module.default.initSqlJs
+    // - CJS interop: module.default.default
+    const initSqlJs =
+      module.initSqlJs || module.default?.initSqlJs || module.default?.default || module.default
 
     // Initialize with bundled WASM - fts5-sql-bundle has a built-in locateFile
     // that correctly resolves the WASM file in its dist/ directory

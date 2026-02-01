@@ -412,3 +412,63 @@ export function runMigrationsSafe(db: DatabaseType): number {
 export function closeDatabase(db: DatabaseType): void {
   db.close()
 }
+
+// ============================================================================
+// SMI-2206: Async Schema Functions with WASM Fallback
+// ============================================================================
+
+import { createDatabaseAsync as createDatabaseAsyncFactory } from './createDatabase.js'
+
+/**
+ * Create a new database connection asynchronously with WASM fallback
+ * This initializes the full schema - use openDatabaseAsync for existing databases
+ *
+ * @param path - Path to database file, or ':memory:' for in-memory
+ * @returns Promise resolving to initialized database
+ */
+export async function createDatabaseAsync(path: string = ':memory:'): Promise<DatabaseType> {
+  const db = await createDatabaseAsyncFactory(path)
+
+  // Enable foreign keys
+  db.pragma('foreign_keys = ON')
+
+  // Initialize schema
+  initializeSchema(db)
+
+  return db
+}
+
+/**
+ * Open an existing database asynchronously with WASM fallback
+ * Runs any pending migrations
+ *
+ * @param path - Path to existing database file
+ * @returns Promise resolving to database with migrations applied
+ */
+export async function openDatabaseAsync(path: string): Promise<DatabaseType> {
+  const db = await createDatabaseAsyncFactory(path, { fileMustExist: true })
+
+  // Enable foreign keys
+  db.pragma('foreign_keys = ON')
+
+  // Check if schema_version table exists
+  const hasSchemaVersion = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'")
+    .get()
+
+  if (!hasSchemaVersion) {
+    // Database has no version tracking - assume it's a legacy import
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+    `)
+  }
+
+  // Run pending migrations safely
+  runMigrationsSafe(db)
+
+  return db
+}
