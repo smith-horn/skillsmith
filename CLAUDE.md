@@ -1006,6 +1006,26 @@ If background agents don't terminate properly:
 ./scripts/cleanup-orphans.sh
 ```
 
+### Native Module Platform Mismatch (SMI-2222)
+
+**Symptoms**: SIGKILL exit 137, "wrong ELF class" errors, process crashes during database initialization when running outside Docker.
+
+**Root Cause**: Package-level `node_modules` (e.g., `packages/core/node_modules/better-sqlite3`) can contain binaries compiled for a different platform (Linux binaries from Docker when running on macOS).
+
+**Solution**:
+
+```bash
+# Remove platform-incompatible native module binaries
+rm -rf packages/*/node_modules/better-sqlite3 packages/*/node_modules/onnxruntime-node
+
+# Then rebuild in Docker
+docker exec skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node
+```
+
+**Prevention**: Always rebuild native modules after switching between Docker and host development. The root `node_modules/` is fine (managed by Docker volume), but package-level duplicates can cause issues.
+
+> See [ADR-107: Async/Sync Context Separation](docs/adr/107-async-sync-context-separation.md) for related WASM fallback architecture.
+
 ---
 
 ## Support
