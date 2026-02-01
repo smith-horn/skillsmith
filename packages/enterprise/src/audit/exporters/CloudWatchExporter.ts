@@ -1,5 +1,6 @@
 /**
  * SMI-959: AWS CloudWatch Logs Exporter
+ * SMI-2164: Fixed TypeScript errors for AWS SDK v3.980+
  *
  * Exports audit events to AWS CloudWatch Logs for centralized log management,
  * monitoring, and compliance. Supports IAM role-based authentication and
@@ -15,8 +16,8 @@ import {
   PutLogEventsCommand,
   PutRetentionPolicyCommand,
   type InputLogEvent,
-  type CloudWatchLogsClientConfig,
 } from '@aws-sdk/client-cloudwatch-logs'
+import type { AwsCredentialIdentity } from '@smithy/types'
 import type { RetentionAuditEvent as AuditEvent } from '../retention/RetentionPolicy.js'
 import type { StreamingExporter, ExportResult } from './index.js'
 
@@ -76,7 +77,14 @@ export class CloudWatchExporter implements StreamingExporter {
     validateCloudWatchConfig(config)
     this.config = createInternalConfig(config)
 
-    const clientConfig: CloudWatchLogsClientConfig = {
+    // SMI-2164: Build client configuration with explicit types for AWS SDK v3.980+
+    // The CloudWatchLogsClientConfig type is a complex intersection that TypeScript
+    // can't resolve without all @smithy/* packages. Use explicit inline type instead.
+    const clientConfig: {
+      region: string
+      credentials?: AwsCredentialIdentity
+      endpoint?: string
+    } = {
       region: config.region,
     }
 
@@ -124,7 +132,11 @@ export class CloudWatchExporter implements StreamingExporter {
         })
       )
 
-      const exists = response.logGroups?.some((lg) => lg.logGroupName === this.config.logGroupName)
+      // SMI-2164: Add explicit type annotation for callback parameter
+      // Use `| undefined` to satisfy exactOptionalPropertyTypes
+      const exists = response.logGroups?.some(
+        (lg: { logGroupName?: string | undefined }) => lg.logGroupName === this.config.logGroupName
+      )
 
       if (!exists) {
         await this.client.send(
@@ -178,7 +190,12 @@ export class CloudWatchExporter implements StreamingExporter {
         })
       )
 
-      const existingStream = response.logStreams?.find((ls) => ls.logStreamName === streamName)
+      // SMI-2164: Add explicit type annotation for callback parameter
+      // Use `| undefined` to satisfy exactOptionalPropertyTypes
+      const existingStream = response.logStreams?.find(
+        (ls: { logStreamName?: string | undefined; uploadSequenceToken?: string | undefined }) =>
+          ls.logStreamName === streamName
+      )
 
       if (existingStream) {
         this.currentLogStream = streamName
