@@ -8,6 +8,10 @@
         "CLAUDE_FLOW_LOG_LEVEL": "info",
         "CLAUDE_FLOW_MEMORY_BACKEND": "sqlite"
       }
+    },
+    "skillsmith": {
+      "command": "node",
+      "args": ["./packages/mcp-server/dist/src/index.js"]
     }
   }
 }
