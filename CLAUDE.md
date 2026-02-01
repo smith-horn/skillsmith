@@ -64,6 +64,23 @@ npm run build
 3. **Create Linear issue** - If fix is non-trivial, track it
 4. **Fix locally first** - Run `docker exec skillsmith-dev-1 npm run preflight` before pushing
 
+### CI Skip Patterns (SMI-2188)
+
+The CI workflow skips for documentation-only commits to save compute time (~11 min per commit). The following patterns trigger a CI skip:
+
+| Pattern | Examples |
+|---------|----------|
+| `docs/**` | ADRs, implementation plans, architecture docs |
+| `**/*.md` | README.md, CLAUDE.md, any markdown file |
+| `LICENSE` | License file changes |
+| `.github/ISSUE_TEMPLATE/**` | Issue templates |
+| `.github/CODEOWNERS` | Code owners file |
+
+**Important**:
+- Mixed commits (docs + code) still trigger full CI
+- Security scans run on schedule regardless of path changes
+- See [ADR-105](docs/adr/105-ci-path-filtering.md) for decision rationale
+
 ---
 
 ## Git-Crypt (Encrypted Documentation)
