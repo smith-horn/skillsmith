@@ -1,0 +1,72 @@
+# SMI-2189: Lightweight CI for documentation-only changes
+# Runs secret scanning and markdown linting without the full build pipeline
+# This workflow triggers for paths that ci.yml ignores via paths-ignore
+name: Docs CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '**/*.md'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/CODEOWNERS'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '**/*.md'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/CODEOWNERS'
+
+concurrency:
+  group: docs-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Secret scanning - catches accidentally committed credentials
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar -xz
+          sudo mv gitleaks /usr/local/bin/
+
+      - name: Run gitleaks
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gitleaks detect --source . --config .gitleaks.toml --log-opts "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" --verbose
+          else
+            gitleaks detect --source . --config .gitleaks.toml --verbose
+          fi
+
+  # Markdown linting - ensures documentation quality
+  markdown-lint:
+    name: Markdown Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Lint markdown files
+        uses: DavidAnson/markdownlint-cli2-action@v20
+        with:
+          globs: |
+            docs/**/*.md
+            *.md
+            !node_modules/**
+            !packages/*/node_modules/**
+          config: .markdownlint.json

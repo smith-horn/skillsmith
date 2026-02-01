@@ -798,12 +798,16 @@ jobs:
 
   # SMI-1537: V3 Migration Performance Benchmarks
   # Runs on PRs to catch performance regressions before merge
+  # SMI-2195: Only run when core package changes (performance-critical code)
   benchmark:
     name: Performance Benchmarks
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: docker-build
-    if: github.event_name == 'pull_request'
+    needs: [docker-build, classify]
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.classify.outputs.tier == 'code' &&
+      contains(needs.classify.outputs.affected_packages, '@skillsmith/core')
     permissions:
       pull-requests: write
 
@@ -1024,13 +1028,16 @@ jobs:
 
   # SMI-1826: Automated Code Review
   # Runs standards audit after lint and test pass, uploads report as artifact
+  # SMI-2195: Skip code review for non-code changes (docs, config)
   code-review:
     name: Code Review
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [lint, test]
+    needs: [lint, test, classify]
     # Non-blocking initially while we stabilize
     continue-on-error: true
+    # Only run for code changes - skip for docs/config
+    if: needs.classify.outputs.tier == 'code'
 
     steps:
       - name: Checkout
@@ -1150,13 +1157,18 @@ jobs:
   # Tests that the CLI works correctly when installed fresh
   # This catches packaging issues, missing dependencies, and native module problems
   # Uses local build artifacts (npm pack) to test the current commit, not npm registry
+  # SMI-2195: Only run on version bumps or dependency changes to save CI time
   fresh-install-test:
     name: Fresh Install Test
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: build
-    # Only run on main branch and releases
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    needs: [build, classify]
+    # Only run on main/tags AND (release commits OR dependency changes)
+    if: |
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) &&
+      (contains(github.event.head_commit.message, 'chore(release)') ||
+       contains(github.event.head_commit.message, 'chore: release') ||
+       needs.classify.outputs.tier == 'deps')
 
     steps:
       - name: Checkout
