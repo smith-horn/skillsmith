@@ -520,7 +520,9 @@ export class GitHubRateLimiter {
     }
 
     if (DEBUG && this.remaining < 500) {
-      console.debug(`Rate limit: ${this.remaining} remaining, resets at ${new Date(this.resetTime).toISOString()}`)
+      console.debug(
+        `Rate limit: ${this.remaining} remaining, resets at ${new Date(this.resetTime).toISOString()}`
+      )
     }
   }
 
