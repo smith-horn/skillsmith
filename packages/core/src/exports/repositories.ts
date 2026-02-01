@@ -29,6 +29,9 @@ export type { DatabaseType } from '../db/schema.js'
 export { createDatabaseSync } from '../db/createDatabase.js'
 export type { Database } from '../db/database-interface.js'
 
+// SMI-2180: Driver detection utilities
+export { isBetterSqlite3Available } from '../db/drivers/betterSqlite3Driver.js'
+
 // ============================================================================
 // Repositories (SMI-578, SMI-628)
 // ============================================================================
