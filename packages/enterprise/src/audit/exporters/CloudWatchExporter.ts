@@ -15,7 +15,6 @@ import {
   PutLogEventsCommand,
   PutRetentionPolicyCommand,
   type InputLogEvent,
-  type CloudWatchLogsClientConfig,
 } from '@aws-sdk/client-cloudwatch-logs'
 import type { RetentionAuditEvent as AuditEvent } from '../retention/RetentionPolicy.js'
 import type { StreamingExporter, ExportResult } from './index.js'
@@ -76,7 +75,8 @@ export class CloudWatchExporter implements StreamingExporter {
     validateCloudWatchConfig(config)
     this.config = createInternalConfig(config)
 
-    const clientConfig: CloudWatchLogsClientConfig = {
+    // Build config object - use Record type for compatibility with AWS SDK v3 type changes
+    const clientConfig: Record<string, unknown> = {
       region: config.region,
     }
 
