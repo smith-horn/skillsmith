@@ -34,10 +34,18 @@
   "dependencies": {
     "@aws-sdk/client-cloudwatch-logs": "3.980.0",
     "@skillsmith/core": "0.4.1",
-    "jose": "^5.2.0",
+    "jose": "5.10.0",
     "zod": "4.2.1"
   },
   "devDependencies": {
+    "@smithy/config-resolver": "4.1.4",
+    "@smithy/core": "3.5.3",
+    "@smithy/middleware-endpoint": "4.1.10",
+    "@smithy/middleware-retry": "4.1.11",
+    "@smithy/protocol-http": "5.1.2",
+    "@smithy/smithy-client": "4.4.3",
+    "@smithy/types": "4.3.1",
+    "@smithy/util-retry": "4.1.2",
     "vitest": "4.0.16"
   },
   "files": [
