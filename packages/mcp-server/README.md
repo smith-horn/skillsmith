@@ -1,17 +1,24 @@
 # @skillsmith/mcp-server
 
+MCP (Model Context Protocol) server for Claude Code skill discovery, installation, and management.
+
+## What's New in v0.3.18
+
+- **Async Initialization** (SMI-2205): Server initializes asynchronously for faster startup
+- **WASM Fallback** (SMI-2206): Automatic fallback to sql.js when native SQLite unavailable
+- **Robust Context Loading** (SMI-2207): Graceful handling of initialization edge cases
+- **612 tests passing** with comprehensive coverage
+
 ## Auto-Update Notifications
 
 The MCP server checks for updates on startup and notifies you when a newer version is available:
 
 ```
-[skillsmith] Update available: 0.3.15 → 0.3.16
+[skillsmith] Update available: 0.3.17 → 0.3.18
 Restart Claude Code to use the latest version.
 ```
 
 To disable update checks, set `SKILLSMITH_AUTO_UPDATE_CHECK=false` in your environment.
-
-MCP (Model Context Protocol) server for Claude Code skill discovery, installation, and management.
 
 ## Installation
 
@@ -215,7 +222,18 @@ Compare multiple skills side-by-side.
 |----------|-------------|---------|
 | `SKILLSMITH_DB_PATH` | Database file location | `~/.skillsmith/skills.db` |
 | `SKILLSMITH_TELEMETRY_ENABLED` | Enable anonymous telemetry | `false` |
+| `SKILLSMITH_USE_WASM` | Force WASM SQLite driver (sql.js) | `false` |
 | `POSTHOG_API_KEY` | PostHog API key (required if telemetry enabled) | - |
+
+### WASM Fallback (v0.3.18+)
+
+The MCP server automatically falls back to a WASM-based SQLite driver (sql.js) when native better-sqlite3 is unavailable. This ensures the server works in environments where native modules can't be compiled.
+
+The fallback is automatic—no configuration needed. To force WASM mode:
+
+```bash
+export SKILLSMITH_USE_WASM=true
+```
 
 ## Telemetry
 
