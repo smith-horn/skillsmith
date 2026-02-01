@@ -38,6 +38,7 @@
     "zod": "4.2.1"
   },
   "devDependencies": {
+    "@smithy/types": "4.12.0",
     "vitest": "4.0.16"
   },
   "files": [
