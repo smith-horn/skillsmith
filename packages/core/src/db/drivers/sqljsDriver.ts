@@ -30,27 +30,38 @@ let sqlJsModule: SqlJs | null = null
 
 /**
  * Load sql.js WASM module (cached)
+ * @throws Error with user-friendly message if WASM fails to load
  */
 async function loadSqlJs(): Promise<SqlJs> {
   if (sqlJsModule) {
     return sqlJsModule
   }
 
-  // Dynamic import to avoid loading at module evaluation time
-  const initSqlJs = (await import('sql.js')).default
+  try {
+    // Dynamic import to avoid loading at module evaluation time
+    const initSqlJs = (await import('sql.js')).default
 
-  // Initialize with bundled WASM (works offline)
-  sqlJsModule = await initSqlJs({
-    // Use Node.js path resolution for WASM file
-    locateFile: (file: string) => {
-      // In production, the WASM file is in node_modules/sql.js/dist/
-      const sqlJsPath = require.resolve('sql.js')
-      const distPath = sqlJsPath.replace(/sql-wasm\.js$/, file)
-      return distPath
-    },
-  })
+    // Initialize with bundled WASM (works offline)
+    sqlJsModule = await initSqlJs({
+      // Use Node.js path resolution for WASM file
+      locateFile: (file: string) => {
+        // In production, the WASM file is in node_modules/sql.js/dist/
+        const sqlJsPath = require.resolve('sql.js')
+        const distPath = sqlJsPath.replace(/sql-wasm\.js$/, file)
+        return distPath
+      },
+    })
 
-  return sqlJsModule
+    return sqlJsModule
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `[Skillsmith] Failed to load sql.js WASM module: ${message}\n\n` +
+        'This may indicate a corrupted installation. Try:\n' +
+        '  npm rebuild sql.js\n' +
+        '  npm install sql.js'
+    )
+  }
 }
 
 /**
@@ -302,12 +313,7 @@ export async function createSqlJsDatabase(
   // Load existing database from file if it exists
   let data: Uint8Array | undefined
   if (path !== ':memory:' && existsSync(path)) {
-    if (options?.fileMustExist === false) {
-      // File must exist option is false, but file exists - that's fine
-      data = readFileSync(path)
-    } else {
-      data = readFileSync(path)
-    }
+    data = readFileSync(path)
   } else if (path !== ':memory:' && options?.fileMustExist) {
     throw new Error(`SQLITE_CANTOPEN: unable to open database file: ${path}`)
   }

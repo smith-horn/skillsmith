@@ -295,17 +295,24 @@ describe('Driver Parity Tests', () => {
     })
 
     it('should return identical results for SELECT', () => {
-      // Insert test data
-      const insert = 'INSERT INTO skills (name, author, score) VALUES (?, ?, ?)'
-      sqlJsDb.prepare(insert).run('skill-a', 'author-1', 90)
-      sqlJsDb.prepare(insert).run('skill-b', 'author-2', 80)
-      betterSqliteDb.prepare(insert).run('skill-a', 'author-1', 90)
-      betterSqliteDb.prepare(insert).run('skill-b', 'author-2', 80)
+      // Insert test data - use exec for simple inserts without needing statement cleanup
+      sqlJsDb.exec("INSERT INTO skills (name, author, score) VALUES ('skill-a', 'author-1', 90)")
+      sqlJsDb.exec("INSERT INTO skills (name, author, score) VALUES ('skill-b', 'author-2', 80)")
+      betterSqliteDb.exec(
+        "INSERT INTO skills (name, author, score) VALUES ('skill-a', 'author-1', 90)"
+      )
+      betterSqliteDb.exec(
+        "INSERT INTO skills (name, author, score) VALUES ('skill-b', 'author-2', 80)"
+      )
 
       // Query and compare
       const query = 'SELECT * FROM skills ORDER BY name'
-      const sqlJsRows = sqlJsDb.prepare(query).all()
-      const betterRows = betterSqliteDb.prepare(query).all()
+      const sqlJsStmt = sqlJsDb.prepare(query)
+      const betterStmt = betterSqliteDb.prepare(query)
+      const sqlJsRows = sqlJsStmt.all()
+      const betterRows = betterStmt.all()
+      sqlJsStmt.finalize()
+      betterStmt.finalize()
 
       expect(sqlJsRows).toEqual(betterRows)
     })
@@ -316,8 +323,12 @@ describe('Driver Parity Tests', () => {
       betterSqliteDb.exec("INSERT INTO skills (name, author) VALUES ('skill', 'author')")
 
       const update = 'UPDATE skills SET score = ? WHERE name = ?'
-      const sqlJsResult = sqlJsDb.prepare(update).run(100, 'skill')
-      const betterResult = betterSqliteDb.prepare(update).run(100, 'skill')
+      const sqlJsStmt = sqlJsDb.prepare(update)
+      const betterStmt = betterSqliteDb.prepare(update)
+      const sqlJsResult = sqlJsStmt.run(100, 'skill')
+      const betterResult = betterStmt.run(100, 'skill')
+      sqlJsStmt.finalize()
+      betterStmt.finalize()
 
       expect(sqlJsResult.changes).toBe(betterResult.changes)
     })
@@ -328,8 +339,12 @@ describe('Driver Parity Tests', () => {
       betterSqliteDb.exec("INSERT INTO skills (name, author) VALUES ('to-delete', 'author')")
 
       const del = 'DELETE FROM skills WHERE name = ?'
-      const sqlJsResult = sqlJsDb.prepare(del).run('to-delete')
-      const betterResult = betterSqliteDb.prepare(del).run('to-delete')
+      const sqlJsStmt = sqlJsDb.prepare(del)
+      const betterStmt = betterSqliteDb.prepare(del)
+      const sqlJsResult = sqlJsStmt.run('to-delete')
+      const betterResult = betterStmt.run('to-delete')
+      sqlJsStmt.finalize()
+      betterStmt.finalize()
 
       expect(sqlJsResult.changes).toBe(betterResult.changes)
     })
@@ -360,16 +375,24 @@ describe('Driver Parity Tests', () => {
       betterSqliteDb.exec("INSERT INTO skills (name, author) VALUES ('nullable', 'author')")
 
       const query = 'SELECT * FROM skills WHERE name = ?'
-      const sqlJsRow = sqlJsDb.prepare(query).get('nullable')
-      const betterRow = betterSqliteDb.prepare(query).get('nullable')
+      const sqlJsStmt = sqlJsDb.prepare(query)
+      const betterStmt = betterSqliteDb.prepare(query)
+      const sqlJsRow = sqlJsStmt.get('nullable')
+      const betterRow = betterStmt.get('nullable')
+      sqlJsStmt.finalize()
+      betterStmt.finalize()
 
       expect(sqlJsRow).toEqual(betterRow)
     })
 
     it('should return undefined for non-existent rows', () => {
       const query = 'SELECT * FROM skills WHERE id = ?'
-      const sqlJsRow = sqlJsDb.prepare(query).get(99999)
-      const betterRow = betterSqliteDb.prepare(query).get(99999)
+      const sqlJsStmt = sqlJsDb.prepare(query)
+      const betterStmt = betterSqliteDb.prepare(query)
+      const sqlJsRow = sqlJsStmt.get(99999)
+      const betterRow = betterStmt.get(99999)
+      sqlJsStmt.finalize()
+      betterStmt.finalize()
 
       expect(sqlJsRow).toBeUndefined()
       expect(betterRow).toBeUndefined()
