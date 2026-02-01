@@ -22,6 +22,7 @@ import {
   createBetterSqlite3Database,
   isBetterSqlite3Available,
 } from './drivers/betterSqlite3Driver.js'
+import { createSqlJsDatabase, isSqlJsAvailable } from './drivers/sqljsDriver.js'
 
 /**
  * Driver type used for database connections
@@ -55,13 +56,16 @@ export function detectAvailableDrivers(): DriverInfo[] {
     })
   }
 
-  // sql.js will be added in Wave 2
-  // For now, mark it as unavailable
-  drivers.push({
-    type: 'sql.js',
-    available: false,
-    reason: 'Not yet implemented (SMI-2182)',
-  })
+  // Check sql.js (WASM - always available in Node.js)
+  if (isSqlJsAvailable()) {
+    drivers.push({ type: 'sql.js', available: true })
+  } else {
+    drivers.push({
+      type: 'sql.js',
+      available: false,
+      reason: 'sql.js package not installed',
+    })
+  }
 
   return drivers
 }
@@ -76,10 +80,10 @@ export function getBestDriver(): DriverType | null {
     return 'better-sqlite3'
   }
 
-  // sql.js fallback will be added in Wave 2
-  // if (isSqlJsAvailable()) {
-  //   return 'sql.js'
-  // }
+  // Fall back to sql.js WASM
+  if (isSqlJsAvailable()) {
+    return 'sql.js'
+  }
 
   return null
 }
@@ -95,21 +99,18 @@ export function getBestDriver(): DriverType | null {
  * @returns Database instance
  * @throws Error if better-sqlite3 is not available
  */
-export function createDatabaseSync(
-  path: string = ':memory:',
-  options?: DatabaseOptions
-): Database {
+export function createDatabaseSync(path: string = ':memory:', options?: DatabaseOptions): Database {
   if (!isBetterSqlite3Available()) {
     throw new Error(
       '[Skillsmith] Native SQLite module (better-sqlite3) is not available. ' +
-      'This may be due to:\n' +
-      '  - Binary compiled for a different platform (Linux vs macOS)\n' +
-      '  - Node.js version mismatch\n' +
-      '  - Missing native build tools\n\n' +
-      'Solutions:\n' +
-      '  - Run in Docker: docker compose --profile dev up -d\n' +
-      '  - Rebuild native module: npm rebuild better-sqlite3\n' +
-      '  - Use async API which will fall back to WASM (coming soon)'
+        'This may be due to:\n' +
+        '  - Binary compiled for a different platform (Linux vs macOS)\n' +
+        '  - Node.js version mismatch\n' +
+        '  - Missing native build tools\n\n' +
+        'Solutions:\n' +
+        '  - Run in Docker: docker compose --profile dev up -d\n' +
+        '  - Rebuild native module: npm rebuild better-sqlite3\n' +
+        '  - Use async API which will fall back to WASM (coming soon)'
     )
   }
 
@@ -138,20 +139,19 @@ export async function createDatabaseAsync(
     return createBetterSqlite3Database(path, options)
   }
 
-  // sql.js fallback will be added in Wave 2 (SMI-2182)
-  // if (isSqlJsAvailable()) {
-  //   console.warn('[Skillsmith] Native SQLite unavailable, using WASM driver')
-  //   return await createSqlJsDatabase(path, options)
-  // }
+  // Fall back to sql.js WASM
+  if (isSqlJsAvailable()) {
+    console.warn('[Skillsmith] Native SQLite unavailable, using WASM driver')
+    return await createSqlJsDatabase(path, options)
+  }
 
   throw new Error(
     '[Skillsmith] No SQLite driver available.\n\n' +
-    'The native module (better-sqlite3) failed to load and sql.js WASM ' +
-    'fallback is not yet implemented.\n\n' +
-    'Solutions:\n' +
-    '  - Run in Docker: docker compose --profile dev up -d\n' +
-    '  - Rebuild native module: npm rebuild better-sqlite3\n' +
-    '  - Wait for WASM support (SMI-2182)'
+      'Neither better-sqlite3 (native) nor sql.js (WASM) could be loaded.\n\n' +
+      'Solutions:\n' +
+      '  - Run in Docker: docker compose --profile dev up -d\n' +
+      '  - Rebuild native module: npm rebuild better-sqlite3\n' +
+      '  - Install sql.js: npm install sql.js'
   )
 }
 

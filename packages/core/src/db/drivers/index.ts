@@ -10,5 +10,4 @@ export {
   isBetterSqlite3Available,
 } from './betterSqlite3Driver.js'
 
-// sql.js driver will be added in Wave 2 (SMI-2182)
-// export { SqlJsDatabase, createSqlJsDatabase } from './sqljsDriver.js'
+export { SqlJsDatabaseAdapter, createSqlJsDatabase, isSqlJsAvailable } from './sqljsDriver.js'
