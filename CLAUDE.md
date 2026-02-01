@@ -116,6 +116,61 @@ See [ADR-106](docs/adr/106-turborepo-build-orchestration.md) for decision ration
 | `scripts/ci/classify-changes.ts` | Classifies commits into tiers (docs/config/code/deps) |
 | `scripts/ci/detect-affected.ts` | Detects affected packages from changed files |
 
+### Branch Protection
+
+The `main` branch is protected with required status checks to ensure code quality.
+
+#### Required Checks
+
+All PRs must pass these checks before merging:
+
+| Check | Workflow | Purpose |
+|-------|----------|---------|
+| Secret Scan | ci.yml, docs-only.yml | Detect accidentally committed credentials |
+| Classify Changes | ci.yml | Categorize change type (docs/config/code/deps) |
+| Package Validation | ci.yml | Verify package.json scope for GitHub Packages |
+| Edge Function Validation | ci.yml | Validate Supabase function structure |
+| Build Docker Image | ci.yml | Build development container |
+| Lint | ci.yml | ESLint and Prettier checks |
+| Type Check | ci.yml | TypeScript type checking |
+| Security Audit | ci.yml | npm audit and security test suite |
+| Standards Compliance | ci.yml | Governance standards audit |
+| Build | ci.yml | Build all packages via Turborepo |
+| Markdown Lint | docs-only.yml | Documentation quality checks |
+
+#### How It Works
+
+**Code PRs**: All 11 checks must pass (full `ci.yml` pipeline runs)
+
+**Docs-only PRs**: Only 2 checks run (`Secret Scan`, `Markdown Lint` from `docs-only.yml`)
+- Full CI is skipped via `paths-ignore` optimization
+- Branch protection is satisfied because both checks are in the required list
+
+**Mixed PRs**: Full CI runs (code changes detected)
+
+#### Emergency Bypass
+
+If required checks are stuck or GitHub Actions is down:
+
+1. **Verify urgency**: Is this blocking production deployment or critical security fix?
+2. **Check status**: Visit [GitHub Status](https://www.githubstatus.com/)
+3. **Use admin bypass**:
+   - Navigate to PR → "Merge pull request"
+   - Select "Merge without waiting for requirements to be met"
+4. **Document**: Add comment explaining bypass reason
+
+**Note**: `enforce_admins: false` allows admins to bypass protection during emergencies.
+
+#### Troubleshooting
+
+**Issue**: "Required checks not found" error
+- **Cause**: Someone renamed a job in `ci.yml` or `docs-only.yml` without updating branch protection
+- **Fix**: Update `.github/branch-protection.json` and re-apply via GitHub API
+
+**Issue**: All PRs blocked after workflow changes
+- **Cause**: Required check name no longer exists in workflows
+- **Fix**: Use emergency bypass, then update branch protection configuration
+
 ---
 
 ## Git-Crypt (Encrypted Documentation)
