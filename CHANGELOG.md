@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **Note**: This project is in alpha (0.x). All packages use 0.x versioning.
 
+## [Unreleased]
+
+### Added
+- **JWT Authentication for Website Users**: Logged-in users now automatically
+  receive their subscription tier rate limits without needing to configure an API key.
+  This provides a seamless experience where your subscription benefits apply immediately.
+- **X-Auth-Method Header**: API responses now include the authentication method used
+  (`jwt`, `api_key`, `anon_key`) for debugging and monitoring purposes.
+- **Realtime Tier Updates**: Subscription tier upgrades now take effect within 5 seconds
+  instead of waiting for cache expiration.
+- **SubscriptionBadge Component**: New visual indicator for subscription tiers with
+  WCAG AA accessible colors (purple for Individual, green for Team, gold for Enterprise).
+
+### Changed
+- Rate limits now apply based on your authenticated session tier, not just API key.
+- Improved circuit breaker resilience for authentication service.
+
+### Security
+- Removed `X-Tier` header from public API responses to protect subscription privacy.
+- Added percentage-based feature flag (`JWT_AUTH_PERCENTAGE`) for gradual, safe rollout.
+
 ## [0.3.6] - 2026-01-18
 
 ### CLI Hotfix Release (SMI-1575)
