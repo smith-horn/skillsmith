@@ -180,6 +180,31 @@ jobs:
             fi
           done
 
+      # SMI-2230: Validate package.json and server.json versions match
+      - name: Validate version sync (MCP server)
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Version Sync Validation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          PKG_VERSION=$(jq -r .version packages/mcp-server/package.json)
+          SERVER_VERSION=$(jq -r .version packages/mcp-server/server.json)
+          SERVER_PKG_VERSION=$(jq -r '.packages[0].version' packages/mcp-server/server.json)
+
+          if [ "$PKG_VERSION" != "$SERVER_VERSION" ]; then
+            echo "::error::Version mismatch: package.json ($PKG_VERSION) != server.json ($SERVER_VERSION)"
+            echo "❌ package.json ($PKG_VERSION) != server.json ($SERVER_VERSION)" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          if [ "$PKG_VERSION" != "$SERVER_PKG_VERSION" ]; then
+            echo "::error::Version mismatch: server.json version ($SERVER_VERSION) != packages[0].version ($SERVER_PKG_VERSION)"
+            echo "❌ server.json version != packages[0].version" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          echo "✅ MCP server version sync: $PKG_VERSION" >> $GITHUB_STEP_SUMMARY
+
   # Build Docker image once, use for all jobs (matches ci.yml pattern)
   # SMI-1319: Skip Docker build if nothing to publish
   docker-build:
@@ -556,11 +581,55 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # SMI-2230: Smoke test published packages
+  smoke-test:
+    name: Smoke Test Published Packages
+    runs-on: ubuntu-latest
+    needs: [publish-core, publish-mcp-server, publish-cli]
+    if: always() && (needs.publish-core.result == 'success' || needs.publish-mcp-server.result == 'success' || needs.publish-cli.result == 'success')
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Wait for npm propagation
+        run: sleep 15
+
+      - name: Smoke test @skillsmith/core
+        if: needs.publish-core.result == 'success'
+        run: |
+          echo "## Smoke Test: @skillsmith/core" >> $GITHUB_STEP_SUMMARY
+          VERSION=$(jq -r .version packages/core/package.json)
+          npx tsx scripts/smoke-test-published.ts @skillsmith/core $VERSION
+          echo "✅ @skillsmith/core@$VERSION smoke test passed" >> $GITHUB_STEP_SUMMARY
+
+      - name: Smoke test @skillsmith/mcp-server
+        if: needs.publish-mcp-server.result == 'success'
+        run: |
+          echo "## Smoke Test: @skillsmith/mcp-server" >> $GITHUB_STEP_SUMMARY
+          VERSION=$(jq -r .version packages/mcp-server/package.json)
+          npx tsx scripts/smoke-test-published.ts @skillsmith/mcp-server $VERSION
+          echo "✅ @skillsmith/mcp-server@$VERSION smoke test passed" >> $GITHUB_STEP_SUMMARY
+
+      - name: Smoke test @skillsmith/cli
+        if: needs.publish-cli.result == 'success'
+        run: |
+          echo "## Smoke Test: @skillsmith/cli" >> $GITHUB_STEP_SUMMARY
+          VERSION=$(jq -r .version packages/cli/package.json)
+          npx tsx scripts/smoke-test-published.ts @skillsmith/cli $VERSION
+          echo "✅ @skillsmith/cli@$VERSION smoke test passed" >> $GITHUB_STEP_SUMMARY
+
   # Summary job
   publish-summary:
     name: Publish Summary
     runs-on: ubuntu-latest
-    needs: [publish-core, publish-mcp-server, publish-cli, publish-enterprise]
+    needs: [publish-core, publish-mcp-server, publish-cli, publish-enterprise, smoke-test]
     if: always()
 
     steps:
@@ -568,9 +637,9 @@ jobs:
         run: |
           echo "## Publish Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Package | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| @skillsmith/core | ${{ needs.publish-core.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| @skillsmith/mcp-server | ${{ needs.publish-mcp-server.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| @skillsmith/cli | ${{ needs.publish-cli.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| @smith-horn/enterprise | ${{ needs.publish-enterprise.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Status | Smoke Test |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| @skillsmith/core | ${{ needs.publish-core.result }} | ${{ needs.smoke-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| @skillsmith/mcp-server | ${{ needs.publish-mcp-server.result }} | ${{ needs.smoke-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| @skillsmith/cli | ${{ needs.publish-cli.result }} | ${{ needs.smoke-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| @smith-horn/enterprise | ${{ needs.publish-enterprise.result }} | N/A |" >> $GITHUB_STEP_SUMMARY

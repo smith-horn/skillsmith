@@ -58,7 +58,11 @@
     "test:e2e:baseline": "npx tsx scripts/e2e/generate-report.ts --baseline",
     "skillsmith": "node packages/cli/dist/src/index.js",
     "cleanup:orphans": "./scripts/cleanup-orphans.sh",
-    "transform:batch": "npx tsx scripts/batch-transform-skills.ts"
+    "transform:batch": "npx tsx scripts/batch-transform-skills.ts",
+    "analyze:publish-deps": "npx tsx scripts/analyze-publish-deps.ts",
+    "validate:versions": "npx tsx scripts/validate-versions.ts",
+    "publish:dry-run": "npm publish --workspaces --dry-run",
+    "publish:all": "npm publish --workspaces --access public"
   },
   "engines": {
     "node": ">=22.0.0"
