@@ -507,10 +507,15 @@ jobs:
         continue-on-error: true
         run: |
           gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
           fi
 
       # SMI-2240: Fallback to native npm ci when Docker unavailable
@@ -601,10 +606,15 @@ jobs:
         continue-on-error: true
         run: |
           gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
           fi
 
       # SMI-2240: Fallback to native npm ci when Docker unavailable
@@ -706,10 +716,15 @@ jobs:
         continue-on-error: true
         run: |
           gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
           fi
 
       # SMI-2240: Fallback to native npm ci when Docker unavailable
@@ -803,6 +818,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Note: No npm ci fallback for test-root - these tests require Docker environment
+      # for consistent behavior with root-level scripts and supabase functions
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -819,10 +836,15 @@ jobs:
       - name: Load Docker image
         run: |
           gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
           fi
 
       - name: Extract node_modules
@@ -868,6 +890,8 @@ jobs:
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
 
+      # Note: No npm ci fallback for security - audit requires Docker for reproducible results
+      # and consistent dependency resolution across environments
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -884,10 +908,15 @@ jobs:
       - name: Load Docker image
         run: |
           gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
           fi
 
       - name: Extract node_modules
@@ -965,6 +994,8 @@ jobs:
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
 
+      # Note: No npm ci fallback for benchmark - performance tests require consistent
+      # Docker environment to produce comparable results
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -978,13 +1009,18 @@ jobs:
           path: /tmp
 
       # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
+      # SMI-2247: Non-critical job - warn on re-tag failure instead of failing
       - name: Load Docker image
         run: |
           gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
+              echo "::warning::Re-tag failed, job will continue with degraded functionality"
+            fi
           fi
 
       - name: Extract node_modules
@@ -1054,6 +1090,8 @@ jobs:
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
 
+      # Note: No npm ci fallback for compliance - standards audit requires Docker
+      # for consistent tooling versions
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -1070,10 +1108,15 @@ jobs:
       - name: Load Docker image
         run: |
           gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
           fi
 
       - name: Extract node_modules
@@ -1121,6 +1164,8 @@ jobs:
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
 
+      # Note: No npm ci fallback for website-build - Astro build requires consistent
+      # Node environment provided by Docker
       - name: Download Docker image
         if: steps.changes.outputs.website == 'true'
         uses: actions/download-artifact@v4
@@ -1136,14 +1181,19 @@ jobs:
           path: /tmp
 
       # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
+      # SMI-2247: Non-critical job - warn on re-tag failure instead of failing
       - name: Load Docker image
         if: steps.changes.outputs.website == 'true'
         run: |
           gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
+              echo "::warning::Re-tag failed, job will continue with degraded functionality"
+            fi
           fi
 
       - name: Extract node_modules
@@ -1203,6 +1253,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Note: No npm ci fallback for code-review - already has continue-on-error: true
+      # so failures are non-blocking anyway
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -1216,13 +1268,18 @@ jobs:
           path: /tmp
 
       # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
+      # SMI-2247: Non-critical job - warn on re-tag failure instead of failing
       - name: Load Docker image
         run: |
           gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
+              echo "::warning::Re-tag failed, job will continue with degraded functionality"
+            fi
           fi
 
       - name: Extract node_modules
@@ -1301,10 +1358,15 @@ jobs:
         continue-on-error: true
         run: |
           gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
           fi
 
       # SMI-2240: Fallback to native npm ci when Docker unavailable
@@ -1378,6 +1440,8 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      # Note: No npm ci fallback for fresh-install-test - this job specifically tests
+      # the packaged artifacts, not the development environment
       - name: Download Docker image
         uses: actions/download-artifact@v4
         with:
@@ -1394,10 +1458,15 @@ jobs:
       - name: Load Docker image
         run: |
           gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
           fi
 
       - name: Extract node_modules

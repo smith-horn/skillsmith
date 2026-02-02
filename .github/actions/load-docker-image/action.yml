@@ -1,0 +1,59 @@
+name: 'Load Docker Image with Re-tag'
+description: 'Load Docker image from artifact and re-tag if SHA mismatch (SMI-2246)'
+
+inputs:
+  image-name:
+    description: 'Docker image name (e.g., skillsmith-ci)'
+    required: true
+  expected-tag:
+    description: 'Expected tag (usually github.sha)'
+    required: true
+  artifact-path:
+    description: 'Path to gzipped tarball'
+    required: true
+    default: '/tmp/skillsmith-ci.tar.gz'
+  fail-on-error:
+    description: 'Whether to fail on re-tag error (false for non-critical jobs)'
+    required: false
+    default: 'true'
+
+outputs:
+  loaded:
+    description: 'Whether image was successfully loaded and tagged'
+    value: ${{ steps.load.outputs.loaded }}
+  original-tag:
+    description: 'Original tag from the loaded image'
+    value: ${{ steps.load.outputs.original_tag }}
+
+runs:
+  using: composite
+  steps:
+    - id: load
+      shell: bash
+      run: |
+        echo "Loading Docker image from ${{ inputs.artifact-path }}..."
+        gunzip -c ${{ inputs.artifact-path }} | docker load
+
+        # LOADED_TAG will be empty if no images exist (handled by -n check below)
+        LOADED_TAG=$(docker images ${{ inputs.image-name }} --format '{{.Tag}}' | head -1)
+        echo "original_tag=$LOADED_TAG" >> $GITHUB_OUTPUT
+
+        if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ inputs.expected-tag }}" ]; then
+          echo "Re-tagging: $LOADED_TAG -> ${{ inputs.expected-tag }}"
+          docker images ${{ inputs.image-name }} --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+
+          if ! docker tag ${{ inputs.image-name }}:$LOADED_TAG ${{ inputs.image-name }}:${{ inputs.expected-tag }}; then
+            if [ "${{ inputs.fail-on-error }}" = "true" ]; then
+              echo "::error::Failed to re-tag Docker image"
+              echo "loaded=false" >> $GITHUB_OUTPUT
+              exit 1
+            else
+              echo "::warning::Re-tag failed, job will continue with degraded functionality"
+              echo "loaded=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+        fi
+
+        echo "loaded=true" >> $GITHUB_OUTPUT
+        echo "✓ Docker image ready: ${{ inputs.image-name }}:${{ inputs.expected-tag }}"

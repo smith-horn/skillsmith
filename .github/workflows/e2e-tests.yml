@@ -102,7 +102,7 @@ jobs:
           docker cp extract-deps:/app/node_modules /tmp/node_modules
 
           # Copy nested workspace node_modules (for non-hoisted dependencies)
-          for pkg in core enterprise mcp-server cli website; do
+          for pkg in core mcp-server cli enterprise vscode-extension website; do
             mkdir -p /tmp/packages/$pkg
             if docker cp extract-deps:/app/packages/$pkg/node_modules /tmp/packages/$pkg/ 2>/dev/null; then
               echo "✓ Copied packages/$pkg/node_modules"
@@ -167,10 +167,15 @@ jobs:
       - name: Load Docker image
         run: |
           gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-e2e --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-e2e:$LOADED_TAG skillsmith-e2e:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-e2e --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-e2e:$LOADED_TAG skillsmith-e2e:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
           fi
 
       - name: Extract node_modules
@@ -244,10 +249,15 @@ jobs:
       - name: Load Docker image
         run: |
           gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-e2e --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-e2e:$LOADED_TAG skillsmith-e2e:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-e2e --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-e2e:$LOADED_TAG skillsmith-e2e:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
           fi
 
       - name: Extract node_modules
@@ -319,10 +329,15 @@ jobs:
       - name: Load Docker image
         run: |
           gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-e2e --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-e2e:$LOADED_TAG skillsmith-e2e:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-e2e --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-e2e:$LOADED_TAG skillsmith-e2e:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
           fi
 
       - name: Extract node_modules
@@ -440,10 +455,15 @@ jobs:
       - name: Load Docker image
         run: |
           gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+          # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-e2e --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging from $LOADED_TAG to ${{ github.sha }}"
-            docker tag skillsmith-e2e:$LOADED_TAG skillsmith-e2e:${{ github.sha }}
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            docker images skillsmith-e2e --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
+            if ! docker tag skillsmith-e2e:$LOADED_TAG skillsmith-e2e:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
           fi
 
       - name: Extract node_modules
