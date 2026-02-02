@@ -818,6 +818,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # SMI-2250: Decrypt git-crypt encrypted files (supabase/functions tests are encrypted)
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+
       # Note: No npm ci fallback for test-root - these tests require Docker environment
       # for consistent behavior with root-level scripts and supabase functions
       - name: Download Docker image

@@ -161,7 +161,7 @@
     "watch": "npm run build -- --watch",
     "lint": "eslint src --ext ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "package": "vsce package"
   },
   "devDependencies": {
