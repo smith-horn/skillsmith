@@ -296,15 +296,16 @@ class BarProgressReporter implements ProgressReporter {
     // Build progress bar
     const barWidth = 30
     const filled = this.total ? Math.round((stats.processed / this.total) * barWidth) : 0
-    const bar = '='.repeat(filled) + (filled < barWidth ? '>' : '') + ' '.repeat(Math.max(0, barWidth - filled - 1))
+    const bar =
+      '='.repeat(filled) +
+      (filled < barWidth ? '>' : '') +
+      ' '.repeat(Math.max(0, barWidth - filled - 1))
 
     // Format ETA
     const etaStr = eta > 0 ? `${Math.floor(eta / 60)}m ${eta % 60}s` : '--'
 
     // Build status line
-    const countStr = this.total
-      ? `(${stats.processed}/${this.total})`
-      : `(${stats.processed})`
+    const countStr = this.total ? `(${stats.processed}/${this.total})` : `(${stats.processed})`
     const statusLine = `Transforming [${bar}] ${percent}% ${countStr} | ${rate.toFixed(1)}/s | ETA: ${etaStr}`
 
     // Clear line and write
@@ -710,7 +711,10 @@ function validateFilters(options: CliOptions): string[] {
   }
 
   // Validate --trust-tier value
-  if (options.trustTier && !VALID_TRUST_TIERS.includes(options.trustTier as typeof VALID_TRUST_TIERS[number])) {
+  if (
+    options.trustTier &&
+    !VALID_TRUST_TIERS.includes(options.trustTier as (typeof VALID_TRUST_TIERS)[number])
+  ) {
     errors.push(
       `Invalid trust tier '${options.trustTier}'. Valid values: ${VALID_TRUST_TIERS.join(', ')}`
     )
@@ -821,10 +825,14 @@ async function getFilterPreview(
 
   // Calculate combined count (simplified - actual query does intersection)
   let combinedCount = totalCount ?? 0
-  if (options.trustTier) combinedCount = Math.min(combinedCount, breakdown[`Trust tier = ${options.trustTier}`])
-  if (options.since) combinedCount = Math.min(combinedCount, breakdown[`Indexed since ${options.since}`])
-  if (options.monorepoSkills) combinedCount = Math.min(combinedCount, breakdown['Monorepo skills (/tree/ URLs)'])
-  if (options.onlyMissing) combinedCount = Math.min(combinedCount, breakdown['Missing transformations'])
+  if (options.trustTier)
+    combinedCount = Math.min(combinedCount, breakdown[`Trust tier = ${options.trustTier}`])
+  if (options.since)
+    combinedCount = Math.min(combinedCount, breakdown[`Indexed since ${options.since}`])
+  if (options.monorepoSkills)
+    combinedCount = Math.min(combinedCount, breakdown['Monorepo skills (/tree/ URLs)'])
+  if (options.onlyMissing)
+    combinedCount = Math.min(combinedCount, breakdown['Missing transformations'])
   if (options.retryFailed) combinedCount = breakdown['Failed in previous run']
   if (options.retrySkipped) combinedCount = breakdown['Skipped in previous run']
 
@@ -979,8 +987,8 @@ async function* fetchSkillsBatch(
   if (filters?.retryFailed || filters?.retrySkipped) {
     const checkpoint = loadBatchTransformCheckpoint()
     const targetIds = filters.retryFailed
-      ? checkpoint?.failedSkillIds ?? []
-      : checkpoint?.skippedSkillIds ?? []
+      ? (checkpoint?.failedSkillIds ?? [])
+      : (checkpoint?.skippedSkillIds ?? [])
 
     if (targetIds.length === 0) {
       console.log(`No ${filters.retryFailed ? 'failed' : 'skipped'} skills found in checkpoint`)
@@ -1346,7 +1354,13 @@ async function main(): Promise<void> {
 
   try {
     // Process skills in batches
-    for await (const batch of fetchSkillsBatch(supabase, batchSize, startOffset, options.limit, filters)) {
+    for await (const batch of fetchSkillsBatch(
+      supabase,
+      batchSize,
+      startOffset,
+      options.limit,
+      filters
+    )) {
       batchNumber++
       const batchStartIdx = (batchNumber - 1) * batchSize + startOffset + 1
       const batchEndIdx = batchStartIdx + batch.length - 1
