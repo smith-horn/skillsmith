@@ -17,11 +17,16 @@ export type AuditEventType =
   | 'cache_operation'
   | 'source_sync'
   | 'config_change'
+  // SMI-2269: Authenticated quarantine operations
+  | 'quarantine_authenticated_review'
+  | 'quarantine_multi_approval'
+  | 'quarantine_multi_approval_complete'
+  | 'quarantine_multi_approval_cancelled'
 
 /**
  * Actor performing the action
  */
-export type AuditActor = 'user' | 'system' | 'adapter' | 'scanner'
+export type AuditActor = 'user' | 'system' | 'adapter' | 'scanner' | 'reviewer'
 
 /**
  * Result of the audited action
