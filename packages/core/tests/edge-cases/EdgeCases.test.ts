@@ -657,12 +657,15 @@ description: |
 
     describe('ReDoS (Regular Expression Denial of Service)', () => {
       it('should handle ReDoS payloads in search queries', () => {
+        // SMI-2257: These patterns are intentionally vulnerable for testing ReDoS detection
+        // lgtm[js/redos] - Intentional ReDoS test patterns
+        // codeql[js/redos] - Intentional ReDoS test patterns
         const redosPayloads = [
           'a'.repeat(50) + '!',
           'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaab',
           'x'.repeat(100) + 'y',
-          '(a+)+b'.repeat(10),
-          '((a+)+)+'.repeat(5),
+          '(a+)+b'.repeat(10), // codeql-disable-line js/redos
+          '((a+)+)+'.repeat(5), // codeql-disable-line js/redos
         ]
 
         for (const payload of redosPayloads) {

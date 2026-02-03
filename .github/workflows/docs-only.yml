@@ -3,6 +3,10 @@
 # This workflow triggers for paths that ci.yml ignores via paths-ignore
 name: Docs CI
 
+# SMI-2267: Explicit permissions for CodeQL compliance
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]

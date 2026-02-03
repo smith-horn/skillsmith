@@ -59,30 +59,40 @@ export function sanitizeHtml(input: string, maxLength = DEFAULT_MAX_LENGTH): str
     return ''
   }
 
-  // Remove script tags and their content
-  let sanitized = input.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+  // SMI-2261: Loop-based sanitization to prevent bypass with nested payloads
+  // e.g., <scr<script>ipt> becomes <script> after single-pass removal
+  let sanitized = input
+  let previousPass = ''
+  const maxIterations = 10 // Prevent infinite loops on malformed input
 
-  // Remove event handlers (onclick, onerror, etc.)
-  sanitized = sanitized.replace(/\son\w+\s*=\s*["'][^"']*["']/gi, '')
-  sanitized = sanitized.replace(/\son\w+\s*=\s*[^\s>]*/gi, '')
+  for (let i = 0; i < maxIterations && previousPass !== sanitized; i++) {
+    previousPass = sanitized
 
-  // Remove javascript: protocol
-  sanitized = sanitized.replace(/javascript:/gi, '')
+    // Remove script tags and their content
+    sanitized = sanitized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
 
-  // Remove data: protocol (can be used for XSS)
-  sanitized = sanitized.replace(/data:text\/html/gi, '')
+    // Remove event handlers (onclick, onerror, etc.)
+    sanitized = sanitized.replace(/\son\w+\s*=\s*["'][^"']*["']/gi, '')
+    sanitized = sanitized.replace(/\son\w+\s*=\s*[^\s>]*/gi, '')
 
-  // Remove vbscript: protocol
-  sanitized = sanitized.replace(/vbscript:/gi, '')
+    // Remove javascript: protocol
+    sanitized = sanitized.replace(/javascript:/gi, '')
 
-  // Remove object and embed tags
-  sanitized = sanitized.replace(/<(object|embed|iframe|frame|frameset)[^>]*>/gi, '')
+    // Remove data: protocol (can be used for XSS)
+    sanitized = sanitized.replace(/data:text\/html/gi, '')
 
-  // Remove style tags (can contain javascript)
-  sanitized = sanitized.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    // Remove vbscript: protocol
+    sanitized = sanitized.replace(/vbscript:/gi, '')
 
-  // Remove import statements in style attributes
-  sanitized = sanitized.replace(/style\s*=\s*["'][^"']*@import[^"']*["']/gi, '')
+    // Remove object and embed tags
+    sanitized = sanitized.replace(/<(object|embed|iframe|frame|frameset)[^>]*>/gi, '')
+
+    // Remove style tags (can contain javascript)
+    sanitized = sanitized.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+
+    // Remove import statements in style attributes
+    sanitized = sanitized.replace(/style\s*=\s*["'][^"']*@import[^"']*["']/gi, '')
+  }
 
   // Log if significant sanitization occurred
   if (sanitized !== input) {

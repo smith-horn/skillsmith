@@ -3,6 +3,10 @@
 # when installed from npm pack tarballs
 name: Packaging Test
 
+# SMI-2268: Explicit permissions for CodeQL compliance
+permissions:
+  contents: read
+
 on:
   schedule:
     # Run every Monday at 6 AM UTC
