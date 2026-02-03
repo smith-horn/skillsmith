@@ -104,6 +104,7 @@ docker exec skillsmith-dev-1 npm run build:legacy
 ```
 
 **Benefits**:
+
 - Dependency-aware task scheduling (builds packages in correct order)
 - Incremental builds with content hashing (10x faster on cache hit)
 - Local cache in `.turbo/` directory (gitignored)
@@ -252,6 +253,7 @@ Use the automation script for creating worktrees in git-crypt encrypted repos:
 ```
 
 The script handles:
+
 1. Validates git-crypt is unlocked in main repo
 2. Creates worktree with `--no-checkout` to avoid smudge filter errors
 3. Copies git-crypt keys to worktree's gitdir
@@ -406,7 +408,7 @@ Add to `~/.claude/settings.json`:
 
 Once configured, you can ask Claude:
 
-```
+```text
 "Search for testing skills"
 "Find verified skills for git workflows"
 "Show details for community/jest-helper"
@@ -510,6 +512,7 @@ docker exec skillsmith-dev-1 npm run build
 The Docker volume `node_modules` persists across container restarts. Use the appropriate method based on change scope:
 
 **Restart (fast) - Minor changes, adding dependencies:**
+
 ```bash
 docker compose --profile dev down
 docker compose --profile dev up -d
@@ -517,6 +520,7 @@ docker exec skillsmith-dev-1 npm install
 ```
 
 **Full Rebuild (thorough) - Major version upgrades, native module changes, dependency conflicts:**
+
 ```bash
 docker compose --profile dev down
 docker volume rm skillsmith_node_modules  # Clear cached node_modules
@@ -582,7 +586,7 @@ claude mcp add claude-flow npx claude-flow@alpha mcp start
 
 ## Package Structure
 
-```
+```text
 packages/
 ├── core/        # @skillsmith/core - Database, repositories, services
 ├── mcp-server/  # @skillsmith/mcp-server - MCP tools (search, install, etc.)
@@ -668,7 +672,7 @@ Add to `~/.claude/settings.json`:
 
 **Important**: Shell environment exports (`export SKILLSMITH_API_KEY=...`) do NOT reach MCP server subprocesses. Use one of the methods above.
 
-Get your API key from https://skillsmith.app/account after signing up.
+Get your API key from <https://skillsmith.app/account> after signing up.
 
 ---
 
@@ -815,6 +819,7 @@ Vitest only runs tests matching these include patterns. Tests in other locations
 | `scripts/tests/**/*.test.ts` | `scripts/tests/validate-skills.test.ts` |
 
 **Common Mistakes:**
+
 - `scripts/__tests__/foo.test.ts` - Wrong directory name (use `scripts/tests/`)
 - `packages/core/test/foo.test.ts` - Wrong directory name (use `tests/` plural)
 - `src/foo.test.ts` - Must be inside a package
@@ -829,7 +834,7 @@ Hive mind configs enable multi-agent task orchestration with coordinated memory 
 
 ### Configuration Location
 
-```
+```text
 .claude/hive-mind/
 ├── README.md              # Usage documentation
 └── *.yaml                 # Task configurations
@@ -883,6 +888,7 @@ npx claude-flow swarm --config .claude/hive-mind/your-config.yaml
 | `alert-notify` | Send alert emails on job failures | Service Role |
 
 **Deploy a function:**
+
 ```bash
 npx supabase functions deploy <function-name> --no-verify-jwt  # Anonymous access
 npx supabase functions deploy <function-name>                   # Requires auth
@@ -913,10 +919,11 @@ npx supabase functions deploy list-invoices --no-verify-jwt
 ```
 
 > **Why these functions use `--no-verify-jwt`:** The Supabase gateway rejects user JWTs from the frontend auth flow. These functions validate tokens internally using `supabase.auth.getUser()`. See SMI-1906 for details.
-
+>
 > **Note**: The `verify_jwt` setting is also configured in `supabase/config.toml` for local development. When deploying to production, you must use the `--no-verify-jwt` flag explicitly.
 
 **CI Protection (SMI-1900):** Anonymous functions are validated by `npm run audit:standards`. If you add a new anonymous function:
+
 1. Add `[functions.<name>]` with `verify_jwt = false` to `supabase/config.toml`
 2. Add deploy command to the anonymous functions list above
 3. Add function name to `ANONYMOUS_FUNCTIONS` array in `scripts/audit-standards.mjs`
@@ -935,7 +942,8 @@ CORS is configured in `supabase/functions/_shared/cors.ts`:
 **Adding custom origins:**
 
 Set in Supabase Dashboard → Edge Functions → Secrets:
-```
+
+```text
 CORS_ALLOWED_ORIGINS=https://custom.example.com,https://staging.skillsmith.app
 ```
 
@@ -962,11 +970,13 @@ CI will fail if any anonymous function is missing from config.toml or CLAUDE.md.
 ### Alert Notifications
 
 Alerts are sent to `support@skillsmith.app` via Resend when:
+
 - Indexer workflow fails
 - Metadata refresh workflow fails (scheduled runs only)
 - Weekly ops report detects anomalies
 
 **Trigger manual ops report:**
+
 ```bash
 varlock run -- bash -c 'curl -X POST \
   -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
@@ -1033,6 +1043,7 @@ cd packages/website && vercel --prod
 ```
 
 **Contact Form**: All user inquiries route through `/contact` form (no exposed email addresses).
+
 - Supports `?topic=` URL param: `verification`, `security`, `support`, `enterprise`, `general`, etc.
 - `/verify` redirects to `/contact?topic=verification`
 
@@ -1102,8 +1113,8 @@ docker exec skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node
 
 ## Support
 
-- Documentation: https://github.com/ruvnet/claude-flow
-- Issues: https://github.com/ruvnet/claude-flow/issues
+- Documentation: <https://github.com/ruvnet/claude-flow>
+- Issues: <https://github.com/ruvnet/claude-flow/issues>
 
 ---
 
