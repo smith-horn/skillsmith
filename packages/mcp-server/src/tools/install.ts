@@ -13,7 +13,7 @@
  * Skills are installed to ~/.claude/skills/ and tracked in ~/.skillsmith/manifest.json
  */
 
-import { SecurityScanner, TransformationService } from '@skillsmith/core'
+import { SecurityScanner, TransformationService, safeWriteFile } from '@skillsmith/core'
 import type { TrustTier } from '@skillsmith/core'
 import * as fs from 'fs/promises'
 import * as path from 'path'
@@ -342,8 +342,9 @@ export async function installSkill(
       await fs.mkdir(installPath, { recursive: true })
 
       // Write SKILL.md (optimized or original)
+      // SMI-2274: Use safeWriteFile to prevent symlink attacks
       const mainSkillPath = path.join(installPath, 'SKILL.md')
-      await fs.writeFile(mainSkillPath, finalSkillContent)
+      await safeWriteFile(mainSkillPath, finalSkillContent)
       writtenFiles.push(mainSkillPath)
 
       // SMI-1867: Store original content for future conflict detection
@@ -358,7 +359,7 @@ export async function installSkill(
         await Promise.all(
           subSkillFiles.map(async (subSkill) => {
             const subPath = path.join(installPath, subSkill.filename)
-            await fs.writeFile(subPath, subSkill.content)
+            await safeWriteFile(subPath, subSkill.content)
             writtenFiles.push(subPath)
           })
         )
@@ -369,7 +370,7 @@ export async function installSkill(
         const agentsDir = path.join(os.homedir(), '.claude', 'agents')
         await fs.mkdir(agentsDir, { recursive: true })
         const subagentPath = path.join(agentsDir, `${skillName}-specialist.md`)
-        await fs.writeFile(subagentPath, subagentContent)
+        await safeWriteFile(subagentPath, subagentContent)
         writtenFiles.push(subagentPath)
         optimizationInfo.subagentPath = subagentPath
       }
@@ -402,7 +403,7 @@ export async function installSkill(
           }
         }
 
-        await fs.writeFile(path.join(installPath, file), content)
+        await safeWriteFile(path.join(installPath, file), content)
       } catch {
         // Optional files are fine to skip
       }

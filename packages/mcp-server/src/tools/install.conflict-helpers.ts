@@ -10,6 +10,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { createHash } from 'crypto'
+import { safeWriteFile } from '@skillsmith/core'
 
 // ============================================================================
 // Conflict Resolution Helpers (SMI-1865)
@@ -148,11 +149,11 @@ export async function storeOriginal(
   // Create directory
   await fs.mkdir(originalDir, { recursive: true })
 
-  // Store SKILL.md content
-  await fs.writeFile(path.join(originalDir, 'SKILL.md'), content, 'utf-8')
+  // SMI-2274: Use safeWriteFile to prevent symlink attacks
+  await safeWriteFile(path.join(originalDir, 'SKILL.md'), content, 'utf-8')
 
   // Store metadata
-  await fs.writeFile(path.join(originalDir, 'metadata.json'), JSON.stringify(metadata, null, 2))
+  await safeWriteFile(path.join(originalDir, 'metadata.json'), JSON.stringify(metadata, null, 2))
 }
 
 /**
