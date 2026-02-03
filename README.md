@@ -29,7 +29,7 @@ Skillsmith is a skill discovery, recommendation, and learning system for [Claude
 
 Skillsmith uses the Model Context Protocol (MCP) to integrate with Claude Code:
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │  Claude Code                                         │
 │  ┌─────────────────────────────────────────────────┐│
@@ -54,7 +54,7 @@ Skillsmith uses the Model Context Protocol (MCP) to integrate with Claude Code:
 
 Copy this snippet and paste it into Claude Code:
 
-```
+```text
 Add this MCP server to my settings.json:
 
 {
@@ -113,7 +113,7 @@ node packages/cli/dist/index.js search "testing"
 
 Once configured, Claude Code can use Skillsmith tools:
 
-```
+```text
 "Search for testing skills"
 → Uses search tool to find testing-related skills
 
@@ -268,12 +268,14 @@ See [CLAUDE.md](CLAUDE.md) for full development workflow and skill configuration
 Skillsmith is source-available under the [Elastic License 2.0](LICENSE).
 
 **You CAN:**
+
 - Use Skillsmith for personal or internal business purposes
 - Modify the source code for your own use
 - Self-host for your team
 - Contribute bug fixes and improvements
 
 **You CANNOT:**
+
 - Offer Skillsmith as a managed service to third parties
 - Circumvent license key enforcement features
 

@@ -10,7 +10,7 @@ We take the security of Skillsmith seriously. If you discover a security vulnera
 
 Instead, please report security issues by emailing:
 
-**security@smithhorn.ca**
+**<security@smithhorn.ca>**
 
 Include the following information in your report:
 
@@ -93,6 +93,6 @@ We appreciate security researchers who help keep Skillsmith secure. With your pe
 
 ## Contact
 
-- **Security Issues**: security@smithhorn.ca
+- **Security Issues**: <security@smithhorn.ca>
 - **General Questions**: Via GitHub Issues
-- **Commercial Support**: contact@smithhorn.ca
+- **Commercial Support**: <contact@smithhorn.ca>
