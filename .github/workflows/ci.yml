@@ -772,6 +772,13 @@ jobs:
         if: steps.load-image.outcome != 'success'
         run: npm run build
 
+      # SMI-2250: Remove local vitest if present to ensure hoisted version is used
+      - name: Clean local vitest (website workaround)
+        if: matrix.package == 'website'
+        run: |
+          rm -rf packages/website/node_modules/vitest packages/website/node_modules/vite-node
+          echo "✓ Removed local vitest/vite-node from website package"
+
       - name: Run tests for ${{ matrix.package }} (Docker)
         if: steps.load-image.outcome == 'success'
         run: |
