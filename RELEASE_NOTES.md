@@ -16,7 +16,7 @@
 
 The MCP server now automatically installs Claude-friendly documentation when first launched:
 
-```
+```text
 [skillsmith] First run detected, installing essentials...
 [skillsmith] Installed bundled skill: skillsmith
 [skillsmith] Installed user documentation to ~/.skillsmith/docs/
@@ -39,7 +39,8 @@ Welcome to Skillsmith!
 | User guide | `~/.skillsmith/docs/USER_GUIDE.md` | Human-readable quick start |
 
 **Trigger Phrases for Claude:**
-```
+
+```text
 "find skill", "search skills", "install skill", "trust tier",
 "create skill", "skill quality", "skill quota"
 ```
@@ -89,6 +90,7 @@ skillsmith sync config --frequency weekly
 ```
 
 **Features:**
+
 - Differential sync - only fetches skills updated since last sync
 - Configurable auto-sync (daily or weekly)
 - Background sync during MCP sessions
@@ -163,6 +165,7 @@ New modules for local-to-live database synchronization:
 ### Schema Updates
 
 New tables for sync tracking:
+
 - `sync_config` - Stores sync configuration
 - `sync_history` - Records sync run history
 
