@@ -12,6 +12,7 @@ Reusable templates for common documentation and development tasks.
 | [blog-accessibility-checklist.md](blog-accessibility-checklist.md) | Accessibility checklist for blog posts |
 | [migration-template.sql](migration-template.sql) | SQL migration template with security patterns |
 | [migration-review-checklist.md](migration-review-checklist.md) | Migration code review checklist |
+| [beta-invite-email.md](beta-invite-email.md) | Beta invite email template (Resend HTML) |
 
 ## Usage
 
