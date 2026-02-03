@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - Removed `X-Tier` header from public API responses to protect subscription privacy.
 - Added percentage-based feature flag (`JWT_AUTH_PERCENTAGE`) for gradual, safe rollout.
+- **Dependabot Alert Review** (2026-02-02): All 18 dependency vulnerabilities resolved.
+  - 12 alerts dismissed (packages updated via npm overrides to patched versions)
+  - 6 alerts auto-fixed by Dependabot
+  - Patched: eslint@9.39.2, fast-xml-parser@5.3.4, diff@8.0.3, tar@7.5.7, hono@4.11.7
 
 ## [0.3.6] - 2026-01-18
 
