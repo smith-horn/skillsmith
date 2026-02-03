@@ -45,11 +45,19 @@ export function sanitizeInput(
   }
 
   // Remove path traversal sequences
+  // SMI-2262: Loop-based sanitization to prevent bypass with nested patterns
+  // e.g., '..././' becomes '../' after single-pass removal
   if (removePathTraversal) {
-    // Remove '../' and '..\' patterns
-    sanitized = sanitized.replace(/\.\.[\\/]/g, '')
-    // Remove leading '../' or '..\'
-    sanitized = sanitized.replace(/^\.\.[\\/]+/, '')
+    let previousPass = ''
+    const maxIterations = 10 // Prevent infinite loops on malformed input
+
+    for (let i = 0; i < maxIterations && previousPass !== sanitized; i++) {
+      previousPass = sanitized
+      // Remove '../' and '..\' patterns
+      sanitized = sanitized.replace(/\.\.[\\/]/g, '')
+      // Remove leading '../' or '..\'
+      sanitized = sanitized.replace(/^\.\.[\\/]+/, '')
+    }
   }
 
   // HTML escape

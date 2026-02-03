@@ -49,8 +49,16 @@ export interface ParsedDependency {
 export function parsePomXml(content: string): ParsedDependency[] {
   const deps: ParsedDependency[] = []
 
-  // Remove XML comments to avoid false matches
-  const contentWithoutComments = content.replace(/<!--[\s\S]*?-->/g, '')
+  // SMI-2264: Loop-based comment removal to prevent bypass with nested comments
+  // e.g., '<!--<!---->' could leave partial comment after single-pass removal
+  let contentWithoutComments = content
+  let previousPass = ''
+  const maxIterations = 10
+
+  for (let i = 0; i < maxIterations && previousPass !== contentWithoutComments; i++) {
+    previousPass = contentWithoutComments
+    contentWithoutComments = contentWithoutComments.replace(/<!--[\s\S]*?-->/g, '')
+  }
 
   // Match dependency blocks first, then extract individual elements
   const depBlockRegex = /<dependency>([\s\S]*?)<\/dependency>/g
