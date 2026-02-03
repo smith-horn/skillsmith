@@ -14,3 +14,6 @@ docs/templates/*.ts !filter !diff
 
 # Encrypt supabase directory (edge functions, migrations - IP)
 supabase/** filter=git-crypt diff=git-crypt
+
+# Except rollback scripts (needed for emergency incident response)
+supabase/rollbacks/** !filter !diff
