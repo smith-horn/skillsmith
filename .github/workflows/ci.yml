@@ -26,6 +26,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# SMI-2266: Explicit minimal permissions for all jobs
+# Individual jobs may override if they need more access
+permissions:
+  contents: read
+
 env:
   NODE_VERSION: '22'
   DOCKER_BUILDKIT: 1
@@ -239,7 +244,7 @@ jobs:
       (needs.package-validation.result == 'success' || needs.package-validation.result == 'skipped')
     name: Build Docker Image
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
