@@ -75,7 +75,7 @@ npm run linear:sync              # Auto-update from last commit
 
 **Issue Status Flow:**
 
-```
+```text
 Backlog → Todo → In Progress → Done
 ```
 
@@ -161,7 +161,7 @@ Runs before pushing to remote:
 
 **New:** Warns about unmerged feature branches before rebasing to prevent accidental work loss.
 
-```bash
+```text
 # Example output
 ⚠️  WARNING: Found unmerged feature branches
 
