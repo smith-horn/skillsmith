@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
 - **JWT Authentication for Website Users**: Logged-in users now automatically
   receive their subscription tier rate limits without needing to configure an API key.
   This provides a seamless experience where your subscription benefits apply immediately.
@@ -21,10 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   WCAG AA accessible colors (purple for Individual, green for Team, gold for Enterprise).
 
 ### Changed
+
 - Rate limits now apply based on your authenticated session tier, not just API key.
 - Improved circuit breaker resilience for authentication service.
 
 ### Security
+
 - Removed `X-Tier` header from public API responses to protect subscription privacy.
 - Added percentage-based feature flag (`JWT_AUTH_PERCENTAGE`) for gradual, safe rollout.
 - **Dependabot Alert Review** (2026-02-02): All 18 dependency vulnerabilities resolved.

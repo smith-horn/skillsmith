@@ -86,6 +86,7 @@ The CI system classifies changes into tiers to run appropriate checks:
 | `.github/CODEOWNERS` | Code owners file |
 
 **Important**:
+
 - Mixed commits (docs + code) trigger full CI (code tier)
 - Docs-only commits run lightweight `docs-only.yml` (not skipped entirely)
 - See [ADR-105](docs/adr/105-ci-path-filtering.md) for decision rationale
