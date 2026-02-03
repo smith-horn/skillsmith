@@ -145,6 +145,7 @@ Skillsmith uses [Husky](https://typicode.github.io/husky/) for git hooks.
 ### Pre-commit Hook
 
 Runs automatically on every commit:
+
 - Secret scanning
 - TypeScript type checking
 - Linting and formatting staged files
@@ -152,6 +153,7 @@ Runs automatically on every commit:
 ### Pre-push Hook
 
 Runs before pushing to remote:
+
 - Security test suite
 - npm audit (high severity)
 - Hardcoded secret detection
