@@ -218,7 +218,7 @@ export {
 export { parseRepoUrl, isGitHubUrl, type ParsedRepoUrl } from './utils/github-url.js'
 
 // SMI-2274: Safe filesystem operations
-export { safeWriteFile, SymlinkError } from './utils/safe-fs.js'
+export { safeWriteFile, SymlinkError, HardlinkError } from './utils/safe-fs.js'
 
 // ============================================================================
 // LIVE SERVICES WORKTREE STUBS (Phase 0 - Conflict Prevention)

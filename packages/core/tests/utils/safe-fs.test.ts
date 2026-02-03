@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { safeWriteFile, SymlinkError } from '../../src/utils/safe-fs.js'
+import { safeWriteFile, SymlinkError, HardlinkError } from '../../src/utils/safe-fs.js'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
@@ -105,14 +105,47 @@ describe('SMI-2274: safeWriteFile', () => {
 
     await expect(safeWriteFile(filePath, 'content')).rejects.toThrow()
   })
+
+  it('should apply default permissions when encoding string is passed', async () => {
+    const filePath = path.join(tempDir, 'encoding-test.md')
+    await safeWriteFile(filePath, 'content', 'utf-8')
+    const stats = await fs.stat(filePath)
+    const mode = stats.mode & 0o777
+    expect(mode).toBe(0o644)
+  })
+
+  it('should reject writing to a hardlinked file', async () => {
+    const originalPath = path.join(tempDir, 'original.md')
+    const hardlinkPath = path.join(tempDir, 'hardlink.md')
+    await fs.writeFile(originalPath, 'original content')
+    await fs.link(originalPath, hardlinkPath)
+
+    await expect(safeWriteFile(hardlinkPath, 'malicious')).rejects.toThrow(HardlinkError)
+
+    // Verify original was not modified
+    const content = await fs.readFile(originalPath, 'utf-8')
+    expect(content).toBe('original content')
+  })
 })
 
 describe('SMI-2274: SymlinkError', () => {
-  it('should have correct name and message', () => {
+  it('should have correct name, message, and filePath', () => {
     const error = new SymlinkError('/path/to/file')
 
     expect(error.name).toBe('SymlinkError')
     expect(error.message).toBe('Refusing to write to symlink: /path/to/file')
+    expect(error.filePath).toBe('/path/to/file')
+    expect(error).toBeInstanceOf(Error)
+  })
+})
+
+describe('SMI-2290: HardlinkError', () => {
+  it('should have correct name, message, and filePath', () => {
+    const error = new HardlinkError('/path/to/file')
+
+    expect(error.name).toBe('HardlinkError')
+    expect(error.message).toBe('Refusing to write to hardlinked file: /path/to/file')
+    expect(error.filePath).toBe('/path/to/file')
     expect(error).toBeInstanceOf(Error)
   })
 })

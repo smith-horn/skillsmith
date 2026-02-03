@@ -8,6 +8,7 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
+import { safeWriteFile } from '@skillsmith/core'
 import type { SkillManifest } from './install.types.js'
 import type {
   ConflictInfo,
@@ -190,8 +191,9 @@ export async function handleMergeAction(
   await cleanupOldBackups(skillName, 3)
 
   // Write the file with conflict markers so user can resolve
+  // SMI-2286: Use safeWriteFile to prevent symlink attacks
   await fs.mkdir(installPath, { recursive: true })
-  await fs.writeFile(path.join(installPath, 'SKILL.md'), mergeResult.merged!)
+  await safeWriteFile(path.join(installPath, 'SKILL.md'), mergeResult.merged!)
 
   // Store the new original for future conflict detection
   const upstreamHash = hashContent(upstreamContent)

@@ -341,6 +341,16 @@ export async function installSkill(
       // Create installation directory
       await fs.mkdir(installPath, { recursive: true })
 
+      // SMI-2287: Validate directory is not a symlink escape
+      const realInstallPath = await fs.realpath(installPath)
+      const expectedPrefix = path.resolve(CLAUDE_SKILLS_DIR)
+      if (
+        !realInstallPath.startsWith(expectedPrefix + path.sep) &&
+        realInstallPath !== expectedPrefix
+      ) {
+        throw new Error(`Install path escapes skills directory: ${installPath}`)
+      }
+
       // Write SKILL.md (optimized or original)
       // SMI-2274: Use safeWriteFile to prevent symlink attacks
       const mainSkillPath = path.join(installPath, 'SKILL.md')
@@ -447,7 +457,10 @@ export async function installSkill(
         error.message.includes('Could not find SKILL.md') ||
         error.message.includes('Invalid SKILL.md') ||
         error.message.includes('Security scan failed') ||
-        error.message.includes('exceeds maximum length')
+        error.message.includes('exceeds maximum length') ||
+        error.message.includes('Refusing to write to symlink') ||
+        error.message.includes('Refusing to write to hardlinked file') ||
+        error.message.includes('Install path escapes skills directory')
       ) {
         safeErrorMessage = error.message
       } else {
