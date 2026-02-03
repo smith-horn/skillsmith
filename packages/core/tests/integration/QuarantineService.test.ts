@@ -11,7 +11,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { QuarantineService } from '../../src/services/quarantine/QuarantineService.js'
 import { QuarantineServiceError } from '../../src/services/quarantine/types.js'
-import type { AuthenticatedSession, QuarantinePermission } from '../../src/services/quarantine/types.js'
+import type {
+  AuthenticatedSession,
+  QuarantinePermission,
+} from '../../src/services/quarantine/types.js'
 import { QuarantineRepository } from '../../src/repositories/quarantine/index.js'
 import { AuditLogger } from '../../src/security/AuditLogger.js'
 import { createDatabaseSync } from '../../src/db/createDatabase.js'
@@ -24,9 +27,7 @@ import type { Database } from '../../src/db/database-interface.js'
 /**
  * Create a mock authenticated session for testing
  */
-function createMockSession(
-  overrides: Partial<AuthenticatedSession> = {}
-): AuthenticatedSession {
+function createMockSession(overrides: Partial<AuthenticatedSession> = {}): AuthenticatedSession {
   return {
     userId: 'user-123',
     email: 'reviewer@example.com',
@@ -41,9 +42,7 @@ function createMockSession(
 /**
  * Create a session with specific permissions
  */
-function createSessionWithPermissions(
-  permissions: QuarantinePermission[]
-): AuthenticatedSession {
+function createSessionWithPermissions(permissions: QuarantinePermission[]): AuthenticatedSession {
   return createMockSession({ permissions })
 }
 

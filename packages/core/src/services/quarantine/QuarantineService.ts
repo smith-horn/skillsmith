@@ -116,10 +116,7 @@ export class QuarantineService {
    * @param filter - Query filters
    * @returns Paginated quarantine results
    */
-  findAll(
-    session: AuthenticatedSession,
-    filter?: Parameters<QuarantineRepository['findAll']>[0]
-  ) {
+  findAll(session: AuthenticatedSession, filter?: Parameters<QuarantineRepository['findAll']>[0]) {
     requirePermission(session, 'quarantine:read')
     return this.repository.findAll(filter)
   }
@@ -166,11 +163,9 @@ export class QuarantineService {
     // Get the quarantine entry
     const entry = this.repository.findById(quarantineId)
     if (!entry) {
-      throw new QuarantineServiceError(
-        `Quarantine entry not found: ${quarantineId}`,
-        'NOT_FOUND',
-        { quarantineId }
-      )
+      throw new QuarantineServiceError(`Quarantine entry not found: ${quarantineId}`, 'NOT_FOUND', {
+        quarantineId,
+      })
     }
 
     // Check if already reviewed
@@ -200,11 +195,9 @@ export class QuarantineService {
     })
 
     if (!reviewResult) {
-      throw new QuarantineServiceError(
-        'Failed to review quarantine entry',
-        'INVALID_INPUT',
-        { quarantineId }
-      )
+      throw new QuarantineServiceError('Failed to review quarantine entry', 'INVALID_INPUT', {
+        quarantineId,
+      })
     }
 
     // Log audit event with full session details
@@ -289,14 +282,10 @@ export class QuarantineService {
       (a) => a.reviewerId === session.userId
     )
     if (existingApproval) {
-      throw new QuarantineServiceError(
-        'You have already approved this entry',
-        'ALREADY_REVIEWED',
-        {
-          quarantineId,
-          previousApprovalAt: existingApproval.approvedAt.toISOString(),
-        }
-      )
+      throw new QuarantineServiceError('You have already approved this entry', 'ALREADY_REVIEWED', {
+        quarantineId,
+        previousApprovalAt: existingApproval.approvedAt.toISOString(),
+      })
     }
 
     // Check for approval timeout
@@ -469,10 +458,7 @@ export class QuarantineService {
    * @param input - Quarantine creation input
    * @returns Created quarantine entry
    */
-  create(
-    session: AuthenticatedSession,
-    input: Parameters<QuarantineRepository['create']>[0]
-  ) {
+  create(session: AuthenticatedSession, input: Parameters<QuarantineRepository['create']>[0]) {
     requirePermission(session, 'quarantine:create')
     return this.repository.create(input)
   }
