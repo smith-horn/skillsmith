@@ -34,7 +34,7 @@ Use this skill when you hear phrases like:
 
 [Describe the simplest way to use this skill]
 
-```
+```text
 [Example interaction or command]
 ```
 
@@ -54,12 +54,14 @@ Use this skill when you hear phrases like:
 **Context**: [When would you use this?]
 
 **Input**:
-```
+
+```text
 [User request]
 ```
 
 **Output**:
-```
+
+```text
 [Expected result]
 ```
 
@@ -68,12 +70,14 @@ Use this skill when you hear phrases like:
 **Context**: [When would you use this?]
 
 **Input**:
-```
+
+```text
 [User request]
 ```
 
 **Output**:
-```
+
+```text
 [Expected result]
 ```
 
@@ -128,6 +132,7 @@ Use this skill when you hear phrases like:
 ## Changelog
 
 ### 1.0.0 (YYYY-MM-DD)
+
 - Initial release
 
 ---

@@ -283,6 +283,7 @@ docker exec skillsmith-dev-1 npm run audit:standards
 ## Changelog
 
 ### 2026-01-23
+
 - Initial template created from SMI-1757 Wave 1 learnings
 - Color palette verified for WCAG AA compliance
 - Component patterns documented

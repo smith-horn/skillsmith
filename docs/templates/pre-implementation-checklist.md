@@ -35,8 +35,6 @@ Complete this checklist before implementing any new feature or module. This ensu
 
 <!-- 2-3 sentence description of what this feature does -->
 
-
-
 ### User Story
 
 <!-- As a [user type], I want to [action] so that [benefit] -->
@@ -99,9 +97,11 @@ function featureMethod(input: FeatureInput): Promise<FeatureOutput>;
 <!-- External and internal dependencies -->
 
 **External:**
+
 - Package name (version)
 
 **Internal:**
+
 - `@skillsmith/core` services used
 - Existing repositories/services
 
@@ -286,13 +286,9 @@ npm run pre-impl -- --module NewFeature
 
 <!-- High-level implementation approach -->
 
-
-
 ### Known Limitations
 
 <!-- Any known limitations or future improvements -->
-
-
 
 ### Follow-up Tasks
 

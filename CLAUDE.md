@@ -145,6 +145,7 @@ All PRs must pass these checks before merging:
 **Code PRs**: All 11 checks must pass (full `ci.yml` pipeline runs)
 
 **Docs-only PRs**: Only 2 checks run (`Secret Scan`, `Markdown Lint` from `docs-only.yml`)
+
 - Full CI is skipped via `paths-ignore` optimization
 - Branch protection is satisfied because both checks are in the required list
 
@@ -166,10 +167,12 @@ If required checks are stuck or GitHub Actions is down:
 #### Troubleshooting
 
 **Issue**: "Required checks not found" error
+
 - **Cause**: Someone renamed a job in `ci.yml` or `docs-only.yml` without updating branch protection
 - **Fix**: Update `.github/branch-protection.json` and re-apply via GitHub API
 
 **Issue**: All PRs blocked after workflow changes
+
 - **Cause**: Required check name no longer exists in workflows
 - **Fix**: Use emergency bypass, then update branch protection configuration
 
@@ -367,6 +370,7 @@ mcp__claude-flow__task_orchestrate({
 ```
 
 **See Also**:
+
 - [Hive Mind Execution Skill](.claude/skills/hive-mind-execution/SKILL.md)
 - [Hive Mind Advanced Skill](.claude/skills/hive-mind-advanced/SKILL.md)
 
@@ -434,6 +438,7 @@ Skillsmith is published to the official MCP Registry for discovery by Claude CoW
 - **npm Package**: `@skillsmith/mcp-server`
 
 Verify listing:
+
 ```bash
 curl -s "https://registry.modelcontextprotocol.io/v0.1/servers?search=skillsmith" | jq '.servers[0].server.name'
 ```
@@ -472,6 +477,7 @@ The `publish.yml` workflow automatically publishes to MCP Registry after npm pub
 | `MCP_REGISTRY_TOKEN` | JWT token from `mcp-publisher login` |
 
 To generate token for CI:
+
 ```bash
 mcp-publisher login github
 cat ~/.mcpregistry_registry_token  # Copy this to GitHub Secrets
@@ -948,6 +954,7 @@ CORS_ALLOWED_ORIGINS=https://custom.example.com,https://staging.skillsmith.app
 ```
 
 Or via CLI:
+
 ```bash
 npx supabase secrets set CORS_ALLOWED_ORIGINS="https://custom.example.com"
 ```
@@ -988,6 +995,7 @@ varlock run -- bash -c 'curl -X POST \
 ### Audit Logs
 
 All scheduled jobs log to the `audit_logs` table:
+
 - `indexer:run` - Skill indexing results
 - `refresh:run` - Metadata refresh results
 - `ops-report:sent` - Weekly report sent
@@ -1023,7 +1031,7 @@ All scheduled jobs log to the `audit_logs` table:
 
 ## Website Documentation (skillsmith.app)
 
-Public documentation pages at https://skillsmith.app/docs:
+Public documentation pages at <https://skillsmith.app/docs>:
 
 | Page | Path | Description |
 |------|------|-------------|
@@ -1038,6 +1046,7 @@ Public documentation pages at https://skillsmith.app/docs:
 | Trust Tiers | `/docs/trust-tiers` | Four-tier trust system (Official, Verified, Community, Unverified) |
 
 **Deployment**: Website requires manual deployment via Vercel CLI:
+
 ```bash
 cd packages/website && vercel --prod
 ```

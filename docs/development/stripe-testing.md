@@ -3,6 +3,7 @@
 This guide covers testing Stripe webhook integration using the Stripe CLI.
 
 > **Related Guides**:
+>
 > - [Billing Portal Testing](stripe-billing-portal.md) - Portal session and cancellation flows
 > - [Troubleshooting](stripe-troubleshooting.md) - Known issues, Deno patterns, edge cases
 
@@ -13,16 +14,19 @@ This guide covers testing Stripe webhook integration using the Stripe CLI.
 ### Install Stripe CLI
 
 **macOS (Homebrew):**
+
 ```bash
 brew install stripe/stripe-cli/stripe
 ```
 
 **Windows (Scoop):**
+
 ```bash
 scoop install stripe
 ```
 
 **Linux (apt):**
+
 ```bash
 curl -s https://packages.stripe.dev/api/security/keypair/stripe-cli-gpg/public | gpg --dearmor | sudo tee /usr/share/keyrings/stripe.gpg
 echo "deb [signed-by=/usr/share/keyrings/stripe.gpg] https://packages.stripe.dev/stripe-cli-debian-local stable main" | sudo tee /etc/apt/sources.list.d/stripe.list
@@ -59,17 +63,19 @@ stripe listen --forward-to https://your-project.supabase.co/functions/v1/stripe-
 
 When `stripe listen` starts, it displays a webhook signing secret:
 
-```
+```text
 Ready! Your webhook signing secret is whsec_xxxxx...
 ```
 
 Set this in your environment:
+
 ```bash
 export STRIPE_WEBHOOK_SECRET=whsec_xxxxx
 ```
 
 Or add to `.env`:
-```
+
+```text
 STRIPE_WEBHOOK_SECRET=whsec_xxxxx
 ```
 
@@ -129,6 +135,7 @@ Use these card numbers in test mode:
 | `4100000000000019` | Flagged as potentially fraudulent |
 
 All test cards use:
+
 - **Expiry:** Any future date (e.g., 12/34)
 - **CVC:** Any 3 digits (e.g., 123)
 - **ZIP:** Any 5 digits (e.g., 12345)
@@ -251,7 +258,7 @@ curl -s -X POST "${SUPABASE_URL}/functions/v1/checkout" \
 
 ### Browser Testing
 
-1. Go to https://www.skillsmith.app/signup?tier=team
+1. Go to <https://www.skillsmith.app/signup?tier=team>
 2. Verify correct tier is displayed (Team - $25/user/mo)
 3. Click "Start Trial"
 4. Enter test card: `4242 4242 4242 4242`
