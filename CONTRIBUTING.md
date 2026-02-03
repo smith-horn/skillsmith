@@ -88,28 +88,33 @@ Backlog → Todo → In Progress → Done
 ## Pull Request Process
 
 1. **Create feature branch**
+
    ```bash
    git checkout -b feature/smi-xxx-description
    ```
 
 2. **Make changes** (in Docker)
+
    ```bash
    docker exec skillsmith-dev-1 npm run build
    docker exec skillsmith-dev-1 npm test
    ```
 
 3. **Commit with issue reference**
+
    ```bash
    git commit -m "feat(module): description (SMI-XXX)"
    ```
 
 4. **Push and create PR**
+
    ```bash
    git push origin feature/smi-xxx-description
    gh pr create
    ```
 
 5. **(Maintainers only) Update Linear**
+
    ```bash
    npm run linear:sync           # Requires LINEAR_API_KEY
    npm run linear:done SMI-XXX   # After merge

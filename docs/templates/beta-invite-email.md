@@ -87,7 +87,7 @@ Resend enforces rate limits. When sending to multiple recipients:
 
 ## Database Status Flow
 
-```
+```text
 early_access_signups.status: pending → invited → converted
 ```
 

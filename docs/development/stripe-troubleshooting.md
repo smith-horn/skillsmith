@@ -92,7 +92,7 @@ When deploying or migrating webhook handlers:
 
 ### Webhook URL Format
 
-```
+```text
 https://<project-ref>.supabase.co/functions/v1/stripe-webhook
 ```
 
@@ -146,6 +146,7 @@ await supabase.from('subscriptions').insert({ ... })
 ### Why This Matters
 
 When Stripe retries events, a non-idempotent handler will:
+
 1. Attempt to INSERT duplicate records
 2. Fail on UNIQUE constraints (`stripe_subscription_id`, `key_hash`)
 3. Return 500 error
@@ -163,6 +164,7 @@ When Stripe retries events, a non-idempotent handler will:
 ### Monitoring Retries
 
 Check Stripe Dashboard → Developers → Webhooks → select endpoint → view attempts:
+
 - `wasIdempotent: true` in logs = duplicate event handled gracefully
 - HTTP 200 for all retries = idempotency working correctly
 
@@ -177,6 +179,7 @@ Check Stripe Dashboard → Developers → Webhooks → select endpoint → view 
 Stripe webhook signature verification fails consistently in **test mode** when using Supabase Edge Functions (Deno runtime). The webhook endpoint is reachable but `stripe.webhooks.constructEventAsync()` never successfully verifies the signature.
 
 **Symptoms:**
+
 - Stripe events show `pending_webhooks: 1` indefinitely
 - No webhook processing occurs
 - Direct POST to endpoint returns correct errors (400 for missing signature)
@@ -185,6 +188,7 @@ Stripe webhook signature verification fails consistently in **test mode** when u
 **Workarounds:**
 
 1. **Use Stripe CLI for local development** (recommended):
+
    ```bash
    stripe listen --forward-to http://localhost:54321/functions/v1/stripe-webhook
    ```
@@ -194,6 +198,7 @@ Stripe webhook signature verification fails consistently in **test mode** when u
 3. **Manual verification** - Create subscriptions manually in database for E2E testing
 
 **Investigation Notes:**
+
 - Multiple fresh webhook endpoints tested with new secrets
 - Secrets verified to match between Stripe and Supabase
 - Function redeployed multiple times
@@ -214,12 +219,14 @@ Stripe webhook signature verification fails consistently in **test mode** when u
 | Webhook delivery | ⚠️ Signature fails | ✅ Works |
 
 **Important:** Test and live mode use completely separate:
+
 - API keys
 - Webhook endpoints and secrets
 - Products and prices
 - Customer data
 
 When switching modes, update ALL of these in Supabase secrets:
+
 ```bash
 npx supabase secrets set \
   STRIPE_SECRET_KEY=sk_test_xxx \

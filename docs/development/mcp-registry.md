@@ -6,6 +6,7 @@
 ## Overview
 
 Skillsmith is published to the official MCP Registry, enabling discovery by:
+
 - Claude CoWork connector search
 - MCP Registry API consumers
 - Third-party aggregators (Glama, Smithery, mcp.so)
@@ -14,7 +15,7 @@ Skillsmith is published to the official MCP Registry, enabling discovery by:
 
 | Field | Value |
 |-------|-------|
-| Registry URL | https://registry.modelcontextprotocol.io/ |
+| Registry URL | <https://registry.modelcontextprotocol.io/> |
 | Server Name | `io.github.smith-horn/skillsmith` |
 | npm Package | `@skillsmith/mcp-server` |
 | Transport | stdio |
@@ -100,6 +101,7 @@ When releasing a new version, update **THREE** locations:
 3. `packages/mcp-server/server.json` → `packages[0].version`
 
 Example script:
+
 ```bash
 VERSION="0.3.15"
 cd packages/mcp-server
@@ -142,7 +144,7 @@ The `mcp-publisher` CLI uses GitHub namespace verification. To publish under `io
 
 1. Be a member of the `smith-horn` GitHub organization
 2. Make membership **public** (not private)
-3. Verify at: https://github.com/orgs/smith-horn/people
+3. Verify at: <https://github.com/orgs/smith-horn/people>
 
 ## Troubleshooting
 
@@ -164,6 +166,7 @@ The `mcp-publisher` CLI uses GitHub namespace verification. To publish under `io
 ### Token files
 
 The CLI stores tokens in:
+
 - `~/.mcpregistry_github_token` - GitHub OAuth token
 - `~/.mcpregistry_registry_token` - Registry JWT
 

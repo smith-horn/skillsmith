@@ -34,7 +34,6 @@ Use this checklist to review database migrations before deployment. This ensures
 <!-- Brief description of what this migration does -->
 
 
-
 ---
 
 ## Pre-Review Checks
@@ -66,6 +65,7 @@ Use this checklist to review database migrations before deployment. This ensures
 - [ ] Exception handling present for expected failures
 
 **Example pattern:**
+
 ```sql
 DO $$
 BEGIN
@@ -107,6 +107,7 @@ END $$;
 - [ ] Function permissions (GRANT/REVOKE) explicitly defined
 
 **Expected pattern:**
+
 ```sql
 CREATE OR REPLACE FUNCTION my_func()
 RETURNS void
@@ -189,6 +190,7 @@ END $$;
 - [ ] Constraint validation queries included
 
 **Example pattern:**
+
 ```sql
 DO $$
 DECLARE

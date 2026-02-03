@@ -193,10 +193,12 @@ Medium complexity: follows established TypeScript adapter pattern but requires P
 ### Files Affected
 
 **New Files:**
+
 - `packages/core/src/analysis/adapters/python.ts` - Python adapter implementation
 - `packages/core/src/analysis/adapters/__tests__/python.test.ts` - Tests
 
 **Modified Files:**
+
 - `packages/core/src/analysis/adapters/index.ts` - Export PythonAdapter
 - `packages/core/src/analysis/types.ts` - Add Python-specific types
 
