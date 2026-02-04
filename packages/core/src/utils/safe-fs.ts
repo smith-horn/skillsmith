@@ -20,10 +20,13 @@ import { open, lstat, constants } from 'fs/promises'
 import type { WriteFileOptions } from 'fs'
 
 /**
- * O_NOFOLLOW: refuse to open symlinks (platform-specific constant)
- * macOS: 0x100, Linux: 0x20000
+ * O_NOFOLLOW: refuse to open symlinks
+ * Prefer runtime constant from fs.constants, fall back to platform-specific values
+ * if unavailable (e.g., Windows where O_NOFOLLOW is not defined).
  */
-const O_NOFOLLOW = process.platform === 'darwin' ? 0x100 : 0x20000
+const O_NOFOLLOW =
+  (constants as Record<string, number>).O_NOFOLLOW ??
+  (process.platform === 'darwin' ? 0x100 : 0x20000)
 
 /**
  * Error thrown when a symlink is detected at a write destination.
