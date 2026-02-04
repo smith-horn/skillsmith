@@ -12,6 +12,25 @@
 export { SearchService } from '../services/SearchService.js'
 
 // ============================================================================
+// Quarantine Service (SMI-2269: Authenticated Quarantine Operations)
+// ============================================================================
+
+export {
+  QuarantineService,
+  QuarantineServiceError,
+  hasPermission,
+  isSessionValid,
+  requirePermission,
+  type QuarantinePermission,
+  type AuthenticatedSession,
+  type ApprovalRecord,
+  type MultiApprovalStatus,
+  type AuthenticatedReviewInput,
+  type AuthenticatedReviewResult,
+  type QuarantineServiceErrorCode,
+} from '../services/quarantine/index.js'
+
+// ============================================================================
 // Optimization Services (Skillsmith Optimization Layer)
 // ============================================================================
 
