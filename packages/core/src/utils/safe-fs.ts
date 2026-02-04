@@ -84,14 +84,11 @@ export async function safeWriteFile(
   options?: WriteFileOptions | string
 ): Promise<void> {
   // SMI-2288: Extract mode and encoding from options (handles string encoding case)
-  const mode =
-    typeof options === 'string'
-      ? 0o644
-      : (options as { mode?: number })?.mode ?? 0o644
+  const mode = typeof options === 'string' ? 0o644 : ((options as { mode?: number })?.mode ?? 0o644)
   const encoding =
     typeof options === 'string'
       ? options
-      : (options as { encoding?: BufferEncoding })?.encoding ?? undefined
+      : ((options as { encoding?: BufferEncoding })?.encoding ?? undefined)
 
   // SMI-2290: Check for hardlinks on existing files
   try {
