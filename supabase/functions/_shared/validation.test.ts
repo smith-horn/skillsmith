@@ -138,8 +138,8 @@ describe('SMI-2271: GitHub Parameter Validation', () => {
       try {
         validateGitHubParams(longName, 'repo')
       } catch (e) {
-        expect((e as Error).message).toContain('aaaaaaaaaaaaaaaaaaaa') // 20 chars
-        expect((e as Error).message.length).toBeLessThan(100) // Not 200+ chars
+        expect((e as Error).message).toContain('a'.repeat(80)) // 80 chars max
+        expect((e as Error).message.length).toBeLessThan(120) // Not 200+ chars
       }
     })
   })
@@ -236,8 +236,8 @@ describe('SMI-2271: GitHub Parameter Validation', () => {
       expect(sanitizeForLog('test\x1b[31mred')).toBe('test[31mred')
     })
 
-    it('should truncate to 20 characters', () => {
-      expect(sanitizeForLog('a'.repeat(30))).toBe('a'.repeat(20))
+    it('should truncate to 80 characters', () => {
+      expect(sanitizeForLog('a'.repeat(100))).toBe('a'.repeat(80))
     })
 
     it('should handle normal strings', () => {
