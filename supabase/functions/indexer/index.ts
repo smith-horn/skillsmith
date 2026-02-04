@@ -647,7 +647,6 @@ async function indexHighTrustRepository(
       topics: string[]
     }
 
-
     // SMI-2280: Validate branch name before URL interpolation
     if (!isValidBranchName(repoData.default_branch)) {
       errors.push(
@@ -688,7 +687,6 @@ async function indexHighTrustRepository(
       // Check each directory for SKILL.md
       for (const item of contents) {
         if (item.type !== 'dir') continue
-
 
         // SMI-2282: Validate item.name from GitHub contents API
         if (!isValidGitHubIdentifier(item.name)) {
