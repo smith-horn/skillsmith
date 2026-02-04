@@ -48,6 +48,14 @@ import {
 
 import { buildGitHubHeaders } from '../_shared/github-auth.ts'
 import { MAX_SKILL_CONTENT_SIZE } from '../_shared/constants.ts'
+import {
+  validateGitHubParams,
+  isValidGitHubIdentifier,
+  isValidGitHubTopic,
+  isValidBranchName,
+  sanitizeForLog,
+  ValidationError,
+} from '../_shared/validation.ts'
 
 /**
  * SMI-2283: Read response body with byte-counted limit to prevent memory exhaustion.
@@ -258,6 +266,17 @@ async function validateSkillMd(
   let metadata: SkillMdValidation['metadata'] = undefined
 
   try {
+    // SMI-2271: Validate parameters before URL construction
+    validateGitHubParams(owner, repo, skillPath)
+
+    // SMI-2280: Validate branch name before URL interpolation
+    if (!isValidBranchName(branch)) {
+      return {
+        valid: false,
+        errors: [`Invalid branch name: ${sanitizeForLog(branch)}`],
+      }
+    }
+
     // Build the URL - skillPath is relative to branch
     const path = skillPath ? `${branch}/${skillPath}/SKILL.md` : `${branch}/SKILL.md`
     const url = `https://raw.githubusercontent.com/${owner}/${repo}/${path}`
@@ -350,6 +369,12 @@ async function validateSkillMd(
       metadata,
     }
   } catch (error) {
+    if (error instanceof ValidationError) {
+      return {
+        valid: false,
+        errors: [`Validation failed: ${error.message}`],
+      }
+    }
     return {
       valid: false,
       errors: [`Failed to fetch SKILL.md: ${error instanceof Error ? error.message : 'Unknown'}`],
@@ -435,6 +460,11 @@ async function searchRepositories(
   perPage = 30
 ): Promise<{ repos: GitHubRepository[]; total: number; error?: string }> {
   try {
+    // SMI-2271: Validate topic before URL construction
+    if (!isValidGitHubTopic(topic)) {
+      return { repos: [], total: 0, error: `Invalid topic: ${sanitizeForLog(topic)}` }
+    }
+
     const query = encodeURIComponent(`topic:${topic}`)
     const url = `https://api.github.com/search/repositories?q=${query}&per_page=${perPage}&page=${page}&sort=stars&order=desc`
 
@@ -461,19 +491,30 @@ async function searchRepositories(
 
     const data = (await response.json()) as GitHubSearchResponse
 
-    const repos: GitHubRepository[] = data.items.map((item) => ({
-      owner: item.owner.login,
-      name: item.name,
-      fullName: item.full_name,
-      description: item.description,
-      url: item.html_url,
-      stars: item.stargazers_count,
-      forks: item.forks_count,
-      topics: item.topics || [],
-      updatedAt: item.updated_at,
-      defaultBranch: item.default_branch,
-      installable: false, // Will be checked separately
-    }))
+    // SMI-2271: Filter out repos with invalid identifiers before processing
+    const repos: GitHubRepository[] = data.items
+      .filter((item) => {
+        try {
+          validateGitHubParams(item.owner.login, item.name)
+          return true
+        } catch {
+          console.log(`Skipping repo with invalid identifiers: ${sanitizeForLog(item.full_name)}`)
+          return false
+        }
+      })
+      .map((item) => ({
+        owner: item.owner.login,
+        name: item.name,
+        fullName: item.full_name,
+        description: item.description,
+        url: item.html_url,
+        stars: item.stargazers_count,
+        forks: item.forks_count,
+        topics: item.topics || [],
+        updatedAt: item.updated_at,
+        defaultBranch: item.default_branch,
+        installable: false, // Will be checked separately
+      }))
 
     return { repos, total: data.total_count }
   } catch (error) {
@@ -579,6 +620,14 @@ async function indexHighTrustRepository(
   const errors: string[] = []
 
   try {
+    // SMI-2271: Validate high-trust author parameters before URL construction
+    try {
+      validateGitHubParams(author.owner, author.repo)
+    } catch (e) {
+      errors.push(`Invalid high-trust author config: ${e instanceof Error ? e.message : 'Unknown'}`)
+      return { skills, errors }
+    }
+
     // Get repository info
     const repoUrl = `https://api.github.com/repos/${author.owner}/${author.repo}`
     const repoResponse = await fetch(repoUrl, {
@@ -598,6 +647,13 @@ async function indexHighTrustRepository(
       topics: string[]
     }
 
+    // SMI-2280: Validate branch name before URL interpolation
+    if (!isValidBranchName(repoData.default_branch)) {
+      errors.push(
+        `Invalid branch name for ${author.owner}/${author.repo}: ${sanitizeForLog(repoData.default_branch)}`
+      )
+      return { skills, errors }
+    }
     // Get repository contents - check both root and skills/ subdirectory
     // Most high-trust repos have skills in a 'skills/' subdirectory
     const pathsToCheck = ['', 'skills']
@@ -632,6 +688,11 @@ async function indexHighTrustRepository(
       for (const item of contents) {
         if (item.type !== 'dir') continue
 
+        // SMI-2282: Validate item.name from GitHub contents API
+        if (!isValidGitHubIdentifier(item.name)) {
+          console.warn(`Skipping directory with invalid name: ${sanitizeForLog(item.name)}`)
+          continue
+        }
         // Skip common non-skill directories
         if (
           [
