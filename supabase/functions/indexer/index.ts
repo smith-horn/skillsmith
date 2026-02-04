@@ -275,10 +275,13 @@ async function validateSkillMd(
 
     // SMI-2273: Pre-check Content-Length header to reject oversized files early
     const contentLength = response.headers.get('content-length')
-    if (contentLength && parseInt(contentLength, 10) > MAX_SKILL_CONTENT_SIZE) {
+    const parsedContentLength = contentLength ? parseInt(contentLength, 10) : NaN
+    if (!isNaN(parsedContentLength) && parsedContentLength > MAX_SKILL_CONTENT_SIZE) {
       return {
         valid: false,
-        errors: [`SKILL.md too large (${contentLength} bytes, max ${MAX_SKILL_CONTENT_SIZE})`],
+        errors: [
+          `SKILL.md too large (${parsedContentLength} bytes, max ${MAX_SKILL_CONTENT_SIZE})`,
+        ],
       }
     }
 
