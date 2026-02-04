@@ -47,6 +47,41 @@ import {
 } from './high-trust-authors.ts'
 
 import { buildGitHubHeaders } from '../_shared/github-auth.ts'
+import { MAX_SKILL_CONTENT_SIZE } from '../_shared/constants.ts'
+
+/**
+ * SMI-2283: Read response body with byte-counted limit to prevent memory exhaustion.
+ * Streams the body and aborts if the accumulated size exceeds the limit.
+ * @throws Error if response body exceeds maxBytes
+ */
+async function readResponseWithLimit(response: Response, maxBytes: number): Promise<string> {
+  const reader = response.body?.getReader()
+  if (!reader) {
+    throw new Error('Response body is not readable')
+  }
+
+  const chunks: Uint8Array[] = []
+  let totalBytes = 0
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      totalBytes += value.byteLength
+      if (totalBytes > maxBytes) {
+        reader.cancel()
+        throw new Error(`Response body exceeds maximum size of ${maxBytes} bytes`)
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const decoder = new TextDecoder()
+  return chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join('') + decoder.decode()
+}
 
 // Re-export categorization logic for external use
 export { CATEGORY_IDS, categorizeSkill } from './categorization.ts'
@@ -238,7 +273,20 @@ async function validateSkillMd(
       }
     }
 
-    const content = await response.text()
+    // SMI-2273: Pre-check Content-Length header to reject oversized files early
+    const contentLength = response.headers.get('content-length')
+    const parsedContentLength = contentLength ? parseInt(contentLength, 10) : NaN
+    if (!isNaN(parsedContentLength) && parsedContentLength > MAX_SKILL_CONTENT_SIZE) {
+      return {
+        valid: false,
+        errors: [
+          `SKILL.md too large (${parsedContentLength} bytes, max ${MAX_SKILL_CONTENT_SIZE})`,
+        ],
+      }
+    }
+
+    // SMI-2283: Stream body with byte-counted limit instead of buffering entirely via response.text()
+    const content = await readResponseWithLimit(response, MAX_SKILL_CONTENT_SIZE)
 
     // Quality gate 1: Content exists (not empty)
     if (!content || content.trim().length === 0) {

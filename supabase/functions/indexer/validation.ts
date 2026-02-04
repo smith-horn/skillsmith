@@ -8,6 +8,8 @@
  * - Quality gate checks
  */
 
+import { MAX_SKILL_CONTENT_SIZE } from '../_shared/constants.ts'
+
 /**
  * Parsed YAML frontmatter from SKILL.md
  */
@@ -40,6 +42,8 @@ export interface SkillMdValidationResult {
 export interface ValidationOptions {
   /** Minimum content length (default: 100) */
   minContentLength?: number
+  /** Maximum content size in bytes (default: 1_000_000). SMI-2273 */
+  maxContentSize?: number
   /** Require YAML frontmatter (default: false) */
   requireFrontmatter?: boolean
   /** Minimum description length in frontmatter (default: 10) */
@@ -48,6 +52,7 @@ export interface ValidationOptions {
 
 const DEFAULT_OPTIONS: Required<ValidationOptions> = {
   minContentLength: 100,
+  maxContentSize: MAX_SKILL_CONTENT_SIZE,
   requireFrontmatter: false,
   minDescriptionLength: 10,
 }
@@ -270,6 +275,16 @@ export function validateSkillMdContent(
 
   const trimmedContent = content.trim()
   result.contentLength = trimmedContent.length
+
+  // SMI-2273 + SMI-2283: Check maximum content size in bytes (not string length)
+  const byteLength = new TextEncoder().encode(trimmedContent).byteLength
+  if (byteLength > opts.maxContentSize) {
+    result.valid = false
+    result.errors.push(
+      `Content too large: ${byteLength} bytes (maximum: ${opts.maxContentSize} bytes)`
+    )
+    return result
+  }
 
   // Check minimum content length
   if (trimmedContent.length < opts.minContentLength) {

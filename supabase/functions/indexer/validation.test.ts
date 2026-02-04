@@ -864,3 +864,75 @@ npx run-skill code-skill
     expect(result.metadata?.name).toBe('code-skill')
   })
 })
+
+// ============================================================================
+// SMI-2273: Max Content Size Tests
+// ============================================================================
+
+describe('SMI-2273: Max Content Size Validation', () => {
+  it('should accept content within max size limit', () => {
+    const content = `---
+name: normal-skill
+description: A skill within size limits
+---
+
+# Normal Skill
+
+${'Content that is within the acceptable size limit. '.repeat(20)}`
+
+    const result = validateSkillMdContent(content, { maxContentSize: 1_000_000 })
+
+    expect(result.valid).toBe(true)
+  })
+
+  it('should reject content exceeding max size', () => {
+    const content = '# Huge Skill\n\n' + 'x'.repeat(1_000_001)
+
+    const result = validateSkillMdContent(content, { maxContentSize: 1_000_000 })
+
+    expect(result.valid).toBe(false)
+    expect(result.errors.some((e) => e.includes('too large'))).toBe(true)
+  })
+
+  it('should use custom max size when provided', () => {
+    const content = '# Small Skill\n\n' + 'x'.repeat(500)
+
+    const result = validateSkillMdContent(content, { maxContentSize: 400 })
+
+    expect(result.valid).toBe(false)
+    expect(result.errors.some((e) => e.includes('too large'))).toBe(true)
+  })
+
+  it('should allow content exactly at the limit', () => {
+    // Create content that is exactly at the limit after trimming
+    const header = '# Skill\n\n'
+    const padding = 'x'.repeat(1000 - header.length)
+    const content = header + padding
+
+    const result = validateSkillMdContent(content, { maxContentSize: 1000 })
+
+    expect(result.valid).toBe(true)
+  })
+
+  it('should measure size in bytes, not characters (multi-byte)', () => {
+    // Each CJK character is 3 bytes in UTF-8
+    const cjkContent = '# Skill\n\n' + '\u4e2d'.repeat(100)
+    // String length: ~110, byte length: ~310 (9 + 300)
+    const result = validateSkillMdContent(cjkContent, {
+      minContentLength: 10,
+      maxContentSize: 200, // Less than byte length, more than char length
+    })
+    expect(result.valid).toBe(false)
+    expect(result.errors.some((e) => e.includes('bytes'))).toBe(true)
+  })
+
+  it('should handle emoji content (4-byte UTF-8)', () => {
+    const emojiContent = '# Skill\n\n' + '\uD83C\uDF89'.repeat(50)
+    // Each emoji is 4 bytes UTF-8
+    const result = validateSkillMdContent(emojiContent, {
+      minContentLength: 10,
+      maxContentSize: 100, // Less than byte length
+    })
+    expect(result.valid).toBe(false)
+  })
+})
