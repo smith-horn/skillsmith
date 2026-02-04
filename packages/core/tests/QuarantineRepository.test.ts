@@ -511,8 +511,51 @@ describe('QuarantineRepository', () => {
         reviewStatus: 'approved',
       })
 
-      // MALICIOUS policy doesn't allow import
-      expect(decision?.canImport).toBe(true) // Approved overrides
+      // SMI-2270: MALICIOUS policy.allowImport=false means canImport is always false
+      // regardless of approval status. This is the correct security behavior.
+      expect(decision?.canImport).toBe(false)
+    })
+
+    it('should not allow import for rejected RISKY skill', () => {
+      // SMI-2270: Regression test for the || vs && bug
+      // A rejected RISKY skill should NOT be importable, even though
+      // RISKY policy has allowImport=true
+      const entry = repo.create({
+        skillId: 'community/rejected-risky',
+        source: 'github',
+        quarantineReason: 'Security concerns',
+        severity: 'RISKY',
+      })
+
+      const decision = repo.review(entry.id, {
+        reviewedBy: 'admin',
+        reviewStatus: 'rejected',
+        reviewNotes: 'Confirmed security issue',
+      })
+
+      // With || logic (bug): canImport = false || true = true (WRONG)
+      // With && logic (fix): canImport = false && true = false (CORRECT)
+      expect(decision?.approved).toBe(false)
+      expect(decision?.canImport).toBe(false)
+    })
+
+    it('should not allow import for rejected LOW_QUALITY skill', () => {
+      // SMI-2270: Another regression test for the || vs && bug
+      const entry = repo.create({
+        skillId: 'community/rejected-low-quality',
+        source: 'github',
+        quarantineReason: 'Poor code quality',
+        severity: 'LOW_QUALITY',
+      })
+
+      const decision = repo.review(entry.id, {
+        reviewedBy: 'admin',
+        reviewStatus: 'rejected',
+        reviewNotes: 'Quality below standards',
+      })
+
+      expect(decision?.approved).toBe(false)
+      expect(decision?.canImport).toBe(false)
     })
   })
 
