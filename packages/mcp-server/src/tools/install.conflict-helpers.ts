@@ -10,6 +10,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { createHash } from 'crypto'
+import { safeWriteFile } from '@skillsmith/core'
 
 // ============================================================================
 // Conflict Resolution Helpers (SMI-1865)
@@ -101,6 +102,11 @@ export async function createSkillBackup(
     const srcPath = path.join(installPath, entry.name)
     const destPath = path.join(backupDir, entry.name)
 
+    // SMI-2291: Skip symlinks to prevent traversal in backup copies
+    if (entry.isSymbolicLink()) {
+      console.warn(`Skipping symlink in skill backup: ${entry.name}`)
+      continue
+    }
     if (entry.isFile()) {
       await fs.copyFile(srcPath, destPath)
     } else if (entry.isDirectory()) {
@@ -123,6 +129,11 @@ async function copyDirectory(src: string, dest: string): Promise<void> {
     const srcPath = path.join(src, entry.name)
     const destPath = path.join(dest, entry.name)
 
+    // SMI-2291: Skip symlinks to prevent traversal in recursive copies
+    if (entry.isSymbolicLink()) {
+      console.warn(`Skipping symlink in directory copy: ${entry.name}`)
+      continue
+    }
     if (entry.isFile()) {
       await fs.copyFile(srcPath, destPath)
     } else if (entry.isDirectory()) {
@@ -148,11 +159,11 @@ export async function storeOriginal(
   // Create directory
   await fs.mkdir(originalDir, { recursive: true })
 
-  // Store SKILL.md content
-  await fs.writeFile(path.join(originalDir, 'SKILL.md'), content, 'utf-8')
+  // SMI-2274: Use safeWriteFile to prevent symlink attacks
+  await safeWriteFile(path.join(originalDir, 'SKILL.md'), content, 'utf-8')
 
   // Store metadata
-  await fs.writeFile(path.join(originalDir, 'metadata.json'), JSON.stringify(metadata, null, 2))
+  await safeWriteFile(path.join(originalDir, 'metadata.json'), JSON.stringify(metadata, null, 2))
 }
 
 /**

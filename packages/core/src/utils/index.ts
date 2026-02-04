@@ -22,3 +22,6 @@ export {
 
 // SMI-2171: GitHub URL parsing utilities
 export { parseRepoUrl, isGitHubUrl, type ParsedRepoUrl } from './github-url.js'
+
+// SMI-2274: Safe filesystem operations (symlink protection)
+export { safeWriteFile, SymlinkError, HardlinkError } from './safe-fs.js'
