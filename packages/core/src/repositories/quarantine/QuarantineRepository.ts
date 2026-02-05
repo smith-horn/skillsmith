@@ -33,6 +33,15 @@ import type { AuditLogger } from '../../security/AuditLogger.js'
  */
 const FEATURE_STRICT_CANIMPORT = process.env.FEATURE_STRICT_CANIMPORT !== 'false'
 
+// SMI-2279: Log warning and audit event when security feature flag is disabled
+if (!FEATURE_STRICT_CANIMPORT) {
+  console.warn(
+    '[SECURITY WARNING] FEATURE_STRICT_CANIMPORT is disabled - using legacy canImport logic. ' +
+      'This allows skills to be imported with approval OR policy.allowImport instead of requiring BOTH. ' +
+      'Set FEATURE_STRICT_CANIMPORT=true or remove the environment variable to use secure behavior.'
+  )
+}
+
 import type {
   QuarantineRow,
   QuarantineEntry,
@@ -106,6 +115,22 @@ export class QuarantineRepository {
     this.auditLogger = auditLogger
     this.ensureTableExists()
     this.prepareStatements()
+
+    // SMI-2279: Audit log security feature flag override
+    if (!FEATURE_STRICT_CANIMPORT && auditLogger) {
+      auditLogger.log({
+        event_type: 'security_feature_flag_override',
+        actor: 'system',
+        resource: 'FEATURE_STRICT_CANIMPORT',
+        action: 'disable',
+        result: 'warning',
+        metadata: {
+          flag: 'FEATURE_STRICT_CANIMPORT',
+          value: 'false',
+          impact: 'Reverts to vulnerable canImport || logic instead of && logic',
+        },
+      })
+    }
   }
 
   /**
