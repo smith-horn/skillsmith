@@ -24,7 +24,7 @@ describe('SMI-2279: FEATURE_STRICT_CANIMPORT audit logging', () => {
 
     // Dynamic import to pick up new env value
     const { QuarantineRepository } = await import(
-      '../../src/repositories/quarantine/QuarantineRepository.js'
+      '../src/repositories/quarantine/QuarantineRepository.js'
     )
 
     // Verify warning was logged at module load time
@@ -34,7 +34,7 @@ describe('SMI-2279: FEATURE_STRICT_CANIMPORT audit logging', () => {
   })
 
   it('should include security_feature_flag_override in AuditEventType', async () => {
-    const { AuditEventType } = await import('../../src/security/audit-types.js')
+    const { AuditEventType } = await import('../src/security/audit-types.js')
 
     // TypeScript will catch this at compile time, but verify runtime too
     const validTypes: string[] = [
