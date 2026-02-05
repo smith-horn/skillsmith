@@ -23,16 +23,6 @@ import {
 } from '../../db/quarantine-schema.js'
 import type { AuditLogger } from '../../security/AuditLogger.js'
 
-/**
- * SMI-2270: Feature flag for strict canImport logic
- *
- * When enabled (default), canImport requires BOTH approval AND policy.allowImport.
- * When disabled (legacy), canImport uses OR logic (security vulnerability).
- *
- * Set FEATURE_STRICT_CANIMPORT=false to use legacy behavior during migration.
- */
-const FEATURE_STRICT_CANIMPORT = process.env.FEATURE_STRICT_CANIMPORT !== 'false'
-
 import type {
   QuarantineRow,
   QuarantineEntry,
@@ -371,10 +361,8 @@ export class QuarantineRepository {
     })
 
     // SMI-2270: Fixed boolean logic - must be approved AND policy allows import
-    // Feature flag allows gradual rollout with fallback to legacy behavior
-    const canImport = FEATURE_STRICT_CANIMPORT
-      ? approved && policy.allowImport
-      : approved || policy.allowImport
+    // SMI-2278: Feature flag removed - secure logic is now permanent
+    const canImport = approved && policy.allowImport
 
     return {
       approved,
