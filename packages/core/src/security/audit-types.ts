@@ -22,6 +22,8 @@ export type AuditEventType =
   | 'quarantine_multi_approval'
   | 'quarantine_multi_approval_complete'
   | 'quarantine_multi_approval_cancelled'
+  // SMI-2279: Security feature flag override
+  | 'security_feature_flag_override'
 
 /**
  * Actor performing the action
