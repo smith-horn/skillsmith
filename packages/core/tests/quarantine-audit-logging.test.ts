@@ -1,7 +1,7 @@
 /**
  * SMI-2279: Test audit logging for FEATURE_STRICT_CANIMPORT override
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 
 describe('SMI-2279: FEATURE_STRICT_CANIMPORT audit logging', () => {
   const originalEnv = process.env.FEATURE_STRICT_CANIMPORT
