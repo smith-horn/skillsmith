@@ -23,9 +23,8 @@ describe('SMI-2279: FEATURE_STRICT_CANIMPORT audit logging', () => {
     process.env.FEATURE_STRICT_CANIMPORT = 'false'
 
     // Dynamic import to pick up new env value
-    const { QuarantineRepository } = await import(
-      '../src/repositories/quarantine/QuarantineRepository.js'
-    )
+    const { QuarantineRepository } =
+      await import('../src/repositories/quarantine/QuarantineRepository.js')
 
     // Verify warning was logged at module load time
     expect(warnSpy).toHaveBeenCalledWith(
