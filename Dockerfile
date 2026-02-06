@@ -77,6 +77,9 @@ FROM deps AS builder
 # Copy TypeScript configuration files
 COPY tsconfig*.json ./
 
+# Copy Turborepo configuration
+COPY turbo.json ./
+
 # Copy source code
 # This is after npm install so source changes don't invalidate dependency cache
 COPY packages/ ./packages/
@@ -94,6 +97,7 @@ FROM deps AS dev
 
 # Copy TypeScript config and source for development
 COPY tsconfig*.json ./
+COPY turbo.json ./
 COPY packages/ ./packages/
 
 # Copy additional development files
