@@ -1,312 +1,369 @@
 # Email-Based Skill Submission Architecture
 
-## Overview
+## Scope: Internal Use Only
 
-Add a new entry point for skill discovery: users email `support@skillsmith.app` with a URL, and Skillsmith automatically extracts the skill, queues it for indexing, runs security/quality checks, and replies to the sender with a contextual status email.
+Internal tool for the Skillsmith team. Team members email `support@skillsmith.app` with a URL to submit skills for indexing. No public access, no spam prevention, no rate limiting.
 
 ## Motivation
 
-The current skill indexer discovers skills via scheduled GitHub Search API queries. This misses:
+The current indexer discovers skills via scheduled GitHub Search API queries. This misses:
 
-- Skills hosted outside GitHub (npm packages, docs pages, self-hosted repos)
-- Skills published after the last indexer run but before the next
-- Skills users discover organically and want to contribute
+- Skills published on landing pages (e.g., `render.com/docs/llm-support`)
+- Multi-skill monorepos (e.g., `github.com/microsoft/skills` with 130+ skills)
+- Skills with bundled code, references, and assets beyond a single SKILL.md
+- Skills discovered organically by the team between indexer runs
 
-Email submission provides a low-friction, zero-signup entry point for community contributions.
+## Real-World Skill Structures
 
-## Current System (No Changes)
-
-```
-GitHub Search (daily 2 AM UTC cron)
-  → indexer edge function
-  → validation (SKILL.md parsing, frontmatter, quality gates)
-  → categorization (7 categories)
-  → trust tier assignment
-  → upsert to skills table
-  → quarantine if flagged by security scanner
-```
-
-## Proposed System (Additive)
+### Pattern 1: Multi-Skill Monorepo (microsoft/skills)
 
 ```
-Inbound email (Resend webhook)
+microsoft/skills/
+├── skills/
+│   ├── typescript/
+│   │   ├── compute/
+│   │   │   └── playwright/        ← individual skill (symlinked)
+│   │   ├── data/
+│   │   ├── frontend/
+│   │   └── ...
+│   ├── python/                    ← 41 skills
+│   ├── dotnet/                    ← 29 skills
+│   ├── java/                      ← 26 skills
+│   └── rust/                      ← 7 skills
+├── .github/skills/                ← flat skill directory (agent install target)
+├── Agents.md
+└── README.md
+```
+
+**Key traits:** 130 skills, nested by language/category, symlinks, no single root SKILL.md.
+
+### Pattern 2: Multi-Skill Product Repo (render-oss/skills)
+
+```
+render-oss/skills/
+├── skills/
+│   ├── render-deploy/
+│   │   ├── SKILL.md               ← 2,800 lines
+│   │   ├── references/            ← 10 companion markdown files
+│   │   │   ├── blueprint-spec.md
+│   │   │   ├── codebase-analysis.md
+│   │   │   ├── troubleshooting-basics.md
+│   │   │   └── ...
+│   │   └── assets/                ← templates, static resources
+│   ├── render-debug/
+│   └── render-monitor/
+├── hooks/                         ← auto-approval hooks
+│   ├── hooks.json
+│   └── auto-approve-render.sh
+├── scripts/
+│   └── install.sh                 ← multi-tool installer
+└── .mcp.json
+```
+
+**Key traits:** 3 skills, each with SKILL.md + references/ + assets/. Shell scripts bundled. Repo-level hooks and installer.
+
+### Pattern 3: Landing Page → GitHub Repo
+
+```
+User submits: https://render.com/docs/llm-support#install
+  → page contains link to: https://github.com/render-oss/skills
+  → repo contains 3 skills with bundled code
+```
+
+**Key traits:** Submitted URL is NOT the repo. Must crawl page to find GitHub link.
+
+### Implication: Skills Are Bundles, Not Single Files
+
+The current indexer treats skills as single SKILL.md files with metadata. Real-world skills are **bundles**:
+
+| Component | Example | Must Index? |
+|-----------|---------|-------------|
+| SKILL.md | Core skill definition | Yes |
+| references/*.md | Companion docs (specs, guides, troubleshooting) | Yes |
+| assets/* | Templates, configs, static files | Yes |
+| scripts/*.sh | Installers, automation | Yes (security scan) |
+| hooks/ | Auto-approval, lifecycle hooks | Yes (security scan) |
+| *.ts / *.py / *.rs | Implementation code | Yes (security scan) |
+
+**If we only index SKILL.md, we miss most of the skill's value.** A 2,800-line SKILL.md references 10 companion files — without those, the skill is incomplete.
+
+## Proposed System
+
+```
+Team member emails support@skillsmith.app with a URL
   → email-inbound edge function (modified)
-  → URL extraction + thread detection
-  → POST to skill-submit edge function (new)
-  → dedup check against skill_submissions table (new)
-  → fetch URL content
-  → reuse indexer validation + categorization pipeline
-  → upsert to skills table
-  → send contextual reply email to sender
-  → audit log
-  → always: forward original email to support (existing behavior preserved)
+  → URL extraction
+  → URL resolution (landing page → GitHub repo)
+  → Repo crawl (discover all skills in repo)
+  → Per-skill: validate, categorize, index full bundle
+  → Reply to sender with summary
+  → Forward to support (existing behavior preserved)
 ```
 
 ## Component Architecture
 
-### 1. Modified: `email-inbound/index.ts` (Webhook Router)
+### 1. Modified: `email-inbound/index.ts`
 
-The existing function receives all inbound emails to `*@skillsmith.app` via Resend webhooks and forwards them to `support@smithhorn.ca`.
-
-**Changes:**
-
-- Add URL extraction from email body (text + HTML)
-- Add thread detection (skip URL extraction for replies to existing threads)
-- Route submissions to `skill-submit` edge function via internal HTTP POST
-- **Preserve existing forwarding behavior unconditionally**
+Add URL extraction and inline processing. No separate edge function needed for internal use.
 
 ```
 email-inbound receives Resend webhook
-  → check: is this a reply? (in_reply_to / thread_id present → skip extraction)
-  → extract URLs from email body
-  → if URLs found:
-      → fire-and-forget POST to /functions/v1/skill-submit
-  → always: forward to support@smithhorn.ca (existing behavior)
+  → skip if reply thread (in_reply_to / thread_id present)
+  → extract URLs from email body (text + HTML)
+  → for each URL:
+      → resolve URL type (GitHub repo, landing page, other)
+      → if landing page: crawl for GitHub repo links
+      → if GitHub repo: crawl for skills
+      → for each skill found: validate, categorize, upsert
+  → reply to sender with processing summary
+  → always: forward to support@smithhorn.ca
 ```
 
-The skill-submit POST must NOT block or affect the forwarding flow. Use fire-and-forget pattern with error isolation.
+### 2. URL Resolution Pipeline
 
-### 2. New: `skill-submit/index.ts` (Core Processing)
-
-Called by `email-inbound` (internal) or directly via HTTP (future API/web form expansion).
-
-#### Processing Steps
-
-| Step | Action | Failure Mode |
-|------|--------|--------------|
-| 1 | Validate URL format | Reply with "invalid URL" |
-| 2 | Rate limit check (sender + global) | Reply with "rate limited" or silent drop |
-| 3 | Dedup check against `skill_submissions` | If exists: increment count, reply "already known" |
-| 4 | Check `skills` table by URL | If exists: reply "already indexed" |
-| 5 | Insert `skill_submissions` row (status: pending) | - |
-| 6 | Fetch URL content (10s timeout) | Mark as pending for retry |
-| 7 | Detect URL type (GitHub repo, npm, docs page) | - |
-| 8 | For GitHub: fetch SKILL.md via API | Mark as failed if no SKILL.md |
-| 9 | Run validation (reuse `validation.ts`) | Mark as rejected |
-| 10 | Run categorization (reuse `categorization.ts`) | Default to uncategorized |
-| 11 | Upsert to `skills` table | - |
-| 12 | Update `skill_submissions` (status: indexed, link skill_id) | - |
-| 13 | Send reply email to sender | Log failure but don't block |
-| 14 | Write audit log | - |
-
-#### Reply Email Branches
-
-**Branch A - New skill discovered:**
-
-> Thank you for contributing to Skillsmith! You found a new skill that was not yet indexed. It's now being reviewed and will be available shortly in the MCP registry.
-
-**Branch B - Already indexed (popular):**
-
-> Thank you for contributing to Skillsmith! [Skill Name] must be popular from user submissions received. It's already available in the Skillsmith MCP registry.
-
-**Branch C - Invalid/no skill found:**
-
-> Thank you for reaching out to Skillsmith! We weren't able to find a valid Claude Code skill at the URL you provided. Our team will review your submission manually.
-
-### 3. New Database Table: `skill_submissions`
-
-```sql
-CREATE TABLE skill_submissions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  url TEXT NOT NULL,
-  normalized_url TEXT NOT NULL,       -- URL without fragment, normalized
-  sender_email TEXT NOT NULL,
-  email_id TEXT,                      -- Resend email ID for threading
-  status TEXT NOT NULL DEFAULT 'pending',
-  skill_id TEXT REFERENCES skills(id),
-  skill_name TEXT,
-  submission_count INTEGER DEFAULT 1,
-  rejection_reason TEXT,
-  processed_at TIMESTAMPTZ,
-  reply_sent BOOLEAN DEFAULT FALSE,
-  reply_sent_at TIMESTAMPTZ,
-  metadata JSONB,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Statuses: pending, processing, indexed, duplicate, rejected, failed
-
-CREATE UNIQUE INDEX idx_skill_submissions_url ON skill_submissions(normalized_url);
-CREATE INDEX idx_skill_submissions_status ON skill_submissions(status);
-CREATE INDEX idx_skill_submissions_sender ON skill_submissions(sender_email);
-CREATE INDEX idx_skill_submissions_created ON skill_submissions(created_at DESC);
+```
+resolveUrl(url)
+  │
+  ├─ isGitHubRepo(url)?          → crawlGitHubRepo(owner, repo)
+  │   e.g. github.com/microsoft/skills
+  │
+  ├─ isGitHubSkillFile(url)?     → fetchSingleSkill(owner, repo, path)
+  │   e.g. github.com/.../SKILL.md
+  │
+  └─ isLandingPage(url)?         → fetchPage(url)
+      e.g. render.com/docs/...       → extractGitHubLinks(html)
+                                      → for each: crawlGitHubRepo(owner, repo)
 ```
 
-**RLS:** Service role only (no public access).
+### 3. GitHub Repo Crawler
 
-### 4. Email Templates (in `_shared/email.ts`)
+Discovers all skills within a repo, regardless of nesting depth.
 
-Three new exported functions:
+```typescript
+interface DiscoveredSkill {
+  name: string
+  path: string                    // e.g. "skills/render-deploy"
+  skillMd: string                 // SKILL.md content
+  bundledFiles: BundledFile[]     // references/, assets/, scripts/
+  repoUrl: string                 // full repo URL
+  skillUrl: string                // repo URL + path to this skill
+}
 
-- `sendSkillSubmissionNewEmail(to, skillName, url)`
-- `sendSkillSubmissionDuplicateEmail(to, skillName, submissionCount)`
-- `sendSkillSubmissionRejectedEmail(to, reason)`
+interface BundledFile {
+  path: string                    // relative to skill directory
+  content: string
+  type: 'reference' | 'asset' | 'script' | 'code' | 'config'
+}
+```
 
-**From:** `Skillsmith <noreply@skillsmith.app>`
-**Reply-to:** `support@skillsmith.app`
+**Discovery algorithm:**
 
-Templates follow existing HTML + plain text pattern for deliverability.
+1. Use GitHub Trees API: `GET /repos/{owner}/{repo}/git/trees/{branch}?recursive=1`
+2. Find all `SKILL.md` files in the tree (any depth)
+3. For each SKILL.md, identify its parent directory as the skill root
+4. Collect sibling files and subdirectories (references/, assets/, scripts/, *.ts, *.py, etc.)
+5. Fetch content for SKILL.md and all bundled files via GitHub Contents API
 
-### 5. URL Type Detection Strategy
+**Why Trees API?** Single API call returns entire repo structure. Avoids N+1 requests for deeply nested repos. The microsoft/skills repo has 130+ skills — we need this to be efficient.
 
-| URL Type | Detection Pattern | Processing |
-|----------|-------------------|------------|
-| GitHub repo | `github.com/{owner}/{repo}` | Fetch SKILL.md via GitHub API |
-| GitHub file | `github.com/.../SKILL.md` | Fetch file directly |
-| npm package | `npmjs.com/package/@scope/name` | Extract from package metadata |
-| Docs page | Any other HTTP(S) URL | Phase 1: queue for manual review. Phase 2: heuristic extraction |
-| Raw markdown | URL ending in `.md` | Fetch and validate as SKILL.md |
+**Rate limiting:** GitHub API allows 5,000 requests/hour with authentication. A single Trees API call + batch Contents API fetches for a repo like microsoft/skills would use ~140 requests (1 tree + ~130 SKILL.md + ~10 reference files per skill is too many — see Optimization below).
 
-#### Phase 1 (MVP): GitHub-Only Auto-Processing
+**Optimization for large repos:** For repos with 100+ skills, fetch only SKILL.md files on initial pass. Fetch bundled files on-demand when a skill is installed (lazy loading). Store the tree structure in `metadata` JSONB for later retrieval.
 
-Auto-process GitHub repo URLs through the full pipeline. All other URLs get stored in `skill_submissions` with `status: pending` and forwarded to support for manual triage. Sender receives Branch C reply.
+### 4. Landing Page Crawler
 
-#### Phase 2: Heuristic Page Scraping
+For non-GitHub URLs, fetch the page and extract GitHub links.
 
-For docs pages, fetch content and look for:
+```typescript
+async function extractGitHubRepos(url: string): Promise<string[]> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+  const html = await response.text()
 
-- MCP server configuration JSON blocks (`"mcpServers"`)
-- `npx` / `npm install` commands
-- SKILL.md-like frontmatter patterns
-- Page title and meta description for skill name/description
+  // Extract all GitHub repo URLs from page content
+  const githubPattern = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+/g
+  const matches = [...new Set(html.match(githubPattern) || [])]
 
-#### Phase 3: LLM-Assisted Extraction
+  // Filter out non-repo URLs (github.com/orgs/*, github.com/settings, etc.)
+  return matches.filter(isRepoUrl)
+}
+```
 
-Use Claude API to analyze arbitrary web pages and extract structured skill metadata.
+**10-second timeout** on all external fetches (edge function 150s budget).
 
-### 6. Configuration Changes
+### 5. Per-Skill Processing
 
-| File | Change |
-|------|--------|
-| `supabase/config.toml` | Add `[functions.skill-submit]` with `verify_jwt = false` |
-| `supabase/config.toml` | Add `[functions.email-inbound]` with `verify_jwt = false` (if not present) |
-| `scripts/audit-standards.mjs` | Add `skill-submit` and `email-inbound` to `ANONYMOUS_FUNCTIONS` |
-| `CLAUDE.md` | Add `skill-submit` to edge function table |
+For each discovered skill, reuse the existing indexer pipeline:
+
+| Step | Module | Notes |
+|------|--------|-------|
+| Validate SKILL.md | `validation.ts` | parseYamlFrontmatter, validateSkillMdContent |
+| Categorize | `categorization.ts` | Tags + description keyword matching |
+| Dedup check | `skills` table | UNIQUE on `repo_url` — use `skillUrl` as key |
+| Security scan | Existing scanner | Flag scripts, hooks, code files for review |
+| Upsert | `skills` table | Set `source: 'email_submission'` |
+| Store bundle manifest | `metadata` JSONB | List of bundled files with paths and sizes |
+
+**Bundle storage strategy:**
+
+The `skills` table stores skill metadata. Bundled file contents are NOT stored in the database — they're fetched from GitHub at install time. The `metadata` JSONB column stores the **manifest** (list of files, paths, sizes) so the install tool knows what to fetch.
+
+```jsonc
+// skills.metadata JSONB
+{
+  "source": "email_submission",
+  "submitted_by": "team-member@smithhorn.ca",
+  "bundle": {
+    "root": "skills/render-deploy",
+    "files": [
+      { "path": "SKILL.md", "size": 45000 },
+      { "path": "references/blueprint-spec.md", "size": 12000 },
+      { "path": "references/codebase-analysis.md", "size": 8000 },
+      { "path": "assets/template.yaml", "size": 2000 }
+    ]
+  }
+}
+```
+
+### 6. Reply Email
+
+Two branches (internal, simple):
+
+**Skills found and indexed:**
+
+> Processed your submission. Found N skills in [repo-name]:
+>
+> - render-deploy (new — indexed)
+> - render-debug (new — indexed)
+> - render-monitor (already indexed)
+>
+> Each skill includes bundled references and assets. Available in Skillsmith shortly.
+
+**No skills found:**
+
+> Received your URL. No SKILL.md files found at this location. Forwarded to the team for manual review.
 
 ### 7. Audit Trail
 
-| Event Type | Trigger |
-|------------|---------|
-| `skill-submit:received` | Email with URL arrives |
-| `skill-submit:duplicate` | URL already submitted before |
-| `skill-submit:already-indexed` | URL matches existing skill |
-| `skill-submit:processing` | Starting URL fetch/validation |
-| `skill-submit:indexed` | Skill successfully added to registry |
-| `skill-submit:rejected` | URL invalid or no skill found |
-| `skill-submit:reply-sent` | Confirmation email sent to sender |
-| `skill-submit:rate-limited` | Sender exceeded rate limit |
+Write to existing `audit_logs` table (no new table needed):
+
+| Event Type | Metadata |
+|------------|----------|
+| `skill-submit:received` | `{ url, sender, email_id }` |
+| `skill-submit:resolved` | `{ original_url, github_repos_found: [...] }` |
+| `skill-submit:crawled` | `{ repo, skills_found: N, total_files: N }` |
+| `skill-submit:indexed` | `{ skill_name, skill_id, is_new, bundle_files: N }` |
+| `skill-submit:reply-sent` | `{ to, skills_indexed: N }` |
 
 ## Sequence Diagram
 
 ```
-User                  Resend           email-inbound        skill-submit         Database
-  |                     |                   |                    |                   |
-  |-- email + URL ----->|                   |                    |                   |
-  |                     |-- webhook POST -->|                    |                   |
-  |                     |                   |-- extract URLs     |                   |
-  |                     |                   |-- forward to support (always)          |
-  |                     |                   |-- POST ----------->|                   |
-  |                     |                   |                    |-- rate limit ---->|
-  |                     |                   |                    |<-- ok ------------|
-  |                     |                   |                    |-- dedup check --->|
-  |                     |                   |                    |<-- not found -----|
-  |                     |                   |                    |-- insert row ---->|
-  |                     |                   |                    |-- fetch URL       |
-  |                     |                   |                    |-- validate        |
-  |                     |                   |                    |-- categorize      |
-  |                     |                   |                    |-- upsert skill -->|
-  |                     |                   |                    |-- update status ->|
-  |                     |                   |                    |-- audit log ----->|
-  |<-- reply email -----|<--- send ---------|<--- reply ---------|                   |
+Team Member          Resend           email-inbound                    GitHub API        Database
+  |                    |                   |                              |                |
+  |-- email + URL ---->|                   |                              |                |
+  |                    |-- webhook POST -->|                              |                |
+  |                    |                   |-- extract URLs               |                |
+  |                    |                   |-- is landing page?           |                |
+  |                    |                   |   yes: fetch page            |                |
+  |                    |                   |   extract github.com links   |                |
+  |                    |                   |                              |                |
+  |                    |                   |-- GET trees API ------------>|                |
+  |                    |                   |<-- full repo tree -----------|                |
+  |                    |                   |-- find all SKILL.md          |                |
+  |                    |                   |                              |                |
+  |                    |                   |-- for each skill:            |                |
+  |                    |                   |   GET SKILL.md content ----->|                |
+  |                    |                   |   <-- content ---------------|                |
+  |                    |                   |   validate + categorize      |                |
+  |                    |                   |   collect bundle manifest    |                |
+  |                    |                   |   dedup check --------------->|               |
+  |                    |                   |   upsert skill --------------->|              |
+  |                    |                   |   audit log ------------------>|              |
+  |                    |                   |                              |                |
+  |                    |                   |-- reply to sender            |                |
+  |<-- summary email --|<-- send ----------|                              |                |
+  |                    |                   |-- forward to support         |                |
 ```
 
-## Security Considerations
+## Configuration Changes
 
-### Spam / Abuse Prevention
+| File | Change |
+|------|--------|
+| `supabase/config.toml` | Add `[functions.email-inbound]` with `verify_jwt = false` (if missing) |
+| `scripts/audit-standards.mjs` | Add `email-inbound` to `ANONYMOUS_FUNCTIONS` (if missing) |
 
-| Control | Implementation |
-|---------|----------------|
-| Per-sender rate limit | 5 submissions per email per 24 hours |
-| Global rate limit | 50 submissions per hour |
-| No URL reflection | Don't echo submitted URLs in reply emails |
-| Thread detection | Skip URL extraction for email replies |
-| Audit logging | All submissions logged for forensics |
+**No new edge function.** No new database table. No config.toml entry for `skill-submit`. Processing happens inline in `email-inbound`.
 
-### Email Loop Prevention
+## What Was Cut (Internal-Only Scope)
 
-- Reply emails sent FROM `noreply@skillsmith.app` TO external sender — won't trigger inbound webhook
-- Inbound replies detected via `in_reply_to` / `thread_id` — skipped for URL extraction
-- Alert emails sent to `support@smithhorn.ca` (not @skillsmith.app) per existing pattern
-
-### PII Retention
-
-- `sender_email` stored in `skill_submissions`
-- 90-day retention policy via pg_cron cleanup job (matches `trial_usage` pattern)
-- After 90 days: hash email, delete raw value
-
-### Malicious URL Protection
-
-- URLs are fetched server-side — SSRF risk
-- Mitigation: validate URL scheme (HTTPS only), reject private IP ranges, 10s timeout
-- Fetched content runs through existing security scanner before indexing
+| Removed | Reason |
+|---------|--------|
+| `skill_submissions` table | No need to track submissions — internal team |
+| `skill-submit` edge function | Inline processing in email-inbound is sufficient |
+| Rate limiting | Trusted senders |
+| Spam / abuse prevention | Internal only |
+| PII retention / GDPR | Internal emails |
+| Sender verification | Known team members |
+| Phased rollout | Ship complete for internal use |
 
 ## Risks and Mitigations
 
-### HIGH: Edge Function Timeout (150s)
+### HIGH: Edge Function 150s Timeout vs Large Repos
 
-URL fetching + validation + email reply could exceed timeout.
+microsoft/skills has 130 skills. Fetching all SKILL.md files + bundled content could easily exceed 150 seconds.
 
-**Mitigation:** 10s fetch timeout. If processing exceeds budget, mark as `pending` and let a scheduled retry job process it. MVP uses synchronous approach; add pg_cron retry if needed.
+**Mitigation:** Two-tier approach:
+1. **Metadata-only pass:** Use Trees API (single call) to discover all skills and store manifests. Upsert skill rows with name, path, repo_url, and bundle manifest. Do NOT fetch all file contents.
+2. **Content fetch on demand:** SKILL.md content is fetched for validation/categorization. Bundled reference files are fetched at install time, not at submission time.
 
-### HIGH: Non-GitHub URL Processing
+For a 130-skill repo, this means: 1 Trees API call + 130 Contents API calls for SKILL.md files. At ~100ms each, that's ~14 seconds. Fits within 150s budget.
 
-Current indexer assumes GitHub repos with SKILL.md. Arbitrary URLs require different extraction logic.
+### HIGH: GitHub API Rate Limiting
 
-**Mitigation:** Phase 1 auto-processes GitHub URLs only. Non-GitHub URLs queued for manual review with human-in-the-loop.
+5,000 requests/hour with token. A single microsoft/skills submission uses ~130 requests. Sustainable for internal use (team would need to submit 38 monorepos/hour to hit limits).
 
-### MEDIUM: Dual Indexing Paths
+**Mitigation:** Use `GITHUB_TOKEN` env var (already available from indexer). Add backoff on 403 responses.
 
-Same skill could be discovered by both cron indexer and email submission.
+### MEDIUM: Repo Without SKILL.md
 
-**Mitigation:** `skills` table has `UNIQUE` on `repo_url`. Upserts handle dedup naturally. Email submissions set `source: 'user_submission'` for attribution.
+Some skill repos may use different conventions (AGENTS.md, plugin.json, .claude-plugin/). The microsoft/skills repo uses a flat `.github/skills/` directory with skill files that may not be named SKILL.md.
 
-### LOW: Existing email-inbound Regression
+**Mitigation:** Expand discovery to look for:
+1. `SKILL.md` (primary)
+2. `skill.md` (case-insensitive)
+3. Files matching `*.skill.md` pattern
+4. Directories containing both a markdown file and code files (heuristic)
 
-Modifying the function could break forwarding.
+### MEDIUM: Bundle Size Explosion
 
-**Mitigation:** URL extraction wrapped in try/catch. Forwarding always executes regardless of extraction outcome. Integration tests verify forwarding still works.
+render-deploy's SKILL.md alone is 2,800 lines. With 10 reference files, total content could be 50KB+ per skill. For 130 skills, that's 6.5MB of content to process.
 
-## Files to Create/Modify
+**Mitigation:** Don't store file contents in the database. Store only the manifest (paths + sizes) in `metadata` JSONB. Fetch content at install time from GitHub.
+
+### LOW: Email Loop
+
+Reply sent FROM `noreply@skillsmith.app` TO team member. Won't trigger inbound webhook. Replies from team member detected via `in_reply_to`.
+
+### LOW: Duplicate Submissions
+
+`skills` table has UNIQUE on `repo_url`. For monorepos, each skill gets a distinct `repo_url` (e.g., `github.com/render-oss/skills/tree/main/skills/render-deploy`). Upserts handle naturally.
+
+## Files to Modify
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `supabase/functions/skill-submit/index.ts` | Create | Core submission processing |
-| `supabase/functions/email-inbound/index.ts` | Modify | Add URL extraction + routing |
-| `supabase/functions/_shared/email.ts` | Modify | Add submission reply templates |
-| `supabase/migrations/NNNN_skill_submissions.sql` | Create | New table + indexes + RLS |
-| `supabase/config.toml` | Modify | Add function configs |
-| `scripts/audit-standards.mjs` | Modify | Add to anonymous functions list |
-| `CLAUDE.md` | Modify | Document new edge function |
+| `supabase/functions/email-inbound/index.ts` | Modify | Add URL extraction, repo crawling, skill indexing, reply |
+| `supabase/functions/_shared/email.ts` | Modify | Add submission reply template |
+| `supabase/functions/_shared/github.ts` | Create | GitHub Trees API, Contents API, repo crawler utilities |
 
 ## Testing Strategy
 
-| Test Type | Scope |
-|-----------|-------|
-| Unit | URL extraction from email body |
-| Unit | URL type detection (GitHub, npm, docs) |
-| Unit | Rate limiting logic |
-| Unit | Dedup logic |
-| Integration | email-inbound → skill-submit flow |
-| Integration | skill-submit → skills table upsert |
-| Integration | Reply email template rendering |
-| E2E | Full email → indexed skill → reply flow |
-
-## Open Questions
-
-1. Should Phase 1 MVP auto-process only GitHub URLs, or attempt all URLs?
-2. Should replies be immediate or batched/delayed (for abuse prevention)?
-3. Should senders be verified as registered Skillsmith users?
-4. Is `email-inbound` currently deployed with a Resend webhook configured?
-5. Expected submission volume (handful/week vs. high volume)?
-6. For non-skill docs pages (like Render's LLM docs), should these be treated as skills or flagged for human review?
+| Test | Scope |
+|------|-------|
+| Unit | URL extraction from email body text/HTML |
+| Unit | GitHub repo URL detection and parsing |
+| Unit | Landing page GitHub link extraction |
+| Unit | SKILL.md discovery from tree listing |
+| Unit | Bundle manifest generation |
+| Integration | Full flow: URL → crawl → validate → upsert → reply |
+| Manual | Submit microsoft/skills URL, verify 130 skills indexed |
+| Manual | Submit render.com landing page, verify 3 skills indexed |
