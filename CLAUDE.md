@@ -892,6 +892,7 @@ npx claude-flow swarm --config .claude/hive-mind/your-config.yaml
 | `skills-refresh-metadata` | Refresh metadata for existing skills (scheduled) | Service Role |
 | `ops-report` | Weekly operations report with email | Service Role |
 | `alert-notify` | Send alert emails on job failures | Service Role |
+| `email-inbound` | Inbound email webhook (Resend), skill submission processing | Anonymous |
 
 **Deploy a function:**
 
@@ -915,6 +916,7 @@ npx supabase functions deploy skills-recommend --no-verify-jwt
 npx supabase functions deploy stripe-webhook --no-verify-jwt
 npx supabase functions deploy checkout --no-verify-jwt
 npx supabase functions deploy events --no-verify-jwt
+npx supabase functions deploy email-inbound --no-verify-jwt
 
 # Authenticated functions with internal JWT validation
 # These validate the user token in function code, not at gateway

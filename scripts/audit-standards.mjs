@@ -330,6 +330,7 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   'stripe-webhook',
   'checkout',
   'events',
+  'email-inbound',
   // Authenticated functions with internal JWT validation
   // These validate tokens in function code, not at Supabase gateway
   'generate-license',
