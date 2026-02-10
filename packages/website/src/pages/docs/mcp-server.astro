@@ -2,20 +2,20 @@
 import DocsLayout from '../../layouts/DocsLayout.astro';
 ---
 
-<DocsLayout title="MCP Server" description="Configure and use the Skillsmith MCP server with Claude Code">
+<DocsLayout title="MCP Server" description="Configure and use the Skillsmith MCP server">
   <h1>MCP Server</h1>
 
   <p class="lead">
-    The Skillsmith MCP server integrates directly with Claude Code, enabling natural
+    The Skillsmith MCP server integrates with MCP-compatible clients, enabling natural
     language skill discovery and management.
   </p>
 
   <h2>Overview</h2>
 
   <p>
-    MCP (Model Context Protocol) servers extend Claude's capabilities by providing
+    MCP (Model Context Protocol) servers extend your AI assistant's capabilities by providing
     additional tools. The Skillsmith MCP server adds tools for searching, installing,
-    and managing Claude Code skills.
+    and managing skills.
   </p>
 
   <h2>Configuration</h2>
@@ -99,7 +99,7 @@ EOF`}</code></pre>
   }
 }`}</code></pre>
 
-  <p><strong>Step 3:</strong> Restart Claude Code (Cmd/Ctrl+Shift+P → "Claude Code: Restart")</p>
+  <p><strong>Step 3:</strong> Restart your MCP client to load the updated configuration.</p>
 
   <div class="callout">
     <h4>Security Note</h4>
@@ -113,7 +113,7 @@ EOF`}</code></pre>
     <h4>Shell Exports Don't Work</h4>
     <p>
       Running <code>export SKILLSMITH_API_KEY=...</code> in your terminal does NOT pass the variable
-      to MCP servers. MCP servers run as subprocesses spawned by Claude Code and don't inherit your
+      to MCP servers. MCP servers run as subprocesses and don't inherit your
       shell environment. Use the config file or settings.json method above.
     </p>
   </div>
@@ -199,7 +199,7 @@ EOF`}</code></pre>
 
   <h2>Available Tools</h2>
 
-  <p>The MCP server provides the following tools to Claude:</p>
+  <p>The MCP server provides the following tools:</p>
 
   <h3>search</h3>
 
@@ -327,7 +327,7 @@ EOF`}</code></pre>
 
   <pre><code>{`You: "I need help with testing in my project. What skills are available?"
 
-Claude: [Uses search tool] I found several testing skills:
+Assistant: [Uses search tool] I found several testing skills:
 - jest-helper: Comprehensive Jest testing utilities
 - vitest-helper: Vitest integration and helpers
 - playwright-utils: End-to-end testing with Playwright
@@ -337,14 +337,14 @@ Claude: [Uses search tool] I found several testing skills:
 
   <pre><code>{`You: "Install the jest-helper skill and show me how to use it"
 
-Claude: [Uses install_skill tool] I've installed jest-helper to
+Assistant: [Uses install_skill tool] I've installed jest-helper to
 ~/.claude/skills/jest-helper. This skill provides...`}</code></pre>
 
   <h3>Comparing Options</h3>
 
   <pre><code>{`You: "Should I use jest-helper or vitest-helper for my Vite project?"
 
-Claude: [Uses compare tool] Here's a comparison:
+Assistant: [Uses compare tool] Here's a comparison:
 | Feature       | jest-helper | vitest-helper |
 | Vite support  | Limited     | Native        |
 | Speed         | Moderate    | Fast          |
@@ -363,7 +363,7 @@ Claude: [Uses compare tool] Here's a comparison:
     <tbody>
       <tr>
         <td><code>verified</code></td>
-        <td>Official Anthropic skills</td>
+        <td>Official platform skills</td>
         <td>Full security audit</td>
       </tr>
       <tr>
@@ -399,7 +399,7 @@ Claude: [Uses compare tool] Here's a comparison:
     <h4>Verify Configuration</h4>
     <p>
       Ensure your <code>~/.claude/settings.json</code> is valid JSON and the
-      MCP server configuration is correct. Restart Claude Code after changes.
+      MCP server configuration is correct. Restart your MCP client after changes.
     </p>
   </div>
 

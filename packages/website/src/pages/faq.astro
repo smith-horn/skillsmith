@@ -24,11 +24,11 @@ const faqCategories: FAQCategory[] = [
     items: [
       {
         question: "What is Skillsmith?",
-        answer: "Skillsmith is an AI-powered skill discovery and management platform for Claude Code. It helps you find, install, compare, and manage skills that enhance your Claude Code environment with specialized capabilities."
+        answer: "Skillsmith is an agent skill platform for AI assistants. It helps you find, install, compare, and manage skills that enhance your development environment with specialized capabilities."
       },
       {
         question: "How do I install Skillsmith?",
-        answer: "Add Skillsmith to your Claude Code settings by configuring the MCP server. Add the following to your ~/.claude/settings.json: {\"mcpServers\": {\"skillsmith\": {\"command\": \"npx\", \"args\": [\"-y\", \"@skillsmith/mcp-server\"]}}}"
+        answer: "Add Skillsmith to your MCP client settings by configuring the MCP server. Add the following to your ~/.claude/settings.json: {\"mcpServers\": {\"skillsmith\": {\"command\": \"npx\", \"args\": [\"-y\", \"@skillsmith/mcp-server\"]}}}"
       },
       {
         question: "Is Skillsmith free to use?",
@@ -36,7 +36,7 @@ const faqCategories: FAQCategory[] = [
       },
       {
         question: "What skills are available?",
-        answer: "Skillsmith indexes thousands of skills across various categories including development tools, testing frameworks, deployment helpers, documentation generators, and more. You can browse available skills on our Skills page or search using Claude Code."
+        answer: "Skillsmith indexes thousands of skills across various categories including development tools, testing frameworks, deployment helpers, documentation generators, and more. You can browse available skills on our Skills page or search using your MCP client."
       }
     ]
   },
@@ -86,7 +86,7 @@ const faqCategories: FAQCategory[] = [
       },
       {
         question: "What is the Trust Tier system?",
-        answer: "Skills are categorized into trust tiers: Verified (official Anthropic skills), Community (community-reviewed skills), and Experimental (new/beta skills). This helps you understand the reliability and review status of each skill."
+        answer: "Skills are categorized into trust tiers: Verified (official skills), Community (community-reviewed skills), and Experimental (new/beta skills). This helps you understand the reliability and review status of each skill."
       }
     ]
   },
@@ -103,7 +103,7 @@ const faqCategories: FAQCategory[] = [
       },
       {
         question: "Can I use Skillsmith offline?",
-        answer: "Skills that have been installed work offline within Claude Code. However, searching for new skills, getting recommendations, and checking for updates requires an internet connection."
+        answer: "Skills that have been installed work offline within your MCP client. However, searching for new skills, getting recommendations, and checking for updates requires an internet connection."
       },
       {
         question: "How do I report a bug or request a feature?",
@@ -142,7 +142,7 @@ const faqCategories: FAQCategory[] = [
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
 
-    <meta name="description" content="Frequently asked questions about Skillsmith - AI-powered skill discovery and management for Claude Code" />
+    <meta name="description" content="Frequently asked questions about Skillsmith - AI-powered skill discovery and management for AI assistants" />
     <title>FAQ | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
     <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />

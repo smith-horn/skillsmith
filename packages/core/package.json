@@ -81,12 +81,10 @@
     "url": "https://github.com/smith-horn/skillsmith/issues"
   },
   "keywords": [
-    "claude",
     "ai",
     "skills",
     "mcp",
-    "llm",
-    "anthropic"
+    "llm"
   ],
   "engines": {
     "node": ">=22.0.0"

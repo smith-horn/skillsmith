@@ -22,7 +22,7 @@ const categories = [...new Set(posts.map(post => post.data.category).filter(Bool
 
 <BaseLayout
   title="Blog | Skillsmith"
-  description="Tutorials, guides, and insights about building AI skills for Claude Code"
+  description="Tutorials, guides, and insights about building agent skills for AI assistants"
 >
   <!-- JSON-LD for Blog listing -->
   <script type="application/ld+json" slot="head">
@@ -30,7 +30,7 @@ const categories = [...new Set(posts.map(post => post.data.category).filter(Bool
       "@context": "https://schema.org",
       "@type": "Blog",
       "name": "Skillsmith Blog",
-      "description": "Tutorials, guides, and insights about building AI skills for Claude Code",
+      "description": "Tutorials, guides, and insights about building agent skills for AI assistants",
       "url": "https://skillsmith.app/blog",
       "publisher": {
         "@type": "Organization",
@@ -61,7 +61,7 @@ const categories = [...new Set(posts.map(post => post.data.category).filter(Bool
         Skillsmith Blog
       </h1>
       <p class="text-lg text-dark-400 max-w-2xl mx-auto">
-        Tutorials, guides, and insights about building AI skills for Claude Code.
+        Tutorials, guides, and insights about building agent skills for AI assistants.
         Learn best practices for agent architecture, skill composition, and workflow automation.
       </p>
     </header>

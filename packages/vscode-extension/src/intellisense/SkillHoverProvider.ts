@@ -22,7 +22,7 @@ interface FieldDocumentation {
  */
 const FIELD_DOCUMENTATION: Record<string, FieldDocumentation> = {
   name: {
-    description: 'The display name of the skill shown in Claude Code and the skill browser.',
+    description: 'The display name of the skill shown in the skill browser and MCP clients.',
     type: 'string',
     required: true,
     example: 'name: "Docker Manager"',
@@ -37,7 +37,7 @@ const FIELD_DOCUMENTATION: Record<string, FieldDocumentation> = {
       'A brief description explaining what the skill does. This appears in search results and the skill detail view.',
     type: 'string',
     required: true,
-    example: 'description: "Manages Docker containers and images directly from Claude Code"',
+    example: 'description: "Manages Docker containers and images directly from your AI assistant"',
     tips: [
       'Keep under 150 characters for best display',
       'Start with an action verb (Manages, Creates, Generates)',
@@ -81,7 +81,7 @@ const FIELD_DOCUMENTATION: Record<string, FieldDocumentation> = {
     tips: ['Use lowercase tags', 'Include related technologies', 'Add common synonyms'],
   },
   triggers: {
-    description: 'Phrases that activate this skill when mentioned in Claude Code conversations.',
+    description: 'Phrases that activate this skill when mentioned in conversations.',
     type: 'array',
     required: false,
     example: 'triggers:\n  - "manage docker"\n  - "docker containers"',
@@ -117,7 +117,7 @@ This section provides a detailed explanation of the skill's functionality.
 Include:
 - Main purpose and use cases
 - Key features and capabilities
-- How it integrates with Claude Code
+- How it integrates with your AI assistant
 `,
   'quick start': `
 ## Quick Start
@@ -132,7 +132,7 @@ Include:
 ## Trigger Phrases
 
 Lists the phrases that activate this skill.
-Claude Code monitors conversations for these triggers.
+Your AI assistant monitors conversations for these triggers.
 Example triggers:
 - "manage docker containers"
 - "create dockerfile"
