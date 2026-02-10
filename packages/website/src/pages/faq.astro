@@ -3,10 +3,13 @@
  * FAQ Page
  *
  * SMI-1160: FAQ page for common questions
+ * SMI-2360: Migrated to BaseLayout for layout consistency
  *
  * Comprehensive FAQ covering pricing, features, technical details,
  * and account management.
  */
+
+import BaseLayout from '../layouts/BaseLayout.astro';
 
 interface FAQItem {
   question: string;
@@ -135,19 +138,8 @@ const faqCategories: FAQCategory[] = [
 ];
 ---
 
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
-
-    <meta name="description" content="Frequently asked questions about Skillsmith - AI-powered skill discovery and management for AI assistants" />
-    <title>FAQ | Skillsmith</title>
-    <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
-    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
-    <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
-
+<BaseLayout title="FAQ | Skillsmith" description="Frequently asked questions about Skillsmith - AI-powered skill discovery and management for AI assistants" activePath="/faq">
+  <Fragment slot="head">
     <!-- JSON-LD FAQPage Schema -->
     <script is:inline type="application/ld+json" set:html={JSON.stringify({
       "@context": "https://schema.org",
@@ -161,225 +153,62 @@ const faqCategories: FAQCategory[] = [
         }
       })))
     })} />
+  </Fragment>
 
-    <!-- Open Graph -->
-    <meta property="og:title" content="FAQ | Skillsmith" />
-    <meta property="og:description" content="Frequently asked questions about Skillsmith - AI-powered skill discovery and management for Claude Code" />
-    <meta property="og:type" content="website" />
-    <meta property="og:url" content={new URL(Astro.url.pathname, Astro.site).href} />
-    <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
-    <meta property="og:image" content={new URL('/og-image.png', Astro.site).href} />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
+  <section class="hero">
+    <h1>Frequently Asked Questions</h1>
+    <p class="hero-subtitle">
+      Find answers to common questions about Skillsmith, pricing, features, and technical details.
+    </p>
+  </section>
 
-    <!-- Twitter Card -->
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="FAQ | Skillsmith" />
-    <meta name="twitter:description" content="Frequently asked questions about Skillsmith - AI-powered skill discovery and management for Claude Code" />
-    <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
-    <meta name="twitter:image" content={new URL('/og-image.png', Astro.site).href} />
-  </head>
-  <body>
-    <header class="header">
-      <nav class="nav">
-        <a href="/" class="logo">
-          <svg width="32" height="32" viewBox="0 0 64 64" class="logo-icon-svg">
-            <rect width="64" height="64" fill="transparent" rx="8"/>
-            <g transform="translate(32, 32)">
-              <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
-                    stroke="currentColor" stroke-width="1.5" stroke-opacity="0.3" fill="none"/>
-              <circle cx="10" cy="-18" r="5" fill="#E07A5F"/>
-              <circle cx="-10" cy="-4" r="5" fill="#E07A5F"/>
-              <circle cx="10" cy="8" r="5" fill="#E07A5F"/>
-              <circle cx="-10" cy="20" r="5" fill="#E07A5F"/>
-            </g>
-          </svg>
-          <span class="logo-text">Skillsmith</span>
-        </a>
-        <div class="nav-links">
-          <a href="/docs">Docs</a>
-          <a href="/pricing">Pricing</a>
-          <a href="/faq" class="active">FAQ</a>
-        </div>
-        <div class="nav-actions">
-          <a href="/login" class="btn btn-ghost">Log in</a>
-          <a href="/signup" class="btn btn-primary">Get Started</a>
-        </div>
-      </nav>
-    </header>
+  <section class="faq-container">
+    <nav class="faq-nav" aria-label="FAQ categories">
+      <h2>Categories</h2>
+      <ul>
+        {faqCategories.map((category, index) => (
+          <li>
+            <a href={`#category-${index}`}>{category.name}</a>
+          </li>
+        ))}
+      </ul>
+    </nav>
 
-    <main>
-      <section class="hero">
-        <h1>Frequently Asked Questions</h1>
-        <p class="hero-subtitle">
-          Find answers to common questions about Skillsmith, pricing, features, and technical details.
-        </p>
-      </section>
-
-      <section class="faq-container">
-        <nav class="faq-nav">
-          <h2>Categories</h2>
-          <ul>
-            {faqCategories.map((category, index) => (
-              <li>
-                <a href={`#category-${index}`}>{category.name}</a>
-              </li>
+    <div class="faq-content">
+      {faqCategories.map((category, catIndex) => (
+        <div class="faq-category" id={`category-${catIndex}`}>
+          <h2>{category.name}</h2>
+          <div class="faq-items">
+            {category.items.map((item) => (
+              <details class="faq-item">
+                <summary>
+                  <span class="question">{item.question}</span>
+                  <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </summary>
+                <div class="answer">
+                  <p>{item.answer}</p>
+                </div>
+              </details>
             ))}
-          </ul>
-        </nav>
-
-        <div class="faq-content">
-          {faqCategories.map((category, catIndex) => (
-            <div class="faq-category" id={`category-${catIndex}`}>
-              <h2>{category.name}</h2>
-              <div class="faq-items">
-                {category.items.map((item, _itemIndex) => (
-                  <details class="faq-item">
-                    <summary>
-                      <span class="question">{item.question}</span>
-                      <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="6 9 12 15 18 9" />
-                      </svg>
-                    </summary>
-                    <div class="answer">
-                      <p>{item.answer}</p>
-                    </div>
-                  </details>
-                ))}
-              </div>
-            </div>
-          ))}
+          </div>
         </div>
-      </section>
+      ))}
+    </div>
+  </section>
 
-      <section class="cta-section">
-        <h2>Still have questions?</h2>
-        <p>Our team is here to help. Reach out and we'll get back to you as soon as possible.</p>
-        <div class="cta-buttons">
-          <a href="/contact" class="btn btn-primary btn-large">Contact Us</a>
-          <a href="/docs" class="btn btn-ghost btn-large">Browse Docs</a>
-        </div>
-      </section>
-    </main>
-
-    <footer class="footer">
-      <div class="footer-content">
-        <p>&copy; 2026 Smith Horn Group Ltd. All rights reserved.</p>
-      </div>
-    </footer>
-  </body>
-</html>
+  <section class="cta-section">
+    <h2>Still have questions?</h2>
+    <p>Our team is here to help. Reach out and we'll get back to you as soon as possible.</p>
+    <div class="cta-buttons">
+      <a href="/contact" class="cta-btn cta-btn-primary">Contact Us</a>
+      <a href="/docs" class="cta-btn cta-btn-outline">Browse Docs</a>
+    </div>
+  </section>
+</BaseLayout>
 
 <style>
-  *,
-  *::before,
-  *::after {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-  }
-
-  body {
-    font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    line-height: 1.6;
-    color: #FAFAFA;
-    background: #0D0D0F;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .header {
-    background: rgba(13, 13, 15, 0.95);
-    backdrop-filter: blur(8px);
-    border-bottom: 1px solid #1f1f23;
-    position: sticky;
-    top: 0;
-    z-index: 100;
-  }
-
-  .nav {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 1rem 2rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 2rem;
-  }
-
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    text-decoration: none;
-    font-weight: 700;
-    font-size: 1.25rem;
-    color: #FAFAFA;
-  }
-
-  .nav-links {
-    display: flex;
-    gap: 2rem;
-  }
-
-  .nav-links a {
-    text-decoration: none;
-    color: #9ca3af;
-    font-weight: 500;
-    transition: color 0.2s;
-  }
-
-  .nav-links a:hover,
-  .nav-links a.active {
-    color: #E07A5F;
-  }
-
-  .nav-actions {
-    display: flex;
-    gap: 0.75rem;
-  }
-
-  /* Buttons */
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.625rem 1.25rem;
-    font-size: 0.9375rem;
-    font-weight: 500;
-    text-decoration: none;
-    border-radius: 0.5rem;
-    transition: all 0.2s;
-    cursor: pointer;
-    border: none;
-  }
-
-  .btn-primary {
-    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
-    color: white;
-  }
-
-  .btn-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(224, 122, 95, 0.4);
-  }
-
-  .btn-ghost {
-    background: transparent;
-    color: #9ca3af;
-  }
-
-  .btn-ghost:hover {
-    color: #E07A5F;
-    background: #1a1a1f;
-  }
-
-  .btn-large {
-    padding: 0.875rem 2rem;
-    font-size: 1rem;
-  }
-
   /* Hero */
   .hero {
     text-align: center;
@@ -434,6 +263,7 @@ const faqCategories: FAQCategory[] = [
 
   .faq-nav ul {
     list-style: none;
+    padding: 0;
   }
 
   .faq-nav li {
@@ -547,41 +377,39 @@ const faqCategories: FAQCategory[] = [
     flex-wrap: wrap;
   }
 
-  .cta-section .btn-primary {
+  .cta-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.875rem 2rem;
+    font-size: 1rem;
+    font-weight: 500;
+    text-decoration: none;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+  }
+
+  .cta-btn-primary {
     background: white;
     color: #974539;
   }
 
-  .cta-section .btn-ghost {
+  .cta-btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  }
+
+  .cta-btn-outline {
     color: white;
     border: 1px solid rgba(255, 255, 255, 0.3);
   }
 
-  .cta-section .btn-ghost:hover {
+  .cta-btn-outline:hover {
     background: rgba(255, 255, 255, 0.1);
-  }
-
-  /* Footer */
-  .footer {
-    margin-top: auto;
-    background: #1a1a2e;
-    padding: 1.5rem 2rem;
-  }
-
-  .footer-content {
-    max-width: 1280px;
-    margin: 0 auto;
-    text-align: center;
-    font-size: 0.875rem;
-    color: #9ca3af;
   }
 
   /* Responsive */
   @media (max-width: 768px) {
-    .nav-links {
-      display: none;
-    }
-
     .faq-container {
       grid-template-columns: 1fr;
       gap: 2rem;
