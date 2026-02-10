@@ -1230,7 +1230,25 @@ jobs:
             -v ${{ github.workspace }}:/app \
             -w /app/packages/website \
             skillsmith-ci:${{ github.sha }} \
-            npm run build
+            npm run build 2>&1 | tee /tmp/astro-build.log
+
+      # SMI-2368: Enforce 0/0/0 baseline (zero errors, warnings, hints)
+      - name: Check for Astro build warnings and hints
+        if: steps.changes.outputs.website == 'true'
+        run: |
+          BUILD_LOG="/tmp/astro-build.log"
+          WARNINGS=$(grep -ci "warning" "$BUILD_LOG" 2>/dev/null || echo "0")
+          HINTS=$(grep -ci "hint" "$BUILD_LOG" 2>/dev/null || echo "0")
+          ERRORS=$(grep -ci "error" "$BUILD_LOG" 2>/dev/null || echo "0")
+          echo "Build quality: $ERRORS errors, $WARNINGS warnings, $HINTS hints"
+          if [ "$WARNINGS" -gt 0 ] || [ "$HINTS" -gt 0 ]; then
+            echo "::error::Astro build produced $WARNINGS warning(s) and $HINTS hint(s). The 0/0/0 baseline must be maintained."
+            echo ""
+            echo "Warnings and hints found:"
+            grep -i "warning\|hint" "$BUILD_LOG" || true
+            exit 1
+          fi
+          echo "Build quality check passed: 0/0/0 baseline maintained"
 
       - name: Verify dist directory exists
         if: steps.changes.outputs.website == 'true'
