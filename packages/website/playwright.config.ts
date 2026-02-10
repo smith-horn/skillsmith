@@ -55,15 +55,12 @@ export default defineConfig({
     },
   ],
 
-  /**
-   * Start the Astro preview server automatically.
-   * Requires the site to be built first (`npm run build`).
-   * Uncomment when ready to run tests against the built site.
-   */
-  // webServer: {
-  //   command: "npm run preview",
-  //   port: 4321,
-  //   reuseExistingServer: !process.env.CI,
-  //   timeout: 30_000,
-  // },
+  /* Start the Astro preview server automatically.
+   * Requires the site to be built first (`npm run build`). */
+  webServer: {
+    command: "npm run preview",
+    port: 4321,
+    reuseExistingServer: !process.env.CI,
+    timeout: 30_000,
+  },
 });

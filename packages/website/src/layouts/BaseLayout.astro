@@ -69,6 +69,7 @@ const supabaseConfig = getSupabaseConfig();
       window.__SUPABASE_CONFIG__ = supabaseConfig;
     </script>
 
+    <!-- TODO: Remove CDN Tailwind in Wave 1B (SMI-2347, SMI-2348) — build-time CSS via global.css is now active -->
     <script is:inline src="https://cdn.tailwindcss.com"></script>
     <script is:inline>
       // @ts-ignore - tailwind is loaded from CDN
@@ -148,8 +149,7 @@ const supabaseConfig = getSupabaseConfig();
     <!-- SMI-2344: Web Vitals RUM tracking (module script, deferred by Astro) -->
     <script>
       import { onLCP, onCLS, onINP } from 'web-vitals';
-
-      type Metric = { name: string; value: number; id: string; rating: string };
+      import type { Metric } from 'web-vitals';
 
       function reportMetric(metric: Metric): void {
         const ms = Math.round(metric.name === 'CLS' ? metric.value * 1000 : metric.value);
@@ -159,7 +159,7 @@ const supabaseConfig = getSupabaseConfig();
         // Forward to Google Analytics if gtag is present
         if (typeof window.gtag === 'function') {
           window.gtag('event', metric.name, {
-            value: Math.round(metric.name === 'CLS' ? metric.value * 1000 : metric.value),
+            value: ms,
             event_category: 'Web Vitals',
             event_label: metric.id,
             non_interaction: true,

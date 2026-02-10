@@ -24,9 +24,7 @@ const pages = [
 ] as const;
 
 for (const { name, path } of pages) {
-  test(`${name} visual baseline`, async ({ page }, testInfo) => {
-    const viewport = testInfo.project.name; // "desktop" or "mobile"
-
+  test(`${name} visual baseline`, async ({ page }) => {
     const response = await page.goto(path, {
       waitUntil: "networkidle",
       timeout: 15_000,
@@ -41,10 +39,10 @@ for (const { name, path } of pages) {
     // Wait for fonts and images to finish loading
     await page.waitForLoadState("networkidle");
 
-    // Allow layout to settle (CSS transitions, lazy images)
-    await page.waitForTimeout(500);
+    // Wait for web fonts to finish loading before capturing snapshot
+    await page.waitForFunction(() => document.fonts.ready.then(() => true));
 
-    await expect(page).toHaveScreenshot(`${name}-${viewport}.png`, {
+    await expect(page).toHaveScreenshot(`${name}.png`, {
       fullPage: true,
       animations: "disabled",
     });

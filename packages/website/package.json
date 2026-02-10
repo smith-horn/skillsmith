@@ -25,10 +25,10 @@
     "astro": "5.16.9",
     "tailwindcss": "4.1.18",
     "turndown": "7.2.2",
-    "turndown-plugin-gfm": "1.0.2",
-    "web-vitals": "^5.1.0"
+    "turndown-plugin-gfm": "1.0.2"
   },
   "devDependencies": {
+    "@playwright/test": "1.52.0",
     "@tailwindcss/typography": "0.5.19",
     "@types/node": "^22.9.0",
     "@types/turndown": "^5.0.5",
@@ -41,8 +41,8 @@
     "strip-literal": "3.1.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.53.1",
-    "@playwright/test": "1.52.0",
-    "vitest": "4.0.16"
+    "vitest": "4.0.16",
+    "web-vitals": "5.1.0"
   },
   "engines": {
     "node": "22.x"
