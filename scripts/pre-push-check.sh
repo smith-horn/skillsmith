@@ -86,15 +86,25 @@ AUDIT_OUTPUT=$(run_cmd npm audit --audit-level=high --omit=dev 2>&1) || AUDIT_ST
 AUDIT_STATUS=${AUDIT_STATUS:-0}
 
 if [ $AUDIT_STATUS -ne 0 ]; then
-  # Show audit output only on failure
-  echo "$AUDIT_OUTPUT"
-  echo -e "${RED}✗ High-severity vulnerabilities detected${NC}"
-  if [ $USE_DOCKER -eq 1 ]; then
-    echo -e "${YELLOW}Run 'docker exec $DOCKER_CONTAINER npm audit fix' to resolve issues${NC}"
+  # SMI-2369: Distinguish network errors from actual vulnerabilities
+  # Network errors should warn but not block the push
+  if echo "$AUDIT_OUTPUT" | grep -qiE "getaddrinfo|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|network|fetch failed|request to .* failed"; then
+    echo -e "${YELLOW}⚠️  npm audit skipped - network unavailable${NC}"
+    echo -e "${YELLOW}   DNS or network error detected inside container.${NC}"
+    echo -e "${YELLOW}   CI will run npm audit on push. To fix locally:${NC}"
+    echo -e "${YELLOW}   docker network prune -f && docker compose --profile dev restart${NC}"
+    # Don't set CHECKS_FAILED - network errors are non-blocking
   else
-    echo -e "${YELLOW}Run 'npm audit fix' to resolve issues${NC}"
+    # Real vulnerabilities found - block the push
+    echo "$AUDIT_OUTPUT"
+    echo -e "${RED}✗ High-severity vulnerabilities detected${NC}"
+    if [ $USE_DOCKER -eq 1 ]; then
+      echo -e "${YELLOW}Run 'docker exec $DOCKER_CONTAINER npm audit fix' to resolve issues${NC}"
+    else
+      echo -e "${YELLOW}Run 'npm audit fix' to resolve issues${NC}"
+    fi
+    CHECKS_FAILED=1
   fi
-  CHECKS_FAILED=1
 else
   echo -e "${GREEN}✓ No high-severity vulnerabilities found${NC}"
 fi
