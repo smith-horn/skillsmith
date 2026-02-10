@@ -13,6 +13,7 @@
     "format": "prettier --write src",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:a11y": "playwright test tests/a11y/",
     "test:visual": "playwright test --config playwright.config.ts",
     "test:visual:update": "playwright test --config playwright.config.ts --update-snapshots"
   },
@@ -28,6 +29,7 @@
     "turndown-plugin-gfm": "1.0.2"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.11.1",
     "@playwright/test": "1.52.0",
     "@tailwindcss/typography": "0.5.19",
     "@types/node": "^22.9.0",
