@@ -11,16 +11,19 @@ const { title, description = 'Skillsmith Documentation' } = Astro.props;
 const currentPath = Astro.url.pathname;
 
 // Build breadcrumb segments from URL path (SMI-2353)
+// Note: Assumes flat docs structure (/docs/page). Nested paths (e.g. /docs/category/page)
+// would need intermediate breadcrumb entries if the docs structure changes.
+const siteOrigin = Astro.site?.origin ?? 'https://skillsmith.app';
 const pathSegments = Astro.url.pathname.split('/').filter(Boolean);
 const breadcrumbs = [
-  { name: 'Home', url: 'https://skillsmith.app/' },
-  { name: 'Docs', url: 'https://skillsmith.app/docs' },
+  { name: 'Home', url: `${siteOrigin}/` },
+  { name: 'Docs', url: `${siteOrigin}/docs` },
 ];
 if (pathSegments.length > 1) {
   // Add the current page as the last breadcrumb
   breadcrumbs.push({
     name: title,
-    url: `https://skillsmith.app${Astro.url.pathname}`,
+    url: new URL(Astro.url.pathname, Astro.site).href,
   });
 }
 ---

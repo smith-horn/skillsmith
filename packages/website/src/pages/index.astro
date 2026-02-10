@@ -28,7 +28,7 @@ const supabaseConfig = getSupabaseConfig();
 
   <title>Skillsmith - AI Skill Discovery for Claude Code</title>
   <meta name="description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
-  <link rel="canonical" href="https://skillsmith.app/" />
+  <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
 
   <!-- Fonts: Satoshi + JetBrains Mono -->
   <!-- Non-CORS preconnect for CSS fetch, CORS preconnect for font file fetch -->
@@ -63,9 +63,9 @@ const supabaseConfig = getSupabaseConfig();
   <meta property="og:title" content="Skillsmith - AI Skill Discovery for Claude Code" />
   <meta property="og:description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://skillsmith.app/" />
+  <meta property="og:url" content={new URL(Astro.url.pathname, Astro.site).href} />
   <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
-  <meta property="og:image" content="https://skillsmith.app/og-image.png" />
+  <meta property="og:image" content={new URL('/og-image.png', Astro.site).href} />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
 
@@ -74,7 +74,7 @@ const supabaseConfig = getSupabaseConfig();
   <meta name="twitter:title" content="Skillsmith - AI Skill Discovery for Claude Code" />
   <meta name="twitter:description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
   <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
-  <meta name="twitter:image" content="https://skillsmith.app/og-image.png" />
+  <meta name="twitter:image" content={new URL('/og-image.png', Astro.site).href} />
 
   <!-- JSON-LD Structured Data -->
   <script type="application/ld+json">
