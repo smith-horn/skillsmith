@@ -38,6 +38,7 @@ export type SkillCategory =
   | 'productivity'
   | 'integration'
   | 'ai-ml'
+  | 'science'
   | 'other'
 
 /**
