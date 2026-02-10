@@ -251,4 +251,6 @@ export interface RegistrySkillInfo {
   repoUrl: string
   name: string
   trustTier: TrustTier
+  // SMI-2383: Quarantine status from registry
+  quarantined?: boolean
 }

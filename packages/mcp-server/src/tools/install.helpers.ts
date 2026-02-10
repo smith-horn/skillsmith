@@ -207,6 +207,8 @@ export async function lookupSkillFromRegistry(
           name: response.data.name,
           // SMI-1533: Validate trust tier for security scan configuration
           trustTier: validateTrustTier(response.data.trust_tier),
+          // SMI-2383: Pass through quarantine status
+          quarantined: response.data.quarantined === true,
         }
       }
       // API found skill but no repo_url - it's seed data
