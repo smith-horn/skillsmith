@@ -25,7 +25,7 @@ const categories = [...new Set(posts.map(post => post.data.category).filter(Bool
   description="Tutorials, guides, and insights about building agent skills for AI assistants"
 >
   <!-- JSON-LD for Blog listing -->
-  <script type="application/ld+json" slot="head">
+  <script is:inline type="application/ld+json" slot="head">
     {JSON.stringify({
       "@context": "https://schema.org",
       "@type": "Blog",

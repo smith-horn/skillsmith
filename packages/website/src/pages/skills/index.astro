@@ -22,7 +22,7 @@ const trustTiers = [
 
 <BaseLayout title="Skills" description="Search and discover agent skills">
   <!-- JSON-LD Schema -->
-  <script type="application/ld+json" slot="head">
+  <script is:inline type="application/ld+json" slot="head">
   {
     "@context": "https://schema.org",
     "@type": "CollectionPage",
@@ -256,7 +256,7 @@ const trustTiers = [
     </div>
   </div>
 
-  <script define:vars={{ apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1` }}>
+  <script is:inline define:vars={{ apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1` }}>
     const API_BASE = apiBase;
     const ITEMS_PER_PAGE = 12;
     const MIN_QUERY_LENGTH = 3; // SMI-1613: Minimum characters for search

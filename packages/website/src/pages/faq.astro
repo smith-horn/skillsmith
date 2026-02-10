@@ -148,7 +148,7 @@ const faqCategories: FAQCategory[] = [
     <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
 
     <!-- JSON-LD FAQPage Schema -->
-    <script type="application/ld+json" set:html={JSON.stringify({
+    <script is:inline type="application/ld+json" set:html={JSON.stringify({
       "@context": "https://schema.org",
       "@type": "FAQPage",
       "mainEntity": faqCategories.flatMap(cat => cat.items.map(item => ({
