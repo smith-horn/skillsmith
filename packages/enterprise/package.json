@@ -8,19 +8,23 @@
   "exports": {
     ".": {
       "types": "./dist/src/index.d.ts",
-      "import": "./dist/src/index.js"
+      "import": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
     },
     "./audit": {
       "types": "./dist/src/audit/index.d.ts",
-      "import": "./dist/src/audit/index.js"
+      "import": "./dist/src/audit/index.js",
+      "default": "./dist/src/audit/index.js"
     },
     "./audit/streaming": {
       "types": "./dist/src/audit/streaming/EventStream.d.ts",
-      "import": "./dist/src/audit/streaming/EventStream.js"
+      "import": "./dist/src/audit/streaming/EventStream.js",
+      "default": "./dist/src/audit/streaming/EventStream.js"
     },
     "./license": {
       "types": "./dist/src/license/index.d.ts",
-      "import": "./dist/src/license/index.js"
+      "import": "./dist/src/license/index.js",
+      "default": "./dist/src/license/index.js"
     }
   },
   "scripts": {
