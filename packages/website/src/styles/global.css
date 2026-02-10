@@ -310,6 +310,18 @@
     @apply text-base font-medium;
   }
 
+  /* Override browser autofill background for dark theme */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  select:-webkit-autofill,
+  textarea:-webkit-autofill {
+    -webkit-box-shadow: 0 0 0 1000px var(--color-dark-800) inset !important;
+    -webkit-text-fill-color: white !important;
+    transition: background-color 5000s ease-in-out 0s;
+    caret-color: white;
+  }
+
   /* Link base styles */
   a {
     @apply transition-colors duration-200;
