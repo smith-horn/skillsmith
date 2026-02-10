@@ -1,620 +1,66 @@
 # Claude Code Configuration - Skillsmith
 
+## Sub-Documentation
+
+Detailed guides extracted via progressive disclosure. CLAUDE.md contains essentials; sub-docs contain deep dives.
+
+| Document | Description |
+|----------|-------------|
+| [docker-guide.md](docs/development/docker-guide.md) | Container rebuild scenarios, DNS failure, native modules, troubleshooting |
+| [git-crypt-guide.md](docs/development/git-crypt-guide.md) | Unlock, worktree setup, rebase workaround, smudge filter fixes |
+| [ci-reference.md](docs/development/ci-reference.md) | Branch protection, change classification, Turborepo, CI scripts |
+| [deployment-guide.md](docs/development/deployment-guide.md) | Edge function deploy commands, CORS, website, monitoring & alerts |
+| [claude-flow-guide.md](docs/development/claude-flow-guide.md) | Agent types, swarm examples, hive mind, SPARC modes |
+
+---
+
 ## Docker-First Development
 
-**All code execution MUST happen in Docker.** This ensures consistent environments and avoids native module issues.
+**All code execution MUST happen in Docker.** Native modules require glibc. See [ADR-002](docs/adr/002-docker-glibc-requirement.md).
 
 ```bash
-# Start the development container (REQUIRED before any code execution)
-docker compose --profile dev up -d
-
-# ALL commands run inside Docker
-docker exec skillsmith-dev-1 npm run build
-docker exec skillsmith-dev-1 npm test
-docker exec skillsmith-dev-1 npm run lint
-docker exec skillsmith-dev-1 npm run typecheck
-docker exec skillsmith-dev-1 npm run audit:standards
+docker compose --profile dev up -d                    # Start container (REQUIRED first)
+docker exec skillsmith-dev-1 npm run build             # Build
+docker exec skillsmith-dev-1 npm test                  # Test
+docker exec skillsmith-dev-1 npm run lint              # Lint
+docker exec skillsmith-dev-1 npm run typecheck         # Typecheck
+docker exec skillsmith-dev-1 npm run audit:standards   # Standards audit
+docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 ```
 
-> **Why Docker?** Native modules (better-sqlite3, onnxruntime-node) require glibc. See [ADR-002](docs/adr/002-docker-glibc-requirement.md).
+**After pulling changes**: Always `docker exec skillsmith-dev-1 npm install && docker exec skillsmith-dev-1 npm run build`.
+
+**Full rebuild** (native module issues, major upgrades): See [docker-guide.md](docs/development/docker-guide.md#full-rebuild-thorough).
+
+**Container management**: `docker compose --profile dev down` (stop), `docker logs skillsmith-dev-1` (logs).
 
 ---
 
 ## CI Health Requirements
 
-**CI stability is a top priority.** All code changes must pass CI before merging. Monitor CI success rate and address issues proactively.
-
-### Zero Tolerance Policy
-
 | Category | Requirement |
 |----------|-------------|
 | ESLint | Zero warnings, zero errors |
-| TypeScript | Strict mode, no `any` types without justification |
+| TypeScript | Strict mode, no unjustified `any` |
 | Prettier | All files formatted |
-| Tests | 100% pass rate, no flaky tests |
+| Tests | 100% pass rate |
 | Security | No high-severity vulnerabilities |
+| File size | < 500 lines per file |
+| Test coverage | > 80% |
 
-### Scripts Must Use Docker
+**When CI fails**: Don't merge. Check logs. Run `docker exec skillsmith-dev-1 npm run preflight` locally. Create Linear issue if non-trivial.
 
-**All scripts MUST use Docker for npm commands.** Local npm execution causes environment inconsistencies.
+**Change tiers**: `docs` (~30s), `config` (validation), `code` (~11 min full), `deps` (rebuild + audit). Mixed commits trigger full CI. Details: [ci-reference.md](docs/development/ci-reference.md).
 
-```bash
-# CORRECT - Docker execution
-docker exec skillsmith-dev-1 npm test
-docker exec skillsmith-dev-1 npm run build
+**Build**: Uses Turborepo (`npm run build`). Legacy fallback: `npm run build:legacy`. See [ADR-106](docs/adr/106-turborepo-build-orchestration.md).
 
-# INCORRECT - Local execution (NEVER use)
-npm test
-npm run build
-```
-
-### Code Quality Standards
-
-| Standard | Target | Tracked By |
-|----------|--------|------------|
-| ESLint warnings | 0 | CI lint job |
-| Explicit `any` types | 0 (or justified) | ESLint rule |
-| File size | < 500 lines | Governance audit |
-| Test coverage | > 80% | Codecov |
-
-### When CI Fails
-
-1. **Do not merge** - CI failures block PRs
-2. **Investigate immediately** - Check the failing job logs
-3. **Create Linear issue** - If fix is non-trivial, track it
-4. **Fix locally first** - Run `docker exec skillsmith-dev-1 npm run preflight` before pushing
-
-### CI Change Classification (SMI-2186)
-
-The CI system classifies changes into tiers to run appropriate checks:
-
-| Tier | Trigger | Workflow | Jobs Run |
-|------|---------|----------|----------|
-| `docs` | Only `docs/**`, `*.md` | `docs-only.yml` | Secret scan, markdown lint (~30s) |
-| `config` | Only config files | `ci.yml` | Validation jobs |
-| `code` | `packages/**`, `supabase/**` | `ci.yml` | Full pipeline (~11 min) |
-| `deps` | `package*.json` changes | `ci.yml` | Docker rebuild, security audit |
-
-**Path Patterns (docs tier)**:
-
-| Pattern | Examples |
-|---------|----------|
-| `docs/**` | ADRs, implementation plans, architecture docs |
-| `**/*.md` | README.md, CLAUDE.md, any markdown file |
-| `LICENSE` | License file changes |
-| `.github/ISSUE_TEMPLATE/**` | Issue templates |
-| `.github/CODEOWNERS` | Code owners file |
-
-**Important**:
-
-- Mixed commits (docs + code) trigger full CI (code tier)
-- Docs-only commits run lightweight `docs-only.yml` (not skipped entirely)
-- See [ADR-105](docs/adr/105-ci-path-filtering.md) for decision rationale
-
-### Turborepo Build Orchestration (SMI-2196)
-
-`npm run build` uses Turborepo for intelligent build orchestration:
-
-```bash
-# Normal build (uses Turbo - recommended)
-docker exec skillsmith-dev-1 npm run build
-
-# Legacy build (manual ordering, for debugging)
-docker exec skillsmith-dev-1 npm run build:legacy
-```
-
-**Benefits**:
-
-- Dependency-aware task scheduling (builds packages in correct order)
-- Incremental builds with content hashing (10x faster on cache hit)
-- Local cache in `.turbo/` directory (gitignored)
-
-See [ADR-106](docs/adr/106-turborepo-build-orchestration.md) for decision rationale.
-
-### CI Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `scripts/ci/classify-changes.ts` | Classifies commits into tiers (docs/config/code/deps) |
-| `scripts/ci/detect-affected.ts` | Detects affected packages from changed files |
-
-### Branch Protection
-
-The `main` branch is protected with required status checks to ensure code quality.
-
-#### Required Checks
-
-All PRs must pass these checks before merging:
-
-| Check | Workflow | Purpose |
-|-------|----------|---------|
-| Secret Scan | ci.yml, docs-only.yml | Detect accidentally committed credentials |
-| Classify Changes | ci.yml | Categorize change type (docs/config/code/deps) |
-| Package Validation | ci.yml | Verify package.json scope for GitHub Packages |
-| Edge Function Validation | ci.yml | Validate Supabase function structure |
-| Build Docker Image | ci.yml | Build development container |
-| Lint | ci.yml | ESLint and Prettier checks |
-| Type Check | ci.yml | TypeScript type checking |
-| Security Audit | ci.yml | npm audit and security test suite |
-| Standards Compliance | ci.yml | Governance standards audit |
-| Build | ci.yml | Build all packages via Turborepo |
-| Markdown Lint | docs-only.yml | Documentation quality checks |
-
-#### How It Works
-
-**Code PRs**: All 11 checks must pass (full `ci.yml` pipeline runs)
-
-**Docs-only PRs**: Only 2 checks run (`Secret Scan`, `Markdown Lint` from `docs-only.yml`)
-
-- Full CI is skipped via `paths-ignore` optimization
-- Branch protection is satisfied because both checks are in the required list
-
-**Mixed PRs**: Full CI runs (code changes detected)
-
-#### Emergency Bypass
-
-If required checks are stuck or GitHub Actions is down:
-
-1. **Verify urgency**: Is this blocking production deployment or critical security fix?
-2. **Check status**: Visit [GitHub Status](https://www.githubstatus.com/)
-3. **Use admin bypass**:
-   - Navigate to PR → "Merge pull request"
-   - Select "Merge without waiting for requirements to be met"
-4. **Document**: Add comment explaining bypass reason
-
-**Note**: `enforce_admins: false` allows admins to bypass protection during emergencies.
-
-#### Troubleshooting
-
-**Issue**: "Required checks not found" error
-
-- **Cause**: Someone renamed a job in `ci.yml` or `docs-only.yml` without updating branch protection
-- **Fix**: Update `.github/branch-protection.json` and re-apply via GitHub API
-
-**Issue**: All PRs blocked after workflow changes
-
-- **Cause**: Required check name no longer exists in workflows
-- **Fix**: Use emergency bypass, then update branch protection configuration
-
-#### Configuration Drift Detection
-
-Validate that GitHub branch protection matches the IaC file:
-
-```bash
-./scripts/validate-branch-protection.sh
-```
-
-#### Applying Changes
-
-To apply branch protection from the IaC file (after modifying `.github/branch-protection.json`):
-
-```bash
-gh api repos/Smith-Horn/skillsmith/branches/main/protection -X PUT --input .github/branch-protection.json
-```
-
----
-
-## Git-Crypt (Encrypted Documentation)
-
-**IMPORTANT**: The `docs/` directory and `.claude/hive-mind/` are encrypted with git-crypt. You MUST unlock before reading these files.
-
-### Setup
-
-Set `GIT_CRYPT_KEY_PATH` in your `.env` file (see `.env.example`). Key path is managed via Varlock.
-
-### Check Status
-
-```bash
-git-crypt status docs/ | head -5
-# If you see "encrypted:" prefix, files are locked
-```
-
-### Unlock (Required for Reading Docs)
-
-```bash
-# Unlock using Varlock-managed key path (tilde expansion required)
-varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'
-```
-
-### Troubleshooting: Files Still Encrypted After Unlock
-
-If `git-crypt unlock` succeeds but files still show encrypted content, the smudge filter isn't being triggered. Use this workaround:
-
-```bash
-# Batch decrypt files manually (pipe through smudge filter)
-for f in docs/gtm/*.md docs/gtm/**/*.md; do
-  if [ -f "$f" ]; then
-    cat "$f" | git-crypt smudge > "/tmp/$(basename $f)" 2>/dev/null
-    mv "/tmp/$(basename $f)" "$f"
-  fi
-done
-```
-
-### Rebasing with Git-Crypt (format-patch Workaround)
-
-`git pull --rebase` fails in git-crypt repos because the smudge filter creates persistent dirty files that block rebasing. Use `format-patch` to preserve local commits:
-
-```bash
-# 1. Save local commits as patches
-git format-patch -N HEAD -o /tmp/patches/   # N = number of unpushed commits
-
-# 2. Reset to remote
-git fetch origin main
-git reset --hard origin/main
-
-# 3. Re-apply patches
-git am /tmp/patches/*.patch
-
-# 4. If a patch conflicts, abort and apply manually
-git am --abort
-# Then apply changes by hand (e.g., sed for bulk replacements)
-```
-
-**When to use**: Any time `git pull --rebase` fails with "You have unstaged changes" due to git-crypt smudge filter artifacts.
-
-### Worktree Considerations
-
-When creating git worktrees, git-crypt must be unlocked in the **main repo first**, then the worktree inherits the unlocked state.
-
-```bash
-# 1. Unlock in main repo first
-cd /path/to/skillsmith
-varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'
-
-# 2. Then create worktree
-git worktree add ../worktrees/my-feature -b feature/my-feature
-```
-
-### Automated Worktree Creation (SMI-1822)
-
-Use the automation script for creating worktrees in git-crypt encrypted repos:
-
-```bash
-# Create a new worktree with automatic git-crypt setup
-./scripts/create-worktree.sh worktrees/my-feature feature/my-feature
-
-# Show help
-./scripts/create-worktree.sh --help
-```
-
-The script handles:
-
-1. Validates git-crypt is unlocked in main repo
-2. Creates worktree with `--no-checkout` to avoid smudge filter errors
-3. Copies git-crypt keys to worktree's gitdir
-4. Checks out files with decryption working
-
-**Manual Method (if script unavailable):**
-
-```bash
-# Step 1: Create without checkout
-git worktree add --no-checkout worktrees/<name> -b <branch> main
-
-# Step 2: Find worktree's gitdir
-GIT_DIR=$(cat worktrees/<name>/.git | sed 's/gitdir: //')
-
-# Step 3: Copy git-crypt keys
-mkdir -p "$GIT_DIR/git-crypt/keys"
-cp -r .git/git-crypt/keys/* "$GIT_DIR/git-crypt/keys/"
-
-# Step 4: Checkout files
-cd worktrees/<name> && git reset --hard HEAD
-```
-
-### Encrypted Paths
-
-| Path | Contains |
-|------|----------|
-| `docs/**` | ADRs, implementation plans, architecture docs |
-| `.claude/hive-mind/**` | Hive mind execution configs |
-
-**Exception**: `docs/development/*.md` and `docs/templates/*.md` are NOT encrypted.
-
----
-
-## Claude-Flow MCP Server (REQUIRED for Hive Mind)
-
-**IMPORTANT**: Hive mind execution and agent spawning require the claude-flow MCP server to be configured.
-
-### Quick Setup
-
-```bash
-# Add MCP server (one-time setup)
-claude mcp add claude-flow -- npx claude-flow@alpha mcp start
-
-# Verify it's configured
-claude mcp list | grep claude-flow
-```
-
-### Project-Level Configuration (Recommended)
-
-The project includes `.mcp.json` for automatic MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "claude-flow": {
-      "command": "npx",
-      "args": ["claude-flow@alpha", "mcp", "start"],
-      "env": {
-        "CLAUDE_FLOW_LOG_LEVEL": "info",
-        "CLAUDE_FLOW_MEMORY_BACKEND": "sqlite"
-      }
-    }
-  }
-}
-```
-
-### MCP Tools Available
-
-Once configured, these tools become available for agent coordination:
-
-| Tool | Purpose |
-|------|---------|
-| `mcp__claude-flow__swarm_init` | Initialize swarm with topology (hierarchical, mesh, etc.) |
-| `mcp__claude-flow__agent_spawn` | Spawn specialist agents (architect, coder, tester, reviewer) |
-| `mcp__claude-flow__task_orchestrate` | Coordinate task execution |
-| `mcp__claude-flow__memory_usage` | Shared memory operations |
-| `mcp__claude-flow__swarm_destroy` | Cleanup swarm after completion |
-
-### Specialist Agent Types
-
-| Agent | Role | Specialization |
-|-------|------|----------------|
-| `architect` | System design | API contracts, infrastructure, DDD |
-| `coder` | Implementation | Backend, frontend, React, Astro, Rust |
-| `tester` | QA | Unit, integration, E2E, security tests |
-| `reviewer` | Code review | Security audit, best practices |
-| `researcher` | Analysis | Codebase exploration, documentation |
-
-### Example: Spawning Agents for a Wave
-
-```javascript
-// 1. Initialize swarm (use "laptop" profile for MacBook)
-mcp__claude-flow__swarm_init({
-  topology: "hierarchical",
-  maxAgents: 2,  // MacBook constraint
-  queen_model: "sonnet",
-  worker_model: "haiku"
-})
-
-// 2. Spawn specialist team (all in single message for parallel execution)
-mcp__claude-flow__agent_spawn({ type: "architect" })
-mcp__claude-flow__agent_spawn({ type: "coder" })
-mcp__claude-flow__agent_spawn({ type: "tester" })
-mcp__claude-flow__agent_spawn({ type: "reviewer" })
-
-// 3. Execute and coordinate via task_orchestrate
-mcp__claude-flow__task_orchestrate({
-  task: "Implement SMI-XXX feature",
-  strategy: "parallel"
-})
-```
-
-**See Also**:
-
-- [Hive Mind Execution Skill](.claude/skills/hive-mind-execution/SKILL.md)
-- [Hive Mind Advanced Skill](.claude/skills/hive-mind-advanced/SKILL.md)
-
----
-
-## License and Pricing
-
-**License**: [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license) - See [ADR-013](docs/adr/013-open-core-licensing.md)
-
-| Tier | Price | API Calls/Month | Features |
-|------|-------|-----------------|----------|
-| Community | Free | 1,000 | Core features |
-| Individual | $9.99/mo | 10,000 | Core + basic analytics |
-| Team | $25/user/mo | 100,000 | Team workspaces, private skills |
-| Enterprise | $55/user/mo | Unlimited | SSO, RBAC, audit logging |
-
-**References**: [ADR-017: Quota Enforcement](docs/adr/017-quota-enforcement-system.md) | [Quota Constants](packages/enterprise/src/license/quotas.ts)
+**Branch protection**: 11 required checks for code PRs, 2 for docs-only. Admin bypass for emergencies. Details: [ci-reference.md](docs/development/ci-reference.md#branch-protection).
 
 ---
 
 ## Project Overview
 
-Skillsmith is an MCP server for Claude Code skill discovery, installation, and management. It helps users find, evaluate, and install skills for their Claude Code environment.
-
-## Quick Start for Users
-
-Add to `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "skillsmith": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"]
-    }
-  }
-}
-```
-
-Once configured, you can ask Claude:
-
-```text
-"Search for testing skills"
-"Find verified skills for git workflows"
-"Show details for community/jest-helper"
-"Compare jest-helper and vitest-helper"
-"Install the commit skill"
-"Recommend skills for my React project"
-"Browse all security skills"
-"Show verified skills"
-"List high-quality skills (score > 80)"
-```
-
----
-
-## MCP Registry (SMI-2158)
-
-Skillsmith is published to the official MCP Registry for discovery by Claude CoWork and other MCP clients.
-
-### Registry Listing
-
-- **Registry**: [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/)
-- **Server Name**: `io.github.smith-horn/skillsmith`
-- **Version**: `0.3.14`
-- **npm Package**: `@skillsmith/mcp-server`
-
-Verify listing:
-
-```bash
-curl -s "https://registry.modelcontextprotocol.io/v0.1/servers?search=skillsmith" | jq '.servers[0].server.name'
-```
-
-### Publishing to MCP Registry
-
-The MCP Registry is updated automatically when `@skillsmith/mcp-server` is published via the CI workflow. For manual publishing:
-
-```bash
-# 1. Install mcp-publisher
-brew install mcp-publisher
-
-# 2. Authenticate with GitHub (org membership must be public)
-mcp-publisher login github
-
-# 3. Publish from packages/mcp-server/
-cd packages/mcp-server
-mcp-publisher publish
-```
-
-### Version Sync Requirement
-
-When bumping the npm version, **both files must be updated**:
-
-| File | Field |
-|------|-------|
-| `packages/mcp-server/package.json` | `version` |
-| `packages/mcp-server/server.json` | `version` AND `packages[0].version` |
-
-### CI Automation
-
-The `publish.yml` workflow automatically publishes to MCP Registry after npm publish. Requires:
-
-| Secret | Purpose |
-|--------|---------|
-| `MCP_REGISTRY_TOKEN` | JWT token from `mcp-publisher login` |
-
-To generate token for CI:
-
-```bash
-mcp-publisher login github
-cat ~/.mcpregistry_registry_token  # Copy this to GitHub Secrets
-```
-
----
-
-## Developer Guide
-
-### Build Commands
-
-| Command | Docker (PREFERRED) |
-|---------|---------------------|
-| Build | `docker exec skillsmith-dev-1 npm run build` |
-| Test | `docker exec skillsmith-dev-1 npm test` |
-| Lint | `docker exec skillsmith-dev-1 npm run lint` |
-| Typecheck | `docker exec skillsmith-dev-1 npm run typecheck` |
-| Audit | `docker exec skillsmith-dev-1 npm run audit:standards` |
-| Preflight | `docker exec skillsmith-dev-1 npm run preflight` |
-
-### Docker Container Management
-
-```bash
-docker compose --profile dev up -d      # Start container
-docker compose --profile dev down       # Stop container
-docker logs skillsmith-dev-1            # View logs
-```
-
-### After Pulling Changes
-
-**Important**: Always run `npm install` after pulling or merging PRs that change `package.json` or `package-lock.json`. Skipping this can cause version mismatches (e.g., wrong dependency versions resolved) leading to TypeScript errors or runtime failures.
-
-```bash
-docker exec skillsmith-dev-1 npm install
-docker exec skillsmith-dev-1 npm run build
-```
-
-### Docker Container Rebuild (SMI-1781)
-
-The Docker volume `node_modules` persists across container restarts. Use the appropriate method based on change scope:
-
-**Restart (fast) - Minor changes, adding dependencies:**
-
-```bash
-docker compose --profile dev down
-docker compose --profile dev up -d
-docker exec skillsmith-dev-1 npm install
-```
-
-**Full Rebuild (thorough) - Major version upgrades, native module changes, dependency conflicts:**
-
-```bash
-docker compose --profile dev down
-docker volume rm skillsmith_node_modules  # Clear cached node_modules
-docker compose --profile dev build --no-cache
-docker compose --profile dev up -d
-```
-
-| Scenario | Use |
-|----------|-----|
-| Adding a new dependency | Restart |
-| Updating patch/minor versions | Restart |
-| Major version upgrade (e.g., Stripe v14→v20) | Full Rebuild |
-| Native module issues (better-sqlite3, onnxruntime) | Full Rebuild |
-| TypeScript errors after `npm install` | Full Rebuild |
-| `NODE_MODULE_VERSION` mismatch | Full Rebuild |
-
-### Native Module Issues
-
-If you see `ERR_DLOPEN_FAILED` or `NODE_MODULE_VERSION` mismatch:
-
-```bash
-docker exec skillsmith-dev-1 npm rebuild better-sqlite3
-docker exec skillsmith-dev-1 npm rebuild onnxruntime-node
-```
-
-> See [ADR-012: Native Module Version Management](docs/adr/012-native-module-version-management.md)
-
----
-
-## SPARC Development
-
-### Core Commands
-
-```bash
-npx claude-flow sparc modes              # List available modes
-npx claude-flow sparc tdd "<feature>"    # Run TDD workflow
-npx claude-flow sparc run <mode> "<task>" # Execute specific mode
-```
-
-### Concurrent Execution Rules
-
-1. ALL operations MUST be concurrent/parallel in a single message
-2. **NEVER save working files to the root folder**
-3. Use Claude Code's Task tool for spawning agents concurrently
-4. Batch ALL todos in ONE TodoWrite call
-
-### File Organization
-
-- `/src` - Source code
-- `/tests` - Test files
-- `/docs` - Documentation
-- `/scripts` - Utility scripts
-
-### MCP Server Setup
-
-```bash
-claude mcp add claude-flow npx claude-flow@alpha mcp start
-```
-
-> See `.claude/agents/` for available agent definitions.
-
----
-
-## Package Structure
+Skillsmith is an MCP server for Claude Code skill discovery, installation, and management.
 
 ```text
 packages/
@@ -623,223 +69,65 @@ packages/
 └── cli/         # @skillsmith/cli - Command-line interface
 ```
 
-## Skillsmith MCP Tools
+**License**: [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license) — See [ADR-013](docs/adr/013-open-core-licensing.md)
 
-| Tool              | Description                          | Example                                   |
-| ----------------- | ------------------------------------ | ----------------------------------------- |
-| `search`          | Search for skills with filters       | `"Find testing skills"`                   |
-| `get_skill`       | Get detailed skill information       | `"Get details for community/jest-helper"` |
-| `install_skill`   | Install a skill to ~/.claude/skills  | `"Install jest-helper"`                   |
-| `uninstall_skill` | Remove an installed skill            | `"Uninstall jest-helper"`                 |
-| `recommend`       | Get contextual skill recommendations | `"Recommend skills for React"`            |
-| `validate`        | Validate a skill's structure         | `"Validate the commit skill"`             |
-| `compare`         | Compare skills side-by-side          | `"Compare jest-helper and vitest-helper"` |
+| Tier | Price | API Calls/Month |
+|------|-------|-----------------|
+| Community | Free | 1,000 |
+| Individual | $9.99/mo | 10,000 |
+| Team | $25/user/mo | 100,000 |
+| Enterprise | $55/user/mo | Unlimited |
 
-### Tool Parameters
-
-**search**
-
-- `query` (optional): Search term. Required if no filters provided.
-- `category`: Filter by category (development, testing, devops, etc.)
-- `trust_tier`: Filter by trust level (verified, community, experimental)
-- `min_score`: Minimum quality score (0-100)
-- `limit`: Max results (default 10)
-
-**Note:** Either `query` OR at least one filter (`category`, `trust_tier`, `min_score`) must be provided.
-
-**get_skill**
-
-- `id` (required): Skill ID in format `author/name`
-
-**compare**
-
-- `skill_ids` (required): Array of skill IDs to compare (2-5 skills)
-
-### Trust Tiers
-
-| Tier | Description |
-|------|-------------|
-| `verified` | Official Anthropic skills |
-| `community` | Community-reviewed skills |
-| `experimental` | New/beta skills |
-
-### API Authentication (SMI-1950)
-
-The MCP server supports three authentication modes:
-
-| Mode | Header | Rate Limit | Usage Tracking |
-|------|--------|------------|----------------|
-| Personal API Key | `X-API-Key: sk_live_*` | Tier-based (60-300/min) | ✅ Account dashboard |
-| Supabase Anon Key | `Authorization: Bearer eyJ...` | 30/min (community) | ❌ Not tracked |
-| No Auth | None | 10 total (trial) | ❌ Not tracked |
-
-**To track usage on your account**, configure your personal API key using one of these methods:
-
-**Method 1: Config File (Recommended - Cross-Platform)**
-
-```bash
-mkdir -p ~/.skillsmith
-echo '{"apiKey": "sk_live_your_key_here"}' > ~/.skillsmith/config.json
-```
-
-**Method 2: Claude Settings (Per-Server)**
-
-Add to `~/.claude/settings.json`:
+**Quick Start** — Add to `~/.claude/settings.json`:
 
 ```json
-{
-  "mcpServers": {
-    "skillsmith": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"],
-      "env": {
-        "SKILLSMITH_API_KEY": "sk_live_your_key_here"
-      }
-    }
-  }
-}
+{ "mcpServers": { "skillsmith": { "command": "npx", "args": ["-y", "@skillsmith/mcp-server"] } } }
 ```
-
-**Important**: Shell environment exports (`export SKILLSMITH_API_KEY=...`) do NOT reach MCP server subprocesses. Use one of the methods above.
-
-Get your API key from <https://skillsmith.app/account> after signing up.
 
 ---
 
-## Skillsmith CLI Commands
+## Git-Crypt (Encrypted Documentation)
 
-The CLI (`skillsmith` or `sklx`) provides commands for skill management and authoring.
+**`docs/`, `.claude/`, and `supabase/` are encrypted.** Exceptions: `docs/development/*.md`, `docs/templates/*.md`, `supabase/rollbacks/**`.
 
-### Author Commands (SMI-1389, SMI-1390, SMI-1433)
+```bash
+git-crypt status docs/ | head -5                      # Check if locked
+varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'  # Unlock
+```
 
-| Command | Description |
-|---------|-------------|
-| `author subagent` | Generate companion subagent for a skill |
-| `author transform` | Upgrade existing skill with subagent |
-| `author mcp-init` | Scaffold a new MCP server project |
+**Worktrees**: Unlock main repo first, then `./scripts/create-worktree.sh`. Remove with `./scripts/remove-worktree.sh --prune`.
 
-> See [Subagent Pair Generation Architecture](docs/architecture/subagent-pair-generation-architecture.md)
+**Rebasing**: `git pull --rebase` fails due to smudge filter. Use `git format-patch` workaround.
 
-### Sync Commands (SMI-1467)
-
-| Command | Description |
-|---------|-------------|
-| `sync` | Sync skills from registry |
-| `sync status` | Show sync status |
-| `sync config` | Configure auto-sync |
-
-> See [ADR-018: Registry Sync System](docs/adr/018-registry-sync-system.md)
+**Full guide**: [git-crypt-guide.md](docs/development/git-crypt-guide.md)
 
 ---
 
 ## Varlock Security
 
-**All secrets MUST be managed via Varlock. Never expose API keys in terminal output.**
+**All secrets via Varlock. Never expose API keys in terminal output.**
 
-| File | Purpose | Commit? |
-|------|---------|---------|
-| `.env.schema` | Defines variables with `@sensitive` annotations | Yes |
-| `.env.example` | Template with placeholder values | Yes |
-| `.env` | Actual secrets | Never |
-
-### Safe Commands
+| File | Commit? |
+|------|---------|
+| `.env.schema` | Yes (defines `@sensitive` annotations) |
+| `.env.example` | Yes (placeholder values) |
+| `.env` | Never |
 
 ```bash
-varlock load                    # Validate environment (masked output)
+varlock load                    # Validate (masked output)
 varlock run -- npm test         # Run with secrets injected
 ```
 
-### Unsafe Commands (NEVER Use)
-
-```bash
-echo $LINEAR_API_KEY            # Exposes to terminal
-cat .env                        # Exposes all secrets
-```
-
-### AI Agent Secret Handling (SMI-1956)
-
-**Never ask users to paste secrets in chat.** Guide them to configure secrets via settings files, then reference via `$VAR` syntax.
-
-See [§4.11 AI Agent Secret Handling](docs/architecture/standards-security.md#411-ai-agent-secret-handling-smi-1956) for the full pattern.
+**Never** `echo $SECRET` or `cat .env`. Never ask users to paste secrets in chat. See [AI Agent Secret Handling](docs/architecture/standards-security.md#411-ai-agent-secret-handling-smi-1956).
 
 ---
 
-## Skills Configuration
+## Test File Locations (SMI-1780)
 
-### Project Skills (`.claude/skills/`)
+Vitest only runs tests matching these patterns. Tests elsewhere are **silently ignored**.
 
-| Skill | Purpose | Trigger Phrases |
-|-------|---------|-----------------|
-| [governance](.claude/skills/governance/SKILL.md) | Engineering standards enforcement | "code review", "standards", "compliance", "retro" |
-| [worktree-manager](.claude/skills/worktree-manager/SKILL.md) | Git worktree parallel development | "create worktree", "parallel development" |
-
-**Quick Audit**: `docker exec skillsmith-dev-1 npm run audit:standards`
-
-### User-Level Skills (`~/.claude/skills/`)
-
-| Skill | Purpose | Trigger Phrases |
-|-------|---------|-----------------|
-| [linear](~/.claude/skills/linear/SKILL.md) | Linear issue management | "linear issue", "SMI-xxx" |
-| [mcp-decision-helper](~/.claude/skills/mcp-decision-helper/SKILL.md) | Skill vs MCP decision framework | "should I use MCP", "skill vs MCP" |
-
-### CI/DevOps Skills (User-Level)
-
-| Skill | Purpose |
-|-------|---------|
-| `flaky-test-detector` | Detect timing-sensitive test patterns |
-| `version-sync` | Sync Node.js versions across files |
-| `ci-doctor` | Diagnose CI/CD pipeline issues |
-| `docker-optimizer` | Optimize Dockerfile for speed/size |
-| `security-auditor` | Run structured security audits |
-
----
-
-## Linear Integration
-
-Initiative: Skillsmith (SMI-xxx issues)
-
-| Document | Purpose | Location |
-|----------|---------|----------|
-| **CLAUDE.md** | AI operational context | Project root |
-| **standards.md** | Engineering policy (authoritative) | docs/architecture/ |
-
----
-
-## Embedding Service Configuration
-
-The EmbeddingService supports both real ONNX embeddings and deterministic mock embeddings.
-
-| Mode | Use Case | Performance |
-|------|----------|-------------|
-| **Real** (default) | Production, semantic search | ~50ms/embedding |
-| **Fallback** | Tests, CI, development | <1ms/embedding |
-
-Set `SKILLSMITH_USE_MOCK_EMBEDDINGS=true` to force fallback mode globally.
-
-> See [ADR-009: Embedding Service Fallback Strategy](docs/adr/009-embedding-service-fallback.md)
-
-### Auto-Update Check (SMI-1952)
-
-The MCP server checks for updates on startup and notifies via stderr if a newer version is available.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SKILLSMITH_AUTO_UPDATE_CHECK` | `true` | Set to `false` to disable update notifications |
-
----
-
-## Testing & Benchmarks
-
-- **Neural Integration Tests**: See [docs/development/neural-testing.md](docs/development/neural-testing.md)
-- **V3 Migration Benchmarks**: See [docs/development/benchmarks.md](docs/development/benchmarks.md)
-- **Stripe CLI Testing**: See [docs/development/stripe-testing.md](docs/development/stripe-testing.md)
-
-### Test File Locations (SMI-1780)
-
-Vitest only runs tests matching these include patterns. Tests in other locations will be silently ignored.
-
-| Pattern | Example Location |
-|---------|------------------|
+| Pattern | Example |
+|---------|---------|
 | `packages/*/src/**/*.test.ts` | `packages/core/src/foo.test.ts` |
 | `packages/*/src/**/*.spec.ts` | `packages/mcp-server/src/bar.spec.ts` |
 | `packages/*/tests/**/*.test.ts` | `packages/core/tests/unit/foo.test.ts` |
@@ -848,358 +136,114 @@ Vitest only runs tests matching these include patterns. Tests in other locations
 | `supabase/functions/**/*.test.ts` | `supabase/functions/indexer/index.test.ts` |
 | `scripts/tests/**/*.test.ts` | `scripts/tests/validate-skills.test.ts` |
 
-**Common Mistakes:**
-
-- `scripts/__tests__/foo.test.ts` - Wrong directory name (use `scripts/tests/`)
-- `packages/core/test/foo.test.ts` - Wrong directory name (use `tests/` plural)
-- `src/foo.test.ts` - Must be inside a package
-
-> Reference: `vitest.config.ts` lines 7-19
+**Common mistakes**: `scripts/__tests__/` (use `scripts/tests/`), `packages/core/test/` (use `tests/` plural), `src/foo.test.ts` (must be inside a package). Reference: `vitest.config.ts`.
 
 ---
 
-## Hive Mind Orchestration
+## Skillsmith MCP Tools
 
-Hive mind configs enable multi-agent task orchestration with coordinated memory and quality gates.
+| Tool | Description |
+|------|-------------|
+| `search` | Search skills (query, category, trust_tier, min_score, limit) |
+| `get_skill` | Get skill details by `author/name` ID |
+| `install_skill` | Install skill to `~/.claude/skills` |
+| `uninstall_skill` | Remove installed skill |
+| `recommend` | Contextual skill recommendations |
+| `validate` | Validate skill structure |
+| `compare` | Compare 2-5 skills side-by-side |
 
-### Configuration Location
+**Auth**: Personal API Key (`X-API-Key: sk_live_*`, tier-based), Supabase Anon Key (30/min), No Auth (10 trial). Configure in `~/.skillsmith/config.json` or `SKILLSMITH_API_KEY` env in Claude settings. Shell exports don't reach MCP subprocesses.
 
-```text
-.claude/hive-mind/
-├── README.md              # Usage documentation
-└── *.yaml                 # Task configurations
-```
+**Trust tiers**: verified (official), community (reviewed), experimental (new/beta).
 
-### Quick Start
-
-```bash
-# Run a hive mind configuration
-./start-hive-mind.sh
-
-# Or use claude-flow directly
-npx claude-flow swarm --config .claude/hive-mind/your-config.yaml
-```
-
-### Resource Profiles
-
-| Profile | Max Agents | Use Case |
-|---------|------------|----------|
-| `laptop` | 2 | M1/M4 MacBook development |
-| `workstation` | 4 | Desktop with more resources |
-| `server` | 8+ | CI/CD or cloud execution |
-
-### When to Version Configs
-
-- **Version**: Reusable templates, team workflows, release processes
-- **Gitignore**: One-time tasks, personal preferences, experiments
-
-> See [.claude/hive-mind/README.md](.claude/hive-mind/README.md) for full documentation
+**CLI**: `skillsmith` or `sklx` — `author subagent/transform/mcp-init`, `sync/status/config`. See [ADR-018](docs/adr/018-registry-sync-system.md).
 
 ---
 
 ## Supabase Edge Functions
 
-| Function | Purpose | Auth |
-|----------|---------|------|
-| `early-access-signup` | Email waitlist signup with rate limiting, honeypot, Resend emails | Anonymous |
-| `contact-submit` | Contact form submissions with email notifications | Anonymous |
-| `checkout` | Stripe checkout session creation | Anonymous |
-| `stripe-webhook` | Stripe webhook handler (subscriptions, payments, license keys) | Anonymous |
-| `create-portal-session` | Stripe customer portal session creation | Authenticated |
-| `list-invoices` | List customer invoices from Stripe | Authenticated |
-| `update-seat-count` | Update subscription seat count | Authenticated |
-| `stats` | Public stats (skill count) for homepage | Anonymous |
-| `skills-search` | Skill search API | API Key |
-| `skills-get` | Get skill details | API Key |
-| `skills-recommend` | Skill recommendations | API Key |
-| `indexer` | GitHub skill indexing (scheduled) | Service Role |
-| `skills-refresh-metadata` | Refresh metadata for existing skills (scheduled) | Service Role |
-| `ops-report` | Weekly operations report with email | Service Role |
-| `alert-notify` | Send alert emails on job failures | Service Role |
+| Function | Auth | `--no-verify-jwt` |
+|----------|------|--------------------|
+| `early-access-signup`, `contact-submit`, `stats`, `checkout`, `stripe-webhook`, `events` | Anonymous | Yes |
+| `skills-search`, `skills-get`, `skills-recommend` | API Key | Yes |
+| `generate-license`, `regenerate-license`, `create-portal-session`, `list-invoices` | Authenticated (internal JWT) | Yes |
+| `update-seat-count` | Authenticated | No |
+| `indexer`, `skills-refresh-metadata`, `ops-report`, `alert-notify` | Service Role | No |
 
-**Deploy a function:**
+**Adding anonymous functions** (CI validates): Add to `supabase/config.toml` with `verify_jwt = false`, add to `ANONYMOUS_FUNCTIONS` in `scripts/audit-standards.mjs`.
 
-```bash
-npx supabase functions deploy <function-name> --no-verify-jwt  # Anonymous access
-npx supabase functions deploy <function-name>                   # Requires auth
-```
-
-**Functions requiring `--no-verify-jwt`:**
-
-These functions bypass Supabase gateway JWT validation and handle auth internally:
-
-```bash
-# Anonymous functions (no auth required)
-npx supabase functions deploy early-access-signup --no-verify-jwt
-npx supabase functions deploy contact-submit --no-verify-jwt
-npx supabase functions deploy stats --no-verify-jwt
-npx supabase functions deploy skills-search --no-verify-jwt
-npx supabase functions deploy skills-get --no-verify-jwt
-npx supabase functions deploy skills-recommend --no-verify-jwt
-npx supabase functions deploy stripe-webhook --no-verify-jwt
-npx supabase functions deploy checkout --no-verify-jwt
-npx supabase functions deploy events --no-verify-jwt
-
-# Authenticated functions with internal JWT validation
-# These validate the user token in function code, not at gateway
-npx supabase functions deploy generate-license --no-verify-jwt
-npx supabase functions deploy regenerate-license --no-verify-jwt
-npx supabase functions deploy create-portal-session --no-verify-jwt
-npx supabase functions deploy list-invoices --no-verify-jwt
-```
-
-> **Why these functions use `--no-verify-jwt`:** The Supabase gateway rejects user JWTs from the frontend auth flow. These functions validate tokens internally using `supabase.auth.getUser()`. See SMI-1906 for details.
->
-> **Note**: The `verify_jwt` setting is also configured in `supabase/config.toml` for local development. When deploying to production, you must use the `--no-verify-jwt` flag explicitly.
-
-**CI Protection (SMI-1900):** Anonymous functions are validated by `npm run audit:standards`. If you add a new anonymous function:
-
-1. Add `[functions.<name>]` with `verify_jwt = false` to `supabase/config.toml`
-2. Add deploy command to the anonymous functions list above
-3. Add function name to `ANONYMOUS_FUNCTIONS` array in `scripts/audit-standards.mjs`
-
-### CORS Configuration (SMI-1904)
-
-CORS is configured in `supabase/functions/_shared/cors.ts`:
-
-| Origin Type | Handling |
-|-------------|----------|
-| Production domains | Always allowed (`skillsmith.app`, `skillsmith.dev`) |
-| Vercel preview URLs | Auto-allowed via pattern (`*-smithhorngroup.vercel.app`) |
-| Localhost | Always allowed for development |
-| Custom domains | Add via `CORS_ALLOWED_ORIGINS` env var |
-
-**Adding custom origins:**
-
-Set in Supabase Dashboard → Edge Functions → Secrets:
-
-```text
-CORS_ALLOWED_ORIGINS=https://custom.example.com,https://staging.skillsmith.app
-```
-
-Or via CLI:
-
-```bash
-npx supabase secrets set CORS_ALLOWED_ORIGINS="https://custom.example.com"
-```
-
-CI will fail if any anonymous function is missing from config.toml or CLAUDE.md.
+**Deploy commands & CORS**: [deployment-guide.md](docs/development/deployment-guide.md)
 
 ---
 
 ## Monitoring & Alerts
 
-### Scheduled Jobs
-
 | Job | Schedule | Function |
 |-----|----------|----------|
 | Skill Indexer | Daily 2 AM UTC | `indexer` |
 | Metadata Refresh | Hourly :30 | `skills-refresh-metadata` |
-| Weekly Ops Report | Monday 9 AM UTC | `ops-report` |
-| Billing Monitor | Monday 9 AM UTC | GitHub Actions only |
+| Ops Report | Monday 9 AM UTC | `ops-report` |
+| Billing Monitor | Monday 9 AM UTC | GitHub Actions |
 
-### Alert Notifications
-
-Alerts are sent to `support@skillsmith.app` via Resend when:
-
-- Indexer workflow fails
-- Metadata refresh workflow fails (scheduled runs only)
-- Weekly ops report detects anomalies
-
-**Trigger manual ops report:**
-
-```bash
-varlock run -- bash -c 'curl -X POST \
-  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
-  -H "Content-Type: application/json" \
-  -d "{\"days\": 7, \"dryRun\": false}" \
-  "$SUPABASE_URL/functions/v1/ops-report"'
-```
-
-### Audit Logs
-
-All scheduled jobs log to the `audit_logs` table:
-
-- `indexer:run` - Skill indexing results
-- `refresh:run` - Metadata refresh results
-- `ops-report:sent` - Weekly report sent
-- `alert:sent` - Alert notification sent
+Alerts to `support@skillsmith.app` via Resend on failures. All jobs log to `audit_logs` table. Manual trigger & audit log details: [deployment-guide.md](docs/development/deployment-guide.md#monitoring--alerts).
 
 ---
 
-## Architecture Documentation
+## Claude-Flow MCP Server
 
-| Document | Purpose |
-|----------|---------|
-| [Skill Dependencies](docs/architecture/system-design/skill-dependencies.md) | Dependency graph showing skill relationships |
-| [System Overview](docs/architecture/system-design/system-overview.md) | High-level system architecture |
-| [Architecture Index](docs/architecture/index.md) | Complete architecture documentation index |
-| [Engineering Standards](docs/architecture/standards.md) | Authoritative engineering policy |
-| [Database Standards](docs/architecture/standards-database.md) | Migration patterns, function security, RLS |
-| [MCP Decision Engine](docs/architecture/mcp-decision-engine-architecture.md) | Skill vs MCP decision framework |
-| [Indexer Infrastructure](docs/architecture/indexer-infrastructure.md) | GitHub skill indexing with App authentication |
-| [Astro Script Patterns](docs/architecture/standards-astro.md) | Module vs inline scripts, server-to-client data passing, **layout consistency & auth navigation** |
+Required for hive mind and agent spawning. Auto-configured via `.mcp.json`. Manual: `claude mcp add claude-flow -- npx claude-flow@alpha mcp start`.
+
+**Tools**: `swarm_init`, `agent_spawn`, `task_orchestrate`, `memory_usage`, `swarm_destroy`.
+
+**Agent types**: architect, coder, tester, reviewer, researcher.
+
+**Full guide**: [claude-flow-guide.md](docs/development/claude-flow-guide.md)
 
 ---
 
-## Process Documentation
+## MCP Registry
 
-| Document | Purpose |
-|----------|---------|
-| [Context Compaction](docs/process/context-compaction.md) | AI context window management, session recovery, hive mind coordination |
-| [Linear Hygiene Guide](docs/process/linear-hygiene-guide.md) | Issue management and workflow standards |
-| [Wave Completion Checklist](docs/process/wave-completion-checklist.md) | Quality gates for wave-based development |
-| [Exploration Phase Template](docs/process/exploration-phase-template.md) | Template for exploration/discovery phases |
+Published as `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/). Auto-published via CI. **Version sync required**: update both `packages/mcp-server/package.json` and `packages/mcp-server/server.json`. Full guide: [mcp-registry.md](docs/development/mcp-registry.md).
 
 ---
 
-## Website Documentation (skillsmith.app)
+## Skills & Embedding
 
-Public documentation pages at <https://skillsmith.app/docs>:
+**Project skills** (`.claude/skills/`): [governance](.claude/skills/governance/SKILL.md) (standards enforcement), [worktree-manager](.claude/skills/worktree-manager/SKILL.md) (parallel development).
 
-| Page | Path | Description |
-|------|------|-------------|
-| Overview | `/docs` | Main documentation landing page |
-| Getting Started | `/docs/getting-started` | Setup guide for MCP server and CLI |
-| Quickstart | `/docs/quickstart` | Dual workflow paths for quick setup |
-| CLI Reference | `/docs/cli` | Complete CLI command reference |
-| MCP Server | `/docs/mcp-server` | MCP server configuration |
-| API Reference | `/docs/api` | API documentation for integrators |
-| Security | `/docs/security` | Security scanning, threat model, best practices |
-| Quarantine | `/docs/quarantine` | Quarantine severity levels and resolution process |
-| Trust Tiers | `/docs/trust-tiers` | Four-tier trust system (Official, Verified, Community, Unverified) |
+**User skills** (`~/.claude/skills/`): linear, mcp-decision-helper, flaky-test-detector, version-sync, ci-doctor, docker-optimizer, security-auditor.
 
-**Deployment**: Website requires manual deployment via Vercel CLI:
-
-```bash
-cd packages/website && vercel --prod
-```
-
-**Contact Form**: All user inquiries route through `/contact` form (no exposed email addresses).
-
-- Supports `?topic=` URL param: `verification`, `security`, `support`, `enterprise`, `general`, etc.
-- `/verify` redirects to `/contact?topic=verification`
+**Embedding**: Real ONNX (~50ms) or mock (<1ms, `SKILLSMITH_USE_MOCK_EMBEDDINGS=true`). See [ADR-009](docs/adr/009-embedding-service-fallback.md). Auto-update check: `SKILLSMITH_AUTO_UPDATE_CHECK=false` to disable.
 
 ---
 
 ## Troubleshooting
 
-### Container won't start
+| Problem | Fix |
+|---------|-----|
+| Container won't start | `docker compose --profile dev down && docker volume rm skillsmith_node_modules && docker compose --profile dev up -d` |
+| Native module errors | `docker exec skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node` |
+| Platform mismatch (SIGKILL 137) | `rm -rf packages/*/node_modules/better-sqlite3 packages/*/node_modules/onnxruntime-node` then rebuild |
+| Docker DNS failure | `docker network prune -f` then restart container |
+| Stale CJS artifacts | `docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f -delete'` |
+| Orphaned agents | `./scripts/cleanup-orphans.sh` (`--dry-run` to preview) |
 
-```bash
-docker compose --profile dev down
-docker volume rm skillsmith_node_modules
-docker compose --profile dev up -d
-docker exec skillsmith-dev-1 npm install
-```
-
-### Tests fail with native module errors
-
-```bash
-docker exec skillsmith-dev-1 npm rebuild better-sqlite3
-docker exec skillsmith-dev-1 npm rebuild onnxruntime-node
-```
-
-### VSCode extension build fails with "@esbuild/linux-x64" not found
-
-This occurs when `npm ci --ignore-scripts` skips esbuild's postinstall script that downloads platform-specific binaries.
-
-```bash
-docker exec skillsmith-dev-1 npm rebuild esbuild
-```
-
-> **Note**: The Dockerfile already handles this via `npm rebuild better-sqlite3 onnxruntime-node esbuild`
-
-### Orphaned Agent Processes
-
-If background agents don't terminate properly:
-
-```bash
-# Preview orphaned processes
-./scripts/cleanup-orphans.sh --dry-run
-
-# Kill orphaned processes
-./scripts/cleanup-orphans.sh
-```
-
-### Native Module Platform Mismatch (SMI-2222)
-
-**Symptoms**: SIGKILL exit 137, "wrong ELF class" errors, process crashes during database initialization when running outside Docker.
-
-**Root Cause**: Package-level `node_modules` (e.g., `packages/core/node_modules/better-sqlite3`) can contain binaries compiled for a different platform (Linux binaries from Docker when running on macOS).
-
-**Solution**:
-
-```bash
-# Remove platform-incompatible native module binaries
-rm -rf packages/*/node_modules/better-sqlite3 packages/*/node_modules/onnxruntime-node
-
-# Then rebuild in Docker
-docker exec skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node
-```
-
-**Prevention**: Always rebuild native modules after switching between Docker and host development. The root `node_modules/` is fine (managed by Docker volume), but package-level duplicates can cause issues.
-
-> See [ADR-107: Async/Sync Context Separation](docs/adr/107-async-sync-context-separation.md) for related WASM fallback architecture.
-
-### Docker DNS Failure (SMI-2367)
-
-**Symptoms**: `getaddrinfo EAI_AGAIN registry.npmjs.org`, `npm audit` / `npm install` fail inside container, all outbound network calls time out.
-
-**Root Cause**: Stale Docker bridge networks from old worktrees/containers accumulate and degrade Docker Desktop's internal DNS proxy.
-
-**Diagnosis**:
-
-```bash
-# Check network count (more than 5 is suspicious)
-docker network ls | wc -l
-
-# Test DNS inside container
-docker exec skillsmith-dev-1 node -e "require('dns').resolve('registry.npmjs.org', console.log)"
-```
-
-**Fix**:
-
-```bash
-# 1. Restart Docker Desktop
-# 2. Prune stale networks
-docker network prune -f
-
-# 3. Restart container
-docker compose --profile dev up -d
-
-# 4. Verify DNS works
-docker exec skillsmith-dev-1 npm audit --production --audit-level=high
-```
-
-**Prevention**: Use `scripts/remove-worktree.sh --prune` when removing worktrees. It automatically checks network count and optionally prunes stale networks.
-
-### Stale Build Artifacts in Container
-
-**Symptoms**: `ReferenceError: exports is not defined in ES module scope`, `Object.defineProperty(exports, "__esModule", ...)` errors in source files.
-
-**Root Cause**: Stale CJS-compiled `.js` files from previous builds sitting in `src/` directories inside the Docker container, conflicting with `"type": "module"`.
-
-**Diagnosis**:
-
-```bash
-# Find stale .js files in source directories
-docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f'
-```
-
-**Fix**:
-
-```bash
-# Remove stale files (review list first)
-docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f -delete'
-```
+**Detailed diagnostics** (Symptoms / Root Cause / Fix): [docker-guide.md](docs/development/docker-guide.md#troubleshooting)
 
 ---
 
-## Support
+## Key References
 
-- Documentation: <https://github.com/ruvnet/claude-flow>
-- Issues: <https://github.com/ruvnet/claude-flow/issues>
+| Category | Documents |
+|----------|-----------|
+| Architecture | [System Overview](docs/architecture/system-design/system-overview.md), [Skill Dependencies](docs/architecture/system-design/skill-dependencies.md), [Index](docs/architecture/index.md) |
+| Standards | [Engineering](docs/architecture/standards.md), [Database](docs/architecture/standards-database.md), [Astro](docs/architecture/standards-astro.md), [Security](docs/architecture/standards-security.md) |
+| Process | [Context Compaction](docs/process/context-compaction.md), [Linear Hygiene](docs/process/linear-hygiene-guide.md), [Wave Checklist](docs/process/wave-completion-checklist.md) |
+| Development | [Docker](docs/development/docker-guide.md), [Git-Crypt](docs/development/git-crypt-guide.md), [CI](docs/development/ci-reference.md), [Deploy](docs/development/deployment-guide.md), [Claude-Flow](docs/development/claude-flow-guide.md) |
+| Testing | [Stripe](docs/development/stripe-testing.md), [Neural](docs/development/neural-testing.md), [Benchmarks](docs/development/benchmarks.md) |
+| Website | [skillsmith.app/docs](https://skillsmith.app/docs) — Deploy: `cd packages/website && vercel --prod` |
+
+**Linear**: Initiative Skillsmith (SMI-xxx). Authoritative standards: `docs/architecture/standards.md`.
 
 ---
 

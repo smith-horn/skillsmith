@@ -169,7 +169,15 @@ export function extractCategoryFromTags(tags: string[] | undefined | null): Skil
     productivity: ['workflow', 'automation', 'tools', 'utility', 'helper'],
     integration: ['api', 'rest', 'graphql', 'webhook', 'sync'],
     'ai-ml': ['ai', 'ml', 'machine-learning', 'llm', 'gpt', 'claude', 'openai', 'neural'],
-    science: ['bioinformatics', 'genomics', 'proteomics', 'biology', 'single-cell', 'sequencing', 'computational-biology'],
+    science: [
+      'bioinformatics',
+      'genomics',
+      'proteomics',
+      'biology',
+      'single-cell',
+      'sequencing',
+      'computational-biology',
+    ],
     other: [],
   }
 
