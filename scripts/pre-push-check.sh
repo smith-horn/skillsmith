@@ -88,7 +88,7 @@ AUDIT_STATUS=${AUDIT_STATUS:-0}
 if [ $AUDIT_STATUS -ne 0 ]; then
   # SMI-2369: Distinguish network errors from actual vulnerabilities
   # Network errors should warn but not block the push
-  if echo "$AUDIT_OUTPUT" | grep -qiE "getaddrinfo|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|network|fetch failed|request to .* failed"; then
+  if echo "$AUDIT_OUTPUT" | grep -qiE "getaddrinfo|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|fetch failed|request to .* failed"; then
     echo -e "${YELLOW}⚠️  npm audit skipped - network unavailable${NC}"
     echo -e "${YELLOW}   DNS or network error detected inside container.${NC}"
     echo -e "${YELLOW}   CI will run npm audit on push. To fix locally:${NC}"
