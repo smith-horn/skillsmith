@@ -21,7 +21,7 @@ interface Props {
   activePath?: string;
 }
 
-const { title, description = "Skillsmith - AI-powered skill discovery and management for Claude Code", activePath = '' } = Astro.props;
+const { title, description = "Skillsmith - AI-powered agent skill discovery and management", activePath = '' } = Astro.props;
 
 // Get Supabase config for auth-aware navigation
 const supabaseConfig = getSupabaseConfig();

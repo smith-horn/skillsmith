@@ -1,6 +1,6 @@
 # @skillsmith/cli
 
-Command-line interface for Skillsmith - discover, manage, and author Claude Code skills.
+Command-line interface for Skillsmith - discover, manage, and author agent skills.
 
 ## What's New in v0.3.1
 
@@ -293,7 +293,7 @@ npm install
 npm run dev  # Start in development mode
 ```
 
-**Configure in Claude Code** (`~/.claude/settings.json`):
+**Configure in your MCP client settings** (`~/.claude/settings.json`):
 ```json
 {
   "mcpServers": {
@@ -510,7 +510,7 @@ npm install
 # Start development server
 npm run dev
 
-# Add to Claude Code settings
+# Add to MCP client settings
 # Edit ~/.claude/settings.json to include the server
 ```
 
