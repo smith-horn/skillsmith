@@ -170,9 +170,25 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `update-seat-count` | Authenticated | No |
 | `indexer`, `skills-refresh-metadata`, `ops-report`, `alert-notify` | Service Role | No |
 
-**Adding anonymous functions** (CI validates): Add to `supabase/config.toml` with `verify_jwt = false`, add to `ANONYMOUS_FUNCTIONS` in `scripts/audit-standards.mjs`.
+**Adding anonymous functions** (CI validates): Add to `supabase/config.toml` with `verify_jwt = false`, add to `NO_VERIFY_JWT_FUNCTIONS` in `scripts/audit-standards.mjs`, and add deploy command below.
 
-**Deploy commands & CORS**: [deployment-guide.md](docs/development/deployment-guide.md)
+**Deploy commands** (`--no-verify-jwt` required — CI scans CLAUDE.md for these):
+
+```bash
+npx supabase functions deploy early-access-signup --no-verify-jwt
+npx supabase functions deploy contact-submit --no-verify-jwt
+npx supabase functions deploy stats --no-verify-jwt
+npx supabase functions deploy skills-search --no-verify-jwt
+npx supabase functions deploy skills-get --no-verify-jwt
+npx supabase functions deploy skills-recommend --no-verify-jwt
+npx supabase functions deploy stripe-webhook --no-verify-jwt
+npx supabase functions deploy checkout --no-verify-jwt
+npx supabase functions deploy events --no-verify-jwt
+npx supabase functions deploy generate-license --no-verify-jwt
+npx supabase functions deploy regenerate-license --no-verify-jwt
+```
+
+**CORS & monitoring details**: [deployment-guide.md](docs/development/deployment-guide.md)
 
 ---
 
