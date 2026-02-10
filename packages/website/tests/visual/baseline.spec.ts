@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from '@playwright/test'
 
 /**
  * Visual regression baseline snapshots for the Skillsmith website.
@@ -16,33 +16,33 @@ import { test, expect } from "@playwright/test";
 
 /** Pages to capture baselines for */
 const pages = [
-  { name: "homepage", path: "/" },
-  { name: "skills", path: "/skills" },
-  { name: "docs", path: "/docs" },
-  { name: "pricing", path: "/pricing" },
-  { name: "contact", path: "/contact" },
-  { name: "faq", path: "/faq" },
-] as const;
+  { name: 'homepage', path: '/' },
+  { name: 'skills', path: '/skills' },
+  { name: 'docs', path: '/docs' },
+  { name: 'pricing', path: '/pricing' },
+  { name: 'contact', path: '/contact' },
+  { name: 'faq', path: '/faq' },
+] as const
 
 for (const { name, path } of pages) {
   test(`${name} visual baseline`, async ({ page }) => {
     const response = await page.goto(path, {
-      waitUntil: "networkidle",
+      waitUntil: 'networkidle',
       timeout: 15_000,
-    });
+    })
 
     // Skip pages that return non-200 (e.g., not yet deployed)
     if (!response || response.status() >= 400) {
-      test.skip(true, `${path} returned status ${response?.status() ?? "no response"}`);
-      return;
+      test.skip(true, `${path} returned status ${response?.status() ?? 'no response'}`)
+      return
     }
 
     // Wait for web fonts to finish loading before capturing snapshot
-    await page.waitForFunction(() => document.fonts.ready.then(() => true));
+    await page.waitForFunction(() => document.fonts.ready.then(() => true))
 
     await expect(page).toHaveScreenshot(`${name}.png`, {
       fullPage: true,
-      animations: "disabled",
-    });
-  });
+      animations: 'disabled',
+    })
+  })
 }

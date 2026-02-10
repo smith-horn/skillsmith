@@ -40,7 +40,7 @@
   --color-primary-900: #7d3b32;
 
   /* Dark color scale (dark surface/background tones) */
-  --color-dark-50: #FAFAFA;
+  --color-dark-50: #fafafa;
   --color-dark-100: #f1f5f9;
   --color-dark-200: #e2e8f0;
   --color-dark-300: #cbd5e1;
@@ -50,7 +50,7 @@
   --color-dark-700: #334155;
   --color-dark-800: #1f1f23;
   --color-dark-900: #121214;
-  --color-dark-950: #0D0D0F;
+  --color-dark-950: #0d0d0f;
 
   /* Secondary color scale (maps to sage) */
   --color-secondary-50: #f0f7f4;

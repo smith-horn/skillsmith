@@ -1,4 +1,4 @@
-import { defineConfig, devices } from "@playwright/test";
+import { defineConfig, devices } from '@playwright/test'
 
 /**
  * Playwright configuration for visual regression testing.
@@ -8,12 +8,11 @@ import { defineConfig, devices } from "@playwright/test";
  * or use the webServer config below to automate it.
  */
 export default defineConfig({
-  testDir: "tests",
-  testMatch: "**/*.spec.ts",
+  testDir: 'tests',
+  testMatch: '**/*.spec.ts',
 
   /* Snapshot settings */
-  snapshotPathTemplate:
-    "{testDir}/visual/__snapshots__/{arg}-{projectName}{ext}",
+  snapshotPathTemplate: '{testDir}/visual/__snapshots__/{arg}-{projectName}{ext}',
 
   /* Fail the build on CI if snapshots are missing */
   expect: {
@@ -28,28 +27,28 @@ export default defineConfig({
   workers: 1,
 
   /* Reporter */
-  reporter: [["list"], ["html", { open: "never" }]],
+  reporter: [['list'], ['html', { open: 'never' }]],
 
   /* Shared settings for all projects */
   use: {
-    baseURL: "http://localhost:4321",
-    screenshot: "only-on-failure",
-    trace: "retain-on-failure",
+    baseURL: 'http://localhost:4321',
+    screenshot: 'only-on-failure',
+    trace: 'retain-on-failure',
   },
 
   /* Two viewport configurations: desktop and mobile */
   projects: [
     {
-      name: "desktop",
+      name: 'desktop',
       use: {
-        ...devices["Desktop Chrome"],
+        ...devices['Desktop Chrome'],
         viewport: { width: 1440, height: 900 },
       },
     },
     {
-      name: "mobile",
+      name: 'mobile',
       use: {
-        ...devices["iPhone 13"],
+        ...devices['iPhone 13'],
         viewport: { width: 375, height: 812 },
       },
     },
@@ -58,9 +57,9 @@ export default defineConfig({
   /* Start the Astro preview server automatically.
    * Requires the site to be built first (`npm run build`). */
   webServer: {
-    command: "npm run preview",
+    command: 'npm run preview',
     port: 4321,
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
   },
-});
+})
