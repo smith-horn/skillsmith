@@ -1118,6 +1118,58 @@ docker exec skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node
 
 > See [ADR-107: Async/Sync Context Separation](docs/adr/107-async-sync-context-separation.md) for related WASM fallback architecture.
 
+### Docker DNS Failure (SMI-2367)
+
+**Symptoms**: `getaddrinfo EAI_AGAIN registry.npmjs.org`, `npm audit` / `npm install` fail inside container, all outbound network calls time out.
+
+**Root Cause**: Stale Docker bridge networks from old worktrees/containers accumulate and degrade Docker Desktop's internal DNS proxy.
+
+**Diagnosis**:
+
+```bash
+# Check network count (more than 5 is suspicious)
+docker network ls | wc -l
+
+# Test DNS inside container
+docker exec skillsmith-dev-1 node -e "require('dns').resolve('registry.npmjs.org', console.log)"
+```
+
+**Fix**:
+
+```bash
+# 1. Restart Docker Desktop
+# 2. Prune stale networks
+docker network prune -f
+
+# 3. Restart container
+docker compose --profile dev up -d
+
+# 4. Verify DNS works
+docker exec skillsmith-dev-1 npm audit --production --audit-level=high
+```
+
+**Prevention**: Use `scripts/remove-worktree.sh --prune` when removing worktrees. It automatically checks network count and optionally prunes stale networks.
+
+### Stale Build Artifacts in Container
+
+**Symptoms**: `ReferenceError: exports is not defined in ES module scope`, `Object.defineProperty(exports, "__esModule", ...)` errors in source files.
+
+**Root Cause**: Stale CJS-compiled `.js` files from previous builds sitting in `src/` directories inside the Docker container, conflicting with `"type": "module"`.
+
+**Diagnosis**:
+
+```bash
+# Find stale .js files in source directories
+docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f'
+```
+
+**Fix**:
+
+```bash
+# Remove stale files (review list first)
+docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f -delete'
+```
+
 ---
 
 ## Support
