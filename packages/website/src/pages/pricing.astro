@@ -12,7 +12,7 @@
 // Disable prerendering - this page needs SSR to inject Supabase config for auth nav
 export const prerender = false;
 
-import { ViewTransitions } from 'astro:transitions';
+import { ClientRouter } from 'astro:transitions';
 import Nav from '../components/Nav.astro';
 import Footer from '../components/Footer.astro';
 import { getSupabaseConfig } from '../lib/supabase-config';
@@ -38,7 +38,7 @@ function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; an
       {
         "@type": "Product",
         "name": "Skillsmith",
-        "description": "AI-powered skill discovery and management for Claude Code",
+        "description": "AI-powered skill discovery and management for AI assistants",
         "brand": { "@type": "Brand", "name": "Skillsmith" },
         "offers": tiers.map(tier => ({
           "@type": "Offer",
@@ -83,7 +83,7 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
     <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
 
     <!-- Google Analytics -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
+    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
     <script is:inline>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
@@ -97,7 +97,7 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
     <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
 
     <!-- Enable smooth page transitions without full reload (SMI-2066) -->
-    <ViewTransitions />
+    <ClientRouter />
 
     <!-- Supabase config for auth-aware navigation -->
     <script is:inline define:vars={{ supabaseConfig }}>
@@ -129,7 +129,7 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
     </script>
 
     <!-- JSON-LD Structured Data -->
-    <script type="application/ld+json" set:html={JSON.stringify(jsonLdData)} />
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLdData)} />
 
     <!-- Pricing page styles -->
     <link rel="stylesheet" href="/styles/pricing.css" />
@@ -315,7 +315,7 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
       </section>
 
       <section class="pricing-cta">
-        <h2>Ready to supercharge your Claude Code workflow?</h2>
+        <h2>Ready to supercharge your development workflow?</h2>
         <p>Join thousands of developers using Skillsmith to discover and manage skills.</p>
         <div class="cta-buttons">
           <a href="/signup?tier=community" class="btn btn-primary btn-large">Get Started Free</a>

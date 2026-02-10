@@ -11,7 +11,7 @@
 // Disable prerendering - this page needs SSR to inject Supabase config for auth nav
 export const prerender = false;
 
-import { ViewTransitions } from 'astro:transitions';
+import { ClientRouter } from 'astro:transitions';
 import Nav from '../components/Nav.astro';
 import { getSupabaseConfig } from '../lib/supabase-config';
 import '../styles/global.css';
@@ -26,8 +26,8 @@ const supabaseConfig = getSupabaseConfig();
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <title>Skillsmith - AI Skill Discovery for Claude Code</title>
-  <meta name="description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
+  <title>Skillsmith - Agent Skill Discovery & Management</title>
+  <meta name="description" content="Find the right agent skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
   <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
 
   <!-- Fonts: Satoshi + JetBrains Mono -->
@@ -40,7 +40,7 @@ const supabaseConfig = getSupabaseConfig();
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" fetchpriority="low" />
 
   <!-- Google Analytics (placed after fonts so font fetches get priority) -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L" fetchpriority="low"></script>
+  <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L" fetchpriority="low"></script>
   <script is:inline>
     window.dataLayer = window.dataLayer || [];
     function gtag(){dataLayer.push(arguments);}
@@ -52,7 +52,7 @@ const supabaseConfig = getSupabaseConfig();
   <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
 
   <!-- Enable smooth page transitions without full reload (SMI-2066) -->
-  <ViewTransitions />
+  <ClientRouter />
 
   <!-- Supabase config for auth-aware navigation -->
   <script is:inline define:vars={{ supabaseConfig }}>
@@ -60,8 +60,8 @@ const supabaseConfig = getSupabaseConfig();
   </script>
 
   <!-- Open Graph -->
-  <meta property="og:title" content="Skillsmith - AI Skill Discovery for Claude Code" />
-  <meta property="og:description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
+  <meta property="og:title" content="Skillsmith - Agent Skill Discovery & Management" />
+  <meta property="og:description" content="Find the right agent skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content={new URL(Astro.url.pathname, Astro.site).href} />
   <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
@@ -71,13 +71,13 @@ const supabaseConfig = getSupabaseConfig();
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Skillsmith - AI Skill Discovery for Claude Code" />
-  <meta name="twitter:description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
+  <meta name="twitter:title" content="Skillsmith - Agent Skill Discovery & Management" />
+  <meta name="twitter:description" content="Find the right agent skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
   <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
   <meta name="twitter:image" content={new URL('/og-image.png', Astro.site).href} />
 
   <!-- JSON-LD Structured Data -->
-  <script type="application/ld+json">
+  <script is:inline type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@graph": [
@@ -100,7 +100,7 @@ const supabaseConfig = getSupabaseConfig();
         "@id": "https://skillsmith.app/#website",
         "url": "https://skillsmith.app",
         "name": "Skillsmith",
-        "description": "AI-powered skill discovery and management for Claude Code",
+        "description": "AI-powered agent skill discovery and management",
         "publisher": {
           "@id": "https://skillsmith.app/#organization"
         }
@@ -111,7 +111,7 @@ const supabaseConfig = getSupabaseConfig();
         "name": "Skillsmith",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "Cross-platform",
-        "description": "Discover, install, and manage skills for Claude Code. 14,000+ curated skills with semantic search, quality scores, and stack-aware recommendations.",
+        "description": "Discover, install, and manage agent skills. 14,000+ curated skills with semantic search, quality scores, and stack-aware recommendations.",
         "url": "https://skillsmith.app",
         "author": {
           "@id": "https://skillsmith.app/#organization"
@@ -183,7 +183,7 @@ const supabaseConfig = getSupabaseConfig();
 
       <!-- Subheadline -->
       <p class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up" style="animation-delay: 0.08s;">
-        <span id="skill-count">14,000+</span> curated Claude Code skills. Finally searchable.<br />
+        <span id="skill-count">14,000+</span> curated agent skills. Finally searchable.<br />
         Get stack-aware recommendations before anyone else.
       </p>
 
@@ -216,7 +216,7 @@ const supabaseConfig = getSupabaseConfig();
     <div class="max-w-[800px] mx-auto px-6">
       <div class="text-center mb-10">
         <h2 class="text-2xl sm:text-3xl font-bold mb-3">Get Started in Seconds</h2>
-        <p class="text-[#A1A1AA]">Copy this snippet and paste it into Claude Code</p>
+        <p class="text-[#A1A1AA]">Copy this snippet to configure your MCP client</p>
       </div>
 
       <!-- Copyable Code Block -->
@@ -253,7 +253,7 @@ const supabaseConfig = getSupabaseConfig();
 
       <!-- Helper text -->
       <p class="text-center text-[#A1A1AA] mb-8">
-        Claude will update your settings automatically. After restarting, ask:
+        After adding this to your settings file and restarting, ask:
         <span class="block mt-2 text-[#E07A5F] font-medium">"Find testing skills for my project"</span>
       </p>
 
@@ -325,7 +325,7 @@ const supabaseConfig = getSupabaseConfig();
             </svg>
           </div>
           <h3 class="text-lg font-bold mb-2">One-Click Install</h3>
-          <p class="text-sm text-[#A1A1AA]">Install directly to Claude Code. Uninstall just as fast.</p>
+          <p class="text-sm text-[#A1A1AA]">Install directly. Uninstall just as fast.</p>
         </div>
       </div>
     </div>
@@ -583,7 +583,7 @@ const supabaseConfig = getSupabaseConfig();
   </script>
 
   <!-- Fetch live skill count -->
-  <script define:vars={{ statsApiUrl: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1/stats` }}>
+  <script is:inline define:vars={{ statsApiUrl: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1/stats` }}>
     (function() {
       const API_URL = statsApiUrl;
       const CACHE_KEY = 'skillsmith_skill_count';

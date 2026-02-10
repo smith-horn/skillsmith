@@ -10,7 +10,7 @@
  */
 
 import '../styles/global.css';
-import { ViewTransitions } from 'astro:transitions';
+import { ClientRouter } from 'astro:transitions';
 import Nav from '../components/Nav.astro';
 import RateLimitToast from '../components/RateLimitToast.astro';
 import { getSupabaseConfig } from '../lib/supabase-config';
@@ -22,7 +22,7 @@ interface Props {
   activePath?: string;
 }
 
-const { title, description = "Skillsmith - AI-powered skill discovery and management for Claude Code", activePath = '' } = Astro.props;
+const { title, description = "Skillsmith - AI-powered agent skill discovery and management", activePath = '' } = Astro.props;
 
 // Get Supabase config for auth-aware navigation
 const supabaseConfig = getSupabaseConfig();
@@ -47,7 +47,7 @@ const supabaseConfig = getSupabaseConfig();
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" fetchpriority="low" />
 
     <!-- Google Analytics (placed after fonts so font fetches get priority) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L" fetchpriority="low"></script>
+    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L" fetchpriority="low"></script>
     <script is:inline>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
@@ -79,7 +79,7 @@ const supabaseConfig = getSupabaseConfig();
     <slot name="head" />
 
     <!-- Enable smooth page transitions without full reload -->
-    <ViewTransitions />
+    <ClientRouter />
 
     <!-- Supabase config for auth-aware navigation -->
     <script is:inline define:vars={{ supabaseConfig }}>

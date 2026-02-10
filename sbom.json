@@ -17,7 +17,7 @@
       "bom-ref": "skillsmith@0.1.0",
       "name": "skillsmith",
       "version": "0.1.0",
-      "description": "Skill discovery, recommendation, and learning system for Claude Code",
+      "description": "Agent skill discovery, recommendation, and management for MCP-compatible AI tools",
       "licenses": [
         {
           "license": {

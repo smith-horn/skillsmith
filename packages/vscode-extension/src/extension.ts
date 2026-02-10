@@ -146,7 +146,7 @@ export function activate(context: vscode.ExtensionContext): void {
   if (!hasShownWelcome) {
     vscode.window
       .showInformationMessage(
-        'Welcome to Skillsmith! Search for Claude Code skills using Cmd+Shift+P.',
+        'Welcome to Skillsmith! Search for agent skills using Cmd+Shift+P.',
         'Search Skills',
         'Connect to MCP'
       )

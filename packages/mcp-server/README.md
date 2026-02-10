@@ -1,6 +1,6 @@
 # @skillsmith/mcp-server
 
-MCP (Model Context Protocol) server for Claude Code skill discovery, installation, and management.
+MCP (Model Context Protocol) server for agent skill discovery, installation, and management.
 
 ## What's New in v0.3.18
 
@@ -15,7 +15,7 @@ The MCP server checks for updates on startup and notifies you when a newer versi
 
 ```
 [skillsmith] Update available: 0.3.17 → 0.3.18
-Restart Claude Code to use the latest version.
+Restart your MCP client to use the latest version.
 ```
 
 To disable update checks, set `SKILLSMITH_AUTO_UPDATE_CHECK=false` in your environment.
@@ -28,7 +28,7 @@ npm install @skillsmith/mcp-server
 
 ## Quick Start
 
-Copy this snippet and paste it into Claude Code:
+Copy this MCP configuration snippet:
 
 ```
 Add this MCP server to my settings.json:
@@ -43,7 +43,7 @@ Add this MCP server to my settings.json:
 }
 ```
 
-Claude will automatically update your `~/.claude/settings.json`. After restarting Claude Code (Cmd/Ctrl+Shift+P → "Claude Code: Restart"), ask Claude:
+After adding to your MCP client settings and restarting, try asking:
 
 ```
 "Search for testing skills"
@@ -95,7 +95,7 @@ Without an API key, you're limited to **10 total requests** (trial mode). With a
 }
 ```
 
-**Step 3:** Restart Claude Code (Cmd/Ctrl+Shift+P → "Claude Code: Restart")
+**Step 3:** Restart your MCP client
 
 > **Security Note:** Never paste your API key in chat. Configure it via the settings file above. For testing, set the env var using the appropriate command for your platform:
 >
@@ -168,7 +168,7 @@ Get detailed information about a specific skill.
 
 ### install_skill
 
-Install a skill to your local Claude Code environment.
+Install a skill to your local environment.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -211,7 +211,7 @@ Compare multiple skills side-by-side.
 
 | Tier | Description |
 |------|-------------|
-| `verified` | Official Anthropic skills |
+| `verified` | Official platform skills |
 | `community` | Community-reviewed skills |
 | `experimental` | New/beta skills |
 | `unknown` | Unverified skills |

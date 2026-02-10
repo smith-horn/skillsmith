@@ -2,14 +2,14 @@
 import DocsLayout from '../../layouts/DocsLayout.astro';
 ---
 
-<DocsLayout title="Documentation" description="Learn how to use Skillsmith for Claude Code skill discovery and management">
+<DocsLayout title="Documentation" description="Learn how to use Skillsmith for agent skill discovery and management">
   <!-- JSON-LD Schema -->
-  <script type="application/ld+json" slot="head">
+  <script is:inline type="application/ld+json" slot="head">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
     "headline": "Skillsmith Documentation",
-    "description": "Complete documentation for Skillsmith - AI-powered skill discovery and management for Claude Code",
+    "description": "Complete documentation for Skillsmith - AI-powered skill discovery and management for development environments",
     "url": "https://skillsmith.app/docs",
     "author": {
       "@type": "Organization",
@@ -67,14 +67,14 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <h1>Skillsmith Documentation</h1>
 
   <p class="lead">
-    Skillsmith is an MCP server for Claude Code skill discovery, installation, and management.
-    It helps you find, evaluate, and install skills for your Claude Code environment.
+    Skillsmith is an MCP server for agent skill discovery, installation, and management.
+    It helps you find, evaluate, and install skills for your development environment.
   </p>
 
   <h2>What is Skillsmith?</h2>
 
   <p>
-    Skillsmith provides a comprehensive toolset for managing Claude Code skills. Whether you're
+    Skillsmith provides a comprehensive toolset for managing agent skills. Whether you're
     looking for testing utilities, git workflow helpers, or specialized development tools,
     Skillsmith makes it easy to discover and install the skills you need.
   </p>
@@ -120,7 +120,7 @@ EOF`}</code></pre>
 
   <h3>3. Start Using Skillsmith</h3>
 
-  <p>Once configured, ask Claude to find and install skills:</p>
+  <p>Once configured, ask your assistant to find and install skills:</p>
 
   <pre><code>{`"Search for testing skills"
 "Find verified skills for git workflows"
@@ -142,7 +142,7 @@ EOF`}</code></pre>
 
     <a href="/docs/mcp-server" class="doc-card">
       <h3>MCP Server</h3>
-      <p>Learn how to configure and use the MCP server with Claude.</p>
+      <p>Learn how to configure and use the MCP server.</p>
     </a>
 
     <a href="/docs/api" class="doc-card">
@@ -152,7 +152,7 @@ EOF`}</code></pre>
 
     <a href="/docs/security" class="doc-card">
       <h3>Security</h3>
-      <p>Learn how Skillsmith protects your Claude Code environment.</p>
+      <p>Learn how Skillsmith protects your development environment.</p>
     </a>
 
     <a href="/docs/trust-tiers" class="doc-card">
@@ -180,7 +180,7 @@ EOF`}</code></pre>
     <tbody>
       <tr>
         <td><code>official</code></td>
-        <td>Anthropic or partner skills with full security review</td>
+        <td>Official or partner skills with full security review</td>
       </tr>
       <tr>
         <td><code>verified</code></td>

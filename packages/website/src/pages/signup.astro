@@ -17,7 +17,7 @@
 // Disable prerendering - this page needs SSR to read query params
 export const prerender = false;
 
-import { ViewTransitions } from 'astro:transitions';
+import { ClientRouter } from 'astro:transitions';
 import { PRICING_TIERS } from '../lib/pricing.ts';
 import { getSupabaseConfig } from '../lib/supabase-config';
 import LoginButton from '../components/auth/LoginButton.astro';
@@ -51,7 +51,7 @@ const savingsPercent = period === 'annual' ? 17 : 0; // ~17% savings
     <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
 
     <!-- Google Analytics -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
+    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
     <script is:inline>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
@@ -66,7 +66,7 @@ const savingsPercent = period === 'annual' ? 17 : 0; // ~17% savings
     <script is:inline define:vars={{ supabaseConfig }}>
       window.__SUPABASE_CONFIG__ = supabaseConfig;
     </script>
-    <ViewTransitions />
+    <ClientRouter />
   </head>
   <body>
     <Nav variant="minimal" activePath="/signup" />

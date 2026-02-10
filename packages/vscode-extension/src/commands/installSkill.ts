@@ -186,7 +186,7 @@ async function performInstall(skill: SkillData): Promise<InstallResult> {
       installPath,
       tips: [
         `Skill "${skill.name}" installed successfully!`,
-        `To use this skill, mention it in Claude Code.`,
+        `To use this skill, mention it in your AI assistant.`,
         `View installed skills: ls ~/.claude/skills/`,
       ],
       error: undefined,
@@ -301,7 +301,7 @@ ${skill.description}
 
 ## Usage
 
-This skill can be triggered by Claude Code when relevant context is detected.
+This skill can be triggered when relevant context is detected.
 
 ### Trigger Phrases
 
