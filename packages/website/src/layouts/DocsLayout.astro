@@ -9,11 +9,37 @@ interface Props {
 
 const { title, description = 'Skillsmith Documentation' } = Astro.props;
 const currentPath = Astro.url.pathname;
+
+// Build breadcrumb segments from URL path (SMI-2353)
+const pathSegments = Astro.url.pathname.split('/').filter(Boolean);
+const breadcrumbs = [
+  { name: 'Home', url: 'https://skillsmith.app/' },
+  { name: 'Docs', url: 'https://skillsmith.app/docs' },
+];
+if (pathSegments.length > 1) {
+  // Add the current page as the last breadcrumb
+  breadcrumbs.push({
+    name: title,
+    url: `https://skillsmith.app${Astro.url.pathname}`,
+  });
+}
 ---
 
 <BaseLayout title={`${title} | Skillsmith Docs`} description={description}>
-  <!-- Pass through head slot content -->
-  <slot name="head" slot="head" />
+  <!-- Pass through head slot content, plus BreadcrumbList JSON-LD (SMI-2353) -->
+  <Fragment slot="head">
+    <slot name="head" />
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      "itemListElement": breadcrumbs.map((crumb, index) => ({
+        "@type": "ListItem",
+        "position": index + 1,
+        "name": crumb.name,
+        "item": crumb.url,
+      })),
+    })} />
+  </Fragment>
 
   <div class="flex min-h-[calc(100vh-4rem)]">
     <!-- Sidebar -->

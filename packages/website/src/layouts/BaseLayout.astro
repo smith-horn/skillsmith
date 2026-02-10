@@ -34,6 +34,7 @@ const supabaseConfig = getSupabaseConfig();
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
+    <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
     <meta name="generator" content={Astro.generator} />
 
     <!-- Font preconnect hints (SMI-2349: moved from CSS @import to HTML link for faster discovery) -->
@@ -58,11 +59,18 @@ const supabaseConfig = getSupabaseConfig();
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
+    <meta property="og:url" content={new URL(Astro.url.pathname, Astro.site).href} />
+    <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
+    <meta property="og:image" content={new URL('/og-image.png', Astro.site).href} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
+    <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
+    <meta name="twitter:image" content={new URL('/og-image.png', Astro.site).href} />
 
     <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
     <title>{title}</title>

@@ -28,6 +28,7 @@ const supabaseConfig = getSupabaseConfig();
 
   <title>Skillsmith - AI Skill Discovery for Claude Code</title>
   <meta name="description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
+  <link rel="canonical" href="https://skillsmith.app/" />
 
   <!-- Fonts: Satoshi + JetBrains Mono -->
   <!-- Non-CORS preconnect for CSS fetch, CORS preconnect for font file fetch -->
@@ -62,13 +63,18 @@ const supabaseConfig = getSupabaseConfig();
   <meta property="og:title" content="Skillsmith - AI Skill Discovery for Claude Code" />
   <meta property="og:description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://skillsmith.app" />
-  <!-- TODO: Add og:image once design creates /public/og-image.png (1200x630) -->
+  <meta property="og:url" content="https://skillsmith.app/" />
+  <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
+  <meta property="og:image" content="https://skillsmith.app/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
 
   <!-- Twitter Card -->
-  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Skillsmith - AI Skill Discovery for Claude Code" />
   <meta name="twitter:description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
+  <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
+  <meta name="twitter:image" content="https://skillsmith.app/og-image.png" />
 
   <!-- JSON-LD Structured Data -->
   <script type="application/ld+json">
