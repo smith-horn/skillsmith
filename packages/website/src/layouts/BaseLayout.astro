@@ -69,45 +69,6 @@ const supabaseConfig = getSupabaseConfig();
       window.__SUPABASE_CONFIG__ = supabaseConfig;
     </script>
 
-    <!-- TODO: Remove CDN Tailwind in Wave 1B (SMI-2347, SMI-2348) — build-time CSS via global.css is now active -->
-    <script is:inline src="https://cdn.tailwindcss.com"></script>
-    <script is:inline>
-      // @ts-ignore - tailwind is loaded from CDN
-      window.tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            colors: {
-              primary: {
-                50: '#fef7f5',
-                100: '#fdeee9',
-                200: '#fbd5cc',
-                300: '#f5b5a5',
-                400: '#ed9580',
-                500: '#E07A5F',
-                600: '#D4694E',
-                700: '#b8573f',
-                800: '#994634',
-                900: '#7a3829',
-              },
-              dark: {
-                50: '#FAFAFA',
-                100: '#f1f5f9',
-                200: '#e2e8f0',
-                300: '#cbd5e1',
-                400: '#94a3b8',
-                500: '#64748b',
-                600: '#475569',
-                700: '#334155',
-                800: '#1f1f23',
-                900: '#121214',
-                950: '#0D0D0F',
-              }
-            }
-          }
-        }
-      }
-    </script>
   </head>
   <body class="bg-dark-950 text-dark-100 min-h-screen antialiased">
     <!-- Skip to main content link for keyboard navigation -->

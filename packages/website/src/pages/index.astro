@@ -14,6 +14,7 @@ export const prerender = false;
 import { ViewTransitions } from 'astro:transitions';
 import Nav from '../components/Nav.astro';
 import { getSupabaseConfig } from '../lib/supabase-config';
+import '../styles/global.css';
 
 // Get Supabase config for auth-aware navigation
 const supabaseConfig = getSupabaseConfig();
@@ -54,9 +55,6 @@ const supabaseConfig = getSupabaseConfig();
   <script is:inline define:vars={{ supabaseConfig }}>
     window.__SUPABASE_CONFIG__ = supabaseConfig;
   </script>
-
-  <!-- Tailwind CSS -->
-  <script is:inline src="https://cdn.tailwindcss.com"></script>
 
   <!-- Open Graph -->
   <meta property="og:title" content="Skillsmith - AI Skill Discovery for Claude Code" />
