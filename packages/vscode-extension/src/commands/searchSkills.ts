@@ -13,7 +13,7 @@ export function registerSearchCommand(
   const searchCommand = vscode.commands.registerCommand('skillsmith.searchSkills', async () => {
     // Show search input (query is optional - empty searches return all skills)
     const query = await vscode.window.showInputBox({
-      prompt: 'Search for Claude Code skills',
+      prompt: 'Search for agent skills',
       placeHolder: 'Search for skills (or press Enter to browse all)',
       title: 'Skillsmith Search',
       // No validation required - empty query is allowed for browsing all skills

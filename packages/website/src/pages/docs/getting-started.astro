@@ -2,11 +2,11 @@
 import DocsLayout from '../../layouts/DocsLayout.astro';
 ---
 
-<DocsLayout title="Getting Started" description="Quick start guide for setting up Skillsmith with Claude Code">
+<DocsLayout title="Getting Started" description="Quick start guide for setting up Skillsmith">
   <h1>Getting Started</h1>
 
   <p class="lead">
-    Get Skillsmith up and running in your Claude Code environment in just a few minutes.
+    Get Skillsmith up and running in your development environment in just a few minutes.
   </p>
 
   <h2>Prerequisites</h2>
@@ -14,7 +14,7 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <p>Before you begin, ensure you have:</p>
 
   <ul>
-    <li><strong>Claude Code</strong> installed and configured</li>
+    <li>An <strong>MCP-compatible AI assistant</strong> installed and configured</li>
     <li><strong>Node.js 18+</strong> (for npx commands)</li>
     <li><strong>npm</strong> or a compatible package manager</li>
   </ul>
@@ -26,11 +26,11 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <h3>Option 1: MCP Server (Recommended)</h3>
 
   <p>
-    The MCP server integrates directly with Claude Code, allowing you to search and
+    The MCP server integrates with any MCP-compatible client, allowing you to search and
     install skills through natural language.
   </p>
 
-  <p>Copy this snippet and paste it directly into Claude Code:</p>
+  <p>Add this to your MCP client configuration:</p>
 
   <pre><code>{`Add this MCP server to my settings.json:
 
@@ -44,8 +44,8 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 }`}</code></pre>
 
   <p>
-    Claude will automatically update your <code>~/.claude/settings.json</code>.
-    After restarting Claude Code (Cmd/Ctrl+Shift+P → "Claude Code: Restart"), the Skillsmith server will be loaded.
+    After adding the configuration to your <code>~/.claude/settings.json</code>,
+    restart your MCP client to load the Skillsmith server.
   </p>
 
   <h3>Option 2: CLI Installation</h3>
@@ -61,7 +61,7 @@ npx @skillsmith/cli search testing`}</code></pre>
 
   <h3>MCP Server Verification</h3>
 
-  <p>Ask Claude to verify the Skillsmith server is running:</p>
+  <p>Ask your assistant to verify the Skillsmith server is running:</p>
 
   <pre><code>{`"List available MCP tools"
 # You should see skillsmith tools like search, install, recommend`}</code></pre>
@@ -113,9 +113,9 @@ skillsmith --help
 }
 EOF`}</code></pre>
 
-  <p>This method works on Mac, Linux, and Windows (via Git Bash or WSL) and doesn't require modifying Claude settings.</p>
+  <p>This method works on Mac, Linux, and Windows (via Git Bash or WSL) and doesn't require modifying MCP client settings.</p>
 
-  <p><strong>Option 2: Claude Code Settings</strong> (MCP server only)</p>
+  <p><strong>Option 2: MCP Client Settings</strong> (MCP server only)</p>
 
   <p>Add the API key directly to your <code>~/.claude/settings.json</code>:</p>
 
@@ -135,7 +135,7 @@ EOF`}</code></pre>
     <h4>Shell Exports Don't Work</h4>
     <p>
       Running <code>export SKILLSMITH_API_KEY=...</code> in your terminal does NOT pass the variable
-      to MCP servers. MCP servers run as subprocesses spawned by Claude Code and don't inherit your
+      to MCP servers. MCP servers run as subprocesses and don't inherit your
       shell environment. Use one of the methods above instead.
     </p>
   </div>
@@ -191,9 +191,9 @@ EOF`}</code></pre>
 
   <h2>Your First Skill Search</h2>
 
-  <h3>Using Claude (MCP)</h3>
+  <h3>Using MCP</h3>
 
-  <p>Simply ask Claude to search for skills:</p>
+  <p>Simply ask your assistant to search for skills:</p>
 
   <pre><code>{`"Search for testing skills"
 "Find verified skills for git workflows"
@@ -214,7 +214,7 @@ skillsmith search --category devops`}</code></pre>
 
   <h2>Installing Your First Skill</h2>
 
-  <h3>Using Claude (MCP)</h3>
+  <h3>Using MCP</h3>
 
   <pre><code>{`"Install the jest-helper skill"
 "Install community/git-commit"`}</code></pre>

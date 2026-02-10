@@ -1,6 +1,6 @@
 # @skillsmith/core
 
-Core library for Skillsmith - provides database operations, search services, caching, security, analytics, and **multi-language codebase analysis** for Claude Code skill discovery.
+Core library for Skillsmith - provides database operations, search services, caching, security, analytics, and **multi-language codebase analysis** for agent skill discovery.
 
 **v0.4.7** includes multi-language support for analyzing TypeScript, JavaScript, Python, Go, Rust, and Java codebases, with improved dependency management.
 

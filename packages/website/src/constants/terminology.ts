@@ -15,7 +15,7 @@ export const TRUST_TIERS = {
   OFFICIAL: {
     id: 'official',
     label: 'Official',
-    description: 'Anthropic or partner skills with full security review',
+    description: 'Official or partner skills with full security review',
     color: 'green',
     autoInstall: true,
     reviewRequired: false,

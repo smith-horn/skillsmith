@@ -20,7 +20,7 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
         </svg>
         <span>Official</span>
       </div>
-      <p>Anthropic or partner skills</p>
+      <p>Official or partner skills</p>
       <ul>
         <li>Auto-install: Yes</li>
         <li>Review required: No</li>
@@ -75,14 +75,14 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <div class="tier-detail">
     <h3>What It Means</h3>
     <p>
-      Published by Anthropic or trusted partners. These skills undergo a full security review
+      Published by the platform or trusted partners. These skills undergo a full security review
       and are maintained with the highest standards.
     </p>
 
     <h3>Requirements</h3>
     <ul>
       <li>Published under <code>anthropic/</code> namespace</li>
-      <li>Full code review by Anthropic security team</li>
+      <li>Full code review by the platform security team</li>
       <li>Cryptographic signing (planned)</li>
       <li>Automatic updates deployed</li>
     </ul>
@@ -94,7 +94,7 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 
     <h3>When to Install</h3>
     <p>
-      <strong>Always safe.</strong> These skills are maintained by Anthropic and suitable for any environment,
+      <strong>Always safe.</strong> These skills are maintained by the platform and suitable for any environment,
       including production and enterprise use.
     </p>
   </div>
@@ -248,7 +248,7 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 
   <p>Use the <code>--tier</code> filter when searching to find skills at specific trust levels:</p>
 
-  <h3>Using Claude (MCP)</h3>
+  <h3>Using MCP</h3>
 
   <pre><code>{`"Find verified testing skills"
 "Show only official skills"
@@ -259,7 +259,7 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <pre><code>{`# Find verified skills only
 skillsmith search testing --tier verified
 
-# Find official Anthropic skills
+# Find official skills
 skillsmith search --tier official
 
 # Exclude unverified skills

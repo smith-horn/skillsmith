@@ -2,13 +2,13 @@
 /**
  * Skillsmith Quickstart Guide
  * First-time user guide with two paths:
- * 1. Happy Path: Claude Code + MCP Server (recommended)
+ * 1. Happy Path: MCP Client + MCP Server (recommended)
  * 2. Alternative: Direct CLI usage
  */
 import BaseLayout from '../../layouts/BaseLayout.astro';
 ---
 
-<BaseLayout title="Quickstart | Skillsmith" description="Get started with Skillsmith in 5 minutes. Two ways to discover and install Claude Code skills.">
+<BaseLayout title="Quickstart | Skillsmith" description="Get started with Skillsmith in 5 minutes. Two ways to discover and install skills for your development environment.">
   <!-- JSON-LD HowTo Schema -->
   <script type="application/ld+json" slot="head">
   {
@@ -16,8 +16,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     "@graph": [
       {
         "@type": "HowTo",
-        "name": "How to Set Up Skillsmith with Claude Code (Recommended)",
-        "description": "Install Skillsmith MCP server to discover and install Claude Code skills using natural language",
+        "name": "How to Set Up Skillsmith with an MCP Client (Recommended)",
+        "description": "Install Skillsmith MCP server to discover and install skills using natural language",
         "totalTime": "PT5M",
         "tool": [
           {
@@ -30,27 +30,27 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
           },
           {
             "@type": "HowToTool",
-            "name": "Claude Code"
+            "name": "MCP-compatible AI assistant"
           }
         ],
         "step": [
           {
             "@type": "HowToStep",
             "position": 1,
-            "name": "Install Claude Code",
-            "text": "Install Claude Code globally using npm: npm install -g @anthropic-ai/claude-code"
+            "name": "Install an MCP Client",
+            "text": "Install an MCP-compatible client such as Claude Code: npm install -g @anthropic-ai/claude-code"
           },
           {
             "@type": "HowToStep",
             "position": 2,
             "name": "Configure Skillsmith MCP Server",
-            "text": "Copy the configuration snippet and paste it into Claude Code. Claude will automatically update your settings.json. Then restart Claude Code to load the server."
+            "text": "Add the configuration snippet to your MCP client settings.json. Then restart your MCP client to load the server."
           },
           {
             "@type": "HowToStep",
             "position": 3,
             "name": "Discover Skills",
-            "text": "Navigate to your project directory, start Claude Code with 'claude', and ask: 'What skills would be helpful for this project?'"
+            "text": "Navigate to your project directory, start your MCP client, and ask: 'What skills would be helpful for this project?'"
           }
         ]
       },
@@ -104,7 +104,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             "name": "What is the recommended way to use Skillsmith?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "The recommended way is to use Claude Code with the Skillsmith MCP server. This allows you to discover and install skills using natural language, like asking 'Find skills for this React project' or 'Install the commit helper skill'."
+              "text": "The recommended way is to use an MCP client with the Skillsmith MCP server. This allows you to discover and install skills using natural language, like asking 'Find skills for this React project' or 'Install the commit helper skill'."
             }
           },
           {
@@ -112,15 +112,15 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             "name": "Where are skills installed?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Skills are installed to ~/.claude/skills/ and are automatically available in all your Claude Code sessions."
+              "text": "Skills are installed to ~/.claude/skills/ and are automatically available in all your sessions."
             }
           },
           {
             "@type": "Question",
-            "name": "Can I use Skillsmith without Claude Code?",
+            "name": "Can I use Skillsmith without an MCP client?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Yes, you can use the Skillsmith CLI directly in any terminal. Install with 'npm install -g @skillsmith/cli' or use npx without installing."
+              "text": "Yes, you can use the Skillsmith CLI directly in any terminal without an MCP client. Install with 'npm install -g @skillsmith/cli' or use npx without installing."
             }
           }
         ]
@@ -165,7 +165,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
       <h2 class="text-2xl font-bold text-white mb-6">Choose Your Workflow</h2>
 
       <div class="grid md:grid-cols-2 gap-6">
-        <!-- Path A: Claude Code -->
+        <!-- Path A: MCP Client -->
         <a href="#path-claude-code" class="block bg-gradient-to-br from-primary-900/30 to-purple-900/30 border-2 border-primary-500/50 rounded-xl p-6 hover:border-primary-400 transition-colors">
           <div class="flex items-center gap-3 mb-3">
             <div class="w-10 h-10 bg-primary-500/20 rounded-lg flex items-center justify-center">
@@ -175,11 +175,11 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
             </div>
             <div>
               <span class="text-xs font-semibold uppercase tracking-wider text-primary-400">Recommended</span>
-              <h3 class="text-lg font-bold text-white">Claude Code + MCP</h3>
+              <h3 class="text-lg font-bold text-white">MCP Client Setup</h3>
             </div>
           </div>
           <p class="text-dark-300 text-sm mb-4">
-            Use natural language to discover and install skills. Just ask Claude!
+            Use natural language to discover and install skills. Just ask your assistant!
           </p>
           <ul class="text-sm text-dark-400 space-y-1">
             <li>• "Find skills for this React project"</li>
@@ -216,24 +216,24 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
     <!-- Divider -->
     <hr class="border-dark-700 my-12" />
 
-    <!-- PATH A: Claude Code + MCP -->
+    <!-- PATH A: MCP Client -->
     <section id="path-claude-code" class="mb-16 scroll-mt-8">
       <div class="flex items-center gap-3 mb-6">
         <div class="w-8 h-8 bg-primary-500 rounded-full flex items-center justify-center text-white font-bold">A</div>
-        <h2 class="text-2xl font-bold text-white">Using Claude Code (Recommended)</h2>
+        <h2 class="text-2xl font-bold text-white">Using an MCP Client (Recommended)</h2>
       </div>
 
       <div class="bg-primary-900/10 border border-primary-800/30 rounded-lg p-4 mb-8">
         <p class="text-primary-300 text-sm">
-          <strong>What is Claude Code?</strong> Claude Code is Anthropic's official CLI tool that lets you chat with Claude directly in your terminal. Skillsmith integrates with Claude Code via MCP (Model Context Protocol), giving Claude the ability to search and install skills for you.
+          <strong>What is MCP?</strong> MCP (Model Context Protocol) lets AI assistants like Claude Code connect to external tool servers. Skillsmith provides an MCP server that gives your assistant the ability to search and install skills for you.
         </p>
       </div>
 
-      <!-- Step 1: Install Claude Code -->
+      <!-- Step 1: Install an MCP Client -->
       <div class="mb-8">
         <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
           <span class="w-6 h-6 bg-dark-800 rounded-full flex items-center justify-center text-sm">1</span>
-          Install Claude Code (if not already installed)
+          Install an MCP Client (if not already installed)
         </h3>
 
         <!-- Platform Tabs -->
@@ -278,7 +278,7 @@ curl -fsSL https://claude.ai/install.sh | sh</code></pre>
         </h3>
 
         <p class="text-dark-300 mb-4">
-          Copy this snippet and paste it directly into Claude Code. Claude will automatically update your settings:
+          Add this configuration to your MCP client settings (e.g., <code class="bg-dark-800 px-1 rounded">~/.claude/settings.json</code>):
         </p>
 
         <div class="bg-dark-900 border border-dark-700 rounded-lg overflow-hidden">
@@ -298,14 +298,12 @@ curl -fsSL https://claude.ai/install.sh | sh</code></pre>
 
         <div class="bg-primary-900/20 border border-primary-700/50 rounded-lg p-4 mt-4">
           <p class="text-primary-300 text-sm">
-            <strong>Why this works:</strong> Claude Code can edit your <code class="bg-dark-800 px-1 rounded">settings.json</code> directly.
-            This reduces installation from a multi-step process to a simple copy-paste.
+            <strong>Tip:</strong> You can also paste this snippet directly into your AI assistant's chat, and it can update your <code class="bg-dark-800 px-1 rounded">settings.json</code> for you.
           </p>
         </div>
 
         <p class="text-dark-400 text-sm mt-3">
-          After Claude updates your settings, restart Claude Code to load Skillsmith
-          (Cmd/Ctrl+Shift+P → "Claude Code: Restart").
+          After updating your settings, restart your MCP client to load Skillsmith.
         </p>
       </div>
 
@@ -317,14 +315,14 @@ curl -fsSL https://claude.ai/install.sh | sh</code></pre>
         </h3>
 
         <p class="text-dark-300 mb-4">
-          Navigate to your project directory and start Claude Code:
+          Navigate to your project directory and start your MCP client:
         </p>
 
         <pre class="bg-dark-900 border border-dark-700 rounded-lg p-4 overflow-x-auto mb-4"><code class="text-sm text-dark-200">cd /path/to/your/project
 claude</code></pre>
 
         <p class="text-dark-300 mb-4">
-          Now just ask Claude to find skills for your project:
+          Now just ask your assistant to find skills for your project:
         </p>
 
         <div class="bg-dark-900 border border-dark-700 rounded-lg p-4">
@@ -372,7 +370,7 @@ claude</code></pre>
           You're all set!
         </h4>
         <p class="text-dark-300 text-sm">
-          Skills are installed to <code class="bg-dark-800 px-1.5 py-0.5 rounded text-xs">~/.claude/skills/</code> and automatically available in all your Claude Code sessions.
+          Skills are installed to <code class="bg-dark-800 px-1.5 py-0.5 rounded text-xs">~/.claude/skills/</code> and automatically available in all your sessions.
         </p>
       </div>
     </section>
@@ -389,7 +387,7 @@ claude</code></pre>
 
       <div class="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-4 mb-8">
         <p class="text-yellow-300 text-sm">
-          <strong>When to use this:</strong> Use the CLI if you prefer traditional command-line tools, want to script skill management, or are not using Claude Code.
+          <strong>When to use this:</strong> Use the CLI if you prefer traditional command-line tools, want to script skill management, or are not using an MCP client.
         </p>
       </div>
 
@@ -531,7 +529,7 @@ skillsmith info jest-helper</code></pre>
           Skills Installed!
         </h4>
         <p class="text-dark-300 text-sm">
-          Skills are installed to <code class="bg-dark-800 px-1.5 py-0.5 rounded text-xs">~/.claude/skills/</code>. They'll be automatically available when you use Claude Code.
+          Skills are installed to <code class="bg-dark-800 px-1.5 py-0.5 rounded text-xs">~/.claude/skills/</code>. They'll be automatically available when you use your MCP client.
         </p>
       </div>
     </section>

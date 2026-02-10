@@ -1,8 +1,8 @@
 # Skillsmith
 
-**Craft your Claude Code workflow.**
+**Craft your agent skill workflow.**
 
-Skillsmith is a skill discovery, recommendation, and learning system for [Claude Code](https://claude.ai/code) users. Find the right skills for your projects, install them safely, and learn to use them effectively.
+Skillsmith is an agent skill discovery, recommendation, and management system for MCP-compatible AI tools. Find the right skills for your projects, install them safely, and learn to use them effectively.
 
 ## Features
 
@@ -10,7 +10,7 @@ Skillsmith is a skill discovery, recommendation, and learning system for [Claude
 - **Recommend** - Get personalized skill suggestions based on context
 - **Install** - One-command installation to `~/.claude/skills/`
 - **Validate** - Quality scores and structure validation
-- **Trust** - Four trust tiers from Anthropic Official to Community ([Security Guide](docs/security/skill-security-guide.md))
+- **Trust** - Four trust tiers from Official to Community ([Security Guide](docs/security/skill-security-guide.md))
 - **Compare** - Side-by-side skill comparison
 
 ### MCP Tools
@@ -19,7 +19,7 @@ Skillsmith is a skill discovery, recommendation, and learning system for [Claude
 |------|-------------|
 | `search` | Search skills with filters (query, category, trust tier, min score) |
 | `get_skill` | Get detailed skill information including install command |
-| `install_skill` | Install a skill to your Claude Code environment |
+| `install_skill` | Install a skill to your local environment |
 | `uninstall_skill` | Remove an installed skill |
 | `recommend` | Get contextual skill recommendations |
 | `validate` | Validate a skill's structure and quality |
@@ -27,11 +27,11 @@ Skillsmith is a skill discovery, recommendation, and learning system for [Claude
 
 ## Architecture
 
-Skillsmith uses the Model Context Protocol (MCP) to integrate with Claude Code:
+Skillsmith uses the Model Context Protocol (MCP):
 
 ```text
 ┌─────────────────────────────────────────────────────┐
-│  Claude Code                                         │
+│  MCP Client (Claude Code, Cursor, etc.)               │
 │  ┌─────────────────────────────────────────────────┐│
 │  │  Skillsmith MCP Server                          ││
 │  │  └── @skillsmith/mcp-server                     ││
@@ -50,9 +50,9 @@ Skillsmith uses the Model Context Protocol (MCP) to integrate with Claude Code:
 
 ## Installation
 
-### Configure with Claude Code (Recommended)
+### Quick Setup (MCP)
 
-Copy this snippet and paste it into Claude Code:
+Copy this MCP configuration snippet:
 
 ```text
 Add this MCP server to my settings.json:
@@ -67,7 +67,7 @@ Add this MCP server to my settings.json:
 }
 ```
 
-Claude will automatically update your `~/.claude/settings.json`. After restarting Claude Code (Cmd/Ctrl+Shift+P → "Claude Code: Restart"), you can immediately ask Claude to search for skills.
+After adding to your MCP client settings and restarting, you can search for skills immediately.
 
 ### API Key Configuration (Optional)
 
@@ -111,7 +111,7 @@ node packages/cli/dist/index.js search "testing"
 
 ## Usage
 
-Once configured, Claude Code can use Skillsmith tools:
+Once configured, your MCP client can use Skillsmith tools:
 
 ```text
 "Search for testing skills"
