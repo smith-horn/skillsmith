@@ -12,7 +12,10 @@
     "lint": "eslint src",
     "format": "prettier --write src",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:a11y": "playwright test tests/a11y/",
+    "test:visual": "playwright test --config playwright.config.ts",
+    "test:visual:update": "playwright test --config playwright.config.ts --update-snapshots"
   },
   "dependencies": {
     "@astrojs/check": "0.9.6",
@@ -26,6 +29,8 @@
     "turndown-plugin-gfm": "1.0.2"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.11.1",
+    "@playwright/test": "1.52.0",
     "@tailwindcss/typography": "0.5.19",
     "@types/node": "^22.9.0",
     "@types/turndown": "^5.0.5",
@@ -38,7 +43,8 @@
     "strip-literal": "3.1.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.53.1",
-    "vitest": "4.0.16"
+    "vitest": "4.0.16",
+    "web-vitals": "5.1.0"
   },
   "engines": {
     "node": "22.x"

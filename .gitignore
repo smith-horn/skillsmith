@@ -80,6 +80,8 @@ docs/strategy/
 /data/
 /output/
 test-results/
+playwright-report/
+blob-report/
 
 # Ignore test databases and output in packages (generated during tests)
 packages/*/data/

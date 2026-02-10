@@ -9,6 +9,7 @@
  * Includes Supabase config injection for UserMenu auth state.
  */
 
+import '../styles/global.css';
 import { ClientRouter } from 'astro:transitions';
 import Nav from '../components/Nav.astro';
 import RateLimitToast from '../components/RateLimitToast.astro';
@@ -33,26 +34,43 @@ const supabaseConfig = getSupabaseConfig();
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
+    <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
+    <meta name="generator" content={Astro.generator} />
 
-    <!-- Google Analytics -->
-    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
+    <!-- Font preconnect hints (SMI-2349: moved from CSS @import to HTML link for faster discovery) -->
+    <!-- Non-CORS preconnect for CSS fetch, CORS preconnect for font file fetch -->
+    <link rel="preconnect" href="https://api.fontshare.com" />
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap" rel="stylesheet" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" fetchpriority="low" />
+
+    <!-- Google Analytics (placed after fonts so font fetches get priority) -->
+    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L" fetchpriority="low"></script>
     <script is:inline>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
       gtag('config', 'G-GGZQZM1Y1L');
     </script>
-    <meta name="generator" content={Astro.generator} />
 
     <!-- Open Graph -->
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
+    <meta property="og:url" content={new URL(Astro.url.pathname, Astro.site).href} />
+    <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
+    <meta property="og:image" content={new URL('/og-image.png', Astro.site).href} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
+    <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
+    <meta name="twitter:image" content={new URL('/og-image.png', Astro.site).href} />
 
     <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
     <title>{title}</title>
@@ -68,44 +86,6 @@ const supabaseConfig = getSupabaseConfig();
       window.__SUPABASE_CONFIG__ = supabaseConfig;
     </script>
 
-    <script is:inline src="https://cdn.tailwindcss.com"></script>
-    <script is:inline>
-      // @ts-ignore - tailwind is loaded from CDN
-      window.tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            colors: {
-              primary: {
-                50: '#fef7f5',
-                100: '#fdeee9',
-                200: '#fbd5cc',
-                300: '#f5b5a5',
-                400: '#ed9580',
-                500: '#E07A5F',
-                600: '#D4694E',
-                700: '#b8573f',
-                800: '#994634',
-                900: '#7a3829',
-              },
-              dark: {
-                50: '#FAFAFA',
-                100: '#f1f5f9',
-                200: '#e2e8f0',
-                300: '#cbd5e1',
-                400: '#94a3b8',
-                500: '#64748b',
-                600: '#475569',
-                700: '#334155',
-                800: '#1f1f23',
-                900: '#121214',
-                950: '#0D0D0F',
-              }
-            }
-          }
-        }
-      }
-    </script>
   </head>
   <body class="bg-dark-950 text-dark-100 min-h-screen antialiased">
     <!-- Skip to main content link for keyboard navigation -->
@@ -143,12 +123,36 @@ const supabaseConfig = getSupabaseConfig();
 
     <!-- SMI-2150: Rate limit toast for 429 errors -->
     <RateLimitToast />
+
+    <!-- SMI-2344: Web Vitals RUM tracking (module script, deferred by Astro) -->
+    <script>
+      import { onLCP, onCLS, onINP } from 'web-vitals';
+      import type { Metric } from 'web-vitals';
+
+      function reportMetric(metric: Metric): void {
+        const ms = Math.round(metric.name === 'CLS' ? metric.value * 1000 : metric.value);
+        const unit = metric.name === 'CLS' ? '' : 'ms';
+        console.log(`[CWV] ${metric.name}: ${ms}${unit} (${metric.rating}) id=${metric.id}`);
+
+        // Forward to Google Analytics if gtag is present
+        if (typeof window.gtag === 'function') {
+          window.gtag('event', metric.name, {
+            value: ms,
+            event_category: 'Web Vitals',
+            event_label: metric.id,
+            non_interaction: true,
+          });
+        }
+      }
+
+      onLCP(reportMetric);
+      onCLS(reportMetric);
+      onINP(reportMetric);
+    </script>
   </body>
 </html>
 
 <style is:global>
-  @import url('https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap');
-
   :root {
     /* Brand Colors - CSS Custom Properties */
     --color-coral-primary: #E07A5F;
@@ -162,7 +166,6 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   html {
-    font-family: 'Satoshi', system-ui, sans-serif;
     scroll-behavior: smooth;
   }
 

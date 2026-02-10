@@ -192,8 +192,8 @@ const { pageTitle, pageDescription } = Astro.props;
       }
 
       // GA tracking - verify gtag is a function before calling
-      if (typeof window !== 'undefined' && 'gtag' in window && typeof (window as Record<string, unknown>).gtag === 'function') {
-        (window as unknown as { gtag: (cmd: string, action: string, params: object) => void }).gtag('event', 'copy_docs', { format });
+      if (typeof window.gtag === 'function') {
+        window.gtag('event', 'copy_docs', { format });
       }
     } catch (error) {
       // Log error for debugging
