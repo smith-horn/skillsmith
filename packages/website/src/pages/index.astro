@@ -157,7 +157,7 @@ const supabaseConfig = getSupabaseConfig();
   </script>
 </head>
 
-<body class="bg-[#0D0D0F] text-[#FAFAFA] font-sans antialiased">
+<body class="bg-dark-950 text-dark-50 font-sans antialiased">
   <!-- Background atmosphere (will-change-transform: intentional for infinite float animation — promotes to compositor layer) -->
   <div class="fixed inset-0 overflow-hidden pointer-events-none">
     <div class="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-[radial-gradient(circle,rgba(224,122,95,0.08)_0%,transparent_70%)] animate-float will-change-transform"></div>
@@ -426,8 +426,8 @@ const supabaseConfig = getSupabaseConfig();
   </footer>
 
   <style>
-    /* Hero animations — 0.5s duration is an intentional LCP optimization
-       (SMI-2350), shorter than the 0.8s default in global.css */
+    /* Hero animations — local override of global.css @theme animation
+       for scoped control over LCP-critical fade-in timing (SMI-2350) */
     .animate-fade-up {
       animation: fadeUp 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
     }
@@ -458,7 +458,7 @@ const supabaseConfig = getSupabaseConfig();
     }
 
     .shadow-glow {
-      box-shadow: 0 0 40px rgba(224, 122, 95, 0.08);
+      box-shadow: 0 0 40px rgba(224, 122, 95, 0.15);
     }
 
     /* Defer rendering of below-fold sections for faster LCP.
@@ -548,6 +548,32 @@ const supabaseConfig = getSupabaseConfig();
         }
       });
     })();
+  </script>
+
+  <!-- SMI-2344: Web Vitals RUM tracking (standalone page — BaseLayout has its own) -->
+  <script>
+    import { onLCP, onCLS, onINP } from 'web-vitals';
+    import type { Metric } from 'web-vitals';
+
+    function reportMetric(metric: Metric): void {
+      const ms = Math.round(metric.name === 'CLS' ? metric.value * 1000 : metric.value);
+      const unit = metric.name === 'CLS' ? '' : 'ms';
+      console.log(`[CWV] ${metric.name}: ${ms}${unit} (${metric.rating}) id=${metric.id}`);
+
+      // Forward to Google Analytics if gtag is present
+      if (typeof window.gtag === 'function') {
+        window.gtag('event', metric.name, {
+          value: ms,
+          event_category: 'Web Vitals',
+          event_label: metric.id,
+          non_interaction: true,
+        });
+      }
+    }
+
+    onLCP(reportMetric);
+    onCLS(reportMetric);
+    onINP(reportMetric);
   </script>
 
   <!-- Fetch live skill count -->

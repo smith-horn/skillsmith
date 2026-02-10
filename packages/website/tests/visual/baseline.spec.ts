@@ -36,9 +36,6 @@ for (const { name, path } of pages) {
       return;
     }
 
-    // Wait for fonts and images to finish loading
-    await page.waitForLoadState("networkidle");
-
     // Wait for web fonts to finish loading before capturing snapshot
     await page.waitForFunction(() => document.fonts.ready.then(() => true));
 
