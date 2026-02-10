@@ -39,11 +39,12 @@ const supabaseConfig = getSupabaseConfig();
   <meta name="description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
 
   <!-- Fonts: Satoshi + JetBrains Mono -->
+  <link rel="preconnect" href="https://api.fontshare.com" />
   <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
   <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap" rel="stylesheet" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" fetchpriority="low" />
 
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
@@ -158,8 +159,8 @@ const supabaseConfig = getSupabaseConfig();
 <body class="bg-[#0D0D0F] text-[#FAFAFA] font-sans antialiased">
   <!-- Background atmosphere -->
   <div class="fixed inset-0 overflow-hidden pointer-events-none">
-    <div class="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-[radial-gradient(circle,rgba(224,122,95,0.08)_0%,transparent_70%)] animate-float"></div>
-    <div class="absolute bottom-[-10%] right-[-10%] w-[400px] h-[400px] bg-[radial-gradient(circle,rgba(129,178,154,0.05)_0%,transparent_70%)] animate-float" style="animation-direction: reverse; animation-duration: 25s;"></div>
+    <div class="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-[radial-gradient(circle,rgba(224,122,95,0.08)_0%,transparent_70%)] animate-float will-change-transform"></div>
+    <div class="absolute bottom-[-10%] right-[-10%] w-[400px] h-[400px] bg-[radial-gradient(circle,rgba(129,178,154,0.05)_0%,transparent_70%)] animate-float will-change-transform" style="animation-direction: reverse; animation-duration: 25s;"></div>
   </div>
 
   <!-- Navigation -->
@@ -169,18 +170,18 @@ const supabaseConfig = getSupabaseConfig();
   <section class="relative min-h-screen flex items-center justify-center pt-[72px]">
     <div class="max-w-[800px] mx-auto px-6 py-24 text-center">
       <!-- Headline -->
-      <h1 class="text-5xl sm:text-6xl lg:text-7xl font-black tracking-tight leading-[1.1] mb-6 opacity-0 animate-fade-up" style="animation-delay: 0.1s;">
+      <h1 class="text-5xl sm:text-6xl lg:text-7xl font-black tracking-tight leading-[1.1] mb-6 opacity-0 animate-fade-up" style="animation-delay: 0.05s;">
         Save Hours Finding<br />the Right Skills.
       </h1>
 
       <!-- Subheadline -->
-      <p class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up" style="animation-delay: 0.2s;">
+      <p class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up" style="animation-delay: 0.08s;">
         <span id="skill-count">14,000+</span> curated Claude Code skills. Finally searchable.<br />
         Get stack-aware recommendations before anyone else.
       </p>
 
       <!-- CTA Buttons -->
-      <div class="flex flex-col sm:flex-row gap-4 justify-center mb-6 opacity-0 animate-fade-up" style="animation-delay: 0.3s;">
+      <div class="flex flex-col sm:flex-row gap-4 justify-center mb-6 opacity-0 animate-fade-up" style="animation-delay: 0.12s;">
         <a
           href="/signup"
           class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
@@ -196,7 +197,7 @@ const supabaseConfig = getSupabaseConfig();
       </div>
 
       <!-- Social Proof -->
-      <p class="text-sm text-[#71717A] opacity-0 animate-fade-up" style="animation-delay: 0.4s;">
+      <p class="text-sm text-[#71717A] opacity-0 animate-fade-up" style="animation-delay: 0.15s;">
         <span class="inline-block w-2 h-2 bg-[#81B29A] rounded-full mr-2 animate-pulse"></span>
         Free tier available — no credit card required
       </p>
@@ -426,7 +427,7 @@ const supabaseConfig = getSupabaseConfig();
   <style>
     /* Ensure animations play */
     .animate-fade-up {
-      animation: fadeUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      animation: fadeUp 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
     }
 
     @keyframes fadeUp {
@@ -456,6 +457,20 @@ const supabaseConfig = getSupabaseConfig();
 
     .shadow-glow {
       box-shadow: 0 0 40px rgba(224, 122, 95, 0.08);
+    }
+
+    /* Defer rendering of below-fold sections for faster LCP */
+    section:nth-of-type(n+2) {
+      content-visibility: auto;
+      contain-intrinsic-size: auto 600px;
+    }
+
+    /* Reserve space for dynamic content to prevent CLS */
+    #skill-count,
+    #skill-count-feature,
+    #skill-count-install {
+      display: inline-block;
+      min-width: 6ch;
     }
   </style>
 

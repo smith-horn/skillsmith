@@ -58,6 +58,11 @@ const supabaseConfig = getSupabaseConfig();
     <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
     <title>{title}</title>
 
+    <!-- Font preconnect hints (SMI-2349: moved from CSS @import to HTML link for faster discovery) -->
+    <link rel="preconnect" href="https://api.fontshare.com" />
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+
     <!-- Slot for page-specific head content (JSON-LD, etc.) -->
     <slot name="head" />
 
@@ -136,8 +141,6 @@ const supabaseConfig = getSupabaseConfig();
 </html>
 
 <style is:global>
-  @import url('https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap');
-
   :root {
     /* Brand Colors - CSS Custom Properties */
     --color-coral-primary: #E07A5F;
@@ -151,7 +154,7 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   html {
-    font-family: 'Satoshi', system-ui, sans-serif;
+    font-family: 'Satoshi', ui-sans-serif, system-ui, -apple-system, sans-serif;
     scroll-behavior: smooth;
   }
 
