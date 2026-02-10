@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://astro.build/config
 export default defineConfig({
-  site: 'https://skillsmith.app',
+  site: 'https://www.skillsmith.app',
 
   integrations: [sitemap()],
 

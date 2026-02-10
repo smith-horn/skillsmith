@@ -556,30 +556,9 @@ const supabaseConfig = getSupabaseConfig();
     })();
   </script>
 
-  <!-- SMI-2344: Web Vitals RUM tracking (standalone page — BaseLayout has its own) -->
+  <!-- SMI-2344: Web Vitals RUM tracking (SMI-2363: shared module) -->
   <script>
-    import { onLCP, onCLS, onINP } from 'web-vitals';
-    import type { Metric } from 'web-vitals';
-
-    function reportMetric(metric: Metric): void {
-      const ms = Math.round(metric.name === 'CLS' ? metric.value * 1000 : metric.value);
-      const unit = metric.name === 'CLS' ? '' : 'ms';
-      console.log(`[CWV] ${metric.name}: ${ms}${unit} (${metric.rating}) id=${metric.id}`);
-
-      // Forward to Google Analytics if gtag is present
-      if (typeof window.gtag === 'function') {
-        window.gtag('event', metric.name, {
-          value: ms,
-          event_category: 'Web Vitals',
-          event_label: metric.id,
-          non_interaction: true,
-        });
-      }
-    }
-
-    onLCP(reportMetric);
-    onCLS(reportMetric);
-    onINP(reportMetric);
+    import '../scripts/web-vitals';
   </script>
 
   <!-- Fetch live skill count -->

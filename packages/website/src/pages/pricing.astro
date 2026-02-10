@@ -5,22 +5,15 @@
  * Pricing tiers from ADR-013 (Open Core Licensing) and ADR-017 (Quota Enforcement)
  * License: Elastic License 2.0
  * SMI-1071: Annual billing toggle support
- * SMI-2043: Unified navigation with auth-state awareness
- * SMI-2081: Refactored to comply with 500-line limit - styles extracted to pricing.css
+ * SMI-1554: Migrated to BaseLayout for layout consistency
  */
 
 // Disable prerendering - this page needs SSR to inject Supabase config for auth nav
 export const prerender = false;
 
-import { ClientRouter } from 'astro:transitions';
-import Nav from '../components/Nav.astro';
-import Footer from '../components/Footer.astro';
-import { getSupabaseConfig } from '../lib/supabase-config';
+import BaseLayout from '../layouts/BaseLayout.astro';
 import { pricingTiers, pricingFaqs, formatPrice, getAnnualPrice } from '../lib/pricing-data';
 import type { PricingTier } from '../lib/pricing-data';
-
-// Get Supabase config for auth-aware navigation
-const supabaseConfig = getSupabaseConfig();
 
 // Generate JSON-LD structured data
 function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; answer: string }>) {
@@ -29,11 +22,11 @@ function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; an
     "@graph": [
       {
         "@type": "WebPage",
-        "@id": "https://skillsmith.app/pricing",
-        "url": "https://skillsmith.app/pricing",
+        "@id": "https://www.skillsmith.app/pricing",
+        "url": "https://www.skillsmith.app/pricing",
         "name": "Skillsmith Pricing - Plans for Individuals and Teams",
         "description": "Choose the Skillsmith plan that fits your needs. From free community access to enterprise-grade features.",
-        "isPartOf": { "@id": "https://skillsmith.app/#website" }
+        "isPartOf": { "@id": "https://www.skillsmith.app/#website" }
       },
       {
         "@type": "Product",
@@ -48,7 +41,7 @@ function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; an
           ...(tier.monthlyPrice > 0 && { "billingDuration": "P1M" }),
           "description": `${tier.apiCalls}. ${tier.features.join(', ')}.`,
           "availability": "https://schema.org/InStock",
-          "url": `https://skillsmith.app${tier.ctaHref}`,
+          "url": `https://www.skillsmith.app${tier.ctaHref}`,
           ...((tier.period?.includes('/user')) && {
             "priceSpecification": {
               "@type": "UnitPriceSpecification",
@@ -75,317 +68,199 @@ function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; an
 const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
 ---
 
-<!DOCTYPE html>
-<html lang="en" class="dark">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
-
-    <!-- Google Analytics -->
-    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
-    <script is:inline>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', 'G-GGZQZM1Y1L');
-    </script>
-
-    <meta name="description" content="Skillsmith pricing - Choose the plan that fits your needs. From free community access to enterprise-grade features." />
-    <title>Pricing | Skillsmith</title>
-    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
-    <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
-
-    <!-- Enable smooth page transitions without full reload (SMI-2066) -->
-    <ClientRouter />
-
-    <!-- Supabase config for auth-aware navigation -->
-    <script is:inline define:vars={{ supabaseConfig }}>
-      window.__SUPABASE_CONFIG__ = supabaseConfig;
-    </script>
-
-    <!-- Tailwind CSS -->
-    <script is:inline src="https://cdn.tailwindcss.com"></script>
-    <script is:inline>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            colors: {
-              primary: {
-                50: '#fef7f5', 100: '#fdeee9', 200: '#fbd5cc', 300: '#f5b5a5',
-                400: '#ed9580', 500: '#E07A5F', 600: '#D4694E', 700: '#b8573f',
-                800: '#994634', 900: '#7a3829',
-              },
-              dark: {
-                50: '#FAFAFA', 100: '#f1f5f9', 200: '#e2e8f0', 300: '#cbd5e1',
-                400: '#94a3b8', 500: '#64748b', 600: '#475569', 700: '#334155',
-                800: '#1f2937', 900: '#111827', 950: '#0D0D0F',
-              }
-            }
-          }
-        }
-      }
-    </script>
-
+<BaseLayout title="Pricing | Skillsmith" description="Skillsmith pricing - Choose the plan that fits your needs. From free community access to enterprise-grade features." activePath="/pricing">
+  <Fragment slot="head">
     <!-- JSON-LD Structured Data -->
     <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLdData)} />
-
     <!-- Pricing page styles -->
     <link rel="stylesheet" href="/styles/pricing.css" />
-  </head>
-  <body class="font-sans bg-[#0D0D0F] text-[#FAFAFA] leading-relaxed">
-    <Nav activePath="/pricing" />
+  </Fragment>
 
-    <main>
-      <section class="pricing-hero">
-        <h1>Simple, transparent pricing</h1>
-        <p class="pricing-hero-subtitle">
-          Start free and scale as you grow. No hidden fees, no surprises.
-        </p>
+  <section class="pricing-hero">
+    <h1>Simple, transparent pricing</h1>
+    <p class="pricing-hero-subtitle">
+      Start free and scale as you grow. No hidden fees, no surprises.
+    </p>
 
-        <!-- Billing Period Toggle -->
-        <div class="billing-toggle" id="billing-toggle">
-          <button type="button" class="toggle-btn active" data-period="monthly">Monthly</button>
-          <button type="button" class="toggle-btn" data-period="annual">
-            Annual
-            <span class="savings-badge">Save 17%</span>
-          </button>
-        </div>
-      </section>
+    <!-- Billing Period Toggle -->
+    <div class="billing-toggle" id="billing-toggle">
+      <button type="button" class="toggle-btn active" data-period="monthly">Monthly</button>
+      <button type="button" class="toggle-btn" data-period="annual">
+        Annual
+        <span class="savings-badge">Save 17%</span>
+      </button>
+    </div>
+  </section>
 
-      <section class="pricing-grid">
-        {pricingTiers.map((tier) => (
-          <div
-            class:list={["pricing-card", { highlighted: tier.highlighted }]}
-            data-tier={tier.name.toLowerCase()}
-            data-monthly-price={tier.monthlyPrice}
-            data-annual-price={getAnnualPrice(tier.monthlyPrice)}
-          >
-            {tier.highlighted && <div class="pricing-badge">Recommended</div>}
-            <div class="card-header">
-              <h2 class="tier-name">{tier.name}</h2>
-              <div class="price-container">
-                <span class="price" data-price-display>{formatPrice(tier.monthlyPrice)}</span>
-                <span class="period" data-period-display>{tier.monthlyPrice === 0 ? '' : tier.period || '/month'}</span>
-              </div>
-              <p class="tier-description">{tier.description}</p>
-            </div>
-            <div class="api-calls">
-              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-              </svg>
-              <span>{tier.apiCalls}</span>
-            </div>
-            <ul class="features-list">
-              {tier.features.map((feature) => (
-                <li>
-                  <svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                  <span>{feature}</span>
-                </li>
-              ))}
-            </ul>
-            <a
-              href={tier.ctaHref}
-              class:list={["btn btn-cta", { "btn-primary": tier.highlighted, "btn-secondary": !tier.highlighted }]}
-              data-cta-link
-              data-base-href={tier.ctaHref}
-            >
-              {tier.cta}
-            </a>
+  <section class="pricing-grid">
+    {pricingTiers.map((tier) => (
+      <div
+        class:list={["pricing-card", { highlighted: tier.highlighted }]}
+        data-tier={tier.name.toLowerCase()}
+        data-monthly-price={tier.monthlyPrice}
+        data-annual-price={getAnnualPrice(tier.monthlyPrice)}
+      >
+        {tier.highlighted && <div class="pricing-badge">Recommended</div>}
+        <div class="card-header">
+          <h2 class="tier-name">{tier.name}</h2>
+          <div class="price-container">
+            <span class="price" data-price-display>{formatPrice(tier.monthlyPrice)}</span>
+            <span class="period" data-period-display>{tier.monthlyPrice === 0 ? '' : tier.period || '/month'}</span>
           </div>
-        ))}
-      </section>
-
-      <section class="features-comparison">
-        <h2>Compare all features</h2>
-        <div class="comparison-table-wrapper">
-          <table class="comparison-table">
-            <thead>
-              <tr>
-                <th>Feature</th>
-                <th>Community</th>
-                <th>Individual</th>
-                <th class="highlighted">Team</th>
-                <th>Enterprise</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>API Calls / Month</td>
-                <td>1,000</td>
-                <td>10,000</td>
-                <td class="highlighted">100,000</td>
-                <td>Unlimited</td>
-              </tr>
-              <tr>
-                <td>Skill Search</td>
-                <td><span class="check" aria-label="Yes">&#10003;</span></td>
-                <td><span class="check" aria-label="Yes">&#10003;</span></td>
-                <td class="highlighted"><span class="check" aria-label="Yes">&#10003;</span></td>
-                <td><span class="check" aria-label="Yes">&#10003;</span></td>
-              </tr>
-              <tr>
-                <td>Skill Installation</td>
-                <td><span class="check" aria-label="Yes">&#10003;</span></td>
-                <td><span class="check" aria-label="Yes">&#10003;</span></td>
-                <td class="highlighted"><span class="check" aria-label="Yes">&#10003;</span></td>
-                <td><span class="check" aria-label="Yes">&#10003;</span></td>
-              </tr>
-              <tr>
-                <td>Recommendations</td>
-                <td><span class="check" aria-label="Yes">&#10003;</span></td>
-                <td><span class="check" aria-label="Yes">&#10003;</span></td>
-                <td class="highlighted"><span class="check" aria-label="Yes">&#10003;</span></td>
-                <td><span class="check" aria-label="Yes">&#10003;</span></td>
-              </tr>
-              <tr>
-                <td>Analytics Dashboard</td>
-                <td><span class="dash" aria-label="No">&mdash;</span></td>
-                <td>Basic</td>
-                <td class="highlighted">Advanced</td>
-                <td>Advanced</td>
-              </tr>
-              <tr>
-                <td>Team Workspaces</td>
-                <td><span class="dash" aria-label="No">&mdash;</span></td>
-                <td><span class="dash" aria-label="No">&mdash;</span></td>
-                <td class="highlighted"><span class="check" aria-label="Yes">&#10003;</span></td>
-                <td><span class="check" aria-label="Yes">&#10003;</span></td>
-              </tr>
-              <tr>
-                <td>Private Skills</td>
-                <td><span class="dash" aria-label="No">&mdash;</span></td>
-                <td><span class="dash" aria-label="No">&mdash;</span></td>
-                <td class="highlighted"><span class="check" aria-label="Yes">&#10003;</span></td>
-                <td><span class="check" aria-label="Yes">&#10003;</span></td>
-              </tr>
-              <tr>
-                <td>SSO / SAML</td>
-                <td><span class="dash" aria-label="No">&mdash;</span></td>
-                <td><span class="dash" aria-label="No">&mdash;</span></td>
-                <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
-                <td><span class="check" aria-label="Yes">&#10003;</span></td>
-              </tr>
-              <tr>
-                <td>Role-Based Access Control</td>
-                <td><span class="dash" aria-label="No">&mdash;</span></td>
-                <td><span class="dash" aria-label="No">&mdash;</span></td>
-                <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
-                <td><span class="check" aria-label="Yes">&#10003;</span></td>
-              </tr>
-              <tr>
-                <td>Audit Logging</td>
-                <td><span class="dash" aria-label="No">&mdash;</span></td>
-                <td><span class="dash" aria-label="No">&mdash;</span></td>
-                <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
-                <td><span class="check" aria-label="Yes">&#10003;</span></td>
-              </tr>
-              <tr>
-                <td>SLA Guarantee</td>
-                <td><span class="dash" aria-label="No">&mdash;</span></td>
-                <td><span class="dash" aria-label="No">&mdash;</span></td>
-                <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
-                <td>99.9%</td>
-              </tr>
-              <tr>
-                <td>Support</td>
-                <td>Community</td>
-                <td>Email</td>
-                <td class="highlighted">Priority</td>
-                <td>Dedicated</td>
-              </tr>
-            </tbody>
-          </table>
+          <p class="tier-description">{tier.description}</p>
         </div>
-      </section>
-
-      <section class="pricing-faq">
-        <h2>Frequently asked questions</h2>
-        <div class="faq-grid">
-          {pricingFaqs.map((faq) => (
-            <div class="faq-item">
-              <h3>{faq.question}</h3>
-              <p>{faq.answer}</p>
-            </div>
+        <div class="api-calls">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+          </svg>
+          <span>{tier.apiCalls}</span>
+        </div>
+        <ul class="features-list">
+          {tier.features.map((feature) => (
+            <li>
+              <svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              <span>{feature}</span>
+            </li>
           ))}
+        </ul>
+        <a
+          href={tier.ctaHref}
+          class:list={["btn btn-cta", { "btn-primary": tier.highlighted, "btn-secondary": !tier.highlighted }]}
+          data-cta-link
+          data-base-href={tier.ctaHref}
+        >
+          {tier.cta}
+        </a>
+      </div>
+    ))}
+  </section>
+
+  <section class="features-comparison">
+    <h2>Compare all features</h2>
+    <div class="comparison-table-wrapper">
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>Community</th>
+            <th>Individual</th>
+            <th class="highlighted">Team</th>
+            <th>Enterprise</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>API Calls / Month</td>
+            <td>1,000</td>
+            <td>10,000</td>
+            <td class="highlighted">100,000</td>
+            <td>Unlimited</td>
+          </tr>
+          <tr>
+            <td>Skill Search</td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td class="highlighted"><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+          </tr>
+          <tr>
+            <td>Skill Installation</td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td class="highlighted"><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+          </tr>
+          <tr>
+            <td>Recommendations</td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td class="highlighted"><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+          </tr>
+          <tr>
+            <td>Analytics Dashboard</td>
+            <td><span class="dash" aria-label="No">&mdash;</span></td>
+            <td>Basic</td>
+            <td class="highlighted">Advanced</td>
+            <td>Advanced</td>
+          </tr>
+          <tr>
+            <td>Team Workspaces</td>
+            <td><span class="dash" aria-label="No">&mdash;</span></td>
+            <td><span class="dash" aria-label="No">&mdash;</span></td>
+            <td class="highlighted"><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+          </tr>
+          <tr>
+            <td>Private Skills</td>
+            <td><span class="dash" aria-label="No">&mdash;</span></td>
+            <td><span class="dash" aria-label="No">&mdash;</span></td>
+            <td class="highlighted"><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+          </tr>
+          <tr>
+            <td>SSO / SAML</td>
+            <td><span class="dash" aria-label="No">&mdash;</span></td>
+            <td><span class="dash" aria-label="No">&mdash;</span></td>
+            <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+          </tr>
+          <tr>
+            <td>Role-Based Access Control</td>
+            <td><span class="dash" aria-label="No">&mdash;</span></td>
+            <td><span class="dash" aria-label="No">&mdash;</span></td>
+            <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+          </tr>
+          <tr>
+            <td>Audit Logging</td>
+            <td><span class="dash" aria-label="No">&mdash;</span></td>
+            <td><span class="dash" aria-label="No">&mdash;</span></td>
+            <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
+            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+          </tr>
+          <tr>
+            <td>SLA Guarantee</td>
+            <td><span class="dash" aria-label="No">&mdash;</span></td>
+            <td><span class="dash" aria-label="No">&mdash;</span></td>
+            <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
+            <td>99.9%</td>
+          </tr>
+          <tr>
+            <td>Support</td>
+            <td>Community</td>
+            <td>Email</td>
+            <td class="highlighted">Priority</td>
+            <td>Dedicated</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="pricing-faq">
+    <h2>Frequently asked questions</h2>
+    <div class="faq-grid">
+      {pricingFaqs.map((faq) => (
+        <div class="faq-item">
+          <h3>{faq.question}</h3>
+          <p>{faq.answer}</p>
         </div>
-      </section>
+      ))}
+    </div>
+  </section>
 
-      <section class="pricing-cta">
-        <h2>Ready to supercharge your development workflow?</h2>
-        <p>Join thousands of developers using Skillsmith to discover and manage skills.</p>
-        <div class="cta-buttons">
-          <a href="/signup?tier=community" class="btn btn-primary btn-large">Get Started Free</a>
-          <a href="/contact" class="btn btn-ghost btn-large">Contact Sales</a>
-        </div>
-      </section>
-    </main>
-
-    <Footer />
-  </body>
-</html>
-
-<style is:global>
-  /* Base styles - using is:global to avoid scoped attribute conflicts with pricing.css */
-  html {
-    font-size: 16px;
-    scroll-behavior: smooth;
-  }
-
-  /* Button base styles (minimal, rest in pricing.css) */
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.625rem 1.25rem;
-    font-size: 0.9375rem;
-    font-weight: 500;
-    text-decoration: none;
-    border-radius: 0.5rem;
-    transition: all 0.2s;
-    cursor: pointer;
-    border: none;
-  }
-
-  .btn-primary {
-    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
-    color: white;
-  }
-
-  .btn-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(224, 122, 95, 0.4);
-  }
-
-  .btn-secondary {
-    background: #18181b;
-    color: #FAFAFA;
-    border: 1px solid #27272a;
-  }
-
-  .btn-secondary:hover {
-    border-color: #E07A5F;
-    color: #E07A5F;
-  }
-
-  .btn-ghost {
-    background: transparent;
-    color: #9ca3af;
-  }
-
-  .btn-ghost:hover {
-    color: #E07A5F;
-    background: #18181b;
-  }
-
-  .btn-large {
-    padding: 0.875rem 2rem;
-    font-size: 1rem;
-  }
-</style>
+  <section class="pricing-cta">
+    <h2>Ready to supercharge your development workflow?</h2>
+    <p>Join thousands of developers using Skillsmith to discover and manage skills.</p>
+    <div class="cta-buttons">
+      <a href="/signup?tier=community" class="btn btn-primary btn-large">Get Started Free</a>
+      <a href="/contact" class="btn btn-ghost btn-large">Contact Sales</a>
+    </div>
+  </section>
+</BaseLayout>
 
 <script>
   // Billing period toggle functionality

@@ -397,3 +397,54 @@
     padding: 0 1rem 2rem;
   }
 }
+
+/* Button styles for pricing cards (SMI-1554: moved from <style is:global>) */
+.pricing-grid .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.625rem 1.25rem;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-decoration: none;
+  border-radius: 0.5rem;
+  transition: all 0.2s;
+  cursor: pointer;
+  border: none;
+}
+
+.pricing-grid .btn-primary {
+  background: linear-gradient(135deg, #e07a5f 0%, #d4694e 100%);
+  color: white;
+}
+
+.pricing-grid .btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(224, 122, 95, 0.4);
+}
+
+.pricing-grid .btn-secondary {
+  background: #18181b;
+  color: #fafafa;
+  border: 1px solid #27272a;
+}
+
+.pricing-grid .btn-secondary:hover {
+  border-color: #e07a5f;
+  color: #e07a5f;
+}
+
+/* CTA section base button style (large variant) */
+.pricing-cta .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.875rem 2rem;
+  font-size: 1rem;
+  font-weight: 500;
+  text-decoration: none;
+  border-radius: 0.5rem;
+  transition: all 0.2s;
+  cursor: pointer;
+  border: none;
+}

@@ -124,71 +124,28 @@ const supabaseConfig = getSupabaseConfig();
     <!-- SMI-2150: Rate limit toast for 429 errors -->
     <RateLimitToast />
 
-    <!-- SMI-2344: Web Vitals RUM tracking (module script, deferred by Astro) -->
+    <!-- SMI-2344: Web Vitals RUM tracking (SMI-2363: shared module) -->
     <script>
-      import { onLCP, onCLS, onINP } from 'web-vitals';
-      import type { Metric } from 'web-vitals';
-
-      function reportMetric(metric: Metric): void {
-        const ms = Math.round(metric.name === 'CLS' ? metric.value * 1000 : metric.value);
-        const unit = metric.name === 'CLS' ? '' : 'ms';
-        console.log(`[CWV] ${metric.name}: ${ms}${unit} (${metric.rating}) id=${metric.id}`);
-
-        // Forward to Google Analytics if gtag is present
-        if (typeof window.gtag === 'function') {
-          window.gtag('event', metric.name, {
-            value: ms,
-            event_category: 'Web Vitals',
-            event_label: metric.id,
-            non_interaction: true,
-          });
-        }
-      }
-
-      onLCP(reportMetric);
-      onCLS(reportMetric);
-      onINP(reportMetric);
+      import '../scripts/web-vitals';
     </script>
   </body>
 </html>
 
 <style is:global>
-  :root {
-    /* Brand Colors - CSS Custom Properties */
-    --color-coral-primary: #E07A5F;
-    --color-coral-secondary: #D4694E;
-    --color-coral-shadow: rgba(224, 122, 95, 0.25);
-    --color-background: #0D0D0F;
-    --color-surface: #121214;
-    --color-text-primary: #FAFAFA;
-    --color-text-secondary: #94a3b8;
-    --color-border: #1f1f23;
-  }
-
-  html {
-    scroll-behavior: smooth;
-  }
-
-  body {
-    min-height: 100vh;
-    background-color: #0D0D0F;
-    color: #FAFAFA;
-  }
-
   .gradient-text {
-    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
+    background: linear-gradient(135deg, var(--color-coral) 0%, var(--color-coral-dark) 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
   .gradient-coral {
-    background: linear-gradient(135deg, var(--color-coral-primary) 0%, var(--color-coral-secondary) 100%);
-    box-shadow: 0 4px 14px var(--color-coral-shadow);
+    background: linear-gradient(135deg, var(--color-coral) 0%, var(--color-coral-dark) 100%);
+    box-shadow: 0 4px 14px rgba(224, 122, 95, 0.25);
   }
 
   .gradient-coral-subtle {
-    background: linear-gradient(135deg, var(--color-coral-primary) 0%, var(--color-coral-secondary) 100%);
+    background: linear-gradient(135deg, var(--color-coral) 0%, var(--color-coral-dark) 100%);
   }
 
   .card-hover {
