@@ -7,7 +7,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import type { ToolContext } from '../context.js'
 // SMI-2171: Import parseRepoUrl from @skillsmith/core for shared use
-import { parseRepoUrl, type ParsedRepoUrl } from '@skillsmith/core'
+import { parseRepoUrl, QuarantineRepository, type ParsedRepoUrl } from '@skillsmith/core'
 import {
   MANIFEST_PATH,
   SKILLSMITH_DIR,
@@ -221,11 +221,17 @@ export async function lookupSkillFromRegistry(
   // Fallback: Local database
   const dbSkill = context.skillRepository.findById(skillId)
   if (dbSkill?.repoUrl) {
+    // SMI-2437: Check local quarantine table for offline quarantine enforcement
+    const quarantineRepo = new QuarantineRepository(context.db)
+    const isQuarantined = quarantineRepo.isQuarantined(dbSkill.id || skillId)
+
     return {
       repoUrl: dbSkill.repoUrl,
       name: dbSkill.name,
       // SMI-1533: Validate trust tier for security scan configuration
       trustTier: validateTrustTier(dbSkill.trustTier),
+      // SMI-2437: Pass through quarantine status from local DB
+      quarantined: isQuarantined,
     }
   }
 
