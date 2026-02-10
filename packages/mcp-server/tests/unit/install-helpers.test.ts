@@ -448,8 +448,15 @@ Use this skill to do things.
             trustTier: 'experimental',
           }),
         },
-        // SMI-2437: QuarantineRepository needs a db with exec()
-        db: { exec: vi.fn(), prepare: vi.fn().mockReturnValue({ get: vi.fn(), all: vi.fn(), run: vi.fn() }) },
+        // SMI-2437: QuarantineRepository needs a db with exec() and prepare().all()
+        db: {
+          exec: vi.fn(),
+          prepare: vi.fn().mockReturnValue({
+            get: vi.fn(),
+            all: vi.fn().mockReturnValue([]),
+            run: vi.fn(),
+          }),
+        },
       } as unknown as ToolContext
 
       const result = await lookupSkillFromRegistry('local/skill', mockContext)
@@ -475,8 +482,15 @@ Use this skill to do things.
             trustTier: 'community',
           }),
         },
-        // SMI-2437: QuarantineRepository needs a db with exec()
-        db: { exec: vi.fn(), prepare: vi.fn().mockReturnValue({ get: vi.fn(), all: vi.fn(), run: vi.fn() }) },
+        // SMI-2437: QuarantineRepository needs a db with exec() and prepare().all()
+        db: {
+          exec: vi.fn(),
+          prepare: vi.fn().mockReturnValue({
+            get: vi.fn(),
+            all: vi.fn().mockReturnValue([]),
+            run: vi.fn(),
+          }),
+        },
       } as unknown as ToolContext
 
       const result = await lookupSkillFromRegistry('fallback/skill', mockContext)
