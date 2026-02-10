@@ -32,7 +32,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
     <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
 
     <!-- Google Analytics -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
+    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
     <script is:inline>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}

@@ -83,7 +83,7 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
     <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
 
     <!-- Google Analytics -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
+    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
     <script is:inline>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
@@ -129,7 +129,7 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
     </script>
 
     <!-- JSON-LD Structured Data -->
-    <script type="application/ld+json" set:html={JSON.stringify(jsonLdData)} />
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLdData)} />
 
     <!-- Pricing page styles -->
     <link rel="stylesheet" href="/styles/pricing.css" />

@@ -167,7 +167,7 @@ const { id } = Astro.params;
     </div>
   </div>
 
-  <script define:vars={{ skillId: id, apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1` }}>
+  <script is:inline define:vars={{ skillId: id, apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1` }}>
     const API_BASE = apiBase;
 
     // Use astro:page-load for View Transitions compatibility

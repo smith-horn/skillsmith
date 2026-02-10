@@ -75,7 +75,7 @@ const jsonLd = {
   readingTime={readingTime}
 >
   <!-- JSON-LD for BlogPosting -->
-  <script type="application/ld+json" slot="head" set:html={JSON.stringify(jsonLd)} />
+  <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(jsonLd)} />
 
   <Content />
 </BlogLayout>

@@ -26,7 +26,7 @@ const supabaseConfig = getSupabaseConfig();
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <!-- Google Analytics -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
+  <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
   <script is:inline>
     window.dataLayer = window.dataLayer || [];
     function gtag(){dataLayer.push(arguments);}
@@ -71,7 +71,7 @@ const supabaseConfig = getSupabaseConfig();
   <meta name="twitter:description" content="Find the right agent skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
 
   <!-- JSON-LD Structured Data -->
-  <script type="application/ld+json">
+  <script is:inline type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@graph": [
@@ -513,7 +513,7 @@ const supabaseConfig = getSupabaseConfig();
   </script>
 
   <!-- Fetch live skill count -->
-  <script define:vars={{ statsApiUrl: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1/stats` }}>
+  <script is:inline define:vars={{ statsApiUrl: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1/stats` }}>
     (function() {
       const API_URL = statsApiUrl;
       const CACHE_KEY = 'skillsmith_skill_count';
