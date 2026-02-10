@@ -12,7 +12,7 @@
 // Disable prerendering - this page needs SSR to inject Supabase config for auth nav
 export const prerender = false;
 
-import { ViewTransitions } from 'astro:transitions';
+import { ClientRouter } from 'astro:transitions';
 import Nav from '../components/Nav.astro';
 import Footer from '../components/Footer.astro';
 import { getSupabaseConfig } from '../lib/supabase-config';
@@ -97,7 +97,7 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
     <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
 
     <!-- Enable smooth page transitions without full reload (SMI-2066) -->
-    <ViewTransitions />
+    <ClientRouter />
 
     <!-- Supabase config for auth-aware navigation -->
     <script is:inline define:vars={{ supabaseConfig }}>
