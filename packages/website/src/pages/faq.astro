@@ -144,6 +144,7 @@ const faqCategories: FAQCategory[] = [
 
     <meta name="description" content="Frequently asked questions about Skillsmith - AI-powered skill discovery and management for AI assistants" />
     <title>FAQ | Skillsmith</title>
+    <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
     <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
 
@@ -160,6 +161,23 @@ const faqCategories: FAQCategory[] = [
         }
       })))
     })} />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="FAQ | Skillsmith" />
+    <meta property="og:description" content="Frequently asked questions about Skillsmith - AI-powered skill discovery and management for Claude Code" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={new URL(Astro.url.pathname, Astro.site).href} />
+    <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
+    <meta property="og:image" content={new URL('/og-image.png', Astro.site).href} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="FAQ | Skillsmith" />
+    <meta name="twitter:description" content="Frequently asked questions about Skillsmith - AI-powered skill discovery and management for Claude Code" />
+    <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
+    <meta name="twitter:image" content={new URL('/og-image.png', Astro.site).href} />
   </head>
   <body>
     <header class="header">
@@ -426,7 +444,7 @@ const faqCategories: FAQCategory[] = [
     display: block;
     padding: 0.5rem 0.75rem;
     text-decoration: none;
-    color: #6b7280;
+    color: #9ca3af;
     font-weight: 500;
     border-radius: 0.375rem;
     transition: all 0.2s;
@@ -531,7 +549,7 @@ const faqCategories: FAQCategory[] = [
 
   .cta-section .btn-primary {
     background: white;
-    color: #D4694E;
+    color: #974539;
   }
 
   .cta-section .btn-ghost {

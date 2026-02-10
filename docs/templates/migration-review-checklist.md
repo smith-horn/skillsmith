@@ -33,7 +33,6 @@ Use this checklist to review database migrations before deployment. This ensures
 
 <!-- Brief description of what this migration does -->
 
-
 ---
 
 ## Pre-Review Checks

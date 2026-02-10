@@ -39,6 +39,19 @@
   --color-primary-800: #974539;
   --color-primary-900: #7d3b32;
 
+  /* Dark color scale (dark surface/background tones) */
+  --color-dark-50: #fafafa;
+  --color-dark-100: #f1f5f9;
+  --color-dark-200: #e2e8f0;
+  --color-dark-300: #cbd5e1;
+  --color-dark-400: #94a3b8;
+  --color-dark-500: #748595;
+  --color-dark-600: #475569;
+  --color-dark-700: #334155;
+  --color-dark-800: #1f1f23;
+  --color-dark-900: #121214;
+  --color-dark-950: #0d0d0f;
+
   /* Secondary color scale (maps to sage) */
   --color-secondary-50: #f0f7f4;
   --color-secondary-100: #dcefe5;
@@ -76,7 +89,7 @@
   --color-yellow-800: #854d0e;
 
   /* Typography */
-  --font-sans: Satoshi, system-ui, -apple-system, sans-serif;
+  --font-sans: Satoshi, ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: JetBrains Mono, Menlo, monospace;
 
   /* Shadows */
@@ -86,7 +99,7 @@
   --shadow-hover: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 
   /* Animations */
-  --animate-fade-up: fadeUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  --animate-fade-up: fadeUp 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
   --animate-float: float 20s ease-in-out infinite;
 
   @keyframes fadeUp {
