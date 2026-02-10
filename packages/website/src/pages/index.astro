@@ -26,25 +26,26 @@ const supabaseConfig = getSupabaseConfig();
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <!-- Google Analytics -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
-  <script is:inline>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js', new Date());
-    gtag('config', 'G-GGZQZM1Y1L');
-  </script>
-
   <title>Skillsmith - AI Skill Discovery for Claude Code</title>
   <meta name="description" content="Find the right Claude Code skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
 
   <!-- Fonts: Satoshi + JetBrains Mono -->
+  <!-- Non-CORS preconnect for CSS fetch, CORS preconnect for font file fetch -->
   <link rel="preconnect" href="https://api.fontshare.com" />
   <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
   <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap" rel="stylesheet" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" fetchpriority="low" />
+
+  <!-- Google Analytics (placed after fonts so font fetches get priority) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L" fetchpriority="low"></script>
+  <script is:inline>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-GGZQZM1Y1L');
+  </script>
 
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
@@ -157,7 +158,7 @@ const supabaseConfig = getSupabaseConfig();
 </head>
 
 <body class="bg-[#0D0D0F] text-[#FAFAFA] font-sans antialiased">
-  <!-- Background atmosphere -->
+  <!-- Background atmosphere (will-change-transform: intentional for infinite float animation — promotes to compositor layer) -->
   <div class="fixed inset-0 overflow-hidden pointer-events-none">
     <div class="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-[radial-gradient(circle,rgba(224,122,95,0.08)_0%,transparent_70%)] animate-float will-change-transform"></div>
     <div class="absolute bottom-[-10%] right-[-10%] w-[400px] h-[400px] bg-[radial-gradient(circle,rgba(129,178,154,0.05)_0%,transparent_70%)] animate-float will-change-transform" style="animation-direction: reverse; animation-duration: 25s;"></div>
@@ -425,7 +426,8 @@ const supabaseConfig = getSupabaseConfig();
   </footer>
 
   <style>
-    /* Ensure animations play */
+    /* Hero animations — 0.5s duration is an intentional LCP optimization
+       (SMI-2350), shorter than the 0.8s default in global.css */
     .animate-fade-up {
       animation: fadeUp 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
     }
@@ -459,10 +461,12 @@ const supabaseConfig = getSupabaseConfig();
       box-shadow: 0 0 40px rgba(224, 122, 95, 0.08);
     }
 
-    /* Defer rendering of below-fold sections for faster LCP */
+    /* Defer rendering of below-fold sections for faster LCP.
+       contain-intrinsic-size uses auto keyword so the browser remembers real
+       height after first render; 800px is the initial estimate for first visit. */
     section:nth-of-type(n+2) {
       content-visibility: auto;
-      contain-intrinsic-size: auto 600px;
+      contain-intrinsic-size: auto 800px;
     }
 
     /* Reserve space for dynamic content to prevent CLS */

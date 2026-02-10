@@ -99,7 +99,7 @@
   --shadow-hover: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 
   /* Animations */
-  --animate-fade-up: fadeUp 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  --animate-fade-up: fadeUp 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
   --animate-float: float 20s ease-in-out infinite;
 
   @keyframes fadeUp {

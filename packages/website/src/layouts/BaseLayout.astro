@@ -59,9 +59,13 @@ const supabaseConfig = getSupabaseConfig();
     <title>{title}</title>
 
     <!-- Font preconnect hints (SMI-2349: moved from CSS @import to HTML link for faster discovery) -->
+    <!-- Non-CORS preconnect for CSS fetch, CORS preconnect for font file fetch -->
     <link rel="preconnect" href="https://api.fontshare.com" />
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
     <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap" rel="stylesheet" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" fetchpriority="low" />
 
     <!-- Slot for page-specific head content (JSON-LD, etc.) -->
     <slot name="head" />
@@ -154,7 +158,6 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   html {
-    font-family: 'Satoshi', ui-sans-serif, system-ui, -apple-system, sans-serif;
     scroll-behavior: smooth;
   }
 
