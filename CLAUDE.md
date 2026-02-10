@@ -230,6 +230,28 @@ for f in docs/gtm/*.md docs/gtm/**/*.md; do
 done
 ```
 
+### Rebasing with Git-Crypt (format-patch Workaround)
+
+`git pull --rebase` fails in git-crypt repos because the smudge filter creates persistent dirty files that block rebasing. Use `format-patch` to preserve local commits:
+
+```bash
+# 1. Save local commits as patches
+git format-patch -N HEAD -o /tmp/patches/   # N = number of unpushed commits
+
+# 2. Reset to remote
+git fetch origin main
+git reset --hard origin/main
+
+# 3. Re-apply patches
+git am /tmp/patches/*.patch
+
+# 4. If a patch conflicts, abort and apply manually
+git am --abort
+# Then apply changes by hand (e.g., sed for bulk replacements)
+```
+
+**When to use**: Any time `git pull --rebase` fails with "You have unstaged changes" due to git-crypt smudge filter artifacts.
+
 ### Worktree Considerations
 
 When creating git worktrees, git-crypt must be unlocked in the **main repo first**, then the worktree inherits the unlocked state.
@@ -507,6 +529,8 @@ docker logs skillsmith-dev-1            # View logs
 ```
 
 ### After Pulling Changes
+
+**Important**: Always run `npm install` after pulling or merging PRs that change `package.json` or `package-lock.json`. Skipping this can cause version mismatches (e.g., wrong dependency versions resolved) leading to TypeScript errors or runtime failures.
 
 ```bash
 docker exec skillsmith-dev-1 npm install
