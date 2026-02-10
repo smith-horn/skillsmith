@@ -48,12 +48,12 @@ if (pathSegments.length > 1) {
     <!-- Sidebar -->
     <DocsSidebar currentPath={currentPath} />
 
-    <!-- Main Content -->
-    <main class="flex-1 min-w-0 px-8 py-10 lg:px-12">
+    <!-- Main Content (div, not main — BaseLayout already renders <main id="main-content">) -->
+    <div class="flex-1 min-w-0 px-8 py-10 lg:px-12">
       <article class="docs-content max-w-3xl">
         <slot />
       </article>
-    </main>
+    </div>
 
     <!-- Table of Contents -->
     <aside class="hidden xl:block w-56 shrink-0 py-10 pr-8">
@@ -103,7 +103,7 @@ if (pathSegments.length > 1) {
 </BaseLayout>
 
 <style is:global>
-  /* Documentation Content Styles - Plain CSS for Tailwind CDN compatibility */
+  /* Documentation Content Styles - Plain CSS overrides for docs prose */
   .docs-content h1 {
     font-size: 1.875rem;
     font-weight: 700;

@@ -17,6 +17,7 @@ import { test, expect } from "@playwright/test";
 /** Pages to capture baselines for */
 const pages = [
   { name: "homepage", path: "/" },
+  { name: "skills", path: "/skills" },
   { name: "docs", path: "/docs" },
   { name: "pricing", path: "/pricing" },
   { name: "contact", path: "/contact" },
