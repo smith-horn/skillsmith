@@ -24,6 +24,7 @@ const VALID_CATEGORIES: readonly SkillCategory[] = [
   'productivity',
   'integration',
   'ai-ml',
+  'science',
   'other',
 ] as const
 
