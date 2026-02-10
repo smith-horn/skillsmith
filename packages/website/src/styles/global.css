@@ -275,8 +275,14 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
-    @apply bg-white text-gray-900;
+    min-height: 100vh;
+    background-color: var(--color-bg-primary);
+    color: var(--color-dark-50);
   }
 
   /* Heading styles */
