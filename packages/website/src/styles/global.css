@@ -89,7 +89,7 @@
   --color-yellow-800: #854d0e;
 
   /* Typography */
-  --font-sans: Satoshi, system-ui, -apple-system, sans-serif;
+  --font-sans: Satoshi, ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: JetBrains Mono, Menlo, monospace;
 
   /* Shadows */

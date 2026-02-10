@@ -472,6 +472,27 @@ const supabaseConfig = getSupabaseConfig();
       display: inline-block;
       min-width: 6ch;
     }
+
+    /* Respect user motion preferences */
+    @media (prefers-reduced-motion: reduce) {
+      .animate-fade-up {
+        animation: none;
+        opacity: 1;
+        transform: none;
+      }
+
+      .animate-float {
+        animation: none;
+      }
+
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
   </style>
 
   <!-- Copy to Clipboard Handler -->
