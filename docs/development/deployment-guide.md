@@ -1,0 +1,136 @@
+# Deployment Guide
+
+Supabase Edge Function deployment, CORS configuration, and website deployment.
+
+## Edge Function Deployment
+
+```bash
+npx supabase functions deploy <function-name> --no-verify-jwt  # Anonymous/internal auth
+npx supabase functions deploy <function-name>                   # Gateway JWT validation
+```
+
+### Functions Requiring `--no-verify-jwt`
+
+These functions bypass Supabase gateway JWT validation and handle auth internally:
+
+```bash
+# Anonymous functions (no auth required)
+npx supabase functions deploy early-access-signup --no-verify-jwt
+npx supabase functions deploy contact-submit --no-verify-jwt
+npx supabase functions deploy stats --no-verify-jwt
+npx supabase functions deploy skills-search --no-verify-jwt
+npx supabase functions deploy skills-get --no-verify-jwt
+npx supabase functions deploy skills-recommend --no-verify-jwt
+npx supabase functions deploy stripe-webhook --no-verify-jwt
+npx supabase functions deploy checkout --no-verify-jwt
+npx supabase functions deploy events --no-verify-jwt
+
+# Authenticated functions with internal JWT validation
+npx supabase functions deploy generate-license --no-verify-jwt
+npx supabase functions deploy regenerate-license --no-verify-jwt
+npx supabase functions deploy create-portal-session --no-verify-jwt
+npx supabase functions deploy list-invoices --no-verify-jwt
+```
+
+**Why `--no-verify-jwt`**: The Supabase gateway rejects user JWTs from the frontend auth flow. These functions validate tokens internally using `supabase.auth.getUser()`. See SMI-1906.
+
+**Note**: `verify_jwt` is also configured in `supabase/config.toml` for local development. Production deployments require the `--no-verify-jwt` flag explicitly.
+
+### Adding New Anonymous Functions (SMI-1900)
+
+CI validates anonymous function configuration. When adding a new one:
+
+1. Add `[functions.<name>]` with `verify_jwt = false` to `supabase/config.toml`
+2. Add deploy command to the list above
+3. Add function name to `ANONYMOUS_FUNCTIONS` array in `scripts/audit-standards.mjs`
+
+CI will fail if any anonymous function is missing from `config.toml` or CLAUDE.md.
+
+## CORS Configuration (SMI-1904)
+
+Configured in `supabase/functions/_shared/cors.ts`:
+
+| Origin Type | Handling |
+|-------------|----------|
+| Production domains | Always allowed (`skillsmith.app`, `skillsmith.dev`) |
+| Vercel preview URLs | Auto-allowed via pattern (`*-smithhorngroup.vercel.app`) |
+| Localhost | Always allowed for development |
+| Custom domains | Add via `CORS_ALLOWED_ORIGINS` env var |
+
+### Adding Custom Origins
+
+Set in Supabase Dashboard (Edge Functions > Secrets):
+
+```text
+CORS_ALLOWED_ORIGINS=https://custom.example.com,https://staging.skillsmith.app
+```
+
+Or via CLI:
+
+```bash
+npx supabase secrets set CORS_ALLOWED_ORIGINS="https://custom.example.com"
+```
+
+## Website Deployment
+
+```bash
+cd packages/website && vercel --prod
+```
+
+Public docs at [skillsmith.app/docs](https://skillsmith.app/docs):
+
+| Page | Path |
+|------|------|
+| Overview | `/docs` |
+| Getting Started | `/docs/getting-started` |
+| Quickstart | `/docs/quickstart` |
+| CLI Reference | `/docs/cli` |
+| MCP Server | `/docs/mcp-server` |
+| API Reference | `/docs/api` |
+| Security | `/docs/security` |
+| Quarantine | `/docs/quarantine` |
+| Trust Tiers | `/docs/trust-tiers` |
+
+Contact form at `/contact` supports `?topic=` param. `/verify` redirects to `/contact?topic=verification`.
+
+## MCP Registry
+
+See [mcp-registry.md](mcp-registry.md) for publishing workflow, version bumping, and CI setup.
+
+## Monitoring & Alerts
+
+### Scheduled Jobs
+
+| Job | Schedule | Function |
+|-----|----------|----------|
+| Skill Indexer | Daily 2 AM UTC | `indexer` |
+| Metadata Refresh | Hourly :30 | `skills-refresh-metadata` |
+| Weekly Ops Report | Monday 9 AM UTC | `ops-report` |
+| Billing Monitor | Monday 9 AM UTC | GitHub Actions only |
+
+### Alert Notifications
+
+Alerts sent to `support@skillsmith.app` via Resend when:
+
+- Indexer workflow fails
+- Metadata refresh workflow fails (scheduled runs only)
+- Weekly ops report detects anomalies
+
+### Manual Ops Report
+
+```bash
+varlock run -- bash -c 'curl -X POST \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"days\": 7, \"dryRun\": false}" \
+  "$SUPABASE_URL/functions/v1/ops-report"'
+```
+
+### Audit Logs
+
+All scheduled jobs log to the `audit_logs` table:
+
+- `indexer:run` - Skill indexing results
+- `refresh:run` - Metadata refresh results
+- `ops-report:sent` - Weekly report sent
+- `alert:sent` - Alert notification sent
