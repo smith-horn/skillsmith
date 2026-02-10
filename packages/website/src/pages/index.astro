@@ -11,7 +11,7 @@
 // Disable prerendering - this page needs SSR to inject Supabase config for auth nav
 export const prerender = false;
 
-import { ViewTransitions } from 'astro:transitions';
+import { ClientRouter } from 'astro:transitions';
 import Nav from '../components/Nav.astro';
 import { getSupabaseConfig } from '../lib/supabase-config';
 
@@ -48,7 +48,7 @@ const supabaseConfig = getSupabaseConfig();
   <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
 
   <!-- Enable smooth page transitions without full reload (SMI-2066) -->
-  <ViewTransitions />
+  <ClientRouter />
 
   <!-- Supabase config for auth-aware navigation -->
   <script is:inline define:vars={{ supabaseConfig }}>
