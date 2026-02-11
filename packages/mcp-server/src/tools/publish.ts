@@ -25,7 +25,7 @@
  */
 
 import { promises as fs } from 'fs'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { SkillParser, SkillsmithError, ErrorCodes } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 
@@ -41,7 +41,7 @@ import {
   scanReferences,
   writeManifest,
   createGitHubRepo,
-  addClauseSkillTopic,
+  addClaudeSkillTopic,
 } from './publish.helpers.js'
 
 // Re-export public API
@@ -85,7 +85,7 @@ export async function executePublish(
   try {
     const stats = await fs.stat(skill_path)
     if (!stats.isDirectory()) {
-      dirPath = skill_path.replace(/\/[^/]+$/, '')
+      dirPath = dirname(skill_path)
     }
   } catch {
     throw new SkillsmithError(ErrorCodes.SKILL_NOT_FOUND, `Path not found: ${skill_path}`, {
@@ -180,7 +180,7 @@ export async function executePublish(
       // Add topic if requested
       if (add_topic && (repoUrl || !create_repo)) {
         const repoName = repoUrl ? repoUrl.replace('https://github.com/', '') : metadata.name
-        const topicAdded = addClauseSkillTopic(repoName)
+        const topicAdded = addClaudeSkillTopic(repoName)
         if (!topicAdded) {
           nextSteps.push(`Add topic manually: gh repo edit ${repoName} --add-topic claude-skill`)
         }

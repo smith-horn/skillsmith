@@ -405,6 +405,10 @@ export class SkillParser {
    * Check for project-specific references that shouldn't be in published skills.
    * Static method — does not require SkillParser instantiation.
    *
+   * Default patterns may produce false positives (e.g., legitimate npm scopes
+   * like `@types/`, common GitHub repo URLs). Use `customPatterns` to add
+   * project-specific checks, or review results before acting on warnings.
+   *
    * @param content - Raw file content to scan
    * @param customPatterns - Additional regex patterns to merge with defaults
    * @returns Object with warnings array and detailed match information

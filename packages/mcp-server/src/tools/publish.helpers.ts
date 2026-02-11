@@ -4,7 +4,7 @@
  * @see SMI-2440: MCP Publish Tool
  */
 
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import { createHash } from 'crypto'
@@ -36,14 +36,14 @@ export function checkGhPreflight(): PreflightResult {
   let ghAuthenticated = false
 
   try {
-    execSync('which gh', { stdio: 'pipe' })
+    execFileSync('gh', ['--version'], { stdio: 'pipe' })
     ghAvailable = true
   } catch {
     return { ghAvailable: false, ghAuthenticated: false }
   }
 
   try {
-    execSync('gh auth status', { stdio: 'pipe' })
+    execFileSync('gh', ['auth', 'status'], { stdio: 'pipe' })
     ghAuthenticated = true
   } catch {
     // gh is available but not authenticated
@@ -70,14 +70,13 @@ export async function scanReferences(
   const allWarnings: ReferenceWarning[] = []
 
   // Read all .md files (max 20)
-  const allFiles = await fs.readdir(dirPath, { recursive: true })
-  const mdFiles = allFiles
-    .filter((f): f is string => typeof f === 'string' && f.endsWith('.md'))
-    .slice(0, 20)
+  const allFiles = (await fs.readdir(dirPath, { recursive: true })) as string[]
+  const mdFiles = allFiles.filter((f) => f.endsWith('.md')).slice(0, 20)
 
   // Parse custom patterns
   const parsedPatterns = customPatterns
     ?.map((p) => {
+      if (p.length > 200) return null // C2: Prevent ReDoS
       try {
         return new RegExp(p, 'g')
       } catch {
@@ -122,7 +121,7 @@ export async function writeManifest(
  */
 export function createGitHubRepo(name: string, visibility: 'public' | 'private'): string | null {
   try {
-    const output = execSync(`gh repo create "${name}" --${visibility} --confirm`, {
+    const output = execFileSync('gh', ['repo', 'create', name, `--${visibility}`], {
       stdio: 'pipe',
       encoding: 'utf-8',
     })
@@ -137,9 +136,9 @@ export function createGitHubRepo(name: string, visibility: 'public' | 'private')
 /**
  * Add claude-skill topic to GitHub repo
  */
-export function addClauseSkillTopic(repoName: string): boolean {
+export function addClaudeSkillTopic(repoName: string): boolean {
   try {
-    execSync(`gh repo edit "${repoName}" --add-topic claude-skill`, {
+    execFileSync('gh', ['repo', 'edit', repoName, '--add-topic', 'claude-skill'], {
       stdio: 'pipe',
     })
     return true

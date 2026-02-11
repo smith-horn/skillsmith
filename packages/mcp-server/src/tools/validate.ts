@@ -127,13 +127,14 @@ export async function executeValidate(
   }
 
   // SMI-2441: Check if skill modifies CLAUDE.md
-  const body = content.slice(content.indexOf('---', 3) + 3).trim()
+  const secondDelimiter = content.indexOf('---', 3)
+  const body = secondDelimiter !== -1 ? content.slice(secondDelimiter + 3).trim() : ''
   const claudeMdWarnings = detectClaudeMdModification(body)
   for (const warning of claudeMdWarnings) {
     errors.push({
       field: 'body',
       message: warning,
-      severity: 'warning' as const,
+      severity: 'warning',
     })
   }
 

@@ -299,10 +299,10 @@ export function detectClaudeMdModification(body: string): string[] {
   const warnings: string[] = []
 
   const claudeMdPatterns = [
-    /CLAUDE\.md/gi,
-    /progressive\s+disclosure/gi,
-    /sub-document/gi,
-    /optimize.*claude/gi,
+    /CLAUDE\.md/i,
+    /progressive\s+disclosure/i,
+    /sub-document/i,
+    /optimize.*claude/i,
   ]
 
   const modifiesClaudeMd = claudeMdPatterns.some((p) => p.test(body))

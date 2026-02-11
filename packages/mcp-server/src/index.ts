@@ -213,7 +213,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
       }
 
-      case 'publish': {
+      case 'skill_publish': {
         const input = publishInputSchema.parse(args)
         const result = await executePublish(input, toolContext)
         return {

@@ -11,6 +11,7 @@ import {
   hasSsrfPattern,
   hasPathTraversal,
   validateMetadata,
+  detectClaudeMdModification,
 } from '../../src/tools/validate.helpers.js'
 
 describe('validate.helpers', () => {
@@ -342,6 +343,61 @@ tags:
       const errors = validateMetadata(metadata, true)
 
       expect(errors.some((e) => e.field === 'tags' && e.message.includes('recommended'))).toBe(true)
+    })
+  })
+
+  describe('detectClaudeMdModification', () => {
+    it('warns when body contains CLAUDE.md reference', () => {
+      const result = detectClaudeMdModification('This skill edits CLAUDE.md directly')
+
+      expect(result).toHaveLength(1)
+      expect(result[0]).toContain('modify CLAUDE.md')
+    })
+
+    it('warns when body contains "progressive disclosure"', () => {
+      const result = detectClaudeMdModification('Uses progressive disclosure to organize content')
+
+      expect(result).toHaveLength(1)
+      expect(result[0]).toContain('modify CLAUDE.md')
+    })
+
+    it('warns when body contains "sub-document"', () => {
+      const result = detectClaudeMdModification('Split config into sub-document files')
+
+      expect(result).toHaveLength(1)
+      expect(result[0]).toContain('modify CLAUDE.md')
+    })
+
+    it('warns when body contains "optimize" near "claude"', () => {
+      const result = detectClaudeMdModification('We optimize your claude configuration')
+
+      expect(result).toHaveLength(1)
+      expect(result[0]).toContain('modify CLAUDE.md')
+    })
+
+    it('returns empty array when body has no CLAUDE.md patterns', () => {
+      const result = detectClaudeMdModification('A simple skill that formats code')
+
+      expect(result).toEqual([])
+    })
+
+    it('is case-insensitive', () => {
+      const result = detectClaudeMdModification('Edits claude.MD for you')
+
+      expect(result).toHaveLength(1)
+    })
+
+    it('returns exactly one warning message even with multiple pattern matches', () => {
+      const body = 'Optimize your claude.md using progressive disclosure and sub-document patterns'
+      const result = detectClaudeMdModification(body)
+
+      expect(result).toHaveLength(1)
+    })
+
+    it('warning message references standards.md', () => {
+      const result = detectClaudeMdModification('Edits CLAUDE.md')
+
+      expect(result[0]).toContain('standards.md')
     })
   })
 })
