@@ -65,9 +65,8 @@ jobs:
           project_id: ${{ env.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
           service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+          token_format: 'access_token'
+          access_token_scopes: 'https://www.googleapis.com/auth/analytics.readonly'
 
       - name: Query GA4 Traffic Data
         id: traffic
@@ -78,7 +77,7 @@ jobs:
 
           # Query sessions, users, and engagement by date
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-            -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.access_token }}" \
             -H "Content-Type: application/json" \
             -d '{
               "dateRanges": [{"startDate": "'"${DAYS}"'daysAgo", "endDate": "today"}],
@@ -135,7 +134,7 @@ jobs:
           DAYS="$INPUT_DAYS"
 
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-            -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.access_token }}" \
             -H "Content-Type: application/json" \
             -d '{
               "dateRanges": [{"startDate": "'"${DAYS}"'daysAgo", "endDate": "today"}],
@@ -171,7 +170,7 @@ jobs:
           DAYS="$INPUT_DAYS"
 
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-            -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.access_token }}" \
             -H "Content-Type: application/json" \
             -d '{
               "dateRanges": [{"startDate": "'"${DAYS}"'daysAgo", "endDate": "today"}],
