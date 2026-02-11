@@ -67,7 +67,7 @@
   "engines": {
     "node": ">=22.0.0"
   },
-  "packageManager": "npm@10.9.4",
+  "packageManager": "npm@11.9.0",
   "author": "Smith Horn Group Ltd",
   "license": "Elastic-2.0",
   "devDependencies": {
