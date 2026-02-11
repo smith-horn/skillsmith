@@ -143,20 +143,18 @@ const faqCategories: FAQCategory[] = [
 ---
 
 <DocsLayout title="FAQ" description="Frequently asked questions about Skillsmith - AI-powered skill discovery and management for AI assistants">
-  <Fragment slot="head">
-    <script is:inline type="application/ld+json" set:html={JSON.stringify({
-      "@context": "https://schema.org",
-      "@type": "FAQPage",
-      "mainEntity": faqCategories.flatMap(cat => cat.items.map(item => ({
-        "@type": "Question",
-        "name": item.question,
-        "acceptedAnswer": {
-          "@type": "Answer",
-          "text": item.answer
-        }
-      })))
-    })} />
-  </Fragment>
+  <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": faqCategories.flatMap(cat => cat.items.map(item => ({
+      "@type": "Question",
+      "name": item.question,
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": item.answer
+      }
+    })))
+  })} />
 
   <h1>Frequently Asked Questions</h1>
 
@@ -202,8 +200,8 @@ const faqCategories: FAQCategory[] = [
   }
 
   .faq-item {
-    background: #121214;
-    border: 1px solid #2a2a2f;
+    background: #0f172a;
+    border: 1px solid #1e293b;
     border-radius: 0.75rem;
     overflow: hidden;
   }
@@ -274,11 +272,28 @@ const faqCategories: FAQCategory[] = [
 
   .cta-btn-outline {
     color: #9ca3af;
-    border: 1px solid #2a2a2f;
+    border: 1px solid #1e293b;
   }
 
   .cta-btn-outline:hover {
     color: #FAFAFA;
-    background: #1a1a1f;
+    background: #0f172a;
   }
 </style>
+
+<script>
+  // GA4: Track FAQ expand/collapse (SMI-2463)
+  document.querySelectorAll('.faq-item').forEach(item => {
+    item.addEventListener('toggle', () => {
+      const details = item as HTMLDetailsElement;
+      if (details.open && typeof window.gtag === 'function') {
+        const question = details.querySelector('.question')?.textContent || '';
+        const category = details.closest('.faq-items')?.previousElementSibling?.textContent || '';
+        window.gtag('event', 'faq_expand', {
+          faq_question: question.slice(0, 100),
+          faq_category: category,
+        });
+      }
+    });
+  });
+</script>
