@@ -1,0 +1,229 @@
+# SMI-2454: Weekly GA4 analytics report via Workload Identity Federation
+# Queries Google Analytics Data API and generates a traffic summary
+# Auth: GitHub OIDC -> WIF Pool -> Service Account impersonation (no secrets needed)
+
+name: Weekly Analytics Report
+
+on:
+  schedule:
+    # Every Monday at 9:00 AM UTC (aligned with ops-report and billing-monitor)
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Number of days to include in report'
+        required: false
+        default: '7'
+        type: string
+      create_issue:
+        description: 'Create GitHub issue with report'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GA4_PROPERTY_ID: 'properties/520456579'
+  GCP_PROJECT_ID: 'gen-lang-client-0194964319'
+  GCP_WIF_PROVIDER: 'projects/709471829250/locations/global/workloadIdentityPools/github-actions-pool/providers/github'
+  GCP_SERVICE_ACCOUNT: 'skillsmith-google-analytics@gen-lang-client-0194964319.iam.gserviceaccount.com'
+
+jobs:
+  analytics-report:
+    name: Generate Analytics Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Query GA4 Traffic Data
+        id: traffic
+        run: |
+          DAYS="${{ github.event.inputs.days || '7' }}"
+
+          # Query top pages, sessions, users, and engagement
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "dateRanges": [{"startDate": "'"${DAYS}"'daysAgo", "endDate": "today"}],
+              "metrics": [
+                {"name": "sessions"},
+                {"name": "activeUsers"},
+                {"name": "screenPageViews"},
+                {"name": "averageSessionDuration"},
+                {"name": "bounceRate"},
+                {"name": "conversions"}
+              ],
+              "dimensions": [{"name": "date"}],
+              "orderBys": [{"dimension": {"dimensionName": "date"}}]
+            }' \
+            "https://analyticsdata.googleapis.com/v1beta/${{ env.GA4_PROPERTY_ID }}:runReport")
+
+          # Check for API errors
+          ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty')
+          if [ -n "$ERROR" ]; then
+            echo "::error::GA4 API error: $ERROR"
+            exit 1
+          fi
+
+          # Extract totals from row-level data
+          TOTAL_SESSIONS=$(echo "$RESPONSE" | jq -r '[.rows[]?.metricValues[0].value | tonumber] | add // 0')
+          TOTAL_USERS=$(echo "$RESPONSE" | jq -r '[.rows[]?.metricValues[1].value | tonumber] | add // 0')
+          TOTAL_PAGEVIEWS=$(echo "$RESPONSE" | jq -r '[.rows[]?.metricValues[2].value | tonumber] | add // 0')
+          AVG_DURATION=$(echo "$RESPONSE" | jq -r '[.rows[]?.metricValues[3].value | tonumber] | add / length // 0 | round')
+          AVG_BOUNCE=$(echo "$RESPONSE" | jq -r '[.rows[]?.metricValues[4].value | tonumber] | add / length // 0 | . * 100 | round / 100')
+          TOTAL_CONVERSIONS=$(echo "$RESPONSE" | jq -r '[.rows[]?.metricValues[5].value | tonumber] | add // 0')
+
+          echo "sessions=$TOTAL_SESSIONS" >> $GITHUB_OUTPUT
+          echo "users=$TOTAL_USERS" >> $GITHUB_OUTPUT
+          echo "pageviews=$TOTAL_PAGEVIEWS" >> $GITHUB_OUTPUT
+          echo "avg_duration=$AVG_DURATION" >> $GITHUB_OUTPUT
+          echo "avg_bounce=$AVG_BOUNCE" >> $GITHUB_OUTPUT
+          echo "conversions=$TOTAL_CONVERSIONS" >> $GITHUB_OUTPUT
+          echo "days=$DAYS" >> $GITHUB_OUTPUT
+
+      - name: Query Top Pages
+        id: pages
+        run: |
+          DAYS="${{ github.event.inputs.days || '7' }}"
+
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "dateRanges": [{"startDate": "'"${DAYS}"'daysAgo", "endDate": "today"}],
+              "metrics": [
+                {"name": "sessions"},
+                {"name": "screenPageViews"}
+              ],
+              "dimensions": [{"name": "pagePath"}],
+              "orderBys": [{"metric": {"metricName": "sessions"}, "desc": true}],
+              "limit": 10
+            }' \
+            "https://analyticsdata.googleapis.com/v1beta/${{ env.GA4_PROPERTY_ID }}:runReport")
+
+          # Build markdown table of top pages
+          TABLE="| Page | Sessions | Page Views |\n|------|----------|------------|\n"
+          TABLE+=$(echo "$RESPONSE" | jq -r '.rows[]? | "| \(.dimensionValues[0].value) | \(.metricValues[0].value) | \(.metricValues[1].value) |"')
+
+          # Save to file to avoid shell escaping issues
+          echo -e "$TABLE" > /tmp/top-pages.md
+
+      - name: Query Traffic Sources
+        id: sources
+        run: |
+          DAYS="${{ github.event.inputs.days || '7' }}"
+
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "dateRanges": [{"startDate": "'"${DAYS}"'daysAgo", "endDate": "today"}],
+              "metrics": [
+                {"name": "sessions"},
+                {"name": "activeUsers"}
+              ],
+              "dimensions": [{"name": "sessionDefaultChannelGroup"}],
+              "orderBys": [{"metric": {"metricName": "sessions"}, "desc": true}],
+              "limit": 10
+            }' \
+            "https://analyticsdata.googleapis.com/v1beta/${{ env.GA4_PROPERTY_ID }}:runReport")
+
+          TABLE="| Channel | Sessions | Users |\n|---------|----------|-------|\n"
+          TABLE+=$(echo "$RESPONSE" | jq -r '.rows[]? | "| \(.dimensionValues[0].value) | \(.metricValues[0].value) | \(.metricValues[1].value) |"')
+
+          echo -e "$TABLE" > /tmp/traffic-sources.md
+
+      - name: Generate Summary
+        run: |
+          DAYS="${{ steps.traffic.outputs.days }}"
+
+          echo "### Weekly Analytics Report (Last ${DAYS} Days)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Sessions | ${{ steps.traffic.outputs.sessions }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Active Users | ${{ steps.traffic.outputs.users }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Page Views | ${{ steps.traffic.outputs.pageviews }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Avg Session Duration | ${{ steps.traffic.outputs.avg_duration }}s |" >> $GITHUB_STEP_SUMMARY
+          echo "| Bounce Rate | ${{ steps.traffic.outputs.avg_bounce }}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Conversions | ${{ steps.traffic.outputs.conversions }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "#### Top Pages" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat /tmp/top-pages.md >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "#### Traffic Sources" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat /tmp/traffic-sources.md >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Report generated: $(date -u +%Y-%m-%dT%H:%M:%SZ) | GA4 Property: G-GGZQZM1Y1L | Auth: Workload Identity Federation*" >> $GITHUB_STEP_SUMMARY
+
+      - name: Create issue if requested
+        if: github.event.inputs.create_issue == 'true'
+        run: |
+          DAYS="${{ steps.traffic.outputs.days }}"
+          TITLE="Analytics Report - $(date +%Y-%m-%d) (${DAYS}d)"
+
+          BODY=$(cat <<'ISSUE_EOF'
+          ## Analytics Report
+
+          **Period**: Last ${{ steps.traffic.outputs.days }} days
+          **Generated**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          ### Overview
+
+          | Metric | Value |
+          |--------|-------|
+          | Sessions | ${{ steps.traffic.outputs.sessions }} |
+          | Active Users | ${{ steps.traffic.outputs.users }} |
+          | Page Views | ${{ steps.traffic.outputs.pageviews }} |
+          | Avg Session Duration | ${{ steps.traffic.outputs.avg_duration }}s |
+          | Bounce Rate | ${{ steps.traffic.outputs.avg_bounce }}% |
+          | Conversions | ${{ steps.traffic.outputs.conversions }} |
+
+          ### Top Pages
+
+          ISSUE_EOF
+
+          BODY+=$(cat /tmp/top-pages.md)
+          BODY+=$'\n\n### Traffic Sources\n\n'
+          BODY+=$(cat /tmp/traffic-sources.md)
+          BODY+=$'\n\n---\n*Auto-generated by analytics-report workflow*'
+
+          gh issue create \
+            --title "$TITLE" \
+            --body "$BODY" \
+            --label "analytics"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Report Failure
+        if: failure()
+        run: |
+          echo "### Analytics Report Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the workflow logs for details." >> $GITHUB_STEP_SUMMARY
+          echo "Common issues:" >> $GITHUB_STEP_SUMMARY
+          echo "- WIF provider misconfigured" >> $GITHUB_STEP_SUMMARY
+          echo "- Service account lacks GA4 Viewer role" >> $GITHUB_STEP_SUMMARY
+          echo "- GA4 Data API not enabled in GCP project" >> $GITHUB_STEP_SUMMARY
