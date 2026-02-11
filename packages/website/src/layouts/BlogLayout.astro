@@ -42,7 +42,15 @@ const formattedUpdated = updated ? formatDate(updated) : null;
     {category && <meta property="article:section" content={category} />}
     {tags.map(tag => <meta property="article:tag" content={tag} />)}
     {ogImage && <meta property="og:image" content={ogImage} />}
-    {ogImage && <meta name="twitter:image" content={ogImage} />}
+    <script is:inline type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://www.skillsmith.app/" },
+        { "@type": "ListItem", "position": 2, "name": "Blog", "item": "https://www.skillsmith.app/blog" },
+        { "@type": "ListItem", "position": 3, "name": title, "item": Astro.url.href }
+      ]
+    })} />
     <slot name="head" />
   </Fragment>
 

@@ -54,7 +54,7 @@ User-agent: YouBot
 Allow: /
 
 # Sitemap
-Sitemap: https://skillsmith.app/sitemap-index.xml
+Sitemap: https://www.skillsmith.app/sitemap-index.xml
 
 # LLMs.txt - AI-specific site information
 # See: https://skillsmith.app/llms.txt

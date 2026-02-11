@@ -69,12 +69,7 @@ const supabaseConfig = getSupabaseConfig();
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
 
-  <!-- Twitter Card -->
-  <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Skillsmith - Agent Skill Discovery & Management" />
-  <meta name="twitter:description" content="Find the right agent skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
-  <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
-  <meta name="twitter:image" content={new URL('/og-image.png', Astro.site).href} />
+  <!-- NO TWITTER: Skillsmith has no Twitter/X account. Do not add twitter: meta tags. See standards-astro.md Section 12. -->
 
   <!-- JSON-LD Structured Data -->
   <script is:inline type="application/ld+json">
@@ -91,8 +86,7 @@ const supabaseConfig = getSupabaseConfig();
           "url": "https://skillsmith.app/logo-icon.svg"
         },
         "sameAs": [
-          "https://github.com/smith-horn/skillsmith",
-          "https://twitter.com/skillsmith"
+          "https://github.com/smith-horn/skillsmith"
         ]
       },
       {
@@ -103,6 +97,10 @@ const supabaseConfig = getSupabaseConfig();
         "description": "AI-powered agent skill discovery and management",
         "publisher": {
           "@id": "https://skillsmith.app/#organization"
+        },
+        "speakable": {
+          "@type": "SpeakableSpecification",
+          "cssSelector": ["h1", "section:first-of-type p"]
         }
       },
       {
@@ -156,6 +154,44 @@ const supabaseConfig = getSupabaseConfig();
           "One-click installation",
           "MCP server integration",
           "CLI tool"
+        ]
+      },
+      {
+        "@type": "FAQPage",
+        "@id": "https://skillsmith.app/#faq",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "What are agent skills?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Agent skills are reusable prompt-and-tool bundles that extend AI coding assistants like Claude Code. Each skill teaches your agent a new capability — from generating commits to running security audits — without writing custom prompts from scratch."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is Skillsmith free?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The Community tier is free forever with 1,000 API calls per month, semantic search, and one-click installation. No credit card required. Paid plans start at $9.99/month for higher limits and analytics."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "What AI tools does Skillsmith work with?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Skillsmith works with any AI tool that supports the Model Context Protocol (MCP), including Claude Code, Claude Desktop, Cursor, Windsurf, and other MCP-compatible clients. Install the MCP server and your client discovers skills automatically."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How do I install a skill?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Add the Skillsmith MCP server to your client's settings.json, restart, then ask your AI assistant to search for and install skills. You can also use the Skillsmith CLI: run 'npx @skillsmith/cli search testing' to find skills, then 'npx @skillsmith/cli install author/skill-name' to install."
+            }
+          }
         ]
       }
     ]
@@ -384,6 +420,55 @@ const supabaseConfig = getSupabaseConfig();
             </li>
           </ul>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ Section (SMI-2457) -->
+  <section class="py-24 border-t border-white/[0.06]">
+    <div class="max-w-[800px] mx-auto px-6">
+      <h2 class="text-3xl sm:text-4xl font-bold text-center mb-12">Common Questions</h2>
+
+      <div class="space-y-4">
+        <details class="group bg-[#18181B] border border-white/[0.06] rounded-xl">
+          <summary class="flex items-center justify-between px-6 py-5 cursor-pointer list-none font-semibold text-white">
+            What are agent skills?
+            <svg class="w-5 h-5 text-[#71717A] group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+          </summary>
+          <div class="px-6 pb-5 text-[#A1A1AA]">
+            Agent skills are reusable prompt-and-tool bundles that extend AI coding assistants like Claude Code. Each skill teaches your agent a new capability — from generating commits to running security audits — without writing custom prompts from scratch.
+          </div>
+        </details>
+
+        <details class="group bg-[#18181B] border border-white/[0.06] rounded-xl">
+          <summary class="flex items-center justify-between px-6 py-5 cursor-pointer list-none font-semibold text-white">
+            Is Skillsmith free?
+            <svg class="w-5 h-5 text-[#71717A] group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+          </summary>
+          <div class="px-6 pb-5 text-[#A1A1AA]">
+            Yes. The Community tier is free forever with 1,000 API calls per month, semantic search, and one-click installation. No credit card required. Paid plans start at $9.99/month for higher limits and analytics.
+          </div>
+        </details>
+
+        <details class="group bg-[#18181B] border border-white/[0.06] rounded-xl">
+          <summary class="flex items-center justify-between px-6 py-5 cursor-pointer list-none font-semibold text-white">
+            What AI tools does it work with?
+            <svg class="w-5 h-5 text-[#71717A] group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+          </summary>
+          <div class="px-6 pb-5 text-[#A1A1AA]">
+            Skillsmith works with any AI tool that supports the Model Context Protocol (MCP), including Claude Code, Claude Desktop, Cursor, Windsurf, and other MCP-compatible clients. Install the MCP server and your client discovers skills automatically.
+          </div>
+        </details>
+
+        <details class="group bg-[#18181B] border border-white/[0.06] rounded-xl">
+          <summary class="flex items-center justify-between px-6 py-5 cursor-pointer list-none font-semibold text-white">
+            How do I install a skill?
+            <svg class="w-5 h-5 text-[#71717A] group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
+          </summary>
+          <div class="px-6 pb-5 text-[#A1A1AA]">
+            Add the Skillsmith MCP server to your client's settings.json, restart, then ask your AI assistant to search for and install skills. You can also use the CLI: run <code class="text-[#7dd3fc] bg-[#1e293b] px-1.5 py-0.5 rounded text-sm">npx @skillsmith/cli search testing</code> to find skills, then <code class="text-[#7dd3fc] bg-[#1e293b] px-1.5 py-0.5 rounded text-sm">npx @skillsmith/cli install author/skill-name</code> to install.
+          </div>
+        </details>
       </div>
     </div>
   </section>
