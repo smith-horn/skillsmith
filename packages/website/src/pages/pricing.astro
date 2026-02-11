@@ -318,6 +318,52 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
       btn.addEventListener('click', () => {
         const period = btn.getAttribute('data-period') || 'monthly';
         updatePrices(period);
+
+        // GA4: Track billing period toggle (SMI-2459)
+        if (typeof window.gtag === 'function') {
+          window.gtag('event', 'billing_period_toggle', {
+            billing_period: period,
+          });
+        }
+      });
+    });
+
+    // GA4 Ecommerce: view_item_list on page load (SMI-2459)
+    if (typeof window.gtag === 'function') {
+      const items = Array.from(pricingCards).map((card, index) => ({
+        item_id: card.getAttribute('data-tier'),
+        item_name: card.querySelector('.tier-name')?.textContent || '',
+        price: parseFloat(card.getAttribute('data-monthly-price') || '0'),
+        item_category: 'subscription',
+        index: index,
+      }));
+
+      window.gtag('event', 'view_item_list', {
+        item_list_id: 'pricing_tiers',
+        item_list_name: 'Pricing Tiers',
+        items: items,
+      });
+    }
+
+    // GA4 Ecommerce: select_item on CTA click (SMI-2459)
+    document.querySelectorAll('[data-cta-link]').forEach(link => {
+      link.addEventListener('click', () => {
+        const card = link.closest('.pricing-card');
+        if (card && typeof window.gtag === 'function') {
+          const isAnnual = document.querySelector('.toggle-btn[data-period="annual"]')?.classList.contains('active');
+          const priceAttr = isAnnual ? 'data-annual-price' : 'data-monthly-price';
+          window.gtag('event', 'select_item', {
+            item_list_id: 'pricing_tiers',
+            item_list_name: 'Pricing Tiers',
+            items: [{
+              item_id: card.getAttribute('data-tier'),
+              item_name: card.querySelector('.tier-name')?.textContent || '',
+              price: parseFloat(card.getAttribute(priceAttr) || '0'),
+              item_category: 'subscription',
+              item_variant: isAnnual ? 'annual' : 'monthly',
+            }],
+          });
+        }
       });
     });
   });
