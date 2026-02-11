@@ -27,6 +27,7 @@ import { sanitizeError } from '../utils/sanitize.js'
  */
 const TRUST_TIER_COLORS: Record<TrustTier, (text: string) => string> = {
   verified: chalk.green,
+  curated: chalk.blue,
   community: chalk.yellow,
   local: chalk.cyan, // SMI-1809: Cyan for local skills
   experimental: chalk.red,

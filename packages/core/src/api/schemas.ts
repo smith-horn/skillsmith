@@ -14,7 +14,13 @@ import { z } from 'zod'
 /**
  * Trust tier enum values
  */
-export const TrustTierSchema = z.enum(['verified', 'curated', 'community', 'experimental', 'unknown'])
+export const TrustTierSchema = z.enum([
+  'verified',
+  'curated',
+  'community',
+  'experimental',
+  'unknown',
+])
 
 // ============================================================================
 // API Search Result Schema
