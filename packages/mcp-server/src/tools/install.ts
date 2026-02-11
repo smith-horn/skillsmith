@@ -115,6 +115,25 @@ export async function installSkill(
         }
       }
 
+      // SMI-2383: Block installation of quarantined skills
+      if (registrySkill.quarantined) {
+        return {
+          success: false,
+          skillId: input.skillId,
+          installPath: '',
+          error:
+            'Skill "' +
+            input.skillId +
+            '" has been quarantined due to security concerns. ' +
+            'Installation is blocked to protect your environment.',
+          tips: [
+            'Visit https://skillsmith.app/docs/quarantine for details on quarantine policies',
+            'If you believe this is a false positive, contact support via https://skillsmith.app/contact?topic=security',
+            'You can install from a direct GitHub URL to bypass registry quarantine (at your own risk)',
+          ],
+        }
+      }
+
       // Parse the repo_url to get GitHub components
       const repoInfo = parseRepoUrl(registrySkill.repoUrl)
       owner = repoInfo.owner
