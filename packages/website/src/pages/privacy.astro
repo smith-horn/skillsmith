@@ -5,7 +5,7 @@
  */
 import BaseLayout from '../layouts/BaseLayout.astro';
 
-const lastUpdated = 'January 17, 2026';
+const lastUpdated = 'February 10, 2026';
 ---
 
 <BaseLayout title="Privacy Policy | Skillsmith" description="Privacy Policy for Skillsmith - Learn how we collect, use, and protect your data.">
@@ -117,6 +117,12 @@ const lastUpdated = 'January 17, 2026';
 
       <div class="space-y-4">
         <div class="bg-dark-900 border border-dark-700 rounded-lg p-4">
+          <h4 class="font-semibold text-white">Google Analytics</h4>
+          <p class="text-dark-400 text-sm">Website analytics and conversion measurement (GA4)</p>
+          <a href="https://policies.google.com/privacy" class="text-primary-400 text-sm hover:text-primary-300" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+        </div>
+
+        <div class="bg-dark-900 border border-dark-700 rounded-lg p-4">
           <h4 class="font-semibold text-white">Supabase</h4>
           <p class="text-dark-400 text-sm">Database and authentication services</p>
           <a href="https://supabase.com/privacy" class="text-primary-400 text-sm hover:text-primary-300" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
@@ -182,14 +188,15 @@ const lastUpdated = 'January 17, 2026';
     <!-- Section 6: Cookies and Tracking -->
     <section id="cookies" class="mb-12">
       <h2 class="text-2xl font-bold text-white mb-6">6. Cookies and Tracking</h2>
-      <p class="text-dark-300 mb-4">We use the following types of cookies:</p>
+      <p class="text-dark-300 mb-4">We use the following types of cookies and tracking technologies:</p>
 
-      <div class="overflow-x-auto">
+      <div class="overflow-x-auto mb-6">
         <table class="w-full text-left border-collapse">
           <thead>
             <tr class="border-b border-dark-700">
               <th class="py-3 pr-4 text-white font-semibold">Type</th>
               <th class="py-3 pr-4 text-white font-semibold">Purpose</th>
+              <th class="py-3 pr-4 text-white font-semibold">Provider</th>
               <th class="py-3 text-white font-semibold">Duration</th>
             </tr>
           </thead>
@@ -197,25 +204,62 @@ const lastUpdated = 'January 17, 2026';
             <tr class="border-b border-dark-800">
               <td class="py-3 pr-4">Essential</td>
               <td class="py-3 pr-4">Authentication and security</td>
+              <td class="py-3 pr-4">Supabase</td>
               <td class="py-3">Session</td>
             </tr>
             <tr class="border-b border-dark-800">
               <td class="py-3 pr-4">Functional</td>
-              <td class="py-3 pr-4">Remember preferences</td>
+              <td class="py-3 pr-4">Remember preferences and cookie consent choice</td>
+              <td class="py-3 pr-4">Skillsmith</td>
               <td class="py-3">1 year</td>
             </tr>
             <tr class="border-b border-dark-800">
               <td class="py-3 pr-4">Analytics</td>
-              <td class="py-3 pr-4">Usage statistics (anonymized)</td>
-              <td class="py-3">1 year</td>
+              <td class="py-3 pr-4">Page views, site navigation, and feature usage</td>
+              <td class="py-3 pr-4">Google Analytics (GA4)</td>
+              <td class="py-3">2 years</td>
+            </tr>
+            <tr class="border-b border-dark-800">
+              <td class="py-3 pr-4">Analytics</td>
+              <td class="py-3 pr-4">Conversion tracking (signup, checkout, purchase)</td>
+              <td class="py-3 pr-4">Google Analytics (GA4)</td>
+              <td class="py-3">2 years</td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      <p class="text-dark-300 mt-4">
-        You can control cookies through your browser settings. Note that disabling certain cookies may
-        affect the functionality of our service.
+      <h3 class="text-xl font-semibold text-white mb-4">Google Analytics</h3>
+      <p class="text-dark-300 mb-4">
+        We use Google Analytics 4 (GA4) to understand how visitors interact with our website. This includes
+        tracking page views, navigation patterns, and conversion events (such as account registration, plan
+        selection, and checkout completion). Google Analytics collects data through cookies and associates it
+        with your browsing activity on our site.
+      </p>
+      <p class="text-dark-300 mb-4">
+        The information collected by Google Analytics is transmitted to and stored by Google on servers in the
+        United States. Google may use this data in accordance with its own
+        <a href="https://policies.google.com/privacy" class="text-primary-400 hover:text-primary-300" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
+        We do not use Google Analytics for advertising purposes, and we have disabled data sharing with Google
+        for advertising.
+      </p>
+
+      <h3 class="text-xl font-semibold text-white mb-4">Your Cookie Choices</h3>
+      <p class="text-dark-300 mb-4">
+        When you first visit Skillsmith, a cookie consent banner gives you the choice to accept or decline
+        analytics cookies. Analytics cookies are <strong class="text-white">not set until you provide consent</strong>.
+        We use <a href="https://developers.google.com/tag-platform/security/guides/consent?consentmode=advanced" class="text-primary-400 hover:text-primary-300" target="_blank" rel="noopener noreferrer">Google Consent Mode v2</a>
+        to ensure your choice is respected.
+      </p>
+      <p class="text-dark-300 mb-4">You can change your cookie preferences at any time by:</p>
+      <ul class="list-disc list-inside text-dark-300 space-y-2 ml-4 mb-4">
+        <li>Clearing your browser's localStorage (which resets your consent choice and shows the banner again)</li>
+        <li>Using your browser's cookie settings to block cookies from <code class="text-primary-400">google-analytics.com</code></li>
+        <li>Installing the <a href="https://tools.google.com/dlpage/gaoptout" class="text-primary-400 hover:text-primary-300" target="_blank" rel="noopener noreferrer">Google Analytics Opt-out Browser Add-on</a></li>
+      </ul>
+      <p class="text-dark-300">
+        Essential cookies (authentication, security) are always active as they are necessary for the service
+        to function. Declining analytics cookies does not affect your ability to use Skillsmith.
       </p>
     </section>
 

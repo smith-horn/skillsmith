@@ -1,0 +1,135 @@
+---
+/**
+ * Cookie Consent Banner
+ *
+ * Implements GA4 Consent Mode v2. Analytics cookies are denied by default
+ * and only granted after the user clicks "Accept". The choice is persisted
+ * in localStorage under `skillsmith_cookie_consent`.
+ *
+ * Related: ADR-107, SMI-2453
+ */
+---
+
+<div id="cookie-consent" class="cookie-banner" role="dialog" aria-label="Cookie consent" hidden>
+  <div class="cookie-inner">
+    <p class="cookie-text">
+      We use cookies and Google Analytics to understand how you use Skillsmith and improve our service.
+      See our <a href="/privacy#cookies">Privacy Policy</a> for details.
+    </p>
+    <div class="cookie-actions">
+      <button type="button" id="cookie-reject" class="cookie-btn cookie-btn-reject">Decline</button>
+      <button type="button" id="cookie-accept" class="cookie-btn cookie-btn-accept">Accept</button>
+    </div>
+  </div>
+</div>
+
+<style>
+  .cookie-banner {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 9999;
+    padding: 1rem;
+    pointer-events: none;
+  }
+
+  .cookie-inner {
+    max-width: 640px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 1.5rem;
+    background: #1a1a1f;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.4);
+    pointer-events: auto;
+  }
+
+  .cookie-text {
+    flex: 1;
+    font-size: 0.875rem;
+    color: #9ca3af;
+    line-height: 1.5;
+  }
+
+  .cookie-text a {
+    color: #E07A5F;
+    text-decoration: none;
+  }
+
+  .cookie-text a:hover {
+    text-decoration: underline;
+  }
+
+  .cookie-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+
+  .cookie-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+
+  .cookie-btn-reject {
+    background: transparent;
+    color: #9ca3af;
+    border: 1px solid #2a2a2f;
+  }
+
+  .cookie-btn-reject:hover {
+    border-color: #9ca3af;
+    color: #FAFAFA;
+  }
+
+  .cookie-btn-accept {
+    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
+    color: white;
+  }
+
+  .cookie-btn-accept:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(224, 122, 95, 0.4);
+  }
+
+  @media (max-width: 640px) {
+    .cookie-inner {
+      flex-direction: column;
+      text-align: center;
+    }
+  }
+</style>
+
+<script is:inline>
+  (function () {
+    var consent = localStorage.getItem('skillsmith_cookie_consent');
+    if (consent) return; // Already made a choice
+
+    var banner = document.getElementById('cookie-consent');
+    if (!banner) return;
+    banner.hidden = false;
+
+    document.getElementById('cookie-accept').addEventListener('click', function () {
+      localStorage.setItem('skillsmith_cookie_consent', 'accepted');
+      if (typeof gtag === 'function') {
+        gtag('consent', 'update', { analytics_storage: 'granted' });
+      }
+      banner.hidden = true;
+    });
+
+    document.getElementById('cookie-reject').addEventListener('click', function () {
+      localStorage.setItem('skillsmith_cookie_consent', 'declined');
+      banner.hidden = true;
+    });
+  })();
+</script>
