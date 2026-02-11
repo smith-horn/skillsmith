@@ -95,6 +95,28 @@ docker exec skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node
 
 See [ADR-107: Async/Sync Context Separation](../adr/107-async-sync-context-separation.md) for related WASM fallback architecture.
 
+### Node ABI Mismatch After Node Upgrade
+
+**Symptoms**: `dlopen(...better_sqlite3.node): slice is not valid mach-o file` or `NODE_MODULE_VERSION` mismatch when running the MCP server outside Docker. The server fails to start.
+
+**Root Cause**: The `better-sqlite3` native binary was compiled against the old Node ABI. After upgrading Node, the binary can't load.
+
+**Behavior since core 0.4.10**: The WASM fallback (`sql.js`) auto-activates. `isBetterSqlite3Available()` now instantiates an in-memory database to trigger the actual `dlopen`, catching ABI mismatches before the fallback decision. The MCP server logs: `[Skillsmith] Native SQLite unavailable, using WASM driver`.
+
+**To restore native performance**:
+
+```bash
+npm rebuild better-sqlite3
+```
+
+Or full rebuild in Docker:
+
+```bash
+docker compose --profile dev down
+docker volume rm skillsmith_node_modules
+docker compose --profile dev up -d
+```
+
 ### Docker DNS Failure (SMI-2367)
 
 **Symptoms**: `getaddrinfo EAI_AGAIN registry.npmjs.org`, `npm audit` / `npm install` fail inside container, all outbound network calls time out.
