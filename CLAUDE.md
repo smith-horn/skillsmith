@@ -166,6 +166,8 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 |----------|------|--------------------|
 | `early-access-signup`, `contact-submit`, `stats`, `checkout`, `stripe-webhook`, `events` | Anonymous | Yes |
 | `skills-search`, `skills-get`, `skills-recommend` | API Key | Yes |
+| `health` | Anonymous (health check) | Yes |
+| `email-inbound` | Anonymous (Resend webhook) | Yes |
 | `generate-license`, `regenerate-license`, `create-portal-session`, `list-invoices` | Authenticated (internal JWT) | Yes |
 | `update-seat-count` | Authenticated | No |
 | `indexer`, `skills-refresh-metadata`, `ops-report`, `alert-notify` | Service Role | No |
@@ -184,8 +186,12 @@ npx supabase functions deploy skills-recommend --no-verify-jwt
 npx supabase functions deploy stripe-webhook --no-verify-jwt
 npx supabase functions deploy checkout --no-verify-jwt
 npx supabase functions deploy events --no-verify-jwt
+npx supabase functions deploy health --no-verify-jwt
+npx supabase functions deploy email-inbound --no-verify-jwt
 npx supabase functions deploy generate-license --no-verify-jwt
 npx supabase functions deploy regenerate-license --no-verify-jwt
+npx supabase functions deploy create-portal-session --no-verify-jwt
+npx supabase functions deploy list-invoices --no-verify-jwt
 ```
 
 **CORS & monitoring details**: [deployment-guide.md](docs/development/deployment-guide.md)
@@ -199,6 +205,7 @@ npx supabase functions deploy regenerate-license --no-verify-jwt
 | Skill Indexer | Daily 2 AM UTC | `indexer` |
 | Metadata Refresh | Hourly :30 | `skills-refresh-metadata` |
 | Ops Report | Monday 9 AM UTC | `ops-report` |
+| Weekly Analytics | Monday 9 AM UTC | GitHub Actions (`analytics-report.yml`) |
 | Billing Monitor | Monday 9 AM UTC | GitHub Actions |
 
 Alerts to `support@skillsmith.app` via Resend on failures. All jobs log to `audit_logs` table. Manual trigger & audit log details: [deployment-guide.md](docs/development/deployment-guide.md#monitoring--alerts).
