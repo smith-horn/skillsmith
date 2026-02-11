@@ -139,6 +139,37 @@ curl -s -X POST \
 - WIF pool with GitHub OIDC provider (condition: `assertion.repository_owner == 'smith-horn'`)
 - `roles/iam.workloadIdentityUser` granted to the WIF pool principal on the service account
 
+## Staging Verification (ADR-108)
+
+Preview deployments are protected by Vercel's deployment protection. To test staging programmatically:
+
+1. **Generate bypass secret**: Vercel Dashboard > Project > Settings > Deployment Protection > Protection Bypass for Automation
+2. **Store in `.env`**: `VERCEL_AUTOMATION_BYPASS_SECRET=<secret>` (already in `.env.schema`)
+3. **First request includes bypass**: `?x-vercel-protection-bypass=SECRET&x-vercel-set-bypass-cookie=samesitenone`
+4. **Subsequent requests**: Cookie auto-sent, no query param needed
+
+### Dev-Browser Testing Pattern
+
+```bash
+cd ~/.claude/skills/dev-browser && \
+  VERCEL_AUTOMATION_BYPASS_SECRET="$(grep '^VERCEL_AUTOMATION_BYPASS_SECRET=' /path/to/.env | cut -d= -f2-)" \
+  bun x tsx <<'SCRIPT'
+import { connect } from './src/client.ts';
+const client = await connect('http://localhost:9222');
+const page = await client.page('default');
+await page.goto(`https://PREVIEW_URL/?x-vercel-protection-bypass=${process.env.VERCEL_AUTOMATION_BYPASS_SECRET}&x-vercel-set-bypass-cookie=samesitenone`, { waitUntil: 'networkidle0' });
+// ... test assertions
+SCRIPT
+```
+
+### Deploy + Verify Workflow
+
+```bash
+cd packages/website && npx vercel          # Deploy staging preview
+# Test with dev-browser (bypass auth wall)
+cd packages/website && vercel --prod       # Deploy to production after verification
+```
+
 ## Monitoring & Alerts
 
 ### Scheduled Jobs
