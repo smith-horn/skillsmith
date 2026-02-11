@@ -27,10 +27,10 @@ permissions:
   issues: write
 
 env:
-  GA4_PROPERTY_ID: 'properties/520456579'
-  GCP_PROJECT_ID: 'gen-lang-client-0194964319'
-  GCP_WIF_PROVIDER: 'projects/709471829250/locations/global/workloadIdentityPools/github-actions-pool/providers/github'
-  GCP_SERVICE_ACCOUNT: 'skillsmith-google-analytics@gen-lang-client-0194964319.iam.gserviceaccount.com'
+  GA4_PROPERTY_ID: ${{ vars.GA4_PROPERTY_ID }}
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+  GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
 jobs:
   analytics-report:

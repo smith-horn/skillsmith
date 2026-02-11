@@ -97,6 +97,48 @@ Contact form at `/contact` supports `?topic=` param. `/verify` redirects to `/co
 
 See [mcp-registry.md](mcp-registry.md) for publishing workflow, version bumping, and CI setup.
 
+## Google Analytics API (SMI-2454)
+
+### Workload Identity Federation
+
+GA4 Data API access uses **Workload Identity Federation** (WIF) — GitHub Actions OIDC tokens are exchanged for short-lived Google credentials. No secrets stored.
+
+**Auth flow**: GitHub OIDC → WIF Pool → Service Account impersonation → GA4 API
+
+### GitHub Repository Variables
+
+Set via Settings → Secrets and variables → Actions → Variables:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `GCP_PROJECT_ID` | Google Cloud project ID | `gen-lang-client-0194964319` |
+| `GCP_WIF_PROVIDER` | Full WIF provider resource name | `projects/NNNN/locations/global/workloadIdentityPools/github-actions-pool/providers/github` |
+| `GCP_SERVICE_ACCOUNT` | Service account email with GA4 Viewer role | `skillsmith-google-analytics@project.iam.gserviceaccount.com` |
+| `GA4_PROPERTY_ID` | GA4 property for API queries | `properties/520456579` |
+
+### Local Testing
+
+```bash
+# Authenticate with service account impersonation
+gcloud auth application-default login \
+  --impersonate-service-account="$GCP_SERVICE_ACCOUNT" \
+  --scopes="https://www.googleapis.com/auth/analytics.readonly"
+
+# Test GA4 API query
+curl -s -X POST \
+  -H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"dateRanges":[{"startDate":"7daysAgo","endDate":"today"}],"metrics":[{"name":"sessions"}]}' \
+  "https://analyticsdata.googleapis.com/v1beta/properties/520456579:runReport"
+```
+
+### GCP Requirements
+
+- Google Analytics Data API enabled in GCP project
+- Service account with GA4 Viewer role on property
+- WIF pool with GitHub OIDC provider (condition: `assertion.repository_owner == 'smith-horn'`)
+- `roles/iam.workloadIdentityUser` granted to the WIF pool principal on the service account
+
 ## Monitoring & Alerts
 
 ### Scheduled Jobs
@@ -106,6 +148,7 @@ See [mcp-registry.md](mcp-registry.md) for publishing workflow, version bumping,
 | Skill Indexer | Daily 2 AM UTC | `indexer` |
 | Metadata Refresh | Hourly :30 | `skills-refresh-metadata` |
 | Weekly Ops Report | Monday 9 AM UTC | `ops-report` |
+| Weekly Analytics | Monday 9 AM UTC | `analytics-report` (GitHub Actions) |
 | Billing Monitor | Monday 9 AM UTC | GitHub Actions only |
 
 ### Alert Notifications
