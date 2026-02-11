@@ -330,10 +330,15 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   'stripe-webhook',
   'checkout',
   'events',
+  // Anonymous functions (health & webhook)
+  'health',
+  'email-inbound',
   // Authenticated functions with internal JWT validation
   // These validate tokens in function code, not at Supabase gateway
   'generate-license',
   'regenerate-license',
+  'create-portal-session',
+  'list-invoices',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'
