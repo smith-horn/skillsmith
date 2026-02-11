@@ -4,8 +4,13 @@
 
 /**
  * SMI-1809: Added 'local' for local skills from ~/.claude/skills/
+ *
+ * NOTE: 'local' is a client-only tier for skills discovered on disk.
+ * It is NOT stored in the database — the skills table CHECK constraint
+ * only allows: verified, curated, community, experimental, unknown.
+ * Never pass 'local' to database upsert operations.
  */
-export type TrustTier = 'verified' | 'community' | 'experimental' | 'unknown' | 'local'
+export type TrustTier = 'verified' | 'curated' | 'community' | 'experimental' | 'unknown' | 'local'
 
 /**
  * SMI-1631: Skill roles for role-based recommendations
