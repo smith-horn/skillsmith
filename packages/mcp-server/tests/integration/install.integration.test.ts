@@ -517,7 +517,7 @@ Use this skill by mentioning it in Claude Code.
     // SMI-1809: Added 'local' tier to return type
     let validateTrustTier: (
       value: string | null | undefined
-    ) => 'verified' | 'community' | 'experimental' | 'unknown' | 'local'
+    ) => 'verified' | 'curated' | 'community' | 'experimental' | 'unknown' | 'local'
 
     beforeAll(async () => {
       const installTypesModule = await import('../../src/tools/install.types.js')
@@ -526,15 +526,17 @@ Use this skill by mentioning it in Claude Code.
 
     // Type alias for trust tier (used in tests below)
     // SMI-1809: Added 'local' tier for local skills
-    type TrustTier = 'verified' | 'community' | 'experimental' | 'unknown' | 'local'
+    type TrustTier = 'verified' | 'curated' | 'community' | 'experimental' | 'unknown' | 'local'
 
     // Scanner options per trust tier (matching install.ts)
     // SMI-1809: Added 'local' tier options
+    // SMI-2381: Added 'curated' tier options
     const TRUST_TIER_SCANNER_OPTIONS: Record<
       TrustTier,
       { riskThreshold: number; maxContentLength: number }
     > = {
       verified: { riskThreshold: 70, maxContentLength: 2_000_000 },
+      curated: { riskThreshold: 55, maxContentLength: 1_500_000 },
       community: { riskThreshold: 40, maxContentLength: 1_000_000 },
       local: { riskThreshold: 100, maxContentLength: 10_000_000 },
       experimental: { riskThreshold: 25, maxContentLength: 500_000 },
@@ -558,6 +560,11 @@ Use this skill by mentioning it in Claude Code.
         expect(validateTrustTier('verified')).toBe('verified')
         expect(validateTrustTier('VERIFIED')).toBe('verified')
         expect(validateTrustTier('Verified')).toBe('verified')
+      })
+
+      it('should validate "curated" tier', () => {
+        expect(validateTrustTier('curated')).toBe('curated')
+        expect(validateTrustTier('CURATED')).toBe('curated')
       })
 
       it('should validate "community" tier', () => {
