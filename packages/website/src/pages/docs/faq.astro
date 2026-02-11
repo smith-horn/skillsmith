@@ -1,0 +1,299 @@
+---
+/**
+ * FAQ Page (Docs)
+ *
+ * SMI-1160: FAQ page for common questions
+ * SMI-2360: Migrated to BaseLayout for layout consistency
+ * Migrated from /faq to /docs/faq using DocsLayout
+ */
+
+import DocsLayout from '../../layouts/DocsLayout.astro';
+
+interface FAQItem {
+  question: string;
+  answer: string;
+}
+
+interface FAQCategory {
+  id: string;
+  name: string;
+  items: FAQItem[];
+}
+
+const faqCategories: FAQCategory[] = [
+  {
+    id: "getting-started",
+    name: "Getting Started",
+    items: [
+      {
+        question: "What is Skillsmith?",
+        answer: "Skillsmith is an agent skill platform for AI assistants. It helps you find, install, compare, and manage skills that enhance your development environment with specialized capabilities."
+      },
+      {
+        question: "How do I install Skillsmith?",
+        answer: "Add Skillsmith to your MCP client settings by configuring the MCP server. Add the following to your ~/.claude/settings.json: {\"mcpServers\": {\"skillsmith\": {\"command\": \"npx\", \"args\": [\"-y\", \"@skillsmith/mcp-server\"]}}}"
+      },
+      {
+        question: "Is Skillsmith free to use?",
+        answer: "Yes, Skillsmith offers a free Community tier that includes 1,000 API calls per month, skill search and discovery, skill installation, and basic recommendations. Paid plans are available for users who need more API calls and advanced features."
+      },
+      {
+        question: "What skills are available?",
+        answer: "Skillsmith indexes thousands of skills across various categories including development tools, testing frameworks, deployment helpers, documentation generators, and more. You can browse available skills on our Skills page or search using your MCP client."
+      }
+    ]
+  },
+  {
+    id: "pricing-billing",
+    name: "Pricing & Billing",
+    items: [
+      {
+        question: "What counts as an API call?",
+        answer: "Each skill search, recommendation request, or skill installation counts as one API call. Viewing cached results and browsing the skill catalog does not count against your quota."
+      },
+      {
+        question: "Can I change plans at any time?",
+        answer: "Yes, you can upgrade or downgrade your plan at any time. When upgrading, you'll get immediate access to the new tier's features. When downgrading, changes take effect at the start of your next billing cycle."
+      },
+      {
+        question: "What happens if I exceed my API limit?",
+        answer: "You'll receive a notification when approaching your limit (at 80% and 90% usage). Once exceeded, API calls will be rate-limited until the next billing cycle or until you upgrade to a higher tier."
+      },
+      {
+        question: "Is there a free trial for paid plans?",
+        answer: "Yes, Individual and Team plans include a 14-day free trial with full access to all features. Enterprise trials are available upon request by contacting our sales team."
+      },
+      {
+        question: "What payment methods do you accept?",
+        answer: "We accept all major credit cards (Visa, Mastercard, American Express, Discover) and can arrange invoicing for Enterprise customers. All payments are processed securely through Stripe."
+      },
+      {
+        question: "How do I cancel my subscription?",
+        answer: "You can manage your subscription from your Account dashboard. When you cancel, you'll retain access to paid features until the end of your current billing period, then be downgraded to the free Community tier."
+      }
+    ]
+  },
+  {
+    id: "features-capabilities",
+    name: "Features & Capabilities",
+    items: [
+      {
+        question: "What are private skills?",
+        answer: "Private skills (available on Team and Enterprise plans) are custom skills that are only visible to your organization. They're perfect for proprietary workflows, internal tools, or company-specific integrations."
+      },
+      {
+        question: "How does team collaboration work?",
+        answer: "Team plans include shared workspaces where team members can collaborate on skills, share recommendations, and maintain consistent tooling across the organization. Admins can control skill sharing and access permissions."
+      },
+      {
+        question: "What's included in the analytics dashboard?",
+        answer: "The analytics dashboard (Individual and above) shows your skill usage patterns, most-used skills, recommendation accuracy, and API consumption trends. Team plans include aggregated team analytics."
+      },
+      {
+        question: "What is the Trust Tier system?",
+        answer: "Skills are categorized into trust tiers: Verified (official skills), Community (community-reviewed skills), and Experimental (new/beta skills). This helps you understand the reliability and review status of each skill."
+      }
+    ]
+  },
+  {
+    id: "technical",
+    name: "Technical",
+    items: [
+      {
+        question: "How do I authenticate with the API?",
+        answer: "Generate a license key from your Account dashboard. Use this key in the Authorization header of your API requests: 'Authorization: Bearer sk_live_...' The key is only shown once when generated, so store it securely."
+      },
+      {
+        question: "What's the rate limit for API calls?",
+        answer: "Rate limits vary by tier: Community (30/min), Individual (60/min), Team (120/min), Enterprise (300/min). These limits help ensure fair usage and service availability for all users."
+      },
+      {
+        question: "Can I use Skillsmith offline?",
+        answer: "Skills that have been installed work offline within your MCP client. However, searching for new skills, getting recommendations, and checking for updates requires an internet connection."
+      },
+      {
+        question: "How do I report a bug or request a feature?",
+        answer: "You can report issues or request features through our GitHub repository at github.com/smith-horn/skillsmith/issues. For Enterprise customers, dedicated support channels are available."
+      }
+    ]
+  },
+  {
+    id: "enterprise",
+    name: "Enterprise",
+    items: [
+      {
+        question: "What's included in the Enterprise SLA?",
+        answer: "Enterprise customers receive a 99.9% uptime guarantee. If we fail to meet this commitment, you'll receive service credits as outlined in your service agreement."
+      },
+      {
+        question: "How does SSO/SAML integration work?",
+        answer: "Enterprise plans support SAML 2.0 for single sign-on integration with your identity provider (Okta, Azure AD, Google Workspace, etc.). Our team will help configure the integration during onboarding."
+      },
+      {
+        question: "What audit logging is available?",
+        answer: "Enterprise audit logs capture all user actions including skill installations, permission changes, API key operations, and team membership changes. Logs can be exported or integrated with your SIEM system."
+      },
+      {
+        question: "Can I get a custom contract?",
+        answer: "Yes, Enterprise plans can be customized to meet your organization's specific needs including custom terms, dedicated support, volume pricing, and additional compliance requirements."
+      }
+    ]
+  }
+];
+---
+
+<DocsLayout title="FAQ" description="Frequently asked questions about Skillsmith - AI-powered skill discovery and management for AI assistants">
+  <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": faqCategories.flatMap(cat => cat.items.map(item => ({
+      "@type": "Question",
+      "name": item.question,
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": item.answer
+      }
+    })))
+  })} />
+
+  <h1>Frequently Asked Questions</h1>
+
+  <p class="lead">
+    Find answers to common questions about Skillsmith, pricing, features, and technical details.
+  </p>
+
+  {faqCategories.map((category) => (
+    <h2 id={category.id}>{category.name}</h2>
+    <div class="faq-items">
+      {category.items.map((item) => (
+        <details class="faq-item">
+          <summary>
+            <span class="question">{item.question}</span>
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </summary>
+          <div class="answer">
+            <p>{item.answer}</p>
+          </div>
+        </details>
+      ))}
+    </div>
+  ))}
+
+  <h2 id="still-have-questions">Still Have Questions?</h2>
+
+  <p>Our team is here to help. Reach out and we'll get back to you as soon as possible.</p>
+
+  <div class="cta-buttons">
+    <a href="/contact" class="cta-btn cta-btn-primary">Contact Us</a>
+    <a href="/docs" class="cta-btn cta-btn-outline">Browse Docs</a>
+  </div>
+</DocsLayout>
+
+<style>
+  .faq-items {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .faq-item {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 0.75rem;
+    overflow: hidden;
+  }
+
+  .faq-item summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.25rem 1.5rem;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .faq-item summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .faq-item .question {
+    font-weight: 500;
+    color: #FAFAFA;
+  }
+
+  .faq-item .chevron {
+    width: 1.25rem;
+    height: 1.25rem;
+    color: #9ca3af;
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+
+  .faq-item[open] .chevron {
+    transform: rotate(180deg);
+  }
+
+  .faq-item .answer {
+    padding: 0 1.5rem 1.5rem;
+    color: #9ca3af;
+    line-height: 1.7;
+  }
+
+  .cta-buttons {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+  }
+
+  .cta-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 1.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+  }
+
+  .cta-btn-primary {
+    background: #E07A5F;
+    color: white;
+  }
+
+  .cta-btn-primary:hover {
+    background: #D4694E;
+  }
+
+  .cta-btn-outline {
+    color: #9ca3af;
+    border: 1px solid #1e293b;
+  }
+
+  .cta-btn-outline:hover {
+    color: #FAFAFA;
+    background: #0f172a;
+  }
+</style>
+
+<script>
+  // GA4: Track FAQ expand/collapse (SMI-2463)
+  document.querySelectorAll('.faq-item').forEach(item => {
+    item.addEventListener('toggle', () => {
+      const details = item as HTMLDetailsElement;
+      if (details.open && typeof window.gtag === 'function') {
+        const question = details.querySelector('.question')?.textContent || '';
+        const category = details.closest('.faq-items')?.previousElementSibling?.textContent || '';
+        window.gtag('event', 'faq_expand', {
+          faq_question: question.slice(0, 100),
+          faq_category: category,
+        });
+      }
+    });
+  });
+</script>

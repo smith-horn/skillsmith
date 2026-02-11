@@ -15,6 +15,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Google Analytics -->
+    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
+    <script is:inline>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-GGZQZM1Y1L');
+    </script>
+
     <meta name="description" content="Welcome to Skillsmith! Your subscription is now active." />
     <title>Welcome to Skillsmith!</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
@@ -349,6 +358,11 @@
     color: #9ca3af;
   }
 
+  .logo-icon-svg {
+    width: 2rem;
+    height: 2rem;
+  }
+
   /* Responsive */
   @media (max-width: 768px) {
     .steps-grid {
@@ -364,3 +378,40 @@
     }
   }
 </style>
+
+<script is:inline>
+  // GA4: Track purchase event after successful Stripe checkout (SMI-2461)
+  (function() {
+    if (typeof window.gtag !== 'function') return;
+
+    // Read session_id from URL (Stripe checkout session)
+    var params = new URLSearchParams(window.location.search);
+    var sessionId = params.get('session_id');
+
+    // Read checkout context saved before Stripe redirect
+    var raw = sessionStorage.getItem('skillsmith_checkout');
+    if (!raw) return;
+
+    try {
+      var checkout = JSON.parse(raw);
+      window.gtag('event', 'purchase', {
+        transaction_id: sessionId || ('fallback_' + Date.now()),
+        value: checkout.value || 0,
+        currency: 'USD',
+        items: [{
+          item_id: checkout.tier,
+          item_name: checkout.tierName,
+          price: checkout.value || 0,
+          quantity: checkout.seatCount || 1,
+          item_category: 'subscription',
+          item_variant: checkout.period,
+        }],
+      });
+
+      // Clear checkout data after firing event
+      sessionStorage.removeItem('skillsmith_checkout');
+    } catch (e) {
+      // Silently fail - don't break the success page
+    }
+  })();
+</script>
