@@ -19,6 +19,7 @@ import * as os from 'os'
  */
 export const VALID_TRUST_TIERS: readonly TrustTier[] = [
   'verified',
+  'curated',
   'community',
   'local',
   'experimental',
@@ -68,6 +69,11 @@ export const TRUST_TIER_SCANNER_OPTIONS: Record<TrustTier, ScannerOptions> = {
     // Anthropic-verified skills get minimal scanning
     riskThreshold: 70, // Higher threshold - more tolerant
     maxContentLength: 2_000_000, // Allow larger skills
+  },
+  curated: {
+    // SMI-2381: Curated third-party publishers get near-verified scanning
+    riskThreshold: 60, // Slightly stricter than verified
+    maxContentLength: 2_000_000, // Same size allowance as verified
   },
   community: {
     // Standard scanning for community-reviewed skills
