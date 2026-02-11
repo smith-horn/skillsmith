@@ -50,14 +50,22 @@ const savingsPercent = period === 'annual' ? 17 : 0; // ~17% savings
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
 
-    <!-- Google Analytics -->
-    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
+    <!-- Google Analytics with Consent Mode v2 -->
     <script is:inline>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
+      var consent = localStorage.getItem('skillsmith_cookie_consent');
+      gtag('consent', 'default', {
+        analytics_storage: consent === 'accepted' ? 'granted' : 'denied',
+        ad_storage: 'denied',
+        ad_user_data: 'denied',
+        ad_personalization: 'denied',
+        wait_for_update: 500,
+      });
       gtag('js', new Date());
       gtag('config', 'G-GGZQZM1Y1L');
     </script>
+    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
 
     <meta name="description" content={`Sign up for Skillsmith ${tierData?.name || ''} plan. ${tierData?.features[0] || 'AI-powered skill discovery for Claude Code.'}`} />
     <title>Sign Up{tierData ? ` - ${tierData.name}` : ''} | Skillsmith</title>
@@ -331,6 +339,38 @@ const savingsPercent = period === 'annual' ? 17 : 0; // ~17% savings
         <p class="license-note">Licensed under <a href="https://www.elastic.co/licensing/elastic-license">Elastic License 2.0</a></p>
       </div>
     </footer>
+
+    <!-- Cookie consent banner (standalone page, not using BaseLayout) -->
+    <div id="cookie-consent" style="position:fixed;bottom:0;left:0;right:0;z-index:9999;padding:1rem;pointer-events:none" hidden>
+      <div style="max-width:640px;margin:0 auto;display:flex;align-items:center;gap:1rem;padding:1rem 1.5rem;background:#1a1a1f;border:1px solid #2a2a2f;border-radius:0.75rem;box-shadow:0 -4px 24px rgba(0,0,0,0.4);pointer-events:auto;font-family:'Satoshi',sans-serif">
+        <p style="flex:1;font-size:0.875rem;color:#9ca3af;line-height:1.5;margin:0">
+          We use cookies and Google Analytics to understand how you use Skillsmith.
+          See our <a href="/privacy#cookies" style="color:#E07A5F;text-decoration:none">Privacy Policy</a>.
+        </p>
+        <div style="display:flex;gap:0.5rem;flex-shrink:0">
+          <button id="cookie-reject" type="button" style="padding:0.5rem 1rem;font-size:0.875rem;font-weight:600;border-radius:0.375rem;cursor:pointer;background:transparent;color:#9ca3af;border:1px solid #2a2a2f;font-family:inherit">Decline</button>
+          <button id="cookie-accept" type="button" style="padding:0.5rem 1rem;font-size:0.875rem;font-weight:600;border-radius:0.375rem;cursor:pointer;background:linear-gradient(135deg,#E07A5F,#D4694E);color:white;border:none;font-family:inherit">Accept</button>
+        </div>
+      </div>
+    </div>
+    <script is:inline>
+      (function(){
+        var c=localStorage.getItem('skillsmith_cookie_consent');
+        if(c)return;
+        var b=document.getElementById('cookie-consent');
+        if(!b)return;
+        b.hidden=false;
+        document.getElementById('cookie-accept').addEventListener('click',function(){
+          localStorage.setItem('skillsmith_cookie_consent','accepted');
+          if(typeof gtag==='function')gtag('consent','update',{analytics_storage:'granted'});
+          b.hidden=true;
+        });
+        document.getElementById('cookie-reject').addEventListener('click',function(){
+          localStorage.setItem('skillsmith_cookie_consent','declined');
+          b.hidden=true;
+        });
+      })();
+    </script>
   </body>
 </html>
 
