@@ -28,9 +28,9 @@ const trustTiers = [
     "@type": "CollectionPage",
     "name": "Skillsmith Skills Browser",
     "description": "Search and discover agent skills. Browse by category and trust tier.",
-    "url": "https://skillsmith.app/skills",
+    "url": "https://www.skillsmith.app/skills",
     "isPartOf": {
-      "@id": "https://skillsmith.app/#website"
+      "@id": "https://www.skillsmith.app/#website"
     },
     "about": {
       "@type": "SoftwareApplication",
@@ -474,6 +474,16 @@ const trustTiers = [
 
         const data = await response.json();
         allResults = data.data || data.skills || data.results || [];
+
+        // GA4: Track skill search (SMI-2453)
+        if (typeof window.gtag === 'function') {
+          window.gtag('event', 'skill_search', {
+            search_term: query || '',
+            category: category || 'all',
+            trust_tier: trustTier || 'all',
+            results_count: allResults.length,
+          });
+        }
 
         // Note: API already filters by category/trustTier, no client-side filtering needed
         // The API response doesn't include category field, so we trust the server filtering

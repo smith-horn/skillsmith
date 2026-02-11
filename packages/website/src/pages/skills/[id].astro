@@ -302,6 +302,16 @@ const { id } = Astro.params;
       errorState.classList.add('hidden');
       skillContent.classList.remove('hidden');
 
+      // GA4: Track skill view (SMI-2453)
+      if (typeof window.gtag === 'function') {
+        window.gtag('event', 'skill_view', {
+          skill_id: skillId,
+          skill_name: skill.name || skillId,
+          trust_tier: skill.trust_tier || 'unknown',
+          category: skill.categories?.[0] || 'uncategorized',
+        });
+      }
+
       // Load related skills if available
       if (skill.related_skills && skill.related_skills.length > 0) {
         loadRelatedSkills(skill.related_skills);
@@ -365,6 +375,14 @@ const { id } = Astro.params;
 
         try {
           await navigator.clipboard.writeText(text);
+
+          // GA4: Track install command copy (SMI-2453)
+          if (typeof window.gtag === 'function') {
+            window.gtag('event', 'skill_install_copy', {
+              skill_id: skillId,
+              command_type: targetId.replace('install-command-', ''),
+            });
+          }
 
           // Show feedback
           const originalHTML = button.innerHTML;
