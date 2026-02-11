@@ -3,6 +3,46 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 ---
 
 <DocsLayout title="Getting Started" description="Quick start guide for setting up Skillsmith">
+  <script is:inline type="application/ld+json" slot="head">
+  {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    "name": "How to Set Up Skillsmith MCP Server",
+    "description": "Install and configure the Skillsmith MCP server to discover and install agent skills using natural language",
+    "totalTime": "PT3M",
+    "tool": [
+      { "@type": "HowToTool", "name": "Node.js 18+" },
+      { "@type": "HowToTool", "name": "npm" },
+      { "@type": "HowToTool", "name": "MCP-compatible AI assistant" }
+    ],
+    "step": [
+      {
+        "@type": "HowToStep",
+        "position": 1,
+        "name": "Add MCP Server Configuration",
+        "text": "Add the Skillsmith MCP server configuration to your ~/.claude/settings.json file: {\"mcpServers\": {\"skillsmith\": {\"command\": \"npx\", \"args\": [\"-y\", \"@skillsmith/mcp-server\"]}}}"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 2,
+        "name": "Restart Your MCP Client",
+        "text": "Restart your MCP client (e.g., Claude Code) to load the Skillsmith server."
+      },
+      {
+        "@type": "HowToStep",
+        "position": 3,
+        "name": "Verify Installation",
+        "text": "Ask your assistant 'List available MCP tools' to verify Skillsmith tools like search, install, and recommend are available."
+      },
+      {
+        "@type": "HowToStep",
+        "position": 4,
+        "name": "Search for Skills",
+        "text": "Ask your assistant to search for skills: 'Search for testing skills' or 'Find verified skills for git workflows'."
+      }
+    ]
+  }
+  </script>
   <h1>Getting Started</h1>
 
   <p class="lead">

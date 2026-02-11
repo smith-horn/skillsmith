@@ -26,7 +26,11 @@ function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; an
         "url": "https://www.skillsmith.app/pricing",
         "name": "Skillsmith Pricing - Plans for Individuals and Teams",
         "description": "Choose the Skillsmith plan that fits your needs. From free community access to enterprise-grade features.",
-        "isPartOf": { "@id": "https://www.skillsmith.app/#website" }
+        "isPartOf": { "@id": "https://www.skillsmith.app/#website" },
+        "speakable": {
+          "@type": "SpeakableSpecification",
+          "cssSelector": [".pricing-hero h1", ".pricing-hero-subtitle", ".tier-description"]
+        }
       },
       {
         "@type": "Product",
@@ -60,6 +64,13 @@ function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; an
           "name": faq.question,
           "acceptedAnswer": { "@type": "Answer", "text": faq.answer }
         }))
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://www.skillsmith.app/" },
+          { "@type": "ListItem", "position": 2, "name": "Pricing", "item": "https://www.skillsmith.app/pricing" }
+        ]
       }
     ]
   };

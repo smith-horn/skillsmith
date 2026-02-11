@@ -1,0 +1,200 @@
+# Skillsmith - Complete Reference for AI Systems
+> Extended documentation for LLM-powered answer engines and AI assistants.
+> For the summary version, see: https://www.skillsmith.app/llms.txt
+
+## Product Overview
+
+Skillsmith is an agent skill platform for AI-powered development tools. It provides a searchable registry of 14,000+ curated skills — reusable prompts, workflows, and configurations that extend AI assistant capabilities.
+
+Skills are YAML files installed to `~/.claude/skills/` that provide:
+- Domain-specific knowledge and best practices
+- Reusable workflows and templates
+- Tool configurations and integrations
+- Project-type-specific guidance
+
+## Installation
+
+### MCP Server (Recommended)
+
+Add to your MCP client configuration (e.g., `~/.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"]
+    }
+  }
+}
+```
+
+Restart your MCP client after adding the configuration.
+
+### CLI Alternative
+
+```bash
+npm install -g @skillsmith/cli
+skillsmith search testing
+skillsmith install jest-helper
+```
+
+## MCP Tools (API)
+
+When using the MCP server, these tools are available:
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `search` | query, category, trust_tier, min_score, limit | Search skills by keyword or semantic query |
+| `get_skill` | id (format: author/name) | Get detailed skill information |
+| `install_skill` | id | Install skill to ~/.claude/skills/ |
+| `uninstall_skill` | id | Remove an installed skill |
+| `recommend` | context (optional) | Get project-based skill recommendations |
+| `validate` | path | Validate a skill's YAML structure |
+| `compare` | ids (2-5 skill IDs) | Compare skills side-by-side |
+
+## CLI Commands
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `skillsmith search <query>` | Search for skills | `skillsmith search testing` |
+| `skillsmith install <id>` | Install a skill | `skillsmith install jest-helper` |
+| `skillsmith uninstall <id>` | Remove a skill | `skillsmith uninstall jest-helper` |
+| `skillsmith list` | List installed skills | `skillsmith list` |
+| `skillsmith recommend` | Get project recommendations | `skillsmith recommend` |
+| `skillsmith info <id>` | Show skill details | `skillsmith info jest-helper` |
+| `skillsmith compare <ids>` | Compare skills | `skillsmith compare jest-helper vitest-helper` |
+| `skillsmith sync` | Sync skill registry | `skillsmith sync` |
+| `skillsmith status` | Show sync status | `skillsmith status` |
+| `skillsmith config` | Manage configuration | `skillsmith config set apiKey sk_live_...` |
+
+Short alias: `sklx` (e.g., `sklx search testing`)
+
+## Authentication
+
+### Methods (in priority order)
+
+1. **Personal API Key** (recommended): `X-API-Key: sk_live_*` header or config file
+2. **Supabase Anon Key**: Built-in fallback, 30 requests/minute
+3. **No Auth**: 10 trial requests total
+
+### API Key Configuration
+
+Option 1 — Config file (cross-platform):
+```json
+// ~/.skillsmith/config.json
+{ "apiKey": "sk_live_your_key_here" }
+```
+
+Option 2 — MCP server environment:
+```json
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": { "SKILLSMITH_API_KEY": "sk_live_your_key_here" }
+    }
+  }
+}
+```
+
+Note: Shell `export` does NOT work for MCP servers. They run as subprocesses and don't inherit shell environment.
+
+## Pricing
+
+| Tier | Price | API Calls/Month | Rate Limit |
+|------|-------|-----------------|------------|
+| Community | Free | 1,000 | 30/min |
+| Individual | $9.99/month | 10,000 | 60/min |
+| Team | $25/user/month | 100,000 | 120/min |
+| Enterprise | $55/user/month | Unlimited | 300/min |
+
+Annual billing saves 17% (pay for 10 months, get 12).
+
+Free 14-day trial available for Individual and Team plans.
+
+## Trust Tiers
+
+| Tier | Description | Badge |
+|------|-------------|-------|
+| verified | Official reviewed skills from trusted authors | Green |
+| community | Community-reviewed and tested skills | Blue |
+| experimental | New or beta skills, less vetting | Yellow |
+
+## Skill Schema Format
+
+Skills are YAML files with this structure:
+
+```yaml
+---
+name: my-skill
+description: What the skill does
+version: 1.0.0
+author: username
+category: development
+tags: [testing, react]
+tools: [Read, Write, Edit, Bash]
+---
+
+# Skill content (Markdown)
+Instructions and prompts for the AI assistant...
+```
+
+## Frequently Asked Questions
+
+Q: What are agent skills?
+A: Skills are reusable prompts and workflows installed to ~/.claude/skills/ that give AI assistants specialized capabilities like testing, deployment, code review, and documentation generation.
+
+Q: Is Skillsmith free?
+A: Yes. The Community tier is free forever with 1,000 API calls per month. Paid plans start at $9.99/month for developers who need more.
+
+Q: What AI tools does it work with?
+A: Skillsmith works with any MCP-compatible client including Claude Code, Claude Desktop, Cursor, Windsurf, and other tools that support the Model Context Protocol.
+
+Q: How do I install a skill?
+A: Add the Skillsmith MCP server to your settings.json, then ask your assistant "Install the [skill-name] skill." Skills install to ~/.claude/skills/ in one step.
+
+Q: What counts as an API call?
+A: Each skill search, recommendation request, or skill installation counts as one API call. Viewing cached results does not count.
+
+Q: Can I change plans at any time?
+A: Yes, upgrade or downgrade at any time. Changes take effect at the next billing cycle.
+
+Q: What happens if I exceed my API limit?
+A: You'll be notified at 80% and 90% usage. Once exceeded, calls are rate-limited until the next cycle or until you upgrade.
+
+Q: Can I use Skillsmith offline?
+A: Installed skills work offline. Searching, recommendations, and updates require an internet connection.
+
+Q: How do I report bugs or request features?
+A: Open an issue at github.com/smith-horn/skillsmith/issues. Enterprise customers have dedicated support channels.
+
+Q: Where are skills installed?
+A: Skills install to ~/.claude/skills/ by default and are automatically available in all sessions.
+
+## Packages
+
+| Package | Install | Description |
+|---------|---------|-------------|
+| @skillsmith/mcp-server | `npx -y @skillsmith/mcp-server` | MCP server for AI assistants |
+| @skillsmith/cli | `npm i -g @skillsmith/cli` | Command-line interface |
+| @skillsmith/core | Internal | Core library (not published separately) |
+
+## Links
+
+- Website: https://www.skillsmith.app
+- Documentation: https://www.skillsmith.app/docs
+- Skills Browser: https://www.skillsmith.app/skills
+- Pricing: https://www.skillsmith.app/pricing
+- GitHub: https://github.com/smith-horn/skillsmith
+- Contact: https://www.skillsmith.app/contact
+- Terms: https://www.skillsmith.app/terms
+- Privacy: https://www.skillsmith.app/privacy
+
+## License
+
+Elastic License 2.0 (ELv2)
+- Self-hosting: Permitted
+- Modification: Permitted for own use
+- Managed service: Not permitted (cannot offer Skillsmith as a service to third parties)
