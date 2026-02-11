@@ -72,3 +72,12 @@ export {
   formatIndexLocalResults,
 } from './index-local.js'
 export type { IndexLocalInput, IndexedSkillSummary, IndexLocalResponse } from './index-local.js'
+
+// Publish tool (SMI-2440)
+export {
+  publishToolSchema,
+  publishInputSchema,
+  executePublish,
+  formatPublishResults,
+} from './publish.js'
+export type { PublishInput, PublishResponse, ReferenceWarning, PreflightResult } from './publish.js'

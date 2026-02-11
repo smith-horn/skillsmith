@@ -400,6 +400,74 @@ export class SkillParser {
 
     return 'unknown'
   }
+
+  /**
+   * Check for project-specific references that shouldn't be in published skills.
+   * Static method — does not require SkillParser instantiation.
+   *
+   * @param content - Raw file content to scan
+   * @param customPatterns - Additional regex patterns to merge with defaults
+   * @returns Object with warnings array and detailed match information
+   */
+  static checkReferences(
+    content: string,
+    customPatterns?: RegExp[]
+  ): { warnings: string[]; matches: Array<{ line: number; text: string; pattern: string }> } {
+    const DEFAULT_REFERENCE_PATTERNS: Array<{ pattern: RegExp; description: string }> = [
+      // Docker container names with project prefix (e.g., myproject-dev-1)
+      { pattern: /[a-z]+-dev-\d+/g, description: 'Docker container name' },
+      // Package scopes (e.g., @skillsmith/, @myorg/)
+      { pattern: /@[a-z]+-[a-z]+\//g, description: 'npm package scope' },
+      // Hardcoded project-specific URLs (not generic docs links)
+      { pattern: /https?:\/\/[^\s)]+\.(app|dev)\//g, description: 'Project URL' },
+      // GitHub org/repo references
+      { pattern: /github\.com\/[a-zA-Z-]+\/[a-zA-Z-]+/g, description: 'GitHub repo reference' },
+      // Specific large line counts that suggest copy-paste
+      { pattern: /\b\d{3,},?\d*\s*(lines|→)/g, description: 'Specific line count' },
+    ]
+
+    const allPatterns = [...DEFAULT_REFERENCE_PATTERNS]
+
+    // Merge custom patterns
+    if (customPatterns) {
+      for (const p of customPatterns) {
+        allPatterns.push({ pattern: p, description: 'Custom pattern' })
+      }
+    }
+
+    const warnings: string[] = []
+    const matches: Array<{ line: number; text: string; pattern: string }> = []
+    const lines = content.split('\n')
+
+    for (const { pattern, description } of allPatterns) {
+      // Reset lastIndex for each pattern scan
+      const regex = new RegExp(pattern.source, pattern.flags)
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!
+        let match: RegExpExecArray | null
+
+        regex.lastIndex = 0
+        while ((match = regex.exec(line)) !== null) {
+          const matchedText = match[0]
+          matches.push({
+            line: i + 1,
+            text: matchedText.length > 80 ? matchedText.slice(0, 80) + '...' : matchedText,
+            pattern: description,
+          })
+        }
+      }
+    }
+
+    if (matches.length > 0) {
+      const uniquePatterns = [...new Set(matches.map((m) => m.pattern))]
+      warnings.push(
+        `Found ${matches.length} project-specific reference(s): ${uniquePatterns.join(', ')}`
+      )
+    }
+
+    return { warnings, matches }
+  }
 }
 
 export default SkillParser

@@ -33,7 +33,12 @@ import type { ValidateInput, ValidateResponse, ValidationError } from './validat
 import { validateInputSchema } from './validate.types.js'
 
 // Import helpers
-import { parseYamlFrontmatter, hasPathTraversal, validateMetadata } from './validate.helpers.js'
+import {
+  parseYamlFrontmatter,
+  hasPathTraversal,
+  validateMetadata,
+  detectClaudeMdModification,
+} from './validate.helpers.js'
 
 // Re-export only public API types (SMI-1718: trimmed internal exports)
 export type { ValidateInput, ValidateResponse, ValidationError } from './validate.types.js'
@@ -119,6 +124,17 @@ export async function executeValidate(
     })
   } else {
     errors.push(...validateMetadata(metadata, strict))
+  }
+
+  // SMI-2441: Check if skill modifies CLAUDE.md
+  const body = content.slice(content.indexOf('---', 3) + 3).trim()
+  const claudeMdWarnings = detectClaudeMdModification(body)
+  for (const warning of claudeMdWarnings) {
+    errors.push({
+      field: 'body',
+      message: warning,
+      severity: 'warning' as const,
+    })
   }
 
   // Determine validity
