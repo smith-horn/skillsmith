@@ -318,19 +318,21 @@ export async function publishSkill(
 
       // Read all .md files in skill directory (max 20)
       const allFiles = await readdir(dirPath, { recursive: true })
-      const mdFiles = allFiles
-        .filter((f): f is string => typeof f === 'string' && f.endsWith('.md'))
-        .slice(0, 20)
+      const mdFiles = (allFiles as string[]).filter((f) => f.endsWith('.md')).slice(0, 20)
 
-      if (
-        allFiles.filter((f): f is string => typeof f === 'string' && f.endsWith('.md')).length > 20
-      ) {
+      if ((allFiles as string[]).filter((f) => f.endsWith('.md')).length > 20) {
         console.log(chalk.yellow('\n  ⚠️  More than 20 .md files found — scanning first 20 only'))
       }
 
       // Parse custom patterns if provided
       const customPatterns = options.referencePatterns
         ?.map((p) => {
+          if (p.length > 200) {
+            console.log(
+              chalk.yellow(`  ⚠️  Regex pattern too long (max 200 chars): ${p.slice(0, 40)}...`)
+            )
+            return null
+          }
           try {
             return new RegExp(p, 'g')
           } catch {

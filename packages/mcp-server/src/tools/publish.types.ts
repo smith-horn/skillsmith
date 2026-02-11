@@ -15,7 +15,7 @@ export const publishInputSchema = z.object({
   /** Run reference check before publishing (default: true) */
   check_references: z.boolean().default(true),
   /** Additional reference patterns to check (regex strings) */
-  reference_patterns: z.array(z.string()).optional(),
+  reference_patterns: z.array(z.string().max(200)).max(20).optional(),
   /** Create GitHub repository (requires gh CLI) */
   create_repo: z.boolean().default(false),
   /** GitHub visibility if creating repo (default: 'public') */
@@ -82,7 +82,7 @@ export interface PublishResponse {
  * MCP tool schema definition for publish
  */
 export const publishToolSchema = {
-  name: 'publish',
+  name: 'skill_publish',
   description:
     'Prepare a skill for publishing. Validates the skill, generates a checksum, ' +
     'creates a publish manifest, and optionally checks for project-specific references. ' +
@@ -101,8 +101,10 @@ export const publishToolSchema = {
       },
       reference_patterns: {
         type: 'array',
-        items: { type: 'string' },
-        description: 'Additional regex patterns to check (regex strings)',
+        items: { type: 'string', maxLength: 200 },
+        maxItems: 20,
+        description:
+          'Additional regex patterns to check (regex strings, max 200 chars each, max 20 patterns)',
       },
       create_repo: {
         type: 'boolean',

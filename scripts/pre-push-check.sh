@@ -48,7 +48,7 @@ SMUDGE_ARTIFACT_COUNT=0
 
 if [ -f .gitattributes ] && grep -q "filter=git-crypt" .gitattributes 2>/dev/null; then
   # Guard: Only check if git-crypt is unlocked (locked state = no smudge artifacts)
-  if command -v git-crypt &> /dev/null && git-crypt status 2>/dev/null | head -1 | grep -q "not encrypted"; then
+  if command -v git-crypt &> /dev/null && git-crypt status 2>/dev/null | grep -q "not encrypted"; then
     # Count files that appear modified but are binary (smudge artifacts)
     while IFS= read -r file; do
       if [ -n "$file" ] && [ -f "$file" ] && file "$file" | grep -q "data\|binary"; then
