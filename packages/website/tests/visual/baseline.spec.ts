@@ -21,7 +21,7 @@ const pages = [
   { name: 'docs', path: '/docs' },
   { name: 'pricing', path: '/pricing' },
   { name: 'contact', path: '/contact' },
-  { name: 'faq', path: '/faq' },
+  { name: 'faq', path: '/docs/faq' },
 ] as const
 
 for (const { name, path } of pages) {
