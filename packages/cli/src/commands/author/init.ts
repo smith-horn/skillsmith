@@ -9,7 +9,7 @@ import { Command } from 'commander'
 import { input, confirm, select } from '@inquirer/prompts'
 import chalk from 'chalk'
 import ora from 'ora'
-import { mkdir, writeFile, readFile, stat } from 'fs/promises'
+import { mkdir, writeFile, readFile, stat, readdir } from 'fs/promises'
 import { dirname, join, resolve } from 'path'
 import { createHash } from 'crypto'
 import { SkillParser } from '@skillsmith/core'
@@ -257,7 +257,10 @@ export async function validateSkill(skillPath: string): Promise<boolean> {
  * Prepare skill for publishing
  * @returns true if publishing succeeded, false if validation failed
  */
-export async function publishSkill(skillPath: string): Promise<boolean> {
+export async function publishSkill(
+  skillPath: string,
+  options: { checkReferences?: boolean; referencePatterns?: string[] } = {}
+): Promise<boolean> {
   const spinner = ora('Preparing skill for publishing...').start()
 
   try {
@@ -307,6 +310,67 @@ export async function publishSkill(skillPath: string): Promise<boolean> {
       checksum,
       publishedAt: new Date().toISOString(),
       trustTier: parser.inferTrustTier(metadata),
+    }
+
+    // SMI-2439: Check for project-specific references
+    if (options.checkReferences) {
+      spinner.text = 'Scanning for project-specific references...'
+
+      // Read all .md files in skill directory (max 20)
+      const allFiles = await readdir(dirPath, { recursive: true })
+      const mdFiles = allFiles
+        .filter((f): f is string => typeof f === 'string' && f.endsWith('.md'))
+        .slice(0, 20)
+
+      if (
+        allFiles.filter((f): f is string => typeof f === 'string' && f.endsWith('.md')).length > 20
+      ) {
+        console.log(chalk.yellow('\n  ⚠️  More than 20 .md files found — scanning first 20 only'))
+      }
+
+      // Parse custom patterns if provided
+      const customPatterns = options.referencePatterns
+        ?.map((p) => {
+          try {
+            return new RegExp(p, 'g')
+          } catch {
+            console.log(chalk.yellow(`  ⚠️  Invalid regex pattern: ${p}`))
+            return null
+          }
+        })
+        .filter((p): p is RegExp => p !== null)
+
+      let totalWarnings = 0
+
+      for (const mdFile of mdFiles) {
+        const filePath = join(dirPath, mdFile)
+        const fileContent = await readFile(filePath, 'utf-8')
+        const result = SkillParser.checkReferences(fileContent, customPatterns)
+
+        if (result.matches.length > 0) {
+          totalWarnings += result.matches.length
+          spinner.stop()
+          console.log(chalk.yellow(`\n  References in ${mdFile}:`))
+          for (const match of result.matches) {
+            const truncated = match.text.length > 80 ? match.text.slice(0, 80) + '...' : match.text
+            console.log(chalk.dim(`    L${match.line}: ${truncated} (${match.pattern})`))
+          }
+          spinner.start()
+        }
+      }
+
+      if (totalWarnings > 0) {
+        spinner.stop()
+        console.log(
+          chalk.yellow(
+            `\n  ⚠️  Found ${totalWarnings} project-specific reference(s) across ${mdFiles.length} file(s)`
+          )
+        )
+        console.log(
+          chalk.dim('  These may leak internal project details. Review before publishing.')
+        )
+        spinner.start()
+      }
     }
 
     // Write publish manifest
@@ -404,9 +468,25 @@ export function createPublishCommand(): Command {
   return new Command('publish')
     .description('Prepare skill for sharing')
     .argument('[path]', 'Path to skill directory', '.')
-    .action(async (skillPath: string) => {
+    .option('--check-references', 'Scan for project-specific references before publishing')
+    .option(
+      '--reference-patterns <patterns>',
+      'Additional regex patterns to check (comma-separated)'
+    )
+    .action(async (skillPath: string, opts: Record<string, string | boolean | undefined>) => {
       try {
-        const success = await publishSkill(skillPath)
+        const referencePatterns = opts['referencePatterns']
+          ? String(opts['referencePatterns'])
+              .split(',')
+              .map((p) => p.trim())
+          : undefined
+        // SMI-2444: Use conditional spread to satisfy exactOptionalPropertyTypes
+        const success = await publishSkill(skillPath, {
+          ...(opts['checkReferences'] !== undefined && {
+            checkReferences: opts['checkReferences'] as boolean,
+          }),
+          ...(referencePatterns !== undefined && { referencePatterns }),
+        })
         process.exit(success ? 0 : 1)
       } catch (error) {
         console.error(chalk.red('Error publishing skill:'), sanitizeError(error))

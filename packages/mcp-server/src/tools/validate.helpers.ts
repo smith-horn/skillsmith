@@ -289,3 +289,31 @@ export function validateMetadata(
 
   return errors
 }
+
+/**
+ * Detect if a skill appears to modify CLAUDE.md files.
+ * Returns warnings if the skill body contains patterns suggesting CLAUDE.md modification.
+ * This is a heuristic check — false positives are possible.
+ */
+export function detectClaudeMdModification(body: string): string[] {
+  const warnings: string[] = []
+
+  const claudeMdPatterns = [
+    /CLAUDE\.md/gi,
+    /progressive\s+disclosure/gi,
+    /sub-document/gi,
+    /optimize.*claude/gi,
+  ]
+
+  const modifiesClaudeMd = claudeMdPatterns.some((p) => p.test(body))
+
+  if (modifiesClaudeMd) {
+    warnings.push(
+      'This skill appears to modify CLAUDE.md. ' +
+        'Ensure it detects CI scripts that regex-scan CLAUDE.md and preserves matched content inline. ' +
+        'See: docs/architecture/standards.md#ci-machine-readable-content-dependencies'
+    )
+  }
+
+  return warnings
+}

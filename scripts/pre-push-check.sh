@@ -39,6 +39,31 @@ else
 fi
 echo ""
 
+# =============================================================================
+# SMI-2442: Detect git-crypt smudge filter artifacts
+# Git-crypt smudge filter can create persistent dirty files (binary diffs)
+# that trigger false positives in format checks (e.g., npm run preflight)
+# =============================================================================
+SMUDGE_ARTIFACT_COUNT=0
+
+if [ -f .gitattributes ] && grep -q "filter=git-crypt" .gitattributes 2>/dev/null; then
+  # Guard: Only check if git-crypt is unlocked (locked state = no smudge artifacts)
+  if command -v git-crypt &> /dev/null && git-crypt status 2>/dev/null | head -1 | grep -q "not encrypted"; then
+    # Count files that appear modified but are binary (smudge artifacts)
+    while IFS= read -r file; do
+      if [ -n "$file" ] && [ -f "$file" ] && file "$file" | grep -q "data\|binary"; then
+        SMUDGE_ARTIFACT_COUNT=$((SMUDGE_ARTIFACT_COUNT + 1))
+      fi
+    done < <(git diff --name-only 2>/dev/null)
+
+    if [ $SMUDGE_ARTIFACT_COUNT -gt 0 ]; then
+      echo -e "${YELLOW}⚠️  Detected ${SMUDGE_ARTIFACT_COUNT} git-crypt smudge artifacts (excluded from format checks)${NC}"
+      echo -e "${YELLOW}   These are expected in git-crypt repos and do not affect push safety.${NC}"
+    fi
+  fi
+fi
+echo ""
+
 # Helper function to run commands in Docker or locally
 # SMI-1774: Use -w /app to support running from worktree directories
 run_cmd() {

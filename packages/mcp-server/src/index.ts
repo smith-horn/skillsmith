@@ -31,6 +31,7 @@ import {
   indexLocalInputSchema,
   executeIndexLocal,
 } from './tools/index-local.js'
+import { publishToolSchema, publishInputSchema, executePublish } from './tools/publish.js'
 import {
   isFirstRun,
   markFirstRunComplete,
@@ -62,6 +63,7 @@ const toolDefinitions = [
   compareToolSchema,
   suggestToolSchema,
   indexLocalToolSchema,
+  publishToolSchema,
 ]
 
 // Create server
@@ -201,6 +203,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'index_local': {
         const input = indexLocalInputSchema.parse(args)
         const result = await executeIndexLocal(input, toolContext)
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        }
+      }
+
+      case 'publish': {
+        const input = publishInputSchema.parse(args)
+        const result = await executePublish(input, toolContext)
         return {
           content: [
             {
