@@ -27,6 +27,8 @@ permissions:
   issues: write
 
 env:
+  # WIF config stored as repository variables (not secrets) since these are
+  # non-sensitive infrastructure identifiers. See deployment-guide.md.
   GA4_PROPERTY_ID: ${{ vars.GA4_PROPERTY_ID }}
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
@@ -39,6 +41,23 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Variables
+        run: |
+          MISSING=""
+          [ -z "$GA4_PROPERTY_ID" ] && MISSING="$MISSING GA4_PROPERTY_ID"
+          [ -z "$GCP_PROJECT_ID" ] && MISSING="$MISSING GCP_PROJECT_ID"
+          [ -z "$GCP_WIF_PROVIDER" ] && MISSING="$MISSING GCP_WIF_PROVIDER"
+          [ -z "$GCP_SERVICE_ACCOUNT" ] && MISSING="$MISSING GCP_SERVICE_ACCOUNT"
+          if [ -n "$MISSING" ]; then
+            echo "::error::Missing required repository variables:$MISSING"
+            echo "Set these at: Settings > Secrets and variables > Actions > Variables"
+            exit 1
+          fi
+          echo "Variables validated"
+
       - name: Authenticate to Google Cloud
         id: auth
         uses: google-github-actions/auth@v2
@@ -52,11 +71,13 @@ jobs:
 
       - name: Query GA4 Traffic Data
         id: traffic
+        env:
+          INPUT_DAYS: ${{ github.event.inputs.days || '7' }}
         run: |
-          DAYS="${{ github.event.inputs.days || '7' }}"
+          DAYS="$INPUT_DAYS"
 
-          # Query top pages, sessions, users, and engagement
-          RESPONSE=$(curl -s -X POST \
+          # Query sessions, users, and engagement by date
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer $(gcloud auth print-access-token)" \
             -H "Content-Type: application/json" \
             -d '{
@@ -72,22 +93,31 @@ jobs:
               "dimensions": [{"name": "date"}],
               "orderBys": [{"dimension": {"dimensionName": "date"}}]
             }' \
-            "https://analyticsdata.googleapis.com/v1beta/${{ env.GA4_PROPERTY_ID }}:runReport")
+            "https://analyticsdata.googleapis.com/v1beta/${GA4_PROPERTY_ID}:runReport")
 
-          # Check for API errors
-          ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty')
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "::error::GA4 API returned HTTP $HTTP_CODE"
+            echo "$BODY" | head -20
+            exit 1
+          fi
+
+          # Check for API-level errors
+          ERROR=$(echo "$BODY" | jq -r '.error.message // empty')
           if [ -n "$ERROR" ]; then
             echo "::error::GA4 API error: $ERROR"
             exit 1
           fi
 
-          # Extract totals from row-level data
-          TOTAL_SESSIONS=$(echo "$RESPONSE" | jq -r '[.rows[]?.metricValues[0].value | tonumber] | add // 0')
-          TOTAL_USERS=$(echo "$RESPONSE" | jq -r '[.rows[]?.metricValues[1].value | tonumber] | add // 0')
-          TOTAL_PAGEVIEWS=$(echo "$RESPONSE" | jq -r '[.rows[]?.metricValues[2].value | tonumber] | add // 0')
-          AVG_DURATION=$(echo "$RESPONSE" | jq -r '[.rows[]?.metricValues[3].value | tonumber] | add / length // 0 | round')
-          AVG_BOUNCE=$(echo "$RESPONSE" | jq -r '[.rows[]?.metricValues[4].value | tonumber] | add / length // 0 | . * 100 | round / 100')
-          TOTAL_CONVERSIONS=$(echo "$RESPONSE" | jq -r '[.rows[]?.metricValues[5].value | tonumber] | add // 0')
+          # Extract totals from row-level data (guard against empty responses)
+          TOTAL_SESSIONS=$(echo "$BODY" | jq -r '[.rows[]?.metricValues[0].value | tonumber] | add // 0')
+          TOTAL_USERS=$(echo "$BODY" | jq -r '[.rows[]?.metricValues[1].value | tonumber] | add // 0')
+          TOTAL_PAGEVIEWS=$(echo "$BODY" | jq -r '[.rows[]?.metricValues[2].value | tonumber] | add // 0')
+          AVG_DURATION=$(echo "$BODY" | jq -r '[.rows[]?.metricValues[3].value | tonumber] | if length == 0 then 0 else (add / length | round) end')
+          AVG_BOUNCE=$(echo "$BODY" | jq -r '[.rows[]?.metricValues[4].value | tonumber] | if length == 0 then 0 else (add / length | . * 100 | round / 100) end')
+          TOTAL_CONVERSIONS=$(echo "$BODY" | jq -r '[.rows[]?.metricValues[5].value | tonumber] | add // 0')
 
           echo "sessions=$TOTAL_SESSIONS" >> $GITHUB_OUTPUT
           echo "users=$TOTAL_USERS" >> $GITHUB_OUTPUT
@@ -99,10 +129,12 @@ jobs:
 
       - name: Query Top Pages
         id: pages
+        env:
+          INPUT_DAYS: ${{ github.event.inputs.days || '7' }}
         run: |
-          DAYS="${{ github.event.inputs.days || '7' }}"
+          DAYS="$INPUT_DAYS"
 
-          RESPONSE=$(curl -s -X POST \
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer $(gcloud auth print-access-token)" \
             -H "Content-Type: application/json" \
             -d '{
@@ -115,21 +147,30 @@ jobs:
               "orderBys": [{"metric": {"metricName": "sessions"}, "desc": true}],
               "limit": 10
             }' \
-            "https://analyticsdata.googleapis.com/v1beta/${{ env.GA4_PROPERTY_ID }}:runReport")
+            "https://analyticsdata.googleapis.com/v1beta/${GA4_PROPERTY_ID}:runReport")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "::error::GA4 Top Pages API returned HTTP $HTTP_CODE"
+            exit 1
+          fi
 
           # Build markdown table of top pages
           TABLE="| Page | Sessions | Page Views |\n|------|----------|------------|\n"
-          TABLE+=$(echo "$RESPONSE" | jq -r '.rows[]? | "| \(.dimensionValues[0].value) | \(.metricValues[0].value) | \(.metricValues[1].value) |"')
+          TABLE+=$(echo "$BODY" | jq -r '.rows[]? | "| \(.dimensionValues[0].value) | \(.metricValues[0].value) | \(.metricValues[1].value) |"')
 
-          # Save to file to avoid shell escaping issues
-          echo -e "$TABLE" > /tmp/top-pages.md
+          printf '%b\n' "$TABLE" > /tmp/top-pages.md
 
       - name: Query Traffic Sources
         id: sources
+        env:
+          INPUT_DAYS: ${{ github.event.inputs.days || '7' }}
         run: |
-          DAYS="${{ github.event.inputs.days || '7' }}"
+          DAYS="$INPUT_DAYS"
 
-          RESPONSE=$(curl -s -X POST \
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer $(gcloud auth print-access-token)" \
             -H "Content-Type: application/json" \
             -d '{
@@ -142,12 +183,20 @@ jobs:
               "orderBys": [{"metric": {"metricName": "sessions"}, "desc": true}],
               "limit": 10
             }' \
-            "https://analyticsdata.googleapis.com/v1beta/${{ env.GA4_PROPERTY_ID }}:runReport")
+            "https://analyticsdata.googleapis.com/v1beta/${GA4_PROPERTY_ID}:runReport")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "::error::GA4 Traffic Sources API returned HTTP $HTTP_CODE"
+            exit 1
+          fi
 
           TABLE="| Channel | Sessions | Users |\n|---------|----------|-------|\n"
-          TABLE+=$(echo "$RESPONSE" | jq -r '.rows[]? | "| \(.dimensionValues[0].value) | \(.metricValues[0].value) | \(.metricValues[1].value) |"')
+          TABLE+=$(echo "$BODY" | jq -r '.rows[]? | "| \(.dimensionValues[0].value) | \(.metricValues[0].value) | \(.metricValues[1].value) |"')
 
-          echo -e "$TABLE" > /tmp/traffic-sources.md
+          printf '%b\n' "$TABLE" > /tmp/traffic-sources.md
 
       - name: Generate Summary
         run: |
@@ -176,34 +225,49 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
 
           echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "*Report generated: $(date -u +%Y-%m-%dT%H:%M:%SZ) | GA4 Property: G-GGZQZM1Y1L | Auth: Workload Identity Federation*" >> $GITHUB_STEP_SUMMARY
+          echo "*Report generated: $(date -u +%Y-%m-%dT%H:%M:%SZ) | GA4 Property: ${GA4_PROPERTY_ID} | Auth: Workload Identity Federation*" >> $GITHUB_STEP_SUMMARY
+
+      - name: Ensure analytics label exists
+        if: github.event.inputs.create_issue == 'true'
+        run: |
+          gh label create analytics --color "4A90D9" --description "Analytics reports and metrics" 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create issue if requested
         if: github.event.inputs.create_issue == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORT_DAYS: ${{ steps.traffic.outputs.days }}
+          REPORT_SESSIONS: ${{ steps.traffic.outputs.sessions }}
+          REPORT_USERS: ${{ steps.traffic.outputs.users }}
+          REPORT_PAGEVIEWS: ${{ steps.traffic.outputs.pageviews }}
+          REPORT_DURATION: ${{ steps.traffic.outputs.avg_duration }}
+          REPORT_BOUNCE: ${{ steps.traffic.outputs.avg_bounce }}
+          REPORT_CONVERSIONS: ${{ steps.traffic.outputs.conversions }}
         run: |
-          DAYS="${{ steps.traffic.outputs.days }}"
-          TITLE="Analytics Report - $(date +%Y-%m-%d) (${DAYS}d)"
+          GENERATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          TITLE="Analytics Report - $(date +%Y-%m-%d) (${REPORT_DAYS}d)"
 
-          BODY=$(cat <<'ISSUE_EOF'
-          ## Analytics Report
+          BODY="## Analytics Report
 
-          **Period**: Last ${{ steps.traffic.outputs.days }} days
-          **Generated**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          **Period**: Last ${REPORT_DAYS} days
+          **Generated**: ${GENERATED}
 
           ### Overview
 
           | Metric | Value |
           |--------|-------|
-          | Sessions | ${{ steps.traffic.outputs.sessions }} |
-          | Active Users | ${{ steps.traffic.outputs.users }} |
-          | Page Views | ${{ steps.traffic.outputs.pageviews }} |
-          | Avg Session Duration | ${{ steps.traffic.outputs.avg_duration }}s |
-          | Bounce Rate | ${{ steps.traffic.outputs.avg_bounce }}% |
-          | Conversions | ${{ steps.traffic.outputs.conversions }} |
+          | Sessions | ${REPORT_SESSIONS} |
+          | Active Users | ${REPORT_USERS} |
+          | Page Views | ${REPORT_PAGEVIEWS} |
+          | Avg Session Duration | ${REPORT_DURATION}s |
+          | Bounce Rate | ${REPORT_BOUNCE}% |
+          | Conversions | ${REPORT_CONVERSIONS} |
 
           ### Top Pages
 
-          ISSUE_EOF
+          "
 
           BODY+=$(cat /tmp/top-pages.md)
           BODY+=$'\n\n### Traffic Sources\n\n'
@@ -214,16 +278,15 @@ jobs:
             --title "$TITLE" \
             --body "$BODY" \
             --label "analytics"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Report Failure
-        if: failure()
+        if: failure() || cancelled()
         run: |
           echo "### Analytics Report Failed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Check the workflow logs for details." >> $GITHUB_STEP_SUMMARY
           echo "Common issues:" >> $GITHUB_STEP_SUMMARY
+          echo "- Repository variables not set (Settings > Actions > Variables)" >> $GITHUB_STEP_SUMMARY
           echo "- WIF provider misconfigured" >> $GITHUB_STEP_SUMMARY
           echo "- Service account lacks GA4 Viewer role" >> $GITHUB_STEP_SUMMARY
           echo "- GA4 Data API not enabled in GCP project" >> $GITHUB_STEP_SUMMARY

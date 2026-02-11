@@ -111,10 +111,10 @@ Set via Settings → Secrets and variables → Actions → Variables:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `GCP_PROJECT_ID` | Google Cloud project ID | `gen-lang-client-0194964319` |
-| `GCP_WIF_PROVIDER` | Full WIF provider resource name | `projects/NNNN/locations/global/workloadIdentityPools/github-actions-pool/providers/github` |
-| `GCP_SERVICE_ACCOUNT` | Service account email with GA4 Viewer role | `skillsmith-google-analytics@project.iam.gserviceaccount.com` |
-| `GA4_PROPERTY_ID` | GA4 property for API queries | `properties/520456579` |
+| `GCP_PROJECT_ID` | Google Cloud project ID | `my-gcp-project-id` |
+| `GCP_WIF_PROVIDER` | Full WIF provider resource name | `projects/NNNN/locations/global/workloadIdentityPools/POOL/providers/PROVIDER` |
+| `GCP_SERVICE_ACCOUNT` | Service account email with GA4 Viewer role | `name@project.iam.gserviceaccount.com` |
+| `GA4_PROPERTY_ID` | GA4 property for API queries (must include `properties/` prefix) | `properties/XXXXXXXXX` |
 
 ### Local Testing
 
