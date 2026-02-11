@@ -153,7 +153,11 @@ const faqCategories: FAQCategory[] = [
         "@type": "Answer",
         "text": item.answer
       }
-    })))
+    }))),
+    "speakable": {
+      "@type": "SpeakableSpecification",
+      "cssSelector": [".question", ".answer"]
+    }
   })} />
 
   <h1>Frequently Asked Questions</h1>

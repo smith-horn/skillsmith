@@ -1,4 +1,5 @@
 # Skillsmith - Agent Skill Discovery & Management
+> For complete reference including full API docs, CLI commands, and FAQ, see: https://www.skillsmith.app/llms-full.txt
 > Skillsmith helps developers discover, install, and manage agent skills. Skills are reusable prompts and workflows that extend AI assistant capabilities.
 
 ## Quick Start
@@ -101,6 +102,20 @@ Elastic License 2.0 (ELv2)
 - Website: https://skillsmith.app
 - GitHub: https://github.com/smith-horn/skillsmith
 - Contact: https://skillsmith.app/contact
+
+## Frequently Asked Questions
+
+Q: What are agent skills?
+A: Skills are reusable prompts and workflows installed to ~/.claude/skills/ that give AI assistants specialized capabilities like testing, deployment, code review, and documentation generation.
+
+Q: Is Skillsmith free?
+A: Yes. The Community tier is free forever with 1,000 API calls per month. Paid plans start at $9.99/month.
+
+Q: What AI tools does it work with?
+A: Any MCP-compatible client including Claude Code, Claude Desktop, Cursor, Windsurf, and other Model Context Protocol tools.
+
+Q: How do I install a skill?
+A: Add the Skillsmith MCP server to your settings.json, then ask your assistant to install it. One step.
 
 ## Optional
 
