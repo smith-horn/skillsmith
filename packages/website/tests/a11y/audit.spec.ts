@@ -21,7 +21,7 @@ const auditPages = [
   { name: 'docs-getting-started', path: '/docs/getting-started' },
   { name: 'pricing', path: '/pricing' },
   { name: 'contact', path: '/contact' },
-  { name: 'faq', path: '/faq' },
+  { name: 'faq', path: '/docs/faq' },
 ] as const
 
 for (const { name, path } of auditPages) {

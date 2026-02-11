@@ -66,6 +66,9 @@ const savingsPercent = period === 'annual' ? 17 : 0; // ~17% savings
     <script is:inline define:vars={{ supabaseConfig }}>
       window.__SUPABASE_CONFIG__ = supabaseConfig;
     </script>
+    <script is:inline define:vars={{ checkoutContext: { tier, period, displayPrice, monthlyPrice, tierName: tierData?.name || '', isPaidTier, seatCount: 1 } }}>
+      window.__CHECKOUT_CONTEXT__ = checkoutContext;
+    </script>
     <ClientRouter />
   </head>
   <body>
@@ -897,6 +900,16 @@ const savingsPercent = period === 'annual' ? 17 : 0; // ~17% savings
 
   // Initialize checkout form handling
   document.addEventListener('DOMContentLoaded', () => {
+    // GA4: Track signup page view with tier context (SMI-2460)
+    const ctx = (window as any).__CHECKOUT_CONTEXT__;
+    if (typeof window.gtag === 'function' && ctx) {
+      window.gtag('event', 'signup_start', {
+        tier: ctx.tier,
+        period: ctx.period,
+        is_paid: ctx.isPaidTier,
+      });
+    }
+
     // ============================================
     // PAID TIER: Stripe Checkout Form Handling
     // ============================================
@@ -979,6 +992,33 @@ const savingsPercent = period === 'annual' ? 17 : 0; // ~17% savings
             throw new Error(data.error || 'Failed to create checkout session')
           }
 
+          // GA4: Track begin_checkout before Stripe redirect (SMI-2461)
+          if (typeof window.gtag === 'function' && ctx) {
+            window.gtag('event', 'begin_checkout', {
+              currency: 'USD',
+              value: ctx.displayPrice,
+              items: [{
+                item_id: ctx.tier,
+                item_name: ctx.tierName,
+                price: ctx.displayPrice,
+                quantity: payload.seatCount,
+                item_category: 'subscription',
+                item_variant: payload.period,
+              }],
+            });
+          }
+
+          // Store checkout data for success page purchase event (SMI-2461)
+          try {
+            sessionStorage.setItem('skillsmith_checkout', JSON.stringify({
+              tier: payload.tier,
+              period: payload.period,
+              value: ctx?.displayPrice || 0,
+              tierName: ctx?.tierName || '',
+              seatCount: payload.seatCount,
+            }));
+          } catch (_) { /* sessionStorage may be unavailable */ }
+
           // Redirect to Stripe checkout
           if (data.url) {
             window.location.href = data.url
@@ -1051,6 +1091,11 @@ const savingsPercent = period === 'annual' ? 17 : 0; // ~17% savings
 
           // Check if email confirmation is required
           if (data.user && !data.user.email_confirmed_at) {
+            // GA4: Track successful signup (SMI-2460)
+            if (typeof window.gtag === 'function') {
+              window.gtag('event', 'sign_up', { method: 'email' });
+            }
+
             if (registerSuccess) {
               registerSuccess.innerHTML = `
                 <strong>Check your email!</strong><br>
@@ -1062,6 +1107,11 @@ const savingsPercent = period === 'annual' ? 17 : 0; // ~17% savings
             registerForm.reset()
           } else if (data.session) {
             // Logged in directly (email confirmation disabled)
+            // GA4: Track successful signup (SMI-2460)
+            if (typeof window.gtag === 'function') {
+              window.gtag('event', 'sign_up', { method: 'email' });
+            }
+
             if (registerSuccess) {
               registerSuccess.textContent = 'Account created! Redirecting to your dashboard...'
               registerSuccess.style.display = 'block'

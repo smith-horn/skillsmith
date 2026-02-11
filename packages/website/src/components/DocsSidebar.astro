@@ -14,6 +14,7 @@ const navItems = [
   { href: '/docs/security', label: 'Security', icon: 'shield' },
   { href: '/docs/quarantine', label: 'Quarantine', icon: 'alert' },
   { href: '/docs/trust-tiers', label: 'Trust Tiers', icon: 'badge' },
+  { href: '/docs/faq', label: 'FAQ', icon: 'help-circle' },
 ];
 
 function isActive(href: string): boolean {
@@ -143,6 +144,10 @@ function isActive(href: string): boolean {
 
   .nav-icon[data-icon="badge"]::before {
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76z'/%3E%3Cpath d='M9 12l2 2 4-4'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon="help-circle"]::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3'/%3E%3Cline x1='12' y1='17' x2='12.01' y2='17'/%3E%3C/svg%3E");
   }
 
   @media (max-width: 1024px) {

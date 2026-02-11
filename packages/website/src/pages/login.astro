@@ -539,6 +539,11 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
           successMessage.textContent = 'Login successful! Redirecting...'
           successMessage.style.display = 'block'
 
+          // GA4: Track successful login (SMI-2460)
+          if (typeof window.gtag === 'function') {
+            window.gtag('event', 'login', { method: 'email' });
+          }
+
           // Redirect after short delay
           const redirectTo = new URLSearchParams(window.location.search).get('redirect') || '/account'
           setTimeout(() => {

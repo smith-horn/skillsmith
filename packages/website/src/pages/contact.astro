@@ -355,6 +355,15 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
         const result = await response.json();
 
         if (response.ok && result.success) {
+          // GA4: Track successful contact form submission (SMI-2463)
+          if (typeof window.gtag === 'function') {
+            window.gtag('event', 'generate_lead', {
+              event_category: 'contact',
+              contact_topic: formData.topic,
+              has_company: !!formData.company,
+            });
+          }
+
           // Show success
           statusDiv.classList.remove('hidden');
           successDiv.classList.remove('hidden');
