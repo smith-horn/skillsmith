@@ -150,10 +150,11 @@ export function createBetterSqlite3Database(
  */
 export function isBetterSqlite3Available(): boolean {
   try {
-    require.resolve('better-sqlite3')
-    // Also try to actually load it to catch binary incompatibility
-
-    require('better-sqlite3')
+    const Database = require('better-sqlite3') as typeof BetterSqlite3
+    // Instantiate in-memory DB to trigger dlopen of the native binary.
+    // Catches ABI mismatch (Node upgrade) and platform mismatch (Linux binary on macOS).
+    const testDb = new Database(':memory:')
+    testDb.close()
     return true
   } catch {
     return false
