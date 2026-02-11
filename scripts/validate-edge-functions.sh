@@ -78,7 +78,7 @@ echo "Checking function structure..."
 for fn in $FUNCTION_DIRS; do
   if [ ! -f "$FUNCTIONS_DIR/$fn/index.ts" ]; then
     echo -e "${RED}  ✗ $fn: Missing index.ts${NC}"
-    ((ERRORS++))
+    ERRORS=$((ERRORS + 1))
   else
     echo -e "${GREEN}  ✓ $fn: index.ts exists${NC}"
   fi
@@ -98,11 +98,11 @@ for fn in "${ANONYMOUS_FUNCTIONS[@]}"; do
         echo -e "${GREEN}  ✓ $fn: verify_jwt = false${NC}"
       else
         echo -e "${YELLOW}  ⚠ $fn: Not configured with verify_jwt = false (may need --no-verify-jwt on deploy)${NC}"
-        ((WARNINGS++))
+        WARNINGS=$((WARNINGS + 1))
       fi
     else
       echo -e "${YELLOW}  ⚠ $fn: Not in config.toml (deploy with --no-verify-jwt)${NC}"
-      ((WARNINGS++))
+      WARNINGS=$((WARNINGS + 1))
     fi
   fi
 done
@@ -121,7 +121,7 @@ for fn in $FUNCTION_DIRS; do
   done
   if [ $FOUND -eq 0 ]; then
     echo -e "${YELLOW}  ⚠ $fn: Not categorized (add to ANONYMOUS, AUTHENTICATED, or SERVICE_ROLE list)${NC}"
-    ((WARNINGS++))
+    WARNINGS=$((WARNINGS + 1))
   fi
 done
 echo ""
@@ -138,7 +138,7 @@ if [ "$1" = "--check-deployment" ]; then
         echo -e "${GREEN}  ✓ $fn: Deployed${NC}"
       else
         echo -e "${RED}  ✗ $fn: NOT DEPLOYED${NC}"
-        ((ERRORS++))
+        ERRORS=$((ERRORS + 1))
       fi
     done
   fi
