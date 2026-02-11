@@ -13,6 +13,7 @@ import '../styles/global.css';
 import { ClientRouter } from 'astro:transitions';
 import Nav from '../components/Nav.astro';
 import RateLimitToast from '../components/RateLimitToast.astro';
+import CookieConsent from '../components/CookieConsent.astro';
 import { getSupabaseConfig } from '../lib/supabase-config';
 
 interface Props {
@@ -46,14 +47,23 @@ const supabaseConfig = getSupabaseConfig();
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" fetchpriority="low" />
 
-    <!-- Google Analytics (placed after fonts so font fetches get priority) -->
-    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L" fetchpriority="low"></script>
+    <!-- Google Analytics with Consent Mode v2 -->
     <script is:inline>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
+      // Set default consent state BEFORE loading gtag.js
+      var consent = localStorage.getItem('skillsmith_cookie_consent');
+      gtag('consent', 'default', {
+        analytics_storage: consent === 'accepted' ? 'granted' : 'denied',
+        ad_storage: 'denied',
+        ad_user_data: 'denied',
+        ad_personalization: 'denied',
+        wait_for_update: 500,
+      });
       gtag('js', new Date());
       gtag('config', 'G-GGZQZM1Y1L');
     </script>
+    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L" fetchpriority="low"></script>
 
     <!-- Open Graph -->
     <meta property="og:title" content={title} />
@@ -123,6 +133,9 @@ const supabaseConfig = getSupabaseConfig();
 
     <!-- SMI-2150: Rate limit toast for 429 errors -->
     <RateLimitToast />
+
+    <!-- Cookie consent banner (GA4 Consent Mode v2) -->
+    <CookieConsent />
 
     <!-- SMI-2344: Web Vitals RUM tracking (SMI-2363: shared module) -->
     <script>
