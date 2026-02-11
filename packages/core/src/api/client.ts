@@ -89,6 +89,7 @@ export interface ApiSearchResult {
   tags: string[]
   stars?: number | null
   installable?: boolean | null
+  quarantined?: boolean
   created_at?: string
   updated_at?: string
 }

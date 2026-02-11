@@ -431,6 +431,7 @@ Use this skill to do things.
         repoUrl: 'https://github.com/owner/repo',
         name: 'test-skill',
         trustTier: 'community',
+        quarantined: false,
       })
       expect(mockContext.apiClient.getSkill).toHaveBeenCalledWith('test/skill')
     })
@@ -447,6 +448,15 @@ Use this skill to do things.
             trustTier: 'experimental',
           }),
         },
+        // SMI-2437: QuarantineRepository needs a db with exec() and prepare().all()
+        db: {
+          exec: vi.fn(),
+          prepare: vi.fn().mockReturnValue({
+            get: vi.fn(),
+            all: vi.fn().mockReturnValue([]),
+            run: vi.fn(),
+          }),
+        },
       } as unknown as ToolContext
 
       const result = await lookupSkillFromRegistry('local/skill', mockContext)
@@ -455,6 +465,7 @@ Use this skill to do things.
         repoUrl: 'https://github.com/local/repo',
         name: 'local-skill',
         trustTier: 'experimental',
+        quarantined: false,
       })
     })
 
@@ -471,6 +482,15 @@ Use this skill to do things.
             trustTier: 'community',
           }),
         },
+        // SMI-2437: QuarantineRepository needs a db with exec() and prepare().all()
+        db: {
+          exec: vi.fn(),
+          prepare: vi.fn().mockReturnValue({
+            get: vi.fn(),
+            all: vi.fn().mockReturnValue([]),
+            run: vi.fn(),
+          }),
+        },
       } as unknown as ToolContext
 
       const result = await lookupSkillFromRegistry('fallback/skill', mockContext)
@@ -479,6 +499,7 @@ Use this skill to do things.
         repoUrl: 'https://github.com/fallback/repo',
         name: 'fallback-skill',
         trustTier: 'community',
+        quarantined: false,
       })
     })
 
