@@ -405,19 +405,6 @@ Claude will use the `get_skill` tool to show your current scores and trust tier.
 
 ---
 
-## Technical Reference
-
-For developers who want to dive deeper:
-
-| Resource | Description |
-|----------|-------------|
-| [Skill Index Schema](/docs/technical/components/skill-index.md) | Full database schema |
-| [Scoring Algorithm](/docs/technical/scoring/algorithm.md) | Detailed scoring math |
-| [Embedding Service](/packages/core/src/embeddings/) | Vector embedding implementation |
-| [ADR-009](/docs/adr/009-embedding-service-fallback.md) | Embedding fallback strategy |
-
----
-
 ## Summary
 
 Skillsmith's indexer transforms your GitHub repository into a discoverable, searchable skill through five stages:
@@ -429,14 +416,6 @@ Skillsmith's indexer transforms your GitHub repository into a discoverable, sear
 5. **Indexing** — SQLite + embeddings enable hybrid search
 
 The best way to rank higher? Build a genuinely useful skill, document it well, and maintain it actively. The algorithm rewards exactly what users want: quality, popularity, and reliability.
-
----
-
-## Next Steps
-
-- **Read the security deep-dive** — [Security, Quarantine, and Safe Skill Installation](/blog/security-quarantine-safe-installation)
-- **Explore the source** — [Skillsmith Core Package](https://github.com/smith-horn/skillsmith/tree/main/packages/core)
-- **Join the community** — Share your skills and get feedback from other developers
 
 ---
 
