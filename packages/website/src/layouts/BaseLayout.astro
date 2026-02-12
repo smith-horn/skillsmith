@@ -12,6 +12,7 @@
 import '../styles/global.css';
 import { ClientRouter } from 'astro:transitions';
 import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
 import RateLimitToast from '../components/RateLimitToast.astro';
 import CookieConsent from '../components/CookieConsent.astro';
 import { getSupabaseConfig } from '../lib/supabase-config';
@@ -104,27 +105,7 @@ const supabaseConfig = getSupabaseConfig();
       <slot />
     </main>
 
-    <footer class="border-t border-dark-800 mt-20 py-12">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex flex-col md:flex-row justify-between items-center">
-          <div class="flex items-center space-x-2 mb-4 md:mb-0">
-            <!-- Neural S Icon -->
-            <svg width="24" height="24" viewBox="0 0 64 64" class="flex-shrink-0" aria-hidden="true">
-              <g transform="translate(32, 32)">
-                <path d="M 10 -18 Q -10 -14, -10 -4 Q -10 4, 10 8 Q 10 16, -10 20"
-                      stroke="currentColor" stroke-width="1.5" stroke-opacity="0.3" fill="none" class="text-white"/>
-                <circle cx="10" cy="-18" r="5" fill="#E07A5F"/>
-                <circle cx="-10" cy="-4" r="5" fill="#E07A5F"/>
-                <circle cx="10" cy="8" r="5" fill="#E07A5F"/>
-                <circle cx="-10" cy="20" r="5" fill="#E07A5F"/>
-              </g>
-            </svg>
-            <span class="text-lg font-semibold text-white">Skillsmith</span>
-          </div>
-          <p class="text-dark-500 text-sm">&copy; 2026 Skillsmith. All rights reserved.</p>
-        </div>
-      </div>
-    </footer>
+    <Footer />
 
     <!-- SMI-2150: Rate limit toast for 429 errors -->
     <RateLimitToast />
