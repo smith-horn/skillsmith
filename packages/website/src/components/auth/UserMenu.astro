@@ -93,9 +93,9 @@ const { loginRedirect = '/account' } = Astro.props;
   }
 
   .avatar-skeleton {
-    /* Match LoginButton dimensions to prevent CLS (SMI-2066) */
-    width: 185px;
-    height: 33.5px;
+    /* Match LoginButton (secondary, sm) dimensions to prevent CLS */
+    width: 190px;
+    height: 30px;
     border-radius: 0.5rem;
     background: linear-gradient(90deg, #2a2a2f 0%, #3a3a3f 50%, #2a2a2f 100%);
     background-size: 200% 100%;
