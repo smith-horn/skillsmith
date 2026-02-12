@@ -2,97 +2,64 @@
 
 ## Reporting a Vulnerability
 
-We take the security of Skillsmith seriously. If you discover a security vulnerability, please report it responsibly.
-
-### How to Report
+We take the security of Skillsmith seriously. If you discover a security vulnerability, please report it responsibly through one of the following channels.
 
 **Please DO NOT file a public GitHub issue for security vulnerabilities.**
 
-Instead, please report security issues by emailing:
+### How to Report
 
-**<security@smithhorn.ca>**
+1. **Email**: Send a detailed report to **security@skillsmith.app**
+2. **GitHub Security Advisories**: Use [GitHub's private vulnerability reporting](https://github.com/smith-horn/skillsmith/security/advisories/new) to submit a confidential advisory
 
-Include the following information in your report:
+### What to Include in a Report
 
-1. **Description** - A clear description of the vulnerability
-2. **Impact** - What an attacker could achieve by exploiting this
-3. **Reproduction Steps** - Step-by-step instructions to reproduce
-4. **Affected Versions** - Which versions are affected
-5. **Suggested Fix** - If you have one (optional)
+- **Description** -- A clear description of the vulnerability and the affected component
+- **Reproduction Steps** -- Step-by-step instructions to reproduce the issue
+- **Impact** -- What an attacker could achieve by exploiting this vulnerability
+- **Affected Versions** -- Which versions are affected, if known
+- **Suggested Fix** -- If you have a recommendation for remediation (optional)
 
-### What to Expect
+### Response Timeline
 
 | Timeline | Action |
 |----------|--------|
-| **24 hours** | Acknowledgment of your report |
-| **72 hours** | Initial assessment and severity classification |
-| **7 days** | Status update on remediation plan |
-| **90 days** | Target for fix release (critical issues faster) |
+| **48 hours** | Initial acknowledgment of your report |
+| **Severity-dependent** | Development and release of a fix (critical issues prioritized) |
+| **Coordinated disclosure** | Public disclosure after a fix is available, coordinated with the reporter |
 
-### Scope
-
-The following are in scope for security reports:
-
-- **Skillsmith core packages** (@skillsmith/core, @skillsmith/mcp-server, @skillsmith/cli)
-- **MCP protocol implementation** vulnerabilities
-- **Authentication/Authorization** bypasses
-- **Injection vulnerabilities** (SQL, command, path traversal)
-- **Information disclosure** of sensitive data
-- **Denial of service** vulnerabilities
-- **Dependency vulnerabilities** with demonstrated exploit
-
-### Out of Scope
-
-- Vulnerabilities in third-party dependencies without a working exploit
-- Social engineering attacks
-- Physical security issues
-- Issues requiring unlikely user interaction
-- Theoretical vulnerabilities without proof of concept
-
-## Security Measures
-
-### Current Protections
-
-Skillsmith implements the following security measures:
-
-| Protection | Implementation |
-|------------|----------------|
-| **Input Validation** | Zod runtime validation at all MCP boundaries |
-| **Path Traversal Prevention** | Normalized path validation, blocked patterns |
-| **SSRF Prevention** | URL validation, blocked internal ranges |
-| **Rate Limiting** | Configurable per-endpoint rate limits |
-| **SQL Injection Prevention** | Parameterized queries via better-sqlite3 |
-| **Secret Detection** | Gitleaks configuration for CI/CD |
-| **Dependency Auditing** | npm audit in CI pipeline |
-
-### Security Testing
-
-- Security-focused test suite (`npm run test:security`)
-- SSRF and path traversal edge case testing
-- Malicious input handling tests
-- CI/CD security scanning
+We follow coordinated disclosure practices. We ask that you refrain from publicly disclosing the vulnerability until we have had a reasonable opportunity to address it and notify affected users.
 
 ## Supported Versions
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x (current) | Yes |
-| < 0.1.0 | No |
+| Latest release | Yes |
+| < 1.0 | No |
 
-## Security Updates
+We recommend always running the latest version to benefit from the most recent security patches.
 
-Security updates are released as patch versions. We recommend:
+## Security Measures
 
-1. Enable automated dependency updates (Dependabot, Renovate)
-2. Subscribe to GitHub security advisories for this repository
-3. Run `npm audit` regularly in your deployments
+Skillsmith implements the following security practices to protect the codebase and its users:
 
-## Acknowledgments
+| Measure | Description |
+|---------|-------------|
+| **Code Review** | All changes require peer review before merging |
+| **Automated Secret Scanning** | Gitleaks and GitHub secret scanning detect leaked credentials in CI |
+| **Dependabot** | Automated dependency updates for known vulnerabilities |
+| **Regular Audits** | npm audit runs in CI; periodic manual security reviews |
+| **Input Validation** | Zod runtime validation at all MCP boundaries |
+| **Parameterized Queries** | SQL injection prevention via parameterized queries |
+| **Path Traversal Prevention** | Normalized path validation with blocked traversal patterns |
+| **SSRF Prevention** | URL validation with blocked internal network ranges |
+| **Rate Limiting** | Configurable per-endpoint rate limits |
+| **CodeQL Analysis** | Automated static analysis via GitHub CodeQL on every PR |
 
-We appreciate security researchers who help keep Skillsmith secure. With your permission, we will acknowledge your contribution in our security advisories.
+## Bug Bounty Program
+
+Not currently offered. We appreciate responsible disclosure and will acknowledge security researchers who help keep Skillsmith secure (with your permission) in our security advisories.
 
 ## Contact
 
-- **Security Issues**: <security@smithhorn.ca>
+- **Security Issues**: security@skillsmith.app
 - **General Questions**: Via GitHub Issues
-- **Commercial Support**: <contact@smithhorn.ca>
