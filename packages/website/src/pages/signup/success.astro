@@ -8,6 +8,8 @@
  * Query parameters:
  * - session_id: Stripe checkout session ID
  */
+import '../../styles/global.css';
+import Footer from '../../components/Footer.astro';
 ---
 
 <!DOCTYPE html>
@@ -114,11 +116,7 @@
       </div>
     </main>
 
-    <footer class="footer">
-      <div class="footer-content">
-        <p>&copy; 2026 Smith Horn Group Ltd. All rights reserved.</p>
-      </div>
-    </footer>
+    <Footer />
 
     <!-- Cookie consent banner (standalone page, not using BaseLayout) -->
     <div id="cookie-consent" style="position:fixed;bottom:0;left:0;right:0;z-index:9999;padding:1rem;pointer-events:none" hidden>
@@ -380,22 +378,6 @@
 
   .receipt-note a:hover {
     text-decoration: underline;
-  }
-
-  /* Footer */
-  .footer {
-    margin-top: auto;
-    background: #1a1a2e;
-    color: white;
-    padding: 2rem;
-  }
-
-  .footer-content {
-    max-width: 1280px;
-    margin: 0 auto;
-    text-align: center;
-    font-size: 0.875rem;
-    color: #9ca3af;
   }
 
   .logo-icon-svg {

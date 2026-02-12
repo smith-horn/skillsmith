@@ -1,6 +1,7 @@
 ---
 import BaseLayout from './BaseLayout.astro';
 import DocsSidebar from '../components/DocsSidebar.astro';
+import DocsCopyButtons from '../components/DocsCopyButtons.astro';
 
 interface Props {
   title: string;
@@ -51,6 +52,7 @@ if (pathSegments.length > 1) {
     <!-- Main Content (div, not main — BaseLayout already renders <main id="main-content">) -->
     <div class="flex-1 min-w-0 px-8 py-10 lg:px-12">
       <article class="docs-content max-w-3xl">
+        <DocsCopyButtons pageTitle={title} pageDescription={description} />
         <slot />
       </article>
     </div>
