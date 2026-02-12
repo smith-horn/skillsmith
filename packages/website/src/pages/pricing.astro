@@ -17,6 +17,7 @@ import type { PricingTier } from '../lib/pricing-data';
 
 // Generate JSON-LD structured data
 function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; answer: string }>) {
+  const priceValidUntil = `${new Date().getFullYear() + 1}-12-31`;
   return {
     "@context": "https://schema.org",
     "@graph": [
@@ -42,6 +43,7 @@ function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; an
           "name": tier.name,
           "price": tier.monthlyPrice.toString(),
           "priceCurrency": "USD",
+          priceValidUntil,
           ...(tier.monthlyPrice > 0 && { "billingDuration": "P1M" }),
           "description": `${tier.apiCalls}. ${tier.features.join(', ')}.`,
           "availability": "https://schema.org/InStock",
