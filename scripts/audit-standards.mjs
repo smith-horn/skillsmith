@@ -633,7 +633,11 @@ if (existsSync(websiteSrcDir)) {
     const lines = content.split('\n')
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]
-      if (line.includes('DOMContentLoaded') && !line.trim().startsWith('//') && !line.trim().startsWith('*')) {
+      if (
+        line.includes('DOMContentLoaded') &&
+        !line.trim().startsWith('//') &&
+        !line.trim().startsWith('*')
+      ) {
         domContentLoadedFiles.push({ file: relative('.', file), line: i + 1 })
       }
     }
