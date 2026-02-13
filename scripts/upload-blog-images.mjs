@@ -29,7 +29,9 @@ const [slug, localDir] = process.argv.slice(2)
 if (!slug || !localDir) usage()
 
 if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
-  console.error(`Error: Invalid slug "${slug}". Use lowercase alphanumeric with hyphens (e.g. "my-article").`)
+  console.error(
+    `Error: Invalid slug "${slug}". Use lowercase alphanumeric with hyphens (e.g. "my-article").`
+  )
   process.exit(1)
 }
 
