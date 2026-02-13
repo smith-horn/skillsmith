@@ -96,9 +96,32 @@ git-crypt status docs/ | head -5                      # Check if locked
 varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'  # Unlock
 ```
 
-**Worktrees**: Unlock main repo first, then `./scripts/create-worktree.sh`. Remove with `./scripts/remove-worktree.sh --prune`.
+**Files still encrypted after unlock** — smudge filter didn't trigger:
 
-**Rebasing**: `git pull --rebase` fails due to smudge filter. Use `git format-patch` workaround.
+```bash
+for f in docs/gtm/*.md docs/gtm/**/*.md; do
+  if [ -f "$f" ]; then
+    cat "$f" | git-crypt smudge > "/tmp/$(basename $f)" 2>/dev/null
+    mv "/tmp/$(basename $f)" "$f"
+  fi
+done
+```
+
+**Worktrees** — unlock main repo first, then create:
+
+```bash
+./scripts/create-worktree.sh worktrees/my-feature feature/my-feature
+./scripts/remove-worktree.sh --prune                  # Remove (use --force if smudge artifacts block)
+```
+
+**Rebasing** — `git pull --rebase` fails due to smudge filter. Use format-patch workaround:
+
+```bash
+git format-patch -N HEAD -o /tmp/patches/             # N = number of unpushed commits
+git fetch origin main && git reset --hard origin/main  # Sync to remote
+git am /tmp/patches/*.patch                            # Re-apply patches
+# If patch conflicts: git am --abort, then apply changes manually
+```
 
 **Full guide**: [git-crypt-guide.md](docs/development/git-crypt-guide.md)
 
