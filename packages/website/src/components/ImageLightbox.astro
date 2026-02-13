@@ -141,7 +141,15 @@
   // Image Lightbox functionality
   // Uses astro:page-load instead of DOMContentLoaded so handlers
   // rebind after ClientRouter view transitions (SMI-2500)
+  // AbortController prevents listener accumulation across navigations
+  let lightboxAC: AbortController | null = null;
+
   function initLightbox() {
+    // Tear down previous listeners to prevent accumulation
+    if (lightboxAC) lightboxAC.abort();
+    lightboxAC = new AbortController();
+    const { signal } = lightboxAC;
+
     const lightboxEl = document.getElementById('image-lightbox');
     const lightboxImageEl = document.getElementById('lightbox-image') as HTMLImageElement | null;
     const closeButtonEl = document.getElementById('lightbox-close');
@@ -181,14 +189,14 @@
       lastFocusedElement = null;
     }
 
-    closeButton.addEventListener('click', closeLightbox);
-    backdrop?.addEventListener('click', closeLightbox);
+    closeButton.addEventListener('click', closeLightbox, { signal });
+    backdrop?.addEventListener('click', closeLightbox, { signal });
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !lightbox.hidden) {
         closeLightbox();
       }
-    });
+    }, { signal });
 
     // Make prose images clickable (skip already-bound images)
     const proseImages = document.querySelectorAll('.prose-content img');
@@ -202,14 +210,14 @@
 
       imgEl.addEventListener('click', () => {
         openLightbox(imgEl.src, imgEl.alt, imgEl);
-      });
+      }, { signal });
 
       imgEl.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           openLightbox(imgEl.src, imgEl.alt, imgEl);
         }
-      });
+      }, { signal });
     });
 
     // Add scope to table headers for accessibility
