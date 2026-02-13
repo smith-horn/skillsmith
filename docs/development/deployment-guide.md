@@ -53,7 +53,7 @@ Configured in `supabase/functions/_shared/cors.ts`:
 | Origin Type | Handling |
 |-------------|----------|
 | Production domains | Always allowed (`skillsmith.app`, `skillsmith.dev`) |
-| Vercel preview URLs | Auto-allowed via pattern (`*-smithhorngroup.vercel.app`) |
+| Vercel preview URLs | Auto-allowed via pattern (`*-<team-slug>.vercel.app`) |
 | Localhost | Always allowed for development |
 | Custom domains | Add via `CORS_ALLOWED_ORIGINS` env var |
 
