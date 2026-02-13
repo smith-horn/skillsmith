@@ -28,6 +28,13 @@ function usage() {
 const [slug, localDir] = process.argv.slice(2)
 if (!slug || !localDir) usage()
 
+if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+  console.error(
+    `Error: Invalid slug "${slug}". Use lowercase alphanumeric with hyphens (e.g. "my-article").`
+  )
+  process.exit(1)
+}
+
 if (!process.env.CLOUDINARY_URL) {
   console.error(
     'Error: CLOUDINARY_URL not set. Run via: varlock run -- node scripts/upload-blog-images.mjs ...'
