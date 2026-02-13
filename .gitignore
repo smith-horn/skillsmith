@@ -136,3 +136,6 @@ worktrees/
 
 # MCP Registry tokens
 .mcpregistry_*
+
+# Blog image generation working directory
+docs/articles/tmp/

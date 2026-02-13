@@ -156,11 +156,15 @@ const formattedUpdated = updated ? formatDate(updated) : null;
 
   <script>
     // Generate table of contents from headings
-    document.addEventListener('DOMContentLoaded', () => {
+    // Uses astro:page-load to rebind after ClientRouter view transitions
+    function initToc() {
       const article = document.querySelector('.prose-content');
       const toc = document.getElementById('toc');
 
       if (!article || !toc) return;
+
+      // Clear previous TOC content before regenerating
+      toc.innerHTML = '';
 
       const headings = article.querySelectorAll('h2, h3');
       if (headings.length === 0) return;
@@ -186,7 +190,9 @@ const formattedUpdated = updated ? formatDate(updated) : null;
       });
 
       toc.appendChild(ul);
-    });
+    }
+
+    document.addEventListener('astro:page-load', initToc);
   </script>
 </BaseLayout>
 

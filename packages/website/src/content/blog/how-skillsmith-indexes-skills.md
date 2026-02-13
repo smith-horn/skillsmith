@@ -11,8 +11,6 @@ ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200
 
 ![From GitHub to Search Results](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/indexer/indexer-pipeline-hero)
 
-# From GitHub to Search Results: How Skillsmith Indexes and Curates Skills
-
 You've built a Claude Code skill. It works great locally. But how does it get discovered by the thousands of developers searching for skills like yours?
 
 This guide walks you through Skillsmith's indexing pipeline—from the moment we discover your skill on GitHub to when it appears in search results. Understanding this process helps you optimize your skills for discovery and explains why some skills rank higher than others.
