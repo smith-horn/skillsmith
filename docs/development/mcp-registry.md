@@ -100,6 +100,16 @@ When releasing a new version, update **THREE** locations:
 2. `packages/mcp-server/server.json` → `version`
 3. `packages/mcp-server/server.json` → `packages[0].version`
 
+### Release Checklist
+
+Before publishing, verify all of the following:
+
+- [ ] Version bumped in all three locations above
+- [ ] `SECURITY.md` supported versions table reflects current minor versions
+- [ ] `RELEASE_NOTES.md` updated with changes
+- [ ] All CI checks pass (`npm run preflight`)
+- [ ] Enterprise `@skillsmith/core` dependency is current (not stale)
+
 Example script:
 
 ```bash

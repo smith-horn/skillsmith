@@ -10,7 +10,7 @@ We take the security of Skillsmith seriously. If you discover a security vulnera
 
 Instead, please report security issues by emailing:
 
-**<security@smithhorn.ca>**
+**<security@skillsmith.app>**
 
 Include the following information in your report:
 
@@ -33,12 +33,13 @@ Include the following information in your report:
 
 The following are in scope for security reports:
 
-- **Skillsmith core packages** (@skillsmith/core, @skillsmith/mcp-server, @skillsmith/cli)
+- **Skillsmith packages** (@skillsmith/core, @skillsmith/mcp-server, @skillsmith/cli, @smith-horn/enterprise)
 - **MCP protocol implementation** vulnerabilities
-- **Authentication/Authorization** bypasses
+- **Authentication/Authorization** bypasses (API keys, Supabase JWT)
 - **Injection vulnerabilities** (SQL, command, path traversal)
 - **Information disclosure** of sensitive data
 - **Denial of service** vulnerabilities
+- **Supabase Edge Functions** security issues
 - **Dependency vulnerabilities** with demonstrated exploit
 
 ### Out of Scope
@@ -62,22 +63,32 @@ Skillsmith implements the following security measures:
 | **SSRF Prevention** | URL validation, blocked internal ranges |
 | **Rate Limiting** | Configurable per-endpoint rate limits |
 | **SQL Injection Prevention** | Parameterized queries via better-sqlite3 |
+| **Command Injection Prevention** | `execFileSync` with array args; no shell string interpolation |
+| **Secret Management** | Varlock for secret injection; never exposed in terminal output |
+| **Encrypted Documentation** | git-crypt for sensitive docs, configs, and Supabase functions |
 | **Secret Detection** | Gitleaks configuration for CI/CD |
 | **Dependency Auditing** | npm audit in CI pipeline |
+| **ReDoS Prevention** | User-supplied regex capped at 200 characters |
 
 ### Security Testing
 
-- Security-focused test suite (`npm run test:security`)
+- Security-focused test suite in core package (`packages/core`: `npm run test:security`)
 - SSRF and path traversal edge case testing
 - Malicious input handling tests
-- CI/CD security scanning
+- CI/CD security scanning (pre-push hook with 4-phase checks)
+- Standards audit (`npm run audit:standards`)
 
 ## Supported Versions
 
-| Version | Supported |
-|---------|-----------|
-| 0.1.x (current) | Yes |
-| < 0.1.0 | No |
+| Package | Current Version | Supported |
+|---------|----------------|-----------|
+| @skillsmith/core | 0.4.x | Yes |
+| @skillsmith/mcp-server | 0.3.x | Yes |
+| @skillsmith/cli | 0.3.x | Yes |
+| @smith-horn/enterprise | 0.1.x | Yes |
+| All packages < current minor | No |
+
+We support the latest minor version of each package. Patch releases include security fixes.
 
 ## Security Updates
 
@@ -93,6 +104,6 @@ We appreciate security researchers who help keep Skillsmith secure. With your pe
 
 ## Contact
 
-- **Security Issues**: <security@smithhorn.ca>
-- **General Questions**: Via GitHub Issues
-- **Commercial Support**: <contact@smithhorn.ca>
+- **Security Issues**: <security@skillsmith.app>
+- **General Questions**: [GitHub Issues](https://github.com/smith-horn/skillsmith/issues)
+- **Commercial Support**: <support@skillsmith.app>
