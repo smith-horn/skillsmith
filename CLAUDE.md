@@ -11,6 +11,7 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 | [ci-reference.md](docs/development/ci-reference.md) | Branch protection, change classification, Turborepo, CI scripts |
 | [deployment-guide.md](docs/development/deployment-guide.md) | Edge function deploy commands, CORS, website, monitoring & alerts |
 | [claude-flow-guide.md](docs/development/claude-flow-guide.md) | Agent types, swarm examples, hive mind, SPARC modes |
+| [cloudinary-guide.md](docs/development/cloudinary-guide.md) | Blog image upload workflow, URL transforms, folder conventions |
 
 ---
 

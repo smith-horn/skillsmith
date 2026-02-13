@@ -6,7 +6,7 @@ date: 2026-01-23
 category: "Guides"
 tags: ["agents", "skills", "architecture", "claude-code", "context-window", "multi-agent"]
 featured: true
-ogImage: "/blog/images/01-agent-skill-matrix.png"
+ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/agent-skill-framework/01-agent-skill-matrix"
 ---
 
 Product managers adopting Claude Code face a recurring challenge: understanding when to use agents versus skills, how to compose them, and why context window management determines success or failure at scale. This reference documents the mental models, decision frameworks, and implementation patterns that separate effective AI-assisted development from expensive context overflow.
@@ -17,7 +17,7 @@ The core insight: **agents define behavior; skills define tools.**<sup>1</sup> W
 
 ## The Fundamental Distinction: Behavior vs. Tooling
 
-![Agent vs Skill Matrix](/blog/images/01-agent-skill-matrix.png)
+![Agent vs Skill Matrix](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/agent-skill-framework/01-agent-skill-matrix)
 
 The distinction maps to a fundamental software engineering principle: **separation of concerns.**
 
@@ -34,7 +34,7 @@ The distinction maps to a fundamental software engineering principle: **separati
 
 ## Context Window Economics: Why This Matters
 
-![Context Window Economics](/blog/images/02-context-window-economics.png)
+![Context Window Economics](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/agent-skill-framework/02-context-window-economics)
 
 The constraint that shapes all decisions: **attention degrades as context grows.**
 
@@ -56,7 +56,7 @@ This is why:
 
 ## The Delegation Architecture
 
-![Delegation Architecture](/blog/images/03-delegation-architecture.png)
+![Delegation Architecture](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/agent-skill-framework/03-delegation-architecture)
 
 The pattern in practice:
 
@@ -77,7 +77,7 @@ The pattern in practice:
 
 ## Decision Framework: When to Create What
 
-![Decision Framework](/blog/images/04-decision-framework.png)
+![Decision Framework](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/agent-skill-framework/04-decision-framework)
 
 ### Use an Agent when:
 
@@ -110,7 +110,7 @@ The pattern in practice:
 
 ## Skill Architecture: Progressive Disclosure
 
-![Progressive Disclosure](/blog/images/05-progressive-disclosure.png)
+![Progressive Disclosure](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/agent-skill-framework/05-progressive-disclosure)
 
 Skills implement **progressive disclosure**—loading information only as needed:<sup>1</sup>
 
@@ -147,7 +147,7 @@ description: Create, update, and manage Linear issues and projects
 
 ## Skill-Initiated Sub-Agents: The Daisy-Chain Pattern
 
-![Daisy Chain Sequence](/blog/images/06-daisy-chain-sequence.png)
+![Daisy Chain Sequence](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/agent-skill-framework/06-daisy-chain-sequence)
 
 This pattern emerged from a specific problem: you want specialist agents to update Linear when they complete work, but you don't want Linear's context polluting the specialist's execution window.
 
@@ -224,7 +224,7 @@ This is dependency inversion applied to agent architecture: high-level agents de
 
 ## Git Worktrees: Isolation Infrastructure
 
-![Git Worktrees](/blog/images/07-git-worktrees.png)
+![Git Worktrees](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/agent-skill-framework/07-git-worktrees)
 
 When running parallel agents, they can collide on the same `.git` state. Git worktrees solve this by providing each agent its own isolated working directory while sharing repository history.<sup>6</sup>
 
@@ -254,7 +254,7 @@ cd trees/agent-tests && claude # Session 3
 
 ## Orchestration Packages: Claude-Flow Pattern
 
-![Claude-Flow Orchestration](/blog/images/08-claude-flow-orchestration.png)
+![Claude-Flow Orchestration](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/agent-skill-framework/08-claude-flow-orchestration)
 
 Claude-Flow (and similar orchestration packages) add structure for complex multi-agent workflows:
 
@@ -309,7 +309,7 @@ Before creating a new agent or skill, verify:
 
 ## Anti-Patterns to Avoid
 
-![Patterns vs Anti-Patterns](/blog/images/09-patterns-antipatterns.png)
+![Patterns vs Anti-Patterns](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/agent-skill-framework/09-patterns-antipatterns)
 
 1. **The God Agent:** One massive agent file with all behaviors, skills, and context. Fails as complexity grows.
 
@@ -325,7 +325,7 @@ Before creating a new agent or skill, verify:
 
 ## Skill Lifecycle Management: From Personal Script to Portable Package
 
-![Skill Lifecycle](/blog/images/10-skill-lifecycle.png)
+![Skill Lifecycle](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/agent-skill-framework/10-skill-lifecycle)
 
 Skills accumulate value over time—but only if they're structured for iteration and distribution. The pattern mirrors how senior engineers maintain scripts across decades: version everything, document changes, and make it portable.
 

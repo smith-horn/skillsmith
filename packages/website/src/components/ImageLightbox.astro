@@ -139,36 +139,33 @@
 
 <script>
   // Image Lightbox functionality
-  document.addEventListener('DOMContentLoaded', () => {
+  // Uses astro:page-load instead of DOMContentLoaded so handlers
+  // rebind after ClientRouter view transitions (SMI-2500)
+  function initLightbox() {
     const lightboxEl = document.getElementById('image-lightbox');
     const lightboxImageEl = document.getElementById('lightbox-image') as HTMLImageElement | null;
     const closeButtonEl = document.getElementById('lightbox-close');
 
     if (!lightboxEl || !lightboxImageEl || !closeButtonEl) return;
 
-    // Store validated references (TypeScript now knows these are non-null)
     const lightbox = lightboxEl;
     const lightboxImage = lightboxImageEl;
     const closeButton = closeButtonEl;
     const backdrop = lightbox.querySelector('.lightbox-backdrop');
 
-    // Track the element that triggered the lightbox for focus return
     let lastFocusedElement: HTMLElement | null = null;
 
-    // Open lightbox function
     function openLightbox(imgSrc: string, imgAlt: string, triggerElement: HTMLElement) {
       lastFocusedElement = triggerElement;
       lightboxImage.src = imgSrc;
       lightboxImage.alt = imgAlt;
       lightbox.hidden = false;
-      // Force reflow for animation
       void lightbox.offsetWidth;
       lightbox.classList.add('is-open');
       closeButton.focus();
       document.body.style.overflow = 'hidden';
     }
 
-    // Close lightbox function
     function closeLightbox() {
       lightbox.classList.remove('is-open');
       document.body.style.overflow = '';
@@ -177,7 +174,6 @@
         lightbox.hidden = true;
         lightboxImage.src = '';
         lightboxImage.alt = '';
-        // Restore focus to the element that opened the lightbox
         if (elementToFocus) {
           elementToFocus.focus();
         }
@@ -185,35 +181,29 @@
       lastFocusedElement = null;
     }
 
-    // Close button click
     closeButton.addEventListener('click', closeLightbox);
-
-    // Backdrop click
     backdrop?.addEventListener('click', closeLightbox);
 
-    // ESC key
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !lightbox.hidden) {
         closeLightbox();
       }
     });
 
-    // Make prose images clickable
+    // Make prose images clickable (skip already-bound images)
     const proseImages = document.querySelectorAll('.prose-content img');
     proseImages.forEach((img) => {
       const imgEl = img as HTMLImageElement;
+      if (imgEl.getAttribute('role') === 'button') return;
 
-      // Add interactive attributes
       imgEl.setAttribute('role', 'button');
       imgEl.setAttribute('tabindex', '0');
       imgEl.setAttribute('aria-label', `${imgEl.alt || 'Image'} - Click to enlarge`);
 
-      // Click handler
       imgEl.addEventListener('click', () => {
         openLightbox(imgEl.src, imgEl.alt, imgEl);
       });
 
-      // Keyboard handler (Enter/Space)
       imgEl.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -232,5 +222,8 @@
         }
       });
     });
-  });
+  }
+
+  // Fires on initial load AND after ClientRouter view transitions
+  document.addEventListener('astro:page-load', initLightbox);
 </script>

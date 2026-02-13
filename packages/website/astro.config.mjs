@@ -49,7 +49,12 @@ export default defineConfig({
 
   // Image optimization
   image: {
-    domains: ['picsum.photos', 'api.skillsmith.app', 'avatars.githubusercontent.com'],
+    domains: [
+      'picsum.photos',
+      'api.skillsmith.app',
+      'avatars.githubusercontent.com',
+      'res.cloudinary.com',
+    ],
     remotePatterns: [
       {
         protocol: 'https',
@@ -58,6 +63,11 @@ export default defineConfig({
       {
         protocol: 'https',
         hostname: 'avatars.githubusercontent.com',
+      },
+      {
+        protocol: 'https',
+        hostname: 'res.cloudinary.com',
+        pathname: '/diqcbcmaq/**',
       },
     ],
   },

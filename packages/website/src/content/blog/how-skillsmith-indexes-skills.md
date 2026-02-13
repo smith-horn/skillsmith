@@ -6,10 +6,10 @@ date: 2026-02-02
 category: "Engineering"
 tags: ["indexer", "search", "embeddings", "github", "scoring", "developers"]
 featured: true
-ogImage: "/blog/images/indexer-pipeline-hero.png"
+ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/indexer/indexer-pipeline-hero"
 ---
 
-![From GitHub to Search Results](/blog/images/indexer-pipeline-hero.png)
+![From GitHub to Search Results](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/indexer/indexer-pipeline-hero)
 
 # From GitHub to Search Results: How Skillsmith Indexes and Curates Skills
 
@@ -23,7 +23,7 @@ This guide walks you through Skillsmith's indexing pipeline—from the moment we
 
 Before diving into details, here's what happens when Skillsmith indexes a skill:
 
-![The Indexing Pipeline](/blog/images/indexer-overview-flow.png)
+![The Indexing Pipeline](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/indexer/indexer-overview-flow)
 
 **The journey in five steps:**
 
@@ -67,7 +67,7 @@ const SEARCH_QUERIES = [
 | Known skill repos | Every 6 hours | Updates to existing skills |
 | Community registries | Daily | Curated skill collections |
 
-![Skill Discovery Sources](/blog/images/discovery-sources.png)
+![Skill Discovery Sources](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/indexer/discovery-sources)
 
 ### How to Get Discovered Faster
 
@@ -139,7 +139,7 @@ We don't penalize you for validation issues—we simply can't index what we can'
 
 Every skill passes through our security scanner before indexing. This protects users and determines your skill's trust tier.
 
-![Security Scan Pipeline](/blog/images/security-scan-pipeline.png)
+![Security Scan Pipeline](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/indexer/security-scan-pipeline)
 
 ### What We Scan For
 
@@ -189,7 +189,7 @@ Our scoring algorithm balances four categories, each contributing to a final sco
 Final Score = Popularity (30) + Activity (25) + Documentation (25) + Trust (20)
 ```
 
-![Skill Scoring Breakdown](/blog/images/scoring-weights-pie.png)
+![Skill Scoring Breakdown](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/indexer/scoring-weights-pie)
 
 <!--
 Note: Image shows donut chart with Popularity 30%, Activity 25%, Documentation 25%, Trust 20%
@@ -266,7 +266,7 @@ The final step stores your skill in our database and makes it searchable through
 
 We combine traditional keyword search with semantic understanding:
 
-![Hybrid Search Architecture](/blog/images/hybrid-search-architecture.png)
+![Hybrid Search Architecture](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/indexer/hybrid-search-architecture)
 
 #### Keyword Search (PostgreSQL Full-Text Search)
 
