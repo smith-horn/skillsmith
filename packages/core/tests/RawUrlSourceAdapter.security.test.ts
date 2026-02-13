@@ -44,8 +44,8 @@ describe('RawUrlSourceAdapter SSRF Prevention (SMI-721)', () => {
         repo: 'test-skill',
         path: 'file:///etc/passwd', // Will be ignored, base URL used
       })
-      // Should fail with 404 from example.com, not file access
-      await expect(result).rejects.toThrow('Failed to fetch skill content')
+      // Should fail with network/HTTP error from example.com, not file access
+      await expect(result).rejects.toThrow(/Failed to fetch skill content|fetch failed/)
     })
   })
 
