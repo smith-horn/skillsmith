@@ -408,7 +408,8 @@ const isActive = (href: string) => {
   });
 
   // Update mobile auth state based on logged in status
-  document.addEventListener('DOMContentLoaded', async () => {
+  // Uses astro:page-load to reinitialize after ClientRouter view transitions
+  document.addEventListener('astro:page-load', async () => {
     const mobileAuth = document.getElementById('nav-mobile-auth');
     if (!mobileAuth) return;
 

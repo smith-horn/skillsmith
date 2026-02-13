@@ -70,11 +70,15 @@ if (pathSegments.length > 1) {
 
   <script>
     // Generate table of contents from headings
-    document.addEventListener('DOMContentLoaded', () => {
+    // Uses astro:page-load to rebind after ClientRouter view transitions
+    function initDocsToc() {
       const article = document.querySelector('.docs-content');
       const toc = document.getElementById('toc');
 
       if (!article || !toc) return;
+
+      // Clear previous TOC content before regenerating
+      toc.innerHTML = '';
 
       const headings = article.querySelectorAll('h2, h3');
       if (headings.length === 0) return;
@@ -100,7 +104,9 @@ if (pathSegments.length > 1) {
       });
 
       toc.appendChild(ul);
-    });
+    }
+
+    document.addEventListener('astro:page-load', initDocsToc);
   </script>
 </BaseLayout>
 

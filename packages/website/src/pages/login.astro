@@ -516,7 +516,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
   const supabaseUrl = config.url;
   const supabaseAnonKey = config.anonKey;
 
-  document.addEventListener('DOMContentLoaded', () => {
+  document.addEventListener('astro:page-load', () => {
     const form = document.getElementById('login-form') as HTMLFormElement
     const submitBtn = document.getElementById('submit-btn') as HTMLButtonElement
     const errorMessage = document.getElementById('error-message') as HTMLDivElement

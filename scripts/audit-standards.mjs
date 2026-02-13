@@ -582,6 +582,76 @@ if (existsSync(PACKAGES_DIR)) {
   warn('packages directory not found - skipping dependency check')
 }
 
+// Blog Content Checks
+console.log(`\n${BOLD}Blog Content${RESET}\n`)
+
+const blogDir = 'packages/website/src/content/blog'
+if (existsSync(blogDir)) {
+  const blogFiles = getFilesRecursive(blogDir, ['.md', '.mdx'])
+  const duplicateH1s = []
+
+  for (const file of blogFiles) {
+    const content = readFileSync(file, 'utf8')
+    // Check if file has frontmatter title AND a markdown H1
+    const hasFrontmatterTitle = /^---[\s\S]*?^title:\s*.+/m.test(content)
+    // Match H1 outside of code blocks (simple heuristic: line starts with # and is not inside ```)
+    const lines = content.split('\n')
+    let inCodeBlock = false
+    for (const line of lines) {
+      if (line.startsWith('```')) inCodeBlock = !inCodeBlock
+      if (!inCodeBlock && /^# /.test(line) && hasFrontmatterTitle) {
+        duplicateH1s.push({ file: relative('.', file), line })
+        break
+      }
+    }
+  }
+
+  if (duplicateH1s.length === 0) {
+    pass('No blog posts have duplicate H1 headings (frontmatter title is sufficient)')
+  } else {
+    warn(
+      `${duplicateH1s.length} blog post(s) have duplicate H1 headings`,
+      'Remove markdown # heading when frontmatter has title (BlogLayout renders <h1> from title)'
+    )
+    duplicateH1s.forEach(({ file }) => console.log(`    ${file}`))
+  }
+} else {
+  warn('Blog directory not found - skipping blog content checks')
+}
+
+// ClientRouter Compatibility Check
+console.log(`\n${BOLD}ClientRouter Compatibility${RESET}\n`)
+
+const websiteSrcDir = 'packages/website/src'
+if (existsSync(websiteSrcDir)) {
+  const astroFiles = getFilesRecursive(websiteSrcDir, ['.astro'])
+  const domContentLoadedFiles = []
+
+  for (const file of astroFiles) {
+    const content = readFileSync(file, 'utf8')
+    // Find DOMContentLoaded in script tags (not in comments)
+    const lines = content.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (line.includes('DOMContentLoaded') && !line.trim().startsWith('//') && !line.trim().startsWith('*')) {
+        domContentLoadedFiles.push({ file: relative('.', file), line: i + 1 })
+      }
+    }
+  }
+
+  if (domContentLoadedFiles.length === 0) {
+    pass('No Astro files use DOMContentLoaded (use astro:page-load for ClientRouter)')
+  } else {
+    fail(
+      `${domContentLoadedFiles.length} Astro file(s) use DOMContentLoaded instead of astro:page-load`,
+      'Replace DOMContentLoaded with astro:page-load for ClientRouter view transition support'
+    )
+    domContentLoadedFiles.forEach(({ file, line }) => console.log(`    ${file}:${line}`))
+  }
+} else {
+  warn('Website src directory not found - skipping ClientRouter check')
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)

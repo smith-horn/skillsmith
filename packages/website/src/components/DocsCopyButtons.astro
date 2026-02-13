@@ -216,6 +216,5 @@ const { pageTitle, pageDescription } = Astro.props;
   }
 
   // Initialize on page load and after Astro page transitions
-  document.addEventListener('DOMContentLoaded', initCopyButtons);
   document.addEventListener('astro:page-load', initCopyButtons);
 </script>

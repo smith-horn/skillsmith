@@ -225,7 +225,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
   const supabaseAnonKey = config.anonKey;
   const authRedirectTo = (window as unknown as { __AUTH_REDIRECT_TO__?: string }).__AUTH_REDIRECT_TO__ || '/account';
 
-  document.addEventListener('DOMContentLoaded', async () => {
+  document.addEventListener('astro:page-load', async () => {
     const loadingState = document.getElementById('loading-state') as HTMLDivElement | null
     const successState = document.getElementById('success-state') as HTMLDivElement | null
     const errorState = document.getElementById('error-state') as HTMLDivElement | null
