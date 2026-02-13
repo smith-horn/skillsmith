@@ -91,39 +91,11 @@ packages/
 
 **`docs/`, `.claude/`, and `supabase/` are encrypted.** Exceptions: `docs/development/*.md`, `docs/templates/*.md`, `supabase/rollbacks/**`.
 
-```bash
-git-crypt status docs/ | head -5                      # Check if locked
-varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'  # Unlock
-```
-
-**Files still encrypted after unlock** — smudge filter didn't trigger:
-
-```bash
-for f in docs/gtm/*.md docs/gtm/**/*.md; do
-  if [ -f "$f" ]; then
-    cat "$f" | git-crypt smudge > "/tmp/$(basename $f)" 2>/dev/null
-    mv "/tmp/$(basename $f)" "$f"
-  fi
-done
-```
-
-**Worktrees** — unlock main repo first, then create:
-
-```bash
-./scripts/create-worktree.sh worktrees/my-feature feature/my-feature
-./scripts/remove-worktree.sh --prune                  # Remove (use --force if smudge artifacts block)
-```
-
-**Rebasing** — `git pull --rebase` fails due to smudge filter. Use format-patch workaround:
-
-```bash
-git format-patch -N HEAD -o /tmp/patches/             # N = number of unpushed commits
-git fetch origin main && git reset --hard origin/main  # Sync to remote
-git am /tmp/patches/*.patch                            # Re-apply patches
-# If patch conflicts: git am --abort, then apply changes manually
-```
-
-**Full guide**: [git-crypt-guide.md](docs/development/git-crypt-guide.md)
+- **Check**: `git-crypt status docs/ | head -5`
+- **Unlock**: `varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'`
+- **Still encrypted after unlock**: pipe each file through `git-crypt smudge` — see [git-crypt-guide.md](docs/development/git-crypt-guide.md)
+- **Worktrees**: unlock main repo first → `./scripts/create-worktree.sh worktrees/<name> <branch>` / remove with `./scripts/remove-worktree.sh --prune` (`--force` if smudge artifacts block)
+- **Rebase fails** (smudge filter): save commits with `git format-patch`, reset to `origin/main`, re-apply with `git am` — see [git-crypt-guide.md](docs/development/git-crypt-guide.md)
 
 ---
 
