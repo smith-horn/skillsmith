@@ -253,7 +253,8 @@ const { loginRedirect = '/account' } = Astro.props;
   import { createClient } from '@supabase/supabase-js';
 
   // Initialize user menu
-  document.addEventListener('DOMContentLoaded', async () => {
+  // Uses astro:page-load to reinitialize after ClientRouter view transitions
+  document.addEventListener('astro:page-load', async () => {
     const loadingState = document.getElementById('user-menu-loading');
     const loggedOutState = document.getElementById('user-menu-logged-out');
     const loggedInState = document.getElementById('user-menu-logged-in');

@@ -939,7 +939,8 @@ const savingsPercent = period === 'annual' ? 17 : 0; // ~17% savings
   const apiBaseUrl = config.apiBaseUrl;
 
   // Initialize checkout form handling
-  document.addEventListener('DOMContentLoaded', () => {
+  // Uses astro:page-load to reinitialize after ClientRouter view transitions
+  document.addEventListener('astro:page-load', () => {
     // GA4: Track signup page view with tier context (SMI-2460)
     const ctx = (window as any).__CHECKOUT_CONTEXT__;
     if (typeof window.gtag === 'function' && ctx) {

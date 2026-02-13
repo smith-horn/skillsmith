@@ -686,7 +686,7 @@ chmod 755 ~/.claude/skills</code></pre>
       });
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('astro:page-load', () => {
       setupTabs('platform-tab', 'platform-content');
       setupTabs('config-tab', 'config-content');
       setupTabs('cli-tab', 'cli-content');
