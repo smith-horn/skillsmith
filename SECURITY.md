@@ -10,7 +10,7 @@ We take the security of Skillsmith seriously. If you discover a security vulnera
 
 Instead, please report security issues by emailing:
 
-**<security@smithhorn.ca>**
+**<security@skillsmith.app>**
 
 Include the following information in your report:
 
@@ -33,12 +33,13 @@ Include the following information in your report:
 
 The following are in scope for security reports:
 
-- **Skillsmith core packages** (@skillsmith/core, @skillsmith/mcp-server, @skillsmith/cli)
+- **Skillsmith packages** (@skillsmith/core, @skillsmith/mcp-server, @skillsmith/cli, @smith-horn/enterprise)
 - **MCP protocol implementation** vulnerabilities
-- **Authentication/Authorization** bypasses
+- **Authentication/Authorization** bypasses (API keys, Supabase JWT)
 - **Injection vulnerabilities** (SQL, command, path traversal)
 - **Information disclosure** of sensitive data
 - **Denial of service** vulnerabilities
+- **Supabase Edge Functions** security issues
 - **Dependency vulnerabilities** with demonstrated exploit
 
 ### Out of Scope
@@ -62,22 +63,91 @@ Skillsmith implements the following security measures:
 | **SSRF Prevention** | URL validation, blocked internal ranges |
 | **Rate Limiting** | Configurable per-endpoint rate limits |
 | **SQL Injection Prevention** | Parameterized queries via better-sqlite3 |
+| **Command Injection Prevention** | `execFileSync` with array args; no shell string interpolation |
+| **Secret Management** | Varlock for secret injection; never exposed in terminal output |
+| **Encrypted Documentation** | git-crypt for sensitive docs, configs, and Supabase functions |
 | **Secret Detection** | Gitleaks configuration for CI/CD |
 | **Dependency Auditing** | npm audit in CI pipeline |
+| **ReDoS Prevention** | User-supplied regex capped at 200 characters |
+
+### Skill Security Scanner
+
+All skills pass through a multi-category static analysis scanner before indexing. The scanner detects:
+
+| Category | Examples | Severity |
+|----------|----------|----------|
+| Jailbreak patterns | "ignore previous instructions", "bypass safety" | Critical |
+| AI defence patterns (CVE-hardened) | Role injection, zero-width character obfuscation, encoded payloads | Critical |
+| Privilege escalation | `sudo -S`, `chmod 777`, sudoers manipulation | Critical |
+| Social engineering | "pretend to be", "roleplay as" | High |
+| Prompt leaking | "show me your system instructions", "reveal your prompt" | High |
+| Data exfiltration | `fetch` with query params, `WebSocket`, `sendBeacon` | High |
+| Sensitive file references | `.env`, `.ssh`, `.pem`, credentials | High |
+| Suspicious code patterns | `eval()`, `child_process`, `rm -rf`, pipe-to-shell | Medium |
+| URL/domain analysis | External URLs checked against allowlist | Medium |
+
+Findings are weighted by severity, category, and confidence. Documentation context (code blocks, tables) receives reduced confidence to minimize false positives.
+
+### Trust Tiers
+
+Skills are classified into six trust tiers that control scanner strictness and user consent requirements:
+
+| Tier | Risk Threshold | Verification |
+|------|---------------|--------------|
+| Verified | 70 | Publisher identity confirmed (GitHub org) |
+| Curated | 60 | Reviewed by Skillsmith team |
+| Community | 40 | Automated scans pass, has license + README |
+| Experimental | 25 | Beta/new, strict scanning |
+| Unknown | 20 | No verification, strictest scanning |
+| Local | 100 | User's own skills, no restrictions |
+
+### Quarantine System
+
+Skills flagged as malicious enter an authenticated quarantine workflow:
+
+1. Immediate removal from search results
+2. Installation blocked for all users
+3. Authenticated review queue with role-based access control
+4. Multi-approval required for MALICIOUS severity (2 independent reviewers)
+5. Full audit trail of all review actions
+
+### Installation-Time Security
+
+Even after indexing, skills are re-checked at install time:
+
+- **Quarantine re-check** — Status may have changed since indexing
+- **Live security scan** — Content scanned with tier-appropriate thresholds
+- **Content integrity** — SHA-256 hash for tamper detection on updates
+
+### Audit Logging
+
+All security-relevant events are logged:
+
+- Skill indexed (scan results, source, timestamp)
+- Scan findings (type, severity, sanitized content)
+- Quarantine actions (quarantined/approved/rejected, reviewer identity)
+- Installation events (user consent, trust tier at time)
+
+For the full security architecture deep-dive, see [Security, Quarantine, and Safe Skill Installation](https://skillsmith.app/blog/security-quarantine-safe-installation).
 
 ### Security Testing
 
-- Security-focused test suite (`npm run test:security`)
+- Security-focused test suite in core package (`packages/core`: `npm run test:security`)
 - SSRF and path traversal edge case testing
 - Malicious input handling tests
-- CI/CD security scanning
+- CI/CD security scanning (pre-push hook with 4-phase checks)
+- Standards audit (`npm run audit:standards`)
 
 ## Supported Versions
 
-| Version | Supported |
-|---------|-----------|
-| 0.1.x (current) | Yes |
-| < 0.1.0 | No |
+| Package | Current Version | Supported |
+|---------|----------------|-----------|
+| @skillsmith/core | 0.4.x | Yes |
+| @skillsmith/mcp-server | 0.3.x | Yes |
+| @skillsmith/cli | 0.3.x | Yes |
+| @smith-horn/enterprise | 0.1.x | Yes |
+
+We support the latest minor version of each package. Older minor versions are unsupported. Patch releases include security fixes.
 
 ## Security Updates
 
@@ -93,6 +163,6 @@ We appreciate security researchers who help keep Skillsmith secure. With your pe
 
 ## Contact
 
-- **Security Issues**: <security@smithhorn.ca>
-- **General Questions**: Via GitHub Issues
-- **Commercial Support**: <contact@smithhorn.ca>
+- **Security Issues**: <security@skillsmith.app>
+- **General Questions**: [GitHub Issues](https://github.com/smith-horn/skillsmith/issues)
+- **Commercial Support**: <support@skillsmith.app>
