@@ -114,12 +114,14 @@ Git-crypt smudge filters can silently switch branches during stash/pop operation
 4. **After `git checkout`**: `git branch --show-current` — checkout can report false success
 
 **If branch switched during commit**, the post-commit hook prints recovery commands:
+
 ```bash
 git checkout <expected-branch>
 git cherry-pick <commit-hash>
 ```
 
 **Creating branches**: Always sync main first:
+
 ```bash
 git fetch origin main && git reset --hard origin/main && git checkout -b <branch-name>
 ```
