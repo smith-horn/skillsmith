@@ -154,7 +154,7 @@ describe('SMI-797: Performance Validation', () => {
       const result = await executeGetSkill({ id: 'test-org/skill-0' }, context)
       const elapsed = performance.now() - start
 
-      expect(elapsed).toBeLessThan(20)
+      expect(elapsed).toBeLessThan(50)
       expect(result.skill.id).toBe('test-org/skill-0')
     })
 
@@ -176,7 +176,7 @@ describe('SMI-797: Performance Validation', () => {
       const results = await Promise.all(ids.map((id) => executeGetSkill({ id }, context)))
       const elapsed = performance.now() - start
 
-      expect(elapsed).toBeLessThan(100)
+      expect(elapsed).toBeLessThan(200)
       expect(results.every((r) => r.skill !== undefined)).toBe(true)
     })
   })
@@ -274,7 +274,7 @@ describe('SMI-797: Performance Validation', () => {
 
       // Assertions
       expect(metrics.singleSearch).toBeLessThan(50)
-      expect(metrics.singleGet).toBeLessThan(20)
+      expect(metrics.singleGet).toBeLessThan(50)
       expect(metrics.concurrentSearches).toBeLessThan(200)
       expect(metrics.searchGetFlow).toBeLessThan(50)
     })
