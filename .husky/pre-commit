@@ -14,6 +14,16 @@ echo "${BLUE}=== Pre-Commit Checks ===${NC}"
 echo ""
 
 # =============================================================================
+# SMI-2536: Branch Integrity Guard
+# Record the current branch so we can verify it doesn't change during commit.
+# Git-crypt smudge filters can silently switch branches during stash/pop.
+# =============================================================================
+EXPECTED_BRANCH=$(git branch --show-current)
+if [ -n "$EXPECTED_BRANCH" ]; then
+  echo "$EXPECTED_BRANCH" > "$(git rev-parse --git-dir)/expected-branch"
+fi
+
+# =============================================================================
 # Detect execution environment (Docker vs Local)
 # =============================================================================
 USE_DOCKER=0
@@ -166,6 +176,31 @@ else
     echo "  ${YELLOW}Emergency bypass:${NC} git commit --no-verify"
     echo ""
     exit 1
+fi
+
+# =============================================================================
+# SMI-2536: Branch Integrity Guard — Verify branch didn't switch
+# lint-staged's internal stash/pop can trigger smudge filter branch switch.
+# Abort BEFORE the commit is created to prevent it landing on the wrong branch.
+# =============================================================================
+if [ -n "$EXPECTED_BRANCH" ]; then
+  CURRENT_BRANCH=$(git branch --show-current)
+  if [ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]; then
+    echo ""
+    echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo "${RED}  ABORTING: Branch switched during pre-commit (smudge filter bug)${NC}"
+    echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "  Expected branch: ${YELLOW}$EXPECTED_BRANCH${NC}"
+    echo "  Current branch:  ${YELLOW}$CURRENT_BRANCH${NC}"
+    echo ""
+    echo "  ${YELLOW}Recovery:${NC}"
+    echo "    git checkout $EXPECTED_BRANCH"
+    echo "    git commit  # retry"
+    echo ""
+    rm -f "$(git rev-parse --git-dir)/expected-branch"
+    exit 1
+  fi
 fi
 
 echo ""

@@ -104,6 +104,30 @@ varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'  # Unl
 
 ---
 
+## Branch Management (SMI-2536)
+
+Git-crypt smudge filters can silently switch branches during stash/pop operations (including lint-staged in pre-commit hooks). The pre-commit hook detects and aborts if this happens, but follow this protocol as defense-in-depth:
+
+1. **Before first edit**: `git branch --show-current` — confirm you're on the feature branch
+2. **After `git commit`**: `git branch --show-current` — verify the commit landed correctly
+3. **After `git stash pop`**: `git branch --show-current` — stash pop is the most common trigger
+4. **After `git checkout`**: `git branch --show-current` — checkout can report false success
+
+**If branch switched during commit**, the post-commit hook prints recovery commands:
+
+```bash
+git checkout <expected-branch>
+git cherry-pick <commit-hash>
+```
+
+**Creating branches**: Always sync main first:
+
+```bash
+git fetch origin main && git reset --hard origin/main && git checkout -b <branch-name>
+```
+
+---
+
 ## Varlock Security
 
 **All secrets via Varlock. Never expose API keys in terminal output.**

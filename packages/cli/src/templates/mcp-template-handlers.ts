@@ -12,7 +12,7 @@ import type { McpToolDefinition } from './mcp-template-types.js'
  * Escape single quotes in strings for safe template interpolation
  */
 export function escapeQuotes(str: string): string {
-  return str.replace(/'/g, "\\'")
+  return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
 }
 
 /**

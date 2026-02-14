@@ -1,23 +1,48 @@
-# Post-commit hook: Automatically sync Linear issues from commit messages
-# Issue: SMI-710
-#
-# This hook extracts SMI-xxx issue references from commit messages and updates
-# their status in Linear. It runs in the background to avoid blocking git.
-#
-# Configuration:
-#   LINEAR_API_KEY       - Required for Linear API access (silent fail if unset)
-#   DEBUG_LINEAR_HOOK    - Set to 'true' for verbose output
-#
-# Behavior:
-#   - Extracts SMI-xxx patterns from commit message
-#   - Marks issues as "in_progress" by default
-#   - Marks as "done" if commit contains: fix, close, complete, done, finish
-#   - Fails silently on any error (never blocks commits)
-#   - Times out after 2 seconds
+#!/bin/sh
+# Post-commit hook
+# - SMI-2536: Branch integrity fallback guard
+# - SMI-710: Linear issue sync from commit messages
 
-# Run the Linear hook in background to not block git operations
-# The script handles its own timeouts and error handling
+# Color codes (match pre-commit style)
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# =============================================================================
+# SMI-2536: Branch Integrity Guard — Fallback verification
+# The pre-commit tail guard should catch branch switches before commit.
+# This is a safety net in case it's bypassed (e.g., commit hooks that
+# don't trigger pre-commit, or future changes to the pre-commit flow).
+# =============================================================================
+GIT_DIR=$(git rev-parse --git-dir)
+EXPECTED_BRANCH_FILE="$GIT_DIR/expected-branch"
+
+if [ -f "$EXPECTED_BRANCH_FILE" ]; then
+  EXPECTED=$(cat "$EXPECTED_BRANCH_FILE")
+  ACTUAL=$(git branch --show-current)
+  rm -f "$EXPECTED_BRANCH_FILE"
+
+  if [ -n "$EXPECTED" ] && [ -n "$ACTUAL" ] && [ "$EXPECTED" != "$ACTUAL" ]; then
+    COMMIT_HASH=$(git rev-parse --short HEAD)
+    echo ""
+    echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo "${RED}  WARNING: Branch switched during commit (smudge filter bug)${NC}"
+    echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "  Expected branch: ${YELLOW}$EXPECTED${NC}"
+    echo "  Actual branch:   ${YELLOW}$ACTUAL${NC}"
+    echo "  Commit ${YELLOW}$COMMIT_HASH${NC} landed on: ${YELLOW}$ACTUAL${NC}"
+    echo ""
+    echo "  ${YELLOW}Recovery:${NC}"
+    echo "    git checkout $EXPECTED"
+    echo "    git cherry-pick $COMMIT_HASH"
+    echo ""
+    echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+  fi
+fi
+
+# SMI-710: Sync Linear issues from commit messages (background, non-blocking)
 node "$(dirname "$0")/../scripts/linear-hook.mjs" post-commit &
 
-# Don't wait for background process
 exit 0
