@@ -102,7 +102,7 @@ regexes = [
 
   # False positive: handleCorsPreflightRequest function name contains 24+ alphanumeric
   # substring that matches the broad vercel-token rule regex [a-zA-Z0-9]{24}
-  '''handleCorsPreflightRequest''',
+  '''handleCorsPreflight''',
 ]
 
 # Allow specific files that contain examples or tests
