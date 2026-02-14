@@ -16,6 +16,7 @@ import type {
   QuarantinePermission,
 } from '../../src/services/quarantine/types.js'
 import { QuarantineRepository } from '../../src/repositories/quarantine/index.js'
+import { ApprovalRepository } from '../../src/repositories/quarantine/ApprovalRepository.js'
 import { AuditLogger } from '../../src/security/AuditLogger.js'
 import { createDatabaseSync } from '../../src/db/createDatabase.js'
 import type { Database } from '../../src/db/database-interface.js'
@@ -62,6 +63,7 @@ function createExpiredSession(): AuthenticatedSession {
 describe('SMI-2269: QuarantineService Authentication', () => {
   let db: Database
   let repository: QuarantineRepository
+  let approvalRepository: ApprovalRepository
   let auditLogger: AuditLogger
   let service: QuarantineService
 
@@ -70,7 +72,8 @@ describe('SMI-2269: QuarantineService Authentication', () => {
     db = createDatabaseSync(':memory:')
     auditLogger = new AuditLogger(db)
     repository = new QuarantineRepository(db, auditLogger)
-    service = new QuarantineService(repository, auditLogger)
+    approvalRepository = new ApprovalRepository(db)
+    service = new QuarantineService(repository, approvalRepository, auditLogger)
   })
 
   afterEach(() => {

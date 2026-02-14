@@ -99,6 +99,11 @@ regexes = [
   # These are NOT real keys - they follow our test key format for validation
   '''sk_live_test_[a-zA-Z0-9]{32}''',
   '''sk_test_[a-zA-Z0-9]{32}''',
+
+  # Function name in supabase/functions/_shared/cors.ts:131 triggers vercel-token rule
+  # because "handleCorsPreflightRequest" contains a 24+ char alphanumeric substring
+  # matching the broad [a-zA-Z0-9]{24} regex. This is a function name, not a token.
+  '''handleCorsPreflightRequest''',
 ]
 
 # Allow specific files that contain examples or tests
