@@ -146,9 +146,8 @@ For the full security architecture deep-dive, see [Security, Quarantine, and Saf
 | @skillsmith/mcp-server | 0.3.x | Yes |
 | @skillsmith/cli | 0.3.x | Yes |
 | @smith-horn/enterprise | 0.1.x | Yes |
-| All packages < current minor | No |
 
-We support the latest minor version of each package. Patch releases include security fixes.
+We support the latest minor version of each package. Older minor versions are unsupported. Patch releases include security fixes.
 
 ## Security Updates
 
