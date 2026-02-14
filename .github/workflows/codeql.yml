@@ -1,5 +1,8 @@
 name: 'CodeQL'
 
+# SMI-2508: Advanced setup replaces default setup (disabled via API).
+# Covers both javascript-typescript and actions languages.
+
 on:
   push:
     branches: [main]
@@ -15,13 +18,13 @@ permissions:
 
 jobs:
   analyze:
-    name: Analyze
+    name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
       matrix:
-        language: ['javascript-typescript']
+        language: ['javascript-typescript', 'actions']
 
     steps:
       - name: Checkout repository
