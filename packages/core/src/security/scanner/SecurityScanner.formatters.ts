@@ -23,7 +23,7 @@ export function toMinimalRefs(report: ScanReport): string[] {
   return report.findings.map((finding) => {
     const line = finding.lineNumber ?? 0
     const severity = finding.severity.toUpperCase()
-    const message = finding.message.replace(/"/g, '\\"')
+    const message = finding.message.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
     // Format: skill_id:line:severity:type:message
     return `${report.skillId}:${line}:${severity}:${finding.type}:${message}`
   })

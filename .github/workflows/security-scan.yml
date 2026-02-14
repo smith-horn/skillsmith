@@ -254,6 +254,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: security-scan
     if: ${{ needs.security-scan.outputs.failed_scans > 0 }}
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout

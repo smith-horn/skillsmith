@@ -153,7 +153,11 @@ export function detectGitHub(path: string): boolean {
 
   try {
     const content = readFileSync(gitConfig, 'utf-8')
-    return content.includes('github.com')
+    return content.split('\n').some((line) => {
+      const match = line.match(/^\s*url\s*=\s*(.+)$/)
+      if (!match) return false
+      return /(?:https?:\/\/|git@)github\.com[/:]/.test(match[1].trim())
+    })
   } catch (error) {
     console.warn(
       '[project-detector] Failed to read git config for GitHub detection:',

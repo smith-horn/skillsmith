@@ -37,6 +37,7 @@ jobs:
     name: Refresh Skill Metadata
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions: {}
 
     steps:
       - name: Validate Secrets

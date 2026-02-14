@@ -35,6 +35,8 @@ jobs:
     name: Transform Skills
     runs-on: ubuntu-latest
     timeout-minutes: 120 # 2 hours max
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout

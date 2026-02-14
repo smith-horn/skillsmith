@@ -173,11 +173,11 @@ async function checkFormatting(artifacts: string[], dryRun: boolean): Promise<Co
   }
 
   try {
-    const { execSync } = await import('child_process')
-    const filePaths = tsFiles.map((f) => join(CONFIG.skillsmithPath, f)).join(' ')
+    const { execFileSync } = await import('child_process')
+    const filePaths = tsFiles.map((f) => join(CONFIG.skillsmithPath, f))
 
     // Use prettier --check to find unformatted files
-    execSync(`npx prettier --check ${filePaths}`, {
+    execFileSync('npx', ['prettier', '--check', ...filePaths], {
       cwd: CONFIG.skillsmithPath,
       stdio: 'pipe',
     })
