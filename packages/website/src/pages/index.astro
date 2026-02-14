@@ -229,6 +229,7 @@ const jsonLd = {
   <!-- Navigation -->
   <Nav activePath="/" />
 
+  <main id="main-content">
   <!-- Hero Section -->
   <section class="relative min-h-screen flex items-center justify-center pt-[72px]">
     <div class="max-w-[800px] mx-auto px-6 py-24 text-center">
@@ -260,7 +261,7 @@ const jsonLd = {
       </div>
 
       <!-- Social Proof -->
-      <p class="text-sm text-[#71717A] opacity-0 animate-fade-up" style="animation-delay: 0.15s;">
+      <p class="text-sm text-[#8E8E96] opacity-0 animate-fade-up" style="animation-delay: 0.15s;">
         <span class="inline-block w-2 h-2 bg-[#81B29A] rounded-full mr-2 animate-pulse"></span>
         Free tier available — no credit card required
       </p>
@@ -292,8 +293,8 @@ const jsonLd = {
         <button
           type="button"
           id="copy-mcp-config"
-          class="absolute top-4 right-4 px-5 py-2.5 bg-[#E07A5F] hover:bg-[#D4694E] text-white text-sm font-semibold rounded-lg transition-all duration-200 flex items-center gap-2 shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
-          aria-label="Copy configuration to clipboard"
+          class="absolute top-4 right-4 px-5 py-2.5 bg-[#E07A5F] hover:bg-[#D4694E] text-dark-950 text-sm font-bold rounded-lg transition-all duration-200 flex items-center gap-2 shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+          aria-label="Copy to Clipboard"
         >
           <!-- Copy icon -->
           <svg id="copy-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
@@ -396,8 +397,8 @@ const jsonLd = {
 
       <div class="grid md:grid-cols-2 gap-6">
         <!-- Without Skillsmith -->
-        <div class="p-8 bg-[#18181B] border border-white/[0.06] rounded-2xl opacity-70">
-          <p class="text-xs font-medium uppercase tracking-wider text-[#71717A] mb-6">Without Skillsmith</p>
+        <div class="p-8 bg-[#18181B] border border-white/[0.06] rounded-2xl">
+          <p class="text-xs font-medium uppercase tracking-wider text-[#8E8E96] mb-6">Without Skillsmith</p>
           <ul class="space-y-4">
             <li class="flex items-start gap-3">
               <span class="text-[#71717A] mt-0.5">✕</span>
@@ -522,6 +523,8 @@ const jsonLd = {
     </div>
   </section>
 
+  </main>
+
   <!-- Footer -->
   <Footer />
 
@@ -621,7 +624,8 @@ const jsonLd = {
           checkIcon.classList.remove('hidden');
           copyText.textContent = 'Copied!';
           copyButton.classList.remove('bg-[#E07A5F]', 'hover:bg-[#D4694E]');
-          copyButton.classList.add('bg-[#81B29A]');
+          copyButton.classList.add('bg-[#81B29A]', 'text-white');
+          copyButton.classList.remove('text-dark-950');
 
           // Track in GA if available
           if (typeof gtag === 'function') {
@@ -636,8 +640,8 @@ const jsonLd = {
             copyIcon.classList.remove('hidden');
             checkIcon.classList.add('hidden');
             copyText.textContent = 'Copy to Clipboard';
-            copyButton.classList.add('bg-[#E07A5F]', 'hover:bg-[#D4694E]');
-            copyButton.classList.remove('bg-[#81B29A]');
+            copyButton.classList.add('bg-[#E07A5F]', 'hover:bg-[#D4694E]', 'text-dark-950');
+            copyButton.classList.remove('bg-[#81B29A]', 'text-white');
           }, 2500);
         } catch (err) {
           console.error('Failed to copy:', err);
@@ -676,7 +680,7 @@ const jsonLd = {
     <div style="max-width:640px;margin:0 auto;display:flex;align-items:center;gap:1rem;padding:1rem 1.5rem;background:#1a1a1f;border:1px solid #2a2a2f;border-radius:0.75rem;box-shadow:0 -4px 24px rgba(0,0,0,0.4);pointer-events:auto;font-family:'Satoshi',sans-serif">
       <p style="flex:1;font-size:0.875rem;color:#9ca3af;line-height:1.5;margin:0">
         We use cookies and Google Analytics to understand how you use the Skillsmith website. We do not track MCP usage, only count API calls.
-        See our <a href="/privacy#cookies" style="color:#E07A5F;text-decoration:none">Privacy Policy</a>.
+        See our <a href="/privacy#cookies" style="color:#E07A5F;text-decoration:underline;text-underline-offset:2px">Privacy Policy</a>.
       </p>
       <div style="display:flex;gap:0.5rem;flex-shrink:0">
         <button id="cookie-reject" type="button" style="padding:0.5rem 1rem;font-size:0.875rem;font-weight:600;border-radius:0.375rem;cursor:pointer;background:transparent;color:#9ca3af;border:1px solid #2a2a2f;font-family:inherit">Decline</button>
