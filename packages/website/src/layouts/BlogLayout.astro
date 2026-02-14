@@ -192,7 +192,15 @@ const formattedUpdated = updated ? formatDate(updated) : null;
       toc.appendChild(ul);
     }
 
+    function fixTaskListCheckboxes() {
+      document.querySelectorAll('.prose-content .task-list-item input[type="checkbox"]').forEach(cb => {
+        cb.setAttribute('aria-hidden', 'true');
+        cb.setAttribute('tabindex', '-1');
+      });
+    }
+
     document.addEventListener('astro:page-load', initToc);
+    document.addEventListener('astro:page-load', fixTaskListCheckboxes);
   </script>
 </BaseLayout>
 
