@@ -584,6 +584,7 @@ If you're publishing skills, here's how to build trust:
 - [ ] **Minimize permissions** — Only ask Claude to do what's necessary
 - [ ] **Publish under a verified account** — Verify your GitHub org
 - [ ] **Use `execFileSync` with array args** — Never interpolate user input into shell commands
+- [ ] **Structure for composability** — [Design skills for reuse with proper agent/skill separation](/blog/agent-skill-framework)
 
 ### Don't
 

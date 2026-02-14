@@ -33,8 +33,8 @@ const formattedUpdated = updated ? formatDate(updated) : null;
 
 <BaseLayout title={`${title} | Skillsmith Blog`} description={description}>
   <!-- SEO and Open Graph tags for blog posts -->
+  <!-- Note: canonical URL is provided by BaseLayout using Astro.site (www-normalized) -->
   <Fragment slot="head">
-    <link rel="canonical" href={Astro.url.href} />
     <meta property="og:type" content="article" />
     {date && <meta property="article:published_time" content={date.toISOString()} />}
     {updated && <meta property="article:modified_time" content={updated.toISOString()} />}
