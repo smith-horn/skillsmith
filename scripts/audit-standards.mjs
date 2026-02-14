@@ -695,6 +695,74 @@ if (existsSync(websiteSrcDir)) {
   warn('Website src directory not found - skipping ClientRouter check')
 }
 
+// 14. Accessibility Patterns (SMI-2541)
+console.log(`\n${BOLD}14. Accessibility Patterns (SMI-2541)${RESET}`)
+
+const docsDir = 'packages/website/src/pages/docs'
+if (existsSync(docsDir)) {
+  const docsAstroFiles = getFilesRecursive(docsDir, ['.astro'])
+  const calloutH4Files = []
+
+  for (const file of docsAstroFiles) {
+    const content = readFileSync(file, 'utf8')
+    const lines = content.split('\n')
+    let inCallout = false
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (line.includes('class="callout')) inCallout = true
+      if (inCallout && line.includes('</div>')) inCallout = false
+      if (inCallout && /<h4>/.test(line)) {
+        calloutH4Files.push({ file: relative('.', file), line: i + 1 })
+      }
+    }
+  }
+
+  if (calloutH4Files.length === 0) {
+    pass('No callout divs use <h4> (use <p class="callout-heading"> instead)')
+  } else {
+    fail(
+      `${calloutH4Files.length} callout(s) use <h4> instead of <p class="callout-heading">`,
+      'Change <h4> to <p class="callout-heading"> inside .callout divs (heading-order violation)'
+    )
+    calloutH4Files.slice(0, 5).forEach(({ file, line }) => console.log(`    ${file}:${line}`))
+  }
+} else {
+  warn('Docs pages directory not found - skipping callout heading check')
+}
+
+// Check BlogLayout has aria-hidden on task-list checkboxes
+const blogLayoutPath = 'packages/website/src/layouts/BlogLayout.astro'
+if (existsSync(blogLayoutPath)) {
+  const blogLayoutContent = readFileSync(blogLayoutPath, 'utf8')
+  if (blogLayoutContent.includes('aria-hidden') && blogLayoutContent.includes('task-list-item')) {
+    pass('BlogLayout hides task-list checkboxes from accessibility tree')
+  } else {
+    fail(
+      'BlogLayout missing aria-hidden on task-list checkboxes',
+      'Add aria-hidden="true" and tabindex="-1" to .task-list-item checkboxes via JS'
+    )
+  }
+} else {
+  warn('BlogLayout.astro not found - skipping task-list checkbox check')
+}
+
+// Check standalone pages have <main> landmark
+const standalonePages = ['packages/website/src/pages/index.astro']
+for (const pagePath of standalonePages) {
+  if (existsSync(pagePath)) {
+    const pageContent = readFileSync(pagePath, 'utf8')
+    if (pageContent.includes('<main')) {
+      pass(`${relative('.', pagePath)} has <main> landmark`)
+    } else {
+      fail(
+        `${relative('.', pagePath)} missing <main> landmark`,
+        'Add <main id="main-content"> to standalone pages not using BaseLayout'
+      )
+    }
+  }
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)
