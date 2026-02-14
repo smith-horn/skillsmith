@@ -21,6 +21,7 @@ The script uploads all images in the directory to `blog/{slug}/` on Cloudinary a
 | `blog/{slug}/` | Blog article images (e.g., `blog/security/defense-layers`) |
 
 Local workflow:
+
 1. `docs/articles/tmp/` - working directory for image generation
 2. Upload via script
 3. Archive originals or delete tmp files after upload
@@ -39,6 +40,7 @@ Base URL: `https://res.cloudinary.com/diqcbcmaq/image/upload/{transforms}/{publi
 | Original (no transform) | (none) | Full size |
 
 Key transforms:
+
 - `f_auto` - serves AVIF/WebP/PNG based on browser `Accept` header
 - `q_auto` - perceptual quality optimization (~40-60% size reduction)
 - `w_N` - scale width to N pixels (aspect ratio preserved unless `c_fill`)
@@ -51,10 +53,12 @@ varlock run -- node scripts/upload-blog-images.mjs <slug> <dir>
 ```
 
 **Arguments:**
+
 - `slug` - article identifier, becomes the Cloudinary folder name (e.g., `security`)
 - `dir` - local directory containing images to upload
 
 **Outputs:**
+
 - Prints blog and OG URLs for each image
 - Saves `cloudinary-metadata.json` in the source directory (tracks public IDs, dimensions, sizes)
 
@@ -73,6 +77,7 @@ varlock run -- node scripts/upload-blog-images.mjs <slug> <dir>
 ```
 
 For OG images in frontmatter:
+
 ```yaml
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/{slug}/{name}"
 ```
