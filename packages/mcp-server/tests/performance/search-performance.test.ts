@@ -51,11 +51,12 @@ describe('SMI-797: Performance Validation', () => {
 
   beforeAll(() => {
     // Create isolated test database
-    const testDir = join(tmpdir(), 'skillsmith-perf-test')
-    if (!existsSync(testDir)) {
-      mkdirSync(testDir, { recursive: true })
-    }
-    testDbPath = join(testDir, `perf-test-${Date.now()}.db`)
+    const testDir = join(
+      tmpdir(),
+      `skillsmith-perf-test-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    )
+    mkdirSync(testDir, { recursive: true })
+    testDbPath = join(testDir, 'test.db')
 
     // Initialize database with bulk data
     db = createDatabase(testDbPath)

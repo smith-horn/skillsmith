@@ -25,7 +25,10 @@ import { scanForHardcoded, type HardcodedIssue } from './utils/hardcoded-detecto
 import { recordTiming, measureAsync } from './utils/baseline-collector.js'
 
 // Test configuration
-const TEST_DIR = join(tmpdir(), 'skillsmith-e2e-recommend')
+const TEST_DIR = join(
+  tmpdir(),
+  `skillsmith-e2e-recommend-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+)
 const TEST_DB_PATH = join(TEST_DIR, 'recommend-test.db')
 const TEST_SKILLS_DIR = join(TEST_DIR, '.claude', 'skills')
 

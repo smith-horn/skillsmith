@@ -23,7 +23,10 @@ import {
 import type { SkillManifest } from '../../src/tools/install.types.js'
 
 // Test configuration
-const TEST_DIR = join(tmpdir(), 'skillsmith-e2e-conflict')
+const TEST_DIR = join(
+  tmpdir(),
+  `skillsmith-e2e-conflict-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+)
 const TEST_HOME = join(TEST_DIR, 'home')
 const TEST_SKILLS_DIR = join(TEST_HOME, '.claude', 'skills')
 const TEST_SKILLSMITH_DIR = join(TEST_HOME, '.skillsmith')

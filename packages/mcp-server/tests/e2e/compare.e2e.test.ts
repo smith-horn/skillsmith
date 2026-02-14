@@ -23,7 +23,10 @@ import { scanForHardcoded } from './utils/hardcoded-detector.js'
 import { measureAsync, recordTiming } from './utils/baseline-collector.js'
 
 // Test configuration
-const TEST_DIR = join(tmpdir(), 'skillsmith-e2e-compare')
+const TEST_DIR = join(
+  tmpdir(),
+  `skillsmith-e2e-compare-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+)
 const TEST_DB_PATH = join(TEST_DIR, 'compare-test.db')
 
 // Seed data for comparison tests

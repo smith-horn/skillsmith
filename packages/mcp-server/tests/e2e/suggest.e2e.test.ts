@@ -27,7 +27,10 @@ import { recordTiming, measureAsync } from './utils/baseline-collector.js'
 import { queueIssue, type TestFailure } from './utils/linear-reporter.js'
 
 // Test configuration
-const TEST_DIR = join(tmpdir(), 'skillsmith-e2e-suggest')
+const TEST_DIR = join(
+  tmpdir(),
+  `skillsmith-e2e-suggest-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+)
 const TEST_DB_PATH = join(TEST_DIR, 'suggest-test.db')
 const TEST_PROJECT_DIR = join(TEST_DIR, 'test-project')
 

@@ -22,7 +22,10 @@ import { scanForHardcoded } from './utils/hardcoded-detector.js'
 import { measureAsync } from './utils/baseline-collector.js'
 
 // Test configuration
-const TEST_DIR = join(tmpdir(), 'skillsmith-e2e-install')
+const TEST_DIR = join(
+  tmpdir(),
+  `skillsmith-e2e-install-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+)
 const TEST_DB_PATH = join(TEST_DIR, 'install-test.db')
 const TEST_HOME = join(TEST_DIR, 'home')
 const TEST_SKILLS_DIR = join(TEST_HOME, '.claude', 'skills')

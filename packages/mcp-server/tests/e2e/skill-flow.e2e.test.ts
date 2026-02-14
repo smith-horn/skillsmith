@@ -97,11 +97,12 @@ describe('E2E: Skill Discovery Flow', () => {
 
   beforeAll(() => {
     // Create isolated test database
-    const testDir = join(tmpdir(), 'skillsmith-e2e-test')
-    if (!existsSync(testDir)) {
-      mkdirSync(testDir, { recursive: true })
-    }
-    testDbPath = join(testDir, `e2e-test-${Date.now()}.db`)
+    const testDir = join(
+      tmpdir(),
+      `skillsmith-e2e-test-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    )
+    mkdirSync(testDir, { recursive: true })
+    testDbPath = join(testDir, 'test.db')
 
     // Initialize database with seed data
     db = createDatabase(testDbPath)
@@ -289,7 +290,10 @@ describe('E2E: Data Quality Validation', () => {
   let testDbPath: string
 
   beforeAll(() => {
-    const testDir = join(tmpdir(), 'skillsmith-e2e-quality')
+    const testDir = join(
+      tmpdir(),
+      `skillsmith-e2e-quality-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    )
     if (!existsSync(testDir)) {
       mkdirSync(testDir, { recursive: true })
     }
