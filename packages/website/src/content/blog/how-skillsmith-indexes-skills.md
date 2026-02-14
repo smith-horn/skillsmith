@@ -379,7 +379,7 @@ description: "A skill for tests"
 description: "Helps write Jest unit tests for React components with mocking and snapshot testing support"
 ```
 
-The second description will match searches for: "Jest", "React", "unit tests", "mocking", "snapshots", and semantic queries like "help me test my components."
+The second description will match searches for: "Jest", "React", "unit tests", "mocking", "snapshots", and semantic queries like "help me test my components." For guidance on structuring your skill for composability and reuse, see our [decision framework for agents and skills](/blog/agent-skill-framework).
 
 ---
 

@@ -7,7 +7,33 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   site: 'https://www.skillsmith.app',
 
-  integrations: [sitemap()],
+  integrations: [
+    sitemap({
+      serialize(item) {
+        // High-priority pages
+        if (item.url === 'https://www.skillsmith.app/') {
+          item.priority = 1.0
+          item.changefreq = 'weekly'
+        } else if (/\/(pricing|docs\/quickstart)\/?$/.test(item.url)) {
+          item.priority = 0.9
+          item.changefreq = 'monthly'
+        } else if (/\/docs\/?/.test(item.url)) {
+          item.priority = 0.8
+          item.changefreq = 'monthly'
+        } else if (/\/blog\/?$/.test(item.url)) {
+          item.priority = 0.8
+          item.changefreq = 'weekly'
+        } else if (/\/blog\//.test(item.url)) {
+          item.priority = 0.7
+          item.changefreq = 'monthly'
+        } else {
+          item.priority = 0.5
+          item.changefreq = 'monthly'
+        }
+        return item
+      },
+    }),
+  ],
 
   // Markdown configuration with Shiki syntax highlighting
   markdown: {

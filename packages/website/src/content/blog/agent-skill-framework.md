@@ -92,7 +92,7 @@ The pattern in practice:
 - Packaging procedural knowledge (how to use Linear, how to write tests)
 - Bundling scripts, templates, or reference documentation
 - Creating reusable workflows that any agent might need
-- Enabling automatic tool discovery based on task context<sup>1</sup>
+- Enabling automatic tool discovery based on task context<sup>1</sup> — see [how Skillsmith's indexing pipeline discovers and curates skills](/blog/how-skillsmith-indexes-skills)
 
 ### Use a Sub-Agent when:
 
@@ -328,7 +328,7 @@ Before creating a new agent or skill, verify:
 
 ![Skill Lifecycle](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/agent-skill-framework/10-skill-lifecycle)
 
-Skills accumulate value over time—but only if they're structured for iteration and distribution. The pattern mirrors how senior engineers maintain scripts across decades: version everything, document changes, and make it portable.
+Skills accumulate value over time—but only if they're structured for iteration and distribution. The pattern mirrors how senior engineers maintain scripts across decades: version everything, document changes, and make it portable. Before publishing, ensure your skill passes [security validation and trust tier requirements](/blog/security-quarantine-safe-installation).
 
 **Reference implementation:** [github.com/wrsmith108/linear-claude-skill](https://github.com/wrsmith108/linear-claude-skill)
 
