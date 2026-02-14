@@ -11,6 +11,7 @@ const globalIgnores = {
     '**/coverage/**',
     '**/*.d.ts',
     '**/*.js',
+    '**/*.cjs',
     '**/*.mjs',
     '!eslint.config.js',
     '**/vitest.config.integration.ts',
