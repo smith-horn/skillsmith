@@ -37,6 +37,7 @@ function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; an
         "@type": "Product",
         "name": "Skillsmith",
         "description": "AI-powered skill discovery and management for AI assistants",
+        "image": "https://www.skillsmith.app/og-image.png",
         "brand": { "@type": "Brand", "name": "Skillsmith" },
         "offers": tiers.map(tier => ({
           "@type": "Offer",
