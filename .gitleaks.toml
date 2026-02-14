@@ -99,6 +99,10 @@ regexes = [
   # These are NOT real keys - they follow our test key format for validation
   '''sk_live_test_[a-zA-Z0-9]{32}''',
   '''sk_test_[a-zA-Z0-9]{32}''',
+
+  # False positive: handleCorsPreflightRequest function name contains 24+ alphanumeric
+  # substring that matches the broad vercel-token rule regex [a-zA-Z0-9]{24}
+  '''handleCorsPreflightRequest''',
 ]
 
 # Allow specific files that contain examples or tests
