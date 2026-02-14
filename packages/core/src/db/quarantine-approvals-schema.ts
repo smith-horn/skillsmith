@@ -4,6 +4,16 @@
  * Database schema for persisting multi-approval state. Replaces the
  * in-memory Map<string, ApprovalState> that was lost on service restart.
  *
+ * Note on type mappings:
+ * - `reviewer_id` is TEXT here (SQLite) but UUID in the Supabase migration.
+ *   In production, values are always UUIDs from auth providers. Tests may
+ *   use human-readable strings like 'user-456' for clarity.
+ * - `is_complete` is INTEGER 0/1 here (SQLite has no native boolean) but
+ *   BOOLEAN in the PostgreSQL migration. Queries in ApprovalRepository use
+ *   integer literals (0/1) which are SQLite-specific.
+ * - `created_at` uses `datetime('now') || 'Z'` to produce UTC ISO-8601
+ *   strings (e.g. '2026-02-13 12:00:00Z') so Date parsing is unambiguous.
+ *
  * @module @skillsmith/core/db/quarantine-approvals-schema
  */
 
@@ -18,10 +28,11 @@ CREATE TABLE IF NOT EXISTS quarantine_approvals (
   id TEXT PRIMARY KEY,
   skill_id TEXT NOT NULL,
   reviewer_id TEXT NOT NULL,
-  reviewer_role TEXT NOT NULL,
+  reviewer_email TEXT NOT NULL,
   decision TEXT NOT NULL CHECK(decision IN ('approved', 'rejected')),
   reason TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now') || 'Z'),
+  completed_at TEXT,
   required_approvals INTEGER NOT NULL DEFAULT 2,
   is_complete INTEGER NOT NULL DEFAULT 0
 );
@@ -30,9 +41,15 @@ CREATE TABLE IF NOT EXISTS quarantine_approvals (
 CREATE INDEX IF NOT EXISTS idx_quarantine_approvals_skill_id
   ON quarantine_approvals(skill_id);
 
--- Index for checking reviewer uniqueness per skill
-CREATE INDEX IF NOT EXISTS idx_quarantine_approvals_reviewer
-  ON quarantine_approvals(skill_id, reviewer_id);
+-- Enforce one pending review per reviewer per skill (defense-in-depth)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_quarantine_approvals_reviewer_unique
+  ON quarantine_approvals(skill_id, reviewer_id)
+  WHERE is_complete = 0;
+
+-- Efficient count of pending approvals (used by isComplete check)
+CREATE INDEX IF NOT EXISTS idx_quarantine_approvals_pending
+  ON quarantine_approvals(skill_id, decision)
+  WHERE is_complete = 0;
 `
 
 /**

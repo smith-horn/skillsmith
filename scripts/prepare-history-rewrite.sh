@@ -161,7 +161,7 @@ check_repo_state() {
     success "  Remote origin: $remote_url"
 
     # Verify the remote points to smith-horn/skillsmith
-    if ! echo "$remote_url" | grep -qi "smith-horn/skillsmith"; then
+    if ! echo "$remote_url" | grep -Fqi "smith-horn/skillsmith"; then
         error "Remote does not appear to be smith-horn/skillsmith: $remote_url"
         return 1
     fi
@@ -332,22 +332,13 @@ check_open_prs() {
     fi
 
     local pr_count
-    pr_count=$(echo "$pr_list" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+    pr_count=$(echo "$pr_list" | gh pr list --state open --json number --jq 'length' 2>/dev/null || echo "$pr_list" | jq 'length' 2>/dev/null || echo "0")
 
     if [[ "$pr_count" -gt 0 ]]; then
         warn "Found $pr_count open pull request(s). These will be invalidated by history rewrite!"
         echo ""
-        # Parse and display PRs
-        echo "$pr_list" | python3 -c "
-import sys, json
-prs = json.load(sys.stdin)
-for pr in prs:
-    num = pr.get('number', '?')
-    title = pr.get('title', 'untitled')
-    branch = pr.get('headRefName', 'unknown')
-    author = pr.get('author', {}).get('login', 'unknown')
-    print(f'    #{num} [{branch}] {title} (by {author})')
-" 2>/dev/null || echo "    (could not parse PR list)"
+        # Parse and display PRs using gh --jq (no python3 dependency)
+        echo "$pr_list" | jq -r '.[] | "    #\(.number) [\(.headRefName // "unknown")] \(.title // "untitled") (by \(.author.login // "unknown"))"' 2>/dev/null || echo "    (could not parse PR list — install jq for details)"
         echo ""
         warn "All open PRs must be merged or closed before history rewrite."
         warn "Collaborators must re-create PRs after re-cloning."

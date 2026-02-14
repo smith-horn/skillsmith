@@ -278,8 +278,34 @@ export class QuarantineService {
     if (startTime) {
       const timeSinceStart = Date.now() - new Date(startTime).getTime()
       if (timeSinceStart > MULTI_APPROVAL_TIMEOUT_MS) {
+        // Capture existing approvals before clearing for audit
+        const expiredApprovals = this.approvalRepository.getPendingApprovals(quarantineId)
+
         // Reset approval workflow
         this.approvalRepository.clearApprovals(quarantineId)
+
+        // Log timeout event so cleared reviewer work is auditable
+        this.auditLogger.log({
+          event_type: 'quarantine_multi_approval_timeout',
+          actor: 'system',
+          resource: skillId,
+          action: 'timeout',
+          result: 'success',
+          metadata: {
+            quarantineId,
+            timeoutMs: MULTI_APPROVAL_TIMEOUT_MS,
+            expiredApprovals: expiredApprovals.map((a) => ({
+              reviewerId: a.reviewerId,
+              email: a.reviewerEmail,
+              approvedAt: a.createdAt,
+            })),
+            triggeredBy: {
+              userId: session.userId,
+              email: session.email,
+            },
+          },
+        })
+
         throw new QuarantineServiceError(
           'Multi-approval workflow timed out. Please start again.',
           'INVALID_INPUT',
@@ -292,7 +318,7 @@ export class QuarantineService {
     this.approvalRepository.recordApproval({
       skillId: quarantineId,
       reviewerId: session.userId,
-      reviewerRole: session.email,
+      reviewerEmail: session.email,
       decision: 'approved',
       reason: input.reviewNotes,
       requiredApprovals: MALICIOUS_APPROVAL_COUNT,
@@ -333,7 +359,7 @@ export class QuarantineService {
       // Perform the actual review
       const approverEmails = pendingApprovals
         .filter((a) => a.decision === 'approved')
-        .map((a) => a.reviewerRole)
+        .map((a) => a.reviewerEmail)
       const reviewResult = this.repository.review(quarantineId, {
         reviewedBy: approverEmails.join(', '),
         reviewStatus: 'approved',
@@ -353,7 +379,7 @@ export class QuarantineService {
             .filter((a) => a.decision === 'approved')
             .map((a) => ({
               reviewerId: a.reviewerId,
-              email: a.reviewerRole,
+              email: a.reviewerEmail,
               approvedAt: a.createdAt,
             })),
         },
@@ -498,21 +524,23 @@ export class QuarantineService {
     quarantineId: string,
     approvals: Array<{
       reviewerId: string
-      reviewerRole: string
+      reviewerEmail: string
       createdAt: string
+      completedAt: string | null
       reason: string | null
       isComplete: boolean
     }>
   ): MultiApprovalStatus {
     const currentApprovals: ApprovalRecord[] = approvals.map((a) => ({
       reviewerId: a.reviewerId,
-      reviewerEmail: a.reviewerRole,
+      reviewerEmail: a.reviewerEmail,
       approvedAt: new Date(a.createdAt),
       notes: a.reason ?? undefined,
     }))
 
     const startedAt = approvals.length > 0 ? new Date(approvals[0].createdAt) : new Date()
     const isComplete = approvals.some((a) => a.isComplete)
+    const completedEntry = approvals.find((a) => a.completedAt)
 
     return {
       quarantineId,
@@ -520,7 +548,7 @@ export class QuarantineService {
       currentApprovals,
       isComplete,
       startedAt,
-      completedAt: isComplete ? new Date() : undefined,
+      completedAt: completedEntry ? new Date(completedEntry.completedAt!) : undefined,
     }
   }
 }

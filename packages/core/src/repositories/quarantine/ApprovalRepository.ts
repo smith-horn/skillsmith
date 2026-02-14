@@ -22,10 +22,11 @@ export interface ApprovalRow {
   id: string
   skill_id: string
   reviewer_id: string
-  reviewer_role: string
+  reviewer_email: string
   decision: 'approved' | 'rejected'
   reason: string | null
   created_at: string
+  completed_at: string | null
   required_approvals: number
   is_complete: number // SQLite uses 0/1 for booleans
 }
@@ -37,10 +38,11 @@ export interface ApprovalEntry {
   id: string
   skillId: string
   reviewerId: string
-  reviewerRole: string
+  reviewerEmail: string
   decision: 'approved' | 'rejected'
   reason: string | null
   createdAt: string
+  completedAt: string | null
   requiredApprovals: number
   isComplete: boolean
 }
@@ -51,7 +53,7 @@ export interface ApprovalEntry {
 export interface RecordApprovalInput {
   skillId: string
   reviewerId: string
-  reviewerRole: string
+  reviewerEmail: string
   decision: 'approved' | 'rejected'
   reason?: string
   requiredApprovals?: number
@@ -63,10 +65,10 @@ export interface RecordApprovalInput {
 
 const INSERT_APPROVAL_QUERY = `
   INSERT INTO quarantine_approvals (
-    id, skill_id, reviewer_id, reviewer_role, decision, reason,
+    id, skill_id, reviewer_id, reviewer_email, decision, reason,
     created_at, required_approvals, is_complete
   )
-  VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, 0)
+  VALUES (?, ?, ?, ?, ?, ?, datetime('now') || 'Z', ?, 0)
 `
 
 const SELECT_BY_SKILL_ID_QUERY = `
@@ -93,7 +95,7 @@ const CHECK_REVIEWER_EXISTS_QUERY = `
 
 const MARK_COMPLETE_QUERY = `
   UPDATE quarantine_approvals
-  SET is_complete = 1
+  SET is_complete = 1, completed_at = datetime('now') || 'Z'
   WHERE skill_id = ? AND is_complete = 0
 `
 
@@ -167,7 +169,7 @@ export class ApprovalRepository {
         id,
         input.skillId,
         input.reviewerId,
-        input.reviewerRole,
+        input.reviewerEmail,
         input.decision,
         input.reason ?? null,
         requiredApprovals
@@ -297,10 +299,11 @@ function rowToEntry(row: ApprovalRow): ApprovalEntry {
     id: row.id,
     skillId: row.skill_id,
     reviewerId: row.reviewer_id,
-    reviewerRole: row.reviewer_role,
+    reviewerEmail: row.reviewer_email,
     decision: row.decision,
     reason: row.reason,
     createdAt: row.created_at,
+    completedAt: row.completed_at,
     requiredApprovals: row.required_approvals,
     isComplete: row.is_complete === 1,
   }

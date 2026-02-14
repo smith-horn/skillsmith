@@ -33,7 +33,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       const entry = repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-456',
-        reviewerRole: 'reviewer@example.com',
+        reviewerEmail: 'reviewer@example.com',
         decision: 'approved',
         reason: 'Code verified safe',
       })
@@ -41,7 +41,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       expect(entry.id).toBeDefined()
       expect(entry.skillId).toBe('quarantine-123')
       expect(entry.reviewerId).toBe('user-456')
-      expect(entry.reviewerRole).toBe('reviewer@example.com')
+      expect(entry.reviewerEmail).toBe('reviewer@example.com')
       expect(entry.decision).toBe('approved')
       expect(entry.reason).toBe('Code verified safe')
       expect(entry.isComplete).toBe(false)
@@ -53,7 +53,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       const entry = repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-456',
-        reviewerRole: 'reviewer@example.com',
+        reviewerEmail: 'reviewer@example.com',
         decision: 'rejected',
         reason: 'Confirmed malicious',
       })
@@ -65,7 +65,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       const entry = repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-456',
-        reviewerRole: 'reviewer@example.com',
+        reviewerEmail: 'reviewer@example.com',
         decision: 'approved',
       })
 
@@ -76,7 +76,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       const entry = repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-456',
-        reviewerRole: 'reviewer@example.com',
+        reviewerEmail: 'reviewer@example.com',
         decision: 'approved',
         requiredApprovals: 3,
       })
@@ -88,14 +88,14 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-2',
-        reviewerRole: 'reviewer2@example.com',
+        reviewerEmail: 'reviewer2@example.com',
         decision: 'approved',
       })
 
@@ -118,7 +118,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
         reason: 'First',
       })
@@ -126,7 +126,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-2',
-        reviewerRole: 'reviewer2@example.com',
+        reviewerEmail: 'reviewer2@example.com',
         decision: 'approved',
         reason: 'Second',
       })
@@ -141,14 +141,14 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-111',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
       repo.recordApproval({
         skillId: 'quarantine-222',
         reviewerId: 'user-2',
-        reviewerRole: 'reviewer2@example.com',
+        reviewerEmail: 'reviewer2@example.com',
         decision: 'approved',
       })
 
@@ -163,14 +163,14 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-2',
-        reviewerRole: 'reviewer2@example.com',
+        reviewerEmail: 'reviewer2@example.com',
         decision: 'approved',
       })
 
@@ -199,7 +199,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-456',
-        reviewerRole: 'reviewer@example.com',
+        reviewerEmail: 'reviewer@example.com',
         decision: 'approved',
       })
 
@@ -210,7 +210,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-456',
-        reviewerRole: 'reviewer@example.com',
+        reviewerEmail: 'reviewer@example.com',
         decision: 'approved',
       })
 
@@ -223,7 +223,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-111',
         reviewerId: 'user-456',
-        reviewerRole: 'reviewer@example.com',
+        reviewerEmail: 'reviewer@example.com',
         decision: 'approved',
       })
 
@@ -245,7 +245,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
@@ -256,14 +256,14 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-2',
-        reviewerRole: 'reviewer2@example.com',
+        reviewerEmail: 'reviewer2@example.com',
         decision: 'approved',
       })
 
@@ -274,14 +274,14 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-2',
-        reviewerRole: 'reviewer2@example.com',
+        reviewerEmail: 'reviewer2@example.com',
         decision: 'approved',
       })
 
@@ -293,14 +293,14 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-2',
-        reviewerRole: 'reviewer2@example.com',
+        reviewerEmail: 'reviewer2@example.com',
         decision: 'rejected',
       })
 
@@ -317,14 +317,14 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-2',
-        reviewerRole: 'reviewer2@example.com',
+        reviewerEmail: 'reviewer2@example.com',
         decision: 'approved',
       })
 
@@ -350,14 +350,14 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-2',
-        reviewerRole: 'reviewer2@example.com',
+        reviewerEmail: 'reviewer2@example.com',
         decision: 'approved',
       })
 
@@ -372,14 +372,14 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-111',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
       repo.recordApproval({
         skillId: 'quarantine-222',
         reviewerId: 'user-2',
-        reviewerRole: 'reviewer2@example.com',
+        reviewerEmail: 'reviewer2@example.com',
         decision: 'approved',
       })
 
@@ -408,7 +408,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
@@ -421,7 +421,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
@@ -444,14 +444,14 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-2',
-        reviewerRole: 'reviewer2@example.com',
+        reviewerEmail: 'reviewer2@example.com',
         decision: 'rejected',
       })
 
@@ -462,13 +462,110 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
       repo.markComplete('quarantine-123')
 
       expect(repo.getPendingApprovalCount('quarantine-123')).toBe(0)
+    })
+  })
+
+  // ==========================================================================
+  // Duplicate Reviewer Enforcement (unique index)
+  // ==========================================================================
+
+  describe('duplicate reviewer enforcement', () => {
+    it('should reject duplicate reviewer for same pending skill', () => {
+      repo.recordApproval({
+        skillId: 'quarantine-123',
+        reviewerId: 'user-1',
+        reviewerEmail: 'reviewer1@example.com',
+        decision: 'approved',
+      })
+
+      expect(() =>
+        repo.recordApproval({
+          skillId: 'quarantine-123',
+          reviewerId: 'user-1',
+          reviewerEmail: 'reviewer1@example.com',
+          decision: 'approved',
+        })
+      ).toThrow() // UNIQUE constraint violation
+    })
+
+    it('should allow same reviewer after previous round is completed', () => {
+      repo.recordApproval({
+        skillId: 'quarantine-123',
+        reviewerId: 'user-1',
+        reviewerEmail: 'reviewer1@example.com',
+        decision: 'approved',
+      })
+
+      // Complete the first round
+      repo.markComplete('quarantine-123')
+
+      // Same reviewer can now approve in a new round
+      const entry = repo.recordApproval({
+        skillId: 'quarantine-123',
+        reviewerId: 'user-1',
+        reviewerEmail: 'reviewer1@example.com',
+        decision: 'approved',
+      })
+
+      expect(entry.reviewerId).toBe('user-1')
+    })
+
+    it('should allow same reviewer for different skills', () => {
+      repo.recordApproval({
+        skillId: 'quarantine-111',
+        reviewerId: 'user-1',
+        reviewerEmail: 'reviewer1@example.com',
+        decision: 'approved',
+      })
+
+      // Different skill, same reviewer — should work
+      const entry = repo.recordApproval({
+        skillId: 'quarantine-222',
+        reviewerId: 'user-1',
+        reviewerEmail: 'reviewer1@example.com',
+        decision: 'approved',
+      })
+
+      expect(entry.skillId).toBe('quarantine-222')
+    })
+  })
+
+  // ==========================================================================
+  // Completed At Timestamp
+  // ==========================================================================
+
+  describe('completedAt timestamp', () => {
+    it('should be null for pending approvals', () => {
+      const entry = repo.recordApproval({
+        skillId: 'quarantine-123',
+        reviewerId: 'user-1',
+        reviewerEmail: 'reviewer1@example.com',
+        decision: 'approved',
+      })
+
+      expect(entry.completedAt).toBeNull()
+    })
+
+    it('should be set when markComplete is called', () => {
+      repo.recordApproval({
+        skillId: 'quarantine-123',
+        reviewerId: 'user-1',
+        reviewerEmail: 'reviewer1@example.com',
+        decision: 'approved',
+      })
+
+      repo.markComplete('quarantine-123')
+
+      const approvals = repo.getApprovals('quarantine-123')
+      expect(approvals[0].completedAt).toBeDefined()
+      expect(approvals[0].completedAt).not.toBeNull()
     })
   })
 
@@ -482,7 +579,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
@@ -499,7 +596,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-1',
-        reviewerRole: 'reviewer1@example.com',
+        reviewerEmail: 'reviewer1@example.com',
         decision: 'approved',
       })
 
@@ -510,7 +607,7 @@ describe('SMI-2277: ApprovalRepository', () => {
       repo2.recordApproval({
         skillId: 'quarantine-123',
         reviewerId: 'user-2',
-        reviewerRole: 'reviewer2@example.com',
+        reviewerEmail: 'reviewer2@example.com',
         decision: 'approved',
       })
 
