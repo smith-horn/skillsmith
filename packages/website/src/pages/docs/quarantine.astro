@@ -142,14 +142,14 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <p>If you try to install a quarantined skill, you'll see different messages depending on severity:</p>
 
   <div class="callout warning">
-    <h4>MALICIOUS Skills</h4>
+    <p class="callout-heading">MALICIOUS Skills</p>
     <pre><code>{`Error: This skill has been quarantined for security reasons and cannot be installed.
 Reason: Security threat detected - jailbreak patterns found
 For more information, visit skillsmith.app/docs/quarantine`}</code></pre>
   </div>
 
   <div class="callout warning">
-    <h4>SUSPICIOUS Skills</h4>
+    <p class="callout-heading">SUSPICIOUS Skills</p>
     <pre><code>{`Warning: This skill is under review and cannot be installed yet.
 Reason: Accesses sensitive file patterns
 Review status: Pending (estimated 24-48 hours)
@@ -157,7 +157,7 @@ You will be notified when the review is complete.`}</code></pre>
   </div>
 
   <div class="callout">
-    <h4>RISKY Skills</h4>
+    <p class="callout-heading">RISKY Skills</p>
     <pre><code>{`Warning: This skill has been flagged for the following risks:
 - References external domain: api.example.com
 - Contains high-entropy content (possible obfuscation)

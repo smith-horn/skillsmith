@@ -192,7 +192,7 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <h2>Best Practices for Users</h2>
 
   <div class="callout">
-    <h4>1. Always Check Trust Tier</h4>
+    <p class="callout-heading">1. Always Check Trust Tier</p>
     <p>
       Before installing a skill, verify its <a href="/docs/trust-tiers">trust tier</a>:
     </p>
@@ -204,7 +204,7 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   </div>
 
   <div class="callout">
-    <h4>2. Review Unverified Skills</h4>
+    <p class="callout-heading">2. Review Unverified Skills</p>
     <p>For unverified skills, always check:</p>
     <ul>
       <li>Read the SKILL.md content for suspicious instructions</li>
@@ -214,14 +214,14 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   </div>
 
   <div class="callout">
-    <h4>3. Use Validation Before Manual Install</h4>
+    <p class="callout-heading">3. Use Validation Before Manual Install</p>
     <p>
       Use <code>skillsmith validate &lt;path&gt;</code> to run security scans on locally-downloaded skills.
     </p>
   </div>
 
   <div class="callout">
-    <h4>4. Keep Skillsmith Updated</h4>
+    <p class="callout-heading">4. Keep Skillsmith Updated</p>
     <p>
       New security patterns are added regularly. Update with:
       <code>npx @skillsmith/mcp-server@latest</code>

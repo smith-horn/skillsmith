@@ -264,17 +264,19 @@ if (pathSegments.length > 1) {
     border-left-color: #f59e0b;
   }
 
-  .docs-content .callout h4 {
+  .docs-content .callout .callout-heading {
+    font-size: 1rem;
+    font-weight: 600;
     color: #38bdf8;
     margin-top: 0;
     margin-bottom: 0.5rem;
   }
 
-  .docs-content .callout.warning h4 {
+  .docs-content .callout.warning .callout-heading {
     color: #fbbf24;
   }
 
-  .docs-content .callout p {
+  .docs-content .callout p:not(.callout-heading) {
     margin-bottom: 0;
   }
 

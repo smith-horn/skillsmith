@@ -102,7 +102,7 @@ EOF`}</code></pre>
   <p><strong>Step 3:</strong> Restart your MCP client to load the updated configuration.</p>
 
   <div class="callout">
-    <h4>Security Note</h4>
+    <p class="callout-heading">Security Note</p>
     <p>
       Never paste your API key directly in chat. Always configure it via one of the methods above.
       Your key will be used automatically for all Skillsmith API requests.
@@ -110,7 +110,7 @@ EOF`}</code></pre>
   </div>
 
   <div class="callout callout-warning">
-    <h4>Shell Exports Don't Work</h4>
+    <p class="callout-heading">Shell Exports Don't Work</p>
     <p>
       Running <code>export SKILLSMITH_API_KEY=...</code> in your terminal does NOT pass the variable
       to MCP servers. MCP servers run as subprocesses and don't inherit your
@@ -389,14 +389,14 @@ Assistant: [Uses compare tool] Here's a comparison:
   <h3>Server Not Starting</h3>
 
   <div class="callout">
-    <h4>Check Node.js Version</h4>
+    <p class="callout-heading">Check Node.js Version</p>
     <p>Ensure you have Node.js 18+ installed. Run <code>node --version</code> to verify.</p>
   </div>
 
   <h3>Tools Not Available</h3>
 
   <div class="callout">
-    <h4>Verify Configuration</h4>
+    <p class="callout-heading">Verify Configuration</p>
     <p>
       Ensure your <code>~/.claude/settings.json</code> is valid JSON and the
       MCP server configuration is correct. Restart your MCP client after changes.
