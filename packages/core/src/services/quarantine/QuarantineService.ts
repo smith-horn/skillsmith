@@ -1,5 +1,6 @@
 /**
  * SMI-2269: Quarantine Service with Authentication
+ * SMI-2277: Persist multi-approval state to database
  *
  * Service layer for quarantine operations that enforces authentication
  * and authorization. Wraps QuarantineRepository with security controls.
@@ -13,11 +14,13 @@
  * - Enforces security_reviewer permission for review access
  * - Multi-approval workflow for MALICIOUS severity
  * - Audit logs include verified reviewer identity
+ * - Approval state persisted to database (survives restarts)
  *
  * @module @skillsmith/core/services/quarantine/QuarantineService
  */
 
 import type { QuarantineRepository } from '../../repositories/quarantine/index.js'
+import type { ApprovalRepository } from '../../repositories/quarantine/ApprovalRepository.js'
 import type { AuditLogger } from '../../security/AuditLogger.js'
 import type {
   AuthenticatedSession,
@@ -54,10 +57,11 @@ const MULTI_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000
  * - Permission checks (security_reviewer role)
  * - Multi-approval workflow for MALICIOUS severity
  * - Audit logging with verified identities
+ * - Database-persisted approval state (SMI-2277)
  *
  * @example
  * ```typescript
- * const service = new QuarantineService(repository, auditLogger)
+ * const service = new QuarantineService(repository, approvalRepository, auditLogger)
  *
  * // Review a quarantined skill (requires authentication)
  * const result = await service.review(
@@ -68,16 +72,9 @@ const MULTI_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000
  * ```
  */
 export class QuarantineService {
-  /**
-   * In-memory store for pending multi-approvals
-   * Key: quarantineId, Value: MultiApprovalStatus
-   *
-   * Note: In production, this should be persisted to database
-   */
-  private pendingApprovals: Map<string, MultiApprovalStatus> = new Map()
-
   constructor(
     private readonly repository: QuarantineRepository,
+    private readonly approvalRepository: ApprovalRepository,
     private readonly auditLogger: AuditLogger
   ) {}
 
@@ -247,6 +244,9 @@ export class QuarantineService {
    * before a skill can be unquarantined. This prevents single
    * reviewer compromise from allowing malicious skills.
    *
+   * Approval state is persisted to the database (SMI-2277) so
+   * pending approvals survive service restarts.
+   *
    * @param session - Authenticated session
    * @param quarantineId - Quarantine entry ID
    * @param skillId - Skill ID
@@ -262,52 +262,74 @@ export class QuarantineService {
     // Require elevated permission for MALICIOUS review
     requirePermission(session, 'quarantine:review_malicious')
 
-    // Get or create pending approval status
-    let approvalStatus = this.pendingApprovals.get(quarantineId)
-
-    if (!approvalStatus) {
-      // Start new multi-approval workflow
-      approvalStatus = {
-        quarantineId,
-        requiredApprovals: MALICIOUS_APPROVAL_COUNT,
-        currentApprovals: [],
-        isComplete: false,
-        startedAt: new Date(),
-      }
-      this.pendingApprovals.set(quarantineId, approvalStatus)
-    }
-
-    // Check if this reviewer already approved
-    const existingApproval = approvalStatus.currentApprovals.find(
-      (a) => a.reviewerId === session.userId
-    )
-    if (existingApproval) {
+    // Check if this reviewer already approved (database-backed)
+    if (this.approvalRepository.hasReviewerApproved(quarantineId, session.userId)) {
+      // Retrieve existing approval for error details
+      const existingApprovals = this.approvalRepository.getPendingApprovals(quarantineId)
+      const existing = existingApprovals.find((a) => a.reviewerId === session.userId)
       throw new QuarantineServiceError('You have already approved this entry', 'ALREADY_REVIEWED', {
         quarantineId,
-        previousApprovalAt: existingApproval.approvedAt.toISOString(),
+        previousApprovalAt: existing?.createdAt ?? 'unknown',
       })
     }
 
     // Check for approval timeout
-    const timeSinceStart = Date.now() - approvalStatus.startedAt.getTime()
-    if (timeSinceStart > MULTI_APPROVAL_TIMEOUT_MS) {
-      // Reset approval workflow
-      this.pendingApprovals.delete(quarantineId)
-      throw new QuarantineServiceError(
-        'Multi-approval workflow timed out. Please start again.',
-        'INVALID_INPUT',
-        { quarantineId, timeoutMs: MULTI_APPROVAL_TIMEOUT_MS }
-      )
+    const startTime = this.approvalRepository.getWorkflowStartTime(quarantineId)
+    if (startTime) {
+      const timeSinceStart = Date.now() - new Date(startTime).getTime()
+      if (timeSinceStart > MULTI_APPROVAL_TIMEOUT_MS) {
+        // Capture existing approvals before clearing for audit
+        const expiredApprovals = this.approvalRepository.getPendingApprovals(quarantineId)
+
+        // Reset approval workflow
+        this.approvalRepository.clearApprovals(quarantineId)
+
+        // Log timeout event so cleared reviewer work is auditable
+        this.auditLogger.log({
+          event_type: 'quarantine_multi_approval_timeout',
+          actor: 'system',
+          resource: skillId,
+          action: 'timeout',
+          result: 'success',
+          metadata: {
+            quarantineId,
+            timeoutMs: MULTI_APPROVAL_TIMEOUT_MS,
+            expiredApprovals: expiredApprovals.map((a) => ({
+              reviewerId: a.reviewerId,
+              email: a.reviewerEmail,
+              approvedAt: a.createdAt,
+            })),
+            triggeredBy: {
+              userId: session.userId,
+              email: session.email,
+            },
+          },
+        })
+
+        throw new QuarantineServiceError(
+          'Multi-approval workflow timed out. Please start again.',
+          'INVALID_INPUT',
+          { quarantineId, timeoutMs: MULTI_APPROVAL_TIMEOUT_MS }
+        )
+      }
     }
 
-    // Add this approval
-    const approval: ApprovalRecord = {
+    // Record this approval in the database
+    this.approvalRepository.recordApproval({
+      skillId: quarantineId,
       reviewerId: session.userId,
       reviewerEmail: session.email,
-      approvedAt: new Date(),
-      notes: input.reviewNotes,
-    }
-    approvalStatus.currentApprovals.push(approval)
+      decision: 'approved',
+      reason: input.reviewNotes,
+      requiredApprovals: MALICIOUS_APPROVAL_COUNT,
+    })
+
+    // Get current approval count and all pending approvals
+    const pendingApprovals = this.approvalRepository.getPendingApprovals(quarantineId)
+    const approvalCount = pendingApprovals.filter((a) => a.decision === 'approved').length
+
+    // Build the multi-approval status from database state
+    const approvalStatus = this.buildMultiApprovalStatus(quarantineId, pendingApprovals)
 
     // Log the approval
     this.auditLogger.log({
@@ -318,8 +340,8 @@ export class QuarantineService {
       result: 'success',
       metadata: {
         quarantineId,
-        approvalNumber: approvalStatus.currentApprovals.length,
-        requiredApprovals: approvalStatus.requiredApprovals,
+        approvalNumber: approvalCount,
+        requiredApprovals: MALICIOUS_APPROVAL_COUNT,
         reviewer: {
           userId: session.userId,
           email: session.email,
@@ -328,20 +350,21 @@ export class QuarantineService {
     })
 
     // Check if we have enough approvals
-    if (approvalStatus.currentApprovals.length >= approvalStatus.requiredApprovals) {
-      // Complete the approval workflow
+    if (approvalCount >= MALICIOUS_APPROVAL_COUNT) {
+      // Mark approvals as complete in database
+      this.approvalRepository.markComplete(quarantineId)
       approvalStatus.isComplete = true
       approvalStatus.completedAt = new Date()
 
       // Perform the actual review
+      const approverEmails = pendingApprovals
+        .filter((a) => a.decision === 'approved')
+        .map((a) => a.reviewerEmail)
       const reviewResult = this.repository.review(quarantineId, {
-        reviewedBy: approvalStatus.currentApprovals.map((a) => a.reviewerEmail).join(', '),
+        reviewedBy: approverEmails.join(', '),
         reviewStatus: 'approved',
-        reviewNotes: `Multi-approval complete: ${approvalStatus.currentApprovals.length} reviewers approved. ${input.reviewNotes || ''}`,
+        reviewNotes: `Multi-approval complete: ${approvalCount} reviewers approved. ${input.reviewNotes || ''}`,
       })
-
-      // Clean up pending approval
-      this.pendingApprovals.delete(quarantineId)
 
       // Log completion
       this.auditLogger.log({
@@ -352,11 +375,13 @@ export class QuarantineService {
         result: 'success',
         metadata: {
           quarantineId,
-          approvals: approvalStatus.currentApprovals.map((a) => ({
-            reviewerId: a.reviewerId,
-            email: a.reviewerEmail,
-            approvedAt: a.approvedAt.toISOString(),
-          })),
+          approvals: pendingApprovals
+            .filter((a) => a.decision === 'approved')
+            .map((a) => ({
+              reviewerId: a.reviewerId,
+              email: a.reviewerEmail,
+              approvedAt: a.createdAt,
+            })),
         },
       })
 
@@ -368,7 +393,7 @@ export class QuarantineService {
         canImport: reviewResult?.canImport ?? false,
         warnings: [
           'MALICIOUS skill approved through multi-approval workflow',
-          `Approved by: ${approvalStatus.currentApprovals.map((a) => a.reviewerEmail).join(', ')}`,
+          `Approved by: ${approverEmails.join(', ')}`,
         ],
         reviewedBy: {
           userId: session.userId,
@@ -387,8 +412,8 @@ export class QuarantineService {
       severity: 'MALICIOUS',
       canImport: false,
       warnings: [
-        `Multi-approval in progress: ${approvalStatus.currentApprovals.length}/${approvalStatus.requiredApprovals} approvals received`,
-        `Requires ${approvalStatus.requiredApprovals - approvalStatus.currentApprovals.length} more approval(s)`,
+        `Multi-approval in progress: ${approvalCount}/${MALICIOUS_APPROVAL_COUNT} approvals received`,
+        `Requires ${MALICIOUS_APPROVAL_COUNT - approvalCount} more approval(s)`,
       ],
       reviewedBy: {
         userId: session.userId,
@@ -411,7 +436,13 @@ export class QuarantineService {
     quarantineId: string
   ): MultiApprovalStatus | null {
     requirePermission(session, 'quarantine:read')
-    return this.pendingApprovals.get(quarantineId) ?? null
+
+    const pendingApprovals = this.approvalRepository.getPendingApprovals(quarantineId)
+    if (pendingApprovals.length === 0) {
+      return null
+    }
+
+    return this.buildMultiApprovalStatus(quarantineId, pendingApprovals)
   }
 
   /**
@@ -424,12 +455,12 @@ export class QuarantineService {
   cancelMultiApproval(session: AuthenticatedSession, quarantineId: string): boolean {
     requirePermission(session, 'quarantine:admin')
 
-    const status = this.pendingApprovals.get(quarantineId)
-    if (!status) {
+    const pendingApprovals = this.approvalRepository.getPendingApprovals(quarantineId)
+    if (pendingApprovals.length === 0) {
       return false
     }
 
-    this.pendingApprovals.delete(quarantineId)
+    this.approvalRepository.clearApprovals(quarantineId)
 
     this.auditLogger.log({
       event_type: 'quarantine_multi_approval_cancelled',
@@ -440,7 +471,7 @@ export class QuarantineService {
       metadata: {
         quarantineId,
         cancelledBy: session.email,
-        pendingApprovals: status.currentApprovals.length,
+        pendingApprovals: pendingApprovals.length,
       },
     })
 
@@ -474,8 +505,50 @@ export class QuarantineService {
     requirePermission(session, 'quarantine:delete')
 
     // Cancel any pending multi-approval
-    this.pendingApprovals.delete(id)
+    this.approvalRepository.clearApprovals(id)
 
     return this.repository.delete(id)
+  }
+
+  // ==========================================================================
+  // Private Helpers
+  // ==========================================================================
+
+  /**
+   * Build a MultiApprovalStatus from database rows
+   *
+   * Converts persisted approval entries into the MultiApprovalStatus
+   * interface expected by consumers.
+   */
+  private buildMultiApprovalStatus(
+    quarantineId: string,
+    approvals: Array<{
+      reviewerId: string
+      reviewerEmail: string
+      createdAt: string
+      completedAt: string | null
+      reason: string | null
+      isComplete: boolean
+    }>
+  ): MultiApprovalStatus {
+    const currentApprovals: ApprovalRecord[] = approvals.map((a) => ({
+      reviewerId: a.reviewerId,
+      reviewerEmail: a.reviewerEmail,
+      approvedAt: new Date(a.createdAt),
+      notes: a.reason ?? undefined,
+    }))
+
+    const startedAt = approvals.length > 0 ? new Date(approvals[0].createdAt) : new Date()
+    const isComplete = approvals.some((a) => a.isComplete)
+    const completedEntry = approvals.find((a) => a.completedAt)
+
+    return {
+      quarantineId,
+      requiredApprovals: MALICIOUS_APPROVAL_COUNT,
+      currentApprovals,
+      isComplete,
+      startedAt,
+      completedAt: completedEntry ? new Date(completedEntry.completedAt!) : undefined,
+    }
   }
 }

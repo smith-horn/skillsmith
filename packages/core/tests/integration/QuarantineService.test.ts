@@ -16,6 +16,7 @@ import type {
   QuarantinePermission,
 } from '../../src/services/quarantine/types.js'
 import { QuarantineRepository } from '../../src/repositories/quarantine/index.js'
+import { ApprovalRepository } from '../../src/repositories/quarantine/index.js'
 import { AuditLogger } from '../../src/security/AuditLogger.js'
 import { createDatabaseSync } from '../../src/db/createDatabase.js'
 import type { Database } from '../../src/db/database-interface.js'
@@ -62,6 +63,7 @@ function createExpiredSession(): AuthenticatedSession {
 describe('SMI-2269: QuarantineService Authentication', () => {
   let db: Database
   let repository: QuarantineRepository
+  let approvalRepository: ApprovalRepository
   let auditLogger: AuditLogger
   let service: QuarantineService
 
@@ -70,7 +72,8 @@ describe('SMI-2269: QuarantineService Authentication', () => {
     db = createDatabaseSync(':memory:')
     auditLogger = new AuditLogger(db)
     repository = new QuarantineRepository(db, auditLogger)
-    service = new QuarantineService(repository, auditLogger)
+    approvalRepository = new ApprovalRepository(db)
+    service = new QuarantineService(repository, approvalRepository, auditLogger)
   })
 
   afterEach(() => {
@@ -426,6 +429,66 @@ describe('SMI-2269: QuarantineService Authentication', () => {
       expect(status).not.toBeNull()
       expect(status?.currentApprovals.length).toBe(1)
       expect(status?.isComplete).toBe(false)
+    })
+  })
+
+  // ==========================================================================
+  // Timeout Tests
+  // ==========================================================================
+
+  describe('Multi-Approval Timeout', () => {
+    it('should reset workflow and log audit event when approval times out', () => {
+      const session1 = createSessionWithPermissions([
+        'quarantine:read',
+        'quarantine:review',
+        'quarantine:review_malicious',
+      ])
+      const session2 = createMockSession({
+        userId: 'user-456',
+        email: 'reviewer2@example.com',
+        permissions: ['quarantine:read', 'quarantine:review', 'quarantine:review_malicious'],
+      })
+
+      const entry = repository.create({
+        skillId: 'test/malicious-skill',
+        source: 'test',
+        quarantineReason: 'Malicious code detected',
+        severity: 'MALICIOUS',
+      })
+
+      // First approval
+      service.review(session1, entry.id, {
+        reviewStatus: 'approved',
+        reviewNotes: 'First approval',
+      })
+
+      // Manipulate the created_at timestamp to simulate 25 hours ago
+      db.prepare(
+        "UPDATE quarantine_approvals SET created_at = datetime('now', '-25 hours') || 'Z' WHERE skill_id = ?"
+      ).run(entry.id)
+
+      // Spy on audit logger
+      const logSpy = vi.spyOn(auditLogger, 'log')
+
+      // Second reviewer triggers timeout
+      expect(() =>
+        service.review(session2, entry.id, {
+          reviewStatus: 'approved',
+        })
+      ).toThrow('timed out')
+
+      // Verify timeout was audit-logged
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event_type: 'quarantine_multi_approval_timeout',
+          actor: 'system',
+          action: 'timeout',
+        })
+      )
+
+      // Verify approvals were cleared
+      const status = service.getMultiApprovalStatus(session1, entry.id)
+      expect(status).toBeNull()
     })
   })
 

@@ -22,6 +22,7 @@ export type AuditEventType =
   | 'quarantine_multi_approval'
   | 'quarantine_multi_approval_complete'
   | 'quarantine_multi_approval_cancelled'
+  | 'quarantine_multi_approval_timeout'
   // SMI-2279: Security feature flag override
   | 'security_feature_flag_override'
 
