@@ -70,6 +70,66 @@ Skillsmith implements the following security measures:
 | **Dependency Auditing** | npm audit in CI pipeline |
 | **ReDoS Prevention** | User-supplied regex capped at 200 characters |
 
+### Skill Security Scanner
+
+All skills pass through a multi-category static analysis scanner before indexing. The scanner detects:
+
+| Category | Examples | Severity |
+|----------|----------|----------|
+| Jailbreak patterns | "ignore previous instructions", "bypass safety" | Critical |
+| AI defence patterns (CVE-hardened) | Role injection, zero-width character obfuscation, encoded payloads | Critical |
+| Privilege escalation | `sudo -S`, `chmod 777`, sudoers manipulation | Critical |
+| Social engineering | "pretend to be", "roleplay as" | High |
+| Prompt leaking | "show me your system instructions", "reveal your prompt" | High |
+| Data exfiltration | `fetch` with query params, `WebSocket`, `sendBeacon` | High |
+| Sensitive file references | `.env`, `.ssh`, `.pem`, credentials | High |
+| Suspicious code patterns | `eval()`, `child_process`, `rm -rf`, pipe-to-shell | Medium |
+| URL/domain analysis | External URLs checked against allowlist | Medium |
+
+Findings are weighted by severity, category, and confidence. Documentation context (code blocks, tables) receives reduced confidence to minimize false positives.
+
+### Trust Tiers
+
+Skills are classified into six trust tiers that control scanner strictness and user consent requirements:
+
+| Tier | Risk Threshold | Verification |
+|------|---------------|--------------|
+| Verified | 70 | Publisher identity confirmed (GitHub org) |
+| Curated | 60 | Reviewed by Skillsmith team |
+| Community | 40 | Automated scans pass, has license + README |
+| Experimental | 25 | Beta/new, strict scanning |
+| Unknown | 20 | No verification, strictest scanning |
+| Local | 100 | User's own skills, no restrictions |
+
+### Quarantine System
+
+Skills flagged as malicious enter an authenticated quarantine workflow:
+
+1. Immediate removal from search results
+2. Installation blocked for all users
+3. Authenticated review queue with role-based access control
+4. Multi-approval required for MALICIOUS severity (2 independent reviewers)
+5. Full audit trail of all review actions
+
+### Installation-Time Security
+
+Even after indexing, skills are re-checked at install time:
+
+- **Quarantine re-check** — Status may have changed since indexing
+- **Live security scan** — Content scanned with tier-appropriate thresholds
+- **Content integrity** — SHA-256 hash for tamper detection on updates
+
+### Audit Logging
+
+All security-relevant events are logged:
+
+- Skill indexed (scan results, source, timestamp)
+- Scan findings (type, severity, sanitized content)
+- Quarantine actions (quarantined/approved/rejected, reviewer identity)
+- Installation events (user consent, trust tier at time)
+
+For the full security architecture deep-dive, see [Security, Quarantine, and Safe Skill Installation](https://skillsmith.app/blog/security-quarantine-safe-installation).
+
 ### Security Testing
 
 - Security-focused test suite in core package (`packages/core`: `npm run test:security`)

@@ -582,6 +582,43 @@ if (existsSync(PACKAGES_DIR)) {
   warn('packages directory not found - skipping dependency check')
 }
 
+// 13. SECURITY.md Feature Coverage (SMI-2498)
+console.log(`\n${BOLD}13. SECURITY.md Feature Coverage (SMI-2498)${RESET}`)
+
+const SECURITY_MD_PATH = 'SECURITY.md'
+if (existsSync(SECURITY_MD_PATH)) {
+  const securityMd = readFileSync(SECURITY_MD_PATH, 'utf8')
+
+  // Key security features that must be documented
+  const REQUIRED_FEATURES = [
+    { keyword: 'security@skillsmith.app', label: 'Security contact email' },
+    { keyword: 'Skill Security Scanner', label: 'Skill security scanner section' },
+    { keyword: 'Trust Tier', label: 'Trust tiers section' },
+    { keyword: 'Quarantine', label: 'Quarantine system section' },
+    { keyword: 'Supported Versions', label: 'Supported versions table' },
+    { keyword: '@skillsmith/core', label: 'Core package in scope' },
+    { keyword: '@skillsmith/mcp-server', label: 'MCP server package in scope' },
+    { keyword: '@skillsmith/cli', label: 'CLI package in scope' },
+    { keyword: '@smith-horn/enterprise', label: 'Enterprise package in scope' },
+    { keyword: 'Varlock', label: 'Varlock secret management' },
+    { keyword: 'execFileSync', label: 'Command injection prevention' },
+  ]
+
+  let secMissing = 0
+  for (const { keyword, label } of REQUIRED_FEATURES) {
+    if (!securityMd.includes(keyword)) {
+      fail(`SECURITY.md missing: ${label} (keyword: "${keyword}")`)
+      secMissing++
+    }
+  }
+
+  if (secMissing === 0) {
+    pass(`SECURITY.md covers all ${REQUIRED_FEATURES.length} required security features`)
+  }
+} else {
+  fail('SECURITY.md not found', 'Create at project root')
+}
+
 // Blog Content Checks
 console.log(`\n${BOLD}Blog Content${RESET}\n`)
 
