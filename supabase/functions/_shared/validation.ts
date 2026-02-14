@@ -1,0 +1,158 @@
+/**
+ * SMI-2271: GitHub parameter validation
+ * @module _shared/validation
+ *
+ * Prevents SSRF, path traversal, and injection attacks by validating
+ * GitHub owner, repo, and path parameters before URL construction.
+ *
+ * Attack vectors mitigated:
+ * - Path traversal via `../` or `..\` in owner/repo/path
+ * - SSRF if combined with other vulnerabilities
+ * - Log injection via special characters
+ * - Null byte injection
+ * - Backslash-based traversal on proxy/Windows systems
+ */
+
+/**
+ * Error thrown when GitHub parameter validation fails.
+ * Extends Error with a distinct name for catch-block filtering.
+ */
+export class ValidationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ValidationError'
+  }
+}
+
+/**
+ * Validate a GitHub owner or repository name.
+ *
+ * GitHub naming rules:
+ * - Alphanumeric characters, hyphens, underscores, and dots
+ * - Cannot start with a hyphen
+ * - Cannot contain `..` (path traversal)
+ * - Maximum 100 characters
+ *
+ * @param value - The owner or repo name to validate
+ * @returns true if the value is a valid GitHub identifier
+ */
+export function isValidGitHubIdentifier(value: string): boolean {
+  if (!value || typeof value !== 'string') {
+    return false
+  }
+
+  return (
+    /^[a-zA-Z0-9_.-]+$/.test(value) &&
+    value.length <= 100 &&
+    !value.includes('..') &&
+    !value.startsWith('-') &&
+    !value.startsWith('.') &&
+    !value.endsWith('.')
+  )
+}
+
+/**
+ * Validate a GitHub file path (e.g., path within a repository).
+ *
+ * Rejects paths containing:
+ * - `..` (directory traversal)
+ * - Null bytes
+ * - Double slashes (path confusion)
+ * - Leading slashes (absolute path injection)
+ * - Paths exceeding 500 characters
+ *
+ * @param path - The file path to validate
+ * @returns true if the path is safe for URL construction
+ */
+export function validateGitHubPath(path: string): boolean {
+  if (!path || typeof path !== 'string') {
+    return false
+  }
+
+  return (
+    !path.includes('..') &&
+    !path.includes('\0') &&
+    !path.includes('\\') &&
+    !path.includes('//') &&
+    !path.startsWith('/') &&
+    path.length <= 500
+  )
+}
+
+/**
+ * Validate GitHub owner, repo, and optional path parameters.
+ *
+ * This function MUST be called before constructing any GitHub URL
+ * from user-supplied or external data.
+ *
+ * @param owner - GitHub owner/organization name
+ * @param repo - GitHub repository name
+ * @param path - Optional path within the repository
+ * @throws {ValidationError} if any parameter is invalid
+ */
+export function validateGitHubParams(owner: string, repo: string, path?: string): void {
+  if (!isValidGitHubIdentifier(owner)) {
+    throw new ValidationError(`Invalid GitHub owner: ${sanitizeForLog(owner)}`)
+  }
+  if (!isValidGitHubIdentifier(repo)) {
+    throw new ValidationError(`Invalid GitHub repo: ${sanitizeForLog(repo)}`)
+  }
+  if (path !== undefined && path !== null && !validateGitHubPath(path)) {
+    throw new ValidationError(`Invalid GitHub path`)
+  }
+}
+
+/**
+ * Validate a GitHub topic string for search queries.
+ *
+ * Topics should be alphanumeric with hyphens only.
+ * Prevents injection into GitHub search query strings.
+ *
+ * @param topic - The topic string to validate
+ * @returns true if the topic is safe for use in search queries
+ */
+export function isValidGitHubTopic(topic: string): boolean {
+  if (!topic || typeof topic !== 'string') {
+    return false
+  }
+
+  return /^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(topic) && topic.length <= 50
+}
+
+/**
+ * Validate a git branch name (from GitHub API default_branch).
+ * Rejects path traversal, null bytes, control characters, and excessive length.
+ */
+export function isValidBranchName(branch: string): boolean {
+  if (!branch || typeof branch !== 'string') return false
+  return (
+    branch.length <= 256 &&
+    !branch.includes('..') &&
+    !branch.includes('\0') &&
+    !branch.includes('~') &&
+    !branch.includes('^') &&
+    !branch.includes(':') &&
+    !branch.includes('\\') &&
+    !branch.includes(' ') &&
+    // eslint-disable-next-line no-control-regex
+    !/[\x00-\x1f\x7f]/.test(branch) &&
+    !branch.startsWith('/') &&
+    !branch.endsWith('/') &&
+    !branch.endsWith('.lock') &&
+    !branch.startsWith('.')
+  )
+}
+
+/**
+ * Sanitize a string for safe inclusion in log messages.
+ * Truncates to 80 characters, removes control characters.
+ */
+export function sanitizeForLog(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '<empty>'
+  }
+  const str = String(value)
+  // eslint-disable-next-line no-control-regex
+  const cleaned = str.replace(/[\x00-\x1f\x7f]/g, '')
+  return cleaned.substring(0, 80)
+}

@@ -1,0 +1,73 @@
+# Blog Implementation - Wave 2: Content & Pages
+# SMI-1728: Implement blog system with first article
+# Execute: npx claude-flow swarm --config .claude/hive-mind/blog-wave-2.yaml
+# REQUIRES: Wave 1 complete
+
+name: "Blog Wave 2: Content & Pages"
+description: "Implement blog pages and publish first article"
+
+resources:
+  max_agents: 2
+  profile: laptop
+  timeout: 45m
+
+prerequisites:
+  - "Wave 1 complete (content config, layout, images, nav)"
+  - "src/content/config.ts exists"
+  - "src/layouts/BlogLayout.astro exists"
+  - "public/blog/images/*.png exist (10 files)"
+
+agents:
+  - type: frontend-developer
+    role: lead
+    tasks:
+      - "Create src/components/BlogPostCard.astro for listing cards"
+      - "Replace src/pages/blog/index.astro with content collection listing"
+      - "Create src/pages/blog/[...slug].astro for individual posts"
+      - "Add reading time calculation"
+      - "Add JSON-LD BlogPosting schema"
+      - "Add Open Graph meta tags"
+    context:
+      - "packages/website/src/layouts/BlogLayout.astro"
+      - "packages/website/src/content/config.ts"
+      - "packages/website/src/pages/skills/index.astro"
+      - "packages/website/src/pages/docs/getting-started.astro"
+
+  - type: documentation-writer
+    role: support
+    tasks:
+      - "Create src/content/blog/agent-skill-framework.md"
+      - "Convert docs/articles/agent-skill-framework.md content"
+      - "Update image paths from images/*.png to /blog/images/*.png"
+      - "Add proper frontmatter (title, description, author, date, tags)"
+    context:
+      - "docs/articles/agent-skill-framework.md"
+
+quality:
+  require_tests: false
+  governance_review: after_wave
+  docker_build: true
+
+verification:
+  commands:
+    - "docker exec skillsmith-dev-1 npm run build"
+    - "docker exec skillsmith-dev-1 npm run typecheck"
+  checks:
+    - "/blog returns 200"
+    - "/blog/agent-skill-framework returns 200"
+    - "BlogPosting JSON-LD present"
+    - "All 10 images render"
+
+acceptance_criteria:
+  - "/blog shows article listing with cards"
+  - "/blog/agent-skill-framework renders full article"
+  - "All 10 diagrams display correctly"
+  - "Reading time shows (e.g., '15 min read')"
+  - "JSON-LD BlogPosting schema present"
+  - "Open Graph tags render correctly"
+  - "Docker build passes without errors"
+
+on_complete:
+  - update_linear: SMI-1728
+  - status: Done
+  - message: "Blog implementation complete! Visit /blog to verify."

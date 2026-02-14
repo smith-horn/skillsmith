@@ -1,0 +1,46 @@
+# Blog Implementation - Wave 1: Infrastructure
+# SMI-1728: Implement blog system with first article
+# Execute: ./start-hive-mind.sh or npx claude-flow swarm --config .claude/hive-mind/blog-wave-1.yaml
+
+name: "Blog Wave 1: Infrastructure"
+description: "Set up foundation for blog system - content collections, layout, images, navigation"
+
+resources:
+  max_agents: 2
+  profile: laptop
+  timeout: 30m
+
+agents:
+  - type: frontend-developer
+    role: lead
+    tasks:
+      - "Create src/content/config.ts with Zod schema for blog collection"
+      - "Create src/layouts/BlogLayout.astro extending BaseLayout"
+      - "Add 'Blog' link to src/components/Header.astro before 'Docs'"
+    context:
+      - "packages/website/src/layouts/BaseLayout.astro"
+      - "packages/website/src/layouts/DocsLayout.astro"
+      - "packages/website/src/components/Header.astro"
+
+  - type: devops-engineer
+    role: support
+    tasks:
+      - "Copy 10 images from docs/articles/images/ to packages/website/public/blog/images/"
+      - "Verify images are accessible"
+    context:
+      - "docs/articles/images/"
+
+quality:
+  require_tests: false
+  governance_review: after_wave
+  docker_build: true
+
+acceptance_criteria:
+  - "Content collection schema validates frontmatter"
+  - "BlogLayout renders with proper styling"
+  - "All 10 images accessible at /blog/images/*.png"
+  - "Header shows: Skills | Pricing | Blog | Docs"
+
+on_complete:
+  - update_linear: SMI-1728
+  - message: "Wave 1 complete. Run blog-wave-2.yaml for content implementation."
