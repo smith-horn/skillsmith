@@ -602,6 +602,8 @@ if (existsSync(SECURITY_MD_PATH)) {
     { keyword: '@smith-horn/enterprise', label: 'Enterprise package in scope' },
     { keyword: 'Varlock', label: 'Varlock secret management' },
     { keyword: 'execFileSync', label: 'Command injection prevention' },
+    { keyword: 'ReDoS', label: 'ReDoS prevention' },
+    { keyword: 'git-crypt', label: 'Encrypted documentation' },
   ]
 
   let secMissing = 0
