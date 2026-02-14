@@ -57,4 +57,4 @@ Allow: /
 Sitemap: https://www.skillsmith.app/sitemap-index.xml
 
 # LLMs.txt - AI-specific site information
-# See: https://skillsmith.app/llms.txt
+# See: https://www.skillsmith.app/llms.txt

@@ -3,6 +3,7 @@ title: "From GitHub to Search Results: How Skillsmith Indexes and Curates Skills
 description: "A behind-the-scenes look at how Skillsmith discovers, scores, and indexes Claude Code skills—and how to optimize your skills for discovery"
 author: "Skillsmith Team"
 date: 2026-02-02
+updated: 2026-02-02
 category: "Engineering"
 tags: ["indexer", "search", "embeddings", "github", "scoring", "developers"]
 featured: true

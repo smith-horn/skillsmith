@@ -29,13 +29,13 @@ skillsmith list
 
 ## Key Pages
 
-- [Home](https://skillsmith.app/): Product overview and features
-- [Quickstart](https://skillsmith.app/docs/quickstart): First-time setup guide with two paths (MCP client recommended, CLI alternative)
-- [Skills Browser](https://skillsmith.app/skills): Browse and search available skills
-- [Pricing](https://skillsmith.app/pricing): Four tiers - Community (free, 1k API calls), Individual ($9.99, 10k), Team ($25/user, 100k), Enterprise ($55/user, unlimited)
-- [CLI Reference](https://skillsmith.app/docs/cli): Complete CLI command documentation
-- [MCP Server](https://skillsmith.app/docs/mcp-server): MCP integration configuration
-- [API Reference](https://skillsmith.app/docs/api): REST API documentation
+- [Home](https://www.skillsmith.app/): Product overview and features
+- [Quickstart](https://www.skillsmith.app/docs/quickstart): First-time setup guide with two paths (MCP client recommended, CLI alternative)
+- [Skills Browser](https://www.skillsmith.app/skills): Browse and search available skills
+- [Pricing](https://www.skillsmith.app/pricing): Four tiers - Community (free, 1k API calls), Individual ($9.99, 10k), Team ($25/user, 100k), Enterprise ($55/user, unlimited)
+- [CLI Reference](https://www.skillsmith.app/docs/cli): Complete CLI command documentation
+- [MCP Server](https://www.skillsmith.app/docs/mcp-server): MCP integration configuration
+- [API Reference](https://www.skillsmith.app/docs/api): REST API documentation
 
 ## What Are Skills?
 
@@ -99,9 +99,9 @@ Elastic License 2.0 (ELv2)
 
 ## Contact
 
-- Website: https://skillsmith.app
+- Website: https://www.skillsmith.app
 - GitHub: https://github.com/smith-horn/skillsmith
-- Contact: https://skillsmith.app/contact
+- Contact: https://www.skillsmith.app/contact
 
 ## Frequently Asked Questions
 
@@ -119,7 +119,7 @@ A: Add the Skillsmith MCP server to your settings.json, then ask your assistant 
 
 ## Optional
 
-- Logo: https://skillsmith.app/logo-icon.svg
-- Changelog: https://skillsmith.app/changelog
-- Terms: https://skillsmith.app/terms
-- Privacy: https://skillsmith.app/privacy
+- Logo: https://www.skillsmith.app/logo-icon.svg
+- Changelog: https://www.skillsmith.app/changelog
+- Terms: https://www.skillsmith.app/terms
+- Privacy: https://www.skillsmith.app/privacy
