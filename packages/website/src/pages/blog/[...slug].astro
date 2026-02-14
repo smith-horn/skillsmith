@@ -25,7 +25,7 @@ const { Content } = await post.render();
 const readingTime = calculateReadingTime(post.body ?? '');
 
 // Get site URL from Astro config (SMI-1733)
-const siteUrl = Astro.site?.toString().replace(/\/$/, '') || 'https://skillsmith.app';
+const siteUrl = Astro.site?.toString().replace(/\/$/, '') || 'https://www.skillsmith.app';
 
 // Format dates for JSON-LD
 const datePublished = post.data.date.toISOString();

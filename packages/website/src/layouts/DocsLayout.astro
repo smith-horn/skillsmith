@@ -14,7 +14,7 @@ const currentPath = Astro.url.pathname;
 // Build breadcrumb segments from URL path (SMI-2353)
 // Note: Assumes flat docs structure (/docs/page). Nested paths (e.g. /docs/category/page)
 // would need intermediate breadcrumb entries if the docs structure changes.
-const siteOrigin = Astro.site?.origin ?? 'https://skillsmith.app';
+const siteOrigin = Astro.site?.origin ?? 'https://www.skillsmith.app';
 const pathSegments = Astro.url.pathname.split('/').filter(Boolean);
 const breadcrumbs = [
   { name: 'Home', url: `${siteOrigin}/` },

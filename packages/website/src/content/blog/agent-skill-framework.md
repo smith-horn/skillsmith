@@ -3,6 +3,7 @@ title: "Composing Agents, Sub-Agents, Skills, and Sub-Skills: A Decision Framewo
 description: "The architecture decisions that determine whether your AI workflow scales or collapses"
 author: "Ryan Smith"
 date: 2026-01-23
+updated: 2026-01-23
 category: "Guides"
 tags: ["agents", "skills", "architecture", "claude-code", "context-window", "multi-agent"]
 featured: true

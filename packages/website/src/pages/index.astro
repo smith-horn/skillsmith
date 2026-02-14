@@ -19,6 +19,138 @@ import '../styles/global.css';
 
 // Get Supabase config for auth-aware navigation
 const supabaseConfig = getSupabaseConfig();
+
+// Dynamic priceValidUntil: always end of next year (SMI-2515)
+const priceValidUntil = `${new Date().getFullYear() + 1}-12-31`;
+
+// JSON-LD structured data (extracted from inline script for dynamic date support)
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://www.skillsmith.app/#organization",
+      "name": "Smith Horn Group",
+      "url": "https://www.skillsmith.app",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://www.skillsmith.app/logo-icon.svg"
+      },
+      "sameAs": [
+        "https://github.com/smith-horn/skillsmith"
+      ]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://www.skillsmith.app/#website",
+      "url": "https://www.skillsmith.app",
+      "name": "Skillsmith",
+      "description": "AI-powered agent skill discovery and management",
+      "publisher": {
+        "@id": "https://www.skillsmith.app/#organization"
+      },
+      "speakable": {
+        "@type": "SpeakableSpecification",
+        "cssSelector": ["h1", "section:first-of-type p"]
+      }
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://www.skillsmith.app/#software",
+      "name": "Skillsmith",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Cross-platform",
+      "description": "Discover, install, and manage agent skills. 14,000+ curated skills with semantic search, quality scores, and stack-aware recommendations.",
+      "url": "https://www.skillsmith.app",
+      "author": {
+        "@id": "https://www.skillsmith.app/#organization"
+      },
+      "offers": [
+        {
+          "@type": "Offer",
+          "name": "Community",
+          "price": "0",
+          "priceCurrency": "USD",
+          "priceValidUntil": priceValidUntil,
+          "description": "Free tier with 1,000 API calls/month"
+        },
+        {
+          "@type": "Offer",
+          "name": "Individual",
+          "price": "9.99",
+          "priceCurrency": "USD",
+          "priceValidUntil": priceValidUntil,
+          "billingDuration": "P1M",
+          "description": "10,000 API calls/month with analytics"
+        },
+        {
+          "@type": "Offer",
+          "name": "Team",
+          "price": "25",
+          "priceCurrency": "USD",
+          "priceValidUntil": priceValidUntil,
+          "billingDuration": "P1M",
+          "description": "100,000 API calls/month with team workspaces"
+        },
+        {
+          "@type": "Offer",
+          "name": "Enterprise",
+          "price": "55",
+          "priceCurrency": "USD",
+          "priceValidUntil": priceValidUntil,
+          "billingDuration": "P1M",
+          "description": "Unlimited API calls with SSO, RBAC, and audit logging"
+        }
+      ],
+      "featureList": [
+        "Semantic skill search",
+        "Quality scores (0-100)",
+        "Stack-aware recommendations",
+        "One-click installation",
+        "MCP server integration",
+        "CLI tool"
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://www.skillsmith.app/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What are agent skills?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Agent skills are reusable prompt-and-tool bundles that extend AI coding assistants like Claude Code. Each skill teaches your agent a new capability \u2014 from generating commits to running security audits \u2014 without writing custom prompts from scratch."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is Skillsmith free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. The Community tier is free forever with 1,000 API calls per month, semantic search, and one-click installation. No credit card required. Paid plans start at $9.99/month for higher limits and analytics."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What AI tools does Skillsmith work with?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Skillsmith works with any AI tool that supports the Model Context Protocol (MCP), including Claude Code, Claude Desktop, Cursor, Windsurf, and other MCP-compatible clients. Install the MCP server and your client discovers skills automatically."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I install a skill?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Add the Skillsmith MCP server to your client's settings.json, restart, then ask your AI assistant to search for and install skills. You can also use the Skillsmith CLI: run 'npx @skillsmith/cli search testing' to find skills, then 'npx @skillsmith/cli install author/skill-name' to install."
+          }
+        }
+      ]
+    }
+  ]
+};
 ---
 
 <!DOCTYPE html>
@@ -80,136 +212,8 @@ const supabaseConfig = getSupabaseConfig();
 
   <!-- NO TWITTER: Skillsmith has no Twitter/X account. Do not add twitter: meta tags. See standards-astro.md Section 12. -->
 
-  <!-- JSON-LD Structured Data -->
-  <script is:inline type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@graph": [
-      {
-        "@type": "Organization",
-        "@id": "https://www.skillsmith.app/#organization",
-        "name": "Smith Horn Group",
-        "url": "https://www.skillsmith.app",
-        "logo": {
-          "@type": "ImageObject",
-          "url": "https://www.skillsmith.app/logo-icon.svg"
-        },
-        "sameAs": [
-          "https://github.com/smith-horn/skillsmith"
-        ]
-      },
-      {
-        "@type": "WebSite",
-        "@id": "https://www.skillsmith.app/#website",
-        "url": "https://www.skillsmith.app",
-        "name": "Skillsmith",
-        "description": "AI-powered agent skill discovery and management",
-        "publisher": {
-          "@id": "https://www.skillsmith.app/#organization"
-        },
-        "speakable": {
-          "@type": "SpeakableSpecification",
-          "cssSelector": ["h1", "section:first-of-type p"]
-        }
-      },
-      {
-        "@type": "SoftwareApplication",
-        "@id": "https://www.skillsmith.app/#software",
-        "name": "Skillsmith",
-        "applicationCategory": "DeveloperApplication",
-        "operatingSystem": "Cross-platform",
-        "description": "Discover, install, and manage agent skills. 14,000+ curated skills with semantic search, quality scores, and stack-aware recommendations.",
-        "url": "https://www.skillsmith.app",
-        "author": {
-          "@id": "https://www.skillsmith.app/#organization"
-        },
-        "offers": [
-          {
-            "@type": "Offer",
-            "name": "Community",
-            "price": "0",
-            "priceCurrency": "USD",
-            "priceValidUntil": "2026-12-31",
-            "description": "Free tier with 1,000 API calls/month"
-          },
-          {
-            "@type": "Offer",
-            "name": "Individual",
-            "price": "9.99",
-            "priceCurrency": "USD",
-            "priceValidUntil": "2026-12-31",
-            "billingDuration": "P1M",
-            "description": "10,000 API calls/month with analytics"
-          },
-          {
-            "@type": "Offer",
-            "name": "Team",
-            "price": "25",
-            "priceCurrency": "USD",
-            "priceValidUntil": "2026-12-31",
-            "billingDuration": "P1M",
-            "description": "100,000 API calls/month with team workspaces"
-          },
-          {
-            "@type": "Offer",
-            "name": "Enterprise",
-            "price": "55",
-            "priceCurrency": "USD",
-            "priceValidUntil": "2026-12-31",
-            "billingDuration": "P1M",
-            "description": "Unlimited API calls with SSO, RBAC, and audit logging"
-          }
-        ],
-        "featureList": [
-          "Semantic skill search",
-          "Quality scores (0-100)",
-          "Stack-aware recommendations",
-          "One-click installation",
-          "MCP server integration",
-          "CLI tool"
-        ]
-      },
-      {
-        "@type": "FAQPage",
-        "@id": "https://www.skillsmith.app/#faq",
-        "mainEntity": [
-          {
-            "@type": "Question",
-            "name": "What are agent skills?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Agent skills are reusable prompt-and-tool bundles that extend AI coding assistants like Claude Code. Each skill teaches your agent a new capability — from generating commits to running security audits — without writing custom prompts from scratch."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Is Skillsmith free?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Yes. The Community tier is free forever with 1,000 API calls per month, semantic search, and one-click installation. No credit card required. Paid plans start at $9.99/month for higher limits and analytics."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "What AI tools does Skillsmith work with?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Skillsmith works with any AI tool that supports the Model Context Protocol (MCP), including Claude Code, Claude Desktop, Cursor, Windsurf, and other MCP-compatible clients. Install the MCP server and your client discovers skills automatically."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "How do I install a skill?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Add the Skillsmith MCP server to your client's settings.json, restart, then ask your AI assistant to search for and install skills. You can also use the Skillsmith CLI: run 'npx @skillsmith/cli search testing' to find skills, then 'npx @skillsmith/cli install author/skill-name' to install."
-            }
-          }
-        ]
-      }
-    ]
-  }
-  </script>
+  <!-- JSON-LD Structured Data (SMI-2515: dynamic priceValidUntil via set:html) -->
+  <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
 </head>
 
 <body class="bg-dark-950 text-dark-50 font-sans antialiased">
