@@ -378,6 +378,34 @@ const formattedUpdated = updated ? formatDate(updated) : null;
     margin: 2.5rem 0;
   }
 
+  /* Shiki code comment contrast fix (github-dark #6A737D fails WCAG AA on dark bg) */
+  .prose-content pre code span[style*="color:#6A737D"] {
+    color: #8B949E !important;
+  }
+
+  /* Task-list checkbox accessibility: decorative disabled checkboxes from markdown checklists */
+  .prose-content .contains-task-list {
+    list-style: none;
+    padding-left: 0;
+  }
+
+  .prose-content .task-list-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .prose-content .task-list-item input[type="checkbox"] {
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    margin-top: 0.25rem;
+    border: 1.5px solid #64748b;
+    border-radius: 0.25rem;
+    background: transparent;
+    flex-shrink: 0;
+  }
+
   /* Superscript footnotes */
   .prose-content sup {
     font-size: 0.75rem;
