@@ -85,6 +85,9 @@ const supabaseConfig = getSupabaseConfig();
     <!-- Slot for page-specific head content (JSON-LD, etc.) -->
     <slot name="head" />
 
+    <!-- RSS feed discovery (SMI-2532) -->
+    <link rel="alternate" type="application/rss+xml" title="Skillsmith Blog" href="/blog/rss.xml" />
+
     <!-- Enable smooth page transitions without full reload -->
     <ClientRouter />
 

@@ -215,6 +215,9 @@ const jsonLd = {
 
   <!-- NO TWITTER: Skillsmith has no Twitter/X account. Do not add twitter: meta tags. See standards-astro.md Section 12. -->
 
+  <!-- RSS feed discovery (SMI-2532) -->
+  <link rel="alternate" type="application/rss+xml" title="Skillsmith Blog" href="/blog/rss.xml" />
+
   <!-- JSON-LD Structured Data (SMI-2515: dynamic priceValidUntil via set:html) -->
   <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
 </head>

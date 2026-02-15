@@ -19,6 +19,10 @@ const blog = defineCollection({
     featured: z.boolean().default(false),
     draft: z.boolean().default(false),
     ogImage: z.string().optional(),
+    schemaType: z.enum(['HowTo', 'FAQ']).optional(),
+    howToSteps: z
+      .array(z.object({ name: z.string(), text: z.string() }))
+      .optional(),
   }),
 })
 

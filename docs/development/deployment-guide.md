@@ -207,6 +207,33 @@ varlock run -- sh -c 'curl -s \
 - WIF pool with GitHub OIDC provider (restricted to `smith-horn/skillsmith`)
 - `roles/iam.workloadIdentityUser` granted to the WIF pool principal on the service account
 
+## Structured Data Validation (SMI-2525)
+
+### Pre-Deploy (every code PR that touches JSON-LD or schema)
+
+1. Deploy to Vercel preview: `cd packages/website && vercel`
+2. Test each changed page with [Google Rich Results Test](https://search.google.com/test/rich-results) using the preview URL
+3. Verify schemas render correctly: BlogPosting, BreadcrumbList, SoftwareApplication, Product, FAQPage, HowTo (when applicable)
+4. Fix any errors before merging — do not merge PRs with invalid structured data
+
+### Post-Deploy
+
+1. After `vercel --prod`, re-test production URLs with Rich Results Test
+2. Check GSC > Enhancements within 24 hours for new errors
+3. If errors appear, hotfix immediately — invalid structured data degrades search appearance
+
+### Weekly Review
+
+1. **GSC Enhancements tab**: Check for warnings/errors on all rich result types (FAQ, Product, etc.)
+2. **GSC Coverage report**: Verify crawled page count matches sitemap count (currently 34 URLs)
+3. **Rich Results status**: Ensure valid items count is stable or increasing
+
+### Notes
+
+- Google deprecated the sitemap ping API (`/ping?sitemap=...`) in 2023 — use GSC for index management
+- JSON-LD `<script>` tags in `.astro` files must use the `is:inline` directive
+- All JSON-LD uses `@graph` arrays for multiple schemas per page (BlogPosting + BreadcrumbList, etc.)
+
 ## Staging Verification (ADR-108)
 
 Preview deployments are protected by Vercel's deployment protection. To test staging programmatically:

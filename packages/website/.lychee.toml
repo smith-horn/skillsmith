@@ -8,7 +8,7 @@ timeout = 10
 max_concurrency = 8
 
 # User agent to identify as a real browser
-user_agent = "Mozilla/5.0 (compatible; Skillsmith-LinkChecker/1.0; +https://skillsmith.app)"
+user_agent = "Mozilla/5.0 (compatible; Skillsmith-LinkChecker/1.0; +https://www.skillsmith.app)"
 
 # Accept 2xx and 3xx status codes as valid
 accept = ["2xx", "3xx"]
