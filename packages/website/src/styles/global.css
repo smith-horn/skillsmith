@@ -329,7 +329,7 @@
 
   /* Code block styles */
   code {
-    @apply font-mono text-sm bg-gray-100 px-1.5 py-0.5 rounded-sm;
+    @apply font-mono text-sm bg-dark-800 px-1.5 py-0.5 rounded-sm;
   }
 
   pre {
