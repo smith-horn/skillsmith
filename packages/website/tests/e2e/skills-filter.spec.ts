@@ -16,7 +16,7 @@
 
 import { test, expect, type Page } from '@playwright/test'
 
-const BASE_URL = process.env.SKILLSMITH_WEBSITE_URL || 'https://skillsmith.app'
+const BASE_URL = process.env.SKILLSMITH_WEBSITE_URL || 'https://www.skillsmith.app'
 
 /**
  * Wait for the skills grid to display results (not empty, not loading, not search prompt)

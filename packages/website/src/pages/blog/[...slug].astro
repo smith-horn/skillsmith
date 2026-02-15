@@ -31,37 +31,62 @@ const siteUrl = Astro.site?.toString().replace(/\/$/, '') || 'https://www.skills
 const datePublished = post.data.date.toISOString();
 const dateModified = post.data.updated?.toISOString() ?? datePublished;
 
-// Build JSON-LD data
-const jsonLd = {
-  "@context": "https://schema.org",
-  "@type": "BlogPosting",
-  "headline": post.data.title,
-  "description": post.data.description,
-  "image": post.data.ogImage ?? `${siteUrl}/og-image.png`,
-  "datePublished": datePublished,
-  "dateModified": dateModified,
-  "author": {
-    "@type": "Person",
-    "name": post.data.author ?? "Skillsmith Team"
+// Build JSON-LD @graph array (SMI-2526)
+const schemas: Record<string, unknown>[] = [
+  {
+    "@type": "BlogPosting",
+    "headline": post.data.title,
+    "description": post.data.description,
+    "image": post.data.ogImage ?? `${siteUrl}/og-image.png`,
+    "datePublished": datePublished,
+    "dateModified": dateModified,
+    "author": {
+      "@type": "Person",
+      "name": post.data.author ?? "Skillsmith Team"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "@id": "https://www.skillsmith.app/#organization",
+      "name": "Skillsmith",
+      "logo": {
+        "@type": "ImageObject",
+        "url": `${siteUrl}/logo-icon.svg`
+      }
+    },
+    "mainEntityOfPage": {
+      "@type": "WebPage",
+      "@id": `${siteUrl}/blog/${post.slug}`
+    },
+    "keywords": post.data.tags?.join(", ") ?? "",
+    "articleSection": post.data.category ?? "Guides",
+    "wordCount": (post.body ?? '').split(/\s+/).length,
+    "timeRequired": `PT${readingTime}M`
   },
-  "publisher": {
-    "@type": "Organization",
-    "@id": "https://www.skillsmith.app/#organization",
-    "name": "Skillsmith",
-    "logo": {
-      "@type": "ImageObject",
-      "url": `${siteUrl}/logo-icon.svg`
-    }
-  },
-  "mainEntityOfPage": {
-    "@type": "WebPage",
-    "@id": `${siteUrl}/blog/${post.slug}`
-  },
-  "keywords": post.data.tags?.join(", ") ?? "",
-  "articleSection": post.data.category ?? "Guides",
-  "wordCount": (post.body ?? '').split(/\s+/).length,
-  "timeRequired": `PT${readingTime}M`
-};
+  {
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": siteUrl },
+      { "@type": "ListItem", "position": 2, "name": "Blog", "item": `${siteUrl}/blog` },
+      { "@type": "ListItem", "position": 3, "name": post.data.title, "item": `${siteUrl}/blog/${post.slug}` }
+    ]
+  }
+];
+
+// Conditionally add HowTo schema when frontmatter declares it (SMI-2526)
+if (post.data.schemaType === 'HowTo' && post.data.howToSteps?.length) {
+  schemas.push({
+    "@type": "HowTo",
+    "name": post.data.title,
+    "description": post.data.description,
+    "step": post.data.howToSteps.map((s) => ({
+      "@type": "HowToStep",
+      "name": s.name,
+      "text": s.text
+    }))
+  });
+}
+
+const jsonLd = { "@context": "https://schema.org", "@graph": schemas };
 ---
 
 <BlogLayout
@@ -75,7 +100,7 @@ const jsonLd = {
   ogImage={post.data.ogImage}
   readingTime={readingTime}
 >
-  <!-- JSON-LD for BlogPosting -->
+  <!-- JSON-LD @graph: BlogPosting + BreadcrumbList (+ HowTo when applicable) -->
   <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(jsonLd)} />
 
   <Content />
