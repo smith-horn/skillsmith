@@ -100,7 +100,7 @@ const jsonLd = { "@context": "https://schema.org", "@graph": schemas };
   ogImage={post.data.ogImage}
   readingTime={readingTime}
 >
-  <!-- JSON-LD for BlogPosting -->
+  <!-- JSON-LD @graph: BlogPosting + BreadcrumbList (+ HowTo when applicable) -->
   <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(jsonLd)} />
 
   <Content />

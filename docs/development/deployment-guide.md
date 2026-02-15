@@ -232,7 +232,7 @@ varlock run -- sh -c 'curl -s \
 
 - Google deprecated the sitemap ping API (`/ping?sitemap=...`) in 2023 — use GSC for index management
 - JSON-LD `<script>` tags in `.astro` files must use the `is:inline` directive
-- All JSON-LD uses `@graph` arrays for multiple schemas per page (BlogPosting + BreadcrumbList, etc.)
+- Blog post pages use `@graph` arrays to combine BlogPosting + BreadcrumbList (+ HowTo when applicable)
 
 ## Staging Verification (ADR-108)
 

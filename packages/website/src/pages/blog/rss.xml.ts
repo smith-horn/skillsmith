@@ -7,7 +7,9 @@ import type { APIContext } from 'astro'
  * SMI-2532: RSS feed implementation
  */
 export async function GET(context: APIContext) {
-  const posts = await getCollection('blog', ({ data }) => !data.draft)
+  const posts = (await getCollection('blog', ({ data }) => !data.draft)).sort(
+    (a, b) => b.data.date.valueOf() - a.data.date.valueOf()
+  )
   return rss({
     title: 'Skillsmith Blog',
     description: 'AI-powered agent skill discovery and management',
