@@ -114,8 +114,8 @@
   transform: translateX(-50%);
   background: linear-gradient(
     135deg,
-    var(--color-coral, #e07a5f) 0%,
-    var(--color-coral-dark, #d4694e) 100%
+    #c4593f 0%,
+    #a34830 100%
   );
   color: white;
   padding: 0.25rem 1rem;
@@ -323,8 +323,8 @@
   padding: 5rem 2rem;
   background: linear-gradient(
     135deg,
-    var(--color-coral, #e07a5f) 0%,
-    var(--color-coral-dark, #d4694e) 100%
+    #c4593f 0%,
+    #a34830 100%
   );
   color: white;
 }
