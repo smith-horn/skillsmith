@@ -151,15 +151,15 @@
 }
 
 @utility btn-secondary {
-  @apply btn bg-gray-100 text-gray-900 hover:bg-gray-200;
+  @apply btn bg-dark-800 text-dark-50 hover:bg-dark-700;
 }
 
 @utility btn-outline {
-  @apply btn border border-gray-300 bg-white text-gray-700 hover:bg-gray-50;
+  @apply btn border border-dark-700 bg-transparent text-dark-300 hover:bg-dark-800;
 }
 
 @utility btn-ghost {
-  @apply btn text-gray-600 hover:bg-gray-100 hover:text-gray-900;
+  @apply btn text-dark-300 hover:bg-dark-800 hover:text-dark-50;
 }
 
 @utility btn-lg {
