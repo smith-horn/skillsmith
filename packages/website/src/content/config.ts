@@ -20,9 +20,7 @@ const blog = defineCollection({
     draft: z.boolean().default(false),
     ogImage: z.string().optional(),
     schemaType: z.enum(['HowTo', 'FAQ']).optional(),
-    howToSteps: z
-      .array(z.object({ name: z.string(), text: z.string() }))
-      .optional(),
+    howToSteps: z.array(z.object({ name: z.string(), text: z.string() })).optional(),
   }),
 })
 
