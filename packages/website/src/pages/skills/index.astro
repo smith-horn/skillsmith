@@ -130,6 +130,7 @@ const trustTiers = [
         <div class="w-full lg:w-48">
           <select
             id="category-filter"
+            aria-label="Filter by category"
             class="w-full px-4 py-3 bg-dark-800 border border-dark-700 rounded-lg text-white focus:outline-none focus:border-primary-500 transition-all appearance-none cursor-pointer"
           >
             {categories.map(cat => (
@@ -142,6 +143,7 @@ const trustTiers = [
         <div class="w-full lg:w-48">
           <select
             id="trust-filter"
+            aria-label="Filter by trust tier"
             class="w-full px-4 py-3 bg-dark-800 border border-dark-700 rounded-lg text-white focus:outline-none focus:border-primary-500 transition-all appearance-none cursor-pointer"
           >
             {trustTiers.map(tier => (
@@ -197,6 +199,7 @@ const trustTiers = [
         <span class="text-dark-500 text-sm">Sort by:</span>
         <select
           id="sort-select"
+          aria-label="Sort results"
           class="px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:border-primary-500 appearance-none cursor-pointer"
         >
           <option value="relevance">Relevance</option>
@@ -222,7 +225,7 @@ const trustTiers = [
       <svg class="w-16 h-16 mx-auto text-dark-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
       </svg>
-      <h3 class="text-xl font-semibold text-dark-300 mb-2">No skills found</h3>
+      <h2 class="text-xl font-semibold text-dark-300 mb-2">No skills found</h3>
       <p class="text-dark-500">Try adjusting your search or filters</p>
     </div>
 
@@ -231,7 +234,7 @@ const trustTiers = [
       <svg class="w-16 h-16 mx-auto text-primary-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
       </svg>
-      <h3 class="text-xl font-semibold text-dark-300 mb-2">Start Searching</h3>
+      <h2 class="text-xl font-semibold text-dark-300 mb-2">Start Searching</h3>
       <p class="text-dark-500 mb-4">Enter a search term or select a filter to browse skills</p>
       <div class="flex flex-wrap justify-center gap-2 max-w-md mx-auto">
         <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="testing">testing</button>
@@ -248,7 +251,7 @@ const trustTiers = [
       <svg class="w-16 h-16 mx-auto text-red-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
       </svg>
-      <h3 class="text-xl font-semibold text-dark-300 mb-2">Error loading skills</h3>
+      <h2 class="text-xl font-semibold text-dark-300 mb-2">Error loading skills</h3>
       <p id="error-message" class="text-dark-500 mb-4">Something went wrong</p>
       <button id="retry-button" class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors">
         Try Again

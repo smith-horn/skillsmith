@@ -350,7 +350,7 @@
 
 .pricing-cta .btn-primary {
   background: white;
-  color: var(--color-coral-dark, #d4694e);
+  color: #b85840;
 }
 
 .pricing-cta .btn-primary:hover {
@@ -414,7 +414,7 @@
 }
 
 .pricing-grid .btn-primary {
-  background: linear-gradient(135deg, #e07a5f 0%, #d4694e 100%);
+  background: linear-gradient(135deg, #c4593f 0%, #a34830 100%);
   color: white;
 }
 
