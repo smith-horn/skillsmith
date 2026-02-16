@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       batch_size:
-        description: 'Number of skills to refresh (default: 100, max: 500)'
+        description: 'Number of skills to refresh (default: 200, max: 500)'
         required: false
-        default: '100'
+        default: '200'
         type: string
       stale_days:
         description: 'Only refresh skills older than N days (default: 1)'

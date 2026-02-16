@@ -6,13 +6,17 @@
 # - max_pages=5 indexes ~400 skills reliably (~1 min)
 # - max_pages=7+ causes timeout (502 Bad Gateway)
 # - Uses GitHub App auth for 5000 req/hour rate limit
+#
+# Phase 1b: 4x daily runs with advisory lock
+# - 00:00 UTC = maintenance (stale cleanup, stale_days=3)
+# - 06:00, 12:00, 18:00 UTC = discovery (new skills, stale_days=30)
 
 name: Skill Indexer
 
 on:
   schedule:
-    # Run daily at 2:00 AM UTC
-    - cron: '0 2 * * *'
+    # Phase 1b: Run 4x daily instead of 1x
+    - cron: '0 0,6,12,18 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -24,6 +28,19 @@ on:
         description: 'Max pages per topic (5 recommended, 7+ causes timeout)'
         required: false
         default: '5'
+        type: string
+      run_type:
+        description: 'Run type: maintenance (stale cleanup) or discovery (new skills)'
+        required: false
+        default: 'discovery'
+        type: choice
+        options:
+          - discovery
+          - maintenance
+      stale_days:
+        description: 'Days before stale quarantine (default: auto based on run_type)'
+        required: false
+        default: ''
         type: string
 
 env:
@@ -46,7 +63,36 @@ jobs:
             echo "See: https://github.com/wrsmith108/skillsmith/settings/secrets/actions"
             exit 1
           fi
-          echo "✓ Secrets validated"
+          echo "Secrets validated"
+
+      - name: Determine Run Type
+        id: config
+        run: |
+          # For scheduled runs, determine run type based on UTC hour
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            HOUR=$(date -u +%H)
+            if [ "$HOUR" = "00" ]; then
+              RUN_TYPE="maintenance"
+              STALE_DAYS="3"
+            else
+              RUN_TYPE="discovery"
+              STALE_DAYS="30"
+            fi
+          else
+            # Manual dispatch uses inputs
+            RUN_TYPE="${{ github.event.inputs.run_type || 'discovery' }}"
+            STALE_DAYS="${{ github.event.inputs.stale_days }}"
+            if [ -z "$STALE_DAYS" ]; then
+              if [ "$RUN_TYPE" = "maintenance" ]; then
+                STALE_DAYS="3"
+              else
+                STALE_DAYS="30"
+              fi
+            fi
+          fi
+          echo "run_type=$RUN_TYPE" >> $GITHUB_OUTPUT
+          echo "stale_days=$STALE_DAYS" >> $GITHUB_OUTPUT
+          echo "Run type: $RUN_TYPE, Stale days: $STALE_DAYS"
 
       - name: Trigger Indexer
         id: indexer
@@ -54,11 +100,15 @@ jobs:
           # Build request body
           DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
           MAX_PAGES="${{ github.event.inputs.max_pages || '5' }}"
+          RUN_TYPE="${{ steps.config.outputs.run_type }}"
+          STALE_DAYS="${{ steps.config.outputs.stale_days }}"
 
           BODY=$(cat <<EOF
           {
             "maxPages": $MAX_PAGES,
-            "dryRun": $DRY_RUN
+            "dryRun": $DRY_RUN,
+            "runType": "$RUN_TYPE",
+            "staleThresholdDays": $STALE_DAYS
           }
           EOF
           )
@@ -84,10 +134,16 @@ jobs:
           echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
           echo "response=$BODY" >> $GITHUB_OUTPUT
 
-          # Check for success
+          # Check for success (200 = normal, skipped runs from advisory lock are OK)
           if [ "$HTTP_CODE" -ne 200 ]; then
             echo "::error::Indexer failed with status $HTTP_CODE"
             exit 1
+          fi
+
+          # Check if run was skipped due to concurrent execution
+          SKIPPED=$(echo "$BODY" | jq -r '.data.skipped // false')
+          if [ "$SKIPPED" = "true" ]; then
+            echo "::notice::Run skipped - concurrent indexer already in progress"
           fi
 
       - name: Parse Results
@@ -99,21 +155,28 @@ jobs:
           FOUND=$(echo "$RESPONSE" | jq -r '.data.found // 0')
           INDEXED=$(echo "$RESPONSE" | jq -r '.data.indexed // 0')
           FAILED=$(echo "$RESPONSE" | jq -r '.data.failed // 0')
+          STALE=$(echo "$RESPONSE" | jq -r '.data.stale // 0')
+          UNCHANGED=$(echo "$RESPONSE" | jq -r '.data.unchanged // 0')
+          CODE_SEARCH=$(echo "$RESPONSE" | jq -r '.data.code_search.repos_found // 0')
           DRY_RUN=$(echo "$RESPONSE" | jq -r '.data.dryRun // false')
+          RUN_TYPE="${{ steps.config.outputs.run_type }}"
 
-          echo "### Indexer Results" >> $GITHUB_STEP_SUMMARY
+          echo "### Indexer Results ($RUN_TYPE)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Found | $FOUND |" >> $GITHUB_STEP_SUMMARY
-          echo "| Indexed | $INDEXED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Indexed (new) | $INDEXED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Unchanged | $UNCHANGED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Stale Quarantined | $STALE |" >> $GITHUB_STEP_SUMMARY
+          echo "| Code Search Repos | $CODE_SEARCH |" >> $GITHUB_STEP_SUMMARY
           echo "| Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
           echo "| Dry Run | $DRY_RUN |" >> $GITHUB_STEP_SUMMARY
 
       - name: Report Failure
         if: failure()
         run: |
-          echo "### ❌ Indexer Failed" >> $GITHUB_STEP_SUMMARY
+          echo "### Indexer Failed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "HTTP Code: ${{ steps.indexer.outputs.http_code }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -127,7 +190,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{
               "type": "indexer_failed",
-              "message": "The daily skill indexer workflow failed. HTTP Code: ${{ steps.indexer.outputs.http_code }}",
+              "message": "The skill indexer workflow failed. HTTP Code: ${{ steps.indexer.outputs.http_code }}",
               "workflow": "Skill Indexer",
               "runId": "${{ github.run_id }}",
               "runUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
