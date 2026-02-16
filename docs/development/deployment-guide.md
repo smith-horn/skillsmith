@@ -279,7 +279,7 @@ cd packages/website && vercel --prod       # Deploy to production after verifica
 
 ### Alert Notifications
 
-Alerts sent to `support@skillsmith.app` via Resend when:
+Alerts sent to `support@smithhorn.ca` via Resend when:
 
 - Indexer workflow fails
 - Metadata refresh workflow fails (scheduled runs only)

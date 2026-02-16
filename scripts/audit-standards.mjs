@@ -941,6 +941,9 @@ console.log(`\n${BOLD}17. Email Consistency (SMI-2562)${RESET}`)
   }
 
   // Check 2: Edge function internal recipients must use smithhorn.ca
+  // Note: reply_to addresses using @skillsmith.app are intentionally exempt —
+  // those are public-facing reply addresses, not internal recipients that trigger
+  // Resend's self-send loop. Only `to:` and `RECIPIENTS` patterns are checked.
   const edgeFnRecipientFiles = [
     'supabase/functions/ops-report/index.ts',
     'supabase/functions/alert-notify/index.ts',
