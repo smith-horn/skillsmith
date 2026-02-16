@@ -13,8 +13,10 @@
 <div id="cookie-consent" class="cookie-banner" role="dialog" aria-label="Cookie consent" hidden>
   <div class="cookie-inner">
     <p class="cookie-text">
-      We use cookies and Google Analytics to understand how you use the Skillsmith website. We do not track MCP usage, only count API calls.
-      See our <a href="/privacy#cookies">Privacy Policy</a> for details.
+      We use cookies and Google Analytics to understand how you use the Skillsmith website. We do
+      not track MCP usage, only count API calls. See our <a href="/privacy#cookies"
+        >Privacy Policy</a
+      > for details.
     </p>
     <div class="cookie-actions">
       <button type="button" id="cookie-reject" class="cookie-btn cookie-btn-reject">Decline</button>
@@ -56,7 +58,7 @@
   }
 
   .cookie-text a {
-    color: #E07A5F;
+    color: #e07a5f;
     text-decoration: underline;
     text-underline-offset: 2px;
   }
@@ -86,11 +88,11 @@
 
   .cookie-btn-reject:hover {
     border-color: #9ca3af;
-    color: #FAFAFA;
+    color: #fafafa;
   }
 
   .cookie-btn-accept {
-    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
+    background: linear-gradient(135deg, #e07a5f 0%, #d4694e 100%);
     color: white;
   }
 
@@ -108,25 +110,25 @@
 </style>
 
 <script is:inline>
-  (function () {
-    var consent = localStorage.getItem('skillsmith_cookie_consent');
-    if (consent) return; // Already made a choice
+  ;(function () {
+    var consent = localStorage.getItem('skillsmith_cookie_consent')
+    if (consent) return // Already made a choice
 
-    var banner = document.getElementById('cookie-consent');
-    if (!banner) return;
-    banner.hidden = false;
+    var banner = document.getElementById('cookie-consent')
+    if (!banner) return
+    banner.hidden = false
 
     document.getElementById('cookie-accept').addEventListener('click', function () {
-      localStorage.setItem('skillsmith_cookie_consent', 'accepted');
+      localStorage.setItem('skillsmith_cookie_consent', 'accepted')
       if (typeof gtag === 'function') {
-        gtag('consent', 'update', { analytics_storage: 'granted' });
+        gtag('consent', 'update', { analytics_storage: 'granted' })
       }
-      banner.hidden = true;
-    });
+      banner.hidden = true
+    })
 
     document.getElementById('cookie-reject').addEventListener('click', function () {
-      localStorage.setItem('skillsmith_cookie_consent', 'declined');
-      banner.hidden = true;
-    });
-  })();
+      localStorage.setItem('skillsmith_cookie_consent', 'declined')
+      banner.hidden = true
+    })
+  })()
 </script>

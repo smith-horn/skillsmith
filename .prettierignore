@@ -8,6 +8,9 @@ package-lock.json
 # Auto-generated directories
 .astro/
 
+# Scripts with embedded GraphQL that Prettier cannot parse
+scripts/linear-api.mjs
+
 # Git-crypt encrypted directories - cannot be parsed in CI
 docs/
 .claude/hive-mind/

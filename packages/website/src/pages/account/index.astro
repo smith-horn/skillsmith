@@ -9,29 +9,35 @@
  */
 
 // Disable prerendering - this page needs SSR to read env vars and handle auth
-export const prerender = false;
+export const prerender = false
 
-import { ClientRouter } from 'astro:transitions';
-import { getSupabaseConfig } from '../../lib/supabase-config';
-import Nav from '../../components/Nav.astro';
+import { ClientRouter } from 'astro:transitions'
+import { getSupabaseConfig } from '../../lib/supabase-config'
+import Nav from '../../components/Nav.astro'
 
 // Read env vars at SSR time to inject into client script
-const supabaseConfig = getSupabaseConfig();
+const supabaseConfig = getSupabaseConfig()
 ---
 
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
 
-    <meta name="description" content="Manage your Skillsmith account, subscription, and license keys" />
+    <meta
+      name="description"
+      content="Manage your Skillsmith account, subscription, and license keys"
+    />
     <title>Account Dashboard | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
-    <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
     <script is:inline define:vars={{ supabaseConfig }}>
-      window.__SUPABASE_CONFIG__ = supabaseConfig;
+      window.__SUPABASE_CONFIG__ = supabaseConfig
     </script>
     <!-- Enable smooth page transitions without full reload (SMI-2066) -->
     <ClientRouter />
@@ -44,8 +50,16 @@ const supabaseConfig = getSupabaseConfig();
       <div id="loading-state" class="loading-state">
         <div class="spinner-container">
           <svg class="spinner" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" opacity="0.25"/>
-            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"/>
+            <circle
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+              fill="none"
+              opacity="0.25"></circle>
+            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+            ></path>
           </svg>
         </div>
         <p>Loading your account...</p>
@@ -55,8 +69,12 @@ const supabaseConfig = getSupabaseConfig();
       <div id="error-state" class="error-state" style="display: none;">
         <div class="error-content">
           <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="1.5"
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            ></path>
           </svg>
           <h3>Failed to load account data</h3>
           <p id="error-message">Something went wrong</p>
@@ -72,7 +90,11 @@ const supabaseConfig = getSupabaseConfig();
           <p class="user-email" id="user-email">user@example.com</p>
           <p class="github-username" id="github-username" style="display: none;">
             <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.115 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
+              <path
+                fill-rule="evenodd"
+                clip-rule="evenodd"
+                d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.115 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z"
+              ></path>
             </svg>
             <a id="github-link" href="#" target="_blank" rel="noopener noreferrer"></a>
           </p>
@@ -165,23 +187,23 @@ const supabaseConfig = getSupabaseConfig();
           <div class="quick-links">
             <a href="/docs/quickstart" class="quick-link">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
               </svg>
               <span>Getting Started</span>
             </a>
             <a href="/docs/api" class="quick-link">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
-                <line x1="16" y1="13" x2="8" y2="13"/>
-                <line x1="16" y1="17" x2="8" y2="17"/>
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
               </svg>
               <span>API Documentation</span>
             </a>
             <a href="/account/billing" class="quick-link">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
-                <line x1="1" y1="10" x2="23" y2="10"/>
+                <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+                <line x1="1" y1="10" x2="23" y2="10"></line>
               </svg>
               <span>Billing History</span>
             </a>
@@ -208,10 +230,16 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   body {
-    font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family:
+      'Satoshi',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
     line-height: 1.6;
-    color: #FAFAFA;
-    background: #0D0D0F;
+    color: #fafafa;
+    background: #0d0d0f;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -243,7 +271,7 @@ const supabaseConfig = getSupabaseConfig();
     text-decoration: none;
     font-weight: 700;
     font-size: 1.25rem;
-    color: #FAFAFA;
+    color: #fafafa;
   }
 
   .nav-links {
@@ -260,7 +288,7 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   .nav-links a:hover {
-    color: #E07A5F;
+    color: #e07a5f;
   }
 
   /* Dashboard Container */
@@ -289,13 +317,17 @@ const supabaseConfig = getSupabaseConfig();
   .spinner {
     width: 2.5rem;
     height: 2.5rem;
-    color: #E07A5F;
+    color: #e07a5f;
     animation: spin 1s linear infinite;
   }
 
   @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   /* Error State */
@@ -317,7 +349,7 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   .error-state h3 {
-    color: #FAFAFA;
+    color: #fafafa;
     font-size: 1.25rem;
     font-weight: 600;
     margin-bottom: 0.5rem;
@@ -365,7 +397,7 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   .github-username a:hover {
-    color: #E07A5F;
+    color: #e07a5f;
   }
 
   /* Stats Grid */
@@ -402,7 +434,7 @@ const supabaseConfig = getSupabaseConfig();
 
   .stat-link {
     font-size: 0.75rem;
-    color: #E07A5F;
+    color: #e07a5f;
     text-decoration: none;
   }
 
@@ -472,7 +504,7 @@ const supabaseConfig = getSupabaseConfig();
 
   .tier-badge.enterprise {
     background: rgba(224, 122, 95, 0.2);
-    color: #E07A5F;
+    color: #e07a5f;
   }
 
   .tier-price {
@@ -555,7 +587,7 @@ const supabaseConfig = getSupabaseConfig();
     background: #1a1a1f;
     border-radius: 0.5rem;
     text-decoration: none;
-    color: #FAFAFA;
+    color: #fafafa;
     transition: background 0.2s;
   }
 
@@ -566,7 +598,7 @@ const supabaseConfig = getSupabaseConfig();
   .quick-link svg {
     width: 1.25rem;
     height: 1.25rem;
-    color: #E07A5F;
+    color: #e07a5f;
   }
 
   /* Buttons */
@@ -590,7 +622,7 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   .btn-primary {
-    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
+    background: linear-gradient(135deg, #e07a5f 0%, #d4694e 100%);
     color: white;
   }
 
@@ -602,12 +634,12 @@ const supabaseConfig = getSupabaseConfig();
   .btn-secondary {
     background: transparent;
     border: 1px solid #2a2a2f;
-    color: #FAFAFA;
+    color: #fafafa;
   }
 
   .btn-secondary:hover {
-    border-color: #E07A5F;
-    color: #E07A5F;
+    border-color: #e07a5f;
+    color: #e07a5f;
   }
 
   .btn-danger {
@@ -662,7 +694,7 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   .modal-close:hover {
-    color: #FAFAFA;
+    color: #fafafa;
   }
 
   .modal-body {
@@ -737,9 +769,9 @@ const supabaseConfig = getSupabaseConfig();
   import { createClient } from '@supabase/supabase-js'
 
   // Read config injected by SSR script in head
-  const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' };
-  const supabaseUrl = config.url;
-  const supabaseAnonKey = config.anonKey;
+  const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+  const supabaseUrl = config.url
+  const supabaseAnonKey = config.anonKey
 
   // Escape HTML to prevent XSS
   function escapeHtml(text: string): string {
@@ -782,7 +814,10 @@ const supabaseConfig = getSupabaseConfig();
     const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
     // Check authentication
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession()
 
     if (!session || sessionError) {
       window.location.href = '/login?redirect=/account'
@@ -801,8 +836,9 @@ const supabaseConfig = getSupabaseConfig();
         .single()
 
       // Get subscription
-      const { data: subscriptions } = await supabase
-        .rpc('get_user_subscription', { user_uuid: user.id })
+      const { data: subscriptions } = await supabase.rpc('get_user_subscription', {
+        user_uuid: user.id,
+      })
 
       // Get license keys (include usage_count for API usage display)
       const { data: licenseKeys } = await supabase
@@ -835,8 +871,9 @@ const supabaseConfig = getSupabaseConfig();
       if (currentTierEl) currentTierEl.textContent = tier.charAt(0).toUpperCase() + tier.slice(1)
 
       // Key count
-      const activeKeys = licenseKeys?.filter(k => k.status === 'active') || []
-      const maxKeys = tier === 'community' ? 1 : tier === 'individual' ? 3 : tier === 'team' ? 10 : 50
+      const activeKeys = licenseKeys?.filter((k) => k.status === 'active') || []
+      const maxKeys =
+        tier === 'community' ? 1 : tier === 'individual' ? 3 : tier === 'team' ? 10 : 50
       const keyCountEl = document.getElementById('key-count')
       if (keyCountEl) keyCountEl.textContent = `${activeKeys.length} / ${maxKeys}`
 
@@ -846,7 +883,7 @@ const supabaseConfig = getSupabaseConfig();
         community: 1000,
         individual: 10000,
         team: 100000,
-        enterprise: -1  // unlimited
+        enterprise: -1, // unlimited
       }
       const quota = quotaLimits[tier] || 1000
       const apiUsageEl = document.getElementById('api-usage')
@@ -876,7 +913,7 @@ const supabaseConfig = getSupabaseConfig();
         const prices: Record<string, string> = {
           individual: '$9.99/mo',
           team: '$25/user/mo',
-          enterprise: '$55/user/mo'
+          enterprise: '$55/user/mo',
         }
         if (tierPriceEl) tierPriceEl.textContent = prices[tier] || 'Free'
 
@@ -926,7 +963,9 @@ const supabaseConfig = getSupabaseConfig();
       // License keys list (only show active keys)
       const keysList = document.getElementById('keys-list')
       if (keysList && activeKeys.length > 0) {
-        keysList.innerHTML = activeKeys.map(key => `
+        keysList.innerHTML = activeKeys
+          .map(
+            (key) => `
           <div class="key-item" data-key-id="${escapeHtml(key.id)}">
             <div class="key-info">
               <div class="key-name">${escapeHtml(key.name)}</div>
@@ -941,13 +980,19 @@ const supabaseConfig = getSupabaseConfig();
               <button class="btn btn-danger btn-sm revoke-btn" data-key-id="${escapeHtml(key.id)}">Revoke</button>
             </div>
           </div>
-        `).join('')
+        `
+          )
+          .join('')
 
         // Add revoke handlers
-        document.querySelectorAll('.revoke-btn').forEach(btn => {
+        document.querySelectorAll('.revoke-btn').forEach((btn) => {
           btn.addEventListener('click', async (e) => {
             const keyId = (e.target as HTMLButtonElement).dataset.keyId
-            if (!keyId || !confirm('Are you sure you want to revoke this key? This cannot be undone.')) return
+            if (
+              !keyId ||
+              !confirm('Are you sure you want to revoke this key? This cannot be undone.')
+            )
+              return
 
             const { error } = await supabase
               .from('license_keys')
@@ -963,7 +1008,6 @@ const supabaseConfig = getSupabaseConfig();
 
       // Show dashboard
       showState('content')
-
     } catch (error) {
       console.error('Failed to load account data:', error)
       errorMessage.textContent = error instanceof Error ? error.message : 'Please try again'
@@ -988,7 +1032,7 @@ const supabaseConfig = getSupabaseConfig();
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${refreshData.session.access_token}`,
+            Authorization: `Bearer ${refreshData.session.access_token}`,
           },
           body: JSON.stringify({ name: 'API Key' }),
         })
@@ -1002,7 +1046,6 @@ const supabaseConfig = getSupabaseConfig();
         // Show the new key in modal
         newKeyValue.textContent = data.key
         newKeyModal.style.display = 'flex'
-
       } catch (error) {
         alert(error instanceof Error ? error.message : 'Failed to generate key')
       } finally {
@@ -1024,7 +1067,9 @@ const supabaseConfig = getSupabaseConfig();
       const key = newKeyValue.textContent || ''
       await navigator.clipboard.writeText(key)
       copyKeyBtn.textContent = 'Copied!'
-      setTimeout(() => { copyKeyBtn.textContent = 'Copy' }, 2000)
+      setTimeout(() => {
+        copyKeyBtn.textContent = 'Copy'
+      }, 2000)
     })
   })
 </script>

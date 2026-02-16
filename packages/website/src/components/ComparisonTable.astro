@@ -9,49 +9,79 @@
  */
 
 interface Feature {
-  name: string;
-  community: string | boolean;
-  individual: string | boolean;
-  team: string | boolean;
-  enterprise: string | boolean;
+  name: string
+  community: string | boolean
+  individual: string | boolean
+  team: string | boolean
+  enterprise: string | boolean
 }
 
 interface Props {
-  features?: Feature[];
-  highlightedTier?: 'community' | 'individual' | 'team' | 'enterprise';
-  compact?: boolean;
+  features?: Feature[]
+  highlightedTier?: 'community' | 'individual' | 'team' | 'enterprise'
+  compact?: boolean
 }
 
 const {
   highlightedTier = 'team',
   compact = false,
   features = [
-    { name: 'API Calls / Month', community: '1,000', individual: '10,000', team: '100,000', enterprise: 'Unlimited' },
+    {
+      name: 'API Calls / Month',
+      community: '1,000',
+      individual: '10,000',
+      team: '100,000',
+      enterprise: 'Unlimited',
+    },
     { name: 'License Keys', community: '1', individual: '3', team: '10', enterprise: '50' },
     { name: 'Skill Search', community: true, individual: true, team: true, enterprise: true },
     { name: 'Skill Installation', community: true, individual: true, team: true, enterprise: true },
     { name: 'Recommendations', community: true, individual: true, team: true, enterprise: true },
-    { name: 'Analytics Dashboard', community: false, individual: 'Basic', team: 'Advanced', enterprise: 'Advanced' },
+    {
+      name: 'Analytics Dashboard',
+      community: false,
+      individual: 'Basic',
+      team: 'Advanced',
+      enterprise: 'Advanced',
+    },
     { name: 'Team Workspaces', community: false, individual: false, team: true, enterprise: true },
     { name: 'Private Skills', community: false, individual: false, team: true, enterprise: true },
     { name: 'SSO / SAML', community: false, individual: false, team: false, enterprise: true },
-    { name: 'Role-Based Access Control', community: false, individual: false, team: false, enterprise: true },
+    {
+      name: 'Role-Based Access Control',
+      community: false,
+      individual: false,
+      team: false,
+      enterprise: true,
+    },
     { name: 'Audit Logging', community: false, individual: false, team: false, enterprise: true },
-    { name: 'SLA Guarantee', community: false, individual: false, team: false, enterprise: '99.9%' },
-    { name: 'Support', community: 'Community', individual: 'Email', team: 'Priority', enterprise: 'Dedicated' },
-  ]
-} = Astro.props;
+    {
+      name: 'SLA Guarantee',
+      community: false,
+      individual: false,
+      team: false,
+      enterprise: '99.9%',
+    },
+    {
+      name: 'Support',
+      community: 'Community',
+      individual: 'Email',
+      team: 'Priority',
+      enterprise: 'Dedicated',
+    },
+  ],
+} = Astro.props
 
-const tiers = ['community', 'individual', 'team', 'enterprise'] as const;
+const tiers = ['community', 'individual', 'team', 'enterprise'] as const
 
 function renderValue(value: string | boolean): string {
   if (value === true) {
-    return '<span class="check" aria-label="Yes">&#10003;</span>';
+    return '<span class="check" aria-label="Yes">&#10003;</span>'
   }
   if (value === false) {
-    return '<span class="dash" aria-label="No">&mdash;</span>';
+    return '<span class="dash" aria-label="No">&mdash;</span>'
   }
-  return value;
+  return value
 }
 ---
 
@@ -60,25 +90,29 @@ function renderValue(value: string | boolean): string {
     <thead>
       <tr>
         <th>Feature</th>
-        {tiers.map(tier => (
-          <th class:list={{ highlighted: tier === highlightedTier }}>
-            {tier.charAt(0).toUpperCase() + tier.slice(1)}
-          </th>
-        ))}
+        {
+          tiers.map((tier) => (
+            <th class:list={{ highlighted: tier === highlightedTier }}>
+              {tier.charAt(0).toUpperCase() + tier.slice(1)}
+            </th>
+          ))
+        }
       </tr>
     </thead>
     <tbody>
-      {features.map(feature => (
-        <tr>
-          <td>{feature.name}</td>
-          {tiers.map(tier => (
-            <td
-              class:list={{ highlighted: tier === highlightedTier }}
-              set:html={renderValue(feature[tier])}
-            />
-          ))}
-        </tr>
-      ))}
+      {
+        features.map((feature) => (
+          <tr>
+            <td>{feature.name}</td>
+            {tiers.map((tier) => (
+              <td
+                class:list={{ highlighted: tier === highlightedTier }}
+                set:html={renderValue(feature[tier])}
+              />
+            ))}
+          </tr>
+        ))
+      }
     </tbody>
   </table>
 </div>
@@ -122,7 +156,7 @@ function renderValue(value: string | boolean): string {
   .comparison-table thead th {
     background: #1a1a1f;
     font-weight: 600;
-    color: #FAFAFA;
+    color: #fafafa;
   }
 
   .comparison-table th.highlighted,
@@ -132,7 +166,7 @@ function renderValue(value: string | boolean): string {
 
   .comparison-table thead th.highlighted {
     background: rgba(224, 122, 95, 0.1);
-    color: #E07A5F;
+    color: #e07a5f;
   }
 
   .comparison-table tbody tr:last-child td {

@@ -29,7 +29,7 @@ docker exec skillsmith-dev-1 npm run audit:standards   # Standards audit
 docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 ```
 
-**After pulling changes**: Always `docker exec skillsmith-dev-1 npm install && docker exec skillsmith-dev-1 npm run build`.
+**After pulling changes**: The `post-merge` hook auto-runs `npm install` in Docker when `package-lock.json` changes. If the container is not running, start it and run `docker exec skillsmith-dev-1 npm install && docker exec skillsmith-dev-1 npm run build`.
 
 **Full rebuild** (native module issues, major upgrades): See [docker-guide.md](docs/development/docker-guide.md#full-rebuild-thorough).
 

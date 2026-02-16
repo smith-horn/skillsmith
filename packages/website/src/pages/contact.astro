@@ -3,21 +3,24 @@
  * Skillsmith Contact Page
  * Contact form and support information
  */
-import BaseLayout from '../layouts/BaseLayout.astro';
+import BaseLayout from '../layouts/BaseLayout.astro'
 
 // Get query params for pre-selecting topic
-const url = Astro.url;
-const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
+const url = Astro.url
+const plan = url.searchParams.get('plan') || url.searchParams.get('tier')
 ---
 
-<BaseLayout title="Contact Us | Skillsmith" description="Get in touch with the Skillsmith team. Contact us for support, sales inquiries, or partnership opportunities.">
+<BaseLayout
+  title="Contact Us | Skillsmith"
+  description="Get in touch with the Skillsmith team. Contact us for support, sales inquiries, or partnership opportunities."
+>
   <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
     <!-- Header -->
     <div class="text-center mb-12">
       <h1 class="text-4xl font-bold text-white mb-4">Contact Us</h1>
       <p class="text-dark-300 text-lg max-w-2xl mx-auto">
-        Have questions about Skillsmith? We're here to help. Reach out to our team
-        and we'll get back to you as soon as possible.
+        Have questions about Skillsmith? We're here to help. Reach out to our team and we'll get
+        back to you as soon as possible.
       </p>
     </div>
 
@@ -89,7 +92,9 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
                 <option value="verification" class="bg-dark-800">Skill Verification Request</option>
                 <option value="security" class="bg-dark-800">Security Report</option>
                 <option value="sales" class="bg-dark-800">Sales / Pricing</option>
-                <option value="enterprise" class="bg-dark-800" selected={plan === 'enterprise'}>Enterprise Plans</option>
+                <option value="enterprise" class="bg-dark-800" selected={plan === 'enterprise'}
+                  >Enterprise Plans</option
+                >
                 <option value="partnership" class="bg-dark-800">Partnership Opportunity</option>
                 <option value="feedback" class="bg-dark-800">Product Feedback</option>
                 <option value="bug" class="bg-dark-800">Bug Report</option>
@@ -108,8 +113,7 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
                 required
                 rows="5"
                 class="w-full px-4 py-3 bg-dark-800 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition-colors resize-none"
-                placeholder="How can we help you?"
-              ></textarea>
+                placeholder="How can we help you?"></textarea>
             </div>
 
             <!-- Submit Button -->
@@ -124,18 +128,32 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
 
             <!-- Form Status -->
             <div id="form-status" class="hidden">
-              <div id="form-success" class="hidden p-4 bg-green-900/30 border border-green-700/50 rounded-lg">
+              <div
+                id="form-success"
+                class="hidden p-4 bg-green-900/30 border border-green-700/50 rounded-lg"
+              >
                 <p class="text-green-400 flex items-center gap-2">
                   <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M5 13l4 4L19 7"></path>
                   </svg>
                   Thank you! Your message has been sent. We'll get back to you soon.
                 </p>
               </div>
-              <div id="form-error" class="hidden p-4 bg-red-900/30 border border-red-700/50 rounded-lg">
+              <div
+                id="form-error"
+                class="hidden p-4 bg-red-900/30 border border-red-700/50 rounded-lg"
+              >
                 <p class="text-red-400 flex items-center gap-2">
                   <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M6 18L18 6M6 6l12 12"></path>
                   </svg>
                   Something went wrong. Please try again or email us directly.
                 </p>
@@ -154,9 +172,21 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
           <div class="space-y-4">
             <!-- General -->
             <div class="flex items-start gap-3">
-              <div class="w-10 h-10 bg-primary-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                <svg class="w-5 h-5 text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              <div
+                class="w-10 h-10 bg-primary-500/20 rounded-lg flex items-center justify-center flex-shrink-0"
+              >
+                <svg
+                  class="w-5 h-5 text-primary-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  ></path>
                 </svg>
               </div>
               <div>
@@ -167,9 +197,21 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
 
             <!-- Support -->
             <div class="flex items-start gap-3">
-              <div class="w-10 h-10 bg-green-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" />
+              <div
+                class="w-10 h-10 bg-green-500/20 rounded-lg flex items-center justify-center flex-shrink-0"
+              >
+                <svg
+                  class="w-5 h-5 text-green-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z"
+                  ></path>
                 </svg>
               </div>
               <div>
@@ -180,9 +222,21 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
 
             <!-- Verification -->
             <div class="flex items-start gap-3">
-              <div class="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              <div
+                class="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center flex-shrink-0"
+              >
+                <svg
+                  class="w-5 h-5 text-blue-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                  ></path>
                 </svg>
               </div>
               <div>
@@ -193,9 +247,21 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
 
             <!-- Enterprise -->
             <div class="flex items-start gap-3">
-              <div class="w-10 h-10 bg-purple-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+              <div
+                class="w-10 h-10 bg-purple-500/20 rounded-lg flex items-center justify-center flex-shrink-0"
+              >
+                <svg
+                  class="w-5 h-5 text-purple-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
+                  ></path>
                 </svg>
               </div>
               <div>
@@ -237,7 +303,11 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
               aria-label="GitHub"
             >
               <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.115 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z" />
+                <path
+                  fill-rule="evenodd"
+                  clip-rule="evenodd"
+                  d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.115 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z"
+                ></path>
               </svg>
             </a>
           </div>
@@ -264,23 +334,30 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
           <h3 class="font-semibold text-white mb-2">How do I report a bug?</h3>
           <p class="text-dark-400 text-sm">
             You can report bugs through this contact form (select "Bug Report"), or open an issue
-            directly on our <a href="https://github.com/smith-horn/skillsmith/issues" class="text-primary-400 hover:text-primary-300 underline decoration-primary-400/50 hover:decoration-primary-300">GitHub repository</a>.
+            directly on our <a
+              href="https://github.com/smith-horn/skillsmith/issues"
+              class="text-primary-400 hover:text-primary-300 underline decoration-primary-400/50 hover:decoration-primary-300"
+              >GitHub repository</a
+            >.
           </p>
         </div>
 
         <div class="bg-dark-900 border border-dark-700 rounded-lg p-6">
           <h3 class="font-semibold text-white mb-2">Do you offer custom Enterprise plans?</h3>
           <p class="text-dark-400 text-sm">
-            Yes! Contact our Enterprise team to discuss custom pricing, SLAs, dedicated support,
-            and on-premise deployment options.
+            Yes! Contact our Enterprise team to discuss custom pricing, SLAs, dedicated support, and
+            on-premise deployment options.
           </p>
         </div>
 
         <div class="bg-dark-900 border border-dark-700 rounded-lg p-6">
           <h3 class="font-semibold text-white mb-2">Where can I find documentation?</h3>
           <p class="text-dark-400 text-sm">
-            Visit our <a href="/docs" class="text-primary-400 hover:text-primary-300 underline decoration-primary-400/50 hover:decoration-primary-300">documentation</a> for
-            guides, API references, and tutorials on using Skillsmith.
+            Visit our <a
+              href="/docs"
+              class="text-primary-400 hover:text-primary-300 underline decoration-primary-400/50 hover:decoration-primary-300"
+              >documentation</a
+            > for guides, API references, and tutorials on using Skillsmith.
           </p>
         </div>
 
@@ -296,21 +373,21 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
   </div>
 
   <script is:inline>
-    const API_BASE = 'https://api.skillsmith.app/functions/v1';
+    const API_BASE = 'https://api.skillsmith.app/functions/v1'
 
     // Handle form submission
-    document.getElementById('contact-form').addEventListener('submit', async function(e) {
-      e.preventDefault();
+    document.getElementById('contact-form').addEventListener('submit', async function (e) {
+      e.preventDefault()
 
-      const form = this;
-      const statusDiv = document.getElementById('form-status');
-      const successDiv = document.getElementById('form-success');
-      const errorDiv = document.getElementById('form-error');
-      const submitBtn = form.querySelector('button[type="submit"]');
+      const form = this
+      const statusDiv = document.getElementById('form-status')
+      const successDiv = document.getElementById('form-success')
+      const errorDiv = document.getElementById('form-error')
+      const submitBtn = form.querySelector('button[type="submit"]')
 
       // Show loading state
-      submitBtn.disabled = true;
-      submitBtn.textContent = 'Sending...';
+      submitBtn.disabled = true
+      submitBtn.textContent = 'Sending...'
 
       // Collect form data
       const formData = {
@@ -319,7 +396,7 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
         company: form.company.value || undefined,
         topic: form.topic.value,
         message: form.message.value,
-      };
+      }
 
       try {
         const response = await fetch(`${API_BASE}/contact-submit`, {
@@ -328,9 +405,9 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(formData),
-        });
+        })
 
-        const result = await response.json();
+        const result = await response.json()
 
         if (response.ok && result.success) {
           // GA4: Track successful contact form submission (SMI-2463)
@@ -339,54 +416,65 @@ const plan = url.searchParams.get('plan') || url.searchParams.get('tier');
               event_category: 'contact',
               contact_topic: formData.topic,
               has_company: !!formData.company,
-            });
+            })
           }
 
           // Show success
-          statusDiv.classList.remove('hidden');
-          successDiv.classList.remove('hidden');
-          errorDiv.classList.add('hidden');
-          form.reset();
+          statusDiv.classList.remove('hidden')
+          successDiv.classList.remove('hidden')
+          errorDiv.classList.add('hidden')
+          form.reset()
 
           // Hide success message after 5 seconds
           setTimeout(() => {
-            statusDiv.classList.add('hidden');
-            successDiv.classList.add('hidden');
-          }, 5000);
+            statusDiv.classList.add('hidden')
+            successDiv.classList.add('hidden')
+          }, 5000)
         } else {
-          throw new Error(result.error || 'Failed to send message');
+          throw new Error(result.error || 'Failed to send message')
         }
       } catch (err) {
-        console.error('Contact form error:', err);
-        statusDiv.classList.remove('hidden');
-        successDiv.classList.add('hidden');
-        errorDiv.classList.remove('hidden');
+        console.error('Contact form error:', err)
+        statusDiv.classList.remove('hidden')
+        successDiv.classList.add('hidden')
+        errorDiv.classList.remove('hidden')
 
         // Hide error after 5 seconds
         setTimeout(() => {
-          statusDiv.classList.add('hidden');
-          errorDiv.classList.add('hidden');
-        }, 5000);
+          statusDiv.classList.add('hidden')
+          errorDiv.classList.add('hidden')
+        }, 5000)
       } finally {
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Send Message';
+        submitBtn.disabled = false
+        submitBtn.textContent = 'Send Message'
       }
-    });
+    })
 
     // Pre-select topic based on URL param
-    const urlParams = new URLSearchParams(window.location.search);
-    const topic = urlParams.get('topic');
-    const plan = urlParams.get('plan') || urlParams.get('tier');
+    const urlParams = new URLSearchParams(window.location.search)
+    const topic = urlParams.get('topic')
+    const plan = urlParams.get('plan') || urlParams.get('tier')
 
     if (topic) {
-      const topicSelect = document.getElementById('topic');
+      const topicSelect = document.getElementById('topic')
       // Check if the topic value is valid
-      const validTopics = ['general', 'support', 'verification', 'security', 'sales', 'enterprise', 'partnership', 'feedback', 'bug', 'other'];
+      const validTopics = [
+        'general',
+        'support',
+        'verification',
+        'security',
+        'sales',
+        'enterprise',
+        'partnership',
+        'feedback',
+        'bug',
+        'other',
+      ]
       if (validTopics.includes(topic)) {
-        topicSelect.value = topic;
+        topicSelect.value = topic
       }
     } else if (plan === 'enterprise') {
-      document.getElementById('topic').value = 'enterprise';
+      document.getElementById('topic').value = 'enterprise'
     }
   </script>
 </BaseLayout>

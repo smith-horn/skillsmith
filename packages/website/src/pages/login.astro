@@ -10,21 +10,21 @@
  */
 
 // Disable prerendering - this page needs SSR to read env vars
-export const prerender = false;
+export const prerender = false
 
-import { ClientRouter } from 'astro:transitions';
-import { getSupabaseConfig } from '../lib/supabase-config';
-import LoginButton from '../components/auth/LoginButton.astro';
-import Nav from '../components/Nav.astro';
+import { ClientRouter } from 'astro:transitions'
+import { getSupabaseConfig } from '../lib/supabase-config'
+import LoginButton from '../components/auth/LoginButton.astro'
+import Nav from '../components/Nav.astro'
 
 // Read env vars at SSR time to inject into client script
-const supabaseConfig = getSupabaseConfig();
+const supabaseConfig = getSupabaseConfig()
 
 // Get redirect URL from query params
-const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
+const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
 ---
 
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -33,27 +33,35 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
 
     <!-- Google Analytics with Consent Mode v2 -->
     <script is:inline>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      var consent = localStorage.getItem('skillsmith_cookie_consent');
+      window.dataLayer = window.dataLayer || []
+      function gtag() {
+        dataLayer.push(arguments)
+      }
+      var consent = localStorage.getItem('skillsmith_cookie_consent')
       gtag('consent', 'default', {
         analytics_storage: consent === 'accepted' ? 'granted' : 'denied',
         ad_storage: 'denied',
         ad_user_data: 'denied',
         ad_personalization: 'denied',
         wait_for_update: 500,
-      });
-      gtag('js', new Date());
-      gtag('config', 'G-GGZQZM1Y1L');
+      })
+      gtag('js', new Date())
+      gtag('config', 'G-GGZQZM1Y1L')
     </script>
     <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
 
-    <meta name="description" content="Sign in to your Skillsmith account to manage skills, view your subscription, and access your dashboard." />
+    <meta
+      name="description"
+      content="Sign in to your Skillsmith account to manage skills, view your subscription, and access your dashboard."
+    />
     <title>Sign In | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
-    <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
     <script is:inline define:vars={{ supabaseConfig }}>
-      window.__SUPABASE_CONFIG__ = supabaseConfig;
+      window.__SUPABASE_CONFIG__ = supabaseConfig
     </script>
     <ClientRouter />
   </head>
@@ -103,8 +111,16 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
             <span class="btn-text">Sign In</span>
             <span class="btn-loading" style="display: none;">
               <svg class="spinner" viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" opacity="0.25"/>
-                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"/>
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="4"
+                  fill="none"
+                  opacity="0.25"></circle>
+                <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+                ></path>
               </svg>
               Signing in...
             </span>
@@ -125,47 +141,75 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
       </div>
 
       <div class="auth-footer">
-        <p>By signing in, you agree to our <a href="/terms">Terms of Service</a> and <a href="/privacy">Privacy Policy</a>.</p>
+        <p>
+          By signing in, you agree to our <a href="/terms">Terms of Service</a> and <a
+            href="/privacy">Privacy Policy</a
+          >.
+        </p>
       </div>
     </main>
 
     <footer class="footer">
       <div class="footer-content">
         <p>&copy; 2026 Smith Horn Group Ltd. All rights reserved.</p>
-        <p class="license-note">Licensed under <a href="https://www.elastic.co/licensing/elastic-license">Elastic License 2.0</a></p>
+        <p class="license-note">
+          Licensed under <a href="https://www.elastic.co/licensing/elastic-license"
+            >Elastic License 2.0</a
+          >
+        </p>
       </div>
     </footer>
 
     <!-- Cookie consent banner (standalone page, not using BaseLayout) -->
-    <div id="cookie-consent" style="position:fixed;bottom:0;left:0;right:0;z-index:9999;padding:1rem;pointer-events:none" hidden>
-      <div style="max-width:640px;margin:0 auto;display:flex;align-items:center;gap:1rem;padding:1rem 1.5rem;background:#1a1a1f;border:1px solid #2a2a2f;border-radius:0.75rem;box-shadow:0 -4px 24px rgba(0,0,0,0.4);pointer-events:auto;font-family:'Satoshi',sans-serif">
+    <div
+      id="cookie-consent"
+      style="position:fixed;bottom:0;left:0;right:0;z-index:9999;padding:1rem;pointer-events:none"
+      hidden
+    >
+      <div
+        style="max-width:640px;margin:0 auto;display:flex;align-items:center;gap:1rem;padding:1rem 1.5rem;background:#1a1a1f;border:1px solid #2a2a2f;border-radius:0.75rem;box-shadow:0 -4px 24px rgba(0,0,0,0.4);pointer-events:auto;font-family:'Satoshi',sans-serif"
+      >
         <p style="flex:1;font-size:0.875rem;color:#9ca3af;line-height:1.5;margin:0">
-          We use cookies and Google Analytics to understand how you use the Skillsmith website. We do not track MCP usage, only count API calls.
-          See our <a href="/privacy#cookies" style="color:#E07A5F;text-decoration:none">Privacy Policy</a>.
+          We use cookies and Google Analytics to understand how you use the Skillsmith website. We
+          do not track MCP usage, only count API calls. See our <a
+            href="/privacy#cookies"
+            style="color:#E07A5F;text-decoration:none">Privacy Policy</a
+          >.
         </p>
         <div style="display:flex;gap:0.5rem;flex-shrink:0">
-          <button id="cookie-reject" type="button" style="padding:0.5rem 1rem;font-size:0.875rem;font-weight:600;border-radius:0.375rem;cursor:pointer;background:transparent;color:#9ca3af;border:1px solid #2a2a2f;font-family:inherit">Decline</button>
-          <button id="cookie-accept" type="button" style="padding:0.5rem 1rem;font-size:0.875rem;font-weight:600;border-radius:0.375rem;cursor:pointer;background:linear-gradient(135deg,#E07A5F,#D4694E);color:white;border:none;font-family:inherit">Accept</button>
+          <button
+            id="cookie-reject"
+            type="button"
+            style="padding:0.5rem 1rem;font-size:0.875rem;font-weight:600;border-radius:0.375rem;cursor:pointer;background:transparent;color:#9ca3af;border:1px solid #2a2a2f;font-family:inherit"
+            >Decline</button
+          >
+          <button
+            id="cookie-accept"
+            type="button"
+            style="padding:0.5rem 1rem;font-size:0.875rem;font-weight:600;border-radius:0.375rem;cursor:pointer;background:linear-gradient(135deg,#E07A5F,#D4694E);color:white;border:none;font-family:inherit"
+            >Accept</button
+          >
         </div>
       </div>
     </div>
     <script is:inline>
-      (function(){
-        var c=localStorage.getItem('skillsmith_cookie_consent');
-        if(c)return;
-        var b=document.getElementById('cookie-consent');
-        if(!b)return;
-        b.hidden=false;
-        document.getElementById('cookie-accept').addEventListener('click',function(){
-          localStorage.setItem('skillsmith_cookie_consent','accepted');
-          if(typeof gtag==='function')gtag('consent','update',{analytics_storage:'granted'});
-          b.hidden=true;
-        });
-        document.getElementById('cookie-reject').addEventListener('click',function(){
-          localStorage.setItem('skillsmith_cookie_consent','declined');
-          b.hidden=true;
-        });
-      })();
+      ;(function () {
+        var c = localStorage.getItem('skillsmith_cookie_consent')
+        if (c) return
+        var b = document.getElementById('cookie-consent')
+        if (!b) return
+        b.hidden = false
+        document.getElementById('cookie-accept').addEventListener('click', function () {
+          localStorage.setItem('skillsmith_cookie_consent', 'accepted')
+          if (typeof gtag === 'function')
+            gtag('consent', 'update', { analytics_storage: 'granted' })
+          b.hidden = true
+        })
+        document.getElementById('cookie-reject').addEventListener('click', function () {
+          localStorage.setItem('skillsmith_cookie_consent', 'declined')
+          b.hidden = true
+        })
+      })()
     </script>
   </body>
 </html>
@@ -185,10 +229,16 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
   }
 
   body {
-    font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family:
+      'Satoshi',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
     line-height: 1.6;
-    color: #FAFAFA;
-    background: #0D0D0F;
+    color: #fafafa;
+    background: #0d0d0f;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -218,7 +268,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
     text-decoration: none;
     font-weight: 700;
     font-size: 1.25rem;
-    color: #FAFAFA;
+    color: #fafafa;
   }
 
   .nav-links {
@@ -234,7 +284,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
   }
 
   .nav-links a:hover {
-    color: #E07A5F;
+    color: #e07a5f;
   }
 
   /* Auth Container */
@@ -295,7 +345,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
 
   .forgot-link {
     font-size: 0.75rem;
-    color: #E07A5F;
+    color: #e07a5f;
     text-decoration: none;
     font-weight: 400;
   }
@@ -310,8 +360,10 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
     border: 1px solid #2a2a2f;
     border-radius: 0.5rem;
     background: #1a1a1f;
-    color: #FAFAFA;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    color: #fafafa;
+    transition:
+      border-color 0.2s,
+      box-shadow 0.2s;
   }
 
   .form-group input::placeholder {
@@ -320,7 +372,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
 
   .form-group input:focus {
     outline: none;
-    border-color: #E07A5F;
+    border-color: #e07a5f;
     box-shadow: 0 0 0 3px rgba(224, 122, 95, 0.1);
   }
 
@@ -359,7 +411,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
   }
 
   .btn-primary {
-    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
+    background: linear-gradient(135deg, #e07a5f 0%, #d4694e 100%);
     color: white;
   }
 
@@ -387,8 +439,12 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
   }
 
   @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   /* Divider */
@@ -436,7 +492,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
   }
 
   .auth-alternate a {
-    color: #E07A5F;
+    color: #e07a5f;
     text-decoration: none;
     font-weight: 500;
   }
@@ -512,9 +568,9 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
 
   // Initialize Supabase client
   // Read config injected by SSR script in head
-  const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' };
-  const supabaseUrl = config.url;
-  const supabaseAnonKey = config.anonKey;
+  const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+  const supabaseUrl = config.url
+  const supabaseAnonKey = config.anonKey
 
   document.addEventListener('astro:page-load', () => {
     const form = document.getElementById('login-form') as HTMLFormElement
@@ -528,7 +584,8 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session) {
           // Already logged in, redirect to account
-          const redirectTo = new URLSearchParams(window.location.search).get('redirect') || '/account'
+          const redirectTo =
+            new URLSearchParams(window.location.search).get('redirect') || '/account'
           window.location.href = redirectTo
         }
       })
@@ -565,7 +622,8 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
 
         if (error) {
           if (error.message.includes('Email not confirmed')) {
-            errorMessage.textContent = 'Please verify your email before logging in. Check your inbox for the verification link.'
+            errorMessage.textContent =
+              'Please verify your email before logging in. Check your inbox for the verification link.'
           } else if (error.message.includes('Invalid login credentials')) {
             errorMessage.textContent = 'Invalid email or password. Please try again.'
           } else {
@@ -581,18 +639,20 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
 
           // GA4: Track successful login (SMI-2460)
           if (typeof window.gtag === 'function') {
-            window.gtag('event', 'login', { method: 'email' });
+            window.gtag('event', 'login', { method: 'email' })
           }
 
           // Redirect after short delay
-          const redirectTo = new URLSearchParams(window.location.search).get('redirect') || '/account'
+          const redirectTo =
+            new URLSearchParams(window.location.search).get('redirect') || '/account'
           setTimeout(() => {
             window.location.href = redirectTo
           }, 500)
         }
       } catch (error) {
         console.error('Login error:', error)
-        errorMessage.textContent = error instanceof Error ? error.message : 'An error occurred. Please try again.'
+        errorMessage.textContent =
+          error instanceof Error ? error.message : 'An error occurred. Please try again.'
         errorMessage.style.display = 'block'
       } finally {
         // Reset button state

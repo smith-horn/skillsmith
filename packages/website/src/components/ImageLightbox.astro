@@ -22,12 +22,7 @@
 >
   <div class="lightbox-backdrop"></div>
   <div class="lightbox-content">
-    <img
-      id="lightbox-image"
-      src=""
-      alt=""
-      class="lightbox-img"
-    />
+    <img id="lightbox-image" src="" alt="" class="lightbox-img" />
     <button
       id="lightbox-close"
       class="lightbox-close"
@@ -62,7 +57,9 @@
     justify-content: center;
     opacity: 0;
     visibility: hidden;
-    transition: opacity 0.2s ease, visibility 0.2s ease;
+    transition:
+      opacity 0.2s ease,
+      visibility 0.2s ease;
   }
 
   .lightbox[hidden] {
@@ -124,7 +121,7 @@
   }
 
   .lightbox-close:focus-visible {
-    outline: 2px solid #E07A5F;
+    outline: 2px solid #e07a5f;
     outline-offset: 2px;
   }
 
@@ -142,96 +139,108 @@
   // Uses astro:page-load instead of DOMContentLoaded so handlers
   // rebind after ClientRouter view transitions (SMI-2500)
   // AbortController prevents listener accumulation across navigations
-  let lightboxAC: AbortController | null = null;
+  let lightboxAC: AbortController | null = null
 
   function initLightbox() {
     // Tear down previous listeners to prevent accumulation
-    if (lightboxAC) lightboxAC.abort();
-    lightboxAC = new AbortController();
-    const { signal } = lightboxAC;
+    if (lightboxAC) lightboxAC.abort()
+    lightboxAC = new AbortController()
+    const { signal } = lightboxAC
 
-    const lightboxEl = document.getElementById('image-lightbox');
-    const lightboxImageEl = document.getElementById('lightbox-image') as HTMLImageElement | null;
-    const closeButtonEl = document.getElementById('lightbox-close');
+    const lightboxEl = document.getElementById('image-lightbox')
+    const lightboxImageEl = document.getElementById('lightbox-image') as HTMLImageElement | null
+    const closeButtonEl = document.getElementById('lightbox-close')
 
-    if (!lightboxEl || !lightboxImageEl || !closeButtonEl) return;
+    if (!lightboxEl || !lightboxImageEl || !closeButtonEl) return
 
-    const lightbox = lightboxEl;
-    const lightboxImage = lightboxImageEl;
-    const closeButton = closeButtonEl;
-    const backdrop = lightbox.querySelector('.lightbox-backdrop');
+    const lightbox = lightboxEl
+    const lightboxImage = lightboxImageEl
+    const closeButton = closeButtonEl
+    const backdrop = lightbox.querySelector('.lightbox-backdrop')
 
-    let lastFocusedElement: HTMLElement | null = null;
+    let lastFocusedElement: HTMLElement | null = null
 
     function openLightbox(imgSrc: string, imgAlt: string, triggerElement: HTMLElement) {
-      lastFocusedElement = triggerElement;
-      lightboxImage.src = imgSrc;
-      lightboxImage.alt = imgAlt;
-      lightbox.hidden = false;
-      void lightbox.offsetWidth;
-      lightbox.classList.add('is-open');
-      closeButton.focus();
-      document.body.style.overflow = 'hidden';
+      lastFocusedElement = triggerElement
+      lightboxImage.src = imgSrc
+      lightboxImage.alt = imgAlt
+      lightbox.hidden = false
+      void lightbox.offsetWidth
+      lightbox.classList.add('is-open')
+      closeButton.focus()
+      document.body.style.overflow = 'hidden'
     }
 
     function closeLightbox() {
-      lightbox.classList.remove('is-open');
-      document.body.style.overflow = '';
-      const elementToFocus = lastFocusedElement;
+      lightbox.classList.remove('is-open')
+      document.body.style.overflow = ''
+      const elementToFocus = lastFocusedElement
       setTimeout(() => {
-        lightbox.hidden = true;
-        lightboxImage.src = '';
-        lightboxImage.alt = '';
+        lightbox.hidden = true
+        lightboxImage.src = ''
+        lightboxImage.alt = ''
         if (elementToFocus) {
-          elementToFocus.focus();
+          elementToFocus.focus()
         }
-      }, 200);
-      lastFocusedElement = null;
+      }, 200)
+      lastFocusedElement = null
     }
 
-    closeButton.addEventListener('click', closeLightbox, { signal });
-    backdrop?.addEventListener('click', closeLightbox, { signal });
+    closeButton.addEventListener('click', closeLightbox, { signal })
+    backdrop?.addEventListener('click', closeLightbox, { signal })
 
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !lightbox.hidden) {
-        closeLightbox();
-      }
-    }, { signal });
+    document.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.key === 'Escape' && !lightbox.hidden) {
+          closeLightbox()
+        }
+      },
+      { signal }
+    )
 
     // Make prose images clickable (skip already-bound images)
-    const proseImages = document.querySelectorAll('.prose-content img');
+    const proseImages = document.querySelectorAll('.prose-content img')
     proseImages.forEach((img) => {
-      const imgEl = img as HTMLImageElement;
-      if (imgEl.getAttribute('role') === 'button') return;
+      const imgEl = img as HTMLImageElement
+      if (imgEl.getAttribute('role') === 'button') return
 
-      imgEl.setAttribute('role', 'button');
-      imgEl.setAttribute('tabindex', '0');
-      imgEl.setAttribute('aria-label', `${imgEl.alt || 'Image'} - Click to enlarge`);
+      imgEl.setAttribute('role', 'button')
+      imgEl.setAttribute('tabindex', '0')
+      imgEl.setAttribute('aria-label', `${imgEl.alt || 'Image'} - Click to enlarge`)
 
-      imgEl.addEventListener('click', () => {
-        openLightbox(imgEl.src, imgEl.alt, imgEl);
-      }, { signal });
+      imgEl.addEventListener(
+        'click',
+        () => {
+          openLightbox(imgEl.src, imgEl.alt, imgEl)
+        },
+        { signal }
+      )
 
-      imgEl.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          openLightbox(imgEl.src, imgEl.alt, imgEl);
-        }
-      }, { signal });
-    });
+      imgEl.addEventListener(
+        'keydown',
+        (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            openLightbox(imgEl.src, imgEl.alt, imgEl)
+          }
+        },
+        { signal }
+      )
+    })
 
     // Add scope to table headers for accessibility
-    const tables = document.querySelectorAll('.prose-content table');
+    const tables = document.querySelectorAll('.prose-content table')
     tables.forEach((table) => {
-      const headerCells = table.querySelectorAll('th');
+      const headerCells = table.querySelectorAll('th')
       headerCells.forEach((th) => {
         if (!th.hasAttribute('scope')) {
-          th.setAttribute('scope', 'col');
+          th.setAttribute('scope', 'col')
         }
-      });
-    });
+      })
+    })
   }
 
   // Fires on initial load AND after ClientRouter view transitions
-  document.addEventListener('astro:page-load', initLightbox);
+  document.addEventListener('astro:page-load', initLightbox)
 </script>

@@ -763,6 +763,150 @@ for (const pagePath of standalonePages) {
   }
 }
 
+// 15. Licensing Language — ELv2 is not "open source" (SMI-2556)
+console.log(`\n${BOLD}15. Licensing Language (SMI-2556)${RESET}`)
+
+const LICENSING_SCAN_DIRS = [
+  'docs/execution',
+  'packages/website/src/content/blog',
+  'packages/website/src/pages',
+]
+const LICENSING_EXTENSIONS = ['.md', '.mdx', '.astro']
+// Patterns that are allowlisted (referring to other projects, or clarification context)
+const LICENSING_ALLOWLIST = [
+  /not\s+OSI[- ]approved\s+open\s+source/i,
+  /not\s+open\s+source/i,
+  /rather\s+than\s+.open\s+source/i,
+  /Is\s+Skillsmith\s+open\s+source/i,
+  /freeCodeCamp/i,
+  /The\s+Changelog/i,
+  /open\s+source\s+projects?\s+focus/i,
+  /open\s+source\s+alternative/i,
+  /OpenSourceAlternative/i,
+  /OpenAlternative/i,
+  /must\s+be\s+OSS/i,
+  /source.available.*open\s+source/i,
+]
+
+{
+  const licensingViolations = []
+
+  for (const dir of LICENSING_SCAN_DIRS) {
+    if (!existsSync(dir)) continue
+    const files = getFilesRecursive(dir, LICENSING_EXTENSIONS)
+
+    for (const file of files) {
+      const content = readFileSync(file, 'utf8')
+      const lines = content.split('\n')
+      let inCodeBlock = false
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]
+        if (line.trim().startsWith('```')) inCodeBlock = !inCodeBlock
+        if (inCodeBlock) continue
+
+        if (/open\s+source/i.test(line)) {
+          // Check if this line matches any allowlist pattern
+          const isAllowed = LICENSING_ALLOWLIST.some((pattern) => pattern.test(line))
+          if (!isAllowed) {
+            licensingViolations.push({
+              file: relative('.', file),
+              line: i + 1,
+              text: line.trim().substring(0, 80),
+            })
+          }
+        }
+      }
+    }
+  }
+
+  if (licensingViolations.length === 0) {
+    pass('No "open source" claims about Skillsmith (Elastic License 2.0 is source-available)')
+  } else {
+    fail(
+      `${licensingViolations.length} instance(s) of "open source" in marketing-facing docs`,
+      'Use "source-available" or "Elastic License 2.0" instead of "open source"'
+    )
+    licensingViolations.slice(0, 5).forEach(({ file, line, text }) => {
+      console.log(`    ${file}:${line} — ${text}`)
+    })
+    if (licensingViolations.length > 5) {
+      console.log(`    ... and ${licensingViolations.length - 5} more`)
+    }
+  }
+}
+
+// 16. URL Normalization — bare skillsmith.app without www (SMI-2553)
+console.log(`\n${BOLD}16. URL Normalization (SMI-2553)${RESET}`)
+
+// Only scan marketing-facing dirs (not internal ADRs, architecture, analysis docs)
+const URL_SCAN_DIRS = ['docs/execution', 'packages/website/src']
+const URL_SCAN_EXTENSIONS = ['.md', '.mdx', '.astro', '.ts', '.tsx']
+// Patterns that are allowlisted (GitHub URLs, email addresses, subdomains, etc.)
+const URL_ALLOWLIST = [
+  /github\.com.*skillsmith/i,
+  /npm.*skillsmith/i,
+  /@skillsmith\//,
+  /security@skillsmith\.app/,
+  /support@skillsmith\.app/,
+  /staging\.skillsmith\.app/,
+  /api\.skillsmith\.app/,
+]
+
+{
+  const urlViolations = []
+
+  for (const dir of URL_SCAN_DIRS) {
+    if (!existsSync(dir)) continue
+    const files = getFilesRecursive(dir, URL_SCAN_EXTENSIONS)
+
+    for (const file of files) {
+      const content = readFileSync(file, 'utf8')
+      const lines = content.split('\n')
+      let inCodeBlock = false
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]
+        if (line.trim().startsWith('```')) inCodeBlock = !inCodeBlock
+        if (inCodeBlock) continue
+
+        // Match skillsmith.app NOT preceded by www.
+        // Use a simple approach: find all skillsmith.app instances, check context
+        const matches = [...line.matchAll(/(?<!www\.)skillsmith\.app/g)]
+        for (const match of matches) {
+          const lineContext = line.substring(Math.max(0, match.index - 20), match.index + 30)
+          // Check allowlist
+          const isAllowed = URL_ALLOWLIST.some((pattern) => pattern.test(line))
+          if (!isAllowed) {
+            urlViolations.push({
+              file: relative('.', file),
+              line: i + 1,
+              text: lineContext.trim(),
+            })
+          }
+        }
+      }
+    }
+  }
+
+  if (urlViolations.length === 0) {
+    pass('All skillsmith.app URLs use www. prefix')
+  } else {
+    // Warn (not fail) to allow gradual cleanup of pre-existing violations in internal docs
+    // Graduate to fail() once docs/execution/ URLs are normalized
+    warn(
+      `${urlViolations.length} bare skillsmith.app URL(s) missing www. prefix`,
+      'Use www.skillsmith.app instead of skillsmith.app'
+    )
+    urlViolations.slice(0, 5).forEach(({ file, line, text }) => {
+      console.log(`    ${file}:${line} — ...${text}...`)
+    })
+    if (urlViolations.length > 5) {
+      console.log(`    ... and ${urlViolations.length - 5} more`)
+    }
+  }
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)

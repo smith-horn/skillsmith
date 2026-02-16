@@ -4,11 +4,11 @@
  * Renders schema.org structured data for SEO and AEO
  */
 interface Props {
-  schema: Record<string, unknown> | Record<string, unknown>[];
+  schema: Record<string, unknown> | Record<string, unknown>[]
 }
 
-const { schema } = Astro.props;
-const jsonLd = JSON.stringify(schema);
+const { schema } = Astro.props
+const jsonLd = JSON.stringify(schema)
 ---
 
 <script is:inline type="application/ld+json" set:html={jsonLd} />
