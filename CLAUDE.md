@@ -233,7 +233,7 @@ npx supabase functions deploy list-invoices --no-verify-jwt
 | Weekly Analytics | Monday 9 AM UTC | GitHub Actions (`analytics-report.yml`) |
 | Billing Monitor | Monday 9 AM UTC | GitHub Actions |
 
-Alerts to `support@skillsmith.app` via Resend on failures. All jobs log to `audit_logs` table. Manual trigger & audit log details: [deployment-guide.md](docs/development/deployment-guide.md#monitoring--alerts).
+Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table. Manual trigger & audit log details: [deployment-guide.md](docs/development/deployment-guide.md#monitoring--alerts).
 
 ---
 

@@ -907,6 +907,103 @@ const URL_ALLOWLIST = [
   }
 }
 
+// 17. Email Consistency — internal recipients must use smithhorn.ca (SMI-2562)
+console.log(`\n${BOLD}17. Email Consistency (SMI-2562)${RESET}`)
+
+{
+  const emailViolations = []
+
+  // Check 1: Workflow files must not hardcode @skillsmith.app for internal recipients
+  // (Resend self-send loop: noreply@skillsmith.app → support@skillsmith.app triggers inbound webhook)
+  const workflowDir = '.github/workflows'
+  if (existsSync(workflowDir)) {
+    const workflowFiles = readdirSync(workflowDir).filter((f) => f.endsWith('.yml'))
+
+    for (const file of workflowFiles) {
+      const content = readFileSync(join(workflowDir, file), 'utf8')
+      const lines = content.split('\n')
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]
+        // Skip comments
+        if (line.trim().startsWith('#')) continue
+        // Flag hardcoded skillsmith.app recipient emails in workflow dispatch/env
+        if (/['"]?support@skillsmith\.app['"]?/.test(line)) {
+          emailViolations.push({
+            file: join(workflowDir, file),
+            line: i + 1,
+            issue: 'Hardcoded support@skillsmith.app in workflow (causes Resend self-send loop)',
+            suggestion: 'Use support@smithhorn.ca for internal recipients',
+          })
+        }
+      }
+    }
+  }
+
+  // Check 2: Edge function internal recipients must use smithhorn.ca
+  // Note: reply_to addresses using @skillsmith.app are intentionally exempt —
+  // those are public-facing reply addresses, not internal recipients that trigger
+  // Resend's self-send loop. Only `to:` and `RECIPIENTS` patterns are checked.
+  const edgeFnRecipientFiles = [
+    'supabase/functions/ops-report/index.ts',
+    'supabase/functions/alert-notify/index.ts',
+    'supabase/functions/contact-submit/index.ts',
+    'supabase/functions/email-inbound/index.ts',
+  ]
+
+  for (const file of edgeFnRecipientFiles) {
+    if (!existsSync(file)) continue
+    const content = readFileSync(file, 'utf8')
+    const lines = content.split('\n')
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      // Skip comments and JSDoc lines (JSDoc may reference both addresses for documentation)
+      if (line.trim().startsWith('//') || line.trim().startsWith('*')) continue
+      // Match to: ['support@skillsmith.app'] or recipients array with skillsmith.app
+      if (
+        /to:\s*\[.*support@skillsmith\.app/.test(line) ||
+        /RECIPIENTS.*support@skillsmith\.app/.test(line)
+      ) {
+        emailViolations.push({
+          file,
+          line: i + 1,
+          issue: 'Internal recipient uses support@skillsmith.app instead of support@smithhorn.ca',
+          suggestion: 'Change to support@smithhorn.ca to avoid Resend self-send loop',
+        })
+      }
+    }
+  }
+
+  // Check 3: CLAUDE.md alert documentation must match actual workflow recipient
+  if (existsSync('CLAUDE.md') && existsSync(join(workflowDir, 'ops-report.yml'))) {
+    const claudeMd = readFileSync('CLAUDE.md', 'utf8')
+    // Check if CLAUDE.md still references skillsmith.app for alerts
+    if (/Alerts to [`']support@skillsmith\.app[`']/.test(claudeMd)) {
+      emailViolations.push({
+        file: 'CLAUDE.md',
+        line: 0,
+        issue: 'Documentation says support@skillsmith.app but ops-report uses support@smithhorn.ca',
+        suggestion: 'Update CLAUDE.md alert recipient to support@smithhorn.ca',
+      })
+    }
+  }
+
+  if (emailViolations.length === 0) {
+    pass('Email consistency verified (internal recipients use smithhorn.ca)')
+  } else {
+    fail(
+      `${emailViolations.length} email consistency issue(s) found`,
+      'Internal recipients must use support@smithhorn.ca to avoid Resend self-send loop'
+    )
+    emailViolations.forEach(({ file, line, issue, suggestion }) => {
+      const lineStr = line ? `:${line}` : ''
+      console.log(`    ${file}${lineStr} — ${issue}`)
+      if (suggestion) console.log(`      ${YELLOW}→${RESET} ${suggestion}`)
+    })
+  }
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)
