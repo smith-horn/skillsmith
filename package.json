@@ -112,6 +112,7 @@
     "hono": "^4.11.7",
     "fast-xml-parser": "^5.3.4",
     "@modelcontextprotocol/sdk": "1.26.0",
-    "qs": "^6.14.2"
+    "qs": "^6.14.2",
+    "web-vitals": "5.1.0"
   }
 }

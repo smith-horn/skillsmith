@@ -60,7 +60,7 @@ const jsonLd = {
       applicationCategory: 'DeveloperApplication',
       operatingSystem: 'Cross-platform',
       description:
-        'Discover, install, and manage agent skills. 14,000+ curated skills with semantic search, quality scores, and stack-aware recommendations.',
+        'Discover, install, and manage agent skills. 14,000+ curated from 20,000+ GitHub skills with semantic search, quality scores, and stack-aware recommendations.',
       url: 'https://www.skillsmith.app',
       author: {
         '@id': 'https://www.skillsmith.app/#organization',
@@ -163,7 +163,7 @@ const jsonLd = {
     <title>Skillsmith - Agent Skill Discovery & Management</title>
     <meta
       name="description"
-      content="Find the right agent skills for your stack. 14,000+ curated skills, finally searchable. Get started for free."
+      content="Find the right agent skills for your stack. 14,000+ curated from 20,000+ skills on GitHub. Get started for free."
     />
     <meta name="robots" content="max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
     <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
@@ -222,7 +222,7 @@ const jsonLd = {
     <meta property="og:title" content="Skillsmith - Agent Skill Discovery & Management" />
     <meta
       property="og:description"
-      content="Find the right agent skills for your stack. 14,000+ curated skills, finally searchable. Get started for free."
+      content="Find the right agent skills for your stack. 14,000+ curated from 20,000+ skills on GitHub. Get started for free."
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content={new URL(Astro.url.pathname, Astro.site).href} />
@@ -274,7 +274,7 @@ const jsonLd = {
             class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up"
             style="animation-delay: 0.08s;"
           >
-            <span id="skill-count">14,000+</span> curated agent skills. Finally searchable.<br />
+            <span id="github-total" class="hidden"><span id="github-total-count">20,000+</span> skills on GitHub &mdash; </span><span id="skill-count">14,000+</span> curated &amp; verified. Finally searchable.<br />
             Get stack-aware recommendations before anyone else.
           </p>
 
@@ -380,10 +380,11 @@ const jsonLd = {
           <!-- Value props inline -->
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center text-sm">
             <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
+              <span class="block text-[#71717A] text-sm mb-0.5 hidden" id="github-total-install"><span id="github-total-count-install">20,000+</span> on GitHub</span>
               <span class="block text-[#E07A5F] font-bold text-lg mb-1" id="skill-count-install"
                 >14,000+</span
               >
-              <span class="text-[#A1A1AA]">Searchable skills</span>
+              <span class="text-[#A1A1AA]">Curated &amp; verified</span>
             </div>
             <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
               <span class="block text-[#E07A5F] font-bold text-lg mb-1">AI-Powered</span>
@@ -769,6 +770,12 @@ const jsonLd = {
         min-width: 6ch;
       }
 
+      #github-total-count,
+      #github-total-count-install {
+        display: inline-block;
+        min-width: 8ch;
+      }
+
       /* Respect user motion preferences */
       @media (prefers-reduced-motion: reduce) {
         .animate-fade-up {
@@ -927,6 +934,7 @@ const jsonLd = {
       ;(function () {
         const API_URL = statsApiUrl
         const CACHE_KEY = 'skillsmith_skill_count'
+        const CACHE_KEY_GITHUB = 'skillsmith_github_total'
         const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
         function formatNumber(num) {
@@ -938,45 +946,74 @@ const jsonLd = {
           const elFeature = document.getElementById('skill-count-feature')
           const elInstall = document.getElementById('skill-count-install')
           if (count > 0) {
-            const formattedCount = formatNumber(count) + '+'
+            var formattedCount = formatNumber(count) + '+'
             if (el) el.textContent = formattedCount
             if (elFeature) elFeature.textContent = formattedCount
             if (elInstall) elInstall.textContent = formattedCount
           }
         }
 
+        function updateGithubTotal(total, skillCount) {
+          if (total > 0 && total > skillCount) {
+            var formatted = formatNumber(total) + '+'
+            ;['github-total-count', 'github-total-count-install'].forEach(function (id) {
+              var el = document.getElementById(id)
+              if (el) el.textContent = formatted
+            })
+            ;['github-total', 'github-total-install'].forEach(function (id) {
+              var el = document.getElementById(id)
+              if (el) el.classList.remove('hidden')
+            })
+          }
+        }
+
         // Check localStorage cache first
         try {
-          const cached = localStorage.getItem(CACHE_KEY)
+          var cached = localStorage.getItem(CACHE_KEY)
           if (cached) {
-            const { count, timestamp } = JSON.parse(cached)
-            if (Date.now() - timestamp < CACHE_TTL) {
-              updateCount(count)
+            var parsed = JSON.parse(cached)
+            if (Date.now() - parsed.timestamp < CACHE_TTL) {
+              updateCount(parsed.count)
+            }
+          }
+          var cachedGithub = localStorage.getItem(CACHE_KEY_GITHUB)
+          if (cachedGithub) {
+            var parsedGithub = JSON.parse(cachedGithub)
+            if (Date.now() - parsedGithub.timestamp < CACHE_TTL && cached) {
+              updateGithubTotal(parsedGithub.total, JSON.parse(cached).count)
             }
           }
         } catch (e) {}
 
         // Fetch fresh count
         fetch(API_URL)
-          .then((res) => res.json())
-          .then((data) => {
+          .then(function (res) { return res.json() })
+          .then(function (data) {
             if (data.data && data.data.skillCount) {
-              const count = data.data.skillCount
+              var count = data.data.skillCount
               updateCount(count)
-              // Cache for next visit
               try {
                 localStorage.setItem(
                   CACHE_KEY,
-                  JSON.stringify({
-                    count,
-                    timestamp: Date.now(),
-                  })
+                  JSON.stringify({ count: count, timestamp: Date.now() })
                 )
               } catch (e) {}
+
+              // Update GitHub total if available
+              var githubTotal = data.data.githubTotal
+              if (githubTotal) {
+                updateGithubTotal(githubTotal, count)
+                try {
+                  localStorage.setItem(
+                    CACHE_KEY_GITHUB,
+                    JSON.stringify({ total: githubTotal, timestamp: Date.now() })
+                  )
+                } catch (e) {}
+              }
             }
           })
-          .catch(() => {
-            // Keep default value on error
+          .catch(function () {
+            // Keep default values on error
           })
       })()
     </script>
