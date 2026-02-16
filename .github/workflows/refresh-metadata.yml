@@ -53,7 +53,7 @@ jobs:
         run: |
           # Build request body
           DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
-          BATCH_SIZE="${{ github.event.inputs.batch_size || '100' }}"
+          BATCH_SIZE="${{ github.event.inputs.batch_size || '200' }}"
           STALE_DAYS="${{ github.event.inputs.stale_days || '1' }}"
 
           BODY=$(cat <<EOF
