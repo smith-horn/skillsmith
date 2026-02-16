@@ -68,7 +68,7 @@ varlock run -- node scripts/upload-blog-images.mjs <slug> <dir>
 
 ## Astro Configuration
 
-`res.cloudinary.com` is configured in `packages/website/astro.config.mjs` under `image.domains` and `image.remotePatterns`. No additional setup needed for new blog images.
+`res.cloudinary.com` is intentionally **excluded** from `packages/website/astro.config.mjs` `image.domains` and `image.remotePatterns`. This lets Cloudinary URLs pass through as plain `<img>` tags, preserving Cloudinary's CDN delivery (`f_auto`, `q_auto`, edge caching). If Cloudinary were listed in those configs, Astro would download and re-encode images into local `/_astro/*.webp` files at build time, defeating Cloudinary's optimizations and adding seconds per page to the build.
 
 ## Markdown Usage
 
@@ -87,7 +87,7 @@ ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200
 | Problem | Fix |
 |---------|-----|
 | 401 Unauthorized | Check `CLOUDINARY_URL` is set. Run via `varlock run --` |
-| Image not loading in Astro | Verify `res.cloudinary.com` is in `astro.config.mjs` `image.domains` |
+| Image not loading in Astro | Verify the Cloudinary URL is a valid `https://res.cloudinary.com/...` path. Do NOT add Cloudinary to `astro.config.mjs` `image.domains` — see Astro Configuration section above |
 | Wrong quality / too large | Adjust `q_auto` to `q_auto:low` or `q_auto:eco` for smaller files |
 | Image too blurry on retina | Use `w_2400` (2x) with `srcset` or serve original width |
 | Upload overwrites existing | Script uses `overwrite: true` by default. Use a different slug to avoid |

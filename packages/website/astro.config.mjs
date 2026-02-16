@@ -74,26 +74,15 @@ export default defineConfig({
   },
 
   // Image optimization
+  // Cloudinary (res.cloudinary.com) intentionally excluded — its CDN handles
+  // f_auto format negotiation, q_auto quality, and responsive sizing better
+  // than Astro's local image service. Blog images pass through as-is.
   image: {
-    domains: [
-      'picsum.photos',
-      'api.skillsmith.app',
-      'avatars.githubusercontent.com',
-      'res.cloudinary.com',
-    ],
+    domains: ['api.skillsmith.app', 'avatars.githubusercontent.com'],
     remotePatterns: [
       {
         protocol: 'https',
-        hostname: '**.picsum.photos',
-      },
-      {
-        protocol: 'https',
         hostname: 'avatars.githubusercontent.com',
-      },
-      {
-        protocol: 'https',
-        hostname: 'res.cloudinary.com',
-        pathname: '/diqcbcmaq/**',
       },
     ],
   },
