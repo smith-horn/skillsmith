@@ -274,7 +274,10 @@ const jsonLd = {
             class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up"
             style="animation-delay: 0.08s;"
           >
-            <span id="github-total" class="hidden"><span id="github-total-count">20,000+</span> skills on GitHub &mdash; </span><span id="skill-count">14,000+</span> curated &amp; verified. Finally searchable.<br />
+            <span id="github-total" class="hidden"
+              ><span id="github-total-count">20,000+</span> skills on GitHub &mdash;
+            </span><span id="skill-count">14,000+</span> curated &amp; verified. Finally searchable.<br
+            />
             Get stack-aware recommendations before anyone else.
           </p>
 
@@ -380,7 +383,9 @@ const jsonLd = {
           <!-- Value props inline -->
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center text-sm">
             <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
-              <span class="block text-[#71717A] text-sm mb-0.5 hidden" id="github-total-install"><span id="github-total-count-install">20,000+</span> on GitHub</span>
+              <span class="block text-[#71717A] text-sm mb-0.5 hidden" id="github-total-install"
+                ><span id="github-total-count-install">20,000+</span> on GitHub</span
+              >
               <span class="block text-[#E07A5F] font-bold text-lg mb-1" id="skill-count-install"
                 >14,000+</span
               >
@@ -987,7 +992,9 @@ const jsonLd = {
 
         // Fetch fresh count
         fetch(API_URL)
-          .then(function (res) { return res.json() })
+          .then(function (res) {
+            return res.json()
+          })
           .then(function (data) {
             if (data.data && data.data.skillCount) {
               var count = data.data.skillCount

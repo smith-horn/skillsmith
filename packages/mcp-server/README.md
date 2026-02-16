@@ -54,7 +54,7 @@ After adding to your MCP client settings and restarting, try asking:
 
 ## Live Skill Registry
 
-The Skillsmith API provides access to **14,000+ skills** that are:
+The Skillsmith API provides access to **14,000+ curated skills** from 20,000+ on GitHub that are:
 
 - **Indexed daily** from GitHub repositories
 - **Security screened hourly** for vulnerabilities and malicious patterns

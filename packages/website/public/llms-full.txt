@@ -4,7 +4,7 @@
 
 ## Product Overview
 
-Skillsmith is an agent skill platform for AI-powered development tools. It provides a searchable registry of 14,000+ curated skills — reusable prompts, workflows, and configurations that extend AI assistant capabilities.
+Skillsmith is an agent skill platform for AI-powered development tools. It provides a searchable registry of 14,000+ curated skills from 20,000+ on GitHub — reusable prompts, workflows, and configurations that extend AI assistant capabilities.
 
 Skills are YAML files installed to `~/.claude/skills/` that provide:
 - Domain-specific knowledge and best practices
