@@ -3,13 +3,16 @@
  * Skillsmith Terms of Service Page
  * Last updated: January 17, 2026
  */
-import BaseLayout from '../layouts/BaseLayout.astro';
+import BaseLayout from '../layouts/BaseLayout.astro'
 
-const lastUpdated = 'January 17, 2026';
-const effectiveDate = 'January 17, 2026';
+const lastUpdated = 'January 17, 2026'
+const effectiveDate = 'January 17, 2026'
 ---
 
-<BaseLayout title="Terms of Service | Skillsmith" description="Terms of Service for Skillsmith - Read our terms and conditions for using the service.">
+<BaseLayout
+  title="Terms of Service | Skillsmith"
+  description="Terms of Service for Skillsmith - Read our terms and conditions for using the service."
+>
   <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
     <!-- Header -->
     <div class="mb-12">
@@ -35,20 +38,65 @@ const effectiveDate = 'January 17, 2026';
     <nav class="bg-dark-900 border border-dark-700 rounded-lg p-6 mb-12">
       <h2 class="text-lg font-semibold text-white mb-4">Contents</h2>
       <ol class="list-decimal list-inside space-y-2 text-primary-400">
-        <li><a href="#acceptance" class="hover:text-primary-300 transition-colors">Acceptance of Terms</a></li>
-        <li><a href="#service-description" class="hover:text-primary-300 transition-colors">Service Description</a></li>
-        <li><a href="#accounts" class="hover:text-primary-300 transition-colors">User Accounts</a></li>
-        <li><a href="#usage-limits" class="hover:text-primary-300 transition-colors">Usage Limits and Quotas</a></li>
-        <li><a href="#acceptable-use" class="hover:text-primary-300 transition-colors">Acceptable Use Policy</a></li>
-        <li><a href="#intellectual-property" class="hover:text-primary-300 transition-colors">Intellectual Property</a></li>
-        <li><a href="#user-content" class="hover:text-primary-300 transition-colors">User Content and Skills</a></li>
-        <li><a href="#payment" class="hover:text-primary-300 transition-colors">Payment Terms</a></li>
-        <li><a href="#termination" class="hover:text-primary-300 transition-colors">Termination</a></li>
-        <li><a href="#disclaimers" class="hover:text-primary-300 transition-colors">Disclaimers</a></li>
-        <li><a href="#limitation" class="hover:text-primary-300 transition-colors">Limitation of Liability</a></li>
-        <li><a href="#indemnification" class="hover:text-primary-300 transition-colors">Indemnification</a></li>
-        <li><a href="#changes" class="hover:text-primary-300 transition-colors">Changes to Terms</a></li>
-        <li><a href="#governing-law" class="hover:text-primary-300 transition-colors">Governing Law</a></li>
+        <li>
+          <a href="#acceptance" class="hover:text-primary-300 transition-colors"
+            >Acceptance of Terms</a
+          >
+        </li>
+        <li>
+          <a href="#service-description" class="hover:text-primary-300 transition-colors"
+            >Service Description</a
+          >
+        </li>
+        <li>
+          <a href="#accounts" class="hover:text-primary-300 transition-colors">User Accounts</a>
+        </li>
+        <li>
+          <a href="#usage-limits" class="hover:text-primary-300 transition-colors"
+            >Usage Limits and Quotas</a
+          >
+        </li>
+        <li>
+          <a href="#acceptable-use" class="hover:text-primary-300 transition-colors"
+            >Acceptable Use Policy</a
+          >
+        </li>
+        <li>
+          <a href="#intellectual-property" class="hover:text-primary-300 transition-colors"
+            >Intellectual Property</a
+          >
+        </li>
+        <li>
+          <a href="#user-content" class="hover:text-primary-300 transition-colors"
+            >User Content and Skills</a
+          >
+        </li>
+        <li>
+          <a href="#payment" class="hover:text-primary-300 transition-colors">Payment Terms</a>
+        </li>
+        <li>
+          <a href="#termination" class="hover:text-primary-300 transition-colors">Termination</a>
+        </li>
+        <li>
+          <a href="#disclaimers" class="hover:text-primary-300 transition-colors">Disclaimers</a>
+        </li>
+        <li>
+          <a href="#limitation" class="hover:text-primary-300 transition-colors"
+            >Limitation of Liability</a
+          >
+        </li>
+        <li>
+          <a href="#indemnification" class="hover:text-primary-300 transition-colors"
+            >Indemnification</a
+          >
+        </li>
+        <li>
+          <a href="#changes" class="hover:text-primary-300 transition-colors">Changes to Terms</a>
+        </li>
+        <li>
+          <a href="#governing-law" class="hover:text-primary-300 transition-colors">Governing Law</a
+          >
+        </li>
         <li><a href="#contact" class="hover:text-primary-300 transition-colors">Contact Us</a></li>
       </ol>
     </nav>
@@ -58,7 +106,10 @@ const effectiveDate = 'January 17, 2026';
       <h2 class="text-2xl font-bold text-white mb-6">1. Acceptance of Terms</h2>
       <p class="text-dark-300 mb-4">
         By creating an account, accessing, or using Skillsmith, you acknowledge that you have read,
-        understood, and agree to be bound by these Terms and our <a href="/privacy" class="text-primary-400 hover:text-primary-300 underline">Privacy Policy</a>.
+        understood, and agree to be bound by these Terms and our <a
+          href="/privacy"
+          class="text-primary-400 hover:text-primary-300 underline">Privacy Policy</a
+        >.
       </p>
       <p class="text-dark-300 mb-4">
         If you are using Skillsmith on behalf of an organization, you represent and warrant that you
@@ -67,7 +118,8 @@ const effectiveDate = 'January 17, 2026';
       </p>
       <p class="text-dark-300">
         We may modify these Terms at any time. Material changes will be communicated via email or
-        through the service. Your continued use after changes constitutes acceptance of the modified Terms.
+        through the service. Your continued use after changes constitutes acceptance of the modified
+        Terms.
       </p>
     </section>
 
@@ -76,16 +128,33 @@ const effectiveDate = 'January 17, 2026';
       <h2 class="text-2xl font-bold text-white mb-6">2. Service Description</h2>
       <p class="text-dark-300 mb-4">Skillsmith provides:</p>
       <ul class="list-disc list-inside text-dark-300 space-y-2 ml-4 mb-6">
-        <li><strong class="text-white">Skill Discovery:</strong> Search and browse Claude Code skills from various sources</li>
-        <li><strong class="text-white">Skill Installation:</strong> Install skills directly to your Claude Code environment</li>
-        <li><strong class="text-white">Skill Management:</strong> Track, update, and remove installed skills</li>
-        <li><strong class="text-white">Recommendations:</strong> Personalized skill suggestions based on your usage</li>
-        <li><strong class="text-white">API Access:</strong> Programmatic access to skill discovery and management</li>
-        <li><strong class="text-white">MCP Integration:</strong> Native integration with Claude Code via Model Context Protocol</li>
+        <li>
+          <strong class="text-white">Skill Discovery:</strong> Search and browse Claude Code skills from
+          various sources
+        </li>
+        <li>
+          <strong class="text-white">Skill Installation:</strong> Install skills directly to your Claude
+          Code environment
+        </li>
+        <li>
+          <strong class="text-white">Skill Management:</strong> Track, update, and remove installed skills
+        </li>
+        <li>
+          <strong class="text-white">Recommendations:</strong> Personalized skill suggestions based on
+          your usage
+        </li>
+        <li>
+          <strong class="text-white">API Access:</strong> Programmatic access to skill discovery and management
+        </li>
+        <li>
+          <strong class="text-white">MCP Integration:</strong> Native integration with Claude Code via
+          Model Context Protocol
+        </li>
       </ul>
       <p class="text-dark-300">
         We reserve the right to modify, suspend, or discontinue any part of the service at any time,
-        with or without notice. We will make reasonable efforts to notify users of significant changes.
+        with or without notice. We will make reasonable efforts to notify users of significant
+        changes.
       </p>
     </section>
 
@@ -167,14 +236,14 @@ const effectiveDate = 'January 17, 2026';
       </p>
 
       <p class="text-dark-300 mb-4">
-        <strong class="text-white">Exceeding limits:</strong> When you reach your monthly limit, API
-        requests will be rate-limited until the next billing cycle. You will receive notifications
-        at 80%, 90%, and 100% of your quota.
+        <strong class="text-white">Exceeding limits:</strong> When you reach your monthly limit, API requests
+        will be rate-limited until the next billing cycle. You will receive notifications at 80%, 90%,
+        and 100% of your quota.
       </p>
 
       <p class="text-dark-300">
-        <strong class="text-white">Fair use:</strong> Inactive accounts (no API calls for 90+ days)
-        may be paused. You will receive email notice before any action is taken.
+        <strong class="text-white">Fair use:</strong> Inactive accounts (no API calls for 90+ days) may
+        be paused. You will receive email notice before any action is taken.
       </p>
     </section>
 
@@ -202,7 +271,8 @@ const effectiveDate = 'January 17, 2026';
           <h3 class="font-semibold text-yellow-400 mb-2">Automated Access</h3>
           <p class="text-dark-300 text-sm">
             Automated access is permitted only through our official API with valid authentication.
-            Automated scraping of the website is prohibited. Rate limits apply to all automated access.
+            Automated scraping of the website is prohibited. Rate limits apply to all automated
+            access.
           </p>
         </div>
       </div>
@@ -219,14 +289,26 @@ const effectiveDate = 'January 17, 2026';
 
       <h3 class="text-xl font-semibold text-white mb-4">Skillsmith Platform</h3>
       <p class="text-dark-300 mb-6">
-        The Skillsmith platform, including its code, design, documentation, and branding, is licensed
-        under the <a href="https://www.elastic.co/licensing/elastic-license" class="text-primary-400 hover:text-primary-300 underline" target="_blank" rel="noopener noreferrer">Elastic License 2.0</a>.
-        This means:
+        The Skillsmith platform, including its code, design, documentation, and branding, is
+        licensed under the <a
+          href="https://www.elastic.co/licensing/elastic-license"
+          class="text-primary-400 hover:text-primary-300 underline"
+          target="_blank"
+          rel="noopener noreferrer">Elastic License 2.0</a
+        >. This means:
       </p>
       <ul class="list-disc list-inside text-dark-300 space-y-2 ml-4 mb-6">
-        <li><span class="text-green-400">Permitted:</span> Self-hosting for internal use, modification for your own use</li>
-        <li><span class="text-red-400">Prohibited:</span> Offering Skillsmith as a managed service to third parties</li>
-        <li><span class="text-red-400">Prohibited:</span> Circumventing license key functionality</li>
+        <li>
+          <span class="text-green-400">Permitted:</span> Self-hosting for internal use, modification for
+          your own use
+        </li>
+        <li>
+          <span class="text-red-400">Prohibited:</span> Offering Skillsmith as a managed service to third
+          parties
+        </li>
+        <li>
+          <span class="text-red-400">Prohibited:</span> Circumventing license key functionality
+        </li>
       </ul>
 
       <h3 class="text-xl font-semibold text-white mb-4">Third-Party Skills</h3>
@@ -284,15 +366,21 @@ const effectiveDate = 'January 17, 2026';
 
       <h3 class="text-xl font-semibold text-white mb-4">Plan Changes</h3>
       <ul class="list-disc list-inside text-dark-300 space-y-2 ml-4 mb-6">
-        <li><strong class="text-white">Upgrades:</strong> Take effect immediately; you pay the prorated difference</li>
-        <li><strong class="text-white">Downgrades:</strong> Take effect at the next billing cycle</li>
-        <li><strong class="text-white">Cancellation:</strong> Access continues until the end of the billing period</li>
+        <li>
+          <strong class="text-white">Upgrades:</strong> Take effect immediately; you pay the prorated
+          difference
+        </li>
+        <li>
+          <strong class="text-white">Downgrades:</strong> Take effect at the next billing cycle
+        </li>
+        <li>
+          <strong class="text-white">Cancellation:</strong> Access continues until the end of the billing
+          period
+        </li>
       </ul>
 
       <h3 class="text-xl font-semibold text-white mb-4">Refunds</h3>
-      <p class="text-dark-300 mb-4">
-        We offer refunds in the following circumstances:
-      </p>
+      <p class="text-dark-300 mb-4">We offer refunds in the following circumstances:</p>
       <ul class="list-disc list-inside text-dark-300 space-y-2 ml-4 mb-6">
         <li>Within 14 days of initial purchase (no questions asked)</li>
         <li>Service unavailability exceeding our SLA (Enterprise plans)</li>
@@ -312,8 +400,8 @@ const effectiveDate = 'January 17, 2026';
 
       <h3 class="text-xl font-semibold text-white mb-4">Termination by You</h3>
       <p class="text-dark-300 mb-6">
-        You may stop using Skillsmith at any time. To delete your account, visit your account settings
-        or contact support. Upon deletion:
+        You may stop using Skillsmith at any time. To delete your account, visit your account
+        settings or contact support. Upon deletion:
       </p>
       <ul class="list-disc list-inside text-dark-300 space-y-2 ml-4 mb-6">
         <li>Your account data will be deleted within 30 days</li>
@@ -359,7 +447,8 @@ const effectiveDate = 'January 17, 2026';
 
       <p class="text-dark-300 mt-6">
         <strong class="text-white">Third-party skills:</strong> We do not guarantee the quality, safety,
-        or legality of skills indexed from third-party sources. You use third-party skills at your own risk.
+        or legality of skills indexed from third-party sources. You use third-party skills at your own
+        risk.
       </p>
     </section>
 
@@ -372,14 +461,20 @@ const effectiveDate = 'January 17, 2026';
           <strong class="text-white">TO THE MAXIMUM EXTENT PERMITTED BY LAW:</strong>
         </p>
         <ul class="list-disc list-inside text-dark-300 space-y-2 ml-4 mb-4">
-          <li>We are not liable for any indirect, incidental, special, consequential, or punitive damages</li>
+          <li>
+            We are not liable for any indirect, incidental, special, consequential, or punitive
+            damages
+          </li>
           <li>We are not liable for loss of profits, data, use, or other intangible losses</li>
-          <li>Our total liability is limited to the amount you paid us in the 12 months preceding the claim</li>
+          <li>
+            Our total liability is limited to the amount you paid us in the 12 months preceding the
+            claim
+          </li>
           <li>For free accounts, our liability is limited to $100 USD</li>
         </ul>
         <p class="text-dark-400 text-sm">
-          These limitations apply regardless of the theory of liability (contract, tort, or otherwise)
-          and even if we have been advised of the possibility of such damages.
+          These limitations apply regardless of the theory of liability (contract, tort, or
+          otherwise) and even if we have been advised of the possibility of such damages.
         </p>
       </div>
     </section>
@@ -424,21 +519,19 @@ const effectiveDate = 'January 17, 2026';
       </p>
       <p class="text-dark-300 mb-4">
         <strong class="text-white">Dispute Resolution:</strong> Any disputes arising from these Terms
-        will be resolved through binding arbitration in Vancouver, British Columbia, except that
-        either party may seek injunctive relief in court for intellectual property violations.
+        will be resolved through binding arbitration in Vancouver, British Columbia, except that either
+        party may seek injunctive relief in court for intellectual property violations.
       </p>
       <p class="text-dark-300">
-        <strong class="text-white">Class Action Waiver:</strong> You agree to resolve disputes with
-        us on an individual basis and waive any right to participate in class actions.
+        <strong class="text-white">Class Action Waiver:</strong> You agree to resolve disputes with us
+        on an individual basis and waive any right to participate in class actions.
       </p>
     </section>
 
     <!-- Section 15: Contact -->
     <section id="contact" class="mb-12">
       <h2 class="text-2xl font-bold text-white mb-6">15. Contact Us</h2>
-      <p class="text-dark-300 mb-6">
-        If you have questions about these Terms, please contact us:
-      </p>
+      <p class="text-dark-300 mb-6">If you have questions about these Terms, please contact us:</p>
 
       <div class="bg-dark-900 border border-dark-700 rounded-lg p-6">
         <p class="text-white font-semibold mb-2">Smith Horn Group Ltd.</p>
@@ -447,11 +540,17 @@ const effectiveDate = 'January 17, 2026';
         <div class="space-y-2">
           <p class="text-dark-300">
             <span class="text-dark-400">General Inquiries:</span>
-            <a href="/contact?topic=general" class="text-primary-400 hover:text-primary-300 underline ml-2">Contact Form</a>
+            <a
+              href="/contact?topic=general"
+              class="text-primary-400 hover:text-primary-300 underline ml-2">Contact Form</a
+            >
           </p>
           <p class="text-dark-300">
             <span class="text-dark-400">Support:</span>
-            <a href="/contact?topic=support" class="text-primary-400 hover:text-primary-300 underline ml-2">Contact Form</a>
+            <a
+              href="/contact?topic=support"
+              class="text-primary-400 hover:text-primary-300 underline ml-2">Contact Form</a
+            >
           </p>
         </div>
 
@@ -478,5 +577,4 @@ const effectiveDate = 'January 17, 2026';
       </a>
     </div>
   </div>
-
 </BaseLayout>

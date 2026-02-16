@@ -1,15 +1,15 @@
 ---
 interface Props {
-  title: string;
-  description: string;
-  slug: string;
-  date: Date;
-  author?: string | undefined;
-  category?: string | undefined;
-  tags?: string[] | undefined;
-  featured?: boolean | undefined;
-  readingTime?: number | undefined;
-  ogImage?: string | undefined;
+  title: string
+  description: string
+  slug: string
+  date: Date
+  author?: string | undefined
+  category?: string | undefined
+  tags?: string[] | undefined
+  featured?: boolean | undefined
+  readingTime?: number | undefined
+  ogImage?: string | undefined
 }
 
 const {
@@ -23,13 +23,13 @@ const {
   featured = false,
   readingTime,
   ogImage,
-} = Astro.props;
+} = Astro.props
 
 const formattedDate = new Intl.DateTimeFormat('en-US', {
   year: 'numeric',
   month: 'short',
   day: 'numeric',
-}).format(date);
+}).format(date)
 ---
 
 <a
@@ -42,34 +42,42 @@ const formattedDate = new Intl.DateTimeFormat('en-US', {
       : 'border-dark-800 hover:border-dark-700',
   ]}
 >
-  {ogImage && (
-    <div class="aspect-video overflow-hidden rounded-t-xl">
-      <img
-        src={ogImage}
-        alt={title}
-        width="640"
-        height="360"
-        class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-        loading="lazy"
-      />
-    </div>
-  )}
+  {
+    ogImage && (
+      <div class="aspect-video overflow-hidden rounded-t-xl">
+        <img
+          src={ogImage}
+          alt={title}
+          width="640"
+          height="360"
+          class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+          loading="lazy"
+        />
+      </div>
+    )
+  }
 
   <div class="p-6">
     <div class="flex items-center gap-3 mb-3">
-      {category && (
-        <span class="px-2 py-1 text-xs font-medium rounded-full bg-primary-500/10 text-primary-400">
-          {category}
-        </span>
-      )}
-      {featured && (
-        <span class="px-2 py-1 text-xs font-medium rounded-full bg-amber-500/10 text-amber-400">
-          Featured
-        </span>
-      )}
+      {
+        category && (
+          <span class="px-2 py-1 text-xs font-medium rounded-full bg-primary-500/10 text-primary-400">
+            {category}
+          </span>
+        )
+      }
+      {
+        featured && (
+          <span class="px-2 py-1 text-xs font-medium rounded-full bg-amber-500/10 text-amber-400">
+            Featured
+          </span>
+        )
+      }
     </div>
 
-    <h3 class="text-lg font-semibold text-white mb-2 group-hover:text-primary-400 transition-colors line-clamp-2">
+    <h3
+      class="text-lg font-semibold text-white mb-2 group-hover:text-primary-400 transition-colors line-clamp-2"
+    >
       <span class="sr-only">Read article: </span>{title}
     </h3>
 
@@ -83,30 +91,41 @@ const formattedDate = new Intl.DateTimeFormat('en-US', {
         <span>&middot;</span>
         <time datetime={date.toISOString()}>{formattedDate}</time>
       </div>
-      {readingTime && (
-        <span class="flex items-center gap-1">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          {readingTime} min
-        </span>
-      )}
+      {
+        readingTime && (
+          <span class="flex items-center gap-1">
+            <svg
+              class="w-3.5 h-3.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </svg>
+            {readingTime} min
+          </span>
+        )
+      }
     </div>
 
-    {tags.length > 0 && (
-      <div class="flex flex-wrap gap-1.5 mt-4 pt-4 border-t border-dark-800">
-        {tags.slice(0, 3).map((tag) => (
-          <span class="px-2 py-0.5 text-xs bg-dark-800 text-dark-400 rounded">
-            {tag}
-          </span>
-        ))}
-        {tags.length > 3 && (
-          <span class="px-2 py-0.5 text-xs text-dark-400">
-            +{tags.length - 3}
-          </span>
-        )}
-      </div>
-    )}
+    {
+      tags.length > 0 && (
+        <div class="flex flex-wrap gap-1.5 mt-4 pt-4 border-t border-dark-800">
+          {tags.slice(0, 3).map((tag) => (
+            <span class="px-2 py-0.5 text-xs bg-dark-800 text-dark-400 rounded">{tag}</span>
+          ))}
+          {tags.length > 3 && (
+            <span class="px-2 py-0.5 text-xs text-dark-400">+{tags.length - 3}</span>
+          )}
+        </div>
+      )
+    }
   </div>
 </a>
 

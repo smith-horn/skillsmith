@@ -1,18 +1,18 @@
 ---
-import BaseLayout from './BaseLayout.astro';
-import ImageLightbox from '../components/ImageLightbox.astro';
-import { formatDate } from '../utils/blog';
+import BaseLayout from './BaseLayout.astro'
+import ImageLightbox from '../components/ImageLightbox.astro'
+import { formatDate } from '../utils/blog'
 
 interface Props {
-  title: string;
-  description?: string | undefined;
-  author?: string | undefined;
-  date?: Date | undefined;
-  updated?: Date | undefined;
-  category?: string | undefined;
-  tags?: string[] | undefined;
-  ogImage?: string | undefined;
-  readingTime?: number | undefined;
+  title: string
+  description?: string | undefined
+  author?: string | undefined
+  date?: Date | undefined
+  updated?: Date | undefined
+  category?: string | undefined
+  tags?: string[] | undefined
+  ogImage?: string | undefined
+  readingTime?: number | undefined
 }
 
 const {
@@ -25,10 +25,10 @@ const {
   tags = [],
   ogImage,
   readingTime,
-} = Astro.props;
+} = Astro.props
 
-const formattedDate = date ? formatDate(date) : null;
-const formattedUpdated = updated ? formatDate(updated) : null;
+const formattedDate = date ? formatDate(date) : null
+const formattedUpdated = updated ? formatDate(updated) : null
 ---
 
 <BaseLayout title={`${title} | Skillsmith Blog`} description={description}>
@@ -40,7 +40,7 @@ const formattedUpdated = updated ? formatDate(updated) : null;
     {updated && <meta property="article:modified_time" content={updated.toISOString()} />}
     {author && <meta property="article:author" content={author} />}
     {category && <meta property="article:section" content={category} />}
-    {tags.map(tag => <meta property="article:tag" content={tag} />)}
+    {tags.map((tag) => <meta property="article:tag" content={tag} />)}
     {ogImage && <meta property="og:image" content={ogImage} />}
     <!-- BreadcrumbList now included in [...slug].astro @graph (SMI-2526) -->
     <slot name="head" />
@@ -51,65 +51,115 @@ const formattedUpdated = updated ? formatDate(updated) : null;
     <main class="flex-1 min-w-0 px-4 py-10 sm:px-8 lg:px-12">
       <article class="blog-content max-w-2xl mx-auto">
         <!-- Back to blog link -->
-        <a href="/blog" class="inline-flex items-center gap-2 text-dark-400 hover:text-primary-500 transition-colors mb-8 group">
-          <svg class="w-4 h-4 transition-transform group-hover:-translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+        <a
+          href="/blog"
+          class="inline-flex items-center gap-2 text-dark-400 hover:text-primary-500 transition-colors mb-8 group"
+        >
+          <svg
+            class="w-4 h-4 transition-transform group-hover:-translate-x-1"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
           </svg>
           Back to Blog
         </a>
 
         <!-- Article Header -->
         <header class="mb-10">
-          {category && (
-            <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-primary-500/10 text-primary-400 mb-4">
-              {category}
-            </span>
-          )}
+          {
+            category && (
+              <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-primary-500/10 text-primary-400 mb-4">
+                {category}
+              </span>
+            )
+          }
 
           <h1 class="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-4 leading-tight">
             {title}
           </h1>
 
-          {description && (
-            <p class="text-lg sm:text-xl text-dark-300 mb-6">
-              {description}
-            </p>
-          )}
+          {description && <p class="text-lg sm:text-xl text-dark-300 mb-6">{description}</p>}
 
           <div class="flex flex-wrap items-center gap-4 text-sm text-dark-400">
-            {author && (
-              <span class="flex items-center gap-2">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                </svg>
-                {author}
-              </span>
-            )}
+            {
+              author && (
+                <span class="flex items-center gap-2">
+                  <svg
+                    class="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                    />
+                  </svg>
+                  {author}
+                </span>
+              )
+            }
 
-            {formattedDate && date && (
-              <time datetime={date.toISOString()} class="flex items-center gap-2">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                {formattedDate}
-              </time>
-            )}
+            {
+              formattedDate && date && (
+                <time datetime={date.toISOString()} class="flex items-center gap-2">
+                  <svg
+                    class="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                    />
+                  </svg>
+                  {formattedDate}
+                </time>
+              )
+            }
 
-            {readingTime && (
-              <span class="flex items-center gap-2">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                {readingTime} min read
-              </span>
-            )}
+            {
+              readingTime && (
+                <span class="flex items-center gap-2">
+                  <svg
+                    class="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  {readingTime} min read
+                </span>
+              )
+            }
           </div>
 
-          {formattedUpdated && formattedUpdated !== formattedDate && (
-            <p class="mt-3 text-sm text-dark-500">
-              Updated: {formattedUpdated}
-            </p>
-          )}
+          {
+            formattedUpdated && formattedUpdated !== formattedDate && (
+              <p class="mt-3 text-sm text-dark-500">Updated: {formattedUpdated}</p>
+            )
+          }
         </header>
 
         <!-- Article Content -->
@@ -121,24 +171,28 @@ const formattedUpdated = updated ? formatDate(updated) : null;
         <ImageLightbox />
 
         <!-- Tags -->
-        {tags.length > 0 && (
-          <footer class="mt-12 pt-8 border-t border-dark-800">
-            <div class="flex flex-wrap gap-2">
-              {tags.map((tag) => (
-                <span class="px-3 py-1 text-sm bg-dark-800 text-dark-300 rounded-full">
-                  #{tag}
-                </span>
-              ))}
-            </div>
-          </footer>
-        )}
+        {
+          tags.length > 0 && (
+            <footer class="mt-12 pt-8 border-t border-dark-800">
+              <div class="flex flex-wrap gap-2">
+                {tags.map((tag) => (
+                  <span class="px-3 py-1 text-sm bg-dark-800 text-dark-300 rounded-full">
+                    #{tag}
+                  </span>
+                ))}
+              </div>
+            </footer>
+          )
+        }
       </article>
     </main>
 
     <!-- Table of Contents -->
     <aside class="hidden xl:block w-64 shrink-0 py-10 pr-8">
       <div class="sticky top-24">
-        <p class="text-xs font-semibold uppercase tracking-wider text-dark-500 mb-4">On this page</p>
+        <p class="text-xs font-semibold uppercase tracking-wider text-dark-500 mb-4">
+          On this page
+        </p>
         <nav class="toc-nav" id="toc" aria-label="Table of contents">
           <!-- Generated by JavaScript -->
         </nav>
@@ -150,49 +204,51 @@ const formattedUpdated = updated ? formatDate(updated) : null;
     // Generate table of contents from headings
     // Uses astro:page-load to rebind after ClientRouter view transitions
     function initToc() {
-      const article = document.querySelector('.prose-content');
-      const toc = document.getElementById('toc');
+      const article = document.querySelector('.prose-content')
+      const toc = document.getElementById('toc')
 
-      if (!article || !toc) return;
+      if (!article || !toc) return
 
       // Clear previous TOC content before regenerating
-      toc.innerHTML = '';
+      toc.innerHTML = ''
 
-      const headings = article.querySelectorAll('h2, h3');
-      if (headings.length === 0) return;
+      const headings = article.querySelectorAll('h2, h3')
+      if (headings.length === 0) return
 
-      const ul = document.createElement('ul');
-      ul.className = 'space-y-2';
+      const ul = document.createElement('ul')
+      ul.className = 'space-y-2'
 
       headings.forEach((heading, index) => {
         if (!heading.id) {
-          heading.id = `heading-${index}`;
+          heading.id = `heading-${index}`
         }
 
-        const li = document.createElement('li');
-        li.className = heading.tagName === 'H3' ? 'pl-3' : '';
+        const li = document.createElement('li')
+        li.className = heading.tagName === 'H3' ? 'pl-3' : ''
 
-        const a = document.createElement('a');
-        a.href = `#${heading.id}`;
-        a.className = 'text-sm text-dark-400 hover:text-primary-400 transition-colors block py-1';
-        a.textContent = heading.textContent;
+        const a = document.createElement('a')
+        a.href = `#${heading.id}`
+        a.className = 'text-sm text-dark-400 hover:text-primary-400 transition-colors block py-1'
+        a.textContent = heading.textContent
 
-        li.appendChild(a);
-        ul.appendChild(li);
-      });
+        li.appendChild(a)
+        ul.appendChild(li)
+      })
 
-      toc.appendChild(ul);
+      toc.appendChild(ul)
     }
 
     function fixTaskListCheckboxes() {
-      document.querySelectorAll('.prose-content .task-list-item input[type="checkbox"]').forEach(cb => {
-        cb.setAttribute('aria-hidden', 'true');
-        cb.setAttribute('tabindex', '-1');
-      });
+      document
+        .querySelectorAll('.prose-content .task-list-item input[type="checkbox"]')
+        .forEach((cb) => {
+          cb.setAttribute('aria-hidden', 'true')
+          cb.setAttribute('tabindex', '-1')
+        })
     }
 
-    document.addEventListener('astro:page-load', initToc);
-    document.addEventListener('astro:page-load', fixTaskListCheckboxes);
+    document.addEventListener('astro:page-load', initToc)
+    document.addEventListener('astro:page-load', fixTaskListCheckboxes)
   </script>
 </BaseLayout>
 
@@ -254,7 +310,7 @@ const formattedUpdated = updated ? formatDate(updated) : null;
   }
 
   .prose-content a {
-    color: #E07A5F;
+    color: #e07a5f;
     text-decoration: underline;
     text-underline-offset: 2px;
     transition: color 0.2s;
@@ -294,7 +350,7 @@ const formattedUpdated = updated ? formatDate(updated) : null;
   }
 
   .prose-content blockquote {
-    border-left: 4px solid #E07A5F;
+    border-left: 4px solid #e07a5f;
     padding-left: 1.25rem;
     margin: 1.5rem 0;
     font-style: italic;
@@ -308,7 +364,9 @@ const formattedUpdated = updated ? formatDate(updated) : null;
     margin: 2rem 0;
     border: 1px solid #1e293b;
     cursor: zoom-in;
-    transition: opacity 0.2s ease, box-shadow 0.2s ease;
+    transition:
+      opacity 0.2s ease,
+      box-shadow 0.2s ease;
   }
 
   .prose-content img:hover {
@@ -318,11 +376,11 @@ const formattedUpdated = updated ? formatDate(updated) : null;
 
   .prose-content img:focus {
     outline: none;
-    box-shadow: 0 0 0 2px #E07A5F;
+    box-shadow: 0 0 0 2px #e07a5f;
   }
 
   .prose-content img:focus-visible {
-    outline: 2px solid #E07A5F;
+    outline: 2px solid #e07a5f;
     outline-offset: 2px;
   }
 
@@ -379,8 +437,8 @@ const formattedUpdated = updated ? formatDate(updated) : null;
   }
 
   /* Shiki code comment contrast fix (github-dark #6A737D fails WCAG AA on dark bg) */
-  .prose-content pre code span[style*="color:#6A737D"] {
-    color: #8B949E !important;
+  .prose-content pre code span[style*='color:#6A737D'] {
+    color: #8b949e !important;
   }
 
   /* Task-list checkbox accessibility: decorative disabled checkboxes from markdown checklists */
@@ -395,7 +453,7 @@ const formattedUpdated = updated ? formatDate(updated) : null;
     gap: 0.5rem;
   }
 
-  .prose-content .task-list-item input[type="checkbox"] {
+  .prose-content .task-list-item input[type='checkbox'] {
     appearance: none;
     width: 1rem;
     height: 1rem;
@@ -409,7 +467,7 @@ const formattedUpdated = updated ? formatDate(updated) : null;
   /* Superscript footnotes */
   .prose-content sup {
     font-size: 0.75rem;
-    color: #E07A5F;
+    color: #e07a5f;
   }
 
   .prose-content sup a {

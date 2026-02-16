@@ -9,80 +9,90 @@
  */
 
 // Disable prerendering - this page needs SSR to inject Supabase config for auth nav
-export const prerender = false;
+export const prerender = false
 
-import BaseLayout from '../layouts/BaseLayout.astro';
-import { pricingTiers, pricingFaqs, formatPrice, getAnnualPrice } from '../lib/pricing-data';
-import type { PricingTier } from '../lib/pricing-data';
+import BaseLayout from '../layouts/BaseLayout.astro'
+import { pricingTiers, pricingFaqs, formatPrice, getAnnualPrice } from '../lib/pricing-data'
+import type { PricingTier } from '../lib/pricing-data'
 
 // Generate JSON-LD structured data
 function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; answer: string }>) {
-  const priceValidUntil = `${new Date().getFullYear() + 1}-12-31`;
+  const priceValidUntil = `${new Date().getFullYear() + 1}-12-31`
   return {
-    "@context": "https://schema.org",
-    "@graph": [
+    '@context': 'https://schema.org',
+    '@graph': [
       {
-        "@type": "WebPage",
-        "@id": "https://www.skillsmith.app/pricing",
-        "url": "https://www.skillsmith.app/pricing",
-        "name": "Skillsmith Pricing - Plans for Individuals and Teams",
-        "description": "Choose the Skillsmith plan that fits your needs. From free community access to enterprise-grade features.",
-        "isPartOf": { "@id": "https://www.skillsmith.app/#website" },
-        "speakable": {
-          "@type": "SpeakableSpecification",
-          "cssSelector": [".pricing-hero h1", ".pricing-hero-subtitle", ".tier-description"]
-        }
+        '@type': 'WebPage',
+        '@id': 'https://www.skillsmith.app/pricing',
+        url: 'https://www.skillsmith.app/pricing',
+        name: 'Skillsmith Pricing - Plans for Individuals and Teams',
+        description:
+          'Choose the Skillsmith plan that fits your needs. From free community access to enterprise-grade features.',
+        isPartOf: { '@id': 'https://www.skillsmith.app/#website' },
+        speakable: {
+          '@type': 'SpeakableSpecification',
+          cssSelector: ['.pricing-hero h1', '.pricing-hero-subtitle', '.tier-description'],
+        },
       },
       {
-        "@type": "Product",
-        "name": "Skillsmith",
-        "description": "AI-powered skill discovery and management for AI assistants",
-        "image": "https://www.skillsmith.app/og-image.png",
-        "brand": { "@type": "Brand", "name": "Skillsmith" },
-        "offers": tiers.map(tier => ({
-          "@type": "Offer",
-          "name": tier.name,
-          "price": tier.monthlyPrice.toString(),
-          "priceCurrency": "USD",
+        '@type': 'Product',
+        name: 'Skillsmith',
+        description: 'AI-powered skill discovery and management for AI assistants',
+        image: 'https://www.skillsmith.app/og-image.png',
+        brand: { '@type': 'Brand', name: 'Skillsmith' },
+        offers: tiers.map((tier) => ({
+          '@type': 'Offer',
+          name: tier.name,
+          price: tier.monthlyPrice.toString(),
+          priceCurrency: 'USD',
           priceValidUntil,
-          ...(tier.monthlyPrice > 0 && { "billingDuration": "P1M" }),
-          "description": `${tier.apiCalls}. ${tier.features.join(', ')}.`,
-          "availability": "https://schema.org/InStock",
-          "url": `https://www.skillsmith.app${tier.ctaHref}`,
-          ...((tier.period?.includes('/user')) && {
-            "priceSpecification": {
-              "@type": "UnitPriceSpecification",
-              "price": tier.monthlyPrice.toString(),
-              "priceCurrency": "USD",
-              "billingDuration": "P1M",
-              "unitText": "user"
-            }
-          })
-        }))
+          ...(tier.monthlyPrice > 0 && { billingDuration: 'P1M' }),
+          description: `${tier.apiCalls}. ${tier.features.join(', ')}.`,
+          availability: 'https://schema.org/InStock',
+          url: `https://www.skillsmith.app${tier.ctaHref}`,
+          ...(tier.period?.includes('/user') && {
+            priceSpecification: {
+              '@type': 'UnitPriceSpecification',
+              price: tier.monthlyPrice.toString(),
+              priceCurrency: 'USD',
+              billingDuration: 'P1M',
+              unitText: 'user',
+            },
+          }),
+        })),
       },
       {
-        "@type": "FAQPage",
-        "mainEntity": faqs.map(faq => ({
-          "@type": "Question",
-          "name": faq.question,
-          "acceptedAnswer": { "@type": "Answer", "text": faq.answer }
-        }))
+        '@type': 'FAQPage',
+        mainEntity: faqs.map((faq) => ({
+          '@type': 'Question',
+          name: faq.question,
+          acceptedAnswer: { '@type': 'Answer', text: faq.answer },
+        })),
       },
       {
-        "@type": "BreadcrumbList",
-        "itemListElement": [
-          { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://www.skillsmith.app/" },
-          { "@type": "ListItem", "position": 2, "name": "Pricing", "item": "https://www.skillsmith.app/pricing" }
-        ]
-      }
-    ]
-  };
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://www.skillsmith.app/' },
+          {
+            '@type': 'ListItem',
+            position: 2,
+            name: 'Pricing',
+            item: 'https://www.skillsmith.app/pricing',
+          },
+        ],
+      },
+    ],
+  }
 }
 
-const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
+const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs)
 ---
 
-<BaseLayout title="Pricing | Skillsmith" description="Skillsmith pricing - Choose the plan that fits your needs. From free community access to enterprise-grade features." activePath="/pricing">
+<BaseLayout
+  title="Pricing | Skillsmith"
+  description="Skillsmith pricing - Choose the plan that fits your needs. From free community access to enterprise-grade features."
+  activePath="/pricing"
+>
   <Fragment slot="head">
     <!-- JSON-LD Structured Data -->
     <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLdData)} />
@@ -107,48 +117,71 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
   </section>
 
   <section class="pricing-grid">
-    {pricingTiers.map((tier) => (
-      <div
-        class:list={["pricing-card", { highlighted: tier.highlighted }]}
-        data-tier={tier.name.toLowerCase()}
-        data-monthly-price={tier.monthlyPrice}
-        data-annual-price={getAnnualPrice(tier.monthlyPrice)}
-      >
-        {tier.highlighted && <div class="pricing-badge">Recommended</div>}
-        <div class="card-header">
-          <h2 class="tier-name">{tier.name}</h2>
-          <div class="price-container">
-            <span class="price" data-price-display>{formatPrice(tier.monthlyPrice)}</span>
-            <span class="period" data-period-display>{tier.monthlyPrice === 0 ? '' : tier.period || '/month'}</span>
-          </div>
-          <p class="tier-description">{tier.description}</p>
-        </div>
-        <div class="api-calls">
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-          </svg>
-          <span>{tier.apiCalls}</span>
-        </div>
-        <ul class="features-list">
-          {tier.features.map((feature) => (
-            <li>
-              <svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-              <span>{feature}</span>
-            </li>
-          ))}
-        </ul>
-        <a
-          href={tier.ctaHref}
-          class:list={["btn btn-cta", { "btn-primary": tier.highlighted, "btn-secondary": !tier.highlighted }]}
-          data-cta-link
-          data-base-href={tier.ctaHref}
+    {
+      pricingTiers.map((tier) => (
+        <div
+          class:list={['pricing-card', { highlighted: tier.highlighted }]}
+          data-tier={tier.name.toLowerCase()}
+          data-monthly-price={tier.monthlyPrice}
+          data-annual-price={getAnnualPrice(tier.monthlyPrice)}
         >
-          {tier.cta}
-        </a>
-      </div>
-    ))}
+          {tier.highlighted && <div class="pricing-badge">Recommended</div>}
+          <div class="card-header">
+            <h2 class="tier-name">{tier.name}</h2>
+            <div class="price-container">
+              <span class="price" data-price-display>
+                {formatPrice(tier.monthlyPrice)}
+              </span>
+              <span class="period" data-period-display>
+                {tier.monthlyPrice === 0 ? '' : tier.period || '/month'}
+              </span>
+            </div>
+            <p class="tier-description">{tier.description}</p>
+          </div>
+          <div class="api-calls">
+            <svg
+              class="icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              aria-hidden="true"
+            >
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+            </svg>
+            <span>{tier.apiCalls}</span>
+          </div>
+          <ul class="features-list">
+            {tier.features.map((feature) => (
+              <li>
+                <svg
+                  class="check-icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  aria-hidden="true"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                <span>{feature}</span>
+              </li>
+            ))}
+          </ul>
+          <a
+            href={tier.ctaHref}
+            class:list={[
+              'btn btn-cta',
+              { 'btn-primary': tier.highlighted, 'btn-secondary': !tier.highlighted },
+            ]}
+            data-cta-link
+            data-base-href={tier.ctaHref}
+          >
+            {tier.cta}
+          </a>
+        </div>
+      ))
+    }
   </section>
 
   <section class="features-comparison">
@@ -257,12 +290,14 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
   <section class="pricing-faq">
     <h2>Frequently asked questions</h2>
     <div class="faq-grid">
-      {pricingFaqs.map((faq) => (
-        <div class="faq-item">
-          <h3>{faq.question}</h3>
-          <p>{faq.answer}</p>
-        </div>
-      ))}
+      {
+        pricingFaqs.map((faq) => (
+          <div class="faq-item">
+            <h3>{faq.question}</h3>
+            <p>{faq.answer}</p>
+          </div>
+        ))
+      }
     </div>
   </section>
 
@@ -280,68 +315,68 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
   // Billing period toggle functionality
   // Uses astro:page-load to reinitialize after ClientRouter view transitions
   document.addEventListener('astro:page-load', () => {
-    const toggleBtns = document.querySelectorAll('.toggle-btn');
-    const pricingCards = document.querySelectorAll('.pricing-card');
+    const toggleBtns = document.querySelectorAll('.toggle-btn')
+    const pricingCards = document.querySelectorAll('.pricing-card')
 
     function updatePrices(period: string) {
       // Update toggle button states
-      toggleBtns.forEach(btn => {
-        btn.classList.toggle('active', btn.getAttribute('data-period') === period);
-      });
+      toggleBtns.forEach((btn) => {
+        btn.classList.toggle('active', btn.getAttribute('data-period') === period)
+      })
 
       // Update each pricing card
-      pricingCards.forEach(card => {
-        const tier = card.getAttribute('data-tier');
-        const monthlyPrice = parseFloat(card.getAttribute('data-monthly-price') || '0');
-        const annualPrice = parseFloat(card.getAttribute('data-annual-price') || '0');
+      pricingCards.forEach((card) => {
+        const tier = card.getAttribute('data-tier')
+        const monthlyPrice = parseFloat(card.getAttribute('data-monthly-price') || '0')
+        const annualPrice = parseFloat(card.getAttribute('data-annual-price') || '0')
 
-        const priceDisplay = card.querySelector('[data-price-display]');
-        const periodDisplay = card.querySelector('[data-period-display]');
-        const ctaLink = card.querySelector('[data-cta-link]') as HTMLAnchorElement;
+        const priceDisplay = card.querySelector('[data-price-display]')
+        const periodDisplay = card.querySelector('[data-period-display]')
+        const ctaLink = card.querySelector('[data-cta-link]') as HTMLAnchorElement
 
         if (priceDisplay) {
           if (monthlyPrice === 0) {
-            priceDisplay.textContent = 'Free';
+            priceDisplay.textContent = 'Free'
           } else if (period === 'annual') {
-            priceDisplay.textContent = `$${annualPrice}`;
+            priceDisplay.textContent = `$${annualPrice}`
           } else {
-            priceDisplay.textContent = `$${monthlyPrice}`;
+            priceDisplay.textContent = `$${monthlyPrice}`
           }
         }
 
         if (periodDisplay && monthlyPrice > 0) {
           if (tier === 'team' || tier === 'enterprise') {
-            periodDisplay.textContent = period === 'annual' ? '/user/year' : '/user/month';
+            periodDisplay.textContent = period === 'annual' ? '/user/year' : '/user/month'
           } else {
-            periodDisplay.textContent = period === 'annual' ? '/year' : '/month';
+            periodDisplay.textContent = period === 'annual' ? '/year' : '/month'
           }
         }
 
         // Update CTA links to include period
         if (ctaLink) {
-          const baseHref = ctaLink.getAttribute('data-base-href') || '';
+          const baseHref = ctaLink.getAttribute('data-base-href') || ''
           if (baseHref.includes('/signup')) {
-            const separator = baseHref.includes('?') ? '&' : '?';
-            ctaLink.href = `${baseHref}${separator}period=${period}`;
+            const separator = baseHref.includes('?') ? '&' : '?'
+            ctaLink.href = `${baseHref}${separator}period=${period}`
           }
         }
-      });
+      })
     }
 
     // Add click handlers to toggle buttons
-    toggleBtns.forEach(btn => {
+    toggleBtns.forEach((btn) => {
       btn.addEventListener('click', () => {
-        const period = btn.getAttribute('data-period') || 'monthly';
-        updatePrices(period);
+        const period = btn.getAttribute('data-period') || 'monthly'
+        updatePrices(period)
 
         // GA4: Track billing period toggle (SMI-2459)
         if (typeof window.gtag === 'function') {
           window.gtag('event', 'billing_period_toggle', {
             billing_period: period,
-          });
+          })
         }
-      });
-    });
+      })
+    })
 
     // GA4 Ecommerce: view_item_list on page load (SMI-2459)
     if (typeof window.gtag === 'function') {
@@ -351,35 +386,39 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs);
         price: parseFloat(card.getAttribute('data-monthly-price') || '0'),
         item_category: 'subscription',
         index: index,
-      }));
+      }))
 
       window.gtag('event', 'view_item_list', {
         item_list_id: 'pricing_tiers',
         item_list_name: 'Pricing Tiers',
         items: items,
-      });
+      })
     }
 
     // GA4 Ecommerce: select_item on CTA click (SMI-2459)
-    document.querySelectorAll('[data-cta-link]').forEach(link => {
+    document.querySelectorAll('[data-cta-link]').forEach((link) => {
       link.addEventListener('click', () => {
-        const card = link.closest('.pricing-card');
+        const card = link.closest('.pricing-card')
         if (card && typeof window.gtag === 'function') {
-          const isAnnual = document.querySelector('.toggle-btn[data-period="annual"]')?.classList.contains('active');
-          const priceAttr = isAnnual ? 'data-annual-price' : 'data-monthly-price';
+          const isAnnual = document
+            .querySelector('.toggle-btn[data-period="annual"]')
+            ?.classList.contains('active')
+          const priceAttr = isAnnual ? 'data-annual-price' : 'data-monthly-price'
           window.gtag('event', 'select_item', {
             item_list_id: 'pricing_tiers',
             item_list_name: 'Pricing Tiers',
-            items: [{
-              item_id: card.getAttribute('data-tier'),
-              item_name: card.querySelector('.tier-name')?.textContent || '',
-              price: parseFloat(card.getAttribute(priceAttr) || '0'),
-              item_category: 'subscription',
-              item_variant: isAnnual ? 'annual' : 'monthly',
-            }],
-          });
+            items: [
+              {
+                item_id: card.getAttribute('data-tier'),
+                item_name: card.querySelector('.tier-name')?.textContent || '',
+                price: parseFloat(card.getAttribute(priceAttr) || '0'),
+                item_category: 'subscription',
+                item_variant: isAnnual ? 'annual' : 'monthly',
+              },
+            ],
+          })
         }
-      });
-    });
-  });
+      })
+    })
+  })
 </script>

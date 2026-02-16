@@ -13,17 +13,17 @@
  */
 
 // Disable prerendering - this page needs SSR to inject Supabase config for auth nav
-export const prerender = false;
+export const prerender = false
 
-import { ClientRouter } from 'astro:transitions';
-import Nav from '../../components/Nav.astro';
-import { getSupabaseConfig } from '../../lib/supabase-config';
+import { ClientRouter } from 'astro:transitions'
+import Nav from '../../components/Nav.astro'
+import { getSupabaseConfig } from '../../lib/supabase-config'
 
 // Read env vars at SSR time to inject into client script
-const supabaseConfig = getSupabaseConfig();
+const supabaseConfig = getSupabaseConfig()
 ---
 
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -33,9 +33,12 @@ const supabaseConfig = getSupabaseConfig();
     <meta name="description" content="View your Skillsmith billing history and download invoices" />
     <title>Billing History | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
-    <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
     <script is:inline define:vars={{ supabaseConfig }}>
-      window.__SUPABASE_CONFIG__ = supabaseConfig;
+      window.__SUPABASE_CONFIG__ = supabaseConfig
     </script>
     <!-- Enable smooth page transitions without full reload (SMI-2066) -->
     <ClientRouter />
@@ -48,8 +51,16 @@ const supabaseConfig = getSupabaseConfig();
       <div id="loading-state" class="loading-state">
         <div class="spinner-container">
           <svg class="spinner" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" opacity="0.25"/>
-            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"/>
+            <circle
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+              fill="none"
+              opacity="0.25"></circle>
+            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+            ></path>
           </svg>
         </div>
         <p>Loading billing history...</p>
@@ -59,8 +70,12 @@ const supabaseConfig = getSupabaseConfig();
       <div id="error-state" class="error-state" style="display: none;">
         <div class="error-content">
           <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="1.5"
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            ></path>
           </svg>
           <h3>Failed to load billing data</h3>
           <p id="error-message">Something went wrong</p>
@@ -115,13 +130,15 @@ const supabaseConfig = getSupabaseConfig();
           <div class="invoices-list" id="invoices-list">
             <div class="empty-state">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-                <line x1="16" y1="2" x2="16" y2="6"/>
-                <line x1="8" y1="2" x2="8" y2="6"/>
-                <line x1="3" y1="10" x2="21" y2="10"/>
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="16" y1="2" x2="16" y2="6"></line>
+                <line x1="8" y1="2" x2="8" y2="6"></line>
+                <line x1="3" y1="10" x2="21" y2="10"></line>
               </svg>
               <p>No invoices yet</p>
-              <p class="text-muted">Invoices will appear here once you have an active subscription.</p>
+              <p class="text-muted">
+                Invoices will appear here once you have an active subscription.
+              </p>
             </div>
           </div>
         </section>
@@ -155,10 +172,16 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   body {
-    font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family:
+      'Satoshi',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
     line-height: 1.6;
-    color: #FAFAFA;
-    background: #0D0D0F;
+    color: #fafafa;
+    background: #0d0d0f;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -186,7 +209,7 @@ const supabaseConfig = getSupabaseConfig();
     text-decoration: none;
     font-weight: 700;
     font-size: 1.25rem;
-    color: #FAFAFA;
+    color: #fafafa;
   }
 
   .nav-links a {
@@ -196,7 +219,7 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   .nav-links a:hover {
-    color: #E07A5F;
+    color: #e07a5f;
   }
 
   .billing-container {
@@ -229,13 +252,17 @@ const supabaseConfig = getSupabaseConfig();
   .spinner {
     width: 2.5rem;
     height: 2.5rem;
-    color: #E07A5F;
+    color: #e07a5f;
     animation: spin 1s linear infinite;
   }
 
   @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   /* Error State */
@@ -257,7 +284,7 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   .error-state h3 {
-    color: #FAFAFA;
+    color: #fafafa;
     font-size: 1.25rem;
     font-weight: 600;
     margin-bottom: 0.5rem;
@@ -477,7 +504,7 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   .btn-primary {
-    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
+    background: linear-gradient(135deg, #e07a5f 0%, #d4694e 100%);
     color: white;
   }
 
@@ -489,12 +516,12 @@ const supabaseConfig = getSupabaseConfig();
   .btn-secondary {
     background: transparent;
     border: 1px solid #2a2a2f;
-    color: #FAFAFA;
+    color: #fafafa;
   }
 
   .btn-secondary:hover {
-    border-color: #E07A5F;
-    color: #E07A5F;
+    border-color: #e07a5f;
+    color: #e07a5f;
   }
 
   .btn-ghost {
@@ -503,7 +530,7 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   .btn-ghost:hover {
-    color: #E07A5F;
+    color: #e07a5f;
   }
 
   .footer {
@@ -541,7 +568,8 @@ const supabaseConfig = getSupabaseConfig();
   import { createClient } from '@supabase/supabase-js'
 
   // Get config from SSR-injected window global (consistent with other auth pages)
-  const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } }).__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+  const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } })
+    .__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
   const supabaseUrl = config.url
   const supabaseAnonKey = config.anonKey
 
@@ -579,7 +607,9 @@ const supabaseConfig = getSupabaseConfig();
     const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
     // Check auth
-    const { data: { session } } = await supabase.auth.getSession()
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
     if (!session) {
       window.location.href = '/login?redirect=/account/billing'
       return
@@ -593,8 +623,9 @@ const supabaseConfig = getSupabaseConfig();
         .eq('id', session.user.id)
         .single()
 
-      const { data: subscriptions } = await supabase
-        .rpc('get_user_subscription', { user_uuid: session.user.id })
+      const { data: subscriptions } = await supabase.rpc('get_user_subscription', {
+        user_uuid: session.user.id,
+      })
 
       const tier = profile?.tier || 'community'
       const subscription = subscriptions?.[0]
@@ -610,7 +641,8 @@ const supabaseConfig = getSupabaseConfig();
       billingEmail.textContent = session.user.email || profile?.email || '-'
 
       if (subscription) {
-        subscriptionStatus.textContent = subscription.status.charAt(0).toUpperCase() + subscription.status.slice(1)
+        subscriptionStatus.textContent =
+          subscription.status.charAt(0).toUpperCase() + subscription.status.slice(1)
         subscriptionStatus.className = `status-badge ${subscription.status}`
 
         const periodEnd = new Date(subscription.current_period_end)
@@ -619,7 +651,7 @@ const supabaseConfig = getSupabaseConfig();
         const prices: Record<string, string> = {
           individual: '$9.99',
           team: `$${25 * (subscription.seat_count || 1)}`,
-          enterprise: `$${55 * (subscription.seat_count || 1)}`
+          enterprise: `$${55 * (subscription.seat_count || 1)}`,
         }
         paymentAmount.textContent = prices[tier] || 'Free'
 
@@ -639,43 +671,43 @@ const supabaseConfig = getSupabaseConfig();
         // Fetch invoices from Stripe via Edge Function
         const invoicesList = document.getElementById('invoices-list') as HTMLDivElement
         try {
-          const invoicesRes = await fetch(
-            `${supabaseUrl}/functions/v1/list-invoices?limit=12`,
-            {
-              method: 'GET',
-              headers: {
-                'Authorization': `Bearer ${session.access_token}`,
-              },
-            }
-          )
+          const invoicesRes = await fetch(`${supabaseUrl}/functions/v1/list-invoices?limit=12`, {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+            },
+          })
 
           if (invoicesRes.ok) {
             const { invoices } = await invoicesRes.json()
 
             if (invoices && invoices.length > 0) {
-              invoicesList.innerHTML = invoices.map((invoice: {
-                id: string
-                number: string | null
-                status: string
-                amount: number
-                currency: string
-                date: string
-                pdfUrl: string | null
-              }) => {
-                const date = new Date(invoice.date).toLocaleDateString('en-US', {
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric'
-                })
-                const amount = `$${invoice.amount.toFixed(2)}`
-                const statusClass = invoice.status === 'paid' ? 'paid' : ''
-                const statusText = invoice.status.charAt(0).toUpperCase() + invoice.status.slice(1)
-                const invoiceNumber = invoice.number || invoice.id.slice(-8).toUpperCase()
-                const downloadButton = invoice.pdfUrl
-                  ? `<a href="${escapeHtml(invoice.pdfUrl)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">Download</a>`
-                  : `<span class="btn btn-ghost btn-sm" style="opacity: 0.5; cursor: not-allowed;">Generating...</span>`
+              invoicesList.innerHTML = invoices
+                .map(
+                  (invoice: {
+                    id: string
+                    number: string | null
+                    status: string
+                    amount: number
+                    currency: string
+                    date: string
+                    pdfUrl: string | null
+                  }) => {
+                    const date = new Date(invoice.date).toLocaleDateString('en-US', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                    })
+                    const amount = `$${invoice.amount.toFixed(2)}`
+                    const statusClass = invoice.status === 'paid' ? 'paid' : ''
+                    const statusText =
+                      invoice.status.charAt(0).toUpperCase() + invoice.status.slice(1)
+                    const invoiceNumber = invoice.number || invoice.id.slice(-8).toUpperCase()
+                    const downloadButton = invoice.pdfUrl
+                      ? `<a href="${escapeHtml(invoice.pdfUrl)}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">Download</a>`
+                      : `<span class="btn btn-ghost btn-sm" style="opacity: 0.5; cursor: not-allowed;">Generating...</span>`
 
-                return `
+                    return `
                   <div class="invoice-item">
                     <div class="invoice-info">
                       <span class="invoice-date">${escapeHtml(date)} <span class="text-muted">(#${escapeHtml(invoiceNumber)})</span></span>
@@ -687,7 +719,9 @@ const supabaseConfig = getSupabaseConfig();
                     </div>
                   </div>
                 `
-              }).join('')
+                  }
+                )
+                .join('')
             }
           }
         } catch (invoiceErr) {
@@ -708,17 +742,14 @@ const supabaseConfig = getSupabaseConfig();
         managePaymentBtn.textContent = 'Loading...'
 
         try {
-          const res = await fetch(
-            `${supabaseUrl}/functions/v1/create-portal-session`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${session.access_token}`,
-              },
-              body: JSON.stringify({ returnUrl: window.location.href }),
-            }
-          )
+          const res = await fetch(`${supabaseUrl}/functions/v1/create-portal-session`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({ returnUrl: window.location.href }),
+          })
 
           if (!res.ok) {
             const err = await res.json()
@@ -737,7 +768,6 @@ const supabaseConfig = getSupabaseConfig();
 
       // Show content
       showState('content')
-
     } catch (error) {
       console.error('Failed to load billing data:', error)
       errorMessage.textContent = error instanceof Error ? error.message : 'Please try again'

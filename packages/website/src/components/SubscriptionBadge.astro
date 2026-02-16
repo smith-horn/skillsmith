@@ -8,12 +8,12 @@
  * while TrustTier badges represent skill verification status (verified, community, experimental).
  */
 interface Props {
-  tier: 'community' | 'individual' | 'team' | 'enterprise';
-  size?: 'sm' | 'md';
-  class?: string;
+  tier: 'community' | 'individual' | 'team' | 'enterprise'
+  size?: 'sm' | 'md'
+  class?: string
 }
 
-const { tier, size = 'md', class: className = '' } = Astro.props;
+const { tier, size = 'md', class: className = '' } = Astro.props
 
 const tierConfig = {
   community: {
@@ -32,14 +32,14 @@ const tierConfig = {
     label: 'Enterprise',
     class: 'subscription-badge--enterprise',
   },
-};
+}
 
-const config = tierConfig[tier] || tierConfig.community;
+const config = tierConfig[tier] || tierConfig.community
 
 const sizeStyles = {
   sm: 'subscription-badge--sm',
   md: 'subscription-badge--md',
-};
+}
 ---
 
 <span class:list={['subscription-badge', config.class, sizeStyles[size], className]}>

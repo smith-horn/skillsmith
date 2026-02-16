@@ -21,7 +21,12 @@
       <!-- Warning Icon -->
       <div class="flex-shrink-0">
         <svg class="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+          ></path>
         </svg>
       </div>
 
@@ -43,7 +48,11 @@
         aria-label="Dismiss notification"
       >
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M6 18L18 6M6 6l12 12"></path>
         </svg>
       </button>
     </div>
@@ -54,106 +63,106 @@
         id="rate-limit-progress"
         class="h-full bg-yellow-500 transition-all duration-1000 ease-linear"
         style="width: 100%"
-      ></div>
+      >
+      </div>
     </div>
   </div>
 </div>
 
 <script is:inline>
   // Rate Limit Toast Controller
-  (function() {
-    const toast = document.getElementById('rate-limit-toast');
-    const message = document.getElementById('rate-limit-message');
-    const countdown = document.getElementById('rate-limit-countdown');
-    const progress = document.getElementById('rate-limit-progress');
-    const closeBtn = document.getElementById('rate-limit-close');
+  ;(function () {
+    const toast = document.getElementById('rate-limit-toast')
+    const message = document.getElementById('rate-limit-message')
+    const countdown = document.getElementById('rate-limit-countdown')
+    const progress = document.getElementById('rate-limit-progress')
+    const closeBtn = document.getElementById('rate-limit-close')
 
-    let countdownInterval = null;
-    let hideTimeout = null;
+    let countdownInterval = null
+    let hideTimeout = null
 
     // Show toast with retry-after countdown
-    window.showRateLimitToast = function(retryAfterSeconds, tierMessage) {
-      if (!toast) return;
+    window.showRateLimitToast = function (retryAfterSeconds, tierMessage) {
+      if (!toast) return
 
       // Clear any existing timers
-      if (countdownInterval) clearInterval(countdownInterval);
-      if (hideTimeout) clearTimeout(hideTimeout);
+      if (countdownInterval) clearInterval(countdownInterval)
+      if (hideTimeout) clearTimeout(hideTimeout)
 
       // Set message based on tier
       if (tierMessage) {
-        message.textContent = tierMessage;
+        message.textContent = tierMessage
       } else {
-        message.textContent = 'Too many requests. Please wait before trying again.';
+        message.textContent = 'Too many requests. Please wait before trying again.'
       }
 
       // Show toast
-      toast.classList.remove('translate-x-full', 'opacity-0', 'pointer-events-none');
+      toast.classList.remove('translate-x-full', 'opacity-0', 'pointer-events-none')
 
       // Start countdown
-      let remaining = retryAfterSeconds || 60;
-      const total = remaining;
+      let remaining = retryAfterSeconds || 60
+      const total = remaining
 
       function updateCountdown() {
         if (remaining <= 0) {
-          hideToast();
-          return;
+          hideToast()
+          return
         }
 
-        const minutes = Math.floor(remaining / 60);
-        const seconds = remaining % 60;
-        countdown.textContent = minutes > 0
-          ? `Try again in ${minutes}m ${seconds}s`
-          : `Try again in ${seconds}s`;
+        const minutes = Math.floor(remaining / 60)
+        const seconds = remaining % 60
+        countdown.textContent =
+          minutes > 0 ? `Try again in ${minutes}m ${seconds}s` : `Try again in ${seconds}s`
 
         // Update progress bar
-        const percent = (remaining / total) * 100;
-        progress.style.width = `${percent}%`;
+        const percent = (remaining / total) * 100
+        progress.style.width = `${percent}%`
 
-        remaining--;
+        remaining--
       }
 
-      updateCountdown();
-      countdownInterval = setInterval(updateCountdown, 1000);
+      updateCountdown()
+      countdownInterval = setInterval(updateCountdown, 1000)
 
       // Auto-hide after countdown + 2s buffer
-      hideTimeout = setTimeout(hideToast, (retryAfterSeconds + 2) * 1000);
-    };
+      hideTimeout = setTimeout(hideToast, (retryAfterSeconds + 2) * 1000)
+    }
 
     // Hide toast
     function hideToast() {
-      if (!toast) return;
+      if (!toast) return
 
-      if (countdownInterval) clearInterval(countdownInterval);
-      if (hideTimeout) clearTimeout(hideTimeout);
+      if (countdownInterval) clearInterval(countdownInterval)
+      if (hideTimeout) clearTimeout(hideTimeout)
 
-      toast.classList.add('translate-x-full', 'opacity-0', 'pointer-events-none');
+      toast.classList.add('translate-x-full', 'opacity-0', 'pointer-events-none')
     }
 
-    window.hideRateLimitToast = hideToast;
+    window.hideRateLimitToast = hideToast
 
     // Close button handler
     if (closeBtn) {
-      closeBtn.addEventListener('click', hideToast);
+      closeBtn.addEventListener('click', hideToast)
     }
 
     // Intercept 429 responses globally
-    const originalFetch = window.fetch;
-    window.fetch = async function(...args) {
-      const response = await originalFetch.apply(this, args);
+    const originalFetch = window.fetch
+    window.fetch = async function (...args) {
+      const response = await originalFetch.apply(this, args)
 
       if (response.status === 429) {
-        const retryAfter = parseInt(response.headers.get('Retry-After') || '60', 10);
-        const tierHeader = response.headers.get('X-Tier');
+        const retryAfter = parseInt(response.headers.get('Retry-After') || '60', 10)
+        const tierHeader = response.headers.get('X-Tier')
 
-        let tierMessage = null;
+        let tierMessage = null
         if (tierHeader) {
-          tierMessage = `Rate limit exceeded for ${tierHeader} tier. Upgrade for higher limits.`;
+          tierMessage = `Rate limit exceeded for ${tierHeader} tier. Upgrade for higher limits.`
         }
 
-        window.showRateLimitToast(retryAfter, tierMessage);
+        window.showRateLimitToast(retryAfter, tierMessage)
       }
 
-      return response;
-    };
-  })();
+      return response
+    }
+  })()
 </script>

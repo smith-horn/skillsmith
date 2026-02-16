@@ -22,6 +22,9 @@ export default {
     'prettier --write',
   ],
 
+  // Astro files: format only (ESLint handled by website's own config)
+  '*.astro': ['prettier --write'],
+
   // Config and documentation files: format only
   '*.{json,md,yml,yaml}': ['prettier --write'],
 }

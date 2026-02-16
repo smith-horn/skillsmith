@@ -13,17 +13,17 @@
  */
 
 // Disable prerendering - this page needs SSR to read env vars and handle auth
-export const prerender = false;
+export const prerender = false
 
-import { ClientRouter } from 'astro:transitions';
-import { getSupabaseConfig } from '../../lib/supabase-config';
-import Nav from '../../components/Nav.astro';
+import { ClientRouter } from 'astro:transitions'
+import { getSupabaseConfig } from '../../lib/supabase-config'
+import Nav from '../../components/Nav.astro'
 
 // Read env vars at SSR time to inject into client script
-const supabaseConfig = getSupabaseConfig();
+const supabaseConfig = getSupabaseConfig()
 ---
 
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -33,9 +33,12 @@ const supabaseConfig = getSupabaseConfig();
     <meta name="description" content="Manage your Skillsmith subscription" />
     <title>Subscription | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
-    <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
     <script is:inline define:vars={{ supabaseConfig }}>
-      window.__SUPABASE_CONFIG__ = supabaseConfig;
+      window.__SUPABASE_CONFIG__ = supabaseConfig
     </script>
     <!-- Enable smooth page transitions without full reload (SMI-2066) -->
     <ClientRouter />
@@ -48,8 +51,16 @@ const supabaseConfig = getSupabaseConfig();
       <div id="loading-state" class="loading-state">
         <div class="spinner-container">
           <svg class="spinner" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" opacity="0.25"/>
-            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"/>
+            <circle
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+              fill="none"
+              opacity="0.25"></circle>
+            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+            ></path>
           </svg>
         </div>
         <p>Loading subscription details...</p>
@@ -59,8 +70,12 @@ const supabaseConfig = getSupabaseConfig();
       <div id="error-state" class="error-state" style="display: none;">
         <div class="error-content">
           <svg class="error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="1.5"
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            ></path>
           </svg>
           <h3>Failed to load subscription data</h3>
           <p id="error-message">Something went wrong</p>
@@ -195,8 +210,13 @@ const supabaseConfig = getSupabaseConfig();
         <section class="section" id="cancel-section" style="display: none;">
           <h2>Cancel Subscription</h2>
           <div class="cancel-info">
-            <p>If you cancel, your subscription will remain active until the end of your current billing period.</p>
-            <p class="text-muted">After cancellation, you'll be downgraded to the free Community plan.</p>
+            <p>
+              If you cancel, your subscription will remain active until the end of your current
+              billing period.
+            </p>
+            <p class="text-muted">
+              After cancellation, you'll be downgraded to the free Community plan.
+            </p>
             <button class="btn btn-danger" id="cancel-btn">Cancel Subscription</button>
           </div>
         </section>
@@ -208,7 +228,6 @@ const supabaseConfig = getSupabaseConfig();
         <p>&copy; 2026 Smith Horn Group Ltd. All rights reserved.</p>
       </div>
     </footer>
-
   </body>
 </html>
 
@@ -222,10 +241,16 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   body {
-    font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family:
+      'Satoshi',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
     line-height: 1.6;
-    color: #FAFAFA;
-    background: #0D0D0F;
+    color: #fafafa;
+    background: #0d0d0f;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -253,7 +278,7 @@ const supabaseConfig = getSupabaseConfig();
     text-decoration: none;
     font-weight: 700;
     font-size: 1.25rem;
-    color: #FAFAFA;
+    color: #fafafa;
   }
 
   .nav-links a {
@@ -263,7 +288,7 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   .nav-links a:hover {
-    color: #E07A5F;
+    color: #e07a5f;
   }
 
   .subscription-container {
@@ -296,13 +321,17 @@ const supabaseConfig = getSupabaseConfig();
   .spinner {
     width: 2.5rem;
     height: 2.5rem;
-    color: #E07A5F;
+    color: #e07a5f;
     animation: spin 1s linear infinite;
   }
 
   @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   /* Error State */
@@ -324,7 +353,7 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   .error-state h3 {
-    color: #FAFAFA;
+    color: #fafafa;
     font-size: 1.25rem;
     font-weight: 600;
     margin-bottom: 0.5rem;
@@ -377,9 +406,18 @@ const supabaseConfig = getSupabaseConfig();
     color: #9ca3af;
   }
 
-  .tier-badge.individual { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
-  .tier-badge.team { background: rgba(139, 92, 246, 0.2); color: #a78bfa; }
-  .tier-badge.enterprise { background: rgba(224, 122, 95, 0.2); color: #E07A5F; }
+  .tier-badge.individual {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+  }
+  .tier-badge.team {
+    background: rgba(139, 92, 246, 0.2);
+    color: #a78bfa;
+  }
+  .tier-badge.enterprise {
+    background: rgba(224, 122, 95, 0.2);
+    color: #e07a5f;
+  }
 
   .plan-name {
     font-weight: 600;
@@ -449,7 +487,7 @@ const supabaseConfig = getSupabaseConfig();
     border: 1px solid #2a2a2f;
     border-radius: 0.5rem;
     background: #1a1a1f;
-    color: #FAFAFA;
+    color: #fafafa;
     font-size: 1rem;
   }
 
@@ -474,7 +512,7 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   .plan-option.featured {
-    border-color: #E07A5F;
+    border-color: #e07a5f;
   }
 
   .plan-option.current {
@@ -486,7 +524,7 @@ const supabaseConfig = getSupabaseConfig();
     top: -0.75rem;
     left: 50%;
     transform: translateX(-50%);
-    background: #E07A5F;
+    background: #e07a5f;
     color: white;
     font-size: 0.75rem;
     font-weight: 600;
@@ -571,7 +609,7 @@ const supabaseConfig = getSupabaseConfig();
   }
 
   .btn-primary {
-    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
+    background: linear-gradient(135deg, #e07a5f 0%, #d4694e 100%);
     color: white;
   }
 
@@ -588,12 +626,12 @@ const supabaseConfig = getSupabaseConfig();
   .btn-secondary {
     background: transparent;
     border: 1px solid #2a2a2f;
-    color: #FAFAFA;
+    color: #fafafa;
   }
 
   .btn-secondary:hover {
-    border-color: #E07A5F;
-    color: #E07A5F;
+    border-color: #e07a5f;
+    color: #e07a5f;
   }
 
   .btn-danger {
@@ -641,9 +679,9 @@ const supabaseConfig = getSupabaseConfig();
   import { createClient } from '@supabase/supabase-js'
 
   // Read config injected by SSR script in head
-  const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' };
-  const supabaseUrl = config.url;
-  const supabaseAnonKey = config.anonKey;
+  const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+  const supabaseUrl = config.url
+  const supabaseAnonKey = config.anonKey
 
   // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation)
   document.addEventListener('astro:page-load', async () => {
@@ -672,7 +710,9 @@ const supabaseConfig = getSupabaseConfig();
     const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
     // Check auth
-    const { data: { session } } = await supabase.auth.getSession()
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
     if (!session) {
       window.location.href = '/login?redirect=/account/subscription'
       return
@@ -686,8 +726,9 @@ const supabaseConfig = getSupabaseConfig();
         .eq('id', session.user.id)
         .single()
 
-      const { data: subscriptions } = await supabase
-        .rpc('get_user_subscription', { user_uuid: session.user.id })
+      const { data: subscriptions } = await supabase.rpc('get_user_subscription', {
+        user_uuid: session.user.id,
+      })
 
       const tier = profile?.tier || 'community'
       const subscription = subscriptions?.[0]
@@ -699,27 +740,29 @@ const supabaseConfig = getSupabaseConfig();
       const planMeta = document.getElementById('plan-meta') as HTMLDivElement
       const subscriptionDetails = document.getElementById('subscription-details') as HTMLDivElement
       const cancelSection = document.getElementById('cancel-section') as HTMLElement
-      const seatManagementSection = document.getElementById('seat-management-section') as HTMLElement
+      const seatManagementSection = document.getElementById(
+        'seat-management-section'
+      ) as HTMLElement
 
       const tierNames: Record<string, string> = {
         community: 'Community Plan',
         individual: 'Individual Plan',
         team: 'Team Plan',
-        enterprise: 'Enterprise Plan'
+        enterprise: 'Enterprise Plan',
       }
 
       const tierPrices: Record<string, string> = {
         community: 'Free',
         individual: '$9.99/month',
         team: '$25/user/month',
-        enterprise: '$55/user/month'
+        enterprise: '$55/user/month',
       }
 
       const apiLimits: Record<string, string> = {
         community: '1,000 API calls per month',
         individual: '10,000 API calls per month',
         team: '100,000 API calls per month',
-        enterprise: 'Unlimited API calls'
+        enterprise: 'Unlimited API calls',
       }
 
       tierBadge.textContent = tier.charAt(0).toUpperCase() + tier.slice(1)
@@ -729,7 +772,7 @@ const supabaseConfig = getSupabaseConfig();
       planMeta.innerHTML = `<p>${apiLimits[tier] || '1,000 API calls per month'}</p>`
 
       // Mark current plan
-      document.querySelectorAll('.plan-option').forEach(el => {
+      document.querySelectorAll('.plan-option').forEach((el) => {
         const planTier = el.getAttribute('data-tier')
         if (planTier === tier) {
           el.classList.add('current')
@@ -754,7 +797,8 @@ const supabaseConfig = getSupabaseConfig();
 
         billingPeriod.textContent = subscription.billing_period === 'annual' ? 'Annual' : 'Monthly'
         nextBilling.textContent = new Date(subscription.current_period_end).toLocaleDateString()
-        subscriptionStatus.textContent = subscription.status.charAt(0).toUpperCase() + subscription.status.slice(1)
+        subscriptionStatus.textContent =
+          subscription.status.charAt(0).toUpperCase() + subscription.status.slice(1)
         subscriptionStatus.className = `status-badge ${subscription.status}`
 
         if (subscription.seat_count > 1 || tier === 'team' || tier === 'enterprise') {
@@ -800,17 +844,14 @@ const supabaseConfig = getSupabaseConfig();
             updateSeatsBtn.textContent = 'Calculating...'
 
             try {
-              const previewRes = await fetch(
-                `${supabaseUrl}/functions/v1/update-seat-count`,
-                {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${session.access_token}`,
-                  },
-                  body: JSON.stringify({ newSeatCount: newSeats, preview: true }),
-                }
-              )
+              const previewRes = await fetch(`${supabaseUrl}/functions/v1/update-seat-count`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${session.access_token}`,
+                },
+                body: JSON.stringify({ newSeatCount: newSeats, preview: true }),
+              })
 
               if (!previewRes.ok) {
                 const err = await previewRes.json()
@@ -818,11 +859,13 @@ const supabaseConfig = getSupabaseConfig();
               }
 
               const preview = await previewRes.json()
-              const prorationText = preview.prorationAmount >= 0
-                ? `You will be charged $${preview.prorationAmount.toFixed(2)} (prorated).`
-                : `You will receive a credit of $${Math.abs(preview.prorationAmount).toFixed(2)}.`
+              const prorationText =
+                preview.prorationAmount >= 0
+                  ? `You will be charged $${preview.prorationAmount.toFixed(2)} (prorated).`
+                  : `You will receive a credit of $${Math.abs(preview.prorationAmount).toFixed(2)}.`
 
-              const confirmMsg = `Changing from ${preview.currentSeatCount} to ${preview.newSeatCount} seats.\n\n` +
+              const confirmMsg =
+                `Changing from ${preview.currentSeatCount} to ${preview.newSeatCount} seats.\n\n` +
                 `${prorationText}\n` +
                 `New monthly total: $${preview.newMonthlyAmount.toFixed(2)}\n\n` +
                 `Continue?`
@@ -835,17 +878,14 @@ const supabaseConfig = getSupabaseConfig();
 
               // Apply the change
               updateSeatsBtn.textContent = 'Updating...'
-              const updateRes = await fetch(
-                `${supabaseUrl}/functions/v1/update-seat-count`,
-                {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${session.access_token}`,
-                  },
-                  body: JSON.stringify({ newSeatCount: newSeats }),
-                }
-              )
+              const updateRes = await fetch(`${supabaseUrl}/functions/v1/update-seat-count`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${session.access_token}`,
+                },
+                body: JSON.stringify({ newSeatCount: newSeats }),
+              })
 
               if (!updateRes.ok) {
                 const err = await updateRes.json()
@@ -867,7 +907,11 @@ const supabaseConfig = getSupabaseConfig();
         // Cancel subscription handler - redirects to Stripe Billing Portal
         const cancelBtn = document.getElementById('cancel-btn') as HTMLButtonElement
         cancelBtn.addEventListener('click', async () => {
-          if (!confirm('Are you sure you want to manage your subscription? You will be redirected to the Stripe billing portal where you can cancel or update your subscription.')) {
+          if (
+            !confirm(
+              'Are you sure you want to manage your subscription? You will be redirected to the Stripe billing portal where you can cancel or update your subscription.'
+            )
+          ) {
             return
           }
 
@@ -875,17 +919,14 @@ const supabaseConfig = getSupabaseConfig();
           cancelBtn.textContent = 'Redirecting...'
 
           try {
-            const res = await fetch(
-              `${supabaseUrl}/functions/v1/create-portal-session`,
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${session.access_token}`,
-                },
-                body: JSON.stringify({ returnUrl: window.location.href }),
-              }
-            )
+            const res = await fetch(`${supabaseUrl}/functions/v1/create-portal-session`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${session.access_token}`,
+              },
+              body: JSON.stringify({ returnUrl: window.location.href }),
+            })
 
             if (!res.ok) {
               const err = await res.json()
@@ -904,7 +945,7 @@ const supabaseConfig = getSupabaseConfig();
       }
 
       // Plan selection handlers
-      document.querySelectorAll('.select-plan-btn').forEach(btn => {
+      document.querySelectorAll('.select-plan-btn').forEach((btn) => {
         btn.addEventListener('click', async (e) => {
           const target = e.target as HTMLButtonElement
           const selectedTier = target.dataset.tier
@@ -918,7 +959,6 @@ const supabaseConfig = getSupabaseConfig();
 
       // Show content
       showState('content')
-
     } catch (error) {
       console.error('Failed to load subscription:', error)
       errorMessage.textContent = error instanceof Error ? error.message : 'Please try again'

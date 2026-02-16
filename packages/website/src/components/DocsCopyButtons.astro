@@ -1,21 +1,17 @@
 ---
 interface Props {
-  pageTitle: string;
-  pageDescription?: string;
+  pageTitle: string
+  pageDescription?: string
 }
 
-const { pageTitle, pageDescription } = Astro.props;
+const { pageTitle, pageDescription } = Astro.props
 ---
 
 <div class="docs-copy-buttons" data-title={pageTitle} data-description={pageDescription || ''}>
   <!-- Live region for screen reader announcements -->
   <span class="sr-only" role="status" aria-live="polite" id="copy-status"></span>
 
-  <button
-    type="button"
-    class="copy-btn copy-llm-btn"
-    aria-label="Copy for LLM"
-  >
+  <button type="button" class="copy-btn copy-llm-btn" aria-label="Copy for LLM">
     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -23,11 +19,7 @@ const { pageTitle, pageDescription } = Astro.props;
     <span class="btn-text">Copy for LLM</span>
   </button>
 
-  <button
-    type="button"
-    class="copy-btn copy-md-btn"
-    aria-label="Copy page content as Markdown"
-  >
+  <button type="button" class="copy-btn copy-md-btn" aria-label="Copy page content as Markdown">
     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
       <polyline points="14 2 14 8 20 8"></polyline>
@@ -116,105 +108,109 @@ const { pageTitle, pageDescription } = Astro.props;
 </style>
 
 <script>
-  import TurndownService from 'turndown';
-  import { gfm } from 'turndown-plugin-gfm';
+  import TurndownService from 'turndown'
+  import { gfm } from 'turndown-plugin-gfm'
 
   function initCopyButtons() {
     // Initialize Turndown with GFM tables support
     const turndown = new TurndownService({
       headingStyle: 'atx',
       codeBlockStyle: 'fenced',
-      bulletListMarker: '-'
-    });
-    turndown.use(gfm);
+      bulletListMarker: '-',
+    })
+    turndown.use(gfm)
 
     // Custom rule for callout divs
     turndown.addRule('callout', {
       filter: (node: Node): boolean => {
-        return node instanceof HTMLElement && node.classList?.contains('callout');
+        return node instanceof HTMLElement && node.classList?.contains('callout')
       },
       replacement: (content: string, node: Node): string => {
-        const element = node as HTMLElement;
-        const isWarning = element.classList.contains('warning');
-        return `\n> ${isWarning ? '⚠️' : 'ℹ️'} ${content.trim()}\n`;
-      }
-    });
+        const element = node as HTMLElement
+        const isWarning = element.classList.contains('warning')
+        return `\n> ${isWarning ? '⚠️' : 'ℹ️'} ${content.trim()}\n`
+      },
+    })
 
     // Custom rule to skip the copy buttons container
     turndown.addRule('skipCopyButtons', {
       filter: (node: Node): boolean => {
-        return node instanceof HTMLElement && node.classList?.contains('docs-copy-buttons');
+        return node instanceof HTMLElement && node.classList?.contains('docs-copy-buttons')
       },
-      replacement: (): string => ''
-    });
+      replacement: (): string => '',
+    })
 
-    document.querySelectorAll<HTMLElement>('.docs-copy-buttons').forEach(container => {
-      const article = document.querySelector('.docs-content');
-      if (!article) return;
+    document.querySelectorAll<HTMLElement>('.docs-copy-buttons').forEach((container) => {
+      const article = document.querySelector('.docs-content')
+      if (!article) return
 
-      const title = container.dataset.title || 'Documentation';
-      const description = container.dataset.description;
+      const title = container.dataset.title || 'Documentation'
+      const description = container.dataset.description
 
       // Copy for LLM handler
-      const llmBtn = container.querySelector('.copy-llm-btn');
+      const llmBtn = container.querySelector('.copy-llm-btn')
       llmBtn?.addEventListener('click', async (e) => {
-        const markdown = turndown.turndown(article.innerHTML);
-        const llmContent = `# ${title} | Skillsmith Docs\n\n${description ? `> ${description}\n\n` : ''}${markdown}`;
-        await copyWithFeedback(e.currentTarget as HTMLButtonElement, llmContent, 'llm');
-      });
+        const markdown = turndown.turndown(article.innerHTML)
+        const llmContent = `# ${title} | Skillsmith Docs\n\n${description ? `> ${description}\n\n` : ''}${markdown}`
+        await copyWithFeedback(e.currentTarget as HTMLButtonElement, llmContent, 'llm')
+      })
 
       // Copy Markdown handler
-      const mdBtn = container.querySelector('.copy-md-btn');
+      const mdBtn = container.querySelector('.copy-md-btn')
       mdBtn?.addEventListener('click', async (e) => {
-        const markdown = turndown.turndown(article.innerHTML);
-        await copyWithFeedback(e.currentTarget as HTMLButtonElement, markdown, 'markdown');
-      });
-    });
+        const markdown = turndown.turndown(article.innerHTML)
+        await copyWithFeedback(e.currentTarget as HTMLButtonElement, markdown, 'markdown')
+      })
+    })
   }
 
-  async function copyWithFeedback(button: HTMLButtonElement, content: string, format: string): Promise<void> {
-    const textSpan = button.querySelector('.btn-text');
-    const statusRegion = document.getElementById('copy-status');
-    if (!textSpan) return;
+  async function copyWithFeedback(
+    button: HTMLButtonElement,
+    content: string,
+    format: string
+  ): Promise<void> {
+    const textSpan = button.querySelector('.btn-text')
+    const statusRegion = document.getElementById('copy-status')
+    if (!textSpan) return
 
-    const originalText = textSpan.textContent;
-    const formatLabel = format === 'llm' ? 'LLM-optimized' : 'Markdown';
+    const originalText = textSpan.textContent
+    const formatLabel = format === 'llm' ? 'LLM-optimized' : 'Markdown'
 
     try {
-      await navigator.clipboard.writeText(content);
-      textSpan.textContent = 'Copied!';
-      button.classList.add('copied');
-      button.classList.remove('failed');
+      await navigator.clipboard.writeText(content)
+      textSpan.textContent = 'Copied!'
+      button.classList.add('copied')
+      button.classList.remove('failed')
 
       // Announce to screen readers
       if (statusRegion) {
-        statusRegion.textContent = `${formatLabel} content copied to clipboard`;
+        statusRegion.textContent = `${formatLabel} content copied to clipboard`
       }
 
       // GA tracking - verify gtag is a function before calling
       if (typeof window.gtag === 'function') {
-        window.gtag('event', 'copy_docs', { format });
+        window.gtag('event', 'copy_docs', { format })
       }
     } catch (error) {
       // Log error for debugging
-      console.error('Failed to copy to clipboard:', error);
+      console.error('Failed to copy to clipboard:', error)
 
-      textSpan.textContent = 'Failed';
-      button.classList.add('failed');
-      button.classList.remove('copied');
+      textSpan.textContent = 'Failed'
+      button.classList.add('failed')
+      button.classList.remove('copied')
 
       // Announce failure to screen readers
       if (statusRegion) {
-        statusRegion.textContent = `Failed to copy ${formatLabel} content`;
+        statusRegion.textContent = `Failed to copy ${formatLabel} content`
       }
     }
 
     setTimeout(() => {
-      textSpan.textContent = originalText;
-      button.classList.remove('copied', 'failed');
-    }, 2000);
+      textSpan.textContent = originalText
+      button.classList.remove('copied', 'failed')
+    }, 2000)
   }
 
   // Initialize on page load and after Astro page transitions
-  document.addEventListener('astro:page-load', initCopyButtons);
+  document.addEventListener('astro:page-load', initCopyButtons)
 </script>

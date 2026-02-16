@@ -9,279 +9,317 @@
  */
 
 // Disable prerendering - this page needs SSR to inject Supabase config for auth nav
-export const prerender = false;
+export const prerender = false
 
-import { ClientRouter } from 'astro:transitions';
-import Nav from '../components/Nav.astro';
-import Footer from '../components/Footer.astro';
-import { getSupabaseConfig } from '../lib/supabase-config';
-import '../styles/global.css';
+import { ClientRouter } from 'astro:transitions'
+import Nav from '../components/Nav.astro'
+import Footer from '../components/Footer.astro'
+import { getSupabaseConfig } from '../lib/supabase-config'
+import '../styles/global.css'
 
 // Get Supabase config for auth-aware navigation
-const supabaseConfig = getSupabaseConfig();
+const supabaseConfig = getSupabaseConfig()
 
 // Dynamic priceValidUntil: always end of next year (SMI-2515)
-const priceValidUntil = `${new Date().getFullYear() + 1}-12-31`;
+const priceValidUntil = `${new Date().getFullYear() + 1}-12-31`
 
 // JSON-LD structured data (extracted from inline script for dynamic date support)
 const jsonLd = {
-  "@context": "https://schema.org",
-  "@graph": [
+  '@context': 'https://schema.org',
+  '@graph': [
     {
-      "@type": "Organization",
-      "@id": "https://www.skillsmith.app/#organization",
-      "name": "Skillsmith",
-      "alternateName": "Smith Horn Group",
-      "url": "https://www.skillsmith.app",
-      "logo": {
-        "@type": "ImageObject",
-        "url": "https://www.skillsmith.app/logo-icon.svg"
+      '@type': 'Organization',
+      '@id': 'https://www.skillsmith.app/#organization',
+      name: 'Skillsmith',
+      alternateName: 'Smith Horn Group',
+      url: 'https://www.skillsmith.app',
+      logo: {
+        '@type': 'ImageObject',
+        url: 'https://www.skillsmith.app/logo-icon.svg',
       },
-      "sameAs": [
-        "https://github.com/smith-horn/skillsmith"
-      ]
+      sameAs: ['https://github.com/smith-horn/skillsmith'],
     },
     {
-      "@type": "WebSite",
-      "@id": "https://www.skillsmith.app/#website",
-      "url": "https://www.skillsmith.app",
-      "name": "Skillsmith",
-      "description": "AI-powered agent skill discovery and management",
-      "publisher": {
-        "@id": "https://www.skillsmith.app/#organization"
+      '@type': 'WebSite',
+      '@id': 'https://www.skillsmith.app/#website',
+      url: 'https://www.skillsmith.app',
+      name: 'Skillsmith',
+      description: 'AI-powered agent skill discovery and management',
+      publisher: {
+        '@id': 'https://www.skillsmith.app/#organization',
       },
-      "speakable": {
-        "@type": "SpeakableSpecification",
-        "cssSelector": ["h1", "section:first-of-type p"]
-      }
+      speakable: {
+        '@type': 'SpeakableSpecification',
+        cssSelector: ['h1', 'section:first-of-type p'],
+      },
     },
     {
-      "@type": "SoftwareApplication",
-      "@id": "https://www.skillsmith.app/#software",
-      "name": "Skillsmith",
-      "applicationCategory": "DeveloperApplication",
-      "operatingSystem": "Cross-platform",
-      "description": "Discover, install, and manage agent skills. 14,000+ curated skills with semantic search, quality scores, and stack-aware recommendations.",
-      "url": "https://www.skillsmith.app",
-      "author": {
-        "@id": "https://www.skillsmith.app/#organization"
+      '@type': 'SoftwareApplication',
+      '@id': 'https://www.skillsmith.app/#software',
+      name: 'Skillsmith',
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'Cross-platform',
+      description:
+        'Discover, install, and manage agent skills. 14,000+ curated skills with semantic search, quality scores, and stack-aware recommendations.',
+      url: 'https://www.skillsmith.app',
+      author: {
+        '@id': 'https://www.skillsmith.app/#organization',
       },
-      "offers": [
+      offers: [
         {
-          "@type": "Offer",
-          "name": "Community",
-          "price": "0",
-          "priceCurrency": "USD",
-          "priceValidUntil": priceValidUntil,
-          "url": "https://www.skillsmith.app/pricing",
-          "description": "Free tier with 1,000 API calls/month"
+          '@type': 'Offer',
+          name: 'Community',
+          price: '0',
+          priceCurrency: 'USD',
+          priceValidUntil: priceValidUntil,
+          url: 'https://www.skillsmith.app/pricing',
+          description: 'Free tier with 1,000 API calls/month',
         },
         {
-          "@type": "Offer",
-          "name": "Individual",
-          "price": "9.99",
-          "priceCurrency": "USD",
-          "priceValidUntil": priceValidUntil,
-          "url": "https://www.skillsmith.app/pricing",
-          "description": "10,000 API calls/month with analytics"
+          '@type': 'Offer',
+          name: 'Individual',
+          price: '9.99',
+          priceCurrency: 'USD',
+          priceValidUntil: priceValidUntil,
+          url: 'https://www.skillsmith.app/pricing',
+          description: '10,000 API calls/month with analytics',
         },
         {
-          "@type": "Offer",
-          "name": "Team",
-          "price": "25",
-          "priceCurrency": "USD",
-          "priceValidUntil": priceValidUntil,
-          "url": "https://www.skillsmith.app/pricing",
-          "description": "100,000 API calls/month with team workspaces"
+          '@type': 'Offer',
+          name: 'Team',
+          price: '25',
+          priceCurrency: 'USD',
+          priceValidUntil: priceValidUntil,
+          url: 'https://www.skillsmith.app/pricing',
+          description: '100,000 API calls/month with team workspaces',
         },
         {
-          "@type": "Offer",
-          "name": "Enterprise",
-          "price": "55",
-          "priceCurrency": "USD",
-          "priceValidUntil": priceValidUntil,
-          "url": "https://www.skillsmith.app/pricing",
-          "description": "Unlimited API calls with SSO, RBAC, and audit logging"
-        }
+          '@type': 'Offer',
+          name: 'Enterprise',
+          price: '55',
+          priceCurrency: 'USD',
+          priceValidUntil: priceValidUntil,
+          url: 'https://www.skillsmith.app/pricing',
+          description: 'Unlimited API calls with SSO, RBAC, and audit logging',
+        },
       ],
-      "featureList": [
-        "Semantic skill search",
-        "Quality scores (0-100)",
-        "Stack-aware recommendations",
-        "One-click installation",
-        "MCP server integration",
-        "CLI tool"
-      ]
+      featureList: [
+        'Semantic skill search',
+        'Quality scores (0-100)',
+        'Stack-aware recommendations',
+        'One-click installation',
+        'MCP server integration',
+        'CLI tool',
+      ],
     },
     {
-      "@type": "FAQPage",
-      "@id": "https://www.skillsmith.app/#faq",
-      "mainEntity": [
+      '@type': 'FAQPage',
+      '@id': 'https://www.skillsmith.app/#faq',
+      mainEntity: [
         {
-          "@type": "Question",
-          "name": "What are agent skills?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Agent skills are reusable prompt-and-tool bundles that extend AI coding assistants like Claude Code. Each skill teaches your agent a new capability \u2014 from generating commits to running security audits \u2014 without writing custom prompts from scratch."
-          }
+          '@type': 'Question',
+          name: 'What are agent skills?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'Agent skills are reusable prompt-and-tool bundles that extend AI coding assistants like Claude Code. Each skill teaches your agent a new capability \u2014 from generating commits to running security audits \u2014 without writing custom prompts from scratch.',
+          },
         },
         {
-          "@type": "Question",
-          "name": "Is Skillsmith free?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Yes. The Community tier is free forever with 1,000 API calls per month, semantic search, and one-click installation. No credit card required. Paid plans start at $9.99/month for higher limits and analytics."
-          }
+          '@type': 'Question',
+          name: 'Is Skillsmith free?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'Yes. The Community tier is free forever with 1,000 API calls per month, semantic search, and one-click installation. No credit card required. Paid plans start at $9.99/month for higher limits and analytics.',
+          },
         },
         {
-          "@type": "Question",
-          "name": "What AI tools does Skillsmith work with?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Skillsmith works with any AI tool that supports the Model Context Protocol (MCP), including Claude Code, Claude Desktop, Cursor, Windsurf, and other MCP-compatible clients. Install the MCP server and your client discovers skills automatically."
-          }
+          '@type': 'Question',
+          name: 'What AI tools does Skillsmith work with?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'Skillsmith works with any AI tool that supports the Model Context Protocol (MCP), including Claude Code, Claude Desktop, Cursor, Windsurf, and other MCP-compatible clients. Install the MCP server and your client discovers skills automatically.',
+          },
         },
         {
-          "@type": "Question",
-          "name": "How do I install a skill?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Add the Skillsmith MCP server to your client's settings.json, restart, then ask your AI assistant to search for and install skills. You can also use the Skillsmith CLI: run 'npx @skillsmith/cli search testing' to find skills, then 'npx @skillsmith/cli install author/skill-name' to install."
-          }
-        }
-      ]
-    }
-  ]
-};
+          '@type': 'Question',
+          name: 'How do I install a skill?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: "Add the Skillsmith MCP server to your client's settings.json, restart, then ask your AI assistant to search for and install skills. You can also use the Skillsmith CLI: run 'npx @skillsmith/cli search testing' to find skills, then 'npx @skillsmith/cli install author/skill-name' to install.",
+          },
+        },
+      ],
+    },
+  ],
+}
 ---
 
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en" class="dark">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <title>Skillsmith - Agent Skill Discovery & Management</title>
-  <meta name="description" content="Find the right agent skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
-  <meta name="robots" content="max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
-  <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
+    <title>Skillsmith - Agent Skill Discovery & Management</title>
+    <meta
+      name="description"
+      content="Find the right agent skills for your stack. 14,000+ curated skills, finally searchable. Get started for free."
+    />
+    <meta name="robots" content="max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
 
-  <!-- Fonts: Satoshi + JetBrains Mono -->
-  <!-- Non-CORS preconnect for CSS fetch, CORS preconnect for font file fetch -->
-  <link rel="preconnect" href="https://api.fontshare.com" />
-  <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
-  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap" rel="stylesheet" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" fetchpriority="low" />
+    <!-- Fonts: Satoshi + JetBrains Mono -->
+    <!-- Non-CORS preconnect for CSS fetch, CORS preconnect for font file fetch -->
+    <link rel="preconnect" href="https://api.fontshare.com" />
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+      fetchpriority="low"
+    />
 
-  <!-- Google Analytics with Consent Mode v2 -->
-  <script is:inline>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    var consent = localStorage.getItem('skillsmith_cookie_consent');
-    gtag('consent', 'default', {
-      analytics_storage: consent === 'accepted' ? 'granted' : 'denied',
-      ad_storage: 'denied',
-      ad_user_data: 'denied',
-      ad_personalization: 'denied',
-      wait_for_update: 500,
-    });
-    gtag('js', new Date());
-    gtag('config', 'G-GGZQZM1Y1L');
-  </script>
-  <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L" fetchpriority="low"></script>
+    <!-- Google Analytics with Consent Mode v2 -->
+    <script is:inline>
+      window.dataLayer = window.dataLayer || []
+      function gtag() {
+        dataLayer.push(arguments)
+      }
+      var consent = localStorage.getItem('skillsmith_cookie_consent')
+      gtag('consent', 'default', {
+        analytics_storage: consent === 'accepted' ? 'granted' : 'denied',
+        ad_storage: 'denied',
+        ad_user_data: 'denied',
+        ad_personalization: 'denied',
+        wait_for_update: 500,
+      })
+      gtag('js', new Date())
+      gtag('config', 'G-GGZQZM1Y1L')
+    </script>
+    <script
+      is:inline
+      async
+      src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"
+      fetchpriority="low"></script>
 
-  <!-- Favicon -->
-  <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
 
-  <!-- Enable smooth page transitions without full reload (SMI-2066) -->
-  <ClientRouter />
+    <!-- Enable smooth page transitions without full reload (SMI-2066) -->
+    <ClientRouter />
 
-  <!-- Supabase config for auth-aware navigation -->
-  <script is:inline define:vars={{ supabaseConfig }}>
-    window.__SUPABASE_CONFIG__ = supabaseConfig;
-  </script>
+    <!-- Supabase config for auth-aware navigation -->
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig
+    </script>
 
-  <!-- Open Graph -->
-  <meta property="og:title" content="Skillsmith - Agent Skill Discovery & Management" />
-  <meta property="og:description" content="Find the right agent skills for your stack. 14,000+ curated skills, finally searchable. Get started for free." />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content={new URL(Astro.url.pathname, Astro.site).href} />
-  <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
-  <meta property="og:image" content={new URL('/og-image.png', Astro.site).href} />
-  <meta property="og:image:width" content="1200" />
-  <meta property="og:image:height" content="630" />
+    <!-- Open Graph -->
+    <meta property="og:title" content="Skillsmith - Agent Skill Discovery & Management" />
+    <meta
+      property="og:description"
+      content="Find the right agent skills for your stack. 14,000+ curated skills, finally searchable. Get started for free."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={new URL(Astro.url.pathname, Astro.site).href} />
+    <!-- TODO: Replace og-image.png once design creates the actual PNG (risk R3-1, SMI-2352) -->
+    <meta property="og:image" content={new URL('/og-image.png', Astro.site).href} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
 
-  <!-- NO TWITTER: Skillsmith has no Twitter/X account. Do not add twitter: meta tags. See standards-astro.md Section 12. -->
+    <!-- NO TWITTER: Skillsmith has no Twitter/X account. Do not add twitter: meta tags. See standards-astro.md Section 12. -->
 
-  <!-- RSS feed discovery (SMI-2532) -->
-  <link rel="alternate" type="application/rss+xml" title="Skillsmith Blog" href="/blog/rss.xml" />
+    <!-- RSS feed discovery (SMI-2532) -->
+    <link rel="alternate" type="application/rss+xml" title="Skillsmith Blog" href="/blog/rss.xml" />
 
-  <!-- JSON-LD Structured Data (SMI-2515: dynamic priceValidUntil via set:html) -->
-  <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
-</head>
+    <!-- JSON-LD Structured Data (SMI-2515: dynamic priceValidUntil via set:html) -->
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
+  </head>
 
-<body class="bg-dark-950 text-dark-50 font-sans antialiased">
-  <!-- Background atmosphere (will-change-transform: intentional for infinite float animation — promotes to compositor layer) -->
-  <div class="fixed inset-0 overflow-hidden pointer-events-none">
-    <div class="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-[radial-gradient(circle,rgba(224,122,95,0.08)_0%,transparent_70%)] animate-float will-change-transform"></div>
-    <div class="absolute bottom-[-10%] right-[-10%] w-[400px] h-[400px] bg-[radial-gradient(circle,rgba(129,178,154,0.05)_0%,transparent_70%)] animate-float will-change-transform" style="animation-direction: reverse; animation-duration: 25s;"></div>
-  </div>
-
-  <!-- Navigation -->
-  <Nav activePath="/" />
-
-  <main id="main-content">
-  <!-- Hero Section -->
-  <section class="relative min-h-screen flex items-center justify-center pt-[72px]">
-    <div class="max-w-[800px] mx-auto px-6 py-24 text-center">
-      <!-- Headline -->
-      <h1 class="text-5xl sm:text-6xl lg:text-7xl font-black tracking-tight leading-[1.1] mb-6 opacity-0 animate-fade-up" style="animation-delay: 0.05s;">
-        Save Hours Finding<br />the Right Skills.
-      </h1>
-
-      <!-- Subheadline -->
-      <p class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up" style="animation-delay: 0.08s;">
-        <span id="skill-count">14,000+</span> curated agent skills. Finally searchable.<br />
-        Get stack-aware recommendations before anyone else.
-      </p>
-
-      <!-- CTA Buttons -->
-      <div class="flex flex-col sm:flex-row gap-4 justify-center mb-6 opacity-0 animate-fade-up" style="animation-delay: 0.12s;">
-        <a
-          href="/signup"
-          class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
-        >
-          Get Started Free →
-        </a>
-        <a
-          href="#mcp-install-block"
-          class="px-8 py-4 border border-white/10 rounded-xl font-medium text-white hover:border-white/20 transition-colors text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
-        >
-          Install MCP Server
-        </a>
+  <body class="bg-dark-950 text-dark-50 font-sans antialiased">
+    <!-- Background atmosphere (will-change-transform: intentional for infinite float animation — promotes to compositor layer) -->
+    <div class="fixed inset-0 overflow-hidden pointer-events-none">
+      <div
+        class="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-[radial-gradient(circle,rgba(224,122,95,0.08)_0%,transparent_70%)] animate-float will-change-transform"
+      >
       </div>
-
-      <!-- Social Proof -->
-      <p class="text-sm text-[#8E8E96] opacity-0 animate-fade-up" style="animation-delay: 0.15s;">
-        <span class="inline-block w-2 h-2 bg-[#81B29A] rounded-full mr-2 animate-pulse"></span>
-        Free tier available — no credit card required
-      </p>
+      <div
+        class="absolute bottom-[-10%] right-[-10%] w-[400px] h-[400px] bg-[radial-gradient(circle,rgba(129,178,154,0.05)_0%,transparent_70%)] animate-float will-change-transform"
+        style="animation-direction: reverse; animation-duration: 25s;"
+      >
+      </div>
     </div>
-  </section>
 
-  <!-- MCP Install Section -->
-  <section class="py-20 border-t border-white/[0.06]">
-    <div class="max-w-[800px] mx-auto px-6">
-      <div class="text-center mb-10">
-        <h2 class="text-2xl sm:text-3xl font-bold mb-3">Get Started in Seconds</h2>
-        <p class="text-[#A1A1AA]">Copy this snippet to configure your MCP client</p>
-      </div>
+    <!-- Navigation -->
+    <Nav activePath="/" />
 
-      <!-- Copyable Code Block -->
-      <div class="relative group mb-8" id="mcp-install-block">
-        <pre class="bg-[#0D0D0F] border border-white/10 rounded-xl p-6 overflow-x-auto font-mono text-sm text-[#E5E5E5] leading-relaxed"><code id="mcp-install-code">{`Add this MCP server to my settings.json:
+    <main id="main-content">
+      <!-- Hero Section -->
+      <section class="relative min-h-screen flex items-center justify-center pt-[72px]">
+        <div class="max-w-[800px] mx-auto px-6 py-24 text-center">
+          <!-- Headline -->
+          <h1
+            class="text-5xl sm:text-6xl lg:text-7xl font-black tracking-tight leading-[1.1] mb-6 opacity-0 animate-fade-up"
+            style="animation-delay: 0.05s;"
+          >
+            Save Hours Finding<br />the Right Skills.
+          </h1>
+
+          <!-- Subheadline -->
+          <p
+            class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up"
+            style="animation-delay: 0.08s;"
+          >
+            <span id="skill-count">14,000+</span> curated agent skills. Finally searchable.<br />
+            Get stack-aware recommendations before anyone else.
+          </p>
+
+          <!-- CTA Buttons -->
+          <div
+            class="flex flex-col sm:flex-row gap-4 justify-center mb-6 opacity-0 animate-fade-up"
+            style="animation-delay: 0.12s;"
+          >
+            <a
+              href="/signup"
+              class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+            >
+              Get Started Free →
+            </a>
+            <a
+              href="#mcp-install-block"
+              class="px-8 py-4 border border-white/10 rounded-xl font-medium text-white hover:border-white/20 transition-colors text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+            >
+              Install MCP Server
+            </a>
+          </div>
+
+          <!-- Social Proof -->
+          <p
+            class="text-sm text-[#8E8E96] opacity-0 animate-fade-up"
+            style="animation-delay: 0.15s;"
+          >
+            <span class="inline-block w-2 h-2 bg-[#81B29A] rounded-full mr-2 animate-pulse"></span>
+            Free tier available — no credit card required
+          </p>
+        </div>
+      </section>
+
+      <!-- MCP Install Section -->
+      <section class="py-20 border-t border-white/[0.06]">
+        <div class="max-w-[800px] mx-auto px-6">
+          <div class="text-center mb-10">
+            <h2 class="text-2xl sm:text-3xl font-bold mb-3">Get Started in Seconds</h2>
+            <p class="text-[#A1A1AA]">Copy this snippet to configure your MCP client</p>
+          </div>
+
+          <!-- Copyable Code Block -->
+          <div class="relative group mb-8" id="mcp-install-block">
+            <pre
+              class="bg-[#0D0D0F] border border-white/10 rounded-xl p-6 overflow-x-auto font-mono text-sm text-[#E5E5E5] leading-relaxed"><code id="mcp-install-code">{`Add this MCP server to my settings.json:
 
 {
   "mcpServers": {
@@ -292,479 +330,655 @@ const jsonLd = {
   }
 }`}</code></pre>
 
-        <!-- Copy button -->
-        <button
-          type="button"
-          id="copy-mcp-config"
-          class="absolute top-4 right-4 px-5 py-2.5 bg-[#E07A5F] hover:bg-[#D4694E] text-dark-950 text-sm font-bold rounded-lg transition-all duration-200 flex items-center gap-2 shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
-          aria-label="Copy to Clipboard"
+            <!-- Copy button -->
+            <button
+              type="button"
+              id="copy-mcp-config"
+              class="absolute top-4 right-4 px-5 py-2.5 bg-[#E07A5F] hover:bg-[#D4694E] text-dark-950 text-sm font-bold rounded-lg transition-all duration-200 flex items-center gap-2 shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+              aria-label="Copy to Clipboard"
+            >
+              <!-- Copy icon -->
+              <svg
+                id="copy-icon"
+                class="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                stroke-width="2"
+                aria-hidden="true"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                ></path>
+              </svg>
+              <!-- Checkmark icon (hidden by default) -->
+              <svg
+                id="check-icon"
+                class="w-4 h-4 hidden"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                stroke-width="2"
+                aria-hidden="true"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+              </svg>
+              <span id="copy-text">Copy to Clipboard</span>
+            </button>
+          </div>
+
+          <!-- Helper text -->
+          <p class="text-center text-[#A1A1AA] mb-8">
+            After adding this to your settings file and restarting, ask:
+            <span class="block mt-2 text-[#E07A5F] font-medium"
+              >"Find testing skills for my project"</span
+            >
+          </p>
+
+          <!-- Value props inline -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center text-sm">
+            <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
+              <span class="block text-[#E07A5F] font-bold text-lg mb-1" id="skill-count-install"
+                >14,000+</span
+              >
+              <span class="text-[#A1A1AA]">Searchable skills</span>
+            </div>
+            <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
+              <span class="block text-[#E07A5F] font-bold text-lg mb-1">AI-Powered</span>
+              <span class="text-[#A1A1AA]">Recommendations</span>
+            </div>
+            <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
+              <span class="block text-[#E07A5F] font-bold text-lg mb-1">One-Click</span>
+              <span class="text-[#A1A1AA]">Installation</span>
+            </div>
+            <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
+              <span class="block text-[#E07A5F] font-bold text-lg mb-1">Side-by-Side</span>
+              <span class="text-[#A1A1AA]">Comparison</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Value Props Section -->
+      <section class="py-24 border-t border-white/[0.06]">
+        <div class="max-w-[1200px] mx-auto px-6">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+            <!-- Semantic Search -->
+            <div class="text-center">
+              <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+                <svg
+                  class="w-8 h-8 text-[#E07A5F]"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  stroke-width="2"
+                  aria-hidden="true"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10 10l4 4"></path>
+                </svg>
+              </div>
+              <h3 class="text-lg font-bold mb-2">Semantic Search</h3>
+              <p class="text-sm text-[#A1A1AA]">
+                Search by intent, not keywords. AI-powered skill discovery.
+              </p>
+            </div>
+
+            <!-- Quality Scores -->
+            <div class="text-center">
+              <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+                <svg
+                  class="w-8 h-8 text-[#E07A5F]"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  stroke-width="2"
+                  aria-hidden="true"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"
+                  ></path>
+                </svg>
+              </div>
+              <h3 class="text-lg font-bold mb-2">Quality Scores</h3>
+              <p class="text-sm text-[#A1A1AA]">
+                0-100 scores based on docs, tests, maintenance, security.
+              </p>
+            </div>
+
+            <!-- Stack-Aware -->
+            <div class="text-center">
+              <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+                <svg
+                  class="w-8 h-8 text-[#E07A5F]"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  stroke-width="2"
+                  aria-hidden="true"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"
+                  ></path>
+                </svg>
+              </div>
+              <h3 class="text-lg font-bold mb-2">Stack-Aware</h3>
+              <p class="text-sm text-[#A1A1AA]">
+                Recommendations tailored to your project's tech stack.
+              </p>
+            </div>
+
+            <!-- One-Click Install -->
+            <div class="text-center">
+              <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+                <svg
+                  class="w-8 h-8 text-[#E07A5F]"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  stroke-width="2"
+                  aria-hidden="true"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                </svg>
+              </div>
+              <h3 class="text-lg font-bold mb-2">One-Click Install</h3>
+              <p class="text-sm text-[#A1A1AA]">Install directly. Uninstall just as fast.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Problem/Solution Section -->
+      <section class="py-24">
+        <div class="max-w-[1000px] mx-auto px-6">
+          <h2 class="text-3xl sm:text-4xl font-bold text-center mb-12">
+            The skill discovery problem
+          </h2>
+
+          <div class="grid md:grid-cols-2 gap-6">
+            <!-- Without Skillsmith -->
+            <div class="p-8 bg-[#18181B] border border-white/[0.06] rounded-2xl">
+              <p class="text-xs font-medium uppercase tracking-wider text-[#8E8E96] mb-6">
+                Without Skillsmith
+              </p>
+              <ul class="space-y-4">
+                <li class="flex items-start gap-3">
+                  <span class="text-[#71717A] mt-0.5">✕</span>
+                  <span class="text-[#A1A1AA]">Manual searches across fragmented sources</span>
+                </li>
+                <li class="flex items-start gap-3">
+                  <span class="text-[#71717A] mt-0.5">✕</span>
+                  <span class="text-[#A1A1AA]">No quality signals or verification</span>
+                </li>
+                <li class="flex items-start gap-3">
+                  <span class="text-[#71717A] mt-0.5">✕</span>
+                  <span class="text-[#A1A1AA]">Trial and error installations</span>
+                </li>
+                <li class="flex items-start gap-3">
+                  <span class="text-[#71717A] mt-0.5">✕</span>
+                  <span class="text-[#A1A1AA]">Missing skills that would save time</span>
+                </li>
+              </ul>
+            </div>
+
+            <!-- With Skillsmith -->
+            <div class="p-8 bg-[#18181B] border border-[#E07A5F]/20 rounded-2xl shadow-glow">
+              <p class="text-xs font-medium uppercase tracking-wider text-[#E07A5F] mb-6">
+                With Skillsmith
+              </p>
+              <ul class="space-y-4">
+                <li class="flex items-start gap-3">
+                  <span class="text-[#81B29A] mt-0.5">✓</span>
+                  <span class="text-[#FAFAFA]"
+                    >Semantic search across <span id="skill-count-feature">14,000+</span> curated skills</span
+                  >
+                </li>
+                <li class="flex items-start gap-3">
+                  <span class="text-[#81B29A] mt-0.5">✓</span>
+                  <span class="text-[#FAFAFA]">Quality scores you can trust</span>
+                </li>
+                <li class="flex items-start gap-3">
+                  <span class="text-[#81B29A] mt-0.5">✓</span>
+                  <span class="text-[#FAFAFA]">Stack-aware recommendations</span>
+                </li>
+                <li class="flex items-start gap-3">
+                  <span class="text-[#81B29A] mt-0.5">✓</span>
+                  <span class="text-[#FAFAFA]">Discover skills before you need them</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FAQ Section (SMI-2457) -->
+      <section class="py-24 border-t border-white/[0.06]">
+        <div class="max-w-[800px] mx-auto px-6">
+          <h2 class="text-3xl sm:text-4xl font-bold text-center mb-12">Common Questions</h2>
+
+          <div class="space-y-4">
+            <details class="group bg-[#18181B] border border-white/[0.06] rounded-xl">
+              <summary
+                class="flex items-center justify-between px-6 py-5 cursor-pointer list-none font-semibold text-white"
+              >
+                What are agent skills?
+                <svg
+                  class="w-5 h-5 text-[#71717A] group-open:rotate-180 transition-transform"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                  ><path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M19 9l-7 7-7-7"></path></svg
+                >
+              </summary>
+              <div class="px-6 pb-5 text-[#A1A1AA]">
+                Agent skills are reusable prompt-and-tool bundles that extend AI coding assistants
+                like Claude Code. Each skill teaches your agent a new capability — from generating
+                commits to running security audits — without writing custom prompts from scratch.
+              </div>
+            </details>
+
+            <details class="group bg-[#18181B] border border-white/[0.06] rounded-xl">
+              <summary
+                class="flex items-center justify-between px-6 py-5 cursor-pointer list-none font-semibold text-white"
+              >
+                Is Skillsmith free?
+                <svg
+                  class="w-5 h-5 text-[#71717A] group-open:rotate-180 transition-transform"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                  ><path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M19 9l-7 7-7-7"></path></svg
+                >
+              </summary>
+              <div class="px-6 pb-5 text-[#A1A1AA]">
+                Yes. The Community tier is free forever with 1,000 API calls per month, semantic
+                search, and one-click installation. No credit card required. Paid plans start at
+                $9.99/month for higher limits and analytics.
+              </div>
+            </details>
+
+            <details class="group bg-[#18181B] border border-white/[0.06] rounded-xl">
+              <summary
+                class="flex items-center justify-between px-6 py-5 cursor-pointer list-none font-semibold text-white"
+              >
+                What AI tools does it work with?
+                <svg
+                  class="w-5 h-5 text-[#71717A] group-open:rotate-180 transition-transform"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                  ><path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M19 9l-7 7-7-7"></path></svg
+                >
+              </summary>
+              <div class="px-6 pb-5 text-[#A1A1AA]">
+                Skillsmith works with any AI tool that supports the Model Context Protocol (MCP),
+                including Claude Code, Claude Desktop, Cursor, Windsurf, and other MCP-compatible
+                clients. Install the MCP server and your client discovers skills automatically.
+              </div>
+            </details>
+
+            <details class="group bg-[#18181B] border border-white/[0.06] rounded-xl">
+              <summary
+                class="flex items-center justify-between px-6 py-5 cursor-pointer list-none font-semibold text-white"
+              >
+                How do I install a skill?
+                <svg
+                  class="w-5 h-5 text-[#71717A] group-open:rotate-180 transition-transform"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                  ><path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M19 9l-7 7-7-7"></path></svg
+                >
+              </summary>
+              <div class="px-6 pb-5 text-[#A1A1AA]">
+                Add the Skillsmith MCP server to your client's settings.json, restart, then ask your
+                AI assistant to search for and install skills. You can also use the CLI: run <code
+                  class="text-[#7dd3fc] bg-[#1e293b] px-1.5 py-0.5 rounded text-sm"
+                  >npx @skillsmith/cli search testing</code
+                > to find skills, then <code
+                  class="text-[#7dd3fc] bg-[#1e293b] px-1.5 py-0.5 rounded text-sm"
+                  >npx @skillsmith/cli install author/skill-name</code
+                > to install.
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <!-- Final CTA Section -->
+      <section class="py-24 relative">
+        <div
+          class="absolute inset-0 bg-gradient-to-b from-transparent via-[#E07A5F]/[0.03] to-transparent"
         >
-          <!-- Copy icon -->
-          <svg id="copy-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-          </svg>
-          <!-- Checkmark icon (hidden by default) -->
-          <svg id="check-icon" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-          </svg>
-          <span id="copy-text">Copy to Clipboard</span>
-        </button>
-      </div>
+        </div>
+        <div class="relative max-w-[600px] mx-auto px-6 text-center">
+          <h2 class="text-3xl sm:text-4xl font-bold mb-4">Start building for free</h2>
+          <p class="text-lg text-[#A1A1AA] mb-10">
+            Discover skills that fit your workflow. No credit card required.
+          </p>
 
-      <!-- Helper text -->
-      <p class="text-center text-[#A1A1AA] mb-8">
-        After adding this to your settings file and restarting, ask:
-        <span class="block mt-2 text-[#E07A5F] font-medium">"Find testing skills for my project"</span>
-      </p>
-
-      <!-- Value props inline -->
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center text-sm">
-        <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
-          <span class="block text-[#E07A5F] font-bold text-lg mb-1" id="skill-count-install">14,000+</span>
-          <span class="text-[#A1A1AA]">Searchable skills</span>
-        </div>
-        <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
-          <span class="block text-[#E07A5F] font-bold text-lg mb-1">AI-Powered</span>
-          <span class="text-[#A1A1AA]">Recommendations</span>
-        </div>
-        <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
-          <span class="block text-[#E07A5F] font-bold text-lg mb-1">One-Click</span>
-          <span class="text-[#A1A1AA]">Installation</span>
-        </div>
-        <div class="px-3 py-4 bg-[#18181B] rounded-xl border border-white/[0.06]">
-          <span class="block text-[#E07A5F] font-bold text-lg mb-1">Side-by-Side</span>
-          <span class="text-[#A1A1AA]">Comparison</span>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Value Props Section -->
-  <section class="py-24 border-t border-white/[0.06]">
-    <div class="max-w-[1200px] mx-auto px-6">
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-        <!-- Semantic Search -->
-        <div class="text-center">
-          <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
-            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              <path stroke-linecap="round" stroke-linejoin="round" d="M10 10l4 4" />
-            </svg>
+          <!-- CTA Buttons -->
+          <div class="flex flex-col sm:flex-row gap-4 justify-center">
+            <a
+              href="/signup"
+              class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+            >
+              Create Free Account →
+            </a>
+            <a
+              href="/pricing"
+              class="px-8 py-4 border border-white/10 rounded-xl font-medium text-white hover:border-white/20 transition-colors text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+            >
+              View Pricing
+            </a>
           </div>
-          <h3 class="text-lg font-bold mb-2">Semantic Search</h3>
-          <p class="text-sm text-[#A1A1AA]">Search by intent, not keywords. AI-powered skill discovery.</p>
         </div>
+      </section>
+    </main>
 
-        <!-- Quality Scores -->
-        <div class="text-center">
-          <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
-            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
-            </svg>
-          </div>
-          <h3 class="text-lg font-bold mb-2">Quality Scores</h3>
-          <p class="text-sm text-[#A1A1AA]">0-100 scores based on docs, tests, maintenance, security.</p>
-        </div>
+    <!-- Footer -->
+    <Footer />
 
-        <!-- Stack-Aware -->
-        <div class="text-center">
-          <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
-            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-            </svg>
-          </div>
-          <h3 class="text-lg font-bold mb-2">Stack-Aware</h3>
-          <p class="text-sm text-[#A1A1AA]">Recommendations tailored to your project's tech stack.</p>
-        </div>
-
-        <!-- One-Click Install -->
-        <div class="text-center">
-          <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
-            <svg class="w-8 h-8 text-[#E07A5F]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
-          </div>
-          <h3 class="text-lg font-bold mb-2">One-Click Install</h3>
-          <p class="text-sm text-[#A1A1AA]">Install directly. Uninstall just as fast.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Problem/Solution Section -->
-  <section class="py-24">
-    <div class="max-w-[1000px] mx-auto px-6">
-      <h2 class="text-3xl sm:text-4xl font-bold text-center mb-12">
-        The skill discovery problem
-      </h2>
-
-      <div class="grid md:grid-cols-2 gap-6">
-        <!-- Without Skillsmith -->
-        <div class="p-8 bg-[#18181B] border border-white/[0.06] rounded-2xl">
-          <p class="text-xs font-medium uppercase tracking-wider text-[#8E8E96] mb-6">Without Skillsmith</p>
-          <ul class="space-y-4">
-            <li class="flex items-start gap-3">
-              <span class="text-[#71717A] mt-0.5">✕</span>
-              <span class="text-[#A1A1AA]">Manual searches across fragmented sources</span>
-            </li>
-            <li class="flex items-start gap-3">
-              <span class="text-[#71717A] mt-0.5">✕</span>
-              <span class="text-[#A1A1AA]">No quality signals or verification</span>
-            </li>
-            <li class="flex items-start gap-3">
-              <span class="text-[#71717A] mt-0.5">✕</span>
-              <span class="text-[#A1A1AA]">Trial and error installations</span>
-            </li>
-            <li class="flex items-start gap-3">
-              <span class="text-[#71717A] mt-0.5">✕</span>
-              <span class="text-[#A1A1AA]">Missing skills that would save time</span>
-            </li>
-          </ul>
-        </div>
-
-        <!-- With Skillsmith -->
-        <div class="p-8 bg-[#18181B] border border-[#E07A5F]/20 rounded-2xl shadow-glow">
-          <p class="text-xs font-medium uppercase tracking-wider text-[#E07A5F] mb-6">With Skillsmith</p>
-          <ul class="space-y-4">
-            <li class="flex items-start gap-3">
-              <span class="text-[#81B29A] mt-0.5">✓</span>
-              <span class="text-[#FAFAFA]">Semantic search across <span id="skill-count-feature">14,000+</span> curated skills</span>
-            </li>
-            <li class="flex items-start gap-3">
-              <span class="text-[#81B29A] mt-0.5">✓</span>
-              <span class="text-[#FAFAFA]">Quality scores you can trust</span>
-            </li>
-            <li class="flex items-start gap-3">
-              <span class="text-[#81B29A] mt-0.5">✓</span>
-              <span class="text-[#FAFAFA]">Stack-aware recommendations</span>
-            </li>
-            <li class="flex items-start gap-3">
-              <span class="text-[#81B29A] mt-0.5">✓</span>
-              <span class="text-[#FAFAFA]">Discover skills before you need them</span>
-            </li>
-          </ul>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- FAQ Section (SMI-2457) -->
-  <section class="py-24 border-t border-white/[0.06]">
-    <div class="max-w-[800px] mx-auto px-6">
-      <h2 class="text-3xl sm:text-4xl font-bold text-center mb-12">Common Questions</h2>
-
-      <div class="space-y-4">
-        <details class="group bg-[#18181B] border border-white/[0.06] rounded-xl">
-          <summary class="flex items-center justify-between px-6 py-5 cursor-pointer list-none font-semibold text-white">
-            What are agent skills?
-            <svg class="w-5 h-5 text-[#71717A] group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
-          </summary>
-          <div class="px-6 pb-5 text-[#A1A1AA]">
-            Agent skills are reusable prompt-and-tool bundles that extend AI coding assistants like Claude Code. Each skill teaches your agent a new capability — from generating commits to running security audits — without writing custom prompts from scratch.
-          </div>
-        </details>
-
-        <details class="group bg-[#18181B] border border-white/[0.06] rounded-xl">
-          <summary class="flex items-center justify-between px-6 py-5 cursor-pointer list-none font-semibold text-white">
-            Is Skillsmith free?
-            <svg class="w-5 h-5 text-[#71717A] group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
-          </summary>
-          <div class="px-6 pb-5 text-[#A1A1AA]">
-            Yes. The Community tier is free forever with 1,000 API calls per month, semantic search, and one-click installation. No credit card required. Paid plans start at $9.99/month for higher limits and analytics.
-          </div>
-        </details>
-
-        <details class="group bg-[#18181B] border border-white/[0.06] rounded-xl">
-          <summary class="flex items-center justify-between px-6 py-5 cursor-pointer list-none font-semibold text-white">
-            What AI tools does it work with?
-            <svg class="w-5 h-5 text-[#71717A] group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
-          </summary>
-          <div class="px-6 pb-5 text-[#A1A1AA]">
-            Skillsmith works with any AI tool that supports the Model Context Protocol (MCP), including Claude Code, Claude Desktop, Cursor, Windsurf, and other MCP-compatible clients. Install the MCP server and your client discovers skills automatically.
-          </div>
-        </details>
-
-        <details class="group bg-[#18181B] border border-white/[0.06] rounded-xl">
-          <summary class="flex items-center justify-between px-6 py-5 cursor-pointer list-none font-semibold text-white">
-            How do I install a skill?
-            <svg class="w-5 h-5 text-[#71717A] group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" /></svg>
-          </summary>
-          <div class="px-6 pb-5 text-[#A1A1AA]">
-            Add the Skillsmith MCP server to your client's settings.json, restart, then ask your AI assistant to search for and install skills. You can also use the CLI: run <code class="text-[#7dd3fc] bg-[#1e293b] px-1.5 py-0.5 rounded text-sm">npx @skillsmith/cli search testing</code> to find skills, then <code class="text-[#7dd3fc] bg-[#1e293b] px-1.5 py-0.5 rounded text-sm">npx @skillsmith/cli install author/skill-name</code> to install.
-          </div>
-        </details>
-      </div>
-    </div>
-  </section>
-
-  <!-- Final CTA Section -->
-  <section class="py-24 relative">
-    <div class="absolute inset-0 bg-gradient-to-b from-transparent via-[#E07A5F]/[0.03] to-transparent"></div>
-    <div class="relative max-w-[600px] mx-auto px-6 text-center">
-      <h2 class="text-3xl sm:text-4xl font-bold mb-4">
-        Start building for free
-      </h2>
-      <p class="text-lg text-[#A1A1AA] mb-10">
-        Discover skills that fit your workflow. No credit card required.
-      </p>
-
-      <!-- CTA Buttons -->
-      <div class="flex flex-col sm:flex-row gap-4 justify-center">
-        <a
-          href="/signup"
-          class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
-        >
-          Create Free Account →
-        </a>
-        <a
-          href="/pricing"
-          class="px-8 py-4 border border-white/10 rounded-xl font-medium text-white hover:border-white/20 transition-colors text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
-        >
-          View Pricing
-        </a>
-      </div>
-    </div>
-  </section>
-
-  </main>
-
-  <!-- Footer -->
-  <Footer />
-
-  <style>
-    /* Hero animations — local override of global.css @theme animation
+    <style>
+      /* Hero animations — local override of global.css @theme animation
        for scoped control over LCP-critical fade-in timing (SMI-2350) */
-    .animate-fade-up {
-      animation: fadeUp 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-    }
-
-    @keyframes fadeUp {
-      from {
-        opacity: 0;
-        transform: translateY(24px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    .animate-float {
-      animation: float 20s ease-in-out infinite;
-    }
-
-    @keyframes float {
-      0%, 100% { transform: translate(0, 0); }
-      50% { transform: translate(30px, -20px); }
-    }
-
-    /* CTA shadow */
-    .shadow-cta {
-      box-shadow: 0 8px 32px rgba(224, 122, 95, 0.25);
-    }
-
-    .shadow-glow {
-      box-shadow: 0 0 40px rgba(224, 122, 95, 0.15);
-    }
-
-    /* Defer rendering of below-fold sections for faster LCP.
-       contain-intrinsic-size uses auto keyword so the browser remembers real
-       height after first render; 800px is the initial estimate for first visit. */
-    section:nth-of-type(n+2) {
-      content-visibility: auto;
-      contain-intrinsic-size: auto 800px;
-    }
-
-    /* Reserve space for dynamic content to prevent CLS */
-    #skill-count,
-    #skill-count-feature,
-    #skill-count-install {
-      display: inline-block;
-      min-width: 6ch;
-    }
-
-    /* Respect user motion preferences */
-    @media (prefers-reduced-motion: reduce) {
       .animate-fade-up {
-        animation: none;
-        opacity: 1;
-        transform: none;
+        animation: fadeUp 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      }
+
+      @keyframes fadeUp {
+        from {
+          opacity: 0;
+          transform: translateY(24px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
       }
 
       .animate-float {
-        animation: none;
+        animation: float 20s ease-in-out infinite;
       }
 
-      *,
-      *::before,
-      *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-      }
-    }
-  </style>
-
-  <!-- Copy to Clipboard Handler -->
-  <script is:inline>
-    (function() {
-      const copyButton = document.getElementById('copy-mcp-config');
-      const codeBlock = document.getElementById('mcp-install-code');
-      const copyIcon = document.getElementById('copy-icon');
-      const checkIcon = document.getElementById('check-icon');
-      const copyText = document.getElementById('copy-text');
-
-      if (!copyButton || !codeBlock) return;
-
-      copyButton.addEventListener('click', async () => {
-        const code = codeBlock.textContent || '';
-
-        try {
-          await navigator.clipboard.writeText(code);
-
-          // Show success state
-          copyIcon.classList.add('hidden');
-          checkIcon.classList.remove('hidden');
-          copyText.textContent = 'Copied!';
-          copyButton.classList.remove('bg-[#E07A5F]', 'hover:bg-[#D4694E]');
-          copyButton.classList.add('bg-[#81B29A]', 'text-white');
-          copyButton.classList.remove('text-dark-950');
-
-          // Track in GA if available
-          if (typeof gtag === 'function') {
-            gtag('event', 'copy_config', {
-              event_category: 'engagement',
-              event_label: 'mcp_install_snippet',
-            });
-          }
-
-          // Reset after 2.5 seconds
-          setTimeout(() => {
-            copyIcon.classList.remove('hidden');
-            checkIcon.classList.add('hidden');
-            copyText.textContent = 'Copy to Clipboard';
-            copyButton.classList.add('bg-[#E07A5F]', 'hover:bg-[#D4694E]', 'text-dark-950');
-            copyButton.classList.remove('bg-[#81B29A]', 'text-white');
-          }, 2500);
-        } catch (err) {
-          console.error('Failed to copy:', err);
-          copyText.textContent = 'Failed to copy';
-          setTimeout(() => {
-            copyText.textContent = 'Copy to Clipboard';
-          }, 2000);
+      @keyframes float {
+        0%,
+        100% {
+          transform: translate(0, 0);
         }
-      });
-    })();
-  </script>
-
-  <!-- GA4: Track homepage FAQ expand (SMI-2453) -->
-  <script is:inline>
-    document.addEventListener('astro:page-load', function() {
-      document.querySelectorAll('details').forEach(function(el) {
-        el.addEventListener('toggle', function() {
-          if (el.open && typeof gtag === 'function') {
-            var q = el.querySelector('summary');
-            gtag('event', 'homepage_faq_expand', {
-              faq_question: q ? q.textContent.trim().slice(0, 100) : '',
-            });
-          }
-        });
-      });
-    });
-  </script>
-
-  <!-- SMI-2344: Web Vitals RUM tracking (SMI-2363: shared module) -->
-  <script>
-    import '../scripts/web-vitals';
-  </script>
-
-  <!-- Cookie consent banner (standalone page, not using BaseLayout) -->
-  <div id="cookie-consent" style="position:fixed;bottom:0;left:0;right:0;z-index:9999;padding:1rem;pointer-events:none" hidden>
-    <div style="max-width:640px;margin:0 auto;display:flex;align-items:center;gap:1rem;padding:1rem 1.5rem;background:#1a1a1f;border:1px solid #2a2a2f;border-radius:0.75rem;box-shadow:0 -4px 24px rgba(0,0,0,0.4);pointer-events:auto;font-family:'Satoshi',sans-serif">
-      <p style="flex:1;font-size:0.875rem;color:#9ca3af;line-height:1.5;margin:0">
-        We use cookies and Google Analytics to understand how you use the Skillsmith website. We do not track MCP usage, only count API calls.
-        See our <a href="/privacy#cookies" style="color:#E07A5F;text-decoration:underline;text-underline-offset:2px">Privacy Policy</a>.
-      </p>
-      <div style="display:flex;gap:0.5rem;flex-shrink:0">
-        <button id="cookie-reject" type="button" style="padding:0.5rem 1rem;font-size:0.875rem;font-weight:600;border-radius:0.375rem;cursor:pointer;background:transparent;color:#9ca3af;border:1px solid #2a2a2f;font-family:inherit">Decline</button>
-        <button id="cookie-accept" type="button" style="padding:0.5rem 1rem;font-size:0.875rem;font-weight:600;border-radius:0.375rem;cursor:pointer;background:linear-gradient(135deg,#E07A5F,#D4694E);color:white;border:none;font-family:inherit">Accept</button>
-      </div>
-    </div>
-  </div>
-  <script is:inline>
-    (function(){
-      var c=localStorage.getItem('skillsmith_cookie_consent');
-      if(c)return;
-      var b=document.getElementById('cookie-consent');
-      if(!b)return;
-      b.hidden=false;
-      document.getElementById('cookie-accept').addEventListener('click',function(){
-        localStorage.setItem('skillsmith_cookie_consent','accepted');
-        if(typeof gtag==='function')gtag('consent','update',{analytics_storage:'granted'});
-        b.hidden=true;
-      });
-      document.getElementById('cookie-reject').addEventListener('click',function(){
-        localStorage.setItem('skillsmith_cookie_consent','declined');
-        b.hidden=true;
-      });
-    })();
-  </script>
-
-  <!-- Fetch live skill count -->
-  <script is:inline define:vars={{ statsApiUrl: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1/stats` }}>
-    (function() {
-      const API_URL = statsApiUrl;
-      const CACHE_KEY = 'skillsmith_skill_count';
-      const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-      function formatNumber(num) {
-        return num.toLocaleString('en-US');
-      }
-
-      function updateCount(count) {
-        const el = document.getElementById('skill-count');
-        const elFeature = document.getElementById('skill-count-feature');
-        const elInstall = document.getElementById('skill-count-install');
-        if (count > 0) {
-          const formattedCount = formatNumber(count) + '+';
-          if (el) el.textContent = formattedCount;
-          if (elFeature) elFeature.textContent = formattedCount;
-          if (elInstall) elInstall.textContent = formattedCount;
+        50% {
+          transform: translate(30px, -20px);
         }
       }
 
-      // Check localStorage cache first
-      try {
-        const cached = localStorage.getItem(CACHE_KEY);
-        if (cached) {
-          const { count, timestamp } = JSON.parse(cached);
-          if (Date.now() - timestamp < CACHE_TTL) {
-            updateCount(count);
-          }
-        }
-      } catch (e) {}
+      /* CTA shadow */
+      .shadow-cta {
+        box-shadow: 0 8px 32px rgba(224, 122, 95, 0.25);
+      }
 
-      // Fetch fresh count
-      fetch(API_URL)
-        .then(res => res.json())
-        .then(data => {
-          if (data.data && data.data.skillCount) {
-            const count = data.data.skillCount;
-            updateCount(count);
-            // Cache for next visit
-            try {
-              localStorage.setItem(CACHE_KEY, JSON.stringify({
-                count,
-                timestamp: Date.now()
-              }));
-            } catch (e) {}
+      .shadow-glow {
+        box-shadow: 0 0 40px rgba(224, 122, 95, 0.15);
+      }
+
+      /* Defer rendering of below-fold sections for faster LCP.
+       contain-intrinsic-size uses auto keyword so the browser remembers real
+       height after first render; 800px is the initial estimate for first visit. */
+      section:nth-of-type(n + 2) {
+        content-visibility: auto;
+        contain-intrinsic-size: auto 800px;
+      }
+
+      /* Reserve space for dynamic content to prevent CLS */
+      #skill-count,
+      #skill-count-feature,
+      #skill-count-install {
+        display: inline-block;
+        min-width: 6ch;
+      }
+
+      /* Respect user motion preferences */
+      @media (prefers-reduced-motion: reduce) {
+        .animate-fade-up {
+          animation: none;
+          opacity: 1;
+          transform: none;
+        }
+
+        .animate-float {
+          animation: none;
+        }
+
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+
+    <!-- Copy to Clipboard Handler -->
+    <script is:inline>
+      ;(function () {
+        const copyButton = document.getElementById('copy-mcp-config')
+        const codeBlock = document.getElementById('mcp-install-code')
+        const copyIcon = document.getElementById('copy-icon')
+        const checkIcon = document.getElementById('check-icon')
+        const copyText = document.getElementById('copy-text')
+
+        if (!copyButton || !codeBlock) return
+
+        copyButton.addEventListener('click', async () => {
+          const code = codeBlock.textContent || ''
+
+          try {
+            await navigator.clipboard.writeText(code)
+
+            // Show success state
+            copyIcon.classList.add('hidden')
+            checkIcon.classList.remove('hidden')
+            copyText.textContent = 'Copied!'
+            copyButton.classList.remove('bg-[#E07A5F]', 'hover:bg-[#D4694E]')
+            copyButton.classList.add('bg-[#81B29A]', 'text-white')
+            copyButton.classList.remove('text-dark-950')
+
+            // Track in GA if available
+            if (typeof gtag === 'function') {
+              gtag('event', 'copy_config', {
+                event_category: 'engagement',
+                event_label: 'mcp_install_snippet',
+              })
+            }
+
+            // Reset after 2.5 seconds
+            setTimeout(() => {
+              copyIcon.classList.remove('hidden')
+              checkIcon.classList.add('hidden')
+              copyText.textContent = 'Copy to Clipboard'
+              copyButton.classList.add('bg-[#E07A5F]', 'hover:bg-[#D4694E]', 'text-dark-950')
+              copyButton.classList.remove('bg-[#81B29A]', 'text-white')
+            }, 2500)
+          } catch (err) {
+            console.error('Failed to copy:', err)
+            copyText.textContent = 'Failed to copy'
+            setTimeout(() => {
+              copyText.textContent = 'Copy to Clipboard'
+            }, 2000)
           }
         })
-        .catch(() => {
-          // Keep default value on error
-        });
-    })();
-  </script>
+      })()
+    </script>
 
-</body>
+    <!-- GA4: Track homepage FAQ expand (SMI-2453) -->
+    <script is:inline>
+      document.addEventListener('astro:page-load', function () {
+        document.querySelectorAll('details').forEach(function (el) {
+          el.addEventListener('toggle', function () {
+            if (el.open && typeof gtag === 'function') {
+              var q = el.querySelector('summary')
+              gtag('event', 'homepage_faq_expand', {
+                faq_question: q ? q.textContent.trim().slice(0, 100) : '',
+              })
+            }
+          })
+        })
+      })
+    </script>
+
+    <!-- SMI-2344: Web Vitals RUM tracking (SMI-2363: shared module) -->
+    <script>
+      import '../scripts/web-vitals'
+    </script>
+
+    <!-- Cookie consent banner (standalone page, not using BaseLayout) -->
+    <div
+      id="cookie-consent"
+      style="position:fixed;bottom:0;left:0;right:0;z-index:9999;padding:1rem;pointer-events:none"
+      hidden
+    >
+      <div
+        style="max-width:640px;margin:0 auto;display:flex;align-items:center;gap:1rem;padding:1rem 1.5rem;background:#1a1a1f;border:1px solid #2a2a2f;border-radius:0.75rem;box-shadow:0 -4px 24px rgba(0,0,0,0.4);pointer-events:auto;font-family:'Satoshi',sans-serif"
+      >
+        <p style="flex:1;font-size:0.875rem;color:#9ca3af;line-height:1.5;margin:0">
+          We use cookies and Google Analytics to understand how you use the Skillsmith website. We
+          do not track MCP usage, only count API calls. See our <a
+            href="/privacy#cookies"
+            style="color:#E07A5F;text-decoration:underline;text-underline-offset:2px"
+            >Privacy Policy</a
+          >.
+        </p>
+        <div style="display:flex;gap:0.5rem;flex-shrink:0">
+          <button
+            id="cookie-reject"
+            type="button"
+            style="padding:0.5rem 1rem;font-size:0.875rem;font-weight:600;border-radius:0.375rem;cursor:pointer;background:transparent;color:#9ca3af;border:1px solid #2a2a2f;font-family:inherit"
+            >Decline</button
+          >
+          <button
+            id="cookie-accept"
+            type="button"
+            style="padding:0.5rem 1rem;font-size:0.875rem;font-weight:600;border-radius:0.375rem;cursor:pointer;background:linear-gradient(135deg,#E07A5F,#D4694E);color:white;border:none;font-family:inherit"
+            >Accept</button
+          >
+        </div>
+      </div>
+    </div>
+    <script is:inline>
+      ;(function () {
+        var c = localStorage.getItem('skillsmith_cookie_consent')
+        if (c) return
+        var b = document.getElementById('cookie-consent')
+        if (!b) return
+        b.hidden = false
+        document.getElementById('cookie-accept').addEventListener('click', function () {
+          localStorage.setItem('skillsmith_cookie_consent', 'accepted')
+          if (typeof gtag === 'function')
+            gtag('consent', 'update', { analytics_storage: 'granted' })
+          b.hidden = true
+        })
+        document.getElementById('cookie-reject').addEventListener('click', function () {
+          localStorage.setItem('skillsmith_cookie_consent', 'declined')
+          b.hidden = true
+        })
+      })()
+    </script>
+
+    <!-- Fetch live skill count -->
+    <script
+      is:inline
+      define:vars={{
+        statsApiUrl: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1/stats`,
+      }}
+    >
+      ;(function () {
+        const API_URL = statsApiUrl
+        const CACHE_KEY = 'skillsmith_skill_count'
+        const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
+        function formatNumber(num) {
+          return num.toLocaleString('en-US')
+        }
+
+        function updateCount(count) {
+          const el = document.getElementById('skill-count')
+          const elFeature = document.getElementById('skill-count-feature')
+          const elInstall = document.getElementById('skill-count-install')
+          if (count > 0) {
+            const formattedCount = formatNumber(count) + '+'
+            if (el) el.textContent = formattedCount
+            if (elFeature) elFeature.textContent = formattedCount
+            if (elInstall) elInstall.textContent = formattedCount
+          }
+        }
+
+        // Check localStorage cache first
+        try {
+          const cached = localStorage.getItem(CACHE_KEY)
+          if (cached) {
+            const { count, timestamp } = JSON.parse(cached)
+            if (Date.now() - timestamp < CACHE_TTL) {
+              updateCount(count)
+            }
+          }
+        } catch (e) {}
+
+        // Fetch fresh count
+        fetch(API_URL)
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.data && data.data.skillCount) {
+              const count = data.data.skillCount
+              updateCount(count)
+              // Cache for next visit
+              try {
+                localStorage.setItem(
+                  CACHE_KEY,
+                  JSON.stringify({
+                    count,
+                    timestamp: Date.now(),
+                  })
+                )
+              } catch (e) {}
+            }
+          })
+          .catch(() => {
+            // Keep default value on error
+          })
+      })()
+    </script>
+  </body>
 </html>

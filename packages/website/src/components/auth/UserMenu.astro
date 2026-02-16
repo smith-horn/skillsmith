@@ -9,16 +9,16 @@
  * Uses client-side JavaScript to check auth state.
  */
 
-import LoginButton from './LoginButton.astro';
+import LoginButton from './LoginButton.astro'
 
 interface Props {
   /**
    * Where to redirect after login
    */
-  loginRedirect?: string;
+  loginRedirect?: string
 }
 
-const { loginRedirect = '/account' } = Astro.props;
+const { loginRedirect = '/account' } = Astro.props
 ---
 
 <div class="user-menu-container" id="user-menu-container">
@@ -34,16 +34,17 @@ const { loginRedirect = '/account' } = Astro.props;
 
   <!-- Logged in state -->
   <div class="user-menu-logged-in" id="user-menu-logged-in" style="display: none;">
-    <button type="button" class="user-menu-trigger" id="user-menu-trigger" aria-haspopup="true" aria-expanded="false">
-      <img
-        id="user-avatar"
-        src="/placeholder-avatar.svg"
-        alt="User avatar"
-        class="user-avatar"
-      />
+    <button
+      type="button"
+      class="user-menu-trigger"
+      id="user-menu-trigger"
+      aria-haspopup="true"
+      aria-expanded="false"
+    >
+      <img id="user-avatar" src="/placeholder-avatar.svg" alt="User avatar" class="user-avatar" />
       <span class="user-name" id="user-name">User</span>
       <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polyline points="6 9 12 15 18 9" />
+        <polyline points="6 9 12 15 18 9"></polyline>
       </svg>
     </button>
 
@@ -56,24 +57,24 @@ const { loginRedirect = '/account' } = Astro.props;
       <div class="dropdown-divider"></div>
       <a href="/account" class="dropdown-item" role="menuitem">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-          <circle cx="12" cy="7" r="4" />
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+          <circle cx="12" cy="7" r="4"></circle>
         </svg>
         Dashboard
       </a>
       <a href="/account/subscription" class="dropdown-item" role="menuitem">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
-          <line x1="1" y1="10" x2="23" y2="10" />
+          <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+          <line x1="1" y1="10" x2="23" y2="10"></line>
         </svg>
         Subscription
       </a>
       <div class="dropdown-divider"></div>
       <button type="button" class="dropdown-item logout-btn" id="logout-btn" role="menuitem">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-          <polyline points="16 17 21 12 16 7" />
-          <line x1="21" y1="12" x2="9" y2="12" />
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+          <polyline points="16 17 21 12 16 7"></polyline>
+          <line x1="21" y1="12" x2="9" y2="12"></line>
         </svg>
         Sign out
       </button>
@@ -103,8 +104,12 @@ const { loginRedirect = '/account' } = Astro.props;
   }
 
   @keyframes shimmer {
-    0% { background-position: -200% 0; }
-    100% { background-position: 200% 0; }
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
   }
 
   /* Menu trigger */
@@ -116,7 +121,7 @@ const { loginRedirect = '/account' } = Astro.props;
     background: transparent;
     border: 1px solid transparent;
     border-radius: 0.5rem;
-    color: #FAFAFA;
+    color: #fafafa;
     cursor: pointer;
     transition: all 0.2s;
     font-family: inherit;
@@ -151,7 +156,7 @@ const { loginRedirect = '/account' } = Astro.props;
     transition: transform 0.2s;
   }
 
-  .user-menu-trigger[aria-expanded="true"] .chevron {
+  .user-menu-trigger[aria-expanded='true'] .chevron {
     transform: rotate(180deg);
   }
 
@@ -188,7 +193,7 @@ const { loginRedirect = '/account' } = Astro.props;
   .dropdown-name {
     font-weight: 600;
     font-size: 0.875rem;
-    color: #FAFAFA;
+    color: #fafafa;
   }
 
   .dropdown-email {
@@ -211,7 +216,7 @@ const { loginRedirect = '/account' } = Astro.props;
     gap: 0.75rem;
     padding: 0.625rem 1rem;
     font-size: 0.875rem;
-    color: #FAFAFA;
+    color: #fafafa;
     text-decoration: none;
     background: transparent;
     border: none;
@@ -250,99 +255,106 @@ const { loginRedirect = '/account' } = Astro.props;
 </style>
 
 <script>
-  import { createClient } from '@supabase/supabase-js';
+  import { createClient } from '@supabase/supabase-js'
 
   // Initialize user menu
   // Uses astro:page-load to reinitialize after ClientRouter view transitions
   document.addEventListener('astro:page-load', async () => {
-    const loadingState = document.getElementById('user-menu-loading');
-    const loggedOutState = document.getElementById('user-menu-logged-out');
-    const loggedInState = document.getElementById('user-menu-logged-in');
-    const menuTrigger = document.getElementById('user-menu-trigger');
-    const dropdown = document.getElementById('user-dropdown');
-    const logoutBtn = document.getElementById('logout-btn');
+    const loadingState = document.getElementById('user-menu-loading')
+    const loggedOutState = document.getElementById('user-menu-logged-out')
+    const loggedInState = document.getElementById('user-menu-logged-in')
+    const menuTrigger = document.getElementById('user-menu-trigger')
+    const dropdown = document.getElementById('user-dropdown')
+    const logoutBtn = document.getElementById('logout-btn')
 
     // Get config
-    const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } }).__SUPABASE_CONFIG__;
+    const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } })
+      .__SUPABASE_CONFIG__
 
     if (!config?.url || !config?.anonKey) {
       // No config, show logged out state
-      if (loadingState) loadingState.style.display = 'none';
-      if (loggedOutState) loggedOutState.style.display = 'block';
-      return;
+      if (loadingState) loadingState.style.display = 'none'
+      if (loggedOutState) loggedOutState.style.display = 'block'
+      return
     }
 
-    const supabase = createClient(config.url, config.anonKey);
+    const supabase = createClient(config.url, config.anonKey)
 
     // Check auth state
-    const { data: { session } } = await supabase.auth.getSession();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
 
-    if (loadingState) loadingState.style.display = 'none';
+    if (loadingState) loadingState.style.display = 'none'
 
     if (session?.user) {
       // User is logged in
-      if (loggedInState) loggedInState.style.display = 'block';
+      if (loggedInState) loggedInState.style.display = 'block'
 
       // Get profile data
       const { data: profile } = await supabase
         .from('profiles')
         .select('full_name, avatar_url, github_username')
         .eq('id', session.user.id)
-        .single();
+        .single()
 
       // Update UI with user info
-      const userName = profile?.full_name || profile?.github_username || session.user.email?.split('@')[0] || 'User';
-      const userEmail = session.user.email || '';
-      const avatarUrl = profile?.avatar_url || session.user.user_metadata?.avatar_url;
+      const userName =
+        profile?.full_name ||
+        profile?.github_username ||
+        session.user.email?.split('@')[0] ||
+        'User'
+      const userEmail = session.user.email || ''
+      const avatarUrl = profile?.avatar_url || session.user.user_metadata?.avatar_url
 
-      const userNameEl = document.getElementById('user-name');
-      const dropdownNameEl = document.getElementById('dropdown-name');
-      const dropdownEmailEl = document.getElementById('dropdown-email');
-      const userAvatarEl = document.getElementById('user-avatar') as HTMLImageElement | null;
+      const userNameEl = document.getElementById('user-name')
+      const dropdownNameEl = document.getElementById('dropdown-name')
+      const dropdownEmailEl = document.getElementById('dropdown-email')
+      const userAvatarEl = document.getElementById('user-avatar') as HTMLImageElement | null
 
-      if (userNameEl) userNameEl.textContent = userName;
-      if (dropdownNameEl) dropdownNameEl.textContent = userName;
-      if (dropdownEmailEl) dropdownEmailEl.textContent = userEmail;
+      if (userNameEl) userNameEl.textContent = userName
+      if (dropdownNameEl) dropdownNameEl.textContent = userName
+      if (dropdownEmailEl) dropdownEmailEl.textContent = userEmail
       if (userAvatarEl && avatarUrl) {
-        userAvatarEl.src = avatarUrl;
-        userAvatarEl.alt = `${userName}'s avatar`;
+        userAvatarEl.src = avatarUrl
+        userAvatarEl.alt = `${userName}'s avatar`
       }
 
       // Toggle dropdown
       menuTrigger?.addEventListener('click', () => {
-        const isOpen = dropdown?.classList.contains('open');
-        dropdown?.classList.toggle('open', !isOpen);
-        menuTrigger?.setAttribute('aria-expanded', (!isOpen).toString());
-        dropdown?.setAttribute('aria-hidden', isOpen ? 'true' : 'false');
-      });
+        const isOpen = dropdown?.classList.contains('open')
+        dropdown?.classList.toggle('open', !isOpen)
+        menuTrigger?.setAttribute('aria-expanded', (!isOpen).toString())
+        dropdown?.setAttribute('aria-hidden', isOpen ? 'true' : 'false')
+      })
 
       // Close dropdown on outside click
       document.addEventListener('click', (e) => {
         if (!loggedInState?.contains(e.target as Node)) {
-          dropdown?.classList.remove('open');
-          menuTrigger?.setAttribute('aria-expanded', 'false');
-          dropdown?.setAttribute('aria-hidden', 'true');
+          dropdown?.classList.remove('open')
+          menuTrigger?.setAttribute('aria-expanded', 'false')
+          dropdown?.setAttribute('aria-hidden', 'true')
         }
-      });
+      })
 
       // Close dropdown on Escape
       document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && dropdown?.classList.contains('open')) {
-          dropdown.classList.remove('open');
-          menuTrigger?.setAttribute('aria-expanded', 'false');
-          dropdown?.setAttribute('aria-hidden', 'true');
-          menuTrigger?.focus();
+          dropdown.classList.remove('open')
+          menuTrigger?.setAttribute('aria-expanded', 'false')
+          dropdown?.setAttribute('aria-hidden', 'true')
+          menuTrigger?.focus()
         }
-      });
+      })
 
       // Logout handler
       logoutBtn?.addEventListener('click', async () => {
-        await supabase.auth.signOut();
-        window.location.href = '/';
-      });
+        await supabase.auth.signOut()
+        window.location.href = '/'
+      })
     } else {
       // User is not logged in
-      if (loggedOutState) loggedOutState.style.display = 'block';
+      if (loggedOutState) loggedOutState.style.display = 'block'
     }
-  });
+  })
 </script>

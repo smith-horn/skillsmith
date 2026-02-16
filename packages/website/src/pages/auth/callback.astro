@@ -10,19 +10,19 @@
  */
 
 // Disable prerendering - this page needs SSR to read env vars
-export const prerender = false;
+export const prerender = false
 
-import { ClientRouter } from 'astro:transitions';
-import { getSupabaseConfig } from '../../lib/supabase-config';
+import { ClientRouter } from 'astro:transitions'
+import { getSupabaseConfig } from '../../lib/supabase-config'
 
 // Read env vars at SSR time to inject into client script
-const supabaseConfig = getSupabaseConfig();
+const supabaseConfig = getSupabaseConfig()
 
 // Get redirect URL from query params (for OAuth flows)
-const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
+const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
 ---
 
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -32,10 +32,13 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
     <meta name="description" content="Verifying your Skillsmith account..." />
     <title>Verifying... | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
-    <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap" rel="stylesheet" />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
     <script is:inline define:vars={{ supabaseConfig, redirectTo }}>
-      window.__SUPABASE_CONFIG__ = supabaseConfig;
-      window.__AUTH_REDIRECT_TO__ = redirectTo;
+      window.__SUPABASE_CONFIG__ = supabaseConfig
+      window.__AUTH_REDIRECT_TO__ = redirectTo
     </script>
     <ClientRouter />
   </head>
@@ -45,8 +48,16 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
         <div id="loading-state" class="state-content">
           <div class="spinner-container">
             <svg class="spinner" viewBox="0 0 24 24">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" opacity="0.25"/>
-              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"/>
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+                fill="none"
+                opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+              ></path>
             </svg>
           </div>
           <h1>Verifying your account...</h1>
@@ -56,7 +67,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
         <div id="success-state" class="state-content" style="display: none;">
           <div class="icon-container success">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="20 6 9 17 4 12" />
+              <polyline points="20 6 9 17 4 12"></polyline>
             </svg>
           </div>
           <h1>Email Verified!</h1>
@@ -67,9 +78,9 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
         <div id="error-state" class="state-content" style="display: none;">
           <div class="icon-container error">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="15" y1="9" x2="9" y2="15" />
-              <line x1="9" y1="9" x2="15" y2="15" />
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="15" y1="9" x2="9" y2="15"></line>
+              <line x1="9" y1="9" x2="15" y2="15"></line>
             </svg>
           </div>
           <h1>Verification Failed</h1>
@@ -94,10 +105,16 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
   }
 
   body {
-    font-family: 'Satoshi', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family:
+      'Satoshi',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
     line-height: 1.6;
-    color: #FAFAFA;
-    background: #0D0D0F;
+    color: #fafafa;
+    background: #0d0d0f;
     min-height: 100vh;
     display: flex;
     align-items: center;
@@ -140,13 +157,17 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
   .spinner {
     width: 3rem;
     height: 3rem;
-    color: #E07A5F;
+    color: #e07a5f;
     animation: spin 1s linear infinite;
   }
 
   @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .icon-container {
@@ -189,7 +210,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
   }
 
   .btn-primary {
-    background: linear-gradient(135deg, #E07A5F 0%, #D4694E 100%);
+    background: linear-gradient(135deg, #e07a5f 0%, #d4694e 100%);
     color: white;
   }
 
@@ -201,12 +222,12 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
   .btn-secondary {
     background: transparent;
     border: 1px solid #2a2a2f;
-    color: #FAFAFA;
+    color: #fafafa;
   }
 
   .btn-secondary:hover {
-    border-color: #E07A5F;
-    color: #E07A5F;
+    border-color: #e07a5f;
+    color: #e07a5f;
   }
 
   .error-actions {
@@ -220,17 +241,21 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
   import { createClient } from '@supabase/supabase-js'
 
   // Read config injected by SSR script in head
-  const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } }).__SUPABASE_CONFIG__ || { url: '', anonKey: '' };
-  const supabaseUrl = config.url;
-  const supabaseAnonKey = config.anonKey;
-  const authRedirectTo = (window as unknown as { __AUTH_REDIRECT_TO__?: string }).__AUTH_REDIRECT_TO__ || '/account';
+  const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } })
+    .__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+  const supabaseUrl = config.url
+  const supabaseAnonKey = config.anonKey
+  const authRedirectTo =
+    (window as unknown as { __AUTH_REDIRECT_TO__?: string }).__AUTH_REDIRECT_TO__ || '/account'
 
   document.addEventListener('astro:page-load', async () => {
     const loadingState = document.getElementById('loading-state') as HTMLDivElement | null
     const successState = document.getElementById('success-state') as HTMLDivElement | null
     const errorState = document.getElementById('error-state') as HTMLDivElement | null
     const errorMessageEl = document.getElementById('error-message') as HTMLParagraphElement | null
-    const dashboardLink = successState?.querySelector('a[href="/account"]') as HTMLAnchorElement | null
+    const dashboardLink = successState?.querySelector(
+      'a[href="/account"]'
+    ) as HTMLAnchorElement | null
 
     // Update the dashboard link with the redirect URL
     if (dashboardLink) {
@@ -316,7 +341,9 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account';
         }
       } else {
         // Check if already logged in
-        const { data: { session } } = await supabase.auth.getSession()
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
         if (session) {
           showSuccess()
         } else {

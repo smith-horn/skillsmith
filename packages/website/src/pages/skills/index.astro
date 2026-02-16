@@ -1,5 +1,5 @@
 ---
-import BaseLayout from '../../layouts/BaseLayout.astro';
+import BaseLayout from '../../layouts/BaseLayout.astro'
 
 const categories = [
   { value: '', label: 'All Categories' },
@@ -10,93 +10,103 @@ const categories = [
   { value: 'documentation', label: 'Documentation' },
   { value: 'productivity', label: 'Productivity' },
   { value: 'security', label: 'Security' },
-];
+]
 
 const trustTiers = [
   { value: '', label: 'All Trust Tiers' },
   { value: 'verified', label: 'Verified' },
   { value: 'community', label: 'Community' },
   { value: 'experimental', label: 'Experimental' },
-];
+]
 ---
 
 <BaseLayout title="Skills" description="Search and discover agent skills">
   <!-- JSON-LD Schema -->
   <script is:inline type="application/ld+json" slot="head">
-  {
-    "@context": "https://schema.org",
-    "@type": "CollectionPage",
-    "name": "Skillsmith Skills Browser",
-    "description": "Search and discover agent skills. Browse by category and trust tier.",
-    "url": "https://www.skillsmith.app/skills",
-    "isPartOf": {
-      "@id": "https://www.skillsmith.app/#website"
-    },
-    "about": {
-      "@type": "SoftwareApplication",
-      "name": "Agent Skills",
-      "applicationCategory": "DeveloperApplication"
-    },
-    "mainEntity": {
-      "@type": "ItemList",
-      "name": "Skill Categories",
+    {
+      "@context": "https://schema.org",
+      "@type": "CollectionPage",
+      "name": "Skillsmith Skills Browser",
+      "description": "Search and discover agent skills. Browse by category and trust tier.",
+      "url": "https://www.skillsmith.app/skills",
+      "isPartOf": {
+        "@id": "https://www.skillsmith.app/#website"
+      },
+      "about": {
+        "@type": "SoftwareApplication",
+        "name": "Agent Skills",
+        "applicationCategory": "DeveloperApplication"
+      },
+      "mainEntity": {
+        "@type": "ItemList",
+        "name": "Skill Categories",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "Development",
+            "description": "Skills for software development workflows"
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": "Integrations",
+            "description": "MCP servers, API integrations, and protocol implementations"
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "name": "Testing",
+            "description": "Testing frameworks and utilities"
+          },
+          {
+            "@type": "ListItem",
+            "position": 4,
+            "name": "DevOps",
+            "description": "CI/CD, deployment, and infrastructure skills"
+          },
+          {
+            "@type": "ListItem",
+            "position": 5,
+            "name": "Documentation",
+            "description": "Documentation generation and management"
+          },
+          {
+            "@type": "ListItem",
+            "position": 6,
+            "name": "Productivity",
+            "description": "Workflow automation and productivity tools"
+          },
+          {
+            "@type": "ListItem",
+            "position": 7,
+            "name": "Security",
+            "description": "Security scanning and best practices"
+          }
+        ]
+      }
+    }
+  </script>
+
+  <script is:inline type="application/ld+json" slot="head">
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
       "itemListElement": [
         {
           "@type": "ListItem",
           "position": 1,
-          "name": "Development",
-          "description": "Skills for software development workflows"
+          "name": "Home",
+          "item": "https://www.skillsmith.app/"
         },
         {
           "@type": "ListItem",
           "position": 2,
-          "name": "Integrations",
-          "description": "MCP servers, API integrations, and protocol implementations"
-        },
-        {
-          "@type": "ListItem",
-          "position": 3,
-          "name": "Testing",
-          "description": "Testing frameworks and utilities"
-        },
-        {
-          "@type": "ListItem",
-          "position": 4,
-          "name": "DevOps",
-          "description": "CI/CD, deployment, and infrastructure skills"
-        },
-        {
-          "@type": "ListItem",
-          "position": 5,
-          "name": "Documentation",
-          "description": "Documentation generation and management"
-        },
-        {
-          "@type": "ListItem",
-          "position": 6,
-          "name": "Productivity",
-          "description": "Workflow automation and productivity tools"
-        },
-        {
-          "@type": "ListItem",
-          "position": 7,
-          "name": "Security",
-          "description": "Security scanning and best practices"
+          "name": "Skills",
+          "item": "https://www.skillsmith.app/skills"
         }
       ]
     }
-  }
-  </script>
-
-  <script is:inline type="application/ld+json" slot="head">
-  {
-    "@context": "https://schema.org",
-    "@type": "BreadcrumbList",
-    "itemListElement": [
-      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://www.skillsmith.app/" },
-      { "@type": "ListItem", "position": 2, "name": "Skills", "item": "https://www.skillsmith.app/skills" }
-    ]
-  }
   </script>
 
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -115,8 +125,17 @@ const trustTiers = [
       <div class="flex flex-col lg:flex-row gap-4">
         <!-- Search Input -->
         <div class="flex-1 relative">
-          <svg class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          <svg
+            class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-500"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
           </svg>
           <input
             type="text"
@@ -133,9 +152,7 @@ const trustTiers = [
             aria-label="Filter by category"
             class="w-full px-4 py-3 bg-dark-800 border border-dark-700 rounded-lg text-white focus:outline-none focus:border-primary-500 transition-all appearance-none cursor-pointer"
           >
-            {categories.map(cat => (
-              <option value={cat.value}>{cat.label}</option>
-            ))}
+            {categories.map((cat) => <option value={cat.value}>{cat.label}</option>)}
           </select>
         </div>
 
@@ -146,9 +163,7 @@ const trustTiers = [
             aria-label="Filter by trust tier"
             class="w-full px-4 py-3 bg-dark-800 border border-dark-700 rounded-lg text-white focus:outline-none focus:border-primary-500 transition-all appearance-none cursor-pointer"
           >
-            {trustTiers.map(tier => (
-              <option value={tier.value}>{tier.label}</option>
-            ))}
+            {trustTiers.map((tier) => <option value={tier.value}>{tier.label}</option>)}
           </select>
         </div>
       </div>
@@ -156,14 +171,23 @@ const trustTiers = [
 
     <!-- Quality Indicator Explanation -->
     <details class="bg-dark-900 rounded-xl border border-dark-800 p-4 mb-8">
-      <summary class="cursor-pointer text-dark-300 hover:text-white font-medium flex items-center gap-2">
+      <summary
+        class="cursor-pointer text-dark-300 hover:text-white font-medium flex items-center gap-2"
+      >
         <svg class="w-5 h-5 text-primary-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
         </svg>
         How Quality Indicators Work
       </summary>
       <div class="mt-4 text-sm text-dark-400 space-y-3">
-        <p>Quality indicators reflect a skill's GitHub popularity based on star count. The colored dot shows the tier at a glance:</p>
+        <p>
+          Quality indicators reflect a skill's GitHub popularity based on star count. The colored
+          dot shows the tier at a glance:
+        </p>
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
           <div class="bg-dark-800 rounded-lg p-3">
             <div class="text-blue-400 font-semibold text-lg">●</div>
@@ -186,15 +210,16 @@ const trustTiers = [
             <div class="text-dark-500 text-xs">&lt;50 ★</div>
           </div>
         </div>
-        <p class="text-dark-500 text-xs">Hover over the indicator to see the exact star count. Verified skills from high-trust authors receive additional vetting.</p>
+        <p class="text-dark-500 text-xs">
+          Hover over the indicator to see the exact star count. Verified skills from high-trust
+          authors receive additional vetting.
+        </p>
       </div>
     </details>
 
     <!-- Results Count -->
     <div class="flex items-center justify-between mb-6">
-      <p id="results-count" class="text-dark-400">
-        Loading skills...
-      </p>
+      <p id="results-count" class="text-dark-400">Loading skills...</p>
       <div class="flex items-center space-x-2">
         <span class="text-dark-500 text-sm">Sort by:</span>
         <select
@@ -216,14 +241,27 @@ const trustTiers = [
 
     <!-- Loading State -->
     <div id="loading-state" class="hidden text-center py-12">
-      <div class="inline-block animate-spin rounded-full h-8 w-8 border-2 border-primary-500 border-t-transparent"></div>
+      <div
+        class="inline-block animate-spin rounded-full h-8 w-8 border-2 border-primary-500 border-t-transparent"
+      >
+      </div>
       <p class="text-dark-400 mt-4">Searching skills...</p>
     </div>
 
     <!-- Empty State -->
     <div id="empty-state" class="hidden text-center py-12">
-      <svg class="w-16 h-16 mx-auto text-dark-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      <svg
+        class="w-16 h-16 mx-auto text-dark-600 mb-4"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="1.5"
+          d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+        ></path>
       </svg>
       <h2 class="text-xl font-semibold text-dark-300 mb-2">No skills found</h2>
       <p class="text-dark-500">Try adjusting your search or filters</p>
@@ -231,132 +269,186 @@ const trustTiers = [
 
     <!-- Search Prompt State (shown when no query entered) -->
     <div id="search-prompt-state" class="hidden text-center py-12">
-      <svg class="w-16 h-16 mx-auto text-primary-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+      <svg
+        class="w-16 h-16 mx-auto text-primary-500 mb-4"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="1.5"
+          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
       </svg>
       <h2 class="text-xl font-semibold text-dark-300 mb-2">Start Searching</h2>
       <p class="text-dark-500 mb-4">Enter a search term or select a filter to browse skills</p>
       <div class="flex flex-wrap justify-center gap-2 max-w-md mx-auto">
-        <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="testing">testing</button>
-        <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="git">git</button>
-        <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="docker">docker</button>
-        <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="commit">commit</button>
-        <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="security">security</button>
-        <button class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm" data-query="workflow">workflow</button>
+        <button
+          class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm"
+          data-query="testing">testing</button
+        >
+        <button
+          class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm"
+          data-query="git">git</button
+        >
+        <button
+          class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm"
+          data-query="docker">docker</button
+        >
+        <button
+          class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm"
+          data-query="commit">commit</button
+        >
+        <button
+          class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm"
+          data-query="security">security</button
+        >
+        <button
+          class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm"
+          data-query="workflow">workflow</button
+        >
       </div>
     </div>
 
     <!-- Error State -->
     <div id="error-state" class="hidden text-center py-12">
-      <svg class="w-16 h-16 mx-auto text-red-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      <svg
+        class="w-16 h-16 mx-auto text-red-500 mb-4"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="1.5"
+          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+        ></path>
       </svg>
       <h2 class="text-xl font-semibold text-dark-300 mb-2">Error loading skills</h2>
       <p id="error-message" class="text-dark-500 mb-4">Something went wrong</p>
-      <button id="retry-button" class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors">
+      <button
+        id="retry-button"
+        class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
+      >
         Try Again
       </button>
     </div>
 
     <!-- Pagination -->
     <div id="pagination" class="hidden flex items-center justify-center space-x-2">
-      <button id="prev-page" class="px-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+      <button
+        id="prev-page"
+        class="px-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      >
         Previous
       </button>
       <span id="page-info" class="text-dark-400 px-4">Page 1 of 1</span>
-      <button id="next-page" class="px-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+      <button
+        id="next-page"
+        class="px-4 py-2 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      >
         Next
       </button>
     </div>
   </div>
 
-  <script is:inline define:vars={{ apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1` }}>
-    const API_BASE = apiBase;
-    const ITEMS_PER_PAGE = 12;
-    const MIN_QUERY_LENGTH = 3; // SMI-1613: Minimum characters for search
+  <script
+    is:inline
+    define:vars={{
+      apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1`,
+    }}
+  >
+    const API_BASE = apiBase
+    const ITEMS_PER_PAGE = 12
+    const MIN_QUERY_LENGTH = 3 // SMI-1613: Minimum characters for search
 
     // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation)
     document.addEventListener('astro:page-load', () => {
       // Get Supabase config for API authentication
-      const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' };
-      const supabaseAnonKey = config.anonKey;
+      const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+      const supabaseAnonKey = config.anonKey
 
       // SMI-2081: Get authenticated user's JWT if available
       // JWT auth provides tier-based rate limits vs anon key's community limits
-      let authToken = supabaseAnonKey; // Default to anon key
-      let authMethod = 'anon_key';
+      let authToken = supabaseAnonKey // Default to anon key
+      let authMethod = 'anon_key'
 
       async function initAuth() {
         try {
           // Check for logged-in user's session token
-          const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
-          const supabase = createClient(config.url, config.anonKey);
-          const { data: { session } } = await supabase.auth.getSession();
+          const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2')
+          const supabase = createClient(config.url, config.anonKey)
+          const {
+            data: { session },
+          } = await supabase.auth.getSession()
 
           if (session?.access_token) {
-            authToken = session.access_token;
-            authMethod = 'jwt';
-            console.debug('[Skills] Using JWT auth for tier-based rate limits');
+            authToken = session.access_token
+            authMethod = 'jwt'
+            console.debug('[Skills] Using JWT auth for tier-based rate limits')
           } else {
-            console.debug('[Skills] Using anon key (community rate limits)');
+            console.debug('[Skills] Using anon key (community rate limits)')
           }
         } catch (e) {
-          console.warn('[Skills] Auth init failed, using anon key:', e.message);
+          console.warn('[Skills] Auth init failed, using anon key:', e.message)
         }
       }
 
-      let currentPage = 1;
-      let totalPages = 1;
-      let allResults = [];
-      let debounceTimer = null;
+      let currentPage = 1
+      let totalPages = 1
+      let allResults = []
+      let debounceTimer = null
 
       // DOM Elements
-      const searchInput = document.getElementById('search-input');
-    const categoryFilter = document.getElementById('category-filter');
-    const trustFilter = document.getElementById('trust-filter');
-    const sortSelect = document.getElementById('sort-select');
-    const resultsGrid = document.getElementById('results-grid');
-    const resultsCount = document.getElementById('results-count');
-    const loadingState = document.getElementById('loading-state');
-    const emptyState = document.getElementById('empty-state');
-    const errorState = document.getElementById('error-state');
-    const errorMessage = document.getElementById('error-message');
-    const pagination = document.getElementById('pagination');
-    const prevPageBtn = document.getElementById('prev-page');
-    const nextPageBtn = document.getElementById('next-page');
-    const pageInfo = document.getElementById('page-info');
-    const retryButton = document.getElementById('retry-button');
-    const searchPromptState = document.getElementById('search-prompt-state');
-    const searchSuggestions = document.querySelectorAll('.search-suggestion');
+      const searchInput = document.getElementById('search-input')
+      const categoryFilter = document.getElementById('category-filter')
+      const trustFilter = document.getElementById('trust-filter')
+      const sortSelect = document.getElementById('sort-select')
+      const resultsGrid = document.getElementById('results-grid')
+      const resultsCount = document.getElementById('results-count')
+      const loadingState = document.getElementById('loading-state')
+      const emptyState = document.getElementById('empty-state')
+      const errorState = document.getElementById('error-state')
+      const errorMessage = document.getElementById('error-message')
+      const pagination = document.getElementById('pagination')
+      const prevPageBtn = document.getElementById('prev-page')
+      const nextPageBtn = document.getElementById('next-page')
+      const pageInfo = document.getElementById('page-info')
+      const retryButton = document.getElementById('retry-button')
+      const searchPromptState = document.getElementById('search-prompt-state')
+      const searchSuggestions = document.querySelectorAll('.search-suggestion')
 
-    // Trust tier badge colors
-    const trustBadgeClasses = {
-      verified: 'bg-green-500/10 text-green-400 border-green-500/20',
-      community: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-      experimental: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
-      unknown: 'bg-dark-500/10 text-dark-400 border-dark-500/20',
-    };
+      // Trust tier badge colors
+      const trustBadgeClasses = {
+        verified: 'bg-green-500/10 text-green-400 border-green-500/20',
+        community: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+        experimental: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+        unknown: 'bg-dark-500/10 text-dark-400 border-dark-500/20',
+      }
 
-    // Quality tier thresholds (matches packages/website/src/utils/quality-tiers.ts)
-    const TIER_THRESHOLDS = { ELITE: 10000, HIGH_QUALITY: 500, GROWING: 50 };
+      // Quality tier thresholds (matches packages/website/src/utils/quality-tiers.ts)
+      const TIER_THRESHOLDS = { ELITE: 10000, HIGH_QUALITY: 500, GROWING: 50 }
 
-    // Get quality tier info from star count
-    function getQualityTier(stars) {
-      const count = stars ?? 0;
-      if (count >= TIER_THRESHOLDS.ELITE) return { color: 'text-blue-400', label: 'Elite' };
-      if (count >= TIER_THRESHOLDS.HIGH_QUALITY) return { color: 'text-green-400', label: 'High Quality' };
-      if (count >= TIER_THRESHOLDS.GROWING) return { color: 'text-yellow-400', label: 'Growing' };
-      return { color: 'text-red-400', label: 'New' };
-    }
+      // Get quality tier info from star count
+      function getQualityTier(stars) {
+        const count = stars ?? 0
+        if (count >= TIER_THRESHOLDS.ELITE) return { color: 'text-blue-400', label: 'Elite' }
+        if (count >= TIER_THRESHOLDS.HIGH_QUALITY)
+          return { color: 'text-green-400', label: 'High Quality' }
+        if (count >= TIER_THRESHOLDS.GROWING) return { color: 'text-yellow-400', label: 'Growing' }
+        return { color: 'text-red-400', label: 'New' }
+      }
 
-    // Create skill card HTML
-    function createSkillCard(skill) {
-      const trustClass = trustBadgeClasses[skill.trust_tier] || trustBadgeClasses.unknown;
-      const stars = skill.stars ?? 0;
-      const tier = getQualityTier(stars);
-      const ariaLabel = `${tier.label}: ${formatNumber(stars)} stars`;
+      // Create skill card HTML
+      function createSkillCard(skill) {
+        const trustClass = trustBadgeClasses[skill.trust_tier] || trustBadgeClasses.unknown
+        const stars = skill.stars ?? 0
+        const tier = getQualityTier(stars)
+        const ariaLabel = `${tier.label}: ${formatNumber(stars)} stars`
 
-      return `
+        return `
         <a href="/skills/${encodeURIComponent(skill.id)}" class="card-hover block bg-dark-900 rounded-xl border border-dark-800 p-6 hover:border-primary-500/50">
           <div class="flex items-start justify-between mb-4">
             <div class="flex-1 min-w-0">
@@ -370,231 +462,237 @@ const trustTiers = [
           <p class="text-dark-400 text-sm mb-4 line-clamp-2">${escapeHtml(skill.description || 'No description available')}</p>
           <div class="flex items-center justify-between text-sm">
             <div class="flex items-center space-x-4">
-              ${skill.categories?.[0] ? `
+              ${
+                skill.categories?.[0]
+                  ? `
                 <span class="text-dark-500">
                   <svg class="w-4 h-4 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
                   </svg>
                   ${escapeHtml(skill.categories[0])}
                 </span>
-              ` : ''}
+              `
+                  : ''
+              }
               ${skill.version ? `<span class="text-dark-500">v${escapeHtml(skill.version)}</span>` : ''}
             </div>
             <span class="${tier.color} text-lg" role="img" aria-label="${ariaLabel}" title="${ariaLabel}">●<span class="sr-only">${ariaLabel}</span></span>
           </div>
         </a>
-      `;
-    }
-
-    // Format number with locale formatting
-    function formatNumber(num) {
-      return new Intl.NumberFormat().format(num);
-    }
-
-    // Escape HTML to prevent XSS
-    function escapeHtml(str) {
-      if (!str) return '';
-      const div = document.createElement('div');
-      div.textContent = str;
-      return div.innerHTML;
-    }
-
-    // Show/hide states
-    function showState(state) {
-      resultsGrid.classList.add('hidden');
-      loadingState.classList.add('hidden');
-      emptyState.classList.add('hidden');
-      errorState.classList.add('hidden');
-      pagination.classList.add('hidden');
-      searchPromptState.classList.add('hidden');
-
-      switch (state) {
-        case 'loading':
-          loadingState.classList.remove('hidden');
-          break;
-        case 'empty':
-          emptyState.classList.remove('hidden');
-          break;
-        case 'error':
-          errorState.classList.remove('hidden');
-          break;
-        case 'results':
-          resultsGrid.classList.remove('hidden');
-          pagination.classList.remove('hidden');
-          break;
-        case 'search-prompt':
-          searchPromptState.classList.remove('hidden');
-          break;
-      }
-    }
-
-    // Search skills
-    async function searchSkills() {
-      const query = searchInput.value.trim();
-      const category = categoryFilter.value;
-      const trustTier = trustFilter.value;
-
-      // ADR-019: Allow filter-only searches (query OR filter required)
-      const hasQuery = query.length >= MIN_QUERY_LENGTH;
-      const hasFilter = category || trustTier;
-
-      if (!hasQuery && !hasFilter) {
-        showState('search-prompt');
-        resultsCount.textContent = 'Enter a search term or select a filter';
-        allResults = [];
-        return;
+      `
       }
 
-      showState('loading');
-      resultsCount.textContent = 'Searching...';
+      // Format number with locale formatting
+      function formatNumber(num) {
+        return new Intl.NumberFormat().format(num)
+      }
 
-      // SMI-1613: Add timeout to prevent indefinite loading
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+      // Escape HTML to prevent XSS
+      function escapeHtml(str) {
+        if (!str) return ''
+        const div = document.createElement('div')
+        div.textContent = str
+        return div.innerHTML
+      }
 
-      try {
-        // Build query parameters for GET request
-        const params = new URLSearchParams();
-        // ADR-019: Only include query if it meets minimum length
-        if (hasQuery) params.set('query', query);
-        params.set('limit', '100');
-        if (category) params.set('category', category);
-        if (trustTier) params.set('trust_tier', trustTier);
+      // Show/hide states
+      function showState(state) {
+        resultsGrid.classList.add('hidden')
+        loadingState.classList.add('hidden')
+        emptyState.classList.add('hidden')
+        errorState.classList.add('hidden')
+        pagination.classList.add('hidden')
+        searchPromptState.classList.add('hidden')
 
-        // SMI-2081: Use JWT if available for tier-based rate limits
-        const response = await fetch(`${API_BASE}/skills-search?${params.toString()}`, {
-          signal: controller.signal,
-          headers: {
-            'Authorization': `Bearer ${authToken}`,
-            'Content-Type': 'application/json'
+        switch (state) {
+          case 'loading':
+            loadingState.classList.remove('hidden')
+            break
+          case 'empty':
+            emptyState.classList.remove('hidden')
+            break
+          case 'error':
+            errorState.classList.remove('hidden')
+            break
+          case 'results':
+            resultsGrid.classList.remove('hidden')
+            pagination.classList.remove('hidden')
+            break
+          case 'search-prompt':
+            searchPromptState.classList.remove('hidden')
+            break
+        }
+      }
+
+      // Search skills
+      async function searchSkills() {
+        const query = searchInput.value.trim()
+        const category = categoryFilter.value
+        const trustTier = trustFilter.value
+
+        // ADR-019: Allow filter-only searches (query OR filter required)
+        const hasQuery = query.length >= MIN_QUERY_LENGTH
+        const hasFilter = category || trustTier
+
+        if (!hasQuery && !hasFilter) {
+          showState('search-prompt')
+          resultsCount.textContent = 'Enter a search term or select a filter'
+          allResults = []
+          return
+        }
+
+        showState('loading')
+        resultsCount.textContent = 'Searching...'
+
+        // SMI-1613: Add timeout to prevent indefinite loading
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 10000) // 10s timeout
+
+        try {
+          // Build query parameters for GET request
+          const params = new URLSearchParams()
+          // ADR-019: Only include query if it meets minimum length
+          if (hasQuery) params.set('query', query)
+          params.set('limit', '100')
+          if (category) params.set('category', category)
+          if (trustTier) params.set('trust_tier', trustTier)
+
+          // SMI-2081: Use JWT if available for tier-based rate limits
+          const response = await fetch(`${API_BASE}/skills-search?${params.toString()}`, {
+            signal: controller.signal,
+            headers: {
+              Authorization: `Bearer ${authToken}`,
+              'Content-Type': 'application/json',
+            },
+          })
+          clearTimeout(timeoutId)
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
           }
-        });
-        clearTimeout(timeoutId);
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          const data = await response.json()
+          allResults = data.data || data.skills || data.results || []
+
+          // GA4: Track skill search (SMI-2453)
+          if (typeof window.gtag === 'function') {
+            window.gtag('event', 'skill_search', {
+              search_term: query || '',
+              category: category || 'all',
+              trust_tier: trustTier || 'all',
+              results_count: allResults.length,
+            })
+          }
+
+          // Note: API already filters by category/trustTier, no client-side filtering needed
+          // The API response doesn't include category field, so we trust the server filtering
+
+          // Sort results
+          sortResults()
+
+          currentPage = 1
+          renderResults()
+        } catch (error) {
+          clearTimeout(timeoutId)
+          console.error('Search error:', error)
+          const isTimeout = error.name === 'AbortError'
+          errorMessage.textContent = isTimeout
+            ? 'Request timed out. Please try again.'
+            : error.message
+          showState('error')
+          resultsCount.textContent = 'Error'
+        }
+      }
+
+      // Sort results based on selected option
+      function sortResults() {
+        const sortBy = sortSelect.value
+
+        switch (sortBy) {
+          case 'stars':
+            allResults.sort((a, b) => (b.stars ?? 0) - (a.stars ?? 0))
+            break
+          case 'name':
+            allResults.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+            break
+          case 'relevance':
+          default:
+            // Keep original order (API relevance)
+            break
+        }
+      }
+
+      // Render results for current page
+      function renderResults() {
+        if (allResults.length === 0) {
+          showState('empty')
+          resultsCount.textContent = 'No skills found'
+          return
         }
 
-        const data = await response.json();
-        allResults = data.data || data.skills || data.results || [];
+        totalPages = Math.ceil(allResults.length / ITEMS_PER_PAGE)
+        const startIdx = (currentPage - 1) * ITEMS_PER_PAGE
+        const endIdx = startIdx + ITEMS_PER_PAGE
+        const pageResults = allResults.slice(startIdx, endIdx)
 
-        // GA4: Track skill search (SMI-2453)
-        if (typeof window.gtag === 'function') {
-          window.gtag('event', 'skill_search', {
-            search_term: query || '',
-            category: category || 'all',
-            trust_tier: trustTier || 'all',
-            results_count: allResults.length,
-          });
+        resultsGrid.innerHTML = pageResults.map(createSkillCard).join('')
+        resultsCount.textContent = `Showing ${startIdx + 1}-${Math.min(endIdx, allResults.length)} of ${allResults.length} skills`
+
+        // Update pagination
+        pageInfo.textContent = `Page ${currentPage} of ${totalPages}`
+        prevPageBtn.disabled = currentPage === 1
+        nextPageBtn.disabled = currentPage === totalPages
+
+        showState('results')
+      }
+
+      // Debounced search
+      function debouncedSearch() {
+        clearTimeout(debounceTimer)
+        debounceTimer = setTimeout(searchSkills, 300)
+      }
+
+      // Event listeners
+      searchInput.addEventListener('input', debouncedSearch)
+      categoryFilter.addEventListener('change', searchSkills)
+      trustFilter.addEventListener('change', searchSkills)
+      sortSelect.addEventListener('change', () => {
+        sortResults()
+        renderResults()
+      })
+
+      prevPageBtn.addEventListener('click', () => {
+        if (currentPage > 1) {
+          currentPage--
+          renderResults()
+          window.scrollTo({ top: 0, behavior: 'smooth' })
         }
+      })
 
-        // Note: API already filters by category/trustTier, no client-side filtering needed
-        // The API response doesn't include category field, so we trust the server filtering
+      nextPageBtn.addEventListener('click', () => {
+        if (currentPage < totalPages) {
+          currentPage++
+          renderResults()
+          window.scrollTo({ top: 0, behavior: 'smooth' })
+        }
+      })
 
-        // Sort results
-        sortResults();
+      retryButton.addEventListener('click', searchSkills)
 
-        currentPage = 1;
-        renderResults();
-      } catch (error) {
-        clearTimeout(timeoutId);
-        console.error('Search error:', error);
-        const isTimeout = error.name === 'AbortError';
-        errorMessage.textContent = isTimeout ? 'Request timed out. Please try again.' : error.message;
-        showState('error');
-        resultsCount.textContent = 'Error';
-      }
-    }
+      // Search suggestion buttons
+      searchSuggestions.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          searchInput.value = btn.dataset.query
+          searchSkills()
+        })
+      })
 
-    // Sort results based on selected option
-    function sortResults() {
-      const sortBy = sortSelect.value;
-
-      switch (sortBy) {
-        case 'stars':
-          allResults.sort((a, b) => (b.stars ?? 0) - (a.stars ?? 0));
-          break;
-        case 'name':
-          allResults.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-          break;
-        case 'relevance':
-        default:
-          // Keep original order (API relevance)
-          break;
-      }
-    }
-
-    // Render results for current page
-    function renderResults() {
-      if (allResults.length === 0) {
-        showState('empty');
-        resultsCount.textContent = 'No skills found';
-        return;
-      }
-
-      totalPages = Math.ceil(allResults.length / ITEMS_PER_PAGE);
-      const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
-      const endIdx = startIdx + ITEMS_PER_PAGE;
-      const pageResults = allResults.slice(startIdx, endIdx);
-
-      resultsGrid.innerHTML = pageResults.map(createSkillCard).join('');
-      resultsCount.textContent = `Showing ${startIdx + 1}-${Math.min(endIdx, allResults.length)} of ${allResults.length} skills`;
-
-      // Update pagination
-      pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
-      prevPageBtn.disabled = currentPage === 1;
-      nextPageBtn.disabled = currentPage === totalPages;
-
-      showState('results');
-    }
-
-    // Debounced search
-    function debouncedSearch() {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(searchSkills, 300);
-    }
-
-    // Event listeners
-    searchInput.addEventListener('input', debouncedSearch);
-    categoryFilter.addEventListener('change', searchSkills);
-    trustFilter.addEventListener('change', searchSkills);
-    sortSelect.addEventListener('change', () => {
-      sortResults();
-      renderResults();
-    });
-
-    prevPageBtn.addEventListener('click', () => {
-      if (currentPage > 1) {
-        currentPage--;
-        renderResults();
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }
-    });
-
-    nextPageBtn.addEventListener('click', () => {
-      if (currentPage < totalPages) {
-        currentPage++;
-        renderResults();
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }
-    });
-
-    retryButton.addEventListener('click', searchSkills);
-
-    // Search suggestion buttons
-    searchSuggestions.forEach(btn => {
-      btn.addEventListener('click', () => {
-        searchInput.value = btn.dataset.query;
-        searchSkills();
-      });
-    });
-
-    // SMI-2081: Initialize auth then show search prompt
-    initAuth().then(() => {
-      showState('search-prompt');
-      resultsCount.textContent = 'Enter a search term or select a filter';
-    });
-    }); // End astro:page-load handler
+      // SMI-2081: Initialize auth then show search prompt
+      initAuth().then(() => {
+        showState('search-prompt')
+        resultsCount.textContent = 'Enter a search term or select a filter'
+      })
+    }) // End astro:page-load handler
   </script>
 
   <style>

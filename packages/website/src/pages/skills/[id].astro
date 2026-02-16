@@ -1,11 +1,11 @@
 ---
-import BaseLayout from '../../layouts/BaseLayout.astro';
+import BaseLayout from '../../layouts/BaseLayout.astro'
 
 // Enable server-side rendering for dynamic routes
-export const prerender = false;
+export const prerender = false
 
 // Get the skill ID from the URL
-const { id } = Astro.params;
+const { id } = Astro.params
 ---
 
 <BaseLayout title="Skill Details" description="View skill details and installation instructions">
@@ -15,7 +15,10 @@ const { id } = Astro.params;
       <ol class="flex items-center space-x-2 text-sm">
         <li><a href="/" class="text-dark-500 hover:text-primary-400 transition-colors">Home</a></li>
         <li class="text-dark-600">/</li>
-        <li><a href="/skills" class="text-dark-500 hover:text-primary-400 transition-colors">Skills</a></li>
+        <li>
+          <a href="/skills" class="text-dark-500 hover:text-primary-400 transition-colors">Skills</a
+          >
+        </li>
         <li class="text-dark-600">/</li>
         <li id="breadcrumb-name" class="text-dark-300">Loading...</li>
       </ol>
@@ -23,20 +26,40 @@ const { id } = Astro.params;
 
     <!-- Loading State -->
     <div id="loading-state" class="text-center py-20">
-      <div class="inline-block animate-spin rounded-full h-12 w-12 border-2 border-primary-500 border-t-transparent"></div>
+      <div
+        class="inline-block animate-spin rounded-full h-12 w-12 border-2 border-primary-500 border-t-transparent"
+      >
+      </div>
       <p class="text-dark-400 mt-6">Loading skill details...</p>
     </div>
 
     <!-- Error State -->
     <div id="error-state" class="hidden text-center py-20">
-      <svg class="w-20 h-20 mx-auto text-red-500 mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      <svg
+        class="w-20 h-20 mx-auto text-red-500 mb-6"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="1.5"
+          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+        ></path>
       </svg>
       <h2 class="text-2xl font-bold text-dark-200 mb-2">Skill not found</h2>
       <p id="error-message" class="text-dark-500 mb-6">The requested skill could not be loaded.</p>
-      <a href="/skills" class="inline-flex items-center px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors">
+      <a
+        href="/skills"
+        class="inline-flex items-center px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
+      >
         <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
         </svg>
         Back to Skills
       </a>
@@ -50,7 +73,8 @@ const { id } = Astro.params;
           <div class="flex-1">
             <div class="flex items-center gap-4 mb-4">
               <h1 id="skill-name" class="text-3xl md:text-4xl font-bold text-white"></h1>
-              <span id="skill-trust-badge" class="px-3 py-1 text-sm font-medium rounded-full border"></span>
+              <span id="skill-trust-badge" class="px-3 py-1 text-sm font-medium rounded-full border"
+              ></span>
             </div>
             <p id="skill-author" class="text-dark-400 text-lg mb-2"></p>
             <p id="skill-version" class="text-dark-500"></p>
@@ -81,10 +105,21 @@ const { id } = Astro.params;
           <div>
             <p class="text-dark-500 text-sm mb-2">Using npx (recommended):</p>
             <div class="relative">
-              <pre id="install-command-npx" class="bg-dark-950 rounded-lg p-4 text-sm font-mono text-primary-400 overflow-x-auto"></pre>
-              <button class="copy-button absolute top-2 right-2 p-2 bg-dark-800 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white transition-colors" data-target="install-command-npx">
+              <pre
+                id="install-command-npx"
+                class="bg-dark-950 rounded-lg p-4 text-sm font-mono text-primary-400 overflow-x-auto">
+              </pre>
+              <button
+                class="copy-button absolute top-2 right-2 p-2 bg-dark-800 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white transition-colors"
+                data-target="install-command-npx"
+              >
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                  ></path>
                 </svg>
               </button>
             </div>
@@ -94,10 +129,21 @@ const { id } = Astro.params;
           <div>
             <p class="text-dark-500 text-sm mb-2">Using Skillsmith CLI:</p>
             <div class="relative">
-              <pre id="install-command-cli" class="bg-dark-950 rounded-lg p-4 text-sm font-mono text-primary-400 overflow-x-auto"></pre>
-              <button class="copy-button absolute top-2 right-2 p-2 bg-dark-800 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white transition-colors" data-target="install-command-cli">
+              <pre
+                id="install-command-cli"
+                class="bg-dark-950 rounded-lg p-4 text-sm font-mono text-primary-400 overflow-x-auto">
+              </pre>
+              <button
+                class="copy-button absolute top-2 right-2 p-2 bg-dark-800 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white transition-colors"
+                data-target="install-command-cli"
+              >
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                  ></path>
                 </svg>
               </button>
             </div>
@@ -107,10 +153,21 @@ const { id } = Astro.params;
           <div>
             <p class="text-dark-500 text-sm mb-2">Or ask your assistant:</p>
             <div class="relative">
-              <pre id="install-command-claude" class="bg-dark-950 rounded-lg p-4 text-sm font-mono text-green-400 overflow-x-auto"></pre>
-              <button class="copy-button absolute top-2 right-2 p-2 bg-dark-800 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white transition-colors" data-target="install-command-claude">
+              <pre
+                id="install-command-claude"
+                class="bg-dark-950 rounded-lg p-4 text-sm font-mono text-green-400 overflow-x-auto">
+              </pre>
+              <button
+                class="copy-button absolute top-2 right-2 p-2 bg-dark-800 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white transition-colors"
+                data-target="install-command-claude"
+              >
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                  ></path>
                 </svg>
               </button>
             </div>
@@ -167,242 +224,269 @@ const { id } = Astro.params;
     </div>
   </div>
 
-  <script is:inline define:vars={{ skillId: id, apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1` }}>
-    const API_BASE = apiBase;
+  <script
+    is:inline
+    define:vars={{
+      skillId: id,
+      apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1`,
+    }}
+  >
+    const API_BASE = apiBase
 
     // Use astro:page-load for View Transitions compatibility
     document.addEventListener('astro:page-load', () => {
       // Get Supabase config for API authentication
-      const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' };
-      const supabaseAnonKey = config.anonKey;
+      const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+      const supabaseAnonKey = config.anonKey
 
-    // Trust tier badge colors
-    const trustBadgeClasses = {
-      verified: 'bg-green-500/10 text-green-400 border-green-500/20',
-      community: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-      experimental: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
-      unknown: 'bg-dark-500/10 text-dark-400 border-dark-500/20',
-    };
-
-    // Quality tier thresholds (matches packages/website/src/utils/quality-tiers.ts)
-    const TIER_THRESHOLDS = { ELITE: 10000, HIGH_QUALITY: 500, GROWING: 50 };
-
-    // Get quality tier info from star count
-    function getQualityTier(stars) {
-      const count = stars ?? 0;
-      if (count >= TIER_THRESHOLDS.ELITE) return { color: 'text-blue-400', label: 'Elite' };
-      if (count >= TIER_THRESHOLDS.HIGH_QUALITY) return { color: 'text-green-400', label: 'High Quality' };
-      if (count >= TIER_THRESHOLDS.GROWING) return { color: 'text-yellow-400', label: 'Growing' };
-      return { color: 'text-red-400', label: 'New' };
-    }
-
-    // DOM Elements
-    const loadingState = document.getElementById('loading-state');
-    const errorState = document.getElementById('error-state');
-    const errorMessage = document.getElementById('error-message');
-    const skillContent = document.getElementById('skill-content');
-    const breadcrumbName = document.getElementById('breadcrumb-name');
-
-    // Escape HTML to prevent XSS
-    function escapeHtml(str) {
-      if (!str) return '';
-      const div = document.createElement('div');
-      div.textContent = str;
-      return div.innerHTML;
-    }
-
-    // Format number with commas
-    function formatNumber(num) {
-      return new Intl.NumberFormat().format(num);
-    }
-
-    // Format date
-    function formatDate(dateStr) {
-      if (!dateStr) return 'Unknown';
-      const date = new Date(dateStr);
-      return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-    }
-
-    // Show error state
-    function showError(message) {
-      loadingState.classList.add('hidden');
-      skillContent.classList.add('hidden');
-      errorState.classList.remove('hidden');
-      errorMessage.textContent = message;
-    }
-
-    // Render skill details
-    function renderSkill(skill) {
-      // Update breadcrumb
-      breadcrumbName.textContent = skill.name || skillId;
-
-      // Update page title
-      document.title = `${skill.name || skillId} | Skillsmith`;
-
-      // Header
-      document.getElementById('skill-name').textContent = skill.name || skillId;
-      document.getElementById('skill-author').textContent = `by ${skill.author || 'Unknown author'}`;
-      document.getElementById('skill-version').textContent = skill.version ? `Version ${skill.version}` : '';
-
-      // Trust badge
-      const trustBadge = document.getElementById('skill-trust-badge');
-      const trustTier = skill.trust_tier || 'unknown';
-      trustBadge.textContent = trustTier;
-      trustBadge.className = `px-3 py-1 text-sm font-medium rounded-full border ${trustBadgeClasses[trustTier] || trustBadgeClasses.unknown}`;
-
-      // Quality tier based on stars
-      const stars = skill.stars ?? 0;
-      const tier = getQualityTier(stars);
-      const tierEl = document.getElementById('skill-tier');
-      tierEl.textContent = tier.label;
-      tierEl.className = `text-2xl font-bold ${tier.color}`;
-      document.getElementById('skill-stars').textContent = `${formatNumber(stars)} ★`;
-
-      // Description
-      document.getElementById('skill-description').textContent = skill.description || 'No description available.';
-
-      // Installation commands
-      const skillName = skill.name || skillId.split('/').pop();
-      document.getElementById('install-command-npx').textContent = `npx @skillsmith/cli install ${skill.id || skillId}`;
-      document.getElementById('install-command-cli').textContent = `skillsmith install ${skill.id || skillId}`;
-      document.getElementById('install-command-claude').textContent = `"Install the ${skillName} skill"`;
-
-      // Details
-      document.getElementById('skill-category').textContent = skill.categories?.[0] || 'Uncategorized';
-      document.getElementById('skill-trust-tier').textContent = trustTier.charAt(0).toUpperCase() + trustTier.slice(1);
-      document.getElementById('skill-version-detail').textContent = skill.version || 'Unknown';
-
-      // Optional fields
-      if (skill.downloads) {
-        document.getElementById('downloads-row').classList.remove('hidden');
-        document.getElementById('skill-downloads').textContent = formatNumber(skill.downloads);
-      }
-      if (skill.updated_at) {
-        document.getElementById('updated-row').classList.remove('hidden');
-        document.getElementById('skill-updated').textContent = formatDate(skill.updated_at);
+      // Trust tier badge colors
+      const trustBadgeClasses = {
+        verified: 'bg-green-500/10 text-green-400 border-green-500/20',
+        community: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+        experimental: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+        unknown: 'bg-dark-500/10 text-dark-400 border-dark-500/20',
       }
 
-      // Tags
-      const tagsContainer = document.getElementById('skill-tags');
-      const noTagsEl = document.getElementById('no-tags');
-      const tags = skill.tags || [];
+      // Quality tier thresholds (matches packages/website/src/utils/quality-tiers.ts)
+      const TIER_THRESHOLDS = { ELITE: 10000, HIGH_QUALITY: 500, GROWING: 50 }
 
-      if (tags.length > 0) {
-        tagsContainer.innerHTML = tags.map(tag =>
-          `<span class="px-3 py-1 bg-dark-800 border border-dark-700 rounded-full text-dark-300 text-sm">${escapeHtml(tag)}</span>`
-        ).join('');
-        noTagsEl.classList.add('hidden');
-      } else {
-        tagsContainer.innerHTML = '';
-        noTagsEl.classList.remove('hidden');
+      // Get quality tier info from star count
+      function getQualityTier(stars) {
+        const count = stars ?? 0
+        if (count >= TIER_THRESHOLDS.ELITE) return { color: 'text-blue-400', label: 'Elite' }
+        if (count >= TIER_THRESHOLDS.HIGH_QUALITY)
+          return { color: 'text-green-400', label: 'High Quality' }
+        if (count >= TIER_THRESHOLDS.GROWING) return { color: 'text-yellow-400', label: 'Growing' }
+        return { color: 'text-red-400', label: 'New' }
       }
 
-      // Show content
-      loadingState.classList.add('hidden');
-      errorState.classList.add('hidden');
-      skillContent.classList.remove('hidden');
+      // DOM Elements
+      const loadingState = document.getElementById('loading-state')
+      const errorState = document.getElementById('error-state')
+      const errorMessage = document.getElementById('error-message')
+      const skillContent = document.getElementById('skill-content')
+      const breadcrumbName = document.getElementById('breadcrumb-name')
 
-      // GA4: Track skill view (SMI-2453)
-      if (typeof window.gtag === 'function') {
-        window.gtag('event', 'skill_view', {
-          skill_id: skillId,
-          skill_name: skill.name || skillId,
-          trust_tier: skill.trust_tier || 'unknown',
-          category: skill.categories?.[0] || 'uncategorized',
-        });
+      // Escape HTML to prevent XSS
+      function escapeHtml(str) {
+        if (!str) return ''
+        const div = document.createElement('div')
+        div.textContent = str
+        return div.innerHTML
       }
 
-      // Load related skills if available
-      if (skill.related_skills && skill.related_skills.length > 0) {
-        loadRelatedSkills(skill.related_skills);
+      // Format number with commas
+      function formatNumber(num) {
+        return new Intl.NumberFormat().format(num)
       }
-    }
 
-    // Load related skills
-    async function loadRelatedSkills(relatedIds) {
-      const relatedSection = document.getElementById('related-section');
-      const relatedContainer = document.getElementById('related-skills');
+      // Format date
+      function formatDate(dateStr) {
+        if (!dateStr) return 'Unknown'
+        const date = new Date(dateStr)
+        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+      }
 
-      try {
-        // For now, just show the IDs as links
-        relatedContainer.innerHTML = relatedIds.slice(0, 6).map(id => `
+      // Show error state
+      function showError(message) {
+        loadingState.classList.add('hidden')
+        skillContent.classList.add('hidden')
+        errorState.classList.remove('hidden')
+        errorMessage.textContent = message
+      }
+
+      // Render skill details
+      function renderSkill(skill) {
+        // Update breadcrumb
+        breadcrumbName.textContent = skill.name || skillId
+
+        // Update page title
+        document.title = `${skill.name || skillId} | Skillsmith`
+
+        // Header
+        document.getElementById('skill-name').textContent = skill.name || skillId
+        document.getElementById('skill-author').textContent =
+          `by ${skill.author || 'Unknown author'}`
+        document.getElementById('skill-version').textContent = skill.version
+          ? `Version ${skill.version}`
+          : ''
+
+        // Trust badge
+        const trustBadge = document.getElementById('skill-trust-badge')
+        const trustTier = skill.trust_tier || 'unknown'
+        trustBadge.textContent = trustTier
+        trustBadge.className = `px-3 py-1 text-sm font-medium rounded-full border ${trustBadgeClasses[trustTier] || trustBadgeClasses.unknown}`
+
+        // Quality tier based on stars
+        const stars = skill.stars ?? 0
+        const tier = getQualityTier(stars)
+        const tierEl = document.getElementById('skill-tier')
+        tierEl.textContent = tier.label
+        tierEl.className = `text-2xl font-bold ${tier.color}`
+        document.getElementById('skill-stars').textContent = `${formatNumber(stars)} ★`
+
+        // Description
+        document.getElementById('skill-description').textContent =
+          skill.description || 'No description available.'
+
+        // Installation commands
+        const skillName = skill.name || skillId.split('/').pop()
+        document.getElementById('install-command-npx').textContent =
+          `npx @skillsmith/cli install ${skill.id || skillId}`
+        document.getElementById('install-command-cli').textContent =
+          `skillsmith install ${skill.id || skillId}`
+        document.getElementById('install-command-claude').textContent =
+          `"Install the ${skillName} skill"`
+
+        // Details
+        document.getElementById('skill-category').textContent =
+          skill.categories?.[0] || 'Uncategorized'
+        document.getElementById('skill-trust-tier').textContent =
+          trustTier.charAt(0).toUpperCase() + trustTier.slice(1)
+        document.getElementById('skill-version-detail').textContent = skill.version || 'Unknown'
+
+        // Optional fields
+        if (skill.downloads) {
+          document.getElementById('downloads-row').classList.remove('hidden')
+          document.getElementById('skill-downloads').textContent = formatNumber(skill.downloads)
+        }
+        if (skill.updated_at) {
+          document.getElementById('updated-row').classList.remove('hidden')
+          document.getElementById('skill-updated').textContent = formatDate(skill.updated_at)
+        }
+
+        // Tags
+        const tagsContainer = document.getElementById('skill-tags')
+        const noTagsEl = document.getElementById('no-tags')
+        const tags = skill.tags || []
+
+        if (tags.length > 0) {
+          tagsContainer.innerHTML = tags
+            .map(
+              (tag) =>
+                `<span class="px-3 py-1 bg-dark-800 border border-dark-700 rounded-full text-dark-300 text-sm">${escapeHtml(tag)}</span>`
+            )
+            .join('')
+          noTagsEl.classList.add('hidden')
+        } else {
+          tagsContainer.innerHTML = ''
+          noTagsEl.classList.remove('hidden')
+        }
+
+        // Show content
+        loadingState.classList.add('hidden')
+        errorState.classList.add('hidden')
+        skillContent.classList.remove('hidden')
+
+        // GA4: Track skill view (SMI-2453)
+        if (typeof window.gtag === 'function') {
+          window.gtag('event', 'skill_view', {
+            skill_id: skillId,
+            skill_name: skill.name || skillId,
+            trust_tier: skill.trust_tier || 'unknown',
+            category: skill.categories?.[0] || 'uncategorized',
+          })
+        }
+
+        // Load related skills if available
+        if (skill.related_skills && skill.related_skills.length > 0) {
+          loadRelatedSkills(skill.related_skills)
+        }
+      }
+
+      // Load related skills
+      async function loadRelatedSkills(relatedIds) {
+        const relatedSection = document.getElementById('related-section')
+        const relatedContainer = document.getElementById('related-skills')
+
+        try {
+          // For now, just show the IDs as links
+          relatedContainer.innerHTML = relatedIds
+            .slice(0, 6)
+            .map(
+              (id) => `
           <a href="/skills/${encodeURIComponent(id)}" class="block bg-dark-800 rounded-lg p-4 hover:bg-dark-700 transition-colors">
             <p class="text-white font-medium">${escapeHtml(id)}</p>
           </a>
-        `).join('');
+        `
+            )
+            .join('')
 
-        relatedSection.classList.remove('hidden');
-      } catch (error) {
-        // Silent fail for related skills (non-critical feature)
-      }
-    }
-
-    // Fetch skill details
-    async function fetchSkill() {
-      try {
-        // Decode first to normalize (Astro params may already be URL-encoded), then re-encode
-        const decodedSkillId = decodeURIComponent(skillId);
-        const response = await fetch(`${API_BASE}/skills-get/${encodeURIComponent(decodedSkillId)}`, {
-          headers: {
-            'Authorization': `Bearer ${supabaseAnonKey}`,
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (!response.ok) {
-          if (response.status === 404) {
-            throw new Error('This skill does not exist or has been removed.');
-          }
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          relatedSection.classList.remove('hidden')
+        } catch (error) {
+          // Silent fail for related skills (non-critical feature)
         }
-
-        const result = await response.json();
-        if (!result.data) {
-          throw new Error(result.error || 'Invalid response from server');
-        }
-        renderSkill(result.data);
-      } catch (error) {
-        showError(error.message);
       }
-    }
 
-    // Copy to clipboard
-    document.querySelectorAll('.copy-button').forEach(button => {
-      button.addEventListener('click', async () => {
-        const targetId = button.getAttribute('data-target');
-        const targetEl = document.getElementById(targetId);
-        const text = targetEl.textContent;
-
+      // Fetch skill details
+      async function fetchSkill() {
         try {
-          await navigator.clipboard.writeText(text);
+          // Decode first to normalize (Astro params may already be URL-encoded), then re-encode
+          const decodedSkillId = decodeURIComponent(skillId)
+          const response = await fetch(
+            `${API_BASE}/skills-get/${encodeURIComponent(decodedSkillId)}`,
+            {
+              headers: {
+                Authorization: `Bearer ${supabaseAnonKey}`,
+                'Content-Type': 'application/json',
+              },
+            }
+          )
 
-          // GA4: Track install command copy (SMI-2453)
-          if (typeof window.gtag === 'function') {
-            window.gtag('event', 'skill_install_copy', {
-              skill_id: skillId,
-              command_type: targetId.replace('install-command-', ''),
-            });
+          if (!response.ok) {
+            if (response.status === 404) {
+              throw new Error('This skill does not exist or has been removed.')
+            }
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
           }
 
-          // Show feedback
-          const originalHTML = button.innerHTML;
-          button.innerHTML = `
+          const result = await response.json()
+          if (!result.data) {
+            throw new Error(result.error || 'Invalid response from server')
+          }
+          renderSkill(result.data)
+        } catch (error) {
+          showError(error.message)
+        }
+      }
+
+      // Copy to clipboard
+      document.querySelectorAll('.copy-button').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const targetId = button.getAttribute('data-target')
+          const targetEl = document.getElementById(targetId)
+          const text = targetEl.textContent
+
+          try {
+            await navigator.clipboard.writeText(text)
+
+            // GA4: Track install command copy (SMI-2453)
+            if (typeof window.gtag === 'function') {
+              window.gtag('event', 'skill_install_copy', {
+                skill_id: skillId,
+                command_type: targetId.replace('install-command-', ''),
+              })
+            }
+
+            // Show feedback
+            const originalHTML = button.innerHTML
+            button.innerHTML = `
             <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
             </svg>
-          `;
+          `
 
-          setTimeout(() => {
-            button.innerHTML = originalHTML;
-          }, 2000);
-        } catch (error) {
-          // Silent fail for clipboard
-        }
-      });
-    });
+            setTimeout(() => {
+              button.innerHTML = originalHTML
+            }, 2000)
+          } catch (error) {
+            // Silent fail for clipboard
+          }
+        })
+      })
 
-    // Initialize
-    fetchSkill();
-    }); // End astro:page-load handler
+      // Initialize
+      fetchSkill()
+    }) // End astro:page-load handler
   </script>
 </BaseLayout>

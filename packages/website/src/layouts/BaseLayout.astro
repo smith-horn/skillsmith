@@ -9,28 +9,32 @@
  * Includes Supabase config injection for UserMenu auth state.
  */
 
-import '../styles/global.css';
-import { ClientRouter } from 'astro:transitions';
-import Nav from '../components/Nav.astro';
-import Footer from '../components/Footer.astro';
-import RateLimitToast from '../components/RateLimitToast.astro';
-import CookieConsent from '../components/CookieConsent.astro';
-import { getSupabaseConfig } from '../lib/supabase-config';
+import '../styles/global.css'
+import { ClientRouter } from 'astro:transitions'
+import Nav from '../components/Nav.astro'
+import Footer from '../components/Footer.astro'
+import RateLimitToast from '../components/RateLimitToast.astro'
+import CookieConsent from '../components/CookieConsent.astro'
+import { getSupabaseConfig } from '../lib/supabase-config'
 
 interface Props {
-  title: string;
-  description?: string;
+  title: string
+  description?: string
   /** Current page path for nav highlighting */
-  activePath?: string;
+  activePath?: string
 }
 
-const { title, description = "Skillsmith - AI-powered agent skill discovery and management", activePath = '' } = Astro.props;
+const {
+  title,
+  description = 'Skillsmith - AI-powered agent skill discovery and management',
+  activePath = '',
+} = Astro.props
 
 // Get Supabase config for auth-aware navigation
-const supabaseConfig = getSupabaseConfig();
+const supabaseConfig = getSupabaseConfig()
 ---
 
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
@@ -44,28 +48,41 @@ const supabaseConfig = getSupabaseConfig();
     <!-- Non-CORS preconnect for CSS fetch, CORS preconnect for font file fetch -->
     <link rel="preconnect" href="https://api.fontshare.com" />
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
-    <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap" rel="stylesheet" />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" fetchpriority="low" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+      fetchpriority="low"
+    />
 
     <!-- Google Analytics with Consent Mode v2 -->
     <script is:inline>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
+      window.dataLayer = window.dataLayer || []
+      function gtag() {
+        dataLayer.push(arguments)
+      }
       // Set default consent state BEFORE loading gtag.js
-      var consent = localStorage.getItem('skillsmith_cookie_consent');
+      var consent = localStorage.getItem('skillsmith_cookie_consent')
       gtag('consent', 'default', {
         analytics_storage: consent === 'accepted' ? 'granted' : 'denied',
         ad_storage: 'denied',
         ad_user_data: 'denied',
         ad_personalization: 'denied',
         wait_for_update: 500,
-      });
-      gtag('js', new Date());
-      gtag('config', 'G-GGZQZM1Y1L');
+      })
+      gtag('js', new Date())
+      gtag('config', 'G-GGZQZM1Y1L')
     </script>
-    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L" fetchpriority="low"></script>
+    <script
+      is:inline
+      async
+      src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"
+      fetchpriority="low"></script>
 
     <!-- Open Graph -->
     <meta property="og:title" content={title} />
@@ -93,13 +110,15 @@ const supabaseConfig = getSupabaseConfig();
 
     <!-- Supabase config for auth-aware navigation -->
     <script is:inline define:vars={{ supabaseConfig }}>
-      window.__SUPABASE_CONFIG__ = supabaseConfig;
+      window.__SUPABASE_CONFIG__ = supabaseConfig
     </script>
-
   </head>
   <body class="bg-dark-950 text-dark-100 min-h-screen antialiased">
     <!-- Skip to main content link for keyboard navigation -->
-    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[60] focus:px-4 focus:py-2 focus:bg-primary-500 focus:text-white focus:rounded-lg focus:outline-none">
+    <a
+      href="#main-content"
+      class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[60] focus:px-4 focus:py-2 focus:bg-primary-500 focus:text-white focus:rounded-lg focus:outline-none"
+    >
       Skip to main content
     </a>
 
@@ -119,7 +138,7 @@ const supabaseConfig = getSupabaseConfig();
 
     <!-- SMI-2344: Web Vitals RUM tracking (SMI-2363: shared module) -->
     <script>
-      import '../scripts/web-vitals';
+      import '../scripts/web-vitals'
     </script>
   </body>
 </html>
@@ -161,7 +180,7 @@ const supabaseConfig = getSupabaseConfig();
   select:focus-visible,
   textarea:focus-visible,
   [tabindex]:focus-visible {
-    outline: 2px solid #E07A5F;
+    outline: 2px solid #e07a5f;
     outline-offset: 2px;
   }
 
