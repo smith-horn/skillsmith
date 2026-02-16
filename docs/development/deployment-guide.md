@@ -283,7 +283,8 @@ Alerts sent to `support@smithhorn.ca` via Resend when:
 
 - Indexer workflow fails
 - Metadata refresh workflow fails (scheduled runs only)
-- Weekly ops report detects anomalies
+- Weekly ops report detects anomalies (static thresholds + week-over-week trends)
+- 404/archived repos quarantined immediately during metadata refresh (SMI-2560)
 
 ### Manual Ops Report
 
