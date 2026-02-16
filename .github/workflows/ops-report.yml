@@ -1,5 +1,5 @@
 # SMI-1617: Weekly operations report with email notification
-# Sends comprehensive ops report to support@skillsmith.app
+# Sends comprehensive ops report to support@smithhorn.ca
 
 name: Weekly Ops Report
 
@@ -20,9 +20,9 @@ on:
         default: 'false'
         type: boolean
       recipients:
-        description: 'Email recipients (comma-separated, default: support@skillsmith.app)'
+        description: 'Email recipients (comma-separated, default: support@smithhorn.ca)'
         required: false
-        default: 'support@skillsmith.app'
+        default: 'support@smithhorn.ca'
         type: string
 
 env:
@@ -50,7 +50,7 @@ jobs:
         run: |
           DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
           DAYS="${{ github.event.inputs.days || '7' }}"
-          RECIPIENTS="${{ github.event.inputs.recipients || 'support@skillsmith.app' }}"
+          RECIPIENTS="${{ github.event.inputs.recipients || 'support@smithhorn.ca' }}"
 
           # Convert comma-separated recipients to JSON array
           RECIPIENTS_JSON=$(echo "$RECIPIENTS" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')
