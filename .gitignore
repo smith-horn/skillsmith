@@ -6,6 +6,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 .turbo/
+.astro/
 
 # TypeScript build artifacts in source dirs
 packages/**/*.js
