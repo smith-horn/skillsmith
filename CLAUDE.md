@@ -120,10 +120,11 @@ git checkout <expected-branch>
 git cherry-pick <commit-hash>
 ```
 
-**Creating branches**: Always sync main first:
+**Syncing main**: Use the quiet wrapper to avoid ~5,000 tokens of git-crypt noise:
 
 ```bash
-git fetch origin main && git reset --hard origin/main && git checkout -b <branch-name>
+./scripts/sync-main.sh                              # Quiet sync (~75 tokens output)
+git checkout -b <branch-name>                        # Then create feature branch
 ```
 
 ---
