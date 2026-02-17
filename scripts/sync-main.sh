@@ -13,5 +13,9 @@ output=$(git checkout main 2>&1 && git fetch origin main 2>&1 && git reset --har
 }
 
 branch=$(git branch --show-current)
+if [ "$branch" != "main" ]; then
+  echo "ERROR: Expected main but landed on '$branch' (smudge filter branch switch)"
+  exit 1
+fi
 commit=$(git log --oneline -1)
 echo "Synced to main: $commit"
