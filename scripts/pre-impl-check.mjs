@@ -385,7 +385,7 @@ ${BOLD}EXIT CODES:${RESET}
 
 ${BOLD}REFERENCE:${RESET}
   See docs/internal/architecture/standards.md for full engineering standards
-  See docs/templates/pre-implementation-checklist.md for manual checklist
+  See .claude/templates/pre-implementation-checklist.md for manual checklist
 `)
 }
 
@@ -458,13 +458,13 @@ async function main() {
     }
 
     // Check template exists
-    const templatePath = join(ROOT_DIR, 'docs/templates/pre-implementation-checklist.md')
+    const templatePath = join(ROOT_DIR, '.claude/templates/pre-implementation-checklist.md')
     if (existsSync(templatePath)) {
       pass('Pre-implementation checklist template exists')
     } else {
       warn(
         'Pre-implementation checklist template not found',
-        'Create docs/templates/pre-implementation-checklist.md'
+        'Create .claude/templates/pre-implementation-checklist.md'
       )
     }
 

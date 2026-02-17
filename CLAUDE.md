@@ -6,13 +6,13 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 
 | Document | Description |
 |----------|-------------|
-| [docker-guide.md](docs/development/docker-guide.md) | Container rebuild scenarios, DNS failure, native modules, troubleshooting |
-| [git-crypt-guide.md](docs/development/git-crypt-guide.md) | Unlock, worktree setup, rebase workaround, smudge filter fixes |
-| [ci-reference.md](docs/development/ci-reference.md) | Branch protection, change classification, Turborepo, CI scripts |
-| [deployment-guide.md](docs/development/deployment-guide.md) | Edge function deploy commands, CORS, website, monitoring & alerts |
-| [claude-flow-guide.md](docs/development/claude-flow-guide.md) | Agent types, swarm examples, hive mind, SPARC modes |
-| [cloudinary-guide.md](docs/development/cloudinary-guide.md) | Blog image upload workflow, URL transforms, folder conventions |
-| [subagent-tool-permissions-guide.md](docs/development/subagent-tool-permissions-guide.md) | Subagent tool access by type, foreground/background behavior, skill author checklist |
+| [docker-guide.md](.claude/development/docker-guide.md) | Container rebuild scenarios, DNS failure, native modules, troubleshooting |
+| [git-crypt-guide.md](.claude/development/git-crypt-guide.md) | Unlock, worktree setup, rebase workaround, smudge filter fixes |
+| [ci-reference.md](.claude/development/ci-reference.md) | Branch protection, change classification, Turborepo, CI scripts |
+| [deployment-guide.md](.claude/development/deployment-guide.md) | Edge function deploy commands, CORS, website, monitoring & alerts |
+| [claude-flow-guide.md](.claude/development/claude-flow-guide.md) | Agent types, swarm examples, hive mind, SPARC modes |
+| [cloudinary-guide.md](.claude/development/cloudinary-guide.md) | Blog image upload workflow, URL transforms, folder conventions |
+| [subagent-tool-permissions-guide.md](.claude/development/subagent-tool-permissions-guide.md) | Subagent tool access by type, foreground/background behavior, skill author checklist |
 
 ---
 
@@ -32,7 +32,7 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 
 **After pulling changes**: The `post-merge` hook auto-runs `npm install` in Docker when `package-lock.json` changes. If the container is not running, start it and run `docker exec skillsmith-dev-1 npm install && docker exec skillsmith-dev-1 npm run build`.
 
-**Full rebuild** (native module issues, major upgrades): See [docker-guide.md](docs/development/docker-guide.md#full-rebuild-thorough).
+**Full rebuild** (native module issues, major upgrades): See [docker-guide.md](.claude/development/docker-guide.md#full-rebuild-thorough).
 
 **Container management**: `docker compose --profile dev down` (stop), `docker logs skillsmith-dev-1` (logs).
 
@@ -54,11 +54,11 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 
 **When CI fails**: Don't merge. Check logs. Run `docker exec skillsmith-dev-1 npm run preflight` locally. Create Linear issue if non-trivial.
 
-**Change tiers**: `docs` (~30s), `config` (validation), `code` (~11 min full), `deps` (rebuild + audit). Mixed commits trigger full CI. Details: [ci-reference.md](docs/development/ci-reference.md).
+**Change tiers**: `docs` (~30s), `config` (validation), `code` (~11 min full), `deps` (rebuild + audit). Mixed commits trigger full CI. Details: [ci-reference.md](.claude/development/ci-reference.md).
 
 **Build**: Uses Turborepo (`npm run build`). Legacy fallback: `npm run build:legacy`. See [ADR-106](docs/internal/adr/106-turborepo-build-orchestration.md).
 
-**Branch protection**: 11 required checks for code PRs, 2 for docs-only. Admin bypass for emergencies. Details: [ci-reference.md](docs/development/ci-reference.md#branch-protection).
+**Branch protection**: 11 required checks for code PRs, 2 for docs-only. Admin bypass for emergencies. Details: [ci-reference.md](.claude/development/ci-reference.md#branch-protection).
 
 ---
 
@@ -100,13 +100,13 @@ varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'  # Unl
 git submodule update --init                           # Init internal docs (authorized users only)
 ```
 
-**Not encrypted** (always readable): `.claude/settings.json`, `supabase/config.toml`, all `docs/development/`, `docs/templates/`.
+**Not encrypted** (always readable): `.claude/settings.json`, `supabase/config.toml`, `.claude/development/`, `.claude/templates/`.
 
 **Worktrees**: Unlock main repo first, then `./scripts/create-worktree.sh`. Remove with `./scripts/remove-worktree.sh --prune`.
 
 **Rebasing**: `git pull --rebase` may fail due to smudge filter on remaining encrypted paths. Use `git format-patch` workaround.
 
-**Full guide**: [git-crypt-guide.md](docs/development/git-crypt-guide.md)
+**Full guide**: [git-crypt-guide.md](.claude/development/git-crypt-guide.md)
 
 ---
 
@@ -232,7 +232,7 @@ npx supabase functions deploy create-portal-session --no-verify-jwt
 npx supabase functions deploy list-invoices --no-verify-jwt
 ```
 
-**CORS & monitoring details**: [deployment-guide.md](docs/development/deployment-guide.md)
+**CORS & monitoring details**: [deployment-guide.md](.claude/development/deployment-guide.md)
 
 ---
 
@@ -246,7 +246,7 @@ npx supabase functions deploy list-invoices --no-verify-jwt
 | Weekly Analytics | Monday 9 AM UTC | GitHub Actions (`analytics-report.yml`) |
 | Billing Monitor | Monday 9 AM UTC | GitHub Actions |
 
-Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table. Manual trigger & audit log details: [deployment-guide.md](docs/development/deployment-guide.md#monitoring--alerts).
+Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table. Manual trigger & audit log details: [deployment-guide.md](.claude/development/deployment-guide.md#monitoring--alerts).
 
 ---
 
@@ -258,13 +258,13 @@ Required for hive mind and agent spawning. Auto-configured via `.mcp.json`. Manu
 
 **Agent types**: architect, coder, tester, reviewer, researcher.
 
-**Full guide**: [claude-flow-guide.md](docs/development/claude-flow-guide.md)
+**Full guide**: [claude-flow-guide.md](.claude/development/claude-flow-guide.md)
 
 ---
 
 ## MCP Registry
 
-Published as `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/). Auto-published via CI. **Version sync required**: update both `packages/mcp-server/package.json` and `packages/mcp-server/server.json`. Full guide: [mcp-registry.md](docs/development/mcp-registry.md).
+Published as `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/). Auto-published via CI. **Version sync required**: update both `packages/mcp-server/package.json` and `packages/mcp-server/server.json`. Full guide: [mcp-registry.md](.claude/development/mcp-registry.md).
 
 ---
 
@@ -290,7 +290,7 @@ Published as `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol
 | Stale CJS artifacts | `docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f -delete'` |
 | Orphaned agents | `./scripts/cleanup-orphans.sh` (`--dry-run` to preview) |
 
-**Detailed diagnostics** (Symptoms / Root Cause / Fix): [docker-guide.md](docs/development/docker-guide.md#troubleshooting)
+**Detailed diagnostics** (Symptoms / Root Cause / Fix): [docker-guide.md](.claude/development/docker-guide.md#troubleshooting)
 
 ---
 
@@ -301,8 +301,8 @@ Published as `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol
 | Architecture | [System Overview](docs/internal/architecture/system-design/system-overview.md), [Skill Dependencies](docs/internal/architecture/system-design/skill-dependencies.md), [Index](docs/internal/architecture/index.md) |
 | Standards | [Engineering](docs/internal/architecture/standards.md), [Database](docs/internal/architecture/standards-database.md), [Astro](docs/internal/architecture/standards-astro.md), [Security](docs/internal/architecture/standards-security.md) |
 | Process | [Context Compaction](docs/internal/process/context-compaction.md), [Linear Hygiene](docs/internal/process/linear-hygiene-guide.md), [Wave Checklist](docs/internal/process/wave-completion-checklist.md) |
-| Development | [Docker](docs/development/docker-guide.md), [Git-Crypt](docs/development/git-crypt-guide.md), [CI](docs/development/ci-reference.md), [Deploy](docs/development/deployment-guide.md), [Claude-Flow](docs/development/claude-flow-guide.md) |
-| Testing | [Stripe](docs/development/stripe-testing.md), [Neural](docs/development/neural-testing.md), [Benchmarks](docs/development/benchmarks.md) |
+| Development | [Docker](.claude/development/docker-guide.md), [Git-Crypt](.claude/development/git-crypt-guide.md), [CI](.claude/development/ci-reference.md), [Deploy](.claude/development/deployment-guide.md), [Claude-Flow](.claude/development/claude-flow-guide.md) |
+| Testing | [Stripe](.claude/development/stripe-testing.md), [Neural](.claude/development/neural-testing.md), [Benchmarks](.claude/development/benchmarks.md) |
 | Website | [skillsmith.app/docs](https://skillsmith.app/docs) — Deploy: `cd packages/website && vercel --prod` |
 
 **Linear**: Initiative Skillsmith (SMI-xxx). Authoritative standards: `docs/internal/architecture/standards.md`.
