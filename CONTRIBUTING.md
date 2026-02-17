@@ -201,6 +201,14 @@ docker exec skillsmith-dev-1 npm run audit:standards
 
 Pre-commit hooks will automatically run linting and formatting.
 
+## Internal Documentation
+
+Internal documentation is in a private submodule at `docs/internal/`. Access requires Smith Horn GitHub org membership. The `--recurse-submodules` flag is optional when cloning.
+
+```bash
+git submodule update --init          # Init submodule (authorized users only)
+```
+
 ## Questions?
 
 - Check [docs/internal/architecture/](docs/internal/architecture/) for design decisions (requires submodule init)

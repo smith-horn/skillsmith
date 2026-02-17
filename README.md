@@ -138,6 +138,8 @@ node packages/cli/dist/index.js install community/jest-helper
 
 ## Documentation
 
+Internal documentation is in a private submodule at `docs/internal/`. Access requires Smith Horn GitHub org membership. Run `git submodule update --init` after cloning.
+
 - [**Skill Security Guide**](docs/internal/security/skill-security-guide.md) - Understanding skill trust, safety, and how Skillsmith protects you
 - [Getting Started](docs/internal/GETTING_STARTED.md) - Complete setup and usage guide
 - [Engineering Standards](docs/internal/architecture/standards.md) - Code quality policies

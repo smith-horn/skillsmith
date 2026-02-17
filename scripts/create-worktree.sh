@@ -339,6 +339,14 @@ create_worktree() {
     (cd "$worktree_path" && git reset --hard HEAD)
     success "  Files checked out successfully"
 
+    # Step 4b: Initialize submodules (docs/internal)
+    if [[ -f "$worktree_path/.gitmodules" ]]; then
+        info "Initializing submodules..."
+        (cd "$worktree_path" && git submodule update --init 2>/dev/null) && \
+            success "  Submodules initialized" || \
+            warn "Submodule init failed (requires org access for private submodule)"
+    fi
+
     # Step 5: Generate Docker override file (if docker-compose.yml exists)
     if [[ -f "$worktree_path/docker-compose.yml" ]]; then
         info "Step 5/5: Generating Docker override file..."

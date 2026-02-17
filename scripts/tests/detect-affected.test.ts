@@ -118,7 +118,7 @@ describe('SMI-2190: Affected Package Detection', () => {
 
     it('should return undefined for non-package files', () => {
       expect(findPackageForFile('scripts/ci/classify.ts', mockPackages)).toBeUndefined()
-      expect(findPackageForFile('docs/adr/001.md', mockPackages)).toBeUndefined()
+      expect(findPackageForFile('docs/internal/adr/001.md', mockPackages)).toBeUndefined()
       expect(findPackageForFile('README.md', mockPackages)).toBeUndefined()
     })
 
@@ -157,7 +157,7 @@ describe('SMI-2190: Affected Package Detection', () => {
     })
 
     it('should not require all packages for docs changes', () => {
-      const result = requiresAllPackages(['docs/adr/001.md', 'README.md'])
+      const result = requiresAllPackages(['docs/internal/adr/001.md', 'README.md'])
       expect(result.required).toBe(false)
     })
   })
@@ -247,7 +247,7 @@ describe('SMI-2190: Affected Package Detection', () => {
     it('should handle mixed package and non-package files', () => {
       const result = detectAffectedPackages([
         'packages/core/src/index.ts',
-        'docs/adr/001.md',
+        'docs/internal/adr/001.md',
         'scripts/ci/classify.ts',
       ])
 

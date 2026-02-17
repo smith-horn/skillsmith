@@ -2,21 +2,27 @@
 
 Complete reference for git-crypt encrypted documentation, worktree setup, and common workarounds.
 
-## Encrypted Paths
+## Encrypted Paths (Narrowed Scope — SMI-2604)
+
+After the git-crypt remediation, encryption is limited to secrets and sensitive code:
 
 | Path | Contains |
 |------|----------|
-| `docs/**` | ADRs, implementation plans, architecture docs |
-| `.claude/**` | Agent definitions, skills, hive mind configs |
-| `supabase/**` | Edge functions, migrations |
+| `.claude/skills/**` | Agent skill definitions |
+| `.claude/plans/**` | Implementation plans |
+| `.claude/hive-mind/**` | Hive mind configs |
+| `supabase/functions/**` | Edge functions |
+| `supabase/migrations/**` | Database migrations |
 
-**Exceptions** (unencrypted):
+**Explicitly excluded** from encryption:
 
 | Path | Why |
 |------|-----|
-| `docs/development/*.md` | Developer guides must be readable without unlock |
-| `docs/templates/*.md` | Templates must be readable without unlock |
+| `.claude/settings.json` | Must be readable for Claude Code config |
+| `supabase/config.toml` | Needed for CI without git-crypt |
 | `supabase/rollbacks/**` | Emergency rollback scripts |
+
+**Not encrypted** (always readable): `docs/development/`, `docs/templates/`, `docs/implementation/`. Internal docs (ADRs, architecture, process) are in a private submodule at `docs/internal/`.
 
 ## Setup
 
@@ -37,15 +43,14 @@ varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'
 
 ## Files Still Encrypted After Unlock
 
-If `git-crypt unlock` succeeds but files still show encrypted content, the smudge filter isn't being triggered:
+If `git-crypt unlock` succeeds but files still show encrypted content, the smudge filter isn't being triggered. Re-run the filter manually on the remaining encrypted paths:
 
 ```bash
-for f in docs/gtm/*.md docs/gtm/**/*.md; do
-  if [ -f "$f" ]; then
-    cat "$f" | git-crypt smudge > "/tmp/$(basename $f)" 2>/dev/null
-    mv "/tmp/$(basename $f)" "$f"
-  fi
-done
+# Check which files are still encrypted
+git-crypt status | grep "encrypted:" | head -10
+
+# Force re-apply smudge filter on a specific file
+git checkout -- path/to/encrypted/file
 ```
 
 ## Rebasing with Git-Crypt
@@ -120,3 +125,18 @@ cd /path/to/skillsmith
 varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'
 git worktree add ../worktrees/my-feature -b feature/my-feature
 ```
+
+## Submodule Workflow
+
+Internal docs are in a private submodule. After cloning or creating a worktree:
+
+```bash
+git submodule update --init          # Init submodule (requires org access)
+ls docs/internal/adr/                # Verify ADRs are available
+```
+
+The `--recurse-submodules` flag is optional for `git clone`. External contributors can work without the submodule.
+
+## History Cleanup
+
+The git history contains encrypted blobs from the pre-migration era. These are harmless — they are unreadable without the git-crypt key and pose no security risk. History rewriting (`git filter-repo`) was considered and rejected because it would rewrite all commit hashes, breaking PR references and contributor attribution. If repo size becomes a concern, this can be revisited as a separate initiative.
