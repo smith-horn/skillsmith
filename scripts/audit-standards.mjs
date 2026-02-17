@@ -8,7 +8,7 @@
 
 import { execSync } from 'child_process'
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
-import { join, relative } from 'path'
+import { extname, join, relative } from 'path'
 
 const RED = '\x1b[31m'
 const GREEN = '\x1b[32m'
@@ -1014,6 +1014,69 @@ console.log(`\n${BOLD}17. Email Consistency (SMI-2562)${RESET}`)
       if (suggestion) console.log(`      ${YELLOW}→${RESET} ${suggestion}`)
     })
   }
+}
+
+// 18. No Double-Encrypted Files (SMI-2607)
+console.log(`\n${BOLD}18. No Double-Encrypted Files (SMI-2607)${RESET}`)
+try {
+  const status = execSync('git-crypt status 2>/dev/null', { encoding: 'utf8' })
+  if (status.includes('locked')) {
+    pass('Skipped (git-crypt locked)')
+  } else {
+    const encryptedFiles = status
+      .split('\n')
+      .filter((line) => line.includes('encrypted:') && !line.includes('NOT ENCRYPTED'))
+      .map((line) => line.trim().split(/\s+/).pop())
+      .filter(Boolean)
+
+    const binaryExtensions = [
+      '.svg',
+      '.png',
+      '.jpg',
+      '.jpeg',
+      '.gif',
+      '.ico',
+      '.woff',
+      '.woff2',
+      '.db',
+      '.wasm',
+    ]
+    const doubleEncrypted = []
+
+    for (const file of encryptedFiles) {
+      const ext = extname(file).toLowerCase()
+      if (binaryExtensions.includes(ext)) continue
+      try {
+        const fileType = execSync(`file -b "${file}"`, { encoding: 'utf8' }).trim()
+        if (fileType === 'data') {
+          doubleEncrypted.push(file)
+        }
+      } catch {
+        /* File might not exist on disk */
+      }
+    }
+
+    if (doubleEncrypted.length > 0) {
+      fail(`${doubleEncrypted.length} double-encrypted files found:\n${doubleEncrypted.join('\n')}`)
+    } else {
+      pass('No double-encrypted files')
+    }
+  }
+} catch {
+  pass('Skipped (git-crypt not installed)')
+}
+
+// 19. docs/ Directory Structure Guard (SMI-2607)
+console.log(`\n${BOLD}19. docs/ Directory Structure Guard (SMI-2607)${RESET}`)
+const allowedDocsDirs = ['development', 'templates', 'internal', 'implementation']
+const actualDocsDirs = readdirSync('docs', { withFileTypes: true })
+  .filter((d) => d.isDirectory())
+  .map((d) => d.name)
+const unexpectedDirs = actualDocsDirs.filter((d) => !allowedDocsDirs.includes(d))
+if (unexpectedDirs.length > 0) {
+  fail(`Unexpected docs/ subdirectories (should be in submodule): ${unexpectedDirs.join(', ')}`)
+} else {
+  pass('docs/ contains only allowed subdirectories')
 }
 
 // Summary

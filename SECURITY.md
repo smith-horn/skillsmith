@@ -65,7 +65,7 @@ Skillsmith implements the following security measures:
 | **SQL Injection Prevention** | Parameterized queries via better-sqlite3 |
 | **Command Injection Prevention** | `execFileSync` with array args; no shell string interpolation |
 | **Secret Management** | Varlock for secret injection; never exposed in terminal output |
-| **Encrypted Documentation** | git-crypt for sensitive docs, configs, and Supabase functions |
+| **Encrypted Code & Config** | git-crypt for `.claude/skills/`, `.claude/plans/`, `.claude/hive-mind/`, `supabase/functions/`, `supabase/migrations/`. Internal docs in private submodule. |
 | **Secret Detection** | Gitleaks configuration for CI/CD |
 | **Dependency Auditing** | npm audit in CI pipeline |
 | **ReDoS Prevention** | User-supplied regex capped at 200 characters |

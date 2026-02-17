@@ -358,7 +358,8 @@ jobs:
         uses: actions/checkout@v4
 
       # SMI-2159: Decrypt git-crypt encrypted files before Docker build
-      # Required for supabase/**, docs/**, .claude/** (encrypted for IP protection)
+      # Narrowed scope (SMI-2604): .claude/skills/**, .claude/plans/**, .claude/hive-mind/**,
+      # supabase/functions/**, supabase/migrations/** (docs moved to private submodule)
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:

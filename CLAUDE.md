@@ -35,6 +35,8 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 
 **Container management**: `docker compose --profile dev down` (stop), `docker logs skillsmith-dev-1` (logs).
 
+**Submodule**: Run `git submodule update --init` before `docker compose up` if internal docs are needed inside the container. Internal docs are not available inside Docker by default.
+
 ---
 
 ## CI Health Requirements
