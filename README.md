@@ -10,7 +10,7 @@ Skillsmith is an agent skill discovery, recommendation, and management system fo
 - **Recommend** - Get personalized skill suggestions based on context
 - **Install** - One-command installation to `~/.claude/skills/`
 - **Validate** - Quality scores and structure validation
-- **Trust** - Four trust tiers from Official to Community ([Security Guide](docs/security/skill-security-guide.md))
+- **Trust** - Four trust tiers from Official to Community ([Security Guide](docs/internal/security/skill-security-guide.md))
 - **Compare** - Side-by-side skill comparison
 
 ### MCP Tools
@@ -138,12 +138,12 @@ node packages/cli/dist/index.js install community/jest-helper
 
 ## Documentation
 
-- [**Skill Security Guide**](docs/security/skill-security-guide.md) - Understanding skill trust, safety, and how Skillsmith protects you
-- [Getting Started](docs/GETTING_STARTED.md) - Complete setup and usage guide
-- [Engineering Standards](docs/architecture/standards.md) - Code quality policies
-- [ADR Index](docs/adr/index.md) - Architecture Decision Records
-- [Security Checklist](docs/security/checklists/code-review.md) - Security review guidelines (developers)
-- [Phase Retrospectives](docs/retros/) - Phase learnings and improvements
+- [**Skill Security Guide**](docs/internal/security/skill-security-guide.md) - Understanding skill trust, safety, and how Skillsmith protects you
+- [Getting Started](docs/internal/GETTING_STARTED.md) - Complete setup and usage guide
+- [Engineering Standards](docs/internal/architecture/standards.md) - Code quality policies
+- [ADR Index](docs/internal/adr/index.md) - Architecture Decision Records
+- [Security Checklist](docs/internal/security/checklists/code-review.md) - Security review guidelines (developers)
+- [Phase Retrospectives](docs/internal/retros/) - Phase learnings and improvements
 
 ## Development
 
@@ -159,7 +159,7 @@ Skillsmith uses **Docker-first development**. All commands run inside Docker to 
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/Smith-Horn-Group/skillsmith.git
+git clone https://github.com/smith-horn/skillsmith.git
 cd skillsmith
 
 # 2. Start the development container
@@ -250,7 +250,7 @@ docker exec skillsmith-dev-1 npm test
 
 Skillsmith uses native Node.js modules (`better-sqlite3`, `onnxruntime-node`) that require **glibc**. Docker provides a consistent Debian-based environment with glibc, avoiding compatibility issues on systems using musl libc (like Alpine Linux).
 
-For the full technical decision, see [ADR-002: Docker with glibc for Native Module Compatibility](/docs/adr/002-docker-glibc-requirement.md).
+For the full technical decision, see [ADR-002: Docker with glibc for Native Module Compatibility](/docs/internal/adr/002-docker-glibc-requirement.md).
 
 See [CLAUDE.md](CLAUDE.md) for full development workflow and skill configuration.
 

@@ -102,8 +102,12 @@ function getTypeScriptFiles(dir) {
  * @returns {object} Naming conventions object
  */
 function loadNamingConventions() {
-  const standardsPath = join(ROOT_DIR, 'docs/architecture/standards.md')
-  if (!existsSync(standardsPath)) {
+  const standardsPath = existsSync(join(ROOT_DIR, 'docs/architecture/standards.md'))
+    ? join(ROOT_DIR, 'docs/architecture/standards.md')
+    : existsSync(join(ROOT_DIR, 'docs/internal/architecture/standards.md'))
+      ? join(ROOT_DIR, 'docs/internal/architecture/standards.md')
+      : null
+  if (!standardsPath) {
     return null
   }
   // Return extracted conventions from standards.md
@@ -382,7 +386,7 @@ ${BOLD}EXIT CODES:${RESET}
   1   One or more checks failed
 
 ${BOLD}REFERENCE:${RESET}
-  See docs/architecture/standards.md for full engineering standards
+  See docs/internal/architecture/standards.md for full engineering standards
   See docs/templates/pre-implementation-checklist.md for manual checklist
 `)
 }
@@ -445,12 +449,16 @@ async function main() {
 
     section('General Pre-Implementation Checks')
 
-    // Check standards.md exists
-    const standardsPath = join(ROOT_DIR, 'docs/architecture/standards.md')
-    if (existsSync(standardsPath)) {
+    // Check standards.md exists (supports both old path and submodule path)
+    const stdPath = existsSync(join(ROOT_DIR, 'docs/architecture/standards.md'))
+      ? join(ROOT_DIR, 'docs/architecture/standards.md')
+      : existsSync(join(ROOT_DIR, 'docs/internal/architecture/standards.md'))
+        ? join(ROOT_DIR, 'docs/internal/architecture/standards.md')
+        : null
+    if (stdPath) {
       pass('standards.md exists and is accessible')
     } else {
-      fail('standards.md not found', 'Create docs/architecture/standards.md')
+      warn('standards.md not found (init submodule: git submodule update --init)')
     }
 
     // Check template exists

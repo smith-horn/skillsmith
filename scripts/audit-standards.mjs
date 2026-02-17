@@ -163,12 +163,18 @@ try {
   fail(`Error checking test files: ${e.message}`)
 }
 
-// 5. Standards.md exists
+// 5. Standards.md exists (supports both old path and submodule path)
 console.log(`\n${BOLD}5. Documentation${RESET}`)
-if (existsSync('docs/architecture/standards.md')) {
-  pass('standards.md exists')
+const standardsPath = existsSync('docs/architecture/standards.md')
+  ? 'docs/architecture/standards.md'
+  : existsSync('docs/internal/architecture/standards.md')
+    ? 'docs/internal/architecture/standards.md'
+    : null
+if (standardsPath) {
+  pass(`standards.md exists (${standardsPath})`)
 } else {
-  fail('docs/architecture/standards.md not found', 'Create from governance template')
+  // Standards may be in private submodule not initialized in this environment
+  warn('standards.md not found (init submodule: git submodule update --init)')
 }
 
 if (existsSync('CLAUDE.md')) {
@@ -177,13 +183,19 @@ if (existsSync('CLAUDE.md')) {
   fail('CLAUDE.md not found', 'Create at project root')
 }
 
-// 6. ADR Directory
+// 6. ADR Directory (supports both old path and submodule path)
 console.log(`\n${BOLD}6. Architecture Decision Records${RESET}`)
-if (existsSync('docs/adr')) {
-  const adrs = readdirSync('docs/adr').filter((f) => f.endsWith('.md'))
-  pass(`docs/adr/ exists with ${adrs.length} ADRs`)
+const adrPath = existsSync('docs/adr')
+  ? 'docs/adr'
+  : existsSync('docs/internal/adr')
+    ? 'docs/internal/adr'
+    : null
+if (adrPath) {
+  const adrs = readdirSync(adrPath).filter((f) => f.endsWith('.md'))
+  pass(`${adrPath}/ exists with ${adrs.length} ADRs`)
 } else {
-  warn('docs/adr/ directory not found', 'Create for architecture decisions')
+  // ADRs may be in private submodule not initialized in this environment
+  warn('docs/adr/ not found (init submodule: git submodule update --init)')
 }
 
 // 7. Pre-commit Hooks
@@ -767,7 +779,7 @@ for (const pagePath of standalonePages) {
 console.log(`\n${BOLD}15. Licensing Language (SMI-2556)${RESET}`)
 
 const LICENSING_SCAN_DIRS = [
-  'docs/execution',
+  'docs/internal/execution',
   'packages/website/src/content/blog',
   'packages/website/src/pages',
 ]
@@ -840,7 +852,7 @@ const LICENSING_ALLOWLIST = [
 console.log(`\n${BOLD}16. URL Normalization (SMI-2553)${RESET}`)
 
 // Only scan marketing-facing dirs (not internal ADRs, architecture, analysis docs)
-const URL_SCAN_DIRS = ['docs/execution', 'packages/website/src']
+const URL_SCAN_DIRS = ['docs/internal/execution', 'packages/website/src']
 const URL_SCAN_EXTENSIONS = ['.md', '.mdx', '.astro', '.ts', '.tsx']
 // Patterns that are allowlisted (GitHub URLs, email addresses, subdomains, etc.)
 const URL_ALLOWLIST = [

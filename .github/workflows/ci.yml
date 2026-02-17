@@ -8,16 +8,20 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - 'docs/**'
+      - 'docs/development/**'
+      - 'docs/templates/**'
       - '**/*.md'
+      - '!.gitmodules'
       - 'LICENSE'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/CODEOWNERS'
   pull_request:
     branches: [main]
     paths-ignore:
-      - 'docs/**'
+      - 'docs/development/**'
+      - 'docs/templates/**'
       - '**/*.md'
+      - '!.gitmodules'
       - 'LICENSE'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/CODEOWNERS'

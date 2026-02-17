@@ -311,7 +311,7 @@ export function detectClaudeMdModification(body: string): string[] {
     warnings.push(
       'This skill appears to modify CLAUDE.md. ' +
         'Ensure it detects CI scripts that regex-scan CLAUDE.md and preserves matched content inline. ' +
-        'See: docs/architecture/standards.md#ci-machine-readable-content-dependencies'
+        'See: docs/internal/architecture/standards.md#ci-machine-readable-content-dependencies'
     )
   }
 
