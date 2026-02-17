@@ -43,7 +43,9 @@ describe('SMI-2187: CI Change Classifier', () => {
 
   describe('matchesPatterns', () => {
     it('should match glob patterns', () => {
-      expect(matchesPatterns('docs/development/docker-guide.md', ['docs/development/**'])).toBe(true)
+      expect(matchesPatterns('docs/development/docker-guide.md', ['docs/development/**'])).toBe(
+        true
+      )
       expect(matchesPatterns('README.md', ['**/*.md'])).toBe(true)
       expect(matchesPatterns('packages/core/src/index.ts', ['packages/**/*.ts'])).toBe(true)
     })
