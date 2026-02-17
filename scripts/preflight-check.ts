@@ -85,6 +85,25 @@ const RUNTIME_PROVIDED_MODULES = new Set([
   'vscode', // VS Code extension API - provided by VS Code runtime
 ])
 
+// Optional/virtual modules that are not real npm dependencies (SMI-2564)
+// These are either dynamically imported with try/catch fallbacks or resolved
+// by the framework build pipeline, not by npm.
+const IGNORED_MODULES = new Set([
+  // Optional native deps — loaded dynamically, fall back gracefully
+  'web-tree-sitter',
+  'tree-sitter',
+  'tree-sitter-typescript',
+  'tree-sitter-python',
+  'tree-sitter-go',
+  'tree-sitter-rust',
+  'tree-sitter-java',
+  'hnswlib-node',
+  '@e2b/code-interpreter',
+  // Astro virtual modules — resolved by the Astro compiler, not npm
+  'astro:content',
+  'astro:middleware',
+])
+
 /**
  * Extract package name from import specifier
  */
@@ -156,6 +175,11 @@ function parseImports(filePath: string): ImportInfo[] {
 
         // Skip runtime-provided modules (e.g., vscode)
         if (RUNTIME_PROVIDED_MODULES.has(packageName)) {
+          continue
+        }
+
+        // Skip optional/virtual modules (SMI-2564)
+        if (IGNORED_MODULES.has(packageName) || IGNORED_MODULES.has(importPath)) {
           continue
         }
 
