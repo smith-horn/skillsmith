@@ -224,6 +224,105 @@ jobs:
             fi
           done
 
+  # SMI-2595: Validate migration SQL for common issues
+  # Catches type mismatches, missing search_path, pg_safeupdate violations
+  # Only runs when migration files are changed
+  migration-lint:
+    name: Migration Lint
+    needs: [classify]
+    if: |
+      !cancelled() &&
+      needs.classify.result == 'success' &&
+      needs.classify.outputs.tier == 'code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for migration changes
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'supabase/migrations/*.sql')
+          else
+            CHANGED=$(git diff --name-only HEAD~1 -- 'supabase/migrations/*.sql')
+          fi
+
+          if [ -z "$CHANGED" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "No migration files changed — skipping lint"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "Migration files changed:"
+            echo "$CHANGED"
+          fi
+
+      - name: Lint migration SQL
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          ERRORS=0
+
+          echo "## Migration Lint Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          for file in supabase/migrations/*.sql; do
+            [ -f "$file" ] || continue
+            BASENAME=$(basename "$file")
+            FILE_ERRORS=0
+
+            # Skip encrypted files (git-crypt)
+            if head -c 9 "$file" | grep -q "GITCRYPT"; then
+              continue
+            fi
+
+            # Check: GET DIAGNOSTICS with boolean variable (should be integer)
+            if grep -Pn 'DECLARE\s+\w+\s+boolean' "$file" | grep -q .; then
+              if grep -q 'GET DIAGNOSTICS' "$file"; then
+                echo "::error file=$file::GET DIAGNOSTICS ROW_COUNT returns integer, not boolean. Use 'integer' type."
+                FILE_ERRORS=$((FILE_ERRORS + 1))
+              fi
+            fi
+
+            # Check: CREATE FUNCTION without SET search_path
+            if grep -q 'CREATE.*FUNCTION' "$file"; then
+              if ! grep -q 'search_path' "$file"; then
+                echo "::warning file=$file::Function missing SET search_path (security best practice)"
+              fi
+            fi
+
+            # Check: UPDATE/DELETE without WHERE (pg_safeupdate)
+            if grep -Pn '^\s*(UPDATE|DELETE)\s' "$file" | grep -v 'WHERE' | grep -q .; then
+              echo "::error file=$file::UPDATE/DELETE without WHERE clause violates pg_safeupdate"
+              FILE_ERRORS=$((FILE_ERRORS + 1))
+            fi
+
+            # Check: GRANT EXECUTE without parameter signature
+            if grep -Pn 'GRANT EXECUTE ON FUNCTION\s+\S+\s*;' "$file" | grep -v '(' | grep -q .; then
+              echo "::warning file=$file::GRANT EXECUTE should include parameter signature to avoid ambiguity"
+            fi
+
+            ERRORS=$((ERRORS + FILE_ERRORS))
+
+            if [ $FILE_ERRORS -eq 0 ]; then
+              echo "| $BASENAME | ✅ |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| $BASENAME | ❌ $FILE_ERRORS error(s) |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+          if [ $ERRORS -gt 0 ]; then
+            echo ""
+            echo "::error::Migration lint found $ERRORS error(s)"
+            exit 1
+          fi
+
+          echo ""
+          echo "All migrations passed lint checks"
+
   # Build Docker image once, extract dependencies, use for all jobs
   # SMI-708: Optimized to extract node_modules once instead of running npm ci per job
   #
