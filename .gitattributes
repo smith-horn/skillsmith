@@ -1,25 +1,16 @@
-# git-crypt encryption for sensitive documentation and IP
-# Files matching these patterns will be encrypted in the repo
+# git-crypt encryption -- minimal scope
+# Internal docs moved to private submodule (docs/internal/)
+# Only encrypt proprietary code and business logic
+# WARNING: Do NOT add a broad docs/** pattern -- docs/internal/ is a private submodule
 
-# Encrypt all docs (ADRs, implementation plans, architecture)
-docs/** filter=git-crypt diff=git-crypt
+# .claude/ -- encrypt skills and plans (proprietary IP)
+.claude/skills/** filter=git-crypt diff=git-crypt
+.claude/plans/** filter=git-crypt diff=git-crypt
+.claude/hive-mind/** filter=git-crypt diff=git-crypt
 
-# Except public-facing docs that should remain readable
-docs/development/*.md !filter !diff
-docs/templates/*.md !filter !diff
-docs/templates/*.ts !filter !diff
+# supabase/ -- encrypt edge functions and migrations (business logic)
+supabase/functions/** filter=git-crypt diff=git-crypt
+supabase/migrations/** filter=git-crypt diff=git-crypt
 
-# Encrypt .claude directory (agents, skills, commands - IP)
-.claude/** filter=git-crypt diff=git-crypt
-
-# .claude/ exclusions -- config files must remain readable
-.claude/settings.json !filter !diff
-.claude/settings.local.json !filter !diff
-.claude/statusline-command.sh !filter !diff
-.claude/helpers/** !filter !diff
-
-# Encrypt supabase directory (edge functions, migrations - IP)
-supabase/** filter=git-crypt diff=git-crypt
-
-# Except rollback scripts (needed for emergency incident response)
+# supabase/ exclusion -- rollbacks must be readable during emergencies
 supabase/rollbacks/** !filter !diff
