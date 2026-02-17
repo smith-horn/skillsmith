@@ -147,8 +147,10 @@ else
 fi
 
 # Phase 3: Lint and Format (staged files only)
+# SMI-2604: --no-stash prevents lint-staged from running git stash push/pop,
+# which triggers git-crypt smudge filters that silently switch branches.
 echo "${YELLOW}[3/3] Running lint and format on staged files...${NC}"
-if npx lint-staged; then
+if npx lint-staged --no-stash; then
     echo "${GREEN}  ✓ Lint and format passed${NC}"
 else
     echo ""
