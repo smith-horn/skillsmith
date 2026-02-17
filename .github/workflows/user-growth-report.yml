@@ -92,7 +92,6 @@ jobs:
           if [ "$TOTAL_HTTP" -ne 200 ] && [ "$TOTAL_HTTP" -ne 206 ]; then
             echo "supabase_failed=true" >> "$GITHUB_OUTPUT"
             echo "::warning::Supabase total query failed with HTTP ${TOTAL_HTTP}"
-            exit 1
           fi
 
           # New signups in period
@@ -109,7 +108,6 @@ jobs:
           if [ "$NEW_HTTP" -ne 200 ] && [ "$NEW_HTTP" -ne 206 ]; then
             echo "supabase_failed=true" >> "$GITHUB_OUTPUT"
             echo "::warning::Supabase new signups query failed with HTTP ${NEW_HTTP}"
-            exit 1
           fi
 
           # Handle empty table (content-range: */0)
@@ -120,6 +118,89 @@ jobs:
           echo "new_signups=${NEW_COUNT}" >> "$GITHUB_OUTPUT"
           echo "days=${DAYS}" >> "$GITHUB_OUTPUT"
           echo "Supabase: ${TOTAL_COUNT} total signups, ${NEW_COUNT} new in last ${DAYS} days"
+
+      # Assumes license_keys table has usage_count, last_used_at columns
+      # (confirmed in packages/website/src/pages/account/index.astro line 846)
+      - name: Query MCP API Usage
+        id: api_usage
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          INPUT_DAYS: ${{ github.event.inputs.days || '7' }}
+        run: |
+          DAYS="$INPUT_DAYS"
+          SINCE=$(date -u -d "${DAYS} days ago" +%Y-%m-%dT00:00:00Z 2>/dev/null \
+            || date -u -v-${DAYS}d +%Y-%m-%dT00:00:00Z)
+
+          # Validate date calculation succeeded
+          if [ -z "$SINCE" ]; then
+            echo "api_failed=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Date calculation failed for ${DAYS} days ago"
+            exit 0
+          fi
+
+          # URL-encode date for safe query string
+          SINCE_ENCODED=$(printf '%s' "$SINCE" | jq -sRr @uri)
+
+          # Total active API keys (count via content-range header)
+          KEYS_HEADERS=$(curl -s -D - -o /dev/null \
+            "${SUPABASE_URL}/rest/v1/license_keys?select=id&status=eq.active" \
+            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Prefer: count=exact" \
+            -H "Range: 0-0")
+
+          KEYS_HTTP=$(echo "$KEYS_HEADERS" | head -1 | grep -oE '[0-9]{3}')
+          TOTAL_KEYS=$(echo "$KEYS_HEADERS" | grep -i 'content-range' | grep -oE '/[0-9]+' | tr -d '/')
+
+          if [ "$KEYS_HTTP" -ne 200 ] && [ "$KEYS_HTTP" -ne 206 ]; then
+            echo "api_failed=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::API usage query failed with HTTP ${KEYS_HTTP}"
+          fi
+
+          # Keys active in period (used within last N days)
+          # Note: Keys with last_used_at=NULL (never used) are excluded by the gte filter
+          ACTIVE_HEADERS=$(curl -s -D - -o /dev/null \
+            "${SUPABASE_URL}/rest/v1/license_keys?select=id&status=eq.active&last_used_at=gte.${SINCE_ENCODED}" \
+            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Prefer: count=exact" \
+            -H "Range: 0-0")
+
+          ACTIVE_HTTP=$(echo "$ACTIVE_HEADERS" | head -1 | grep -oE '[0-9]{3}')
+          ACTIVE_KEYS=$(echo "$ACTIVE_HEADERS" | grep -i 'content-range' | grep -oE '/[0-9]+' | tr -d '/')
+
+          if [ "$ACTIVE_HTTP" -ne 200 ] && [ "$ACTIVE_HTTP" -ne 206 ]; then
+            echo "api_failed=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Active keys query failed with HTTP ${ACTIVE_HTTP}"
+          fi
+
+          # Lifetime total API calls (sum usage_count across active keys)
+          # Client-side sum — PostgREST default limit is 1000 rows; sufficient at current scale
+          USAGE_RESPONSE=$(curl -s -w "\n%{http_code}" \
+            "${SUPABASE_URL}/rest/v1/license_keys?select=usage_count&status=eq.active" \
+            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}")
+
+          USAGE_HTTP=$(echo "$USAGE_RESPONSE" | tail -n1)
+          USAGE_BODY=$(echo "$USAGE_RESPONSE" | sed '$d')
+
+          if [ "$USAGE_HTTP" -ne 200 ]; then
+            echo "api_failed=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Usage count query failed with HTTP ${USAGE_HTTP}"
+          fi
+
+          TOTAL_CALLS=$(echo "$USAGE_BODY" | jq '[.[].usage_count // 0] | add // 0')
+
+          [ -z "$TOTAL_KEYS" ] && TOTAL_KEYS=0
+          [ -z "$ACTIVE_KEYS" ] && ACTIVE_KEYS=0
+          [ -z "$TOTAL_CALLS" ] && TOTAL_CALLS=0
+
+          echo "total_keys=${TOTAL_KEYS}" >> "$GITHUB_OUTPUT"
+          echo "active_keys=${ACTIVE_KEYS}" >> "$GITHUB_OUTPUT"
+          echo "total_calls=${TOTAL_CALLS}" >> "$GITHUB_OUTPUT"
+          echo "API: ${TOTAL_KEYS} keys, ${ACTIVE_KEYS} active in ${DAYS}d, ${TOTAL_CALLS} lifetime calls"
 
       - name: Authenticate to Google Cloud
         id: auth
@@ -160,14 +241,12 @@ jobs:
           if [ "$HTTP_CODE" -ne 200 ]; then
             echo "ga4_failed=true" >> "$GITHUB_OUTPUT"
             echo "::warning::GA4 API returned HTTP ${HTTP_CODE}"
-            exit 1
           fi
 
           ERROR=$(echo "$BODY" | jq -r '.error.message // empty')
           if [ -n "$ERROR" ]; then
             echo "ga4_failed=true" >> "$GITHUB_OUTPUT"
             echo "::warning::GA4 API error: ${ERROR}"
-            exit 1
           fi
 
           ACTIVE_USERS=$(echo "$BODY" | jq -r '[.rows[]?.metricValues[0].value | tonumber] | add // 0')
@@ -185,6 +264,10 @@ jobs:
           SUPABASE_FAILED: ${{ steps.supabase.outputs.supabase_failed }}
           TOTAL_SIGNUPS: ${{ steps.supabase.outputs.total_signups }}
           NEW_SIGNUPS: ${{ steps.supabase.outputs.new_signups }}
+          API_FAILED: ${{ steps.api_usage.outputs.api_failed }}
+          TOTAL_KEYS: ${{ steps.api_usage.outputs.total_keys }}
+          ACTIVE_KEYS: ${{ steps.api_usage.outputs.active_keys }}
+          TOTAL_CALLS: ${{ steps.api_usage.outputs.total_calls }}
           GA4_FAILED: ${{ steps.ga4.outputs.ga4_failed }}
           ACTIVE_USERS: ${{ steps.ga4.outputs.active_users }}
           NEW_USERS: ${{ steps.ga4.outputs.new_users }}
@@ -196,7 +279,7 @@ jobs:
           echo "### User Growth Report (Last ${DAYS} Days)" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
-          # Section 1: User Growth (Supabase)
+          # Section 1: User Growth (Supabase — first because it's the primary growth metric)
           echo "#### User Growth (Supabase)" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           if [ "$SUPABASE_FAILED" = "true" ]; then
@@ -213,7 +296,25 @@ jobs:
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
-          # Section 2: Website Engagement (GA4)
+          # Section 2: MCP API Usage (Supabase — grouped with Section 1 by auth source)
+          echo "#### MCP API Usage (Supabase)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$API_FAILED" = "true" ]; then
+            echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Status | Unavailable |" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "> API usage query failed. Check license_keys table access." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Total API Keys (active) | ${TOTAL_KEYS} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Keys Used (${DAYS}d) | ${ACTIVE_KEYS} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Lifetime API Calls | ${TOTAL_CALLS} |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          # Section 3: Website Engagement (GA4 — different auth source, placed last)
           echo "#### Website Engagement (GA4)" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           if [ "$GA4_FAILED" = "true" ]; then
@@ -231,9 +332,9 @@ jobs:
           fi
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
-          # Both-failed diagnostic
-          if [ "$SUPABASE_FAILED" = "true" ] && [ "$GA4_FAILED" = "true" ]; then
-            echo "> **Both data sources unavailable.** Check network access, secrets, and API permissions." >> "$GITHUB_STEP_SUMMARY"
+          # All-failed diagnostic (after all sections)
+          if [ "$SUPABASE_FAILED" = "true" ] && [ "$API_FAILED" = "true" ] && [ "$GA4_FAILED" = "true" ]; then
+            echo "> **All data sources unavailable.** Check network access, secrets, and API permissions." >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -254,6 +355,10 @@ jobs:
           SUPABASE_FAILED: ${{ steps.supabase.outputs.supabase_failed }}
           TOTAL_SIGNUPS: ${{ steps.supabase.outputs.total_signups }}
           NEW_SIGNUPS: ${{ steps.supabase.outputs.new_signups }}
+          API_FAILED: ${{ steps.api_usage.outputs.api_failed }}
+          TOTAL_KEYS: ${{ steps.api_usage.outputs.total_keys }}
+          ACTIVE_KEYS: ${{ steps.api_usage.outputs.active_keys }}
+          TOTAL_CALLS: ${{ steps.api_usage.outputs.total_calls }}
           GA4_FAILED: ${{ steps.ga4.outputs.ga4_failed }}
           ACTIVE_USERS: ${{ steps.ga4.outputs.active_users }}
           NEW_USERS: ${{ steps.ga4.outputs.new_users }}
@@ -289,6 +394,23 @@ jobs:
           |--------|-------|
           | Total Signups | ${TOTAL_SIGNUPS} |
           | New Signups (${DAYS}d) | ${NEW_SIGNUPS} |
+          "
+          fi
+
+          BODY+="
+          ### MCP API Usage (Supabase)
+
+          "
+
+          if [ "$API_FAILED" = "true" ]; then
+            BODY+="Data unavailable — check license_keys table access.
+          "
+          else
+            BODY+="| Metric | Value |
+          |--------|-------|
+          | Total API Keys (active) | ${TOTAL_KEYS} |
+          | Keys Used (${DAYS}d) | ${ACTIVE_KEYS} |
+          | Lifetime API Calls | ${TOTAL_CALLS} |
           "
           fi
 
