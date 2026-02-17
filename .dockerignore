@@ -59,6 +59,7 @@ playwright-report
 
 # -----------------------------------------------------------------------------
 # Documentation (not needed in image)
+# Internal docs are in private submodule (docs/internal/); dev docs excluded too
 # -----------------------------------------------------------------------------
 docs
 *.md

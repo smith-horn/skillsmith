@@ -185,7 +185,7 @@ Options:
   • Skip this check: git rebase --no-verify
 ```
 
-This hook was added after the [docs 404 incident](docs/retros/2025-01-22-docs-404-recovery.md) where completed work was lost during a rebase because feature branches were never merged.
+This hook was added after the [docs 404 incident](docs/internal/retros/2025-01-22-docs-404-recovery.md) where completed work was lost during a rebase because feature branches were never merged.
 
 ## Code Quality
 
@@ -203,6 +203,6 @@ Pre-commit hooks will automatically run linting and formatting.
 
 ## Questions?
 
-- Check [docs/architecture/](docs/architecture/) for design decisions
-- Review [docs/adr/](docs/adr/) for architecture decision records
-- See [docs/retros/](docs/retros/) for phase retrospectives
+- Check [docs/internal/architecture/](docs/internal/architecture/) for design decisions (requires submodule init)
+- Review [docs/internal/adr/](docs/internal/adr/) for architecture decision records (requires submodule init)
+- See [docs/internal/retros/](docs/internal/retros/) for phase retrospectives (requires submodule init)

@@ -55,7 +55,8 @@ export interface ClassificationResult {
 // Pattern definitions for each tier
 const TIER_PATTERNS: Record<Tier, string[]> = {
   docs: [
-    'docs/**',
+    'docs/development/**',
+    'docs/templates/**',
     '**/*.md',
     'LICENSE',
     '.github/ISSUE_TEMPLATE/**',
@@ -70,6 +71,7 @@ const TIER_PATTERNS: Record<Tier, string[]> = {
     'vitest.config.ts',
     '.gitignore',
     '.gitattributes',
+    '.gitmodules',
     '.gitleaks.toml',
     '.husky/**',
   ],

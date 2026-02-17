@@ -17,7 +17,7 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 
 ## Docker-First Development
 
-**All code execution MUST happen in Docker.** Native modules require glibc. See [ADR-002](docs/adr/002-docker-glibc-requirement.md).
+**All code execution MUST happen in Docker.** Native modules require glibc. See [ADR-002](docs/internal/adr/002-docker-glibc-requirement.md).
 
 ```bash
 docker compose --profile dev up -d                    # Start container (REQUIRED first)
@@ -53,7 +53,7 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 
 **Change tiers**: `docs` (~30s), `config` (validation), `code` (~11 min full), `deps` (rebuild + audit). Mixed commits trigger full CI. Details: [ci-reference.md](docs/development/ci-reference.md).
 
-**Build**: Uses Turborepo (`npm run build`). Legacy fallback: `npm run build:legacy`. See [ADR-106](docs/adr/106-turborepo-build-orchestration.md).
+**Build**: Uses Turborepo (`npm run build`). Legacy fallback: `npm run build:legacy`. See [ADR-106](docs/internal/adr/106-turborepo-build-orchestration.md).
 
 **Branch protection**: 11 required checks for code PRs, 2 for docs-only. Admin bypass for emergencies. Details: [ci-reference.md](docs/development/ci-reference.md#branch-protection).
 
@@ -70,7 +70,7 @@ packages/
 └── cli/         # @skillsmith/cli - Command-line interface
 ```
 
-**License**: [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license) — See [ADR-013](docs/adr/013-open-core-licensing.md)
+**License**: [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license) — See [ADR-013](docs/internal/adr/013-open-core-licensing.md)
 
 | Tier | Price | API Calls/Month |
 |------|-------|-----------------|
@@ -87,18 +87,21 @@ packages/
 
 ---
 
-## Git-Crypt (Encrypted Documentation)
+## Git-Crypt (Narrowed Scope)
 
-**`docs/`, `.claude/`, and `supabase/` are encrypted.** Exceptions: `docs/development/*.md`, `docs/templates/*.md`, `supabase/rollbacks/**`.
+**Only `.claude/skills/`, `.claude/plans/`, `.claude/hive-mind/`, `supabase/functions/`, and `supabase/migrations/` are encrypted.** Internal docs are in a private submodule at `docs/internal/`.
 
 ```bash
-git-crypt status docs/ | head -5                      # Check if locked
+git-crypt status | head -10                           # Check encryption scope
 varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'  # Unlock
+git submodule update --init                           # Init internal docs (authorized users only)
 ```
+
+**Not encrypted** (always readable): `.claude/settings.json`, `supabase/config.toml`, all `docs/development/`, `docs/templates/`.
 
 **Worktrees**: Unlock main repo first, then `./scripts/create-worktree.sh`. Remove with `./scripts/remove-worktree.sh --prune`.
 
-**Rebasing**: `git pull --rebase` fails due to smudge filter. Use `git format-patch` workaround.
+**Rebasing**: `git pull --rebase` may fail due to smudge filter on remaining encrypted paths. Use `git format-patch` workaround.
 
 **Full guide**: [git-crypt-guide.md](docs/development/git-crypt-guide.md)
 
@@ -150,7 +153,7 @@ varlock load                    # Validate (masked output)
 varlock run -- npm test         # Run with secrets injected
 ```
 
-**Never** `echo $SECRET` or `cat .env`. Never ask users to paste secrets in chat. See [AI Agent Secret Handling](docs/architecture/standards-security.md#411-ai-agent-secret-handling-smi-1956).
+**Never** `echo $SECRET` or `cat .env`. Never ask users to paste secrets in chat. See [AI Agent Secret Handling](docs/internal/architecture/standards-security.md#411-ai-agent-secret-handling-smi-1956).
 
 ---
 
@@ -188,7 +191,7 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 
 **Trust tiers**: verified (official), community (reviewed), experimental (new/beta).
 
-**CLI**: `skillsmith` or `sklx` — `author subagent/transform/mcp-init`, `sync/status/config`. See [ADR-018](docs/adr/018-registry-sync-system.md).
+**CLI**: `skillsmith` or `sklx` — `author subagent/transform/mcp-init`, `sync/status/config`. See [ADR-018](docs/internal/adr/018-registry-sync-system.md).
 
 ---
 
@@ -268,7 +271,7 @@ Published as `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol
 
 **User skills** (`~/.claude/skills/`): linear, mcp-decision-helper, flaky-test-detector, version-sync, ci-doctor, docker-optimizer, security-auditor.
 
-**Embedding**: Real ONNX (~50ms) or mock (<1ms, `SKILLSMITH_USE_MOCK_EMBEDDINGS=true`). See [ADR-009](docs/adr/009-embedding-service-fallback.md). Auto-update check: `SKILLSMITH_AUTO_UPDATE_CHECK=false` to disable.
+**Embedding**: Real ONNX (~50ms) or mock (<1ms, `SKILLSMITH_USE_MOCK_EMBEDDINGS=true`). See [ADR-009](docs/internal/adr/009-embedding-service-fallback.md). Auto-update check: `SKILLSMITH_AUTO_UPDATE_CHECK=false` to disable.
 
 ---
 
@@ -292,14 +295,14 @@ Published as `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol
 
 | Category | Documents |
 |----------|-----------|
-| Architecture | [System Overview](docs/architecture/system-design/system-overview.md), [Skill Dependencies](docs/architecture/system-design/skill-dependencies.md), [Index](docs/architecture/index.md) |
-| Standards | [Engineering](docs/architecture/standards.md), [Database](docs/architecture/standards-database.md), [Astro](docs/architecture/standards-astro.md), [Security](docs/architecture/standards-security.md) |
-| Process | [Context Compaction](docs/process/context-compaction.md), [Linear Hygiene](docs/process/linear-hygiene-guide.md), [Wave Checklist](docs/process/wave-completion-checklist.md) |
+| Architecture | [System Overview](docs/internal/architecture/system-design/system-overview.md), [Skill Dependencies](docs/internal/architecture/system-design/skill-dependencies.md), [Index](docs/internal/architecture/index.md) |
+| Standards | [Engineering](docs/internal/architecture/standards.md), [Database](docs/internal/architecture/standards-database.md), [Astro](docs/internal/architecture/standards-astro.md), [Security](docs/internal/architecture/standards-security.md) |
+| Process | [Context Compaction](docs/internal/process/context-compaction.md), [Linear Hygiene](docs/internal/process/linear-hygiene-guide.md), [Wave Checklist](docs/internal/process/wave-completion-checklist.md) |
 | Development | [Docker](docs/development/docker-guide.md), [Git-Crypt](docs/development/git-crypt-guide.md), [CI](docs/development/ci-reference.md), [Deploy](docs/development/deployment-guide.md), [Claude-Flow](docs/development/claude-flow-guide.md) |
 | Testing | [Stripe](docs/development/stripe-testing.md), [Neural](docs/development/neural-testing.md), [Benchmarks](docs/development/benchmarks.md) |
 | Website | [skillsmith.app/docs](https://skillsmith.app/docs) — Deploy: `cd packages/website && vercel --prod` |
 
-**Linear**: Initiative Skillsmith (SMI-xxx). Authoritative standards: `docs/architecture/standards.md`.
+**Linear**: Initiative Skillsmith (SMI-xxx). Authoritative standards: `docs/internal/architecture/standards.md`.
 
 ---
 

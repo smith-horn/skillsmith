@@ -43,7 +43,7 @@ describe('SMI-2187: CI Change Classifier', () => {
 
   describe('matchesPatterns', () => {
     it('should match glob patterns', () => {
-      expect(matchesPatterns('docs/adr/001.md', ['docs/**'])).toBe(true)
+      expect(matchesPatterns('docs/development/docker-guide.md', ['docs/development/**'])).toBe(true)
       expect(matchesPatterns('README.md', ['**/*.md'])).toBe(true)
       expect(matchesPatterns('packages/core/src/index.ts', ['packages/**/*.ts'])).toBe(true)
     })
@@ -62,7 +62,7 @@ describe('SMI-2187: CI Change Classifier', () => {
   describe('classifyChanges', () => {
     describe('docs tier', () => {
       it('should classify markdown-only changes as docs', () => {
-        const result = classifyChanges(['README.md', 'docs/adr/001.md'])
+        const result = classifyChanges(['README.md', 'docs/development/docker-guide.md'])
         expect(result.tier).toBe('docs')
         expect(result.skipDocker).toBe(true)
         expect(result.skipTests).toBe(true)
@@ -104,6 +104,11 @@ describe('SMI-2187: CI Change Classifier', () => {
 
       it('should classify husky hooks as config', () => {
         const result = classifyChanges(['.husky/pre-commit'])
+        expect(result.tier).toBe('config')
+      })
+
+      it('should classify .gitmodules as config', () => {
+        const result = classifyChanges(['.gitmodules'])
         expect(result.tier).toBe('config')
       })
     })
