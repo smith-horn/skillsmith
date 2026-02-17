@@ -1,0 +1,331 @@
+# Weekly User Growth Report — combines Supabase user data with GA4 engagement metrics
+# Differentiates from analytics-report: this tracks product growth (signups, new users),
+# while analytics-report tracks website traffic (sessions, pageviews, bounce rate).
+# Auth: Supabase service role key (secret) + GitHub OIDC -> WIF -> SA for GA4
+
+name: Weekly User Growth Report
+
+on:
+  schedule:
+    # Every Monday at 9:00 AM UTC (aligned with other Monday reports)
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Number of days to include in report'
+        required: false
+        default: '7'
+        type: string
+      create_issue:
+        description: 'Create GitHub issue with report'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  id-token: write # WIF OIDC for GA4
+  issues: write # Optional issue creation
+
+env:
+  GA4_PROPERTY_ID: ${{ vars.GA4_PROPERTY_ID }}
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+  GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+jobs:
+  growth-report:
+    name: Generate Growth Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Validate Secrets and Variables
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          MISSING=""
+          [ -z "$SUPABASE_URL" ] && MISSING="$MISSING SUPABASE_URL"
+          [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && MISSING="$MISSING SUPABASE_SERVICE_ROLE_KEY"
+          [ -z "$GA4_PROPERTY_ID" ] && MISSING="$MISSING GA4_PROPERTY_ID"
+          [ -z "$GCP_PROJECT_ID" ] && MISSING="$MISSING GCP_PROJECT_ID"
+          [ -z "$GCP_WIF_PROVIDER" ] && MISSING="$MISSING GCP_WIF_PROVIDER"
+          [ -z "$GCP_SERVICE_ACCOUNT" ] && MISSING="$MISSING GCP_SERVICE_ACCOUNT"
+          if [ -n "$MISSING" ]; then
+            echo "::error::Missing required configuration:$MISSING"
+            echo "Secrets: Settings > Secrets and variables > Actions > Secrets"
+            echo "Variables: Settings > Secrets and variables > Actions > Variables"
+            exit 1
+          fi
+
+          # Validate Supabase URL format
+          if ! echo "$SUPABASE_URL" | grep -qE '^https://[a-z0-9-]+\.supabase\.co$'; then
+            echo "::error::SUPABASE_URL format invalid (expected https://<project>.supabase.co)"
+            exit 1
+          fi
+
+          echo "All secrets and variables validated"
+
+      - name: Query Supabase User Data
+        id: supabase
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          INPUT_DAYS: ${{ github.event.inputs.days || '7' }}
+        run: |
+          DAYS="$INPUT_DAYS"
+          SINCE=$(date -u -d "${DAYS} days ago" +%Y-%m-%dT00:00:00Z 2>/dev/null \
+            || date -u -v-${DAYS}d +%Y-%m-%dT00:00:00Z)
+
+          # Total signups via PostgREST count header
+          TOTAL_HEADERS=$(curl -s -D - -o /dev/null \
+            "${SUPABASE_URL}/rest/v1/early_access_signups?select=id" \
+            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Prefer: count=exact" \
+            -H "Range: 0-0")
+
+          TOTAL_HTTP=$(echo "$TOTAL_HEADERS" | head -1 | grep -oE '[0-9]{3}')
+          TOTAL_COUNT=$(echo "$TOTAL_HEADERS" | grep -i 'content-range' | grep -oE '/[0-9]+' | tr -d '/')
+
+          if [ "$TOTAL_HTTP" -ne 200 ] && [ "$TOTAL_HTTP" -ne 206 ]; then
+            echo "supabase_failed=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Supabase total query failed with HTTP ${TOTAL_HTTP}"
+            exit 1
+          fi
+
+          # New signups in period
+          NEW_HEADERS=$(curl -s -D - -o /dev/null \
+            "${SUPABASE_URL}/rest/v1/early_access_signups?select=id&created_at=gte.${SINCE}" \
+            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Prefer: count=exact" \
+            -H "Range: 0-0")
+
+          NEW_HTTP=$(echo "$NEW_HEADERS" | head -1 | grep -oE '[0-9]{3}')
+          NEW_COUNT=$(echo "$NEW_HEADERS" | grep -i 'content-range' | grep -oE '/[0-9]+' | tr -d '/')
+
+          if [ "$NEW_HTTP" -ne 200 ] && [ "$NEW_HTTP" -ne 206 ]; then
+            echo "supabase_failed=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Supabase new signups query failed with HTTP ${NEW_HTTP}"
+            exit 1
+          fi
+
+          # Handle empty table (content-range: */0)
+          [ -z "$TOTAL_COUNT" ] && TOTAL_COUNT=0
+          [ -z "$NEW_COUNT" ] && NEW_COUNT=0
+
+          echo "total_signups=${TOTAL_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "new_signups=${NEW_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "days=${DAYS}" >> "$GITHUB_OUTPUT"
+          echo "Supabase: ${TOTAL_COUNT} total signups, ${NEW_COUNT} new in last ${DAYS} days"
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+          token_format: 'access_token'
+          access_token_scopes: 'https://www.googleapis.com/auth/analytics.readonly'
+
+      - name: Query GA4 Growth Metrics
+        id: ga4
+        continue-on-error: true
+        env:
+          INPUT_DAYS: ${{ github.event.inputs.days || '7' }}
+        run: |
+          DAYS="$INPUT_DAYS"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.access_token }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "dateRanges": [{"startDate": "'"${DAYS}"'daysAgo", "endDate": "today"}],
+              "metrics": [
+                {"name": "activeUsers"},
+                {"name": "newUsers"},
+                {"name": "sessions"}
+              ],
+              "dimensions": [{"name": "date"}],
+              "orderBys": [{"dimension": {"dimensionName": "date"}}]
+            }' \
+            "https://analyticsdata.googleapis.com/v1beta/${GA4_PROPERTY_ID}:runReport")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "ga4_failed=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::GA4 API returned HTTP ${HTTP_CODE}"
+            exit 1
+          fi
+
+          ERROR=$(echo "$BODY" | jq -r '.error.message // empty')
+          if [ -n "$ERROR" ]; then
+            echo "ga4_failed=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::GA4 API error: ${ERROR}"
+            exit 1
+          fi
+
+          ACTIVE_USERS=$(echo "$BODY" | jq -r '[.rows[]?.metricValues[0].value | tonumber] | add // 0')
+          NEW_USERS=$(echo "$BODY" | jq -r '[.rows[]?.metricValues[1].value | tonumber] | add // 0')
+          SESSIONS=$(echo "$BODY" | jq -r '[.rows[]?.metricValues[2].value | tonumber] | add // 0')
+
+          echo "active_users=${ACTIVE_USERS}" >> "$GITHUB_OUTPUT"
+          echo "new_users=${NEW_USERS}" >> "$GITHUB_OUTPUT"
+          echo "sessions=${SESSIONS}" >> "$GITHUB_OUTPUT"
+          echo "GA4: ${ACTIVE_USERS} active, ${NEW_USERS} new, ${SESSIONS} sessions"
+
+      - name: Generate Summary
+        if: always()
+        env:
+          SUPABASE_FAILED: ${{ steps.supabase.outputs.supabase_failed }}
+          TOTAL_SIGNUPS: ${{ steps.supabase.outputs.total_signups }}
+          NEW_SIGNUPS: ${{ steps.supabase.outputs.new_signups }}
+          GA4_FAILED: ${{ steps.ga4.outputs.ga4_failed }}
+          ACTIVE_USERS: ${{ steps.ga4.outputs.active_users }}
+          NEW_USERS: ${{ steps.ga4.outputs.new_users }}
+          SESSIONS: ${{ steps.ga4.outputs.sessions }}
+          DAYS: ${{ steps.supabase.outputs.days || github.event.inputs.days || '7' }}
+        run: |
+          GENERATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          echo "### User Growth Report (Last ${DAYS} Days)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          # Section 1: User Growth (Supabase)
+          echo "#### User Growth (Supabase)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$SUPABASE_FAILED" = "true" ]; then
+            echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Status | Unavailable |" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "> Supabase query failed. Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY secrets." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Total Signups | ${TOTAL_SIGNUPS} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| New Signups (${DAYS}d) | ${NEW_SIGNUPS} |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          # Section 2: Website Engagement (GA4)
+          echo "#### Website Engagement (GA4)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$GA4_FAILED" = "true" ]; then
+            echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Status | Unavailable |" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "> GA4 query failed. Check WIF configuration and GA4 API access." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Active Users | ${ACTIVE_USERS} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| New Users | ${NEW_USERS} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Sessions | ${SESSIONS} |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          # Both-failed diagnostic
+          if [ "$SUPABASE_FAILED" = "true" ] && [ "$GA4_FAILED" = "true" ]; then
+            echo "> **Both data sources unavailable.** Check network access, secrets, and API permissions." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+          echo "*Report generated: ${GENERATED} | Period: ${DAYS} days*" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Ensure growth label exists
+        if: github.event.inputs.create_issue == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create growth --color "22863A" --description "User growth reports and metrics" 2>/dev/null || true
+
+      - name: Create issue if requested
+        if: github.event.inputs.create_issue == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUPABASE_FAILED: ${{ steps.supabase.outputs.supabase_failed }}
+          TOTAL_SIGNUPS: ${{ steps.supabase.outputs.total_signups }}
+          NEW_SIGNUPS: ${{ steps.supabase.outputs.new_signups }}
+          GA4_FAILED: ${{ steps.ga4.outputs.ga4_failed }}
+          ACTIVE_USERS: ${{ steps.ga4.outputs.active_users }}
+          NEW_USERS: ${{ steps.ga4.outputs.new_users }}
+          SESSIONS: ${{ steps.ga4.outputs.sessions }}
+          DAYS: ${{ steps.supabase.outputs.days || github.event.inputs.days || '7' }}
+        run: |
+          GENERATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          REPORT_DATE=$(date +%Y-%m-%d)
+          TITLE="User Growth Report - ${REPORT_DATE} (${DAYS}d)"
+
+          # Check for existing report with same date
+          EXISTING=$(gh issue list --label growth --search "User Growth Report - ${REPORT_DATE}" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "Issue #${EXISTING} already exists for ${REPORT_DATE}, skipping creation"
+            exit 0
+          fi
+
+          # Build issue body
+          BODY="## User Growth Report
+
+          **Period**: Last ${DAYS} days
+          **Generated**: ${GENERATED}
+
+          ### User Growth (Supabase)
+
+          "
+
+          if [ "$SUPABASE_FAILED" = "true" ]; then
+            BODY+="Data unavailable — check Supabase secrets and connectivity.
+          "
+          else
+            BODY+="| Metric | Value |
+          |--------|-------|
+          | Total Signups | ${TOTAL_SIGNUPS} |
+          | New Signups (${DAYS}d) | ${NEW_SIGNUPS} |
+          "
+          fi
+
+          BODY+="
+          ### Website Engagement (GA4)
+
+          "
+
+          if [ "$GA4_FAILED" = "true" ]; then
+            BODY+="Data unavailable — check WIF configuration and GA4 API access.
+          "
+          else
+            BODY+="| Metric | Value |
+          |--------|-------|
+          | Active Users | ${ACTIVE_USERS} |
+          | New Users | ${NEW_USERS} |
+          | Sessions | ${SESSIONS} |
+          "
+          fi
+
+          BODY+="
+          ---
+          *Auto-generated by user-growth-report workflow*"
+
+          gh issue create \
+            --title "$TITLE" \
+            --body "$BODY" \
+            --label "growth"
+
+      - name: Report Failure
+        if: failure()
+        run: |
+          echo "### User Growth Report Failed" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Check the workflow logs for details. Common issues:" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`SUPABASE_URL\` or \`SUPABASE_SERVICE_ROLE_KEY\` secrets not set" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Supabase URL format invalid" >> "$GITHUB_STEP_SUMMARY"
+          echo "- WIF provider misconfigured (check repository variables)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Service account lacks GA4 Viewer role" >> "$GITHUB_STEP_SUMMARY"
+          echo "- GA4 Data API not enabled in GCP project" >> "$GITHUB_STEP_SUMMARY"
