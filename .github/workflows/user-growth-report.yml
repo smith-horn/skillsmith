@@ -137,6 +137,7 @@ jobs:
           if [ -z "$SINCE" ]; then
             echo "api_failed=true" >> "$GITHUB_OUTPUT"
             echo "::warning::Date calculation failed for ${DAYS} days ago"
+            exit 0
           fi
 
           # URL-encode date for safe query string
@@ -176,6 +177,7 @@ jobs:
           fi
 
           # Lifetime total API calls (sum usage_count across active keys)
+          # Client-side sum — PostgREST default limit is 1000 rows; sufficient at current scale
           USAGE_RESPONSE=$(curl -s -w "\n%{http_code}" \
             "${SUPABASE_URL}/rest/v1/license_keys?select=usage_count&status=eq.active" \
             -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
@@ -193,6 +195,7 @@ jobs:
 
           [ -z "$TOTAL_KEYS" ] && TOTAL_KEYS=0
           [ -z "$ACTIVE_KEYS" ] && ACTIVE_KEYS=0
+          [ -z "$TOTAL_CALLS" ] && TOTAL_CALLS=0
 
           echo "total_keys=${TOTAL_KEYS}" >> "$GITHUB_OUTPUT"
           echo "active_keys=${ACTIVE_KEYS}" >> "$GITHUB_OUTPUT"
