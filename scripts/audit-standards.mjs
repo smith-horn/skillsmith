@@ -1062,7 +1062,7 @@ try {
 
 // 19. docs/ Directory Structure Guard (SMI-2607)
 console.log(`\n${BOLD}19. docs/ Directory Structure Guard (SMI-2607)${RESET}`)
-const allowedDocsDirs = ['development', 'templates', 'internal', 'implementation']
+const allowedDocsDirs = ['internal']
 const actualDocsDirs = readdirSync('docs', { withFileTypes: true })
   .filter((d) => d.isDirectory())
   .map((d) => d.name)

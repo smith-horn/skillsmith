@@ -398,7 +398,7 @@ print_summary() {
         echo -e "  ${GREEN}${BOLD}STATUS: READY TO REWRITE${NC}"
         echo ""
         echo "  Next steps:"
-        echo "    1. Send notification to collaborators (see docs/templates/history-rewrite-notification.md)"
+        echo "    1. Send notification to collaborators (see .claude/templates/history-rewrite-notification.md)"
         echo "    2. Merge or close all open PRs"
         echo "    3. Remove all worktrees"
         echo "    4. Execute history rewrite with BFG"

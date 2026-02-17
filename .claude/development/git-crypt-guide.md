@@ -22,7 +22,7 @@ After the git-crypt remediation, encryption is limited to secrets and sensitive 
 | `supabase/config.toml` | Needed for CI without git-crypt |
 | `supabase/rollbacks/**` | Emergency rollback scripts |
 
-**Not encrypted** (always readable): `docs/development/`, `docs/templates/`, `docs/implementation/`. Internal docs (ADRs, architecture, process) are in a private submodule at `docs/internal/`.
+**Not encrypted** (always readable): `.claude/development/`, `.claude/templates/`, `docs/implementation/`. Internal docs (ADRs, architecture, process) are in a private submodule at `docs/internal/`.
 
 ## Setup
 

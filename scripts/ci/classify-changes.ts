@@ -55,8 +55,8 @@ export interface ClassificationResult {
 // Pattern definitions for each tier
 const TIER_PATTERNS: Record<Tier, string[]> = {
   docs: [
-    'docs/development/**',
-    'docs/templates/**',
+    '.claude/development/**',
+    '.claude/templates/**',
     '**/*.md',
     'LICENSE',
     '.github/ISSUE_TEMPLATE/**',

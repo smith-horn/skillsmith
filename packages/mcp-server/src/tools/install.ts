@@ -249,7 +249,7 @@ export async function installSkill(
         tips: [
           'SKILL.md must have YAML frontmatter with name and description fields',
           'Content must be at least 100 characters',
-          'See template: https://github.com/wrsmith108/skillsmith/blob/main/docs/templates/skill-template.md',
+          'See template: https://github.com/wrsmith108/skillsmith/blob/main/.claude/templates/skill-template.md',
         ],
       }
     }

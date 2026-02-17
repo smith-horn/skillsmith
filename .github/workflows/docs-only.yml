@@ -11,7 +11,9 @@ on:
   push:
     branches: [main]
     paths:
-      - 'docs/**'
+      - 'docs/internal/**'
+      - '.claude/development/**'
+      - '.claude/templates/**'
       - '**/*.md'
       - 'LICENSE'
       - '.github/ISSUE_TEMPLATE/**'
@@ -19,7 +21,9 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'docs/**'
+      - 'docs/internal/**'
+      - '.claude/development/**'
+      - '.claude/templates/**'
       - '**/*.md'
       - 'LICENSE'
       - '.github/ISSUE_TEMPLATE/**'
@@ -68,16 +72,15 @@ jobs:
       # SMI-2215: Pinned to SHA for reproducibility (v20 release)
       # To update: check https://github.com/DavidAnson/markdownlint-cli2-action/releases
       # Only lint non-encrypted markdown files.
-      # Most docs/** files are git-crypt encrypted and appear as binary in CI,
-      # producing thousands of false lint errors. Only docs/development/ and
-      # docs/templates/ are excluded from encryption (see .gitattributes).
+      # docs/** files are in a private submodule (not available in CI).
+      # .claude/development/ and .claude/templates/ are unencrypted dev docs.
       - name: Lint markdown files
         uses: DavidAnson/markdownlint-cli2-action@992badcdf24e3b8eb7e87ff9287fe931bcb00c6e
         with:
           globs: |
             *.md
-            docs/development/**/*.md
-            docs/templates/**/*.md
+            .claude/development/**/*.md
+            .claude/templates/**/*.md
             !node_modules/**
             !packages/*/node_modules/**
           config: .markdownlint.json

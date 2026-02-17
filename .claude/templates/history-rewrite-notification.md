@@ -108,4 +108,4 @@ Contact [NAME] via:
 
 ---
 
-*This notification was generated from `docs/templates/history-rewrite-notification.md`.*
+*This notification was generated from `.claude/templates/history-rewrite-notification.md`.*

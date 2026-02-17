@@ -2,6 +2,6 @@
 # These files appear as binary in CI (where git-crypt is not unlocked)
 # and generate thousands of false markdown lint errors
 docs/**
-!docs/development/**
-!docs/templates/**
 .claude/**
+!.claude/development/**
+!.claude/templates/**
