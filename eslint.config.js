@@ -17,9 +17,8 @@ const globalIgnores = {
     '**/vitest.config.integration.ts',
     // Website uses Astro with its own ESLint config - lint separately
     'packages/website/**',
-    // Git-crypt encrypted TS files - templates excluded via .gitattributes
-    'docs/**/*.ts',
-    '!docs/templates/*.ts',
+    // TypeScript template files in .claude/templates/ should be linted
+    '!.claude/templates/*.ts',
     // Git worktrees - lint separately within each worktree context
     'worktrees/**',
   ],

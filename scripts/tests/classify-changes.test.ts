@@ -43,7 +43,7 @@ describe('SMI-2187: CI Change Classifier', () => {
 
   describe('matchesPatterns', () => {
     it('should match glob patterns', () => {
-      expect(matchesPatterns('docs/development/docker-guide.md', ['docs/development/**'])).toBe(
+      expect(matchesPatterns('.claude/development/docker-guide.md', ['docs/development/**'])).toBe(
         true
       )
       expect(matchesPatterns('README.md', ['**/*.md'])).toBe(true)
@@ -64,7 +64,7 @@ describe('SMI-2187: CI Change Classifier', () => {
   describe('classifyChanges', () => {
     describe('docs tier', () => {
       it('should classify markdown-only changes as docs', () => {
-        const result = classifyChanges(['README.md', 'docs/development/docker-guide.md'])
+        const result = classifyChanges(['README.md', '.claude/development/docker-guide.md'])
         expect(result.tier).toBe('docs')
         expect(result.skipDocker).toBe(true)
         expect(result.skipTests).toBe(true)

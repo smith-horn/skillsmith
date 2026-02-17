@@ -8,8 +8,8 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - 'docs/development/**'
-      - 'docs/templates/**'
+      - '.claude/development/**'
+      - '.claude/templates/**'
       - '**/*.md'
       - '!.gitmodules'
       - 'LICENSE'
@@ -18,8 +18,8 @@ on:
   pull_request:
     branches: [main]
     paths-ignore:
-      - 'docs/development/**'
-      - 'docs/templates/**'
+      - '.claude/development/**'
+      - '.claude/templates/**'
       - '**/*.md'
       - '!.gitmodules'
       - 'LICENSE'
