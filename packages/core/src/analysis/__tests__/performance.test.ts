@@ -9,7 +9,7 @@
  * - Memory budget: 500MB
  * - Cache hit rate: > 80%
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'

@@ -5,7 +5,7 @@
  * Enables efficient incremental parsing by detecting minimal
  * edit regions between old and new content.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @module analysis/incremental
  */
 

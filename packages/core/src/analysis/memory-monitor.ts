@@ -4,7 +4,7 @@
  * Monitors memory usage and triggers cleanup when thresholds are exceeded.
  * Integrates with ParseCache for memory pressure handling.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @module analysis/memory-monitor
  */
 

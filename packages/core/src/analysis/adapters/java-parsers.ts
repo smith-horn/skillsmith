@@ -4,7 +4,7 @@
  * Parses Maven pom.xml and Gradle build files to extract dependency information.
  * Extracted from java.ts for better modularity.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  */
 
 /**

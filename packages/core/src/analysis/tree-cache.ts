@@ -7,7 +7,7 @@
  * Tree-sitter trees hold native resources and must be explicitly
  * deleted to free memory. This cache handles that lifecycle.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @module analysis/tree-cache
  */
 

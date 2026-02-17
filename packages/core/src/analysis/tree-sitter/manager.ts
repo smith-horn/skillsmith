@@ -4,7 +4,7 @@
  * Manages tree-sitter parser instances with lazy loading.
  * Uses web-tree-sitter (WASM) to avoid native module conflicts.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @see ADR-002: Docker glibc Requirement
  * @module analysis/tree-sitter/manager
  */

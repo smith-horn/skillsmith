@@ -8,7 +8,7 @@
  * - Generics in class and method declarations
  * - Interfaces, abstract classes, enums, and annotation types
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  */
 
 import { LanguageAdapter, type SupportedLanguage } from './base.js'

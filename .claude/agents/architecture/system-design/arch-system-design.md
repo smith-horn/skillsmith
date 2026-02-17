@@ -51,7 +51,7 @@ capabilities:
   
 constraints:
   allowed_paths:
-    - "docs/architecture/**"
+    - "docs/internal/architecture/**"
     - "docs/design/**"
     - "diagrams/**"
     - "*.md"

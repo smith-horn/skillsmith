@@ -4,7 +4,7 @@
  * Framework detection rules for common Python frameworks and libraries.
  * Extracted from python.ts for better modularity.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  */
 
 import type { FrameworkRule } from './base.js'

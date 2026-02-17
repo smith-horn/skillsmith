@@ -5,7 +5,7 @@
  * Uses Node.js worker_threads for true parallelism,
  * bypassing the single-threaded event loop limitation.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @module analysis/worker-pool
  */
 

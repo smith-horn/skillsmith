@@ -6,7 +6,7 @@
  * Type definitions for multi-language codebase analysis.
  *
  * @see ADR-010: Codebase Analysis Scope
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @module analysis/types
  */
 

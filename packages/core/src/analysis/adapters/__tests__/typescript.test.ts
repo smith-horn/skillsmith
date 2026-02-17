@@ -8,7 +8,7 @@
  * - Async function detection
  * - Backward compatibility with existing analyzer
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'

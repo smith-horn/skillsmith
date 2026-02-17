@@ -5,7 +5,7 @@
  * Exports all language adapter classes and types for multi-language
  * codebase analysis.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  */
 
 // Base adapter class and types

@@ -8,7 +8,7 @@
  * - ParserWorkerPool with mixed language batches
  * - ResultAggregator combining results from multiple languages
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'

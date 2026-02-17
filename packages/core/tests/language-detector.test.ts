@@ -7,7 +7,7 @@
  * - Statistical keyword analysis
  * - Confidence scoring
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  */
 
 import { describe, it, expect } from 'vitest'

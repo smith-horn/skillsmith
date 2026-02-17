@@ -5,7 +5,7 @@
  * imports, exports, and function definitions using regex-based
  * parsing with optional tree-sitter support for incremental parsing.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  */
 
 import { LanguageAdapter, type SupportedLanguage, type FrameworkRule } from './base.js'

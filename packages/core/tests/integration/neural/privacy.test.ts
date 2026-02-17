@@ -13,7 +13,7 @@
  * 6. Privacy audit log records all operations
  *
  * @see packages/core/src/learning/interfaces.ts
- * @see docs/execution/phase5-testing-execution.md
+ * @see docs/internal/execution/phase5-testing-execution.md
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'

@@ -4,7 +4,7 @@
  * Memory-efficient file reading with streaming support for large files.
  * Provides generators for processing files without loading all into memory.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @module analysis/file-streamer
  */
 

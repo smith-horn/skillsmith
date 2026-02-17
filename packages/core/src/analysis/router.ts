@@ -7,7 +7,7 @@
  * Detects file language and dispatches to appropriate adapter.
  * Manages adapter registry and provides unified access to framework rules.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @module analysis/router
  */
 

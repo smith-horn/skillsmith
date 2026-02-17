@@ -5,7 +5,7 @@
  * Aggregates parse results from multiple languages into unified context.
  * Collects imports, exports, and functions across all analyzed files.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @module analysis/aggregator
  */
 

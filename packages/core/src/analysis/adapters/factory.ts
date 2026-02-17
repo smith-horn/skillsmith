@@ -4,7 +4,7 @@
  * Factory class for creating language adapters with lazy instantiation.
  * Avoids unnecessary adapter creation and provides centralized adapter management.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @module analysis/adapters/factory
  */
 

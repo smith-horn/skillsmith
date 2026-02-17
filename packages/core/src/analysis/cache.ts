@@ -5,7 +5,7 @@
  * LRU cache for parse results with content hash validation.
  * Provides memory-based eviction to prevent memory exhaustion.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @module analysis/cache
  */
 
