@@ -346,7 +346,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh label create growth --color "22863A" --description "User growth reports and metrics" 2>/dev/null || true
+          gh label create growth --color "22863A" --description "User growth reports and metrics" --repo "${{ github.repository }}" 2>/dev/null || true
 
       - name: Create issue if requested
         if: github.event.inputs.create_issue == 'true'
@@ -370,7 +370,7 @@ jobs:
           TITLE="User Growth Report - ${REPORT_DATE} (${DAYS}d)"
 
           # Check for existing report with same date
-          EXISTING=$(gh issue list --label growth --search "User Growth Report - ${REPORT_DATE}" --json number --jq '.[0].number // empty')
+          EXISTING=$(gh issue list --label growth --search "User Growth Report - ${REPORT_DATE}" --json number --jq '.[0].number // empty' --repo "${{ github.repository }}")
           if [ -n "$EXISTING" ]; then
             echo "Issue #${EXISTING} already exists for ${REPORT_DATE}, skipping creation"
             exit 0
@@ -438,7 +438,8 @@ jobs:
           gh issue create \
             --title "$TITLE" \
             --body "$BODY" \
-            --label "growth"
+            --label "growth" \
+            --repo "${{ github.repository }}"
 
       - name: Report Failure
         if: failure()
