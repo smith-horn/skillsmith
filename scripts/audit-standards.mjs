@@ -857,6 +857,7 @@ const URL_ALLOWLIST = [
   /support@skillsmith\.app/,
   /staging\.skillsmith\.app/,
   /api\.skillsmith\.app/,
+  /skillsmith\.app redirects to www/i, // Redirect-description context (non-www is intentional)
 ]
 
 {
