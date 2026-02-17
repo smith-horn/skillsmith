@@ -12,6 +12,12 @@ docs/templates/*.ts !filter !diff
 # Encrypt .claude directory (agents, skills, commands - IP)
 .claude/** filter=git-crypt diff=git-crypt
 
+# .claude/ exclusions -- config files must remain readable
+.claude/settings.json !filter !diff
+.claude/settings.local.json !filter !diff
+.claude/statusline-command.sh !filter !diff
+.claude/helpers/** !filter !diff
+
 # Encrypt supabase directory (edge functions, migrations - IP)
 supabase/** filter=git-crypt diff=git-crypt
 
