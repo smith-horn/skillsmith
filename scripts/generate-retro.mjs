@@ -380,7 +380,8 @@ async function main() {
 
     // Determine output path
     const outputPath =
-      output || `docs/retros/phase-${phase.toLowerCase().replace(/\s+/g, '-')}-generated.md`
+      output ||
+      `docs/internal/retros/phase-${phase.toLowerCase().replace(/\s+/g, '-')}-generated.md`
 
     if (dryRun) {
       console.log('\n--- DRY RUN OUTPUT ---\n')
