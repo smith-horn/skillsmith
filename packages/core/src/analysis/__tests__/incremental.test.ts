@@ -7,7 +7,7 @@
  * - Incremental parse: < 100ms
  * - Tree cache hit rate: > 80%
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'

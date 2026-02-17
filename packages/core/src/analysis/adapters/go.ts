@@ -5,7 +5,7 @@
  * using regex-based parsing. Go uses capitalization-based visibility:
  * identifiers starting with uppercase are exported (public).
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  */
 
 import { LanguageAdapter, type SupportedLanguage } from './base.js'

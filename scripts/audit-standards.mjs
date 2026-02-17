@@ -163,17 +163,15 @@ try {
   fail(`Error checking test files: ${e.message}`)
 }
 
-// 5. Standards.md exists (supports both old path and submodule path)
+// 5. Standards.md exists (in private submodule)
 console.log(`\n${BOLD}5. Documentation${RESET}`)
-const standardsPath = existsSync('docs/architecture/standards.md')
-  ? 'docs/architecture/standards.md'
-  : existsSync('docs/internal/architecture/standards.md')
-    ? 'docs/internal/architecture/standards.md'
-    : null
+const standardsPath = existsSync('docs/internal/architecture/standards.md')
+  ? 'docs/internal/architecture/standards.md'
+  : null
 if (standardsPath) {
   pass(`standards.md exists (${standardsPath})`)
 } else {
-  // Standards may be in private submodule not initialized in this environment
+  // Standards are in private submodule — not available without org access
   warn('standards.md not found (init submodule: git submodule update --init)')
 }
 
@@ -183,19 +181,15 @@ if (existsSync('CLAUDE.md')) {
   fail('CLAUDE.md not found', 'Create at project root')
 }
 
-// 6. ADR Directory (supports both old path and submodule path)
+// 6. ADR Directory (in private submodule)
 console.log(`\n${BOLD}6. Architecture Decision Records${RESET}`)
-const adrPath = existsSync('docs/adr')
-  ? 'docs/adr'
-  : existsSync('docs/internal/adr')
-    ? 'docs/internal/adr'
-    : null
+const adrPath = existsSync('docs/internal/adr') ? 'docs/internal/adr' : null
 if (adrPath) {
   const adrs = readdirSync(adrPath).filter((f) => f.endsWith('.md'))
   pass(`${adrPath}/ exists with ${adrs.length} ADRs`)
 } else {
-  // ADRs may be in private submodule not initialized in this environment
-  warn('docs/adr/ not found (init submodule: git submodule update --init)')
+  // ADRs are in private submodule — not available without org access
+  warn('docs/internal/adr/ not found (init submodule: git submodule update --init)')
 }
 
 // 7. Pre-commit Hooks

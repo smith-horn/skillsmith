@@ -7,7 +7,7 @@
  * - Magic bytes detection
  * - Statistical analysis of keywords
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @module analysis/language-detector
  */
 

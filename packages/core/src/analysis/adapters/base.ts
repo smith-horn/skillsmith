@@ -5,7 +5,7 @@
  * Each adapter translates language-specific AST nodes into
  * the unified ParseResult format.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @module analysis/adapters/base
  */
 

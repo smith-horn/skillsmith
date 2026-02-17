@@ -4,7 +4,7 @@
  * TypeScript/JavaScript adapter using the existing TypeScript compiler API.
  * Falls back to tree-sitter for incremental parsing (SMI-1309).
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  */
 
 import { LanguageAdapter, type SupportedLanguage } from './base.js'

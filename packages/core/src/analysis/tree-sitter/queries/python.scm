@@ -4,7 +4,7 @@
 ; from Python files using tree-sitter.
 ;
 ; These queries will be used for incremental parsing in SMI-1309.
-; @see docs/architecture/multi-language-analysis.md
+; @see docs/internal/architecture/multi-language-analysis.md
 
 ; ====================
 ; Import Statements

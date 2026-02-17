@@ -8,7 +8,7 @@
  * to extract context for skill recommendations.
  *
  * @see ADR-010: Codebase Analysis Scope
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  */
 
 // Main analyzer class

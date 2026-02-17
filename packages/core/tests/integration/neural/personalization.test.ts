@@ -15,7 +15,7 @@
  * 8. Personalization disabled by user preference
  *
  * @see packages/core/src/learning/interfaces.ts
- * @see docs/execution/phase5-testing-execution.md
+ * @see docs/internal/execution/phase5-testing-execution.md
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'

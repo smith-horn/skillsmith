@@ -137,6 +137,26 @@ ls docs/internal/adr/                # Verify ADRs are available
 
 The `--recurse-submodules` flag is optional for `git clone`. External contributors can work without the submodule.
 
+## Double-Smudge Recovery
+
+When git-crypt's clean filter runs twice on the same content (e.g., after `.gitattributes` scope changes), files become double-encrypted — unreadable even after `git-crypt unlock`. Apply the smudge filter twice to reverse both encryption layers:
+
+```bash
+# Recover a single double-encrypted file
+git show HEAD:path/to/file | git-crypt smudge | git-crypt smudge > /tmp/recovered-file
+
+# Bulk recover all double-encrypted files in a directory
+for file in $(git ls-tree -r --name-only HEAD -- docs/); do
+  content=$(git show "HEAD:$file" | git-crypt smudge 2>/dev/null | git-crypt smudge 2>/dev/null)
+  if [ -n "$content" ] && ! echo "$content" | head -c 10 | grep -q "GITCRYPT"; then
+    mkdir -p "/tmp/recovered/$(dirname "$file")"
+    echo "$content" > "/tmp/recovered/$file"
+  fi
+done
+```
+
+**When to use**: After changing `.gitattributes` patterns, if previously-encrypted files appear as binary blobs even with git-crypt unlocked. Discovered during the git-crypt remediation (SMI-2603) where this technique recovered all 331 double-encrypted files with zero data loss.
+
 ## History Cleanup
 
 The git history contains encrypted blobs from the pre-migration era. These are harmless — they are unreadable without the git-crypt key and pose no security risk. History rewriting (`git filter-repo`) was considered and rejected because it would rewrite all commit hashes, breaking PR references and contributor attribution. If repo size becomes a concern, this can be revisited as a separate initiative.

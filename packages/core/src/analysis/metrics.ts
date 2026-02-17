@@ -9,7 +9,7 @@
  * - Memory usage (gauge)
  * - Error counts by type (counter)
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @module analysis/metrics
  */
 

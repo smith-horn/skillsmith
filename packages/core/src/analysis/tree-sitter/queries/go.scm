@@ -3,7 +3,7 @@
 ; Tree-sitter queries for extracting imports, exports, functions,
 ; and type definitions from Go source files.
 ;
-; @see docs/architecture/multi-language-analysis.md
+; @see docs/internal/architecture/multi-language-analysis.md
 
 ; ==================================
 ; Package Declaration

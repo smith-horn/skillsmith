@@ -4,7 +4,7 @@
  * Type definitions for the worker thread pool.
  * Extracted from worker-pool.ts for better modularity.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  * @module analysis/worker-types
  */
 

@@ -5,7 +5,7 @@
  * using regex-based parsing. Rust uses explicit `pub` visibility modifiers
  * for public items.
  *
- * @see docs/architecture/multi-language-analysis.md
+ * @see docs/internal/architecture/multi-language-analysis.md
  */
 
 import { LanguageAdapter, type SupportedLanguage } from './base.js'

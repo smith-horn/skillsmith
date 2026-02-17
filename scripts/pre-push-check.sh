@@ -57,8 +57,9 @@ if [ -f .gitattributes ] && grep -q "filter=git-crypt" .gitattributes 2>/dev/nul
     done < <(git diff --name-only 2>/dev/null)
 
     if [ $SMUDGE_ARTIFACT_COUNT -gt 0 ]; then
-      echo -e "${YELLOW}⚠️  Detected ${SMUDGE_ARTIFACT_COUNT} git-crypt smudge artifacts (excluded from format checks)${NC}"
+      echo -e "${YELLOW}⚠️  Detected ${SMUDGE_ARTIFACT_COUNT} git-crypt smudge artifacts${NC}"
       echo -e "${YELLOW}   These are expected in git-crypt repos and do not affect push safety.${NC}"
+      echo -e "${YELLOW}   Encrypted paths are excluded from Prettier via .prettierignore.${NC}"
     fi
   fi
 fi
