@@ -309,6 +309,16 @@ Published as `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol
 
 ---
 
+## Infrastructure Change Policy (ADR-109)
+
+Changes to Docker, CI, entrypoints, hooks, or dev tooling scripts **require SPARC + plan-review before implementation**. Use `/launchpad --infra` (auto-detected) or run SPARC research manually → `docs/internal/implementation/{slug}.md` → plan-review skill → implement.
+
+Trigger paths: `docker-entrypoint.sh`, `Dockerfile`, `docker-compose.yml`, `.github/workflows/`, `.husky/`, `scripts/` (CI/hook files), `vitest.config.ts`, `turbo.json`, `lint-staged.config.js`.
+
+Application code (`packages/*/src/**`) and docs do not require this. See [ADR-109](docs/internal/adr/109-sparc-plan-review-for-infra-changes.md).
+
+---
+
 ## Important Instruction Reminders
 
 Do what has been asked; nothing more, nothing less.
