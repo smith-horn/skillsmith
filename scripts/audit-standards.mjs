@@ -1118,7 +1118,10 @@ console.log(`\n${BOLD}20. Stale Doc Path References in Skills (SMI-2637)${RESET}
       const content = readFileSync(file, 'utf8')
       let match
       while ((match = docsRefRegex.exec(content)) !== null) {
-        const refPath = match[1].replace(/^\.\.\//, '').replace(/^\.\.\//, '').replace(/^\.\.\//, '')
+        const refPath = match[1]
+          .replace(/^\.\.\//, '')
+          .replace(/^\.\.\//, '')
+          .replace(/^\.\.\//, '')
         // Resolve relative to project root
         if (refPath.startsWith('docs/') && !existsSync(refPath)) {
           brokenRefs.push({
