@@ -2,7 +2,7 @@
 /**
  * Linear Hook - Lightweight Linear sync for git hooks
  *
- * Designed for post-commit hooks with the following constraints:
+ * Designed for post-commit and pre-push hooks with the following constraints:
  * - Fast execution (< 2 seconds with timeout)
  * - Fails silently if LINEAR_API_KEY is not set
  * - Never blocks commits on Linear API errors
@@ -10,11 +10,12 @@
  *
  * Usage:
  *   node scripts/linear-hook.mjs post-commit   # After commit, mark issues as in-progress
+ *   node scripts/linear-hook.mjs --batch        # Before push, mark unpushed issues as in-review
  *
- * Issue: SMI-710
+ * Issue: SMI-710, SMI-2633
  */
 
-import { execSync, spawn } from 'child_process'
+import { execSync, execFileSync, spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
@@ -147,6 +148,70 @@ function determineStatus(commitMessage) {
 }
 
 /**
+ * Get unpushed commits and extract issue IDs
+ * Uses git log origin/HEAD..HEAD to get commits not yet pushed
+ */
+function getUnpushedIssues() {
+  try {
+    // Use execFileSync with array args (security pattern — no shell interpolation)
+    const output = execFileSync('git', ['log', 'origin/HEAD..HEAD', '--oneline'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      stdio: ['pipe', 'pipe', 'ignore'], // Suppress stderr if origin/HEAD doesn't exist yet
+    })
+
+    const allText = output
+      .split('\n')
+      .filter((line) => line.trim())
+      .join(' ')
+
+    const issues = extractIssues(allText)
+    return [...new Set(issues)] // Deduplicate
+  } catch (err) {
+    log('Failed to get unpushed commits:', err.message)
+    return []
+  }
+}
+
+/**
+ * Handle batch mode: sync all unpushed issues
+ * Marks issues as "in_review" since code is being pushed for review
+ */
+async function handleBatch() {
+  if (!isLinearAvailable()) {
+    process.exit(0)
+  }
+
+  const issues = getUnpushedIssues()
+  if (issues.length === 0) {
+    log('No unpushed commits with issue IDs found')
+    process.exit(0)
+  }
+
+  log(`Found unpushed issues: ${issues.join(', ')}`)
+
+  // Update issues in parallel with overall timeout (10s for batch)
+  const updatePromises = issues.map((issue) => updateIssueStatus(issue, 'in_review'))
+
+  // Set overall timeout for batch (longer than post-commit since multiple issues)
+  const batchTimeout = 10000
+  const overallTimeout = setTimeout(() => {
+    log('Batch timeout reached, exiting')
+    process.exit(0)
+  }, batchTimeout)
+
+  try {
+    await Promise.all(updatePromises)
+    clearTimeout(overallTimeout)
+  } catch (err) {
+    log('Error in batch updates:', err.message)
+    clearTimeout(overallTimeout)
+  }
+
+  process.exit(0)
+}
+
+/**
  * Handle post-commit hook
  * Extracts issues from commit message and updates their status
  */
@@ -195,14 +260,19 @@ async function main() {
   const [, , command] = process.argv
 
   // Always set a global timeout to ensure we never block
+  const globalTimeout = command === '--batch' ? 15000 : TIMEOUT_MS + 1000
   setTimeout(() => {
     log('Global safety timeout, exiting')
     process.exit(0)
-  }, TIMEOUT_MS + 1000)
+  }, globalTimeout)
 
   switch (command) {
     case 'post-commit':
       await handlePostCommit()
+      break
+
+    case '--batch':
+      await handleBatch()
       break
 
     default:
@@ -211,7 +281,8 @@ async function main() {
 Linear Hook - Git hook integration for Linear
 
 Usage:
-  node scripts/linear-hook.mjs post-commit
+  node scripts/linear-hook.mjs post-commit   # After commit, mark issues as in-progress
+  node scripts/linear-hook.mjs --batch        # Before push, mark unpushed issues as in-review
 
 Environment:
   LINEAR_API_KEY      - Required for Linear API access
