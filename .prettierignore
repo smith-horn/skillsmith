@@ -19,3 +19,6 @@ docs/
 .claude/hive-mind/
 supabase/functions/
 supabase/migrations/
+
+# Local settings (untracked, varies per developer)
+.claude/settings.local.json

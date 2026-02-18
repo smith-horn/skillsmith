@@ -15,7 +15,7 @@
  * Issue: SMI-710, SMI-2633
  */
 
-import { execSync, execFileSync, spawn } from 'child_process'
+import { execFileSync, spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
@@ -64,7 +64,7 @@ function extractIssues(text) {
  */
 function getLastCommitMessage() {
   try {
-    return execSync('git log -1 --format=%B', {
+    return execFileSync('git', ['log', '-1', '--format=%B'], {
       encoding: 'utf-8',
       timeout: 1000,
     }).trim()
@@ -154,7 +154,7 @@ function determineStatus(commitMessage) {
 function getUnpushedIssues() {
   try {
     // Use execFileSync with array args (security pattern — no shell interpolation)
-    const output = execFileSync('git', ['log', 'origin/HEAD..HEAD', '--oneline'], {
+    const output = execFileSync('git', ['log', '@{u}..HEAD', '--oneline'], {
       encoding: 'utf-8',
       timeout: 5000,
       stdio: ['pipe', 'pipe', 'ignore'], // Suppress stderr if origin/HEAD doesn't exist yet
@@ -165,8 +165,7 @@ function getUnpushedIssues() {
       .filter((line) => line.trim())
       .join(' ')
 
-    const issues = extractIssues(allText)
-    return [...new Set(issues)] // Deduplicate
+    return extractIssues(allText)
   } catch (err) {
     log('Failed to get unpushed commits:', err.message)
     return []

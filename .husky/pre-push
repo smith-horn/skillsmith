@@ -119,4 +119,6 @@ fi
 # Phase 5: Linear issue sync (non-blocking, SMI-2633)
 # Syncs SMI-* references from unpushed commits to Linear
 echo "🔄 Syncing Linear issues..."
-node "$(dirname "$0")/../scripts/linear-hook.mjs" --batch 2>/dev/null || echo "⚠️  Linear sync skipped (non-blocking)"
+node "$(dirname "$0")/../scripts/linear-hook.mjs" --batch || echo "⚠️  Linear sync skipped (non-blocking)"
+
+exit 0
