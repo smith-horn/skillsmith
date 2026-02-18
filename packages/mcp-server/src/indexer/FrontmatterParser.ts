@@ -5,6 +5,8 @@
  *
  * Provides YAML frontmatter parsing functionality extracted from LocalIndexer
  * for better modularity and governance compliance.
+ *
+ * Parity: supabase/functions/indexer/frontmatter-parser.ts
  */
 
 /**
@@ -19,11 +21,16 @@ export interface SkillFrontmatter {
   triggers: string[]
 }
 
+/** Parsing mode for the current value being accumulated */
+type ParseMode = 'none' | 'list' | 'block-fold' | 'block-literal' | 'scalar'
+
 /**
  * Parse SKILL.md frontmatter to extract metadata.
  *
  * Supports YAML frontmatter delimited by `---` lines.
  * Extracts name, description, author, tags, version, and triggers.
+ * Handles multi-line values: folded block (>-/>), literal block (|/|-),
+ * and plain multi-line scalars.
  *
  * @param content - Content of the SKILL.md file
  * @returns Parsed frontmatter fields
@@ -43,19 +50,43 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
     return result
   }
 
-  // Find the closing --- delimiter
-  const secondDelimiterIndex = content.indexOf('---', 3)
-  if (secondDelimiterIndex === -1) {
+  // Find the closing --- delimiter using regex to match line boundary
+  const closingMatch = content.match(/\n---(\r?\n|$)/)
+  if (!closingMatch || closingMatch.index === undefined) {
     return result
   }
 
-  // Extract frontmatter content
-  const frontmatter = content.substring(3, secondDelimiterIndex).trim()
+  // Extract frontmatter content between delimiters
+  const frontmatter = content.substring(3, closingMatch.index).trim()
 
-  // Parse YAML-like frontmatter (simple key: value parsing)
   const lines = frontmatter.split('\n')
   let currentKey: string | null = null
-  let inArray = false
+  let currentMode: ParseMode = 'none'
+  let blockLines: string[] = []
+
+  function flushBlock(): void {
+    if (!currentKey || blockLines.length === 0) return
+    const joined = currentMode === 'block-literal' ? blockLines.join('\n') : blockLines.join(' ')
+    assignValue(currentKey, joined)
+    blockLines = []
+  }
+
+  function assignValue(key: string, value: string): void {
+    switch (key) {
+      case 'name':
+        result.name = value
+        break
+      case 'description':
+        result.description = value
+        break
+      case 'author':
+        result.author = value
+        break
+      case 'version':
+        result.version = value
+        break
+    }
+  }
 
   for (const line of lines) {
     const trimmedLine = line.trim()
@@ -64,7 +95,15 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
     if (!trimmedLine) continue
 
     // Check for array item (starts with -)
-    if (trimmedLine.startsWith('- ') && currentKey && inArray) {
+    // Matches in list mode, or when first item after empty-value key (scalar mode)
+    if (
+      trimmedLine.startsWith('- ') &&
+      currentKey &&
+      (currentMode === 'list' || currentMode === 'scalar')
+    ) {
+      if (currentMode === 'scalar') {
+        currentMode = 'list'
+      }
       const value = trimmedLine
         .substring(2)
         .trim()
@@ -77,6 +116,24 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
       continue
     }
 
+    // In block/scalar accumulation: check for continuation lines
+    if (
+      (currentMode === 'block-fold' ||
+        currentMode === 'block-literal' ||
+        currentMode === 'scalar') &&
+      currentKey
+    ) {
+      // Continuation lines start with whitespace and don't look like a key
+      if (line.match(/^\s/) && !line.match(/^[\w-]+:\s*/)) {
+        blockLines.push(trimmedLine)
+        continue
+      }
+      // Not a continuation — flush and fall through
+      flushBlock()
+      currentMode = 'none'
+      currentKey = null
+    }
+
     // Check for key: value pair
     const colonIndex = trimmedLine.indexOf(':')
     if (colonIndex === -1) continue
@@ -84,10 +141,20 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
     const key = trimmedLine.substring(0, colonIndex).trim().toLowerCase()
     const value = trimmedLine.substring(colonIndex + 1).trim()
 
-    // Handle empty value (might be start of array)
+    currentKey = key
+
+    // Handle empty value — defer decision until first continuation line
     if (!value) {
-      currentKey = key
-      inArray = true
+      currentMode = 'scalar'
+      blockLines = []
+      continue
+    }
+
+    // Handle block scalar indicators: >-, >, |, |-
+    const blockMatch = value.match(/^([>|])(-?)$/)
+    if (blockMatch) {
+      currentMode = blockMatch[1] === '>' ? 'block-fold' : 'block-literal'
+      blockLines = []
       continue
     }
 
@@ -102,32 +169,19 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
         result.triggers = items.filter(Boolean)
       }
       currentKey = null
-      inArray = false
+      currentMode = 'none'
       continue
     }
 
-    // Clean quoted values
+    // Clean quoted values and assign
     const cleanValue = value.replace(/^["']|["']$/g, '')
+    assignValue(key, cleanValue)
 
-    // Assign to appropriate field
-    switch (key) {
-      case 'name':
-        result.name = cleanValue
-        break
-      case 'description':
-        result.description = cleanValue
-        break
-      case 'author':
-        result.author = cleanValue
-        break
-      case 'version':
-        result.version = cleanValue
-        break
-    }
-
-    currentKey = key
-    inArray = false
+    currentMode = 'none'
   }
+
+  // Flush any remaining block content
+  flushBlock()
 
   return result
 }
