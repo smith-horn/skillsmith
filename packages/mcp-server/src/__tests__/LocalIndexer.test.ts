@@ -635,9 +635,7 @@ description: >
 # Test`
 
     const result = parseFrontmatter(content)
-    expect(result.description).toBe(
-      'Folded without chomping indicator still joins with spaces.'
-    )
+    expect(result.description).toBe('Folded without chomping indicator still joins with spaces.')
   })
 
   it('should parse literal block scalar with chomping (|-)', () => {
@@ -655,7 +653,8 @@ description: |-
   })
 
   it('should parse frontmatter with \\r\\n line endings', () => {
-    const content = '---\r\nname: crlf-skill\r\ndescription: Windows line endings\r\n---\r\n\r\n# Test'
+    const content =
+      '---\r\nname: crlf-skill\r\ndescription: Windows line endings\r\n---\r\n\r\n# Test'
 
     const result = parseFrontmatter(content)
     expect(result.name).toBe('crlf-skill')

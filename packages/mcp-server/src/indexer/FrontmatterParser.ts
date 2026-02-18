@@ -66,8 +66,7 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
 
   function flushBlock(): void {
     if (!currentKey || blockLines.length === 0) return
-    const joined =
-      currentMode === 'block-literal' ? blockLines.join('\n') : blockLines.join(' ')
+    const joined = currentMode === 'block-literal' ? blockLines.join('\n') : blockLines.join(' ')
     assignValue(currentKey, joined)
     blockLines = []
   }
@@ -97,7 +96,11 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
 
     // Check for array item (starts with -)
     // Matches in list mode, or when first item after empty-value key (scalar mode)
-    if (trimmedLine.startsWith('- ') && currentKey && (currentMode === 'list' || currentMode === 'scalar')) {
+    if (
+      trimmedLine.startsWith('- ') &&
+      currentKey &&
+      (currentMode === 'list' || currentMode === 'scalar')
+    ) {
       if (currentMode === 'scalar') {
         currentMode = 'list'
       }
@@ -115,7 +118,9 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
 
     // In block/scalar accumulation: check for continuation lines
     if (
-      (currentMode === 'block-fold' || currentMode === 'block-literal' || currentMode === 'scalar') &&
+      (currentMode === 'block-fold' ||
+        currentMode === 'block-literal' ||
+        currentMode === 'scalar') &&
       currentKey
     ) {
       // Continuation lines start with whitespace and don't look like a key
