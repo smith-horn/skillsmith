@@ -114,6 +114,17 @@
     "@modelcontextprotocol/sdk": "1.26.0",
     "qs": "^6.14.2",
     "web-vitals": "5.1.0",
-    "ajv": "^8.18.0"
+    "@modelcontextprotocol/sdk": {
+      "ajv": "^8.18.0"
+    },
+    "agentdb": {
+      "ajv": "^8.18.0"
+    },
+    "yaml-language-server": {
+      "ajv": "^8.18.0"
+    },
+    "@vercel/routing-utils": {
+      "ajv": "^8.18.0"
+    }
   }
 }
