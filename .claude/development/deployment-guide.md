@@ -286,6 +286,60 @@ Alerts sent to `support@smithhorn.ca` via Resend when:
 - Weekly ops report detects anomalies (static thresholds + week-over-week trends)
 - 404/archived repos quarantined immediately during metadata refresh (SMI-2560)
 
+### Manual Indexer Triggers
+
+**Env var required for subdirectory search (SMI-2660):**
+
+```bash
+# Enable cross-ecosystem subdirectory search (.gemini/skills, .github/skills, skills/)
+varlock run -- npx supabase secrets set SKILLSMITH_ENABLE_SUBDIRECTORY_SEARCH=true
+
+# Disable (e.g. during rate-limit incidents)
+varlock run -- npx supabase secrets set SKILLSMITH_ENABLE_SUBDIRECTORY_SEARCH=false
+```
+
+**Dry run (safe — no DB writes):**
+
+```bash
+varlock run -- sh -c 'curl -s -X POST \
+  "$SUPABASE_URL/functions/v1/indexer" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"dryRun\": true, \"maxPages\": 1}" | jq .'
+```
+
+**Discovery run (with 7-day freshness filter — safe for synchronous HTTP trigger):**
+
+```bash
+varlock run -- sh -c 'curl -s -X POST \
+  "$SUPABASE_URL/functions/v1/indexer" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"runType\": \"discovery\", \"maxPages\": 3, \"codeSearchMaxPages\": 2, \"maxRepos\": 50}" | jq .'
+```
+
+**⚠️ Maintenance run limitation:** Full maintenance runs (`runType: "maintenance"`, no freshness filter) exceed the Edge Function 150s timeout when `SKILLSMITH_ENABLE_SUBDIRECTORY_SEARCH=true`. Use the nightly 2 AM UTC scheduler for full-corpus scans — it runs asynchronously without the HTTP timeout constraint. Attempting a synchronous maintenance run will hit `WORKER_LIMIT`.
+
+**Stale lock recovery** (if a run crashes before releasing its lock):
+
+```bash
+# 1. Find the stale run_id
+varlock run -- sh -c 'curl -s \
+  "$SUPABASE_URL/rest/v1/indexer_lock?select=locked_by,locked_at&id=eq.1" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "apikey: $SUPABASE_SERVICE_ROLE_KEY"'
+
+# 2. Release it (replace <run_id> with locked_by value from above)
+varlock run -- sh -c 'curl -s -X POST \
+  "$SUPABASE_URL/rest/v1/rpc/release_indexer_lock" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"run_id\": \"<run_id>\"}"'
+```
+
+The lock also auto-expires after 30 minutes if not manually released.
+
 ### Manual Ops Report
 
 ```bash
