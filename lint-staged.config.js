@@ -25,6 +25,11 @@ export default {
   // Astro files: format only (ESLint handled by website's own config)
   '*.astro': ['prettier --write'],
 
+  // Root scripts (*.mjs): format only
+  // ESLint ignores *.mjs globally, so only run Prettier.
+  // SMI-2640: Previously only caught at pre-push Phase 3.
+  '*.mjs': ['prettier --write'],
+
   // Config and documentation files: format only
   '*.{json,md,yml,yaml}': ['prettier --write'],
 }
