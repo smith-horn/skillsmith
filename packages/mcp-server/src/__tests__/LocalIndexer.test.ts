@@ -623,4 +623,42 @@ version: 1.0.0
     expect(result.author).toBe('test-author')
     expect(result.version).toBe('1.0.0')
   })
+
+  it('should parse folded block scalar without chomping (>)', () => {
+    const content = `---
+name: fold-test
+description: >
+  Folded without chomping indicator
+  still joins with spaces.
+---
+
+# Test`
+
+    const result = parseFrontmatter(content)
+    expect(result.description).toBe(
+      'Folded without chomping indicator still joins with spaces.'
+    )
+  })
+
+  it('should parse literal block scalar with chomping (|-)', () => {
+    const content = `---
+name: literal-chomp
+description: |-
+  Line A
+  Line B
+---
+
+# Test`
+
+    const result = parseFrontmatter(content)
+    expect(result.description).toBe('Line A\nLine B')
+  })
+
+  it('should parse frontmatter with \\r\\n line endings', () => {
+    const content = '---\r\nname: crlf-skill\r\ndescription: Windows line endings\r\n---\r\n\r\n# Test'
+
+    const result = parseFrontmatter(content)
+    expect(result.name).toBe('crlf-skill')
+    expect(result.description).toBe('Windows line endings')
+  })
 })
