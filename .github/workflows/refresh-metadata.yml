@@ -51,44 +51,47 @@ jobs:
       - name: Trigger Metadata Refresh
         id: refresh
         run: |
-          # Build request body
           DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
           BATCH_SIZE="${{ github.event.inputs.batch_size || '200' }}"
           STALE_DAYS="${{ github.event.inputs.stale_days || '1' }}"
 
-          BODY=$(cat <<EOF
-          {
-            "batchSize": $BATCH_SIZE,
-            "staleDays": $STALE_DAYS,
-            "dryRun": $DRY_RUN
+          call_refresh() {
+            local batch=$1
+            local body="{\"batchSize\": $batch, \"staleDays\": $STALE_DAYS, \"dryRun\": $DRY_RUN}"
+            echo "Triggering metadata refresh with batch=$batch: $body"
+
+            local response
+            response=$(curl -s -w "\n%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+              -H "Content-Type: application/json" \
+              -d "$body" \
+              "$SUPABASE_URL/functions/v1/skills-refresh-metadata")
+
+            FINAL_HTTP_CODE=$(echo "$response" | tail -n1)
+            FINAL_BODY=$(echo "$response" | sed '$d')
+
+            echo "Response code: $FINAL_HTTP_CODE"
+            echo "Response body: $FINAL_BODY"
           }
-          EOF
-          )
 
-          echo "Triggering metadata refresh with: $BODY"
+          # First attempt with full batch
+          call_refresh "$BATCH_SIZE"
 
-          # Call the Edge Function
-          RESPONSE=$(curl -s -w "\n%{http_code}" \
-            -X POST \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Content-Type: application/json" \
-            -d "$BODY" \
-            "$SUPABASE_URL/functions/v1/skills-refresh-metadata")
+          # Retry with half batch on compute-limit errors (502 Bad Gateway, 546 Worker Limit)
+          if [ "$FINAL_HTTP_CODE" = "502" ] || [ "$FINAL_HTTP_CODE" = "546" ]; then
+            RETRY_BATCH=$(( BATCH_SIZE / 2 ))
+            echo "::warning::Compute limit hit (HTTP $FINAL_HTTP_CODE). Retrying with batch=$RETRY_BATCH in 30s..."
+            sleep 30
+            call_refresh "$RETRY_BATCH"
+          fi
 
-          # Extract status code and body
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
+          # Write final result to step outputs (only once, after potential retry)
+          echo "http_code=$FINAL_HTTP_CODE" >> "$GITHUB_OUTPUT"
+          echo "response=$FINAL_BODY" >> "$GITHUB_OUTPUT"
 
-          echo "Response code: $HTTP_CODE"
-          echo "Response body: $BODY"
-
-          # Set outputs
-          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
-          echo "response=$BODY" >> $GITHUB_OUTPUT
-
-          # Check for success
-          if [ "$HTTP_CODE" -ne 200 ]; then
-            echo "::error::Metadata refresh failed with status $HTTP_CODE"
+          if [ "$FINAL_HTTP_CODE" -ne 200 ]; then
+            echo "::error::Metadata refresh failed with status $FINAL_HTTP_CODE"
             exit 1
           fi
 
