@@ -1074,6 +1074,91 @@ if (unexpectedDirs.length > 0) {
   pass('docs/ contains only allowed subdirectories')
 }
 
+// 20. Stale Doc Path References in Skills (SMI-2637)
+console.log(`\n${BOLD}20. Stale Doc Path References in Skills (SMI-2637)${RESET}`)
+
+{
+  const skillsDir = '.claude/skills'
+  if (existsSync(skillsDir)) {
+    const skillMdFiles = getFilesRecursive(skillsDir, ['.md'])
+    const staleRefs = []
+
+    // Match docs/ paths in markdown links and plain text references
+    // Captures: docs/architecture/..., docs/adr/..., docs/process/..., docs/execution/...
+    // These old paths should now be docs/internal/...
+    const docPathRegex =
+      /(?:docs\/(?:architecture|adr|process|execution|retros|code_review)\/[^\s)'"]+)/g
+
+    for (const file of skillMdFiles) {
+      const content = readFileSync(file, 'utf8')
+      const lines = content.split('\n')
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]
+        // Skip YAML frontmatter
+        if (line.trim().startsWith('#') && line.includes('comment')) continue
+        const matches = line.match(docPathRegex)
+        if (matches) {
+          for (const match of matches) {
+            staleRefs.push({
+              file: relative(process.cwd(), file),
+              line: i + 1,
+              path: match,
+            })
+          }
+        }
+      }
+    }
+
+    // Also check for docs/ references that point to non-existent files
+    const docsRefRegex = /(?:\(|]\()([^)]*docs\/[^)]+)\)/g
+    const brokenRefs = []
+
+    for (const file of skillMdFiles) {
+      const content = readFileSync(file, 'utf8')
+      let match
+      while ((match = docsRefRegex.exec(content)) !== null) {
+        const refPath = match[1]
+          .replace(/^\.\.\//, '')
+          .replace(/^\.\.\//, '')
+          .replace(/^\.\.\//, '')
+        // Resolve relative to project root
+        if (refPath.startsWith('docs/') && !existsSync(refPath)) {
+          brokenRefs.push({
+            file: relative(process.cwd(), file),
+            path: refPath,
+          })
+        }
+      }
+    }
+
+    if (staleRefs.length === 0 && brokenRefs.length === 0) {
+      pass('No stale or broken doc path references in project skills')
+    } else {
+      if (staleRefs.length > 0) {
+        fail(
+          `${staleRefs.length} stale doc path(s) in skills (should be docs/internal/...)`,
+          'Update paths from docs/<old>/ to docs/internal/<new>/'
+        )
+        staleRefs.slice(0, 5).forEach(({ file, line, path }) => {
+          console.log(`    ${file}:${line} — ${path}`)
+        })
+      }
+      if (brokenRefs.length > 0) {
+        warn(
+          `${brokenRefs.length} broken doc link(s) in skills (file does not exist)`,
+          'Update or remove broken links'
+        )
+        brokenRefs.slice(0, 5).forEach(({ file, path }) => {
+          console.log(`    ${file} → ${path}`)
+        })
+      }
+    }
+  } else {
+    warn('.claude/skills/ directory not found - skipping stale doc path check')
+  }
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)
