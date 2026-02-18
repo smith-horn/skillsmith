@@ -498,3 +498,129 @@ describe('Singleton functions', () => {
     expect(indexer1).not.toBe(indexer2)
   })
 })
+
+/**
+ * Multi-line YAML parity tests
+ * Fixtures shared with: supabase/functions/indexer/frontmatter-parser.test.ts
+ */
+describe('parseFrontmatter: multi-line YAML scalars (parity)', () => {
+  it('should parse folded block scalar (>-)', () => {
+    const content = `---
+name: docs-changelog
+description: >-
+  Generates and formats changelog files for a new release based on provided
+  version and raw changelog data.
+---
+
+# Procedure`
+
+    const result = parseFrontmatter(content)
+    expect(result.name).toBe('docs-changelog')
+    expect(result.description).toBe(
+      'Generates and formats changelog files for a new release based on provided version and raw changelog data.'
+    )
+  })
+
+  it('should parse plain multi-line scalar', () => {
+    const content = `---
+name: pr-creator
+description:
+  Use this skill when asked to create a pull request (PR). It ensures all PRs
+  follow the repository's established templates and standards.
+---
+
+# PR Creator`
+
+    const result = parseFrontmatter(content)
+    expect(result.name).toBe('pr-creator')
+    expect(result.description).toBe(
+      "Use this skill when asked to create a pull request (PR). It ensures all PRs follow the repository's established templates and standards."
+    )
+  })
+
+  it('should parse literal block scalar (|)', () => {
+    const content = `---
+name: literal-test
+description: |
+  Line 1
+  Line 2
+  Line 3
+---
+
+# Test`
+
+    const result = parseFrontmatter(content)
+    expect(result.description).toBe('Line 1\nLine 2\nLine 3')
+  })
+
+  it('should parse block scalar followed by inline key', () => {
+    const content = `---
+name: mixed-test
+description: >-
+  Multi-line description that spans
+  two lines.
+author: google
+---
+
+# Test`
+
+    const result = parseFrontmatter(content)
+    expect(result.description).toBe('Multi-line description that spans two lines.')
+    expect(result.author).toBe('google')
+  })
+
+  it('should handle empty-value key followed by list items', () => {
+    const content = `---
+name: list-test
+triggers:
+  - create PR
+  - make PR
+---
+
+# Test`
+
+    const result = parseFrontmatter(content)
+    expect(result.triggers).toEqual(['create PR', 'make PR'])
+  })
+
+  it('should handle colon-in-value within block scalar', () => {
+    const content = `---
+name: colon-test
+description: >-
+  Use key: value pairs to configure
+  the skill settings.
+---
+
+# Test`
+
+    const result = parseFrontmatter(content)
+    expect(result.description).toBe('Use key: value pairs to configure the skill settings.')
+  })
+
+  it('should handle missing frontmatter (code-reviewer fallback)', () => {
+    const content = `# Code Reviewer
+
+This skill guides the agent in conducting professional code reviews.`
+
+    const result = parseFrontmatter(content)
+    expect(result.name).toBeNull()
+    expect(result.description).toBeNull()
+  })
+
+  it('should parse single-line values (regression baseline)', () => {
+    const content = `---
+name: test-skill
+description: A test skill for testing
+author: test-author
+version: 1.0.0
+---
+
+# Test`
+
+    const result = parseFrontmatter(content)
+    expect(result.name).toBe('test-skill')
+    expect(result.description).toBe('A test skill for testing')
+    expect(result.author).toBe('test-author')
+    expect(result.version).toBe('1.0.0')
+  })
+})
