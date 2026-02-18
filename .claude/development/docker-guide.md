@@ -10,6 +10,47 @@ docker compose --profile dev down       # Stop container
 docker logs skillsmith-dev-1            # View logs
 ```
 
+## Worktree First Start
+
+When starting a Docker container in a **fresh git worktree** for the first time, `docker-entrypoint.sh` automatically runs `npm run build` before validating native modules.
+
+**Why this happens**: The `docker-compose.yml` bind mount (`- .:/app`) overlays the host working directory over `/app` at container start. This erases `packages/*/dist/` compiled into the Docker image during build. In a fresh worktree, the host has no `dist/` (gitignored and never committed), so the entrypoint rebuilds it. After the first start, `dist/` exists on the host and all subsequent starts skip the build.
+
+```bash
+# First start — expect ~30-45 seconds of build output:
+docker compose --profile dev up -d
+docker logs <worktree-container-name>
+# [entrypoint] Checking dist/ outputs...
+#   ✗ dist/ not found (first container start) — building packages...
+#   This is a one-time cost per worktree (until dist/ is manually removed).
+#   ✓ Build complete.
+# [entrypoint] dist/ outputs ready.
+
+# Subsequent starts are instant (dist/ now on host):
+docker compose --profile dev down && docker compose --profile dev up -d
+# [entrypoint] Checking dist/ outputs...
+#   ✓ dist/ found — skipping build.
+# [entrypoint] dist/ outputs ready.
+```
+
+**If the build fails**, the container exits with code 1. Run the build manually to see the full TypeScript error, fix it, then restart:
+
+```bash
+docker exec <container-name> npm run build    # See full Turbo/tsc output
+docker compose --profile dev down
+docker compose --profile dev up -d
+```
+
+**If node_modules is missing** (e.g., after `docker volume rm`), the entrypoint exits before attempting the build:
+
+```bash
+docker compose --profile dev up -d            # Exits 1: "node_modules not initialised"
+docker exec <container-name> npm install      # Re-initialise
+docker compose --profile dev down && docker compose --profile dev up -d
+```
+
+**After `docker volume rm skillsmith_node_modules`** (common troubleshooting step), Turbo's cache is also lost. The next `npm run build` is a full cold build (~30-45s). This is expected — volume removal resets all cached state.
+
 ## Container Rebuild
 
 The Docker volume `node_modules` persists across container restarts. Use the appropriate method based on change scope.
@@ -45,6 +86,7 @@ docker compose --profile dev up -d
 | Native module issues (better-sqlite3, onnxruntime) | Full Rebuild |
 | TypeScript errors after `npm install` | Full Rebuild |
 | `NODE_MODULE_VERSION` mismatch | Full Rebuild |
+| Fresh worktree (no dist/ on host) | Automatic — entrypoint builds on first start |
 
 See [ADR-012: Native Module Version Management](../adr/012-native-module-version-management.md).
 
