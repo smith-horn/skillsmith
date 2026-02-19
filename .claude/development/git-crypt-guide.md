@@ -90,6 +90,11 @@ The script handles:
 2. Creates worktree with `--no-checkout` to avoid smudge filter errors
 3. Copies git-crypt keys to worktree's gitdir
 4. Checks out files with decryption working
+   - 4b. Initializes submodules (`docs/internal`)
+   - 4c. Scans `.claude/skills/**` for encrypted files; warns with `varlock run -- git-crypt unlock` command if any remain binary (SMI-2676)
+5. Generates Docker override file
+
+**If step 4c warns**: skills like `/launchpad` Stage 4 (`hive-mind-execution`) will silently degrade until git-crypt is unlocked in the worktree. Run the printed unlock command before using `/launchpad`.
 
 ### Manual Method
 
