@@ -173,7 +173,7 @@ Or if you have the key path directly:
 
             if [[ -n "$test_file" ]] && [[ -f "$test_file" ]]; then
                 # Check if file starts with git-crypt binary header
-                if head -c 10 "$test_file" 2>/dev/null | grep -q "GITCRYPT"; then
+                if is_git_crypt_encrypted "$test_file"; then
                     error "git-crypt appears to be locked. Found encrypted file: $test_file
 
 Please unlock git-crypt first:
@@ -184,6 +184,67 @@ Please unlock git-crypt first:
     fi
 
     success "git-crypt is unlocked in main repository"
+}
+
+#######################################
+# Check if a file is git-crypt encrypted
+# Uses xxd for cross-platform compatibility (macOS + Linux)
+# Returns: 0 if encrypted, 1 if not encrypted or xxd unavailable
+#######################################
+is_git_crypt_encrypted() {
+    local file="$1"
+    local header
+
+    # Require xxd for reliable cross-platform binary detection
+    if ! command -v xxd >/dev/null 2>&1; then
+        return 1  # Cannot determine; treat as not encrypted (non-fatal)
+    fi
+
+    header=$(head -c 4 "$file" 2>/dev/null | xxd -p 2>/dev/null || echo "")
+    # git-crypt binary header: \x00GIT = 00 47 49 54 (4-byte read = exactly 8 hex chars)
+    [[ "$header" == "00474954" ]]
+}
+
+#######################################
+# Verify project-level skill files are readable after worktree checkout
+# Warns if any agent-prompt.md or SKILL.md files remain git-crypt encrypted
+#######################################
+verify_skill_readability() {
+    local worktree_path="$1"
+    local skills_dir="$worktree_path/.claude/skills"
+    local encrypted_count=0
+    local checked_count=0
+
+    if [[ ! -d "$skills_dir" ]]; then
+        return 0
+    fi
+
+    # Skip silently if xxd unavailable
+    if ! command -v xxd >/dev/null 2>&1; then
+        info "  xxd not available — skill readability check skipped"
+        return 0
+    fi
+
+    while IFS= read -r -d '' skill_file; do
+        checked_count=$((checked_count + 1))
+        if is_git_crypt_encrypted "$skill_file"; then
+            warn "Skill appears encrypted: ${skill_file#"$worktree_path/"}"
+            encrypted_count=$((encrypted_count + 1))
+        fi
+    done < <(find "$skills_dir" \( -name "agent-prompt.md" -o -name "SKILL.md" \) -print0 2>/dev/null)
+
+    if [[ $encrypted_count -gt 0 ]]; then
+        echo ""
+        warn "$encrypted_count of $checked_count skill file(s) are encrypted in this worktree."
+        warn "Skills requiring git-crypt (e.g., /launchpad Stage 4 hive-mind-execution) will silently degrade."
+        echo ""
+        echo "To unlock:"
+        echo "  cd $worktree_path"
+        echo "  varlock run -- sh -c 'git-crypt unlock \"\${GIT_CRYPT_KEY_PATH/#\\~/$HOME}\"'"
+        echo ""
+    elif [[ $checked_count -gt 0 ]]; then
+        success "  All $checked_count skill file(s) readable (git-crypt decryption verified)"
+    fi
 }
 
 #######################################
@@ -347,13 +408,17 @@ create_worktree() {
             warn "Submodule init failed (requires org access for private submodule)"
     fi
 
+    # Step 4c: Verify project-level skill readability
+    info "Step 4c: Verifying project-level skill readability..."
+    verify_skill_readability "$worktree_path"
+
     # Step 5: Generate Docker override file (if docker-compose.yml exists)
     if [[ -f "$worktree_path/docker-compose.yml" ]]; then
-        info "Step 5/5: Generating Docker override file..."
+        info "Step 5: Generating Docker override file..."
         generate_docker_override "$worktree_path" "$branch_name"
         success "  Docker override file created"
     else
-        info "Step 5/5: Skipping Docker setup (no docker-compose.yml found)"
+        info "Step 5: Skipping Docker setup (no docker-compose.yml found)"
     fi
 
     echo ""
