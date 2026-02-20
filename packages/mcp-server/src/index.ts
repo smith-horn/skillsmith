@@ -39,15 +39,23 @@ import {
   TIER1_SKILLS,
 } from './onboarding/first-run.js'
 import { checkForUpdates, formatUpdateNotification } from '@skillsmith/core'
+import { createLicenseMiddleware } from './middleware/license.js'
+import { createQuotaMiddleware } from './middleware/quota.js'
 
 // Package version - keep in sync with package.json
-const PACKAGE_VERSION = '0.3.17'
+const PACKAGE_VERSION = '0.4.0'
 const PACKAGE_NAME = '@skillsmith/mcp-server'
 import {
   installBundledSkills,
   installUserDocs,
   getUserGuidePath,
 } from './onboarding/install-assets.js'
+
+// SMI-2679: Quota enforcement middleware — module-level singletons, initialized once
+// licenseMiddleware uses a cache (TTL) so the first-call @skillsmith/enterprise lazy-load
+// latency (~10-50ms) is not incurred on every tool invocation.
+const licenseMiddleware = createLicenseMiddleware()
+const quotaMiddleware = createQuotaMiddleware()
 
 // Initialize tool context with database connection
 let toolContext: ToolContext
@@ -70,7 +78,7 @@ const toolDefinitions = [
 const server = new Server(
   {
     name: 'skillsmith',
-    version: '0.3.17',
+    version: '0.4.0',
   },
   {
     capabilities: {
@@ -188,7 +196,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'skill_suggest': {
+        // Validate input first — quota must not be consumed for malformed requests.
         const input = suggestInputSchema.parse(args)
+        // SMI-2679: Enforce monthly API quota. buildExceededResponse returns
+        // MCPErrorResponse (content + isError:true) — returned directly, not thrown.
+        // getLicenseInfo failures fall back to community tier via the inner catch.
+        let licenseInfo = null
+        try {
+          licenseInfo = await licenseMiddleware.getLicenseInfo()
+        } catch {
+          // Enterprise package absent or network error — degrade to community tier.
+        }
+        const quotaResult = await quotaMiddleware.checkAndTrack('skill_suggest', licenseInfo)
+        if (!quotaResult.allowed) {
+          return quotaMiddleware.buildExceededResponse(quotaResult)
+        }
         const result = await executeSuggest(input, toolContext)
         return {
           content: [
