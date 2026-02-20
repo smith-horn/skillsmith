@@ -2,6 +2,12 @@
 
 MCP (Model Context Protocol) server for agent skill discovery, installation, and management.
 
+## What's New in v0.4.0
+
+- **Quota-based throttling** (SMI-2679): `skill_suggest` now counts against your monthly API quota instead of an undocumented per-session rate limit. Community (1,000/mo), Individual (10,000/mo), Team (100,000/mo), Enterprise (unlimited). See [www.skillsmith.app/pricing](https://www.skillsmith.app/pricing).
+- **Graceful license degradation**: If the enterprise license check is unavailable, `skill_suggest` falls back to community-tier defaults rather than returning a hard error.
+- **5,575 tests passing** across all packages.
+
 ## What's New in v0.3.18
 
 - **Async Initialization** (SMI-2205): Server initializes asynchronously for faster startup
@@ -14,7 +20,7 @@ MCP (Model Context Protocol) server for agent skill discovery, installation, and
 The MCP server checks for updates on startup and notifies you when a newer version is available:
 
 ```
-[skillsmith] Update available: 0.3.17 → 0.3.18
+[skillsmith] Update available: 0.3.20 → 0.4.0
 Restart your MCP client to use the latest version.
 ```
 
@@ -142,7 +148,7 @@ All tiers include:
 | `skill_recommend` | Get contextual skill recommendations | `"Recommend skills for React"` |
 | `skill_validate` | Validate a skill's structure | `"Validate the commit skill"` |
 | `skill_compare` | Compare skills side-by-side | `"Compare jest-helper and vitest-helper"` |
-| `skill_suggest` | Suggest skills based on context | `"Suggest skills for my project"` |
+| `skill_suggest` | Suggest skills based on project context (counts against monthly quota) | `"Suggest skills for my project"` |
 
 ## Tool Parameters
 
@@ -206,6 +212,20 @@ Compare multiple skills side-by-side.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `skill_ids` | string[] | Yes | Array of skill IDs to compare (2-5) |
+
+### skill_suggest
+
+Proactively suggest relevant skills based on current project context. Counts against your monthly API quota.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `project_path` | string | Yes | Absolute path to the project directory |
+| `current_file` | string | No | File currently being edited |
+| `recent_commands` | string[] | No | Recent terminal commands (last 5) |
+| `error_message` | string | No | Recent error message, if any |
+| `installed_skills` | string[] | No | Currently installed skill IDs (for filtering) |
+| `limit` | number | No | Max suggestions to return (default 3, max 10) |
+| `session_id` | string | No | Session identifier (optional, for informational purposes) |
 
 ## Trust Tiers
 
