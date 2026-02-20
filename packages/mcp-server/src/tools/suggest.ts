@@ -10,7 +10,6 @@
  * - Project structure analysis
  *
  * Features:
- * - Rate limiting (max 1 suggestion per 5 minutes per session)
  * - Context scoring to filter low-relevance suggestions
  * - Integration with CodebaseAnalyzer
  * - Semantic skill matching
@@ -29,7 +28,6 @@ import { z } from 'zod'
 import { TriggerDetector, ContextScorer } from '@skillsmith/core'
 import { CodebaseAnalyzer } from '@skillsmith/core'
 import { SkillMatcher } from '@skillsmith/core'
-import { RateLimiter } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import type { MCPTrustTier as TrustTier } from '@skillsmith/core'
 import { mapTrustTierFromDb, getTrustBadge } from '../utils/validation.js'
@@ -50,7 +48,7 @@ export const suggestInputSchema = z.object({
   installed_skills: z.array(z.string()).default([]),
   /** Maximum suggestions to return (default 3) */
   limit: z.number().min(1).max(10).default(3),
-  /** Session ID for rate limiting */
+  /** Session identifier (optional, for informational purposes) */
   session_id: z.string().default('default'),
 })
 
@@ -87,10 +85,6 @@ export interface SuggestResponse {
   suggestions: SkillSuggestion[]
   /** Overall context relevance score (0-1) */
   context_score: number
-  /** Whether request was rate limited */
-  rate_limited: boolean
-  /** When next suggestion is allowed (ISO timestamp) */
-  next_suggestion_at?: string
   /** Which triggers fired */
   triggers_fired: string[]
   /** Performance timing */
@@ -107,7 +101,7 @@ export interface SuggestResponse {
 export const suggestToolSchema = {
   name: 'skill_suggest',
   description:
-    'Proactively suggest relevant skills based on current context (files, commands, errors, project structure). Rate-limited to max 1 per 5 minutes per session.',
+    'Proactively suggest relevant skills based on current context (files, commands, errors, project structure). Counts against your monthly API quota (Community: 1,000/mo — see www.skillsmith.app/pricing).',
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -142,7 +136,8 @@ export const suggestToolSchema = {
       },
       session_id: {
         type: 'string',
-        description: 'Session ID for rate limiting (default: "default")',
+        description:
+          'Session identifier (optional, for informational purposes — default: "default")',
         default: 'default',
       },
     },
@@ -217,27 +212,6 @@ async function loadSkillsFromDatabase(
   return result.items.map(transformSkillToMatchData)
 }
 
-// Rate limiter instance (singleton)
-let rateLimiter: RateLimiter | null = null
-
-/**
- * Get or create the rate limiter
- */
-function getRateLimiter(): RateLimiter {
-  if (!rateLimiter) {
-    // Use STRICT preset: 10 requests per minute = ~1 per 6 seconds
-    // For suggestions, we want max 1 per 5 minutes, so we'll use custom config
-    rateLimiter = new RateLimiter({
-      maxTokens: 1, // Only 1 suggestion at a time
-      refillRate: 1 / 300, // 1 token per 300 seconds (5 minutes)
-      windowMs: 300000, // 5 minute window
-      keyPrefix: 'suggest',
-      failMode: 'open', // Allow on errors (graceful degradation)
-    })
-  }
-  return rateLimiter
-}
-
 /**
  * Execute skill suggestion based on context.
  *
@@ -262,32 +236,8 @@ export async function executeSuggest(
 
   // Validate input
   const validated = suggestInputSchema.parse(input)
-  const {
-    project_path,
-    current_file,
-    recent_commands,
-    error_message,
-    installed_skills,
-    limit,
-    session_id,
-  } = validated
-
-  // Check rate limit
-  const limiter = getRateLimiter()
-  const rateLimitResult = await limiter.checkLimit(session_id)
-
-  if (!rateLimitResult.allowed) {
-    return {
-      suggestions: [],
-      context_score: 0,
-      rate_limited: true,
-      next_suggestion_at: rateLimitResult.resetAt,
-      triggers_fired: [],
-      timing: {
-        totalMs: Math.round(performance.now() - startTime),
-      },
-    }
-  }
+  const { project_path, current_file, recent_commands, error_message, installed_skills, limit } =
+    validated
 
   const analysisStart = performance.now()
 
@@ -324,7 +274,6 @@ export async function executeSuggest(
     return {
       suggestions: [],
       context_score: contextScore.score,
-      rate_limited: false,
       triggers_fired: contextScore.triggers,
       timing: {
         totalMs: Math.round(performance.now() - startTime),
@@ -384,7 +333,6 @@ export async function executeSuggest(
   return {
     suggestions,
     context_score: contextScore.score,
-    rate_limited: false,
     triggers_fired: contextScore.triggers,
     timing: {
       totalMs,
@@ -401,14 +349,6 @@ export function formatSuggestions(response: SuggestResponse): string {
   const lines: string[] = []
 
   lines.push('\n=== Skill Suggestions ===\n')
-
-  if (response.rate_limited) {
-    lines.push('Rate limited. Please wait before requesting more suggestions.')
-    if (response.next_suggestion_at) {
-      lines.push(`Next suggestion available at: ${response.next_suggestion_at}`)
-    }
-    return lines.join('\n')
-  }
 
   if (response.suggestions.length === 0) {
     lines.push('No relevant suggestions at this time.')

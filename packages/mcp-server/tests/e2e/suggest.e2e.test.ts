@@ -10,7 +10,7 @@
  * User Journey: Proactive skill suggestions based on context
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { existsSync, rmSync, mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir, homedir } from 'os'
@@ -233,68 +233,54 @@ describe('E2E: skill_suggest tool', () => {
     })
   })
 
-  describe('Rate Limiting', () => {
-    // Use fake timers to prevent CI flakiness from timing variations
-    // The rate limiter uses Date.now() internally, so we control time explicitly
-    const FIXED_TIME = new Date('2025-01-01T12:00:00.000Z').getTime()
-    let testCounter = 0
+  describe('Quota Behaviour', () => {
+    // SMI-2679: Per-session RateLimiter removed. skill_suggest is now throttled
+    // exclusively by the monthly API quota enforced in index.ts via checkAndTrack.
+    // executeSuggest itself imposes no per-call throttle.
 
-    beforeEach(() => {
-      vi.useFakeTimers()
-      vi.setSystemTime(FIXED_TIME)
-      testCounter++
+    it('should not contain rate_limited field in response', async () => {
+      const result = await executeSuggest({ project_path: TEST_PROJECT_DIR, limit: 3 }, context)
+
+      expect(result).not.toHaveProperty('rate_limited')
+      expect(result).not.toHaveProperty('next_suggestion_at')
     })
 
-    afterEach(() => {
-      vi.useRealTimers()
-    })
+    it('should not throttle consecutive calls from the same session', async () => {
+      const sessionId = 'quota-behaviour-consecutive'
 
-    it('should rate limit rapid requests', async () => {
-      // Use counter for unique session ID since Date.now() is frozen
-      const sessionId = `test-session-rate-limit-${testCounter}`
-
-      // First request should succeed
       const result1 = await executeSuggest(
         { project_path: TEST_PROJECT_DIR, session_id: sessionId, limit: 3 },
         context
       )
 
-      expect(result1.rate_limited).toBe(false)
-
-      // Advance time by a tiny amount (1ms) to ensure we're still within rate limit window
-      // The rate limiter has a 5-minute window with 1 token that refills at 1/300 per second
-      vi.advanceTimersByTime(1)
-
-      // Immediate second request should be rate limited
       const result2 = await executeSuggest(
         { project_path: TEST_PROJECT_DIR, session_id: sessionId, limit: 3 },
         context
       )
 
-      expect(result2.rate_limited).toBe(true)
-      expect(result2.next_suggestion_at).toBeDefined()
+      // Both must complete without per-session blocking.
+      // Assert response shape rather than vacuous timing bounds.
+      expect(Array.isArray(result1.suggestions)).toBe(true)
+      expect(Array.isArray(result2.suggestions)).toBe(true)
+      expect(result1).not.toHaveProperty('rate_limited')
+      expect(result2).not.toHaveProperty('rate_limited')
+      // Second call must complete within a reasonable wall-clock window — confirms
+      // it was not held in a backoff/cooldown period (5-min limit would be ~300_000ms).
+      expect(result2.timing.totalMs).toBeLessThan(10_000)
     })
 
-    it('should allow requests from different sessions', async () => {
-      // Use unique session IDs that won't collide with other tests
-      const sessionA = `session-multi-a-${testCounter}`
-      const sessionB = `session-multi-b-${testCounter}`
+    it('should return response matching updated SuggestResponse interface', async () => {
+      const result = await executeSuggest({ project_path: TEST_PROJECT_DIR, limit: 3 }, context)
 
-      const result1 = await executeSuggest(
-        { project_path: TEST_PROJECT_DIR, session_id: sessionA, limit: 3 },
-        context
-      )
+      // Required fields present
+      expect(Array.isArray(result.suggestions)).toBe(true)
+      expect(typeof result.context_score).toBe('number')
+      expect(Array.isArray(result.triggers_fired)).toBe(true)
+      expect(typeof result.timing.totalMs).toBe('number')
 
-      const result2 = await executeSuggest(
-        { project_path: TEST_PROJECT_DIR, session_id: sessionB, limit: 3 },
-        context
-      )
-
-      // Different sessions should not be rate limited against each other
-      expect(result1.rate_limited).toBe(false)
-      expect(result2.rate_limited).toBe(false)
-      expect(result1.timing.totalMs).toBeGreaterThanOrEqual(0)
-      expect(result2.timing.totalMs).toBeGreaterThanOrEqual(0)
+      // Removed fields must be absent
+      expect(result).not.toHaveProperty('rate_limited')
+      expect(result).not.toHaveProperty('next_suggestion_at')
     })
   })
 
@@ -310,7 +296,6 @@ describe('E2E: skill_suggest tool', () => {
 
       // Validate response structure
       expect(typeof result.context_score).toBe('number')
-      expect(typeof result.rate_limited).toBe('boolean')
       expect(Array.isArray(result.triggers_fired)).toBe(true)
       expect(result.timing.totalMs).toBeGreaterThanOrEqual(0)
 
