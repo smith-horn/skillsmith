@@ -16,6 +16,8 @@ import Nav from '../components/Nav.astro'
 import Footer from '../components/Footer.astro'
 import { getSupabaseConfig } from '../lib/supabase-config'
 import '../styles/global.css'
+import HomepageCategoryGrid from '../components/HomepageCategoryGrid.astro'
+const abVariant = Astro.locals.abVariant
 
 // Get Supabase config for auth-aware navigation
 const supabaseConfig = getSupabaseConfig()
@@ -407,6 +409,7 @@ const jsonLd = {
         </div>
       </section>
 
+      {abVariant === 'variant-b' && <HomepageCategoryGrid abVariant={abVariant} />}
       <!-- Value Props Section -->
       <section class="py-24 border-t border-white/[0.06]">
         <div class="max-w-[1200px] mx-auto px-6">
@@ -868,6 +871,15 @@ const jsonLd = {
             }
           })
         })
+      })
+    </script>
+
+    <!-- GA4: Track A/B variant for all visitors (SMI-2709) -->
+    <script is:inline define:vars={{ abVariant }}>
+      document.addEventListener('astro:page-load', function () {
+        if (typeof gtag === 'function') {
+          gtag('event', 'homepage_ab_variant', { variant: abVariant })
+        }
       })
     </script>
 

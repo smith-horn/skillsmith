@@ -1,0 +1,120 @@
+---
+/**
+ * HomepageCategoryGrid
+ *
+ * Homepage category discovery section for Variant B of the A/B test.
+ * Shown to users assigned variant-b via the sk_ab_variant cookie.
+ *
+ * Links to /skills/[category] landing pages (Wave 2).
+ * GA4 click tracking wired via data-category + data-variant attributes.
+ *
+ * SMI-2708: Homepage Conversion & A/B Test — Wave 3
+ */
+
+interface Props {
+  abVariant: string
+}
+const { abVariant } = Astro.props
+
+const CATEGORIES = [
+  {
+    slug: 'development',
+    label: 'Development',
+    description: 'Code generation, refactoring, and PR reviews.',
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>',
+  },
+  {
+    slug: 'integrations',
+    label: 'Integrations',
+    description: 'MCP servers, APIs, and protocol connectors.',
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>',
+  },
+  {
+    slug: 'testing',
+    label: 'Testing',
+    description: 'Unit, integration, and end-to-end test automation.',
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>',
+  },
+  {
+    slug: 'devops',
+    label: 'DevOps',
+    description: 'CI/CD, Docker, and infrastructure automation.',
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>',
+  },
+  {
+    slug: 'documentation',
+    label: 'Documentation',
+    description: 'Changelogs, API docs, and README generation.',
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>',
+  },
+  {
+    slug: 'productivity',
+    label: 'Productivity',
+    description: 'Workflow automation and task management.',
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>',
+  },
+  {
+    slug: 'security',
+    label: 'Security',
+    description: 'Vulnerability scanning and compliance automation.',
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>',
+  },
+] as const
+---
+
+<section class="py-20 border-t border-white/[0.06]">
+  <div class="max-w-[1100px] mx-auto px-6">
+    <div class="text-center mb-10">
+      <h2 class="text-2xl sm:text-3xl font-bold mb-3">Browse by Category</h2>
+      <p class="text-[#A1A1AA]">Find the right skills for your workflow</p>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-10">
+      {
+        CATEGORIES.map((cat) => (
+          <a
+            href={`/skills/${cat.slug}`}
+            class="group flex flex-col gap-3 p-5 rounded-xl border border-white/[0.06] hover:border-primary-500/40 bg-[#18181B]/50 hover:bg-[#18181B] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F]"
+            data-category={cat.slug}
+            data-variant={abVariant}
+          >
+            <div
+              class="w-10 h-10 rounded-lg bg-[#E07A5F]/10 flex items-center justify-center text-primary-400"
+              set:html={cat.icon}
+            />
+            <div>
+              <h3 class="font-semibold text-[#FAFAFA] group-hover:text-white transition-colors text-sm">
+                {cat.label}
+              </h3>
+              <p class="text-xs text-[#A1A1AA] mt-0.5 leading-relaxed">{cat.description}</p>
+            </div>
+          </a>
+        ))
+      }
+    </div>
+
+    <div class="text-center">
+      <a
+        href="/skills"
+        class="text-sm text-primary-400 hover:text-primary-300 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:rounded"
+      >
+        Browse all 14,000+ skills &rarr;
+      </a>
+    </div>
+  </div>
+</section>
+
+<script is:inline define:vars={{ abVariant }}>
+  document.addEventListener('astro:page-load', function () {
+    document.querySelectorAll('[data-category][data-variant]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        if (typeof gtag === 'function') {
+          gtag('event', 'homepage_category_click', {
+            category: el.dataset.category,
+            variant: el.dataset.variant,
+          })
+        }
+      })
+    })
+  })
+</script>
