@@ -1,0 +1,60 @@
+name: GA4 Baseline Query (one-shot — delete after use)
+on:
+  workflow_dispatch:
+permissions:
+  id-token: write
+env:
+  GA4_PROPERTY_ID: ${{ vars.GA4_PROPERTY_ID }}
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+  GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/analytics.readonly
+      - name: Query copy_config baseline (last 30 days)
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          # Session count (denominator)
+          SESSIONS=$(curl -s -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"dateRanges":[{"startDate":"30daysAgo","endDate":"yesterday"}],"metrics":[{"name":"sessions"}],"dimensionFilter":{"filter":{"fieldName":"pagePath","stringFilter":{"matchType":"EXACT","value":"/"}}}}' \
+            "https://analyticsdata.googleapis.com/v1beta/${GA4_PROPERTY_ID}:runReport" \
+            | jq -r '.rows[0].metricValues[0].value // "0"')
+
+          # copy_config event count (numerator)
+          COPY_CONFIG=$(curl -s -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"dateRanges":[{"startDate":"30daysAgo","endDate":"yesterday"}],"metrics":[{"name":"eventCount"}],"dimensionFilter":{"andGroup":{"expressions":[{"filter":{"fieldName":"eventName","stringFilter":{"matchType":"EXACT","value":"copy_config"}}},{"filter":{"fieldName":"pagePath","stringFilter":{"matchType":"EXACT","value":"/"}}}]}}}' \
+            "https://analyticsdata.googleapis.com/v1beta/${GA4_PROPERTY_ID}:runReport" \
+            | jq -r '.rows[0].metricValues[0].value // "0"')
+
+          # Homepage sessions (for verification — may differ from filtered above)
+          HOME_SESSIONS=$(curl -s -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"dateRanges":[{"startDate":"30daysAgo","endDate":"yesterday"}],"metrics":[{"name":"sessions"}]}' \
+            "https://analyticsdata.googleapis.com/v1beta/${GA4_PROPERTY_ID}:runReport" \
+            | jq -r '.rows[0].metricValues[0].value // "0"')
+
+          RATE=$(echo "scale=4; $COPY_CONFIG / $SESSIONS * 100" | bc 2>/dev/null || echo "N/A")
+
+          echo "=== GA4 BASELINE (last 30 days, pre-experiment) ==="
+          echo "Total site sessions:        $HOME_SESSIONS"
+          echo "Homepage (/) sessions:      $SESSIONS"
+          echo "copy_config events:         $COPY_CONFIG"
+          echo "copy_config rate:           ${RATE}%"
+          echo "==================================================="
