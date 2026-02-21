@@ -245,6 +245,7 @@ npx supabase functions deploy list-invoices --no-verify-jwt
 | Ops Report | Monday 9 AM UTC | `ops-report` |
 | Weekly Analytics | Monday 9 AM UTC | GitHub Actions (`analytics-report.yml`) |
 | Billing Monitor | Monday 9 AM UTC | GitHub Actions |
+| A/B Experiment Results | Monday 9 AM UTC | GitHub Actions (`ab-results.yml`) — creates issue with verdict |
 
 Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table. Manual trigger & audit log details: [deployment-guide.md](.claude/development/deployment-guide.md#monitoring--alerts).
 
