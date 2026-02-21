@@ -1,24 +1,19 @@
-# Weekly A/B Experiment Results — Homepage Category Grid (SMI-2700)
-#
+name: Weekly A/B Experiment Results
+# Homepage Category Grid experiment — SMI-2700
 # Runs every Monday at 9 AM UTC.
 # Queries GA4 for copy_config rate by homepage_ab_variant user property.
-# Computes z-test for proportions, reports lift and significance.
-# Creates a GitHub issue with results + promotion recommendation.
-#
-# Baseline (2026-02-21): 1.18% copy_config rate (506 homepage sessions / 6 events)
-# Promotion criteria: +20% relative lift (target: 1.42%+), p < 0.05, n >= 500/cohort, runtime >= 7 days
-
-name: Weekly A/B Experiment Results
+# Computes z-test for proportions, creates GitHub issue with promotion verdict.
+# Baseline: 1.18% (6/506 sessions, 2026-02-21) | Target: 1.42%+ (+20% lift, p<0.05)
 
 on:
   schedule:
-    - cron: '0 9 * * 1' # Every Monday at 9 AM UTC
+    - cron: "0 9 * * 1"
   workflow_dispatch:
     inputs:
       create_issue:
-        description: 'Create GitHub issue with results'
+        description: "Create GitHub issue with results"
         required: false
-        default: 'true'
+        default: "true"
         type: boolean
 
 permissions:
@@ -30,13 +25,10 @@ env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
   GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
-  EXPERIMENT_START: '2026-02-21'
-  BASELINE_RATE: '1.18'
-  BASELINE_SESSIONS: '506'
-  BASELINE_EVENTS: '6'
-  MIN_COHORT_SIZE: '500'
-  MIN_RUNTIME_DAYS: '7'
-  PROMOTION_LIFT_PCT: '20'
+  EXPERIMENT_START: "2026-02-21"
+  MIN_COHORT_SIZE: "500"
+  MIN_RUNTIME_DAYS: "7"
+  PROMOTION_LIFT_PCT: "20"
 
 jobs:
   results:
@@ -55,160 +47,150 @@ jobs:
           token_format: access_token
           access_token_scopes: https://www.googleapis.com/auth/analytics.readonly
 
-      - name: Query copy_config by variant
+      - name: Query GA4 copy_config by variant
         id: ga4
         continue-on-error: true
         env:
           TOKEN: ${{ steps.auth.outputs.access_token }}
         run: |
-          # Days since experiment started
           START_EPOCH=$(date -d "$EXPERIMENT_START" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$EXPERIMENT_START" +%s)
           NOW_EPOCH=$(date +%s)
           RUNTIME_DAYS=$(( (NOW_EPOCH - START_EPOCH) / 86400 ))
           echo "runtime_days=${RUNTIME_DAYS}" >> "$GITHUB_OUTPUT"
+          echo "Runtime: ${RUNTIME_DAYS} days since experiment start"
 
-          # Query: sessions by variant (denominator)
           SESSIONS_RESP=$(curl -s -X POST \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"dateRanges\": [{\"startDate\": \"${EXPERIMENT_START}\", \"endDate\": \"yesterday\"}],
-              \"dimensions\": [{\"name\": \"customUser:homepage_ab_variant\"}],
-              \"metrics\": [{\"name\": \"sessions\"}]
-            }" \
+            -d "{\"dateRanges\":[{\"startDate\":\"${EXPERIMENT_START}\",\"endDate\":\"yesterday\"}],\"dimensions\":[{\"name\":\"customUser:homepage_ab_variant\"}],\"metrics\":[{\"name\":\"sessions\"}]}" \
             "https://analyticsdata.googleapis.com/v1beta/${GA4_PROPERTY_ID}:runReport")
 
-          # Query: copy_config events by variant (numerator)
           EVENTS_RESP=$(curl -s -X POST \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"dateRanges\": [{\"startDate\": \"${EXPERIMENT_START}\", \"endDate\": \"yesterday\"}],
-              \"dimensions\": [{\"name\": \"customUser:homepage_ab_variant\"}],
-              \"metrics\": [{\"name\": \"eventCount\"}],
-              \"dimensionFilter\": {
-                \"filter\": {
-                  \"fieldName\": \"eventName\",
-                  \"stringFilter\": {\"matchType\": \"EXACT\", \"value\": \"copy_config\"}
-                }
-              }
-            }" \
+            -d "{\"dateRanges\":[{\"startDate\":\"${EXPERIMENT_START}\",\"endDate\":\"yesterday\"}],\"dimensions\":[{\"name\":\"customUser:homepage_ab_variant\"}],\"metrics\":[{\"name\":\"eventCount\"}],\"dimensionFilter\":{\"filter\":{\"fieldName\":\"eventName\",\"stringFilter\":{\"matchType\":\"EXACT\",\"value\":\"copy_config\"}}}}" \
             "https://analyticsdata.googleapis.com/v1beta/${GA4_PROPERTY_ID}:runReport")
 
-          echo "Sessions response: $SESSIONS_RESP" | head -5
+          CTRL_SESSIONS=$(echo "$SESSIONS_RESP" | jq -r '.rows[]? | select(.dimensionValues[0].value == "control") | .metricValues[0].value' 2>/dev/null)
+          VARB_SESSIONS=$(echo "$SESSIONS_RESP" | jq -r '.rows[]? | select(.dimensionValues[0].value == "variant-b") | .metricValues[0].value' 2>/dev/null)
+          CTRL_EVENTS=$(echo "$EVENTS_RESP" | jq -r '.rows[]? | select(.dimensionValues[0].value == "control") | .metricValues[0].value' 2>/dev/null)
+          VARB_EVENTS=$(echo "$EVENTS_RESP" | jq -r '.rows[]? | select(.dimensionValues[0].value == "variant-b") | .metricValues[0].value' 2>/dev/null)
 
-          # Parse sessions by variant
-          CTRL_SESSIONS=$(echo "$SESSIONS_RESP" | jq -r '.rows[] | select(.dimensionValues[0].value == "control") | .metricValues[0].value' 2>/dev/null || echo "0")
-          VARB_SESSIONS=$(echo "$SESSIONS_RESP" | jq -r '.rows[] | select(.dimensionValues[0].value == "variant-b") | .metricValues[0].value' 2>/dev/null || echo "0")
-          [ -z "$CTRL_SESSIONS" ] && CTRL_SESSIONS=0
-          [ -z "$VARB_SESSIONS" ] && VARB_SESSIONS=0
-
-          # Parse copy_config events by variant
-          CTRL_EVENTS=$(echo "$EVENTS_RESP" | jq -r '.rows[] | select(.dimensionValues[0].value == "control") | .metricValues[0].value' 2>/dev/null || echo "0")
-          VARB_EVENTS=$(echo "$EVENTS_RESP" | jq -r '.rows[] | select(.dimensionValues[0].value == "variant-b") | .metricValues[0].value' 2>/dev/null || echo "0")
-          [ -z "$CTRL_EVENTS" ] && CTRL_EVENTS=0
-          [ -z "$VARB_EVENTS" ] && VARB_EVENTS=0
-
-          echo "control: ${CTRL_SESSIONS} sessions, ${CTRL_EVENTS} copy_config"
-          echo "variant-b: ${VARB_SESSIONS} sessions, ${VARB_EVENTS} copy_config"
+          CTRL_SESSIONS="${CTRL_SESSIONS:-0}"
+          VARB_SESSIONS="${VARB_SESSIONS:-0}"
+          CTRL_EVENTS="${CTRL_EVENTS:-0}"
+          VARB_EVENTS="${VARB_EVENTS:-0}"
 
           echo "ctrl_sessions=${CTRL_SESSIONS}" >> "$GITHUB_OUTPUT"
           echo "varb_sessions=${VARB_SESSIONS}" >> "$GITHUB_OUTPUT"
           echo "ctrl_events=${CTRL_EVENTS}" >> "$GITHUB_OUTPUT"
           echo "varb_events=${VARB_EVENTS}" >> "$GITHUB_OUTPUT"
+          echo "control: ${CTRL_SESSIONS} sessions, ${CTRL_EVENTS} copy_config events"
+          echo "variant-b: ${VARB_SESSIONS} sessions, ${VARB_EVENTS} copy_config events"
 
-      - name: Compute statistics
+      - name: Compute statistics (z-test for proportions)
         id: stats
         env:
-          CTRL_SESSIONS: ${{ steps.ga4.outputs.ctrl_sessions || '0' }}
-          VARB_SESSIONS: ${{ steps.ga4.outputs.varb_sessions || '0' }}
-          CTRL_EVENTS: ${{ steps.ga4.outputs.ctrl_events || '0' }}
-          VARB_EVENTS: ${{ steps.ga4.outputs.varb_events || '0' }}
-          RUNTIME_DAYS: ${{ steps.ga4.outputs.runtime_days || '0' }}
+          CTRL_N: ${{ steps.ga4.outputs.ctrl_sessions }}
+          VARB_N: ${{ steps.ga4.outputs.varb_sessions }}
+          CTRL_K: ${{ steps.ga4.outputs.ctrl_events }}
+          VARB_K: ${{ steps.ga4.outputs.varb_events }}
+          RUNTIME: ${{ steps.ga4.outputs.runtime_days }}
         run: |
-          # Compute rates and z-test for proportions (two-tailed, normal approximation)
-          python3 - <<'PYEOF'
-          import os, math, json
+          CTRL_N="${CTRL_N:-0}"
+          VARB_N="${VARB_N:-0}"
+          CTRL_K="${CTRL_K:-0}"
+          VARB_K="${VARB_K:-0}"
+          RUNTIME="${RUNTIME:-0}"
 
-          ctrl_n = int(os.environ.get('CTRL_SESSIONS', 0))
-          varb_n = int(os.environ.get('VARB_SESSIONS', 0))
-          ctrl_k = int(os.environ.get('CTRL_EVENTS', 0))
-          varb_k = int(os.environ.get('VARB_EVENTS', 0))
-          runtime = int(os.environ.get('RUNTIME_DAYS', 0))
-          min_cohort = int(os.environ.get('MIN_COHORT_SIZE', 500))
-          min_runtime = int(os.environ.get('MIN_RUNTIME_DAYS', 7))
-          target_lift = float(os.environ.get('PROMOTION_LIFT_PCT', 20))
-          baseline_rate = float(os.environ.get('BASELINE_RATE', 1.18))
+          # Rates (scale=6 for precision)
+          if [ "$CTRL_N" -gt 0 ]; then
+            CTRL_RATE=$(echo "scale=6; $CTRL_K / $CTRL_N" | bc)
+          else
+            CTRL_RATE="0"
+          fi
 
-          # Rates
-          ctrl_rate = ctrl_k / ctrl_n if ctrl_n > 0 else 0
-          varb_rate = varb_k / varb_n if varb_n > 0 else 0
+          if [ "$VARB_N" -gt 0 ]; then
+            VARB_RATE=$(echo "scale=6; $VARB_K / $VARB_N" | bc)
+          else
+            VARB_RATE="0"
+          fi
 
-          # Lift
-          if ctrl_rate > 0:
-              lift_pct = (varb_rate - ctrl_rate) / ctrl_rate * 100
-          else:
-              lift_pct = 0
+          # Lift percentage
+          if [ "$(echo "$CTRL_RATE > 0" | bc)" -eq 1 ]; then
+            LIFT=$(echo "scale=2; ($VARB_RATE - $CTRL_RATE) / $CTRL_RATE * 100" | bc)
+          else
+            LIFT="0"
+          fi
 
-          # Z-test for proportions (two-tailed)
-          z_score = 0.0
-          p_value = 1.0
-          if ctrl_n > 0 and varb_n > 0 and (ctrl_k + varb_k) > 0:
-              p_pool = (ctrl_k + varb_k) / (ctrl_n + varb_n)
-              se = math.sqrt(p_pool * (1 - p_pool) * (1/ctrl_n + 1/varb_n))
-              if se > 0:
-                  z_score = (varb_rate - ctrl_rate) / se
-                  # Approximation: p-value from standard normal CDF
-                  # Using error function approximation
-                  abs_z = abs(z_score)
-                  t = 1 / (1 + 0.2316419 * abs_z)
-                  poly = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))))
-                  p_value = 2 * (1 - (1 / math.sqrt(2 * math.pi)) * math.exp(-abs_z**2 / 2) * (1 - poly))
-                  p_value = max(0.0, min(1.0, p_value))
+          # Pooled proportion and z-score
+          TOTAL_N=$(( CTRL_N + VARB_N ))
+          TOTAL_K=$(( CTRL_K + VARB_K ))
+          Z_SCORE="0"
+          P_VALUE="1"
 
-          # Verdict
-          enough_runtime = runtime >= min_runtime
-          enough_sample = min(ctrl_n, varb_n) >= min_cohort
-          significant = p_value < 0.05
-          positive_lift = lift_pct >= target_lift
+          if [ "$TOTAL_N" -gt 0 ] && [ "$TOTAL_K" -gt 0 ] && [ "$CTRL_N" -gt 0 ] && [ "$VARB_N" -gt 0 ]; then
+            P_POOL=$(echo "scale=8; $TOTAL_K / $TOTAL_N" | bc)
+            Q_POOL=$(echo "scale=8; 1 - $P_POOL" | bc)
+            VAR=$(echo "scale=10; $P_POOL * $Q_POOL * (1/$CTRL_N + 1/$VARB_N)" | bc -l)
+            SE=$(echo "scale=8; sqrt($VAR)" | bc -l)
+            if [ "$(echo "$SE > 0" | bc)" -eq 1 ]; then
+              Z_SCORE=$(echo "scale=3; ($VARB_RATE - $CTRL_RATE) / $SE" | bc -l)
+              # p-value approximation via normal CDF (Abramowitz & Stegun)
+              ABS_Z=$(echo "scale=4; if ($Z_SCORE < 0) -($Z_SCORE) else $Z_SCORE" | bc)
+              P_VALUE=$(echo "scale=4;
+                t = 1 / (1 + 0.2316419 * $ABS_Z);
+                pdf = (1 / sqrt(2 * 3.14159265)) * e(-$ABS_Z * $ABS_Z / 2);
+                poly = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+                p = 2 * pdf * poly;
+                if (p > 1) 1 else if (p < 0) 0 else p" | bc -l)
+            fi
+          fi
 
-          if not enough_runtime:
-              verdict = "WAITING — experiment has not run for the minimum 7 days yet"
-              recommendation = "wait"
-          elif not enough_sample:
-              verdict = f"WAITING — insufficient sample size (need {min_cohort}/cohort, have {min(ctrl_n, varb_n)})"
-              recommendation = "wait"
-          elif significant and positive_lift:
-              verdict = f"PROMOTE — variant-b wins (+{lift_pct:.1f}% lift, p={p_value:.3f})"
-              recommendation = "promote"
-          elif significant and lift_pct < 0:
-              verdict = f"REVERT — variant-b hurts ({lift_pct:.1f}% lift, p={p_value:.3f})"
-              recommendation = "revert"
-          elif not significant and enough_sample:
-              verdict = f"NO EFFECT — no significant difference detected (lift={lift_pct:.1f}%, p={p_value:.3f})"
-              recommendation = "no_effect"
-          else:
-              verdict = f"INCONCLUSIVE — more data needed (lift={lift_pct:.1f}%, p={p_value:.3f})"
-              recommendation = "wait"
+          # Format rates as percentages
+          CTRL_RATE_PCT=$(echo "scale=4; $CTRL_RATE * 100" | bc)
+          VARB_RATE_PCT=$(echo "scale=4; $VARB_RATE * 100" | bc)
 
-          print(f"ctrl_rate={ctrl_rate*100:.4f}")
-          print(f"varb_rate={varb_rate*100:.4f}")
-          print(f"lift_pct={lift_pct:.2f}")
-          print(f"z_score={z_score:.3f}")
-          print(f"p_value={p_value:.4f}")
-          print(f"verdict={verdict}")
-          print(f"recommendation={recommendation}")
+          # Determine verdict
+          ENOUGH_RUNTIME=$([ "$RUNTIME" -ge "$MIN_RUNTIME_DAYS" ] && echo "1" || echo "0")
+          ENOUGH_CTRL=$([ "$CTRL_N" -ge "$MIN_COHORT_SIZE" ] && echo "1" || echo "0")
+          ENOUGH_VARB=$([ "$VARB_N" -ge "$MIN_COHORT_SIZE" ] && echo "1" || echo "0")
+          SIGNIFICANT=$(echo "scale=4; if ($P_VALUE < 0.05) 1 else 0" | bc)
+          POSITIVE=$(echo "scale=2; if ($LIFT >= $PROMOTION_LIFT_PCT) 1 else 0" | bc)
+          NEGATIVE=$(echo "scale=2; if ($LIFT < 0) 1 else 0" | bc)
 
-          # Write to GITHUB_OUTPUT
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"ctrl_rate={ctrl_rate*100:.4f}\n")
-              f.write(f"varb_rate={varb_rate*100:.4f}\n")
-              f.write(f"lift_pct={lift_pct:.2f}\n")
-              f.write(f"z_score={z_score:.3f}\n")
-              f.write(f"p_value={p_value:.4f}\n")
-              f.write(f"verdict={verdict}\n")
-              f.write(f"recommendation={recommendation}\n")
-          PYEOF
+          if [ "$ENOUGH_RUNTIME" -eq 0 ]; then
+            VERDICT="WAITING - experiment has not run for the minimum ${MIN_RUNTIME_DAYS} days yet (${RUNTIME} days elapsed)"
+            REC="wait"
+          elif [ "$ENOUGH_CTRL" -eq 0 ] || [ "$ENOUGH_VARB" -eq 0 ]; then
+            MIN_COHORT=$([ "$CTRL_N" -lt "$VARB_N" ] && echo "$CTRL_N" || echo "$VARB_N")
+            VERDICT="WAITING - insufficient sample size (need ${MIN_COHORT_SIZE}/cohort, have ${MIN_COHORT})"
+            REC="wait"
+          elif [ "$SIGNIFICANT" -eq 1 ] && [ "$POSITIVE" -eq 1 ]; then
+            VERDICT="PROMOTE - variant-b wins (+${LIFT}% lift, p=${P_VALUE})"
+            REC="promote"
+          elif [ "$SIGNIFICANT" -eq 1 ] && [ "$NEGATIVE" -eq 1 ]; then
+            VERDICT="REVERT - variant-b hurts (${LIFT}% lift, p=${P_VALUE})"
+            REC="revert"
+          else
+            VERDICT="INCONCLUSIVE - lift=${LIFT}%, p=${P_VALUE} (need p<0.05 and lift>=${PROMOTION_LIFT_PCT}%)"
+            REC="wait"
+          fi
+
+          echo "ctrl_rate=${CTRL_RATE_PCT}" >> "$GITHUB_OUTPUT"
+          echo "varb_rate=${VARB_RATE_PCT}" >> "$GITHUB_OUTPUT"
+          echo "lift=${LIFT}" >> "$GITHUB_OUTPUT"
+          echo "z_score=${Z_SCORE}" >> "$GITHUB_OUTPUT"
+          echo "p_value=${P_VALUE}" >> "$GITHUB_OUTPUT"
+          echo "verdict=${VERDICT}" >> "$GITHUB_OUTPUT"
+          echo "recommendation=${REC}" >> "$GITHUB_OUTPUT"
+          echo "=== RESULTS ==="
+          echo "control:   ${CTRL_RATE_PCT}% (${CTRL_K}/${CTRL_N})"
+          echo "variant-b: ${VARB_RATE_PCT}% (${VARB_K}/${VARB_N})"
+          echo "lift:      ${LIFT}%"
+          echo "z-score:   ${Z_SCORE}"
+          echo "p-value:   ${P_VALUE}"
+          echo "verdict:   ${VERDICT}"
 
       - name: Create GitHub issue with results
         if: ${{ github.event.inputs.create_issue != 'false' }}
@@ -221,63 +203,42 @@ jobs:
           VARB_K: ${{ steps.ga4.outputs.varb_events }}
           CTRL_RATE: ${{ steps.stats.outputs.ctrl_rate }}
           VARB_RATE: ${{ steps.stats.outputs.varb_rate }}
-          LIFT: ${{ steps.stats.outputs.lift_pct }}
+          LIFT: ${{ steps.stats.outputs.lift }}
           Z: ${{ steps.stats.outputs.z_score }}
           P: ${{ steps.stats.outputs.p_value }}
           VERDICT: ${{ steps.stats.outputs.verdict }}
           REC: ${{ steps.stats.outputs.recommendation }}
         run: |
           WEEK=$(date +"%Y-%m-%d")
+          case "$REC" in promote) EMOJI="🟢" ;; revert) EMOJI="🔴" ;; *) EMOJI="🟡" ;; esac
+          gh issue create \
+            --repo smith-horn/skillsmith \
+            --title "${EMOJI} A/B Results (${WEEK}): ${VERDICT}" \
+            --body "## ${EMOJI} Homepage A/B Experiment Results — ${WEEK}
 
-          # Choose emoji based on recommendation
-          case "$REC" in
-            promote) EMOJI="🟢" ;;
-            revert)  EMOJI="🔴" ;;
-            wait)    EMOJI="🟡" ;;
-            *)       EMOJI="⚪" ;;
-          esac
-
-          BODY="## ${EMOJI} Homepage A/B Experiment Results — ${WEEK}
-
-**Experiment**: Category Grid vs Control (Variant B vs Control)
-**Runtime**: ${RUNTIME} days (started 2026-02-21)
-**Metric**: \`copy_config\` event rate
+**Experiment**: Category Grid (variant-b) vs Control | **Runtime**: ${RUNTIME} days
 
 ### Results
 
-| Cohort | Sessions | copy_config events | Rate |
-|--------|----------|--------------------|------|
+| Cohort | Sessions | copy_config | Rate |
+|--------|----------|-------------|------|
 | control | ${CTRL_N} | ${CTRL_K} | ${CTRL_RATE}% |
 | variant-b | ${VARB_N} | ${VARB_K} | ${VARB_RATE}% |
 
-**Lift**: ${LIFT}% | **z-score**: ${Z} | **p-value**: ${P}
+**Lift**: ${LIFT}% | **z**: ${Z} | **p**: ${P}
 
-### Verdict
-
-> ${VERDICT}
+### Verdict: ${VERDICT}
 
 ### Promotion Criteria
-
-| Criterion | Required | Status |
-|-----------|----------|--------|
-| Runtime | ≥ 7 days | ${RUNTIME} days |
-| Sample size | ≥ 500/cohort | min(${CTRL_N}, ${VARB_N}) |
-| Lift | ≥ +20% relative | ${LIFT}% |
+| Criterion | Required | Current |
+|-----------|----------|---------|
+| Runtime | >= 7 days | ${RUNTIME} days |
+| Sample/cohort | >= 500 | min(${CTRL_N}, ${VARB_N}) |
+| Lift | >= +20% | ${LIFT}% |
 | Significance | p < 0.05 | p = ${P} |
 
-### Baseline (pre-experiment)
+**Baseline** (pre-experiment): 1.18% (6/506 sessions, 2026-02-21)
+**Kill switch**: set HOMEPAGE_AB_ENABLED=false in Vercel to stop experiment immediately.
 
-copy_config rate: 1.18% (6 events / 506 sessions, 30-day window ending 2026-02-21)
-
----
-
-**Next action** (if PROMOTE): Set \`HOMEPAGE_AB_ENABLED=false\`, update homepage to always show the category grid, then redeploy.
-**Kill switch**: Set \`HOMEPAGE_AB_ENABLED=false\` in Vercel dashboard to disable experiment immediately.
-
-_Auto-generated by [ab-experiment-results.yml](/.github/workflows/ab-experiment-results.yml) | SMI-2700_"
-
-          gh issue create \
-            --repo smith-horn/skillsmith \
-            --title "${EMOJI} A/B Results (${WEEK}): Homepage Category Grid — ${VERDICT}" \
-            --body "$BODY" \
+_Auto-generated by ab-experiment-results.yml | SMI-2700_" \
             --label "analytics"
