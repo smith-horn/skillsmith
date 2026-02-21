@@ -1,6 +1,6 @@
 ---
 title: "Building Skillsmith with Multi-Agent Orchestration"
-description: "How Skillsmith used Claude-Flow V3, its SPARC methodology, hive-mind execution, wave-based delivery, as well as custom skills like Plan-Review — to ship 159 commits at 94% goal achievement across 534 Claude Code sessions. A guide to How-I-AI in practice."
+description: "How Skillsmith used Claude-Flow V3, its SPARC methodology, hive-mind execution, wave-based delivery, as well as custom skills like Plan-Review — to ship 159 commits across 534 Claude Code sessions. A guide to How-I-AI in practice."
 author: "Ryan Smith"
 date: 2026-02-20
 updated: 2026-02-20
@@ -13,20 +13,20 @@ ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200
 
 ![Building Skillsmith with a Multi-Agent Workflow](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/claude-flow-v3-presentation/slide-01-cover)
 
-Skillsmith was built to be agent-native by Claude Code skills, orchestrated by Claude Flow V3. This post is a behind-the-scenes look at how that has worked out in the first 60 days — the specific patterns used, what they caught, and what the numbers looked like at the end of a 2-month sprint.
+Skillsmith was built to be agent-native for agent frameworks like Claude Code, and it's development has been orchestrated by Claude Flow V3. This post is a behind-the-scenes look at how that has worked out in the first 60 days — the specific patterns used, what they caught, and what the numbers look like so far.
 
-The short version: 159 commits, 534 sessions, 94% goal achievement rate, and two critical architectural bugs caught before a single line of code was written. Here's how.
+The short version: 159 commits, 534 sessions, and two critical architectural bugs caught before a single line of code was written. 
 
 ---
 
 ## Key Takeaways
 
-- **Claude Flow V3** turns Claude Code from a good agent assistant into a coordinated multi-agent engineering system via SPARC, hive-mind execution, wave-based delivery, and intelligent model routing
-- **SPARC methodology** is mandatory for infrastructure changes — research-first planning catches potential bugs at the architecture stage, where they're cheap to fix
-- **Plan-Review** (three VP perspectives before any code) returned a ~60× cost ratio: 5 minutes of review prevented hours of production debugging such as avoided anti-patterns, regressions, conflicts, or blockers
-- **Wave-based delivery** with risk-first ordering and branch stacking ships multi-dependency epics in hours rather than days or weeks
+- **Claude Flow V3** turns Claude Code from an agent framework into a coordinated multi-agent engineering system via SPARC, hive-mind execution, wave-based delivery, and intelligent model routing
+- **SPARC methodology** is mandatory in Skillsmith for any infrastructure change — research-first planning catches potential bugs at the architecture stage, where they're cheap to fix
+- **Plan-Review** (triggered for each implementation plan, creates 3 perspectives before any code to predict failure points) has resulted in a ~60X return on time: 5 minutes of review prevented hours of production debugging such as avoided anti-patterns, regressions, conflicts, or blockers
+- **Wave-based delivery** bundles similar tickets together for shared context with risk-first ordering and branch stacking which ships multi-dependency epics in hours rather than days or weeks
 - **MEMORY.md + SQLite persistence** gives each session 94% of prior context, compounding across hundreds of sessions into institutional knowledge, and no sweat on auto-compact on sessions
-- **The dogfooding loop** — Skillsmith built with its own skills — creates a direct quality feedback cycle between the toolchain and the product
+- **The dogfooding loop** — Skillsmith is built with its own skills — creating a direct quality feedback cycle between the toolchain and the product
 
 ---
 
@@ -34,9 +34,9 @@ The short version: 159 commits, 534 sessions, 94% goal achievement rate, and two
 
 ![What is Skillsmith?](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/claude-flow-v3-presentation/slide-02-product)
 
-Skillsmith is an MCP server and a CLI that enables an agent framework to discover, evaluate, and install Claude Code skills from a curated registry — with trust scoring, security scanning, and contextual recommendations. It also includes command line tools to create, publish, or optimize skills for authors.
+Skillsmith is an MCP server and a CLI that enables an agent framework to discover, evaluate, and install agent skills from a curated registry — with trust scoring, security scanning, and contextual recommendations. It also includes command line tools to create, publish, or optimize skills for authors.
 
-The problem it solves: *finding and trusting a skill today is like npm in 2010 — no curation, no scoring, no safety net.* We've indexed 50,000+ skills from GitHub with sub-100ms search latency, a security scan on every install.
+The problem it solves: *finding and trusting a skill today is like npm in 2010 — no curation, no scoring, no safety net.* We've indexed 50,000+ skills from GitHub with sub-100ms search latency, a security scan on every install. Hot tip - do not just download and install markdown files from the internet. You're welcome. 
 
 | Tool | What it does |
 |------|--------------|
@@ -56,7 +56,7 @@ Building Skillsmith with its own skills creates a tight feedback loop: every pat
 
 **Claude Flow V3 is a multi-agent orchestration framework that ships as an MCP server, SQLite db, as well as package of agents and skills for software development.** The core idea: Claude Code alone is a powerful agent framework. Claude Flow V3 turns it into a coordinated agent system by layering additional memory, routing, specialist agents, orchestration, and planning on top of each other - like from factory workers to a factory that makes factories.
 
-The architecture has five layers:
+The Skillsmith Agent Architecture has five layers:
 
 | Layer | Component | Role |
 |-------|-----------|------|
@@ -66,7 +66,7 @@ The architecture has five layers:
 | 4 — Orchestration | SPARC + Wave-Planner + Hive Mind | Planning and parallel execution |
 | 5 — Custom Skillsmith Planning | Launchpad | 4-stage pipeline from issue to deployed code |
 
-The jump from V2 to V3 introduced three meaningful changes: intelligent model routing (right model, right task, every step), SPARC as a first-class planning mode for high-blast-radius work, and hive-mind configs versioned alongside code rather than generated ad hoc.
+The jump from Claude Code V2 to V3 introduced three meaningful changes: intelligent model routing (right model, right task, every step), SPARC as a first-class planning mode for high-blast-radius work, and hive-mind configs versioned alongside code rather than generated ad hoc. This hive-mind capability improves the coordination and execution of code with reduced errors at speed. It enables more on-the-fly specialist agent definitions and the skills those specialists need to get work done, taking advantage of the Attention Is All You Need research finding.
 
 ---
 
@@ -74,13 +74,13 @@ The jump from V2 to V3 introduced three meaningful changes: intelligent model ro
 
 ![The Launchpad Pipeline](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/claude-flow-v3-presentation/slide-04-launchpad)
 
-**Launchpad is the end-to-end orchestrator.** One skill command drives the entire journey from Linear issue to deployed PR across four stages:
+**Launchpad is the end-to-end orchestrator skill.** Using the Daisy-Chain skill framework, one super skill command drives the entire journey from Linear issues to deployed PR across four stages:
 
 ```
 Stage 1 → Plan      SPARC (infra) or Wave-Planner (features)
-Stage 2 → Review    VP Product · VP Engineering · VP Design
+Stage 2 → Plan Review   e.g. VP Product · VP Engineering · VP Design improve plan first
 Stage 3 → Track     Linear issues created, dependencies linked
-Stage 4 → Execute   Hive-mind agents implement in parallel
+Stage 4 → Execute   Hive-mind agents implement in parallel with specialist configs
 ```
 
 Before Stage 1 runs, there's a Stage 0 routing decision. Launchpad inspects the trigger paths in your plan:
