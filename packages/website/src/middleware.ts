@@ -19,7 +19,14 @@
  */
 
 import { defineMiddleware } from 'astro:middleware'
-import { isProtectedRoute, isAuthRoute, getAuthSecurityHeaders } from './middleware.utils'
+import {
+  isProtectedRoute,
+  isAuthRoute,
+  getAuthSecurityHeaders,
+  parseAbVariantFromCookie,
+  assignAbVariant,
+  buildAbVariantCookie,
+} from './middleware.utils'
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const { pathname } = context.url
@@ -32,8 +39,25 @@ export const onRequest = defineMiddleware(async (context, next) => {
   context.locals.isProtectedRoute = protectedRoute
   context.locals.isAuthRoute = authRoute
 
+  // A/B variant assignment for homepage (kill switch: HOMEPAGE_AB_ENABLED=false disables)
+  const abEnabled = import.meta.env.HOMEPAGE_AB_ENABLED !== 'false'
+  const cookieHeader = context.request.headers.get('cookie')
+  const existingVariant = parseAbVariantFromCookie(cookieHeader)
+  let freshlyAssigned = false
+  let abVariant: import('./middleware.utils').AbVariant = existingVariant ?? 'control'
+  if (abEnabled && pathname === '/' && !existingVariant) {
+    abVariant = assignAbVariant()
+    freshlyAssigned = true
+  }
+  context.locals.abVariant = abVariant
+
   // Continue to the next middleware or page
   const response = await next()
+
+  // Persist A/B variant cookie on fresh assignment
+  if (freshlyAssigned) {
+    response.headers.append('Set-Cookie', buildAbVariantCookie(abVariant))
+  }
 
   // Add security headers for auth-related pages
   if (protectedRoute || authRoute) {
@@ -52,6 +76,7 @@ declare global {
     interface Locals {
       isProtectedRoute: boolean
       isAuthRoute: boolean
+      abVariant: import('./middleware.utils').AbVariant
     }
   }
 }

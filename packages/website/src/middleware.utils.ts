@@ -85,3 +85,56 @@ export function getAuthSecurityHeaders(): Record<string, string> {
     Expires: '0',
   }
 }
+
+// ─── A/B Testing (homepage category grid experiment) ─────────────────────────
+
+/** Cookie name for the A/B variant assignment */
+export const AB_VARIANT_COOKIE = 'sk_ab_variant'
+
+/** 30-day TTL in seconds */
+export const AB_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
+
+/** Valid A/B variant values */
+export const AB_VARIANTS = ['control', 'variant-b'] as const
+export type AbVariant = (typeof AB_VARIANTS)[number]
+
+/**
+ * Returns true if the value is a known AbVariant.
+ */
+export function isValidAbVariant(value: unknown): value is AbVariant {
+  return AB_VARIANTS.includes(value as AbVariant)
+}
+
+/**
+ * Reads the AB_VARIANT_COOKIE from a Cookie header string.
+ * Returns the variant if valid, null otherwise.
+ *
+ * @param cookieHeader - Raw `Cookie:` header value (e.g. "sk_ab_variant=control; session=abc")
+ * Note: URL-encoded cookie values (rare) will fail isValidAbVariant and return null.
+ */
+export function parseAbVariantFromCookie(cookieHeader: string | null): AbVariant | null {
+  if (!cookieHeader) return null
+  const match = cookieHeader.match(/(?:^|;\s*)sk_ab_variant=([^;]+)/)
+  if (!match) return null
+  const value = match[1].trim()
+  return isValidAbVariant(value) ? value : null
+}
+
+/**
+ * Randomly assigns a variant with equal 50/50 probability.
+ */
+export function assignAbVariant(): AbVariant {
+  return Math.random() < 0.5 ? 'control' : 'variant-b'
+}
+
+/**
+ * Builds the Set-Cookie header string for the AB variant.
+ * Note: The Secure flag prevents this cookie from being set on http://localhost.
+ * For local testing of variant-b, set the cookie manually via browser DevTools.
+ *
+ * @param variant - The variant to persist
+ * @returns Set-Cookie header value
+ */
+export function buildAbVariantCookie(variant: AbVariant): string {
+  return `${AB_VARIANT_COOKIE}=${variant}; Max-Age=${AB_COOKIE_MAX_AGE}; Path=/; SameSite=Lax; Secure`
+}

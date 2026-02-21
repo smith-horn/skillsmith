@@ -17,6 +17,15 @@ import {
   shouldDisableCache,
   getAuthSecurityHeaders,
 } from '../middleware.utils'
+import {
+  AB_VARIANT_COOKIE,
+  AB_COOKIE_MAX_AGE,
+  AB_VARIANTS,
+  isValidAbVariant,
+  parseAbVariantFromCookie,
+  assignAbVariant,
+  buildAbVariantCookie,
+} from '../middleware.utils'
 
 describe('Middleware Route Detection', () => {
   describe('PROTECTED_ROUTES', () => {
@@ -235,6 +244,94 @@ describe('Edge Cases', () => {
     it('should handle unicode paths', () => {
       expect(isProtectedRoute('/account/\u4e2d\u6587')).toBe(true)
       expect(isAuthRoute('/\u30ed\u30b0\u30a4\u30f3')).toBe(false)
+    })
+  })
+})
+
+describe('A/B Testing Utilities', () => {
+  describe('isValidAbVariant', () => {
+    it('should return true for "control"', () => {
+      expect(isValidAbVariant('control')).toBe(true)
+    })
+    it('should return true for "variant-b"', () => {
+      expect(isValidAbVariant('variant-b')).toBe(true)
+    })
+    it('should return false for unknown strings', () => {
+      expect(isValidAbVariant('variant-a')).toBe(false)
+      expect(isValidAbVariant('')).toBe(false)
+      expect(isValidAbVariant(null)).toBe(false)
+      expect(isValidAbVariant(undefined)).toBe(false)
+    })
+  })
+
+  describe('parseAbVariantFromCookie', () => {
+    it('should parse "control" from cookie header', () => {
+      expect(parseAbVariantFromCookie('sk_ab_variant=control')).toBe('control')
+    })
+    it('should parse "variant-b" from cookie header', () => {
+      expect(parseAbVariantFromCookie('sk_ab_variant=variant-b')).toBe('variant-b')
+    })
+    it('should parse when other cookies are present', () => {
+      expect(parseAbVariantFromCookie('session=abc; sk_ab_variant=control; other=xyz')).toBe(
+        'control'
+      )
+    })
+    it('should return null for null input', () => {
+      expect(parseAbVariantFromCookie(null)).toBeNull()
+    })
+    it('should return null when cookie is absent', () => {
+      expect(parseAbVariantFromCookie('session=abc; other=xyz')).toBeNull()
+    })
+    it('should return null for unknown variant values', () => {
+      expect(parseAbVariantFromCookie('sk_ab_variant=variant-a')).toBeNull()
+    })
+  })
+
+  describe('assignAbVariant', () => {
+    it('should return a valid AbVariant', () => {
+      const result = assignAbVariant()
+      expect(AB_VARIANTS).toContain(result)
+    })
+    it('should produce both variants over many calls (probabilistic)', () => {
+      const results = new Set(Array.from({ length: 200 }, () => assignAbVariant()))
+      expect(results.has('control')).toBe(true)
+      expect(results.has('variant-b')).toBe(true)
+    })
+  })
+
+  describe('buildAbVariantCookie', () => {
+    it('should include the cookie name and value', () => {
+      const cookie = buildAbVariantCookie('control')
+      expect(cookie).toContain('sk_ab_variant=control')
+    })
+    it('should include Max-Age', () => {
+      const cookie = buildAbVariantCookie('control')
+      expect(cookie).toContain(`Max-Age=${AB_COOKIE_MAX_AGE}`)
+    })
+    it('should include Path=/', () => {
+      const cookie = buildAbVariantCookie('control')
+      expect(cookie).toContain('Path=/')
+    })
+    it('should include SameSite=Lax', () => {
+      const cookie = buildAbVariantCookie('control')
+      expect(cookie).toContain('SameSite=Lax')
+    })
+    it('should include Secure', () => {
+      const cookie = buildAbVariantCookie('control')
+      expect(cookie).toContain('Secure')
+    })
+    it('should work for variant-b', () => {
+      const cookie = buildAbVariantCookie('variant-b')
+      expect(cookie).toContain('sk_ab_variant=variant-b')
+    })
+  })
+
+  describe('AB_VARIANT_COOKIE and AB_COOKIE_MAX_AGE', () => {
+    it('AB_VARIANT_COOKIE should equal sk_ab_variant', () => {
+      expect(AB_VARIANT_COOKIE).toBe('sk_ab_variant')
+    })
+    it('AB_COOKIE_MAX_AGE should equal 30 days in seconds', () => {
+      expect(AB_COOKIE_MAX_AGE).toBe(60 * 60 * 24 * 30)
     })
   })
 })
