@@ -1,0 +1,194 @@
+---
+/**
+ * Category Landing Pages — Static SEO Shell
+ *
+ * Wave 2: Homepage Conversion & A/B Test
+ * SMI-2706: 7 static category pages at /skills/[category]
+ *
+ * SCOPE: Static shell only. Provides crawlable metadata (H1, meta description,
+ * JSON-LD, breadcrumb) for each category. Skill browser embed is Wave 2b.
+ */
+
+import BaseLayout from '../../layouts/BaseLayout.astro'
+
+export const prerender = true
+
+export function getStaticPaths() {
+  const CATEGORIES = [
+    {
+      slug: 'development',
+      label: 'Development',
+      h1: 'Development Skills for Claude Code',
+      metaDescription:
+        'Browse 14,000+ development skills for Claude Code. Code generation, refactoring, PR reviews, and IDE integrations. Free to try.',
+      description:
+        'Skills for software development workflows — code generation, refactoring, PR reviews, and IDE integrations that make Claude Code a better coding partner.',
+      jsonLdDescription:
+        'Claude Code skills for software development workflows including code generation, refactoring, and PR reviews.',
+    },
+    {
+      slug: 'integrations',
+      label: 'Integrations',
+      h1: 'Integration Skills — MCP Servers & APIs',
+      metaDescription:
+        'Connect Claude Code to your tools. Browse MCP server skills, API integrations, and protocol implementations. Free to try.',
+      description:
+        'MCP servers, API integrations, and protocol implementations that connect Claude Code to your existing tools and services.',
+      jsonLdDescription:
+        'Claude Code skills for MCP servers, API integrations, and protocol implementations.',
+    },
+    {
+      slug: 'testing',
+      label: 'Testing',
+      h1: 'Testing Skills for Claude Code',
+      metaDescription:
+        'Automate your tests with Claude Code. Browse skills for Vitest, Jest, Playwright, and more testing frameworks. Free to try.',
+      description:
+        'Testing frameworks and utilities for unit, integration, and end-to-end test automation across all major testing tools.',
+      jsonLdDescription:
+        'Claude Code skills for automated testing including unit tests, integration tests, and end-to-end test automation.',
+    },
+    {
+      slug: 'devops',
+      label: 'DevOps',
+      h1: 'DevOps Skills for Claude Code',
+      metaDescription:
+        'Automate your DevOps pipelines. Browse skills for Docker, CI/CD, Kubernetes, and infrastructure tools. Free to try.',
+      description:
+        'CI/CD, Docker, Kubernetes, and infrastructure automation skills for DevOps workflows and deployment pipelines.',
+      jsonLdDescription:
+        'Claude Code skills for DevOps including CI/CD automation, Docker, Kubernetes, and infrastructure management.',
+    },
+    {
+      slug: 'documentation',
+      label: 'Documentation',
+      h1: 'Documentation Skills for Claude Code',
+      metaDescription:
+        'Generate docs automatically with Claude Code. Browse skills for changelogs, API docs, and README generation. Free to try.',
+      description:
+        'Documentation generation, changelog automation, and API doc skills that keep your docs current with your code.',
+      jsonLdDescription:
+        'Claude Code skills for documentation generation including changelogs, API docs, and README automation.',
+    },
+    {
+      slug: 'productivity',
+      label: 'Productivity',
+      h1: 'Productivity Skills for Claude Code',
+      metaDescription:
+        'Work smarter with Claude Code. Browse skills for workflow automation, task management, and developer productivity. Free to try.',
+      description:
+        'Workflow automation, task management, and productivity skills for developers who want to move faster on every task.',
+      jsonLdDescription:
+        'Claude Code skills for developer productivity including workflow automation and task management.',
+    },
+    {
+      slug: 'security',
+      label: 'Security',
+      h1: 'Security Skills for Claude Code',
+      metaDescription:
+        'Harden your codebase with Claude Code. Browse skills for security scanning, vulnerability detection, and compliance. Free to try.',
+      description:
+        'Security scanning, vulnerability detection, and compliance skills that help you build secure by default.',
+      jsonLdDescription:
+        'Claude Code skills for security scanning, vulnerability detection, and compliance automation.',
+    },
+  ] as const
+  return CATEGORIES.map((cat) => ({ params: { category: cat.slug }, props: cat }))
+}
+
+type Props = {
+  slug: string
+  label: string
+  h1: string
+  metaDescription: string
+  description: string
+  jsonLdDescription: string
+}
+const { slug, label, h1, metaDescription, description } = Astro.props
+
+const canonicalUrl = `https://www.skillsmith.app/skills/${slug}`
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://www.skillsmith.app' },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: 'Skills',
+        item: 'https://www.skillsmith.app/skills',
+      },
+      { '@type': 'ListItem', position: 3, name: label, item: canonicalUrl },
+    ],
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'CollectionPage',
+    name: `${label} Skills — Skillsmith`,
+    description: metaDescription,
+    url: canonicalUrl,
+    isPartOf: { '@id': 'https://www.skillsmith.app/#website' },
+  },
+]
+---
+
+<BaseLayout title={`${label} Skills — Skillsmith`} description={metaDescription}>
+  <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(jsonLd)} />
+  <link rel="canonical" href={canonicalUrl} slot="head" />
+
+  <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <!-- Breadcrumb -->
+    <nav aria-label="Breadcrumb" class="mb-8">
+      <ol class="flex items-center space-x-2 text-sm">
+        <li><a href="/" class="text-dark-500 hover:text-primary-400 transition-colors">Home</a></li>
+        <li class="text-dark-600" aria-hidden="true">/</li>
+        <li>
+          <a href="/skills" class="text-dark-500 hover:text-primary-400 transition-colors">Skills</a
+          >
+        </li>
+        <li class="text-dark-600" aria-hidden="true">/</li>
+        <li class="text-dark-300" aria-current="page">{label}</li>
+      </ol>
+    </nav>
+
+    <!-- Page heading -->
+    <header class="mb-10">
+      <h1 class="text-3xl sm:text-4xl font-bold mb-4">{h1}</h1>
+      <p class="text-lg text-dark-400 max-w-2xl">{description}</p>
+    </header>
+
+    <!-- CTA: Browse filtered skills -->
+    <div class="flex flex-col sm:flex-row gap-4 mb-12">
+      <a
+        href={`/skills?category=${slug}`}
+        class="inline-flex items-center px-6 py-3 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] transition-all text-center focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:outline-none"
+      >
+        Browse {label} skills &rarr;
+      </a>
+      <a
+        href="/skills"
+        class="inline-flex items-center px-6 py-3 border border-white/10 rounded-xl font-medium text-white hover:border-white/20 transition-colors text-center focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:outline-none"
+      >
+        All categories
+      </a>
+    </div>
+
+    <!-- Category context -->
+    <div class="bg-[#18181B] border border-white/[0.06] rounded-xl p-8">
+      <h2 class="text-lg font-semibold mb-3">About {label} Skills</h2>
+      <p class="text-dark-400">{description}</p>
+      <p class="text-dark-500 text-sm mt-4">
+        Skillsmith indexes 14,000+ curated skills from GitHub. Use the
+        <a
+          href={`/skills?category=${slug}`}
+          class="text-primary-400 hover:text-primary-300 underline underline-offset-2"
+        >
+          {label.toLowerCase()} skills browser
+        </a>
+        to search, filter by trust tier, and install with one command.
+      </p>
+    </div>
+  </div>
+</BaseLayout>
