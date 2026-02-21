@@ -13,92 +13,98 @@ import BaseLayout from '../../layouts/BaseLayout.astro'
 
 export const prerender = true
 
-const CATEGORIES = [
-  {
-    slug: 'development',
-    label: 'Development',
-    h1: 'Development Skills for Claude Code',
-    metaDescription:
-      'Browse 14,000+ development skills for Claude Code. Code generation, refactoring, PR reviews, and IDE integrations. Free to try.',
-    description:
-      'Skills for software development workflows — code generation, refactoring, PR reviews, and IDE integrations that make Claude Code a better coding partner.',
-    jsonLdDescription:
-      'Claude Code skills for software development workflows including code generation, refactoring, and PR reviews.',
-  },
-  {
-    slug: 'integrations',
-    label: 'Integrations',
-    h1: 'Integration Skills — MCP Servers & APIs',
-    metaDescription:
-      'Connect Claude Code to your tools. Browse MCP server skills, API integrations, and protocol implementations. Free to try.',
-    description:
-      'MCP servers, API integrations, and protocol implementations that connect Claude Code to your existing tools and services.',
-    jsonLdDescription:
-      'Claude Code skills for MCP servers, API integrations, and protocol implementations.',
-  },
-  {
-    slug: 'testing',
-    label: 'Testing',
-    h1: 'Testing Skills for Claude Code',
-    metaDescription:
-      'Automate your tests with Claude Code. Browse skills for Vitest, Jest, Playwright, and more testing frameworks. Free to try.',
-    description:
-      'Testing frameworks and utilities for unit, integration, and end-to-end test automation across all major testing tools.',
-    jsonLdDescription:
-      'Claude Code skills for automated testing including unit tests, integration tests, and end-to-end test automation.',
-  },
-  {
-    slug: 'devops',
-    label: 'DevOps',
-    h1: 'DevOps Skills for Claude Code',
-    metaDescription:
-      'Automate your DevOps pipelines. Browse skills for Docker, CI/CD, Kubernetes, and infrastructure tools. Free to try.',
-    description:
-      'CI/CD, Docker, Kubernetes, and infrastructure automation skills for DevOps workflows and deployment pipelines.',
-    jsonLdDescription:
-      'Claude Code skills for DevOps including CI/CD automation, Docker, Kubernetes, and infrastructure management.',
-  },
-  {
-    slug: 'documentation',
-    label: 'Documentation',
-    h1: 'Documentation Skills for Claude Code',
-    metaDescription:
-      'Generate docs automatically with Claude Code. Browse skills for changelogs, API docs, and README generation. Free to try.',
-    description:
-      'Documentation generation, changelog automation, and API doc skills that keep your docs current with your code.',
-    jsonLdDescription:
-      'Claude Code skills for documentation generation including changelogs, API docs, and README automation.',
-  },
-  {
-    slug: 'productivity',
-    label: 'Productivity',
-    h1: 'Productivity Skills for Claude Code',
-    metaDescription:
-      'Work smarter with Claude Code. Browse skills for workflow automation, task management, and developer productivity. Free to try.',
-    description:
-      'Workflow automation, task management, and productivity skills for developers who want to move faster on every task.',
-    jsonLdDescription:
-      'Claude Code skills for developer productivity including workflow automation and task management.',
-  },
-  {
-    slug: 'security',
-    label: 'Security',
-    h1: 'Security Skills for Claude Code',
-    metaDescription:
-      'Harden your codebase with Claude Code. Browse skills for security scanning, vulnerability detection, and compliance. Free to try.',
-    description:
-      'Security scanning, vulnerability detection, and compliance skills that help you build secure by default.',
-    jsonLdDescription:
-      'Claude Code skills for security scanning, vulnerability detection, and compliance automation.',
-  },
-] as const
-
 export function getStaticPaths() {
+  const CATEGORIES = [
+    {
+      slug: 'development',
+      label: 'Development',
+      h1: 'Development Skills for Claude Code',
+      metaDescription:
+        'Browse 14,000+ development skills for Claude Code. Code generation, refactoring, PR reviews, and IDE integrations. Free to try.',
+      description:
+        'Skills for software development workflows — code generation, refactoring, PR reviews, and IDE integrations that make Claude Code a better coding partner.',
+      jsonLdDescription:
+        'Claude Code skills for software development workflows including code generation, refactoring, and PR reviews.',
+    },
+    {
+      slug: 'integrations',
+      label: 'Integrations',
+      h1: 'Integration Skills — MCP Servers & APIs',
+      metaDescription:
+        'Connect Claude Code to your tools. Browse MCP server skills, API integrations, and protocol implementations. Free to try.',
+      description:
+        'MCP servers, API integrations, and protocol implementations that connect Claude Code to your existing tools and services.',
+      jsonLdDescription:
+        'Claude Code skills for MCP servers, API integrations, and protocol implementations.',
+    },
+    {
+      slug: 'testing',
+      label: 'Testing',
+      h1: 'Testing Skills for Claude Code',
+      metaDescription:
+        'Automate your tests with Claude Code. Browse skills for Vitest, Jest, Playwright, and more testing frameworks. Free to try.',
+      description:
+        'Testing frameworks and utilities for unit, integration, and end-to-end test automation across all major testing tools.',
+      jsonLdDescription:
+        'Claude Code skills for automated testing including unit tests, integration tests, and end-to-end test automation.',
+    },
+    {
+      slug: 'devops',
+      label: 'DevOps',
+      h1: 'DevOps Skills for Claude Code',
+      metaDescription:
+        'Automate your DevOps pipelines. Browse skills for Docker, CI/CD, Kubernetes, and infrastructure tools. Free to try.',
+      description:
+        'CI/CD, Docker, Kubernetes, and infrastructure automation skills for DevOps workflows and deployment pipelines.',
+      jsonLdDescription:
+        'Claude Code skills for DevOps including CI/CD automation, Docker, Kubernetes, and infrastructure management.',
+    },
+    {
+      slug: 'documentation',
+      label: 'Documentation',
+      h1: 'Documentation Skills for Claude Code',
+      metaDescription:
+        'Generate docs automatically with Claude Code. Browse skills for changelogs, API docs, and README generation. Free to try.',
+      description:
+        'Documentation generation, changelog automation, and API doc skills that keep your docs current with your code.',
+      jsonLdDescription:
+        'Claude Code skills for documentation generation including changelogs, API docs, and README automation.',
+    },
+    {
+      slug: 'productivity',
+      label: 'Productivity',
+      h1: 'Productivity Skills for Claude Code',
+      metaDescription:
+        'Work smarter with Claude Code. Browse skills for workflow automation, task management, and developer productivity. Free to try.',
+      description:
+        'Workflow automation, task management, and productivity skills for developers who want to move faster on every task.',
+      jsonLdDescription:
+        'Claude Code skills for developer productivity including workflow automation and task management.',
+    },
+    {
+      slug: 'security',
+      label: 'Security',
+      h1: 'Security Skills for Claude Code',
+      metaDescription:
+        'Harden your codebase with Claude Code. Browse skills for security scanning, vulnerability detection, and compliance. Free to try.',
+      description:
+        'Security scanning, vulnerability detection, and compliance skills that help you build secure by default.',
+      jsonLdDescription:
+        'Claude Code skills for security scanning, vulnerability detection, and compliance automation.',
+    },
+  ] as const
   return CATEGORIES.map((cat) => ({ params: { category: cat.slug }, props: cat }))
 }
 
-type Props = (typeof CATEGORIES)[number]
-const { slug, label, h1, metaDescription, description } = Astro.props as Props
+type Props = {
+  slug: string
+  label: string
+  h1: string
+  metaDescription: string
+  description: string
+  jsonLdDescription: string
+}
+const { slug, label, h1, metaDescription, description } = Astro.props
 
 const canonicalUrl = `https://www.skillsmith.app/skills/${slug}`
 
@@ -139,8 +145,7 @@ const jsonLd = [
         <li><a href="/" class="text-dark-500 hover:text-primary-400 transition-colors">Home</a></li>
         <li class="text-dark-600" aria-hidden="true">/</li>
         <li>
-          <a href="/skills" class="text-dark-500 hover:text-primary-400 transition-colors"
-            >Skills</a
+          <a href="/skills" class="text-dark-500 hover:text-primary-400 transition-colors">Skills</a
           >
         </li>
         <li class="text-dark-600" aria-hidden="true">/</li>
