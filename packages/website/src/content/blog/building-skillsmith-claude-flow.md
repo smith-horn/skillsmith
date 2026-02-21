@@ -128,7 +128,7 @@ In one sprint alone, Plan-Review surfaced two catches that would have cost hours
 
 **Catch 1 — Data flow misread.** A proposed refactor identified `wildcardExpansionCount` as a duplicate field and flagged it for removal. The VP Engineering reviewer traced the data flow and found it was the *source* — the accumulator that feeds `high_trust_wildcard.total_paths_expanded` downstream. Removing it would have silently zeroed all wildcard telemetry with no error thrown.
 
-**Catch 2 — Premature execution.** The same refactor targeted a file that was 484 lines on `main` — under the 500-line gate that would have justified the refactor. The relevant fields only existed on the feature worktree branch. Executing the plan against `main` would have been a no-op.
+**Catch 2 — Premature execution.** The same refactor targeted a file that was 484 lines on `main` — under a 500-line limit set in all code reeviews, that would have justified a refactor should it have been over 500 lines. The relevant fields only existed on the feature worktree branch. Executing the plan against `main` would have been a no-op.
 
 **Cost of Plan-Review:** ~5 minutes.
 **Cost of catching either issue in production:** hours + hotfix PR + incident report.
@@ -168,7 +168,7 @@ Across all Skillsmith work: **98 hive-mind configs** generated, representing the
 
 ![Memory and Cross-Session Learning](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/claude-flow-v3-presentation/slide-08-memory)
 
-**The hardest problem in AI-assisted development is session amnesia.** Each new Claude session starts from zero by default. Over 534 sessions, this would compound into thousands of repeated corrections and re-explanations.
+**The hardest problem in agentic AI development is session amnesia.** Each new Claude session starts from zero by default. Over 534 sessions, this would compound into thousands of repeated corrections and re-explanations.
 
 Claude Flow V3 attacks this at two levels.
 
@@ -176,6 +176,7 @@ Claude Flow V3 attacks this at two levels.
 - Project conventions and Docker-first rules
 - Hard-won debugging insights (the root cause of git-crypt smudge filter branch switching, for example, took time to isolate — it lives in MEMORY.md now)
 - API patterns, model choices, architectural decisions with links to their ADRs
+- Maximum 200 lines, which can include references to other documents
 
 Every session starts as smart as the *best* previous session.
 
@@ -187,8 +188,6 @@ The result compounds:
 Session learns → MEMORY.md updated → Next session smarter
 → Fewer corrections → More ambitious work → Better learnings
 ```
-
-Measured outcome across 48 tracked sessions: **94% goal achievement rate**.
 
 ---
 
@@ -242,7 +241,7 @@ By the numbers as of February 2026:
 
 What Claude Flow V3 actually unlocked, translated from metrics to practice:
 
-- **Parallelism at scale** — 4-wave epics delivered in days rather than weeks, with agents working independent waves concurrently
+- **Parallelism at scale** — 4-wave epics delivered in hours rather than weeks, with agents working independent waves concurrently
 - **Institutional memory** — every session builds on the last; the system gets smarter permanently rather than starting fresh each time
 - **Pre-code safety** — SPARC + Plan-Review catches architectural bugs before they touch the codebase, which is the only stage where they're cheap to fix
 - **Dogfooding quality loop** — the skills that build Skillsmith are the product, which means quality improvements feed directly back into the toolchain
