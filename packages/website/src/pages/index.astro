@@ -874,11 +874,13 @@ const jsonLd = {
       })
     </script>
 
-    <!-- GA4: Track A/B variant for all visitors (SMI-2709) -->
+    <!-- GA4: Track A/B variant for all visitors + set user property for cohort attribution (SMI-2709) -->
     <script is:inline define:vars={{ abVariant }}>
       document.addEventListener('astro:page-load', function () {
         if (typeof gtag === 'function') {
           gtag('event', 'homepage_ab_variant', { variant: abVariant })
+          // Set user property so copy_config and other events can be segmented by variant in GA4 Explore
+          gtag('set', { user_properties: { homepage_ab_variant: abVariant } })
         }
       })
     </script>
