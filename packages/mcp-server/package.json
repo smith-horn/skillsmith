@@ -57,7 +57,15 @@
     "skills",
     "mcp",
     "llm",
-    "model-context-protocol"
+    "model-context-protocol",
+    "claude-code",
+    "agent-skills",
+    "skill-discovery",
+    "skill-management",
+    "autonomous-agents",
+    "openclaw",
+    "multi-agent",
+    "tool-management"
   ],
   "engines": {
     "node": ">=22.0.0"

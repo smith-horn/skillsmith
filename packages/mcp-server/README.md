@@ -49,6 +49,44 @@ Add this MCP server to my settings.json:
 }
 ```
 
+## Platform Configuration
+
+Skillsmith works with any MCP-compatible AI agent platform. Add the following to your platform's MCP config file:
+
+**Claude Code** (`~/.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_your_key_here"
+      }
+    }
+  }
+}
+```
+
+**OpenClaw / Cursor / Codex / Antigravity / GitHub Copilot / other MCP clients** (`openclaw.json` or equivalent):
+
+```json
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_your_key_here"
+      }
+    }
+  }
+}
+```
+
+Get your API key at https://skillsmith.app/account (free Community tier available).
+
 After adding to your MCP client settings and restarting, try asking:
 
 ```
