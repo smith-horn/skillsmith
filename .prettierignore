@@ -11,8 +11,8 @@ package-lock.json
 # Scripts with embedded GraphQL that Prettier cannot parse
 scripts/linear-api.mjs
 
-# Workflows with embedded Python heredocs — Prettier YAML parser crashes on backticks in multiline strings
-.github/workflows/ab-experiment-results.yml
+# Workflows with complex multiline shell strings — Prettier YAML parser crashes on unindented multiline content
+.github/workflows/ab-results.yml
 
 # Git-crypt encrypted directories - cannot be parsed when locked (CI, fresh clones)
 # Must match encrypted paths in .gitattributes
