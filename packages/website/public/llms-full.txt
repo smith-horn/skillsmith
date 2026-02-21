@@ -181,6 +181,15 @@ A: Skills install to ~/.claude/skills/ by default and are automatically availabl
 | @skillsmith/cli | `npm i -g @skillsmith/cli` | Command-line interface |
 | @skillsmith/core | Internal | Core library (not published separately) |
 
+## Blog
+
+Engineering and product articles covering Skillsmith development and AI-native workflows.
+
+- [Building Skillsmith with Claude Flow V3](https://www.skillsmith.app/blog/building-skillsmith-claude-flow): How multi-agent orchestration — SPARC methodology, hive-mind execution, wave-based delivery, and Plan-Review — shipped 159 commits at 94% goal achievement across 534 Claude Code sessions.
+- [From GitHub to Search Results: How Skillsmith Indexes Skills](https://www.skillsmith.app/blog/how-skillsmith-indexes-skills): The five-stage pipeline that discovers, validates, scans, scores, and indexes skills for semantic search.
+- [Composing Agents, Sub-Agents, Skills, and Sub-Skills](https://www.skillsmith.app/blog/agent-skill-framework): A decision framework for when to use each component and how to compose them without context overflow.
+- [Security and Trust: How Skillsmith Scans and Quarantines Skills](https://www.skillsmith.app/blog/security-quarantine-safe-installation): How static analysis, trust tiers, and quarantine protect users from malicious skills.
+
 ## Links
 
 - Website: https://www.skillsmith.app
