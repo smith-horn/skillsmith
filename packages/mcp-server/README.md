@@ -147,7 +147,7 @@ Without an API key, you're limited to **10 total requests** (trial mode). With a
 > |----------|---------|
 > | Mac/Linux | `!export SKILLSMITH_API_KEY='your-key-here'` |
 > | Windows PowerShell | `!$env:SKILLSMITH_API_KEY='your-key-here'` |
-> | Windows CMD | `!set SKILLSMITH_API_KEY=your-key-here` |
+> | Windows CMD | `!set SKILLSMITH_API_KEY="your-key-here"` |
 >
 > The `!` prefix in Claude Code runs the command without exposing the output. See [SMI-1956](https://linear.app/smith-horn-group/issue/SMI-1956).
 
