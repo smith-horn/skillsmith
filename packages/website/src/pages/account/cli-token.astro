@@ -154,6 +154,16 @@ const supabaseConfig = getSupabaseConfig()
     <script>
       import { createClient } from '@supabase/supabase-js'
 
+      // XSS-safe HTML escaping helper (module scope — defined once across navigations)
+      function escapeHtml(str: string): string {
+        return str
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;')
+      }
+
       document.addEventListener('astro:page-load', async () => {
         const config = window.__SUPABASE_CONFIG__
         const supabaseUrl = config?.url
@@ -231,16 +241,6 @@ const supabaseConfig = getSupabaseConfig()
           .eq('name', 'CLI Token')
           .order('created_at', { ascending: false })
 
-        // XSS-safe HTML escaping helper
-        function escapeHtml(str: string): string {
-          return str
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;')
-        }
-
         // Render active CLI tokens section
         const tokenCard = document.querySelector('.token-card')
         if (cliKeys && cliKeys.length > 0 && tokenCard) {
@@ -257,7 +257,7 @@ const supabaseConfig = getSupabaseConfig()
                 ${cliKeys
                   .map(
                     (key) => `
-                  <li class="key-item" data-key-id="${escapeHtml(key.id)}">
+                  <li class="key-item">
                     <div class="key-info">
                       <span class="key-prefix">${escapeHtml(key.key_prefix)}&hellip;</span>
                       <span class="key-meta">
