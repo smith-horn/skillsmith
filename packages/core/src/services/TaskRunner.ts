@@ -1,5 +1,6 @@
 /**
  * SMI-1662: TaskRunner - Background Task Timeout Management
+ * @see SMI-2741: Types split to TaskRunner.types.ts, process utils to TaskRunner.process.ts
  *
  * Provides configurable timeout enforcement for background Task agents.
  * Addresses orphaned process memory leaks identified in incident 2026-01-22.
@@ -26,78 +27,29 @@
 
 import { randomUUID } from 'crypto'
 import { createLogger, type Logger } from '../utils/logger.js'
+import {
+  DEFAULT_TASK_TIMEOUT_MS,
+  WARNING_THRESHOLD_RATIO,
+  type TaskRunnerConfig,
+  type TaskStatus,
+  type TrackedTask,
+  type CleanupResult,
+} from './TaskRunner.types.js'
+import { gracefulShutdown, killProcess } from './TaskRunner.process.js'
 
-/**
- * Default timeout: 10 minutes (600000ms)
- */
-export const DEFAULT_TASK_TIMEOUT_MS = 600000
-
-/**
- * Grace period before SIGKILL after SIGTERM: 5 seconds
- */
-export const SIGKILL_GRACE_PERIOD_MS = 5000
-
-/**
- * Warning threshold: 80% of timeout
- */
-export const WARNING_THRESHOLD_RATIO = 0.8
-
-/**
- * Configuration options for TaskRunner
- */
-export interface TaskRunnerConfig {
-  /** Timeout in milliseconds (default: 600000 = 10 minutes) */
-  timeoutMs?: number
-  /** Enable debug logging (default: false) */
-  debug?: boolean
-  /** Custom logger instance */
-  logger?: Logger
-  /** Callback when a task times out */
-  onTimeout?: (task: TrackedTask) => void
-  /** Callback when warning threshold is reached */
-  onWarning?: (task: TrackedTask, remainingMs: number) => void
-}
-
-/**
- * Status of a tracked task
- */
-export type TaskStatus = 'running' | 'completed' | 'failed' | 'timeout' | 'killed'
-
-/**
- * A tracked background task
- */
-export interface TrackedTask {
-  /** Unique task identifier */
-  id: string
-  /** Process ID of the background task */
-  pid: number
-  /** Human-readable description */
-  description: string
-  /** When the task started */
-  startedAt: number
-  /** Current status */
-  status: TaskStatus
-  /** When the task completed/failed/timed out */
-  endedAt?: number
-  /** Duration in milliseconds */
-  durationMs?: number
-  /** Whether warning was issued */
-  warningIssued: boolean
-  /** Error message if failed */
-  error?: string
-}
-
-/**
- * Result of a cleanup operation
- */
-export interface CleanupResult {
-  /** Number of tasks cleaned up */
-  cleaned: number
-  /** Task IDs that were cleaned */
-  taskIds: string[]
-  /** Any errors encountered */
-  errors: Array<{ taskId: string; error: string }>
-}
+// Re-export types and constants for public API
+export type {
+  TaskRunnerConfig,
+  TaskStatus,
+  TrackedTask,
+  CleanupResult,
+} from './TaskRunner.types.js'
+export {
+  DEFAULT_TASK_TIMEOUT_MS,
+  SIGKILL_GRACE_PERIOD_MS,
+  WARNING_THRESHOLD_RATIO,
+} from './TaskRunner.types.js'
+export { gracefulShutdown, killProcess, sleep } from './TaskRunner.process.js'
 
 /**
  * TaskRunner manages background task lifecycles with timeout enforcement.
@@ -292,7 +244,7 @@ export class TaskRunner {
     for (const [id, task] of this.tasks.entries()) {
       if (task.status === 'running' && now - task.startedAt > this.config.timeoutMs) {
         try {
-          await this.killProcess(task.pid)
+          await killProcess(task.pid)
           this.finishTask(id, 'killed')
           result.cleaned++
           result.taskIds.push(id)
@@ -388,7 +340,7 @@ export class TaskRunner {
 
     // Attempt graceful shutdown
     try {
-      await this.gracefulShutdown(task.pid)
+      await gracefulShutdown(task.pid)
       this.finishTask(taskId, 'timeout')
     } catch (error) {
       this.logger.error(
@@ -400,55 +352,6 @@ export class TaskRunner {
     }
 
     this.onTimeout?.(task)
-  }
-
-  /**
-   * Gracefully shutdown a process: SIGTERM -> wait -> SIGKILL
-   */
-  private async gracefulShutdown(pid: number): Promise<void> {
-    // First, send SIGTERM for graceful shutdown
-    try {
-      process.kill(pid, 'SIGTERM')
-    } catch (error) {
-      // Process might already be dead
-      if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
-        if (this.config.debug) {
-          this.logger.debug('Process already terminated', { pid })
-        }
-        return
-      }
-      throw error
-    }
-
-    // Wait for grace period
-    await this.sleep(SIGKILL_GRACE_PERIOD_MS)
-
-    // Check if still running and send SIGKILL
-    try {
-      // process.kill(pid, 0) checks if process exists
-      process.kill(pid, 0)
-      // Process still running, send SIGKILL
-      if (this.config.debug) {
-        this.logger.debug('Process did not terminate gracefully, sending SIGKILL', { pid })
-      }
-      process.kill(pid, 'SIGKILL')
-    } catch {
-      // Process is already dead, which is fine
-    }
-  }
-
-  /**
-   * Kill a process immediately with SIGKILL
-   */
-  private async killProcess(pid: number): Promise<void> {
-    try {
-      process.kill(pid, 'SIGKILL')
-    } catch (error) {
-      // ESRCH means process doesn't exist, which is fine
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
-        throw error
-      }
-    }
   }
 
   /**
@@ -486,13 +389,6 @@ export class TaskRunner {
         description: task.description,
       })
     }
-  }
-
-  /**
-   * Sleep for a specified duration
-   */
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms))
   }
 }
 

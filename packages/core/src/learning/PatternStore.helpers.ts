@@ -10,7 +10,10 @@ import type {
   StoredPattern,
   PatternOutcome,
   PatternRow,
+  EWCConfig,
+  ConsolidationState,
 } from './PatternStore.types.js'
+import type { Database } from '../db/database-interface.js'
 
 // ============================================================================
 // SQL Schema
@@ -363,4 +366,62 @@ export function rowToStoredPattern(row: PatternRow, dimensions: number): StoredP
     createdAt: new Date(row.created_at * 1000),
     lastAccessedAt: new Date(row.last_accessed_at * 1000),
   }
+}
+
+// ============================================================================
+// PatternStore Instance Helpers (SMI-2741: Extracted from PatternStore.ts)
+// ============================================================================
+
+/**
+ * Compute the average embedding across stored patterns
+ *
+ * @param db - Database instance
+ * @param limit - Max patterns to sample
+ * @param dimensions - Embedding dimensions
+ * @returns Average embedding vector
+ */
+export async function computeAverageEmbedding(
+  db: Database,
+  limit: number,
+  dimensions: number
+): Promise<Float32Array> {
+  const stmt = db.prepare('SELECT context_embedding FROM patterns ORDER BY created_at DESC LIMIT ?')
+  const rows = stmt.all(limit) as Array<{ context_embedding: Buffer }>
+  if (rows.length === 0) {
+    return new Float32Array(dimensions)
+  }
+
+  const sum = new Float32Array(dimensions)
+  for (const row of rows) {
+    const embedding = deserializeEmbedding(row.context_embedding, dimensions)
+    for (let i = 0; i < embedding.length; i++) {
+      sum[i] += embedding[i]
+    }
+  }
+
+  for (let i = 0; i < sum.length; i++) {
+    sum[i] /= rows.length
+  }
+  return sum
+}
+
+/**
+ * Determine whether the store should run consolidation
+ *
+ * @param state - Current consolidation state
+ * @param ewcConfig - EWC configuration
+ * @returns True if consolidation should run
+ */
+export function shouldConsolidate(state: ConsolidationState, ewcConfig: EWCConfig): boolean {
+  if (state.lastConsolidation) {
+    const hoursSinceLast = (Date.now() - state.lastConsolidation.getTime()) / (60 * 60 * 1000)
+    if (hoursSinceLast < 1) return false
+  }
+  if (state.totalPatterns === 0) return false
+
+  const newPatternsRatio = state.patternsSinceLastConsolidation / state.totalPatterns
+  if (newPatternsRatio >= ewcConfig.consolidationThreshold) return true
+  if (state.totalPatterns > ewcConfig.maxPatterns * 0.9) return true
+
+  return false
 }

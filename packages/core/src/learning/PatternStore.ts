@@ -58,6 +58,8 @@ import {
   calculatePatternImportance,
   calculateDimensionImportance,
   rowToStoredPattern,
+  computeAverageEmbedding,
+  shouldConsolidate,
 } from './PatternStore.helpers.js'
 import {
   getPatternCount,
@@ -75,7 +77,6 @@ import {
   getAverageImportance,
   getHighImportanceCount,
   getConsolidationStats,
-  getContextEmbeddings,
 } from './PatternStore.queries.js'
 
 /** PatternStore - EWC++ pattern storage for successful recommendation matches */
@@ -201,14 +202,14 @@ export class PatternStore {
       pattern.source
     )
 
-    const avgEmbedding = await this.computeAverageEmbedding()
+    const avgEmbedding = await computeAverageEmbedding(this.db, 100, this.config.dimensions)
     const gradient = computeGradient(contextEmbedding, avgEmbedding)
     this.fisherMatrix.update(gradient)
 
     this.consolidationState.patternsSinceLastConsolidation++
     this.consolidationState.totalPatterns++
 
-    if (this.config.autoConsolidate && this.shouldConsolidate()) {
+    if (this.config.autoConsolidate && shouldConsolidate(this.consolidationState, this.ewcConfig)) {
       await this.consolidate()
     }
 
@@ -317,7 +318,7 @@ export class PatternStore {
       this.ewcConfig.fisherSampleSize,
       this.config.dimensions
     )
-    const avgEmbedding = await this.computeAverageEmbedding()
+    const avgEmbedding = await computeAverageEmbedding(this.db, 100, this.config.dimensions)
 
     for (const pattern of samplePatterns) {
       const gradient = computeGradient(pattern.contextEmbedding, avgEmbedding)
@@ -453,42 +454,6 @@ export class PatternStore {
     if (!this.initialized) {
       throw new Error('PatternStore not initialized. Call initialize() first.')
     }
-  }
-
-  private async computeAverageEmbedding(): Promise<Float32Array> {
-    const rows = getContextEmbeddings(this.db, 100)
-    if (rows.length === 0) {
-      return new Float32Array(this.config.dimensions)
-    }
-
-    const sum = new Float32Array(this.config.dimensions)
-    for (const row of rows) {
-      const embedding = deserializeEmbedding(row.context_embedding, this.config.dimensions)
-      for (let i = 0; i < embedding.length; i++) {
-        sum[i] += embedding[i]
-      }
-    }
-
-    for (let i = 0; i < sum.length; i++) {
-      sum[i] /= rows.length
-    }
-    return sum
-  }
-
-  private shouldConsolidate(): boolean {
-    if (this.consolidationState.lastConsolidation) {
-      const hoursSinceLast =
-        (Date.now() - this.consolidationState.lastConsolidation.getTime()) / (60 * 60 * 1000)
-      if (hoursSinceLast < 1) return false
-    }
-    if (this.consolidationState.totalPatterns === 0) return false
-
-    const newPatternsRatio =
-      this.consolidationState.patternsSinceLastConsolidation / this.consolidationState.totalPatterns
-    if (newPatternsRatio >= this.ewcConfig.consolidationThreshold) return true
-    if (this.consolidationState.totalPatterns > this.ewcConfig.maxPatterns * 0.9) return true
-
-    return false
   }
 
   private loadFisherMatrix(): void {
