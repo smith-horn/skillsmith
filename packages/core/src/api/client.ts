@@ -28,9 +28,11 @@ import {
   DEFAULT_BASE_URL,
   PRODUCTION_ANON_KEY,
 } from './utils.js'
+import { checkApiHealth } from './client.health.js'
 
 // Re-export for backwards compatibility
 export { generateAnonymousId } from './utils.js'
+export { checkApiHealth } from './client.health.js'
 export {
   ApiSearchResultSchema,
   SearchResponseSchema,
@@ -442,61 +444,7 @@ export class SkillsmithApiClient {
     timestamp: string
     version: string
   }> {
-    // In offline mode, return synthetic healthy status
-    if (this.offlineMode) {
-      return {
-        status: 'healthy',
-        timestamp: new Date().toISOString(),
-        version: 'offline',
-      }
-    }
-
-    try {
-      // Simple health check - try to reach the API
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 5000) // 5s timeout for health
-
-      const response = await fetch(`${this.baseUrl}/health`, {
-        headers: buildRequestHeaders(this.anonKey),
-        signal: controller.signal,
-      })
-
-      clearTimeout(timeoutId)
-
-      if (response.ok) {
-        // Try to parse JSON response, fall back to basic healthy status
-        try {
-          const data = (await response.json()) as { status?: string; version?: string }
-          return {
-            status: 'healthy',
-            timestamp: new Date().toISOString(),
-            version: data.version || '1.0.0',
-          }
-        } catch {
-          return {
-            status: 'healthy',
-            timestamp: new Date().toISOString(),
-            version: '1.0.0',
-          }
-        }
-      }
-
-      // Non-OK response indicates degraded service
-      return {
-        status: response.status >= 500 ? 'unhealthy' : 'degraded',
-        timestamp: new Date().toISOString(),
-        version: 'unknown',
-      }
-    } catch (error) {
-      this.log('Health check failed:', error)
-
-      // Network errors indicate unhealthy service
-      return {
-        status: 'unhealthy',
-        timestamp: new Date().toISOString(),
-        version: 'unknown',
-      }
-    }
+    return checkApiHealth(this.baseUrl, this.anonKey, this.offlineMode)
   }
 
   /**

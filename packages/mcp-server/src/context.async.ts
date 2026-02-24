@@ -1,28 +1,19 @@
 /**
- * @fileoverview MCP Server Tool Context - Database initialization and shared services
- * @module @skillsmith/mcp-server/context
- * @see SMI-792: Add database initialization to MCP server
- * @see SMI-898: Path traversal protection for DB_PATH
- * @see SMI-2741: Async context split into context.async.ts to meet 500-line standard
+ * @fileoverview Async Tool Context Creation with WASM Fallback
+ * @module @skillsmith/mcp-server/context.async
+ * @see SMI-2207: Async database functions with WASM fallback
+ * @see SMI-2741: Split from context.ts to meet 500-line standard
  *
- * Provides shared context for MCP tool handlers including:
- * - SQLite database connection with FTS5 search
- * - SearchService for skill discovery
- * - SkillRepository for CRUD operations
- * - Secure path validation for database paths
- *
- * @example
- * // Initialize context at server startup
- * const context = createToolContext();
- *
- * // Pass to tool handlers
- * const result = await executeSearch(input, context);
+ * Provides async context creation for cross-platform compatibility:
+ * 1. Try better-sqlite3 native module first (fastest)
+ * 2. Fall back to sql.js WASM if native is unavailable
  */
 
 import { existsSync } from 'fs'
 import {
-  createDatabase,
-  openDatabase,
+  createDatabaseAsync,
+  openDatabaseAsync,
+  initializeSchema,
   SearchService,
   SkillRepository,
   validateDbPath,
@@ -41,49 +32,35 @@ import {
 } from '@skillsmith/core'
 import { LLMFailoverChain } from './llm/failover.js'
 import { getDefaultDbPath, ensureDbDirectory } from './context.helpers.js'
-
-// Re-export types and async context from companion files
-export type {
-  ToolContext,
-  TelemetryConfig,
-  BackgroundSyncConfig,
-  ToolContextOptions,
-} from './context.types.js'
-export { getDefaultDbPath, ensureDbDirectory } from './context.helpers.js'
-export {
-  createToolContextAsync,
-  getToolContextAsync,
-  resetAsyncToolContext,
-} from './context.async.js'
-
-// Re-import types needed for function signatures in this file
 import type { ToolContext, ToolContextOptions } from './context.types.js'
 
+// Separate singleton for async context (prevents caching conflict with sync)
+let asyncGlobalContext: ToolContext | null = null
+
 /**
- * Create the shared tool context with database and services
+ * Create the shared tool context asynchronously with WASM fallback
+ *
+ * This is the recommended way to initialize context for cross-platform
+ * compatibility. It will:
+ * 1. Try better-sqlite3 native module first (fastest)
+ * 2. Fall back to sql.js WASM if native is unavailable
  *
  * @param options - Configuration options
- * @returns Initialized tool context
+ * @returns Promise resolving to initialized tool context
  *
  * @see SMI-898: Path traversal protection
- * - Custom dbPath is validated for path traversal attacks
- * - Rejects paths with ".." or outside allowed directories
+ * @see SMI-2207: Async initialization for WASM fallback
  *
  * @example
- * // With default path (~/.skillsmith/skills.db)
- * const context = createToolContext();
- *
- * @example
- * // With custom path (must be in allowed directory)
- * const context = createToolContext({ dbPath: '~/.skillsmith/custom.db' });
- *
- * @example
- * // For testing with in-memory database
- * const context = createToolContext({ dbPath: ':memory:' });
+ * // Initialize with WASM fallback support
+ * const context = await createToolContextAsync();
  *
  * @throws Error if dbPath contains path traversal attempt
+ * @throws Error if no database driver is available
  */
-export function createToolContext(options: ToolContextOptions = {}): ToolContext {
+export async function createToolContextAsync(
+  options: ToolContextOptions = {}
+): Promise<ToolContext> {
   let dbPath: string
 
   if (options.dbPath) {
@@ -110,13 +87,16 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
     ensureDbDirectory(dbPath)
   }
 
-  // SMI-1784: Use openDatabase for existing files to run migrations
-  // createDatabase would skip migrations for existing tables without new columns
+  // SMI-2207: Use async database creation with WASM fallback
   let db: DatabaseType
   if (dbPath !== ':memory:' && existsSync(dbPath)) {
-    db = openDatabase(dbPath)
+    db = await openDatabaseAsync(dbPath)
   } else {
-    db = createDatabase(dbPath)
+    db = await createDatabaseAsync(dbPath)
+    // SMI-2207: createDatabaseAsync returns a bare connection (no schema).
+    // openDatabaseAsync runs runMigrationsSafe internally; for new/in-memory
+    // databases we must call initializeSchema explicitly to match the sync path.
+    initializeSchema(db)
   }
 
   // Initialize services
@@ -126,17 +106,15 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
 
   const skillRepository = new SkillRepository(db)
 
-  // SMI-XXXX: Get API key from options, env, or config file
   // SMI-1851: Use shared config module (handles env var > config file precedence)
   const apiKey = options.apiKey || getApiKey()
 
   // SMI-1183: Initialize API client with configuration
-  // API is primary data source; local DB is fallback
   const apiClient = new SkillsmithApiClient({
     baseUrl: options.apiClientConfig?.baseUrl,
     anonKey: options.apiClientConfig?.anonKey,
     apiKey,
-    timeout: options.apiClientConfig?.timeout ?? 10000, // 10s default
+    timeout: options.apiClientConfig?.timeout ?? 10000,
     maxRetries: options.apiClientConfig?.maxRetries ?? 3,
     debug: options.apiClientConfig?.debug,
     offlineMode: options.apiClientConfig?.offlineMode,
@@ -145,17 +123,13 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
   // SMI-1184: Initialize PostHog telemetry (opt-in, privacy first)
   let distinctId: string | undefined
 
-  // Check env vars first, then fall back to config
   const telemetryEnabled =
     process.env.SKILLSMITH_TELEMETRY_ENABLED === 'true' || options.telemetryConfig?.enabled === true
 
   const postHogApiKey = process.env.POSTHOG_API_KEY || options.telemetryConfig?.postHogApiKey
 
   if (telemetryEnabled && postHogApiKey) {
-    // Generate anonymous user ID for telemetry
     distinctId = generateAnonymousId()
-
-    // Initialize PostHog client
     initializePostHog({
       apiKey: postHogApiKey,
       host: options.telemetryConfig?.postHogHost,
@@ -166,7 +140,6 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
   // Initialize background sync service if enabled
   let backgroundSync: BackgroundSyncService | undefined
 
-  // Check env var first, then config option (default: true)
   const backgroundSyncEnabled =
     process.env.SKILLSMITH_BACKGROUND_SYNC !== 'false' &&
     options.backgroundSyncConfig?.enabled !== false
@@ -176,7 +149,6 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
     const syncHistoryRepo = new SyncHistoryRepository(db)
     const skillVersionRepo = new SkillVersionRepository(db)
 
-    // Only start if user has auto-sync enabled in their config
     const syncConfig = syncConfigRepo.getConfig()
     if (syncConfig.enabled) {
       const syncEngine = new SyncEngine(
@@ -211,7 +183,6 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
   // SMI-1524: Initialize LLM failover chain if enabled
   let llmFailover: LLMFailoverChain | undefined
 
-  // Check env var first (SKILLSMITH_LLM_FAILOVER_ENABLED), then config
   const llmFailoverEnabled =
     process.env.SKILLSMITH_LLM_FAILOVER_ENABLED === 'true' ||
     options.llmFailoverConfig?.enabled === true
@@ -223,8 +194,6 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
       debug: options.llmFailoverConfig?.debug ?? false,
     })
 
-    // Initialize in background (non-blocking)
-    // Always log errors to prevent silent failures
     llmFailover.initialize().catch((error) => {
       console.error(`[skillsmith] LLM failover initialization error: ${error.message}`)
     })
@@ -234,7 +203,7 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
     }
   }
 
-  // Create signal handlers for cleanup (stored for removal to prevent memory leaks)
+  // Create signal handlers for cleanup
   const signalHandlers: Array<{ signal: NodeJS.Signals; handler: () => void }> = []
 
   if (backgroundSync || llmFailover) {
@@ -268,71 +237,48 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
 }
 
 /**
- * Close the tool context and release resources
- * SMI-1184: Also shuts down PostHog telemetry if initialized
- * SMI-1524: Also closes LLM failover chain
+ * Get or create the global async tool context
  *
- * @param context - Tool context to close
- */
-export async function closeToolContext(context: ToolContext): Promise<void> {
-  // Remove signal handlers to prevent memory leaks
-  if (context._signalHandlers) {
-    for (const { signal, handler } of context._signalHandlers) {
-      process.removeListener(signal, handler)
-    }
-  }
-
-  // Stop background sync service if running
-  if (context.backgroundSync) {
-    context.backgroundSync.stop()
-  }
-
-  // SMI-1524: Close LLM failover chain if initialized
-  if (context.llmFailover) {
-    context.llmFailover.close()
-  }
-
-  // Close database connection
-  context.db.close()
-
-  // SMI-1184: Shutdown PostHog if telemetry was enabled
-  if (context.distinctId) {
-    await shutdownPostHog()
-  }
-}
-
-// Singleton context for the MCP server
-let globalContext: ToolContext | null = null
-
-/**
- * Get or create the global tool context
- * Uses singleton pattern for MCP server lifecycle
- *
- * Note: Options are only applied on first call. Subsequent calls
- * return the cached context and ignore any options.
+ * Uses a separate singleton from the sync version to prevent caching issues
+ * where the sync path might be triggered first and cached.
  *
  * @param options - Configuration options (only used on first call)
- * @returns The global tool context
+ * @returns Promise resolving to the global tool context
  */
-export function getToolContext(options?: ToolContextOptions): ToolContext {
-  if (!globalContext) {
-    globalContext = createToolContext(options)
+export async function getToolContextAsync(options?: ToolContextOptions): Promise<ToolContext> {
+  if (!asyncGlobalContext) {
+    asyncGlobalContext = await createToolContextAsync(options)
   } else if (options) {
-    // Warn if options are provided after context is already created
     console.warn(
-      '[skillsmith] getToolContext called with options after context was already initialized. Options ignored.'
+      '[skillsmith] getToolContextAsync called with options after context was already initialized. Options ignored.'
     )
   }
-  return globalContext
+  return asyncGlobalContext
 }
 
 /**
- * Reset the global context (for testing)
- * SMI-1184: Made async to properly shutdown PostHog
+ * Reset the async global context (for testing)
  */
-export async function resetToolContext(): Promise<void> {
-  if (globalContext) {
-    await closeToolContext(globalContext)
-    globalContext = null
+export async function resetAsyncToolContext(): Promise<void> {
+  if (asyncGlobalContext) {
+    // Inline close to avoid circular import with context.ts
+    const context = asyncGlobalContext
+    asyncGlobalContext = null
+
+    if (context._signalHandlers) {
+      for (const { signal, handler } of context._signalHandlers) {
+        process.removeListener(signal, handler)
+      }
+    }
+    if (context.backgroundSync) {
+      context.backgroundSync.stop()
+    }
+    if (context.llmFailover) {
+      context.llmFailover.close()
+    }
+    context.db.close()
+    if (context.distinctId) {
+      await shutdownPostHog()
+    }
   }
 }

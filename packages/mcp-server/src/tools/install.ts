@@ -2,6 +2,7 @@
  * @fileoverview MCP Install Skill Tool for downloading and installing skills
  * @module @skillsmith/mcp-server/tools/install
  * @see {@link https://github.com/wrsmith108/skillsmith|Skillsmith Repository}
+ * @see SMI-2741: Split to meet 500-line standard
  *
  * Provides skill installation functionality with:
  * - GitHub repository fetching (supports owner/repo and full URLs)
@@ -13,7 +14,7 @@
  * Skills are installed to ~/.claude/skills/ and tracked in ~/.skillsmith/manifest.json
  */
 
-import { SecurityScanner, TransformationService, safeWriteFile } from '@skillsmith/core'
+import { SecurityScanner, safeWriteFile } from '@skillsmith/core'
 import type { TrustTier } from '@skillsmith/core'
 import * as fs from 'fs/promises'
 import * as path from 'path'
@@ -27,7 +28,6 @@ import {
   CLAUDE_SKILLS_DIR,
   type InstallInput,
   type InstallResult,
-  type OptimizationInfo,
 } from './install.types.js'
 
 // Import helpers
@@ -46,6 +46,13 @@ import {
 
 // SMI-1867: Conflict resolution logic (extracted per governance review)
 import { checkForConflicts, handleMergeAction } from './install.conflict.js'
+
+// SMI-1788/SMI-2741: Optimization layer extracted to companion file
+import { applySkillOptimization } from './install.optimize.js'
+
+// SMI-2741: MCP tool definition extracted to companion file
+export { installTool } from './install.tool.js'
+export { default } from './install.tool.js'
 
 // Re-export only public API types (SMI-1718: trimmed internal exports)
 export { installInputSchema, type InstallInput, type InstallResult } from './install.types.js'
@@ -323,54 +330,18 @@ export async function installSkill(
     }
 
     // SMI-1788: Apply Skillsmith Optimization Layer (unless skipped)
-    let optimizationInfo: OptimizationInfo = { optimized: false }
-    let finalSkillContent = skillMdContent
-    let subSkillFiles: Array<{ filename: string; content: string }> = []
-    let subagentContent: string | undefined
-    let claudeMdSnippet: string | undefined
-
-    if (!input.skipOptimize) {
-      try {
-        const transformService = new TransformationService(context.db, {
-          cacheTtl: 3600, // 1 hour cache
-          version: '1.0.0',
-        })
-
-        // Extract skill name and description for transformation
-        const nameMatch = skillMdContent.match(/^name:\s*(.+)$/m)
-        const descMatch = skillMdContent.match(/^description:\s*(.+)$/m)
-        const extractedName = nameMatch ? nameMatch[1].trim() : skillName
-        const extractedDesc = descMatch ? descMatch[1].trim() : ''
-
-        const transformResult = await transformService.transform(
-          input.skillId,
-          extractedName,
-          extractedDesc,
-          skillMdContent
-        )
-
-        if (transformResult.transformed) {
-          finalSkillContent = transformResult.mainSkillContent
-          subSkillFiles = transformResult.subSkills
-          subagentContent = transformResult.subagent?.content
-          claudeMdSnippet = transformResult.claudeMdSnippet
-
-          optimizationInfo = {
-            optimized: true,
-            subSkills: subSkillFiles.map((s) => s.filename),
-            subagentGenerated: !!subagentContent,
-            tokenReductionPercent: transformResult.stats.tokenReductionPercent,
-            originalLines: transformResult.stats.originalLines,
-            optimizedLines: transformResult.stats.optimizedLines,
-          }
+    const optimizeResult = input.skipOptimize
+      ? {
+          finalSkillContent: skillMdContent,
+          subSkillFiles: [] as Array<{ filename: string; content: string }>,
+          subagentContent: undefined as string | undefined,
+          claudeMdSnippet: undefined as string | undefined,
+          optimizationInfo: { optimized: false as const },
         }
-      } catch (transformError) {
-        // Transformation failed - continue with original content
-        console.warn('[install] Optimization failed, using original content:', transformError)
-        finalSkillContent = skillMdContent
-        optimizationInfo = { optimized: false }
-      }
-    }
+      : await applySkillOptimization(input.skillId, skillName, skillMdContent, context.db)
+
+    const { finalSkillContent, subSkillFiles, subagentContent, claudeMdSnippet, optimizationInfo } =
+      optimizeResult
 
     // SMI-1867: Compute hash before file operations (needed in manifest update)
     const contentHash = hashContent(finalSkillContent)
@@ -519,42 +490,3 @@ export async function installSkill(
     }
   }
 }
-
-/**
- * MCP tool definition
- */
-export const installTool = {
-  name: 'install_skill',
-  description:
-    'Install a Claude Code skill from GitHub. Performs security scan and Skillsmith optimization before installation.',
-  inputSchema: {
-    type: 'object' as const,
-    properties: {
-      skillId: {
-        type: 'string',
-        description: 'Skill ID (owner/repo/skill) or GitHub URL',
-      },
-      force: {
-        type: 'boolean',
-        description: 'Force reinstall if skill already exists',
-      },
-      skipScan: {
-        type: 'boolean',
-        description: 'Skip security scan (not recommended)',
-      },
-      skipOptimize: {
-        type: 'boolean',
-        description: 'Skip Skillsmith optimization (decomposition, subagent generation)',
-      },
-      conflictAction: {
-        type: 'string',
-        enum: ['overwrite', 'merge', 'cancel'],
-        description:
-          'Action when local modifications detected: overwrite (backup + replace), merge (three-way), or cancel',
-      },
-    },
-    required: ['skillId'],
-  },
-}
-
-export default installTool

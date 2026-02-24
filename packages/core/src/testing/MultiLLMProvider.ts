@@ -2,6 +2,7 @@
  * @fileoverview Multi-LLM Provider Chain for Skill Compatibility Testing
  * @module @skillsmith/core/testing/MultiLLMProvider
  * @see SMI-1523: Configure multi-LLM provider chain
+ * @see SMI-2741: Split to meet 500-line standard
  *
  * Provides a unified interface for testing skills across multiple LLM providers:
  * - Claude (Anthropic) - Primary
@@ -50,6 +51,19 @@ export {
 } from './MultiLLMProvider.helpers.js'
 export type { CircuitState, CircuitBreakerMetrics } from './MultiLLMProvider.helpers.js'
 
+// Re-export selection utilities for consumers
+export {
+  selectProvider,
+  selectRoundRobin,
+  selectLeastLoaded,
+  selectByLatency,
+  selectByCost,
+  getFallbackProvider,
+} from './MultiLLMProvider.selection.js'
+
+// Re-export metrics utilities for consumers
+export { aggregateMetrics, runCompatibilityTest } from './MultiLLMProvider.metrics.js'
+
 // Internal imports
 import type {
   LLMProviderType,
@@ -66,12 +80,12 @@ import type {
 import { DEFAULT_MULTI_LLM_CONFIG } from './MultiLLMProvider.types.js'
 import {
   CircuitBreaker,
-  getErrorCondition,
   estimateTokens,
   calculateCost,
-  calculateCompatibilityScore,
   simulateRequest,
 } from './MultiLLMProvider.helpers.js'
+import { selectProvider, getFallbackProvider } from './MultiLLMProvider.selection.js'
+import { aggregateMetrics, runCompatibilityTest } from './MultiLLMProvider.metrics.js'
 
 // ============================================================================
 // Multi-LLM Provider Implementation
@@ -219,7 +233,7 @@ export class MultiLLMProvider extends EventEmitter {
     this.ensureInitialized()
 
     const startTime = Date.now()
-    const provider = request.provider ?? this.selectProvider(request)
+    const provider = request.provider ?? this.doSelectProvider(request)
     const fallbackChain: LLMProviderType[] = []
 
     let currentProvider = provider
@@ -249,7 +263,7 @@ export class MultiLLMProvider extends EventEmitter {
         this.updateMetrics(currentProvider, { success: false, latencyMs: Date.now() - startTime })
         this.emit('provider_error', { provider: currentProvider, error })
 
-        const fallbackProvider = this.getFallbackProvider(currentProvider, error)
+        const fallbackProvider = this.doGetFallbackProvider(currentProvider, error)
         if (fallbackProvider && attempts < maxAttempts) {
           fallbackChain.push(currentProvider)
           currentProvider = fallbackProvider
@@ -266,49 +280,7 @@ export class MultiLLMProvider extends EventEmitter {
   /** Test skill compatibility across providers */
   async testSkillCompatibility(skillId: string): Promise<SkillCompatibilityResult> {
     this.ensureInitialized()
-
-    const results: SkillCompatibilityResult['results'] = {} as SkillCompatibilityResult['results']
-    const enabledProviders = this.getEnabledProviders()
-
-    const testPrompt = `Analyze if you can effectively help a user with a skill called "${skillId}".
-    Respond with a brief assessment of your capability.`
-
-    for (const provider of enabledProviders) {
-      const startTime = Date.now()
-
-      try {
-        const response = await this.complete({
-          messages: [{ role: 'user', content: testPrompt }],
-          provider,
-          maxTokens: 100,
-        })
-
-        results[provider] = {
-          compatible: true,
-          score: calculateCompatibilityScore(response),
-          latencyMs: response.latencyMs,
-        }
-      } catch (error) {
-        results[provider] = {
-          compatible: false,
-          score: 0,
-          latencyMs: Date.now() - startTime,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        }
-      }
-    }
-
-    const scores = Object.values(results)
-      .filter((r) => r.compatible)
-      .map((r) => r.score)
-    const overallScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0
-
-    const recommendedProviders = Object.entries(results)
-      .filter(([, r]) => r.compatible && r.score >= 0.7)
-      .sort(([, a], [, b]) => b.score - a.score)
-      .map(([p]) => p as LLMProviderType)
-
-    return { skillId, results, overallScore, recommendedProviders, testedAt: new Date() }
+    return runCompatibilityTest(skillId, this.getEnabledProviders(), (req) => this.complete(req))
   }
 
   /** Get provider metrics */
@@ -324,29 +296,7 @@ export class MultiLLMProvider extends EventEmitter {
     avgSuccessRate: number
     providerBreakdown: Record<LLMProviderType, number>
   } {
-    let totalRequests = 0,
-      totalCost = 0,
-      totalLatency = 0,
-      totalSuccessRate = 0
-    const providerBreakdown: Record<LLMProviderType, number> = {} as Record<LLMProviderType, number>
-
-    for (const [provider, metrics] of this.providerMetrics) {
-      totalRequests += metrics.totalRequests
-      totalCost += metrics.totalCost
-      totalLatency += metrics.avgLatencyMs * metrics.totalRequests
-      totalSuccessRate += metrics.successRate
-      providerBreakdown[provider] = metrics.totalRequests
-    }
-
-    const providerCount = this.providerMetrics.size
-
-    return {
-      totalRequests,
-      totalCost,
-      avgLatencyMs: totalRequests > 0 ? totalLatency / totalRequests : 0,
-      avgSuccessRate: providerCount > 0 ? totalSuccessRate / providerCount : 0,
-      providerBreakdown,
-    }
+    return aggregateMetrics(this.providerMetrics)
   }
 
   /** Close and cleanup */
@@ -393,100 +343,32 @@ export class MultiLLMProvider extends EventEmitter {
     }
   }
 
-  private selectProvider(request: LLMRequest): LLMProviderType {
+  private doSelectProvider(request: LLMRequest): LLMProviderType {
     const available = this.getAvailableProviders()
-    if (available.length === 0) {
-      throw new Error('No providers available')
-    }
-
-    // Cost constraint check
-    if (request.costConstraints?.maxCost && this.config.costOptimization.enabled) {
-      const costSorted = available.sort((a, b) => {
-        const configA = this.config.providers[a]
-        const configB = this.config.providers[b]
-        const costA = (configA?.costPerInputToken ?? 0) + (configA?.costPerOutputToken ?? 0)
-        const costB = (configB?.costPerInputToken ?? 0) + (configB?.costPerOutputToken ?? 0)
-        return costA - costB
-      })
-      return costSorted[0]
-    }
-
-    // Load balancing
-    if (this.config.loadBalancing.enabled) {
-      switch (this.config.loadBalancing.strategy) {
-        case 'round-robin':
-          return this.selectRoundRobin(available)
-        case 'least-loaded':
-          return this.selectLeastLoaded(available)
-        case 'latency-based':
-          return this.selectByLatency(available)
-        case 'cost-based':
-          return this.selectByCost(available)
-      }
-    }
-
-    // Default to configured default
-    if (available.includes(this.config.defaultProvider)) {
-      return this.config.defaultProvider
-    }
-
-    return available[0]
+    const result = selectProvider(
+      request,
+      available,
+      this.config,
+      this.roundRobinIndex,
+      (p) => this.getProviderStatus(p),
+      (p) => this.providerMetrics.get(p)
+    )
+    this.roundRobinIndex = result.nextRoundRobinIndex
+    return result.provider
   }
 
-  private selectRoundRobin(providers: LLMProviderType[]): LLMProviderType {
-    const selected = providers[this.roundRobinIndex % providers.length]
-    this.roundRobinIndex++
-    return selected
-  }
-
-  private selectLeastLoaded(providers: LLMProviderType[]): LLMProviderType {
-    return providers.reduce((best, current) => {
-      const bestStatus = this.getProviderStatus(best)
-      const currentStatus = this.getProviderStatus(current)
-      return currentStatus.currentLoad < bestStatus.currentLoad ? current : best
-    })
-  }
-
-  private selectByLatency(providers: LLMProviderType[]): LLMProviderType {
-    return providers.reduce((best, current) => {
-      const bestMetrics = this.providerMetrics.get(best)
-      const currentMetrics = this.providerMetrics.get(current)
-      const bestLatency = bestMetrics?.avgLatencyMs ?? Infinity
-      const currentLatency = currentMetrics?.avgLatencyMs ?? Infinity
-      return currentLatency < bestLatency ? current : best
-    })
-  }
-
-  private selectByCost(providers: LLMProviderType[]): LLMProviderType {
-    return providers.reduce((best, current) => {
-      const configBest = this.config.providers[best]
-      const configCurrent = this.config.providers[current]
-      const costBest = (configBest?.costPerInputToken ?? 0) + (configBest?.costPerOutputToken ?? 0)
-      const costCurrent =
-        (configCurrent?.costPerInputToken ?? 0) + (configCurrent?.costPerOutputToken ?? 0)
-      return costCurrent < costBest ? current : best
-    })
-  }
-
-  private getFallbackProvider(
+  private doGetFallbackProvider(
     currentProvider: LLMProviderType,
     error: unknown
   ): LLMProviderType | null {
     if (!this.config.fallbackStrategy.enabled) return null
-
-    const condition = getErrorCondition(error)
-    const rule = this.config.fallbackStrategy.rules.find((r) => r.condition === condition)
-
-    if (!rule) return null
-
     const available = this.getAvailableProviders()
-    for (const fallback of rule.fallbackProviders) {
-      if (fallback !== currentProvider && available.includes(fallback)) {
-        return fallback
-      }
-    }
-
-    return null
+    return getFallbackProvider(
+      currentProvider,
+      error,
+      this.config.fallbackStrategy.rules,
+      available
+    )
   }
 
   private async executeRequest(
