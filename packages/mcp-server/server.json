@@ -8,7 +8,7 @@
     "url": "https://github.com/smith-horn/skillsmith",
     "source": "github"
   },
-  "version": "0.4.1",
+  "version": "0.4.2",
   "_meta": {
     "io.skillsmith/categories": ["developer-tools", "ai-agents", "skill-management"],
     "io.skillsmith/keywords": [
@@ -23,7 +23,7 @@
     {
       "registryType": "npm",
       "identifier": "@skillsmith/mcp-server",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "transport": {
         "type": "stdio"
       },

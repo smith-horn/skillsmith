@@ -13,7 +13,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { existsSync, rmSync, readFileSync, readdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import Database from 'better-sqlite3'
+import { createDatabaseAsync } from '@skillsmith/core'
+import type { Database } from '@skillsmith/core'
 import type { AuditEventType, AuditLogEntry, AuditActor, AuditResult } from '@skillsmith/core'
 import {
   RetentionEnforcer,
@@ -37,7 +38,7 @@ import type {
  * without extending the base class, avoiding private member conflicts.
  */
 class MockAuditLogger {
-  db: Database.Database
+  db: Database
   // Required stub properties to satisfy EnterpriseAuditLogger interface
   config = { dbPath: ':memory:', retentionDays: 90 }
   stmts = {}
@@ -45,7 +46,7 @@ class MockAuditLogger {
   cleanupInternal = (): void => {}
   validateRetentionDays = (): void => {}
 
-  constructor(db: Database.Database) {
+  constructor(db: Database) {
     this.db = db
     this.ensureTableExists()
   }
@@ -290,13 +291,13 @@ describe('RetentionPolicy', () => {
 })
 
 describe('RetentionEnforcer', () => {
-  let db: Database.Database
+  let db: Database
   let auditLogger: EnterpriseAuditLogger
   let mockLogger: MockAuditLogger
   let archivePath: string
 
-  beforeEach(() => {
-    db = new Database(':memory:')
+  beforeEach(async () => {
+    db = await createDatabaseAsync(':memory:')
     mockLogger = new MockAuditLogger(db)
     auditLogger = mockLogger as unknown as EnterpriseAuditLogger
     archivePath = join(tmpdir(), 'audit-archive-test-' + Date.now())
