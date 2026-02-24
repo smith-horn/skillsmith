@@ -133,19 +133,28 @@ skillsmith --help
     </p>
   </div>
 
-  <h3>Get Your API Key</h3>
+  <h3>Get and Configure Your API Key</h3>
+
+  <p><strong>Option 1: CLI Login</strong> (Recommended — one command)</p>
+
+  <pre><code>{`npm install -g @skillsmith/cli
+skillsmith login`}</code></pre>
+
+  <p>
+    This opens <a href="/account/cli-token">skillsmith.app/account/cli-token</a> in your browser.
+    Generate a key, copy it, and paste it when prompted. The key is stored securely in your OS
+    keyring (macOS Keychain, GNOME Keyring, Windows Credential Store).
+  </p>
+
+  <p>For CI/headless environments, use <code>SKILLSMITH_API_KEY</code> as an environment variable instead.</p>
+
+  <p><strong>Option 2: Manual Config File</strong></p>
 
   <ol>
     <li><a href="/signup">Create a free account</a> (GitHub OAuth)</li>
-    <li>Your API key is automatically generated on signup</li>
-    <li>Find it on your <a href="/account">Account Dashboard</a></li>
+    <li>Visit your <a href="/account/cli-token">CLI Token page</a> to generate a key</li>
+    <li>Create <code>~/.skillsmith/config.json</code>:</li>
   </ol>
-
-  <h3>Configure Your API Key</h3>
-
-  <p><strong>Option 1: Config File</strong> (Recommended - Cross-Platform)</p>
-
-  <p>Create <code>~/.skillsmith/config.json</code> with your API key:</p>
 
   <pre><code>{`mkdir -p ~/.skillsmith && cat > ~/.skillsmith/config.json << 'EOF'
 {
@@ -153,9 +162,7 @@ skillsmith --help
 }
 EOF`}</code></pre>
 
-  <p>This method works on Mac, Linux, and Windows (via Git Bash or WSL) and doesn't require modifying MCP client settings.</p>
-
-  <p><strong>Option 2: MCP Client Settings</strong> (MCP server only)</p>
+  <p><strong>Option 3: MCP Client Settings</strong> (MCP server only)</p>
 
   <p>Add the API key directly to your <code>~/.claude/settings.json</code>:</p>
 

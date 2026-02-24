@@ -42,6 +42,17 @@ export function createWhoamiCommand(): Command {
       console.log(chalk.dim('  Key:    ') + chalk.cyan(masked))
       console.log(chalk.dim('  Source: ') + (SOURCE_LABELS[status.source] ?? status.source))
       console.log(chalk.dim('  Format: ') + chalk.green('valid'))
+
+      // Hint: when using file fallback, let the user know they can upgrade to keyring
+      if (status.source === 'config') {
+        console.log(
+          chalk.dim(
+            '  Tip:    Install @isaacs/keytar for more secure OS keyring storage: ' +
+              'npm install -g @isaacs/keytar'
+          )
+        )
+      }
+
       process.exit(0)
     })
 }

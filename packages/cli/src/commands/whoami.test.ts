@@ -42,13 +42,15 @@ describe('createWhoamiCommand', () => {
   let processExitSpy: ReturnType<typeof vi.spyOn>
 
   beforeEach(() => {
+    // clearAllMocks resets call history on module-level mocks (declared above).
+    // Must run BEFORE setting up spies so the spy implementations are not cleared.
+    vi.clearAllMocks()
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     processExitSpy = vi
       .spyOn(process, 'exit')
       .mockImplementation((code?: string | number | null | undefined) => {
         throw new Error(`process.exit(${code ?? 0})`)
       })
-    vi.clearAllMocks()
   })
 
   afterEach(() => {

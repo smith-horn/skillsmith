@@ -64,6 +64,9 @@ describe('createLoginCommand', () => {
   let originalEnv: NodeJS.ProcessEnv
 
   beforeEach(() => {
+    // clearAllMocks resets call history on module-level mocks (declared above).
+    // Must run BEFORE setting up spies so the spy implementations are not cleared.
+    vi.clearAllMocks()
     originalEnv = { ...process.env }
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -72,7 +75,6 @@ describe('createLoginCommand', () => {
       .mockImplementation((code?: string | number | null | undefined) => {
         throw new Error(`process.exit(${code ?? 0})`)
       })
-    vi.clearAllMocks()
   })
 
   afterEach(() => {
