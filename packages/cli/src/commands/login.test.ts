@@ -244,5 +244,30 @@ describe('createLoginCommand', () => {
       const output = consoleLogSpy.mock.calls.flat().join('\n')
       expect(output).toContain('clipboard')
     })
+
+    it('exits 1 with message when storeApiKey throws (filesystem error)', async () => {
+      mockIsValidApiKeyFormat.mockReturnValue(true)
+      mockPassword.mockResolvedValue(VALID_KEY)
+      mockStoreApiKey.mockRejectedValue(new Error('EACCES: permission denied'))
+
+      await expect(runCommand()).rejects.toThrow('process.exit(1)')
+
+      const errorOutput = consoleErrorSpy.mock.calls.flat().join('\n')
+      expect(errorOutput).toContain('Failed to store credentials')
+      expect(errorOutput).toContain('EACCES')
+    })
+
+    it('exits 0 cleanly on Ctrl+C (ExitPromptError)', async () => {
+      const exitPromptError = Object.assign(new Error('User force closed the prompt'), {
+        name: 'ExitPromptError',
+      })
+      mockPassword.mockRejectedValue(exitPromptError)
+
+      await expect(runCommand()).rejects.toThrow('process.exit(0)')
+
+      expect(mockStoreApiKey).not.toHaveBeenCalled()
+      const output = consoleLogSpy.mock.calls.flat().join('\n')
+      expect(output).toContain('Cancelled')
+    })
   })
 })

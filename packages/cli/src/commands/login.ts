@@ -87,29 +87,49 @@ export function createLoginCommand(): Command {
       let attempts = 0
       const MAX_ATTEMPTS = 3
 
-      while (attempts < MAX_ATTEMPTS) {
-        const raw = await password({ message: 'Paste your API key:' })
+      try {
+        while (attempts < MAX_ATTEMPTS) {
+          const raw = await password({ message: 'Paste your API key:' })
 
-        if (!isValidApiKeyFormat(raw)) {
-          attempts++
-          if (attempts < MAX_ATTEMPTS) {
+          if (!isValidApiKeyFormat(raw)) {
+            attempts++
+            if (attempts < MAX_ATTEMPTS) {
+              console.error(
+                chalk.red(
+                  `That doesn't look like a valid key (expected: sk_live_...). ` +
+                    `Try again (${attempts} of ${MAX_ATTEMPTS}).`
+                )
+              )
+            }
+            continue
+          }
+
+          // Valid format — store and exit
+          try {
+            await storeApiKey(raw)
+          } catch (storeErr) {
             console.error(
               chalk.red(
-                `That doesn't look like a valid key (expected: sk_live_...). ` +
-                  `Try again (${attempts} of ${MAX_ATTEMPTS}).`
+                '\nFailed to store credentials: ' +
+                  (storeErr instanceof Error ? storeErr.message : String(storeErr))
               )
             )
+            process.exit(1)
           }
-          continue
+          console.log(chalk.green('\nLogged in successfully.'))
+          console.log(
+            chalk.dim('  Note: your API key may still be in your clipboard. Clear it when done.')
+          )
+          process.exit(0)
         }
-
-        // Valid format — store and exit
-        await storeApiKey(raw)
-        console.log(chalk.green('\nLogged in successfully.'))
-        console.log(
-          chalk.dim('  Note: your API key may still be in your clipboard. Clear it when done.')
-        )
-        process.exit(0)
+      } catch (promptErr) {
+        // @inquirer/prompts throws ExitPromptError on Ctrl+C — exit cleanly
+        const name = (promptErr as { name?: string }).name
+        if (name === 'ExitPromptError') {
+          console.log(chalk.dim('\nCancelled.'))
+          process.exit(0)
+        }
+        throw promptErr
       }
 
       // Exhausted all attempts

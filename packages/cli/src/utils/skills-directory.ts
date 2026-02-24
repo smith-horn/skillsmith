@@ -95,7 +95,7 @@ export async function getSkillsFromDirectory(skillsDir: string): Promise<Install
 
 /**
  * Get list of installed skills from both global (~/.claude/skills) and
- * local (./claude/skills) directories.
+ * local (.claude/skills) directories.
  *
  * SMI-1630: Local skills take precedence over global skills with the same name.
  */
