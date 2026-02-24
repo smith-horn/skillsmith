@@ -265,8 +265,8 @@ export class CacheBenchmark {
       },
     }
 
-    this.tieredCache = new EnhancedTieredCache(cacheConfig)
-    this.cacheManager = new CacheManager({
+    this.tieredCache = await EnhancedTieredCache.create(cacheConfig)
+    this.cacheManager = await CacheManager.create({
       ...cacheConfig,
       enableBackgroundRefresh: false, // Disable for benchmarking
     })

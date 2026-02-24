@@ -69,8 +69,8 @@ interface ResolvedManagerConfig {
  * Coordinates L1/L2 caching with intelligent TTL management
  */
 export class CacheManager {
-  private cache: EnhancedTieredCache
-  private readonly config: ResolvedManagerConfig
+  private cache!: EnhancedTieredCache
+  private config!: ResolvedManagerConfig
   private queryFrequencies: Map<string, QueryFrequency> = new Map()
   private refreshTimer: ReturnType<typeof setInterval> | null = null
   /** SMI-683: Use Map<key, Promise> for proper deduplication of concurrent refreshes */
@@ -81,21 +81,44 @@ export class CacheManager {
   private lastInvalidation = 0
   private invalidationCallbacks: Array<() => void> = []
 
-  constructor(config: CacheManagerConfig = {}) {
-    this.cache = new EnhancedTieredCache(config)
+  /**
+   * @deprecated Use CacheManager.create(config) — async factory with WASM fallback.
+   * This constructor always throws to prevent silent data loss.
+   */
+  constructor(_config?: CacheManagerConfig) {
+    throw new Error(
+      '[CacheManager] Cannot construct synchronously. ' +
+        'Use await CacheManager.create(config) instead.'
+    )
+  }
 
-    this.config = {
+  /**
+   * Async factory — supports both native and WASM SQLite.
+   *
+   * @param config - Cache manager configuration
+   * @returns Fully initialised CacheManager instance
+   */
+  static async create(config: CacheManagerConfig = {}): Promise<CacheManager> {
+    const instance = Object.create(CacheManager.prototype) as CacheManager
+    instance.cache = await EnhancedTieredCache.create(config)
+    instance.config = {
       enableBackgroundRefresh: config.enableBackgroundRefresh ?? true,
       refreshIntervalMs: config.refreshIntervalMs ?? 30 * 1000,
       maxConcurrentRefreshes: config.maxConcurrentRefreshes ?? 3,
     }
-
-    this.refreshCallback = config.refreshCallback ?? null
+    instance.queryFrequencies = new Map()
+    instance.refreshTimer = null
+    instance.activeRefreshes = new Map()
+    instance.refreshCallback = config.refreshCallback ?? null
+    instance.lastInvalidation = 0
+    instance.invalidationCallbacks = []
 
     // Start background refresh if enabled
-    if (this.config.enableBackgroundRefresh && this.refreshCallback) {
-      this.startBackgroundRefresh()
+    if (instance.config.enableBackgroundRefresh && instance.refreshCallback) {
+      instance.startBackgroundRefresh()
     }
+
+    return instance
   }
 
   /**

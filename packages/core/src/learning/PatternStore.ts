@@ -4,7 +4,7 @@
  * @see https://arxiv.org/abs/1801.10112 (Progress & Compress)
  */
 import type { Database } from '../db/database-interface.js'
-import { createDatabaseSync } from '../db/createDatabase.js'
+import { createDatabaseAsync } from '../db/createDatabase.js'
 import { randomUUID } from 'crypto'
 import { EmbeddingService } from '../embeddings/index.js'
 
@@ -104,10 +104,23 @@ export class PatternStore {
     }
   }
 
+  /**
+   * Async factory — creates and fully initialises a PatternStore.
+   * Equivalent to `new PatternStore(config)` + `await store.initialize()`.
+   *
+   * @param config - Store configuration
+   * @returns Fully initialised PatternStore instance
+   */
+  static async create(config: PatternStoreConfig = {}): Promise<PatternStore> {
+    const store = new PatternStore(config)
+    await store.initialize()
+    return store
+  }
+
   async initialize(): Promise<void> {
     if (this.initialized) return
 
-    this.db = createDatabaseSync(this.config.dbPath || ':memory:')
+    this.db = await createDatabaseAsync(this.config.dbPath || ':memory:')
     this.db.exec(PATTERN_STORE_SCHEMA)
     this.fisherMatrix = new FisherInformationMatrix(this.config.dimensions)
     this.loadFisherMatrix()

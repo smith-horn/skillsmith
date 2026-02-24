@@ -13,27 +13,31 @@ import {
 
 describe('EmbeddingService', () => {
   describe('constructor', () => {
-    it('should accept legacy string dbPath argument', () => {
-      // This tests backward compatibility
-      const service = new EmbeddingService(':memory:')
-      expect(service).toBeInstanceOf(EmbeddingService)
-      service.close()
+    it('should throw when dbPath is passed as string (use EmbeddingService.create instead)', () => {
+      expect(() => new EmbeddingService(':memory:')).toThrow(
+        '[EmbeddingService] Cannot open a database file in the sync constructor'
+      )
     })
 
-    it('should accept options object', () => {
+    it('should throw when dbPath is passed in options (use EmbeddingService.create instead)', () => {
       const options: EmbeddingServiceOptions = {
         dbPath: ':memory:',
         useFallback: true,
       }
-      const service = new EmbeddingService(options)
-      expect(service).toBeInstanceOf(EmbeddingService)
-      expect(service.isUsingFallback()).toBe(true)
-      service.close()
+      expect(() => new EmbeddingService(options)).toThrow(
+        '[EmbeddingService] Cannot open a database file in the sync constructor'
+      )
     })
 
     it('should work without any arguments', () => {
       const service = new EmbeddingService()
       expect(service).toBeInstanceOf(EmbeddingService)
+    })
+
+    it('async factory should create instance with DB (EmbeddingService.create)', async () => {
+      const service = await EmbeddingService.create({ dbPath: ':memory:', useFallback: true })
+      expect(service).toBeInstanceOf(EmbeddingService)
+      service.close()
     })
   })
 
@@ -202,8 +206,8 @@ describe('EmbeddingService', () => {
   describe('database caching', () => {
     let service: EmbeddingService
 
-    beforeEach(() => {
-      service = new EmbeddingService({ dbPath: ':memory:', useFallback: true })
+    beforeEach(async () => {
+      service = await EmbeddingService.create({ dbPath: ':memory:', useFallback: true })
     })
 
     afterEach(() => {

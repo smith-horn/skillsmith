@@ -18,7 +18,8 @@ export * from './exports/repositories.js'
 // SMI-2229: Explicit re-exports for TypeScript project reference resolution
 // These are already exported via repositories.js but TypeScript composite projects
 // don't always follow the re-export chain correctly
-export { createDatabaseSync } from './db/createDatabase.js'
+// SMI-2721 (L1): Export createDatabaseAsync for CLI + enterprise async migration
+export { createDatabaseSync, createDatabaseAsync } from './db/createDatabase.js'
 export type { Database } from './db/database-interface.js'
 
 // Types - All type definitions

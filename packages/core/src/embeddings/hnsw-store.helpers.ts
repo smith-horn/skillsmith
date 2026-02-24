@@ -15,22 +15,22 @@ import { HNSWEmbeddingStore } from './hnsw-store.js'
  * Create an HNSWEmbeddingStore with a preset configuration.
  *
  * @param preset - Preset name ('small', 'medium', 'large', 'xlarge')
- * @param options - Additional options (merged with preset)
- * @returns Configured HNSWEmbeddingStore instance
+ * @param options - Additional options (merged with preset); dbPath is opened async
+ * @returns Promise resolving to a configured HNSWEmbeddingStore instance
  *
  * @example
  * ```typescript
- * const store = createHNSWStore('large', {
+ * const store = await createHNSWStore('large', {
  *   dbPath: './embeddings.db',
  *   indexPath: './embeddings.hnsw',
  * });
  * ```
  */
-export function createHNSWStore(
+export async function createHNSWStore(
   preset: keyof typeof HNSW_PRESETS,
   options: Omit<HNSWEmbeddingStoreOptions, 'hnswConfig'> = {}
-): HNSWEmbeddingStore {
-  return new HNSWEmbeddingStore({
+): Promise<HNSWEmbeddingStore> {
+  return HNSWEmbeddingStore.create({
     ...options,
     hnswConfig: HNSW_PRESETS[preset],
   })

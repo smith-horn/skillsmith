@@ -44,13 +44,19 @@ describe('HNSWEmbeddingStore', () => {
   })
 
   describe('constructor', () => {
-    it('should create store with default config', () => {
-      store = new HNSWEmbeddingStore({ dbPath: testDbPath })
+    it('should throw when dbPath is passed (use HNSWEmbeddingStore.create instead)', () => {
+      expect(() => new HNSWEmbeddingStore({ dbPath: testDbPath })).toThrow(
+        '[HNSWEmbeddingStore] Cannot open a database file in the sync constructor'
+      )
+    })
+
+    it('async factory should create store with default config', async () => {
+      store = await HNSWEmbeddingStore.create({ dbPath: testDbPath })
       expect(store).toBeInstanceOf(HNSWEmbeddingStore)
     })
 
-    it('should create store with custom config', () => {
-      store = new HNSWEmbeddingStore({
+    it('async factory should create store with custom config', async () => {
+      store = await HNSWEmbeddingStore.create({
         dbPath: testDbPath,
         hnswConfig: {
           m: 32,
@@ -63,8 +69,8 @@ describe('HNSWEmbeddingStore', () => {
       expect(store).toBeInstanceOf(HNSWEmbeddingStore)
     })
 
-    it('should use brute-force fallback when useHNSW is false', () => {
-      store = new HNSWEmbeddingStore({
+    it('should use brute-force fallback when useHNSW is false', async () => {
+      store = await HNSWEmbeddingStore.create({
         dbPath: testDbPath,
         useHNSW: false,
       })
@@ -73,8 +79,8 @@ describe('HNSWEmbeddingStore', () => {
   })
 
   describe('storeEmbedding', () => {
-    beforeEach(() => {
-      store = new HNSWEmbeddingStore({ dbPath: testDbPath, useHNSW: false })
+    beforeEach(async () => {
+      store = await HNSWEmbeddingStore.create({ dbPath: testDbPath, useHNSW: false })
     })
 
     it('should store embedding successfully', () => {
@@ -107,8 +113,8 @@ describe('HNSWEmbeddingStore', () => {
   })
 
   describe('getEmbedding', () => {
-    beforeEach(() => {
-      store = new HNSWEmbeddingStore({ dbPath: testDbPath, useHNSW: false })
+    beforeEach(async () => {
+      store = await HNSWEmbeddingStore.create({ dbPath: testDbPath, useHNSW: false })
     })
 
     it('should return null for non-existent skill', () => {
@@ -131,8 +137,8 @@ describe('HNSWEmbeddingStore', () => {
   })
 
   describe('getAllEmbeddings', () => {
-    beforeEach(() => {
-      store = new HNSWEmbeddingStore({ dbPath: testDbPath, useHNSW: false })
+    beforeEach(async () => {
+      store = await HNSWEmbeddingStore.create({ dbPath: testDbPath, useHNSW: false })
     })
 
     it('should return empty map for empty store', () => {
@@ -154,8 +160,8 @@ describe('HNSWEmbeddingStore', () => {
   })
 
   describe('findSimilar', () => {
-    beforeEach(() => {
-      store = new HNSWEmbeddingStore({ dbPath: testDbPath, useHNSW: false })
+    beforeEach(async () => {
+      store = await HNSWEmbeddingStore.create({ dbPath: testDbPath, useHNSW: false })
     })
 
     it('should return empty array for empty store', () => {
@@ -204,8 +210,8 @@ describe('HNSWEmbeddingStore', () => {
   })
 
   describe('cosineSimilarity', () => {
-    beforeEach(() => {
-      store = new HNSWEmbeddingStore({ dbPath: testDbPath, useHNSW: false })
+    beforeEach(async () => {
+      store = await HNSWEmbeddingStore.create({ dbPath: testDbPath, useHNSW: false })
     })
 
     it('should return 1 for identical normalized vectors', () => {
@@ -234,8 +240,8 @@ describe('HNSWEmbeddingStore', () => {
   })
 
   describe('batchInsert', () => {
-    beforeEach(() => {
-      store = new HNSWEmbeddingStore({ dbPath: testDbPath, useHNSW: false })
+    beforeEach(async () => {
+      store = await HNSWEmbeddingStore.create({ dbPath: testDbPath, useHNSW: false })
     })
 
     it('should batch insert multiple embeddings', () => {
@@ -273,8 +279,8 @@ describe('HNSWEmbeddingStore', () => {
   })
 
   describe('removeEmbedding', () => {
-    beforeEach(() => {
-      store = new HNSWEmbeddingStore({ dbPath: testDbPath, useHNSW: false })
+    beforeEach(async () => {
+      store = await HNSWEmbeddingStore.create({ dbPath: testDbPath, useHNSW: false })
     })
 
     it('should remove existing embedding', () => {
@@ -293,8 +299,8 @@ describe('HNSWEmbeddingStore', () => {
   })
 
   describe('getStats', () => {
-    beforeEach(() => {
-      store = new HNSWEmbeddingStore({ dbPath: testDbPath, useHNSW: false })
+    beforeEach(async () => {
+      store = await HNSWEmbeddingStore.create({ dbPath: testDbPath, useHNSW: false })
     })
 
     it('should return correct stats for empty store', () => {
@@ -315,8 +321,8 @@ describe('HNSWEmbeddingStore', () => {
   })
 
   describe('factory functions', () => {
-    it('createHNSWStore should create with preset config', () => {
-      store = createHNSWStore('large', { dbPath: testDbPath })
+    it('createHNSWStore should create with preset config', async () => {
+      store = await createHNSWStore('large', { dbPath: testDbPath })
       const stats = store.getStats()
       expect(stats.m).toBe(HNSW_PRESETS.large.m)
       expect(stats.efConstruction).toBe(HNSW_PRESETS.large.efConstruction)

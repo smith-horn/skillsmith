@@ -47,12 +47,33 @@ export class TieredCache {
   private l1: L1Cache
   private l2: L2Cache | null = null
 
+  /**
+   * @deprecated If l2Options is passed, use TieredCache.create(options) — async factory
+   * with WASM fallback. Passing l2Options to this constructor throws to prevent silent
+   * data loss.
+   */
   constructor(options: TieredCacheOptions = {}) {
-    this.l1 = new L1Cache(options.l1MaxSize ?? 100)
-
     if (options.l2Options) {
-      this.l2 = new L2Cache(options.l2Options)
+      throw new Error(
+        '[TieredCache] Cannot open a database file in the sync constructor. ' +
+          'Use await TieredCache.create(options) instead.'
+      )
     }
+    this.l1 = new L1Cache(options.l1MaxSize ?? 100)
+  }
+
+  /**
+   * Async factory — supports both native and WASM SQLite.
+   *
+   * @param options - Cache options; l2Options.dbPath is opened via createDatabaseAsync
+   * @returns Fully initialised TieredCache instance
+   */
+  static async create(options: TieredCacheOptions = {}): Promise<TieredCache> {
+    const instance = new TieredCache({ l1MaxSize: options.l1MaxSize })
+    if (options.l2Options) {
+      instance.l2 = await L2Cache.create(options.l2Options)
+    }
+    return instance
   }
 
   /**

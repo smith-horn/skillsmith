@@ -10,7 +10,7 @@
  */
 
 import type { Database } from '../db/database-interface.js'
-import { createDatabaseSync } from '../db/createDatabase.js'
+import { createDatabaseSync, createDatabaseAsync } from '../db/createDatabase.js'
 
 // Import types and utilities from extracted modules
 export type {
@@ -52,18 +52,44 @@ export class EmbeddingService {
   /**
    * Create an EmbeddingService instance.
    *
-   * @param optionsOrDbPath - Options object or legacy dbPath string
+   * @deprecated If dbPath is passed, use EmbeddingService.create(options) instead —
+   * the async factory supports both native and WASM SQLite. Passing dbPath to this
+   * constructor throws to prevent silent data loss.
+   *
+   * @param optionsOrDbPath - Options object or legacy dbPath string (dbPath throws)
    */
   constructor(optionsOrDbPath?: string | { dbPath?: string; useFallback?: boolean }) {
     const options =
       typeof optionsOrDbPath === 'string' ? { dbPath: optionsOrDbPath } : (optionsOrDbPath ?? {})
 
-    this.useFallback = shouldUseFallback(options.useFallback)
-
     if (options.dbPath) {
-      this.db = createDatabaseSync(options.dbPath)
-      this.initEmbeddingTable()
+      throw new Error(
+        '[EmbeddingService] Cannot open a database file in the sync constructor. ' +
+          'Use await EmbeddingService.create(options) instead.'
+      )
     }
+
+    this.useFallback = shouldUseFallback(options.useFallback)
+  }
+
+  /**
+   * Async factory — supports both native and WASM SQLite.
+   *
+   * @param optionsOrDbPath - Options object or dbPath string
+   * @returns Fully initialised EmbeddingService instance
+   */
+  static async create(
+    optionsOrDbPath?: string | { dbPath?: string; useFallback?: boolean }
+  ): Promise<EmbeddingService> {
+    const options =
+      typeof optionsOrDbPath === 'string' ? { dbPath: optionsOrDbPath } : (optionsOrDbPath ?? {})
+    // Bypass the throwing constructor by omitting dbPath
+    const instance = new EmbeddingService({ useFallback: options.useFallback })
+    if (options.dbPath) {
+      instance.db = await createDatabaseAsync(options.dbPath)
+      instance.initEmbeddingTable()
+    }
+    return instance
   }
 
   /** Check if service is running in fallback (mock) mode */

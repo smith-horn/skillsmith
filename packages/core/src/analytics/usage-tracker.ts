@@ -66,39 +66,56 @@ export interface UsageTrackerOptions {
  * ```
  */
 export class UsageTracker {
-  private storage: AnalyticsStorage
-  private pendingEvents: Map<string, PendingTracking>
+  private storage!: AnalyticsStorage
+  private pendingEvents: Map<string, PendingTracking> = new Map()
   private cleanupTimer: ReturnType<typeof setInterval> | null = null
   private sessionCleanupTimer: ReturnType<typeof setInterval> | null = null
 
   /**
-   * Create a usage tracker instance
+   * @deprecated Use UsageTracker.create(options) — async factory with WASM fallback.
+   * This constructor always throws to prevent silent data loss.
+   */
+  constructor(_options?: UsageTrackerOptions) {
+    throw new Error(
+      '[UsageTracker] Cannot construct synchronously. ' +
+        'Use await UsageTracker.create(options) instead.'
+    )
+  }
+
+  /**
+   * Async factory — supports both native and WASM SQLite.
    *
    * @param options - Configuration options
+   * @returns Fully initialised UsageTracker instance
    */
-  constructor(options: UsageTrackerOptions = {}) {
-    this.storage = new AnalyticsStorage(options.dbPath)
-    this.pendingEvents = new Map()
+  static async create(options: UsageTrackerOptions = {}): Promise<UsageTracker> {
+    const instance = Object.create(UsageTracker.prototype) as UsageTracker
+    instance.storage = await AnalyticsStorage.create(options.dbPath)
+    instance.pendingEvents = new Map()
+    instance.cleanupTimer = null
+    instance.sessionCleanupTimer = null
 
     // Setup auto-cleanup (default: every hour)
     const cleanupInterval = options.cleanupInterval ?? 60 * 60 * 1000
     if (cleanupInterval > 0) {
-      this.cleanupTimer = setInterval(() => this.cleanup(), cleanupInterval)
+      instance.cleanupTimer = setInterval(() => instance.cleanup(), cleanupInterval)
       // Don't block Node.js from exiting
-      if (this.cleanupTimer.unref) {
-        this.cleanupTimer.unref()
+      if (instance.cleanupTimer.unref) {
+        instance.cleanupTimer.unref()
       }
     }
 
     // Setup session cleanup at half the timeout interval to prevent unbounded growth
-    this.sessionCleanupTimer = setInterval(
-      () => this.cleanupStaleSessions(),
+    instance.sessionCleanupTimer = setInterval(
+      () => instance.cleanupStaleSessions(),
       SESSION_TIMEOUT_MS / 2
     )
     // Don't block Node.js from exiting
-    if (this.sessionCleanupTimer.unref) {
-      this.sessionCleanupTimer.unref()
+    if (instance.sessionCleanupTimer.unref) {
+      instance.sessionCleanupTimer.unref()
     }
+
+    return instance
   }
 
   /**

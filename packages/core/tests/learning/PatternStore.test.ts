@@ -84,6 +84,16 @@ describe('PatternStore', () => {
       instance.close()
     })
 
+    it('static async create() factory opens DB and initializes correctly (SMI-2721)', async () => {
+      const instance = await PatternStore.create({ dbPath: ':memory:' })
+      expect(instance).toBeInstanceOf(PatternStore)
+      expect(instance.isInitialized()).toBe(true)
+      // Verify DB is usable by checking metrics
+      const metrics = instance.getMetrics()
+      expect(metrics.totalPatterns).toBe(0)
+      instance.close()
+    })
+
     it('should throw if methods called before initialization', async () => {
       const uninitialized = new PatternStore()
 

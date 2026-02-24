@@ -13,9 +13,9 @@ import { UsageTracker } from '../../src/analytics/usage-tracker.js'
 describe('UsageTracker', () => {
   let tracker: UsageTracker
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Use in-memory database for tests
-    tracker = new UsageTracker({ dbPath: ':memory:' })
+    tracker = await UsageTracker.create({ dbPath: ':memory:' })
   })
 
   afterEach(() => {
@@ -135,10 +135,10 @@ describe('UsageTracker', () => {
   })
 
   describe('dispose', () => {
-    it('should clear the session cleanup interval', () => {
+    it('should clear the session cleanup interval', async () => {
       const clearIntervalSpy = vi.spyOn(global, 'clearInterval')
 
-      const testTracker = new UsageTracker({ dbPath: ':memory:' })
+      const testTracker = await UsageTracker.create({ dbPath: ':memory:' })
       testTracker.dispose()
 
       // Should have cleared at least the session cleanup timer
@@ -147,8 +147,8 @@ describe('UsageTracker', () => {
       clearIntervalSpy.mockRestore()
     })
 
-    it('should be callable multiple times without error', () => {
-      const testTracker = new UsageTracker({ dbPath: ':memory:' })
+    it('should be callable multiple times without error', async () => {
+      const testTracker = await UsageTracker.create({ dbPath: ':memory:' })
 
       expect(() => {
         testTracker.dispose()
@@ -156,8 +156,8 @@ describe('UsageTracker', () => {
       }).not.toThrow()
     })
 
-    it('should be an alias for close', () => {
-      const testTracker = new UsageTracker({ dbPath: ':memory:' })
+    it('should be an alias for close', async () => {
+      const testTracker = await UsageTracker.create({ dbPath: ':memory:' })
       const closeSpy = vi.spyOn(testTracker, 'close')
 
       testTracker.dispose()

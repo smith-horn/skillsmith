@@ -15,7 +15,7 @@ describe('UsageTracker', () => {
   let testDbPath: string
   let testDir: string
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Create a unique test directory for each test
     testDir = join(
       tmpdir(),
@@ -24,7 +24,7 @@ describe('UsageTracker', () => {
     mkdirSync(testDir, { recursive: true })
     testDbPath = join(testDir, 'test-tracker.db')
     // Disable auto-cleanup for tests
-    tracker = new UsageTracker({ dbPath: testDbPath, cleanupInterval: 0 })
+    tracker = await UsageTracker.create({ dbPath: testDbPath, cleanupInterval: 0 })
   })
 
   afterEach(() => {
@@ -196,10 +196,10 @@ describe('UsageTracker', () => {
   })
 
   describe('auto-cleanup', () => {
-    it('should schedule cleanup with interval', () => {
+    it('should schedule cleanup with interval', async () => {
       vi.useFakeTimers()
 
-      const autoTracker = new UsageTracker({
+      const autoTracker = await UsageTracker.create({
         dbPath: join(testDir, 'auto-cleanup.db'),
         cleanupInterval: 1000,
       })
@@ -216,10 +216,10 @@ describe('UsageTracker', () => {
       vi.useRealTimers()
     })
 
-    it('should not schedule cleanup when interval is 0', () => {
+    it('should not schedule cleanup when interval is 0', async () => {
       vi.useFakeTimers()
 
-      const noCleanupTracker = new UsageTracker({
+      const noCleanupTracker = await UsageTracker.create({
         dbPath: join(testDir, 'no-cleanup.db'),
         cleanupInterval: 0,
       })

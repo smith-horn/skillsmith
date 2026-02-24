@@ -75,6 +75,11 @@ export function detectAvailableDrivers(): DriverInfo[] {
  * @returns The driver type to use, or null if none available
  */
 export function getBestDriver(): DriverType | null {
+  // Allow env var override for testing WASM path in Docker
+  if (process.env.SKILLSMITH_FORCE_WASM === 'true') {
+    return isSqlJsAvailable() ? 'sql.js' : null
+  }
+
   // Prefer native for performance
   if (isBetterSqlite3Available()) {
     return 'better-sqlite3'
@@ -134,6 +139,17 @@ export async function createDatabaseAsync(
   path: string = ':memory:',
   options?: DatabaseOptions
 ): Promise<Database> {
+  // Allow env var override for testing WASM path in Docker
+  if (process.env.SKILLSMITH_FORCE_WASM === 'true') {
+    if (isSqlJsAvailable()) {
+      return await createSqlJsDatabase(path, options)
+    }
+    throw new Error(
+      '[Skillsmith] SKILLSMITH_FORCE_WASM is set but sql.js (WASM) is not available.\n\n' +
+        'Install sql.js: npm install sql.js'
+    )
+  }
+
   // Try native first
   if (isBetterSqlite3Available()) {
     return createBetterSqlite3Database(path, options)
