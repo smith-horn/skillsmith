@@ -189,8 +189,9 @@ describe('SMI-797: Performance Validation', () => {
       const searchResult = await executeSearch({ query: 'test' }, context)
       expect(searchResult.results.length).toBeGreaterThan(0)
 
-      // Get first result
-      const firstId = searchResult.results[0].id
+      // Get first registry result (skip local skills — they aren't in the test DB)
+      const firstId =
+        searchResult.results.find((r) => r.source !== 'local')?.id ?? 'test-org/skill-0'
       await executeGetSkill({ id: firstId }, context)
 
       const elapsed = performance.now() - start
@@ -203,8 +204,11 @@ describe('SMI-797: Performance Validation', () => {
       // Search with limit
       const searchResult = await executeSearch({ query: 'test' }, context)
 
-      // Get all results (up to 10)
-      const ids = searchResult.results.slice(0, 10).map((r) => r.id)
+      // Get up to 10 registry results (skip local skills — they aren't in the test DB)
+      const ids = searchResult.results
+        .filter((r) => r.source !== 'local')
+        .slice(0, 10)
+        .map((r) => r.id)
       await Promise.all(ids.map((id) => executeGetSkill({ id }, context)))
 
       const elapsed = performance.now() - start
@@ -260,10 +264,11 @@ describe('SMI-797: Performance Validation', () => {
       )
       metrics.concurrentSearches = performance.now() - start
 
-      // Search + Get flow
+      // Search + Get flow (use first registry result — local skills aren't in the test DB)
       start = performance.now()
       const result = await executeSearch({ query: 'test' }, context)
-      await executeGetSkill({ id: result.results[0].id }, context)
+      const flowId = result.results.find((r) => r.source !== 'local')?.id ?? 'test-org/skill-0'
+      await executeGetSkill({ id: flowId }, context)
       metrics.searchGetFlow = performance.now() - start
 
       console.log('Performance Metrics (ms):')

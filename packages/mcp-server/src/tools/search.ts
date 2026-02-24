@@ -232,6 +232,7 @@ export async function executeSearch(
 
       // Convert API results to SkillSearchResult format
       // SMI-1491: Added repository field for transparency
+      // SMI-2734: Added installHint for ergonomic registry ID (registry skills only)
       const results: SkillSearchResult[] = apiResponse.data.map((item) => ({
         id: item.id,
         name: item.name,
@@ -241,6 +242,8 @@ export async function executeSearch(
         trustTier: mapTrustTierFromDb(item.trust_tier),
         score: Math.round((item.quality_score ?? 0) * 100),
         repository: item.repo_url || undefined,
+        // SMI-2734: 'author/name' install ID — valid for all registry API results
+        installHint: item.author ? item.author + '/' + item.name : undefined,
       }))
 
       // SMI-1809: Search local skills and merge with API results
@@ -317,6 +320,9 @@ export async function executeSearch(
   // Convert SearchResult to SkillSearchResult format
   // SMI-1491: Added repository field for transparency
   // SMI-825: Added security summary
+  // SMI-2734: installHint intentionally omitted — local DB results are registry skills fetched
+  // via the local cache. However the local DB also holds skills without a routable registry
+  // owner (e.g. seed data with author='unknown'). Guard on author being a real value.
   const results: SkillSearchResult[] = searchResults.items.map((item) => ({
     id: item.skill.id,
     name: item.skill.name,
@@ -326,6 +332,11 @@ export async function executeSearch(
     trustTier: mapTrustTierFromDb(item.skill.trustTier),
     score: Math.round((item.skill.qualityScore ?? 0) * 100), // Convert 0-1 to 0-100
     repository: item.skill.repoUrl || undefined,
+    // SMI-2734: Only set installHint when author is a real registry owner (not 'unknown')
+    installHint:
+      item.skill.author && item.skill.author !== 'unknown'
+        ? item.skill.author + '/' + item.skill.name
+        : undefined,
     // SMI-825: Security summary
     security: {
       passed: item.skill.securityPassed,
@@ -419,6 +430,10 @@ export function formatSearchResults(response: SearchResponse): string {
       lines.push('   Author: ' + skill.author + ' | Score: ' + skill.score + '/100')
       lines.push('   ' + skill.description)
       lines.push('   ID: ' + skill.id)
+      // SMI-2734: Surface registry install ID so models can use owner/name directly
+      if (skill.installHint) {
+        lines.push('   Install: ' + skill.installHint)
+      }
       lines.push('')
     })
   }

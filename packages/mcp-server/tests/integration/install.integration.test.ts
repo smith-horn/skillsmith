@@ -15,6 +15,18 @@ import {
   type TestFilesystemContext,
 } from './setup.js'
 
+// SMI-2722/2732: Mock install.helpers module for UUID install path tests.
+// Uses importActual to preserve all real helpers; only lookupSkillFromRegistry and
+// fetchFromGitHub are replaced so per-test vi.mocked() calls can control their behavior.
+vi.mock('../../src/tools/install.helpers.js', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/tools/install.helpers.js')>()
+  return {
+    ...actual,
+    lookupSkillFromRegistry: vi.fn(),
+    fetchFromGitHub: vi.fn(),
+  }
+})
+
 // We need to mock the paths used by the install module
 // Since the install.ts uses os.homedir(), we'll test the core logic
 
@@ -714,6 +726,128 @@ Use this skill by mentioning it in Claude Code.
         expect(getTierContext('verified')).toBe('')
         expect(getTierContext('community')).toBe('')
       })
+    })
+  })
+
+  /**
+   * SMI-2722/2732: UUID install path integration tests
+   * Verifies the full installSkill() flow for UUID skillIds:
+   *  - registry hit with valid repo_url → install succeeds
+   *  - registry returns null (no repo_url) → discovery-only error
+   *  - registry returns quarantined skill → quarantine error
+   *  - UUID not found in registry → discovery-only error
+   *  - SKILL.md fetch throws for registry-sourced skill → data quality error
+   */
+  describe('SMI-2722/2732: UUID install path', () => {
+    const TEST_UUID = 'a129e127-a82c-47e5-8bc5-09d7ba2e8734'
+    const VALID_SKILL_MD = [
+      '---',
+      'name: test-skill',
+      'description: A test skill for integration testing UUID install path',
+      '---',
+      '# Test Skill',
+      '',
+      'This is a test skill with sufficient content to pass all validation checks.',
+      'It has YAML frontmatter, a markdown heading, and enough body text.',
+    ].join('\n')
+
+    let installSkill: (typeof import('../../src/tools/install.js'))['installSkill']
+    let installInputSchema: (typeof import('../../src/tools/install.types.js'))['installInputSchema']
+    let lookupSkillFromRegistry: ReturnType<typeof vi.fn>
+    let fetchFromGitHub: ReturnType<typeof vi.fn>
+
+    beforeAll(async () => {
+      // Dynamic import after vi.mock() has been hoisted — module is already mocked
+      const installModule = await import('../../src/tools/install.js')
+      installSkill = installModule.installSkill
+
+      const typesModule = await import('../../src/tools/install.types.js')
+      installInputSchema = typesModule.installInputSchema
+
+      const helpersModule = await import('../../src/tools/install.helpers.js')
+      lookupSkillFromRegistry = vi.mocked(helpersModule.lookupSkillFromRegistry)
+      fetchFromGitHub = vi.mocked(helpersModule.fetchFromGitHub)
+    })
+
+    beforeEach(() => {
+      vi.clearAllMocks()
+    })
+
+    it('UUID with valid repo_url resolves and installs the skill', async () => {
+      // Registry returns a routable skill entry
+      lookupSkillFromRegistry.mockResolvedValue({
+        repoUrl: 'https://github.com/owner/test-skill',
+        name: 'test-skill',
+        trustTier: 'community',
+        quarantined: false,
+      })
+      // SKILL.md fetch succeeds
+      fetchFromGitHub.mockResolvedValue(VALID_SKILL_MD)
+
+      const result = await installSkill(
+        installInputSchema.parse({ skillId: TEST_UUID, skipScan: true, force: true })
+      )
+
+      expect(result.success).toBe(true)
+      expect(result.skillId).toBe(TEST_UUID)
+      expect(lookupSkillFromRegistry).toHaveBeenCalledWith(TEST_UUID, expect.anything())
+    })
+
+    it('UUID with null registry result returns "indexed for discovery only" error', async () => {
+      // Registry found the skill but it has no repo_url (seed / metadata-only)
+      lookupSkillFromRegistry.mockResolvedValue(null)
+
+      const result = await installSkill(installInputSchema.parse({ skillId: TEST_UUID }))
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('indexed for discovery only')
+      expect(lookupSkillFromRegistry).toHaveBeenCalledWith(TEST_UUID, expect.anything())
+    })
+
+    it('UUID for a quarantined skill returns "quarantined" error', async () => {
+      // Registry flags the skill as quarantined
+      lookupSkillFromRegistry.mockResolvedValue({
+        repoUrl: 'https://github.com/owner/bad-skill',
+        name: 'bad-skill',
+        trustTier: 'community',
+        quarantined: true,
+      })
+
+      const result = await installSkill(installInputSchema.parse({ skillId: TEST_UUID }))
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('quarantined')
+      expect(lookupSkillFromRegistry).toHaveBeenCalledWith(TEST_UUID, expect.anything())
+    })
+
+    it('UUID not found in registry (lookupSkillFromRegistry returns null) surfaces discovery-only error', async () => {
+      // lookupSkillFromRegistry returns null — no row in registry for this UUID
+      // This is semantically distinct from test #2: there the API returned a row with null repo_url.
+      // Here lookupSkillFromRegistry itself returns null (API 404 + DB miss).
+      // Both paths hit the same !registrySkill branch in installSkill(); this test confirms
+      // the UUID routing guard works end-to-end when the registry has no record at all.
+      lookupSkillFromRegistry.mockResolvedValue(null)
+
+      const result = await installSkill(installInputSchema.parse({ skillId: TEST_UUID }))
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('indexed for discovery only')
+    })
+
+    it('registry-sourced UUID with SKILL.md fetch failure surfaces "registry data quality issue" error', async () => {
+      // Registry has a valid entry, but the SKILL.md fetch throws (broken repo_url)
+      lookupSkillFromRegistry.mockResolvedValue({
+        repoUrl: 'https://github.com/owner/broken-skill',
+        name: 'broken-skill',
+        trustTier: 'community',
+        quarantined: false,
+      })
+      fetchFromGitHub.mockRejectedValue(new Error('Failed to fetch SKILL.md: 404'))
+
+      const result = await installSkill(installInputSchema.parse({ skillId: TEST_UUID }))
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('registry data quality issue')
     })
   })
 })
