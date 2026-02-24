@@ -318,6 +318,10 @@ export function runMigrations(db: DatabaseType): number {
 /**
  * Create a new database connection with proper configuration
  * This initializes the full schema - use openDatabase for existing databases
+ *
+ * @deprecated Use createDatabaseAsync() for cross-platform WASM support.
+ * This function requires better-sqlite3 native module and will fail on
+ * platforms where native modules are unavailable.
  */
 export function createDatabase(path: string = ':memory:'): DatabaseType {
   const db = createDatabaseSync(path)
@@ -334,6 +338,8 @@ export function createDatabase(path: string = ':memory:'): DatabaseType {
 /**
  * SMI-974: Open an existing database and run any pending migrations
  * Use this for databases that may have been created by different versions
+ *
+ * @deprecated Use openDatabaseAsync() for cross-platform WASM support.
  */
 export function openDatabase(path: string): DatabaseType {
   const db = createDatabaseSync(path)

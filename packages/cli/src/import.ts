@@ -9,7 +9,7 @@
  * - Supports batch import of 1000+ skills
  */
 
-import { createDatabase, SkillRepository, type SkillCreateInput } from '@skillsmith/core'
+import { createDatabaseAsync, SkillRepository, type SkillCreateInput } from '@skillsmith/core'
 import { DEFAULT_DB_PATH } from './config.js'
 
 interface GitHubSearchResult {
@@ -266,7 +266,7 @@ export async function importSkills(options: ImportOptions = {}): Promise<ImportR
   }
 
   // Initialize database
-  const db = createDatabase(dbPath)
+  const db = await createDatabaseAsync(dbPath)
   const skillRepo = new SkillRepository(db)
 
   console.log(`Searching for repositories with topic: ${topic}...`)

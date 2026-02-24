@@ -9,7 +9,7 @@
  */
 
 import type { Database as DatabaseType } from '../db/database-interface.js'
-import { createDatabase, closeDatabase } from '../db/schema.js'
+import { createDatabaseAsync, closeDatabase } from '../db/schema.js'
 import { SkillRepository } from '../repositories/SkillRepository.js'
 import { BenchmarkRunner, type BenchmarkReport, type BenchmarkConfig } from './BenchmarkRunner.js'
 import { percentile, mean } from './stats.js'
@@ -293,7 +293,7 @@ export class IndexBenchmark {
    * Setup database
    */
   private async setup(): Promise<void> {
-    this.db = createDatabase(':memory:')
+    this.db = await createDatabaseAsync(':memory:')
     this.repo = new SkillRepository(this.db)
     this.skillCounter = 0
   }

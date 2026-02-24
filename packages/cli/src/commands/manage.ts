@@ -10,7 +10,12 @@ import chalk from 'chalk'
 import Table from 'cli-table3'
 import ora from 'ora'
 import { rm } from 'fs/promises'
-import { createDatabase, SkillRepository, type Skill, type TrustTier } from '@skillsmith/core'
+import {
+  createDatabaseAsync,
+  SkillRepository,
+  type Skill,
+  type TrustTier,
+} from '@skillsmith/core'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { getInstalledSkills, type InstalledSkill } from '../utils/skills-directory.js'
@@ -83,7 +88,7 @@ async function getSkillDiff(
   skillName: string,
   dbPath: string
 ): Promise<{ oldVersion: string | null; newVersion: string | null; changes: string[] } | null> {
-  const db = createDatabase(dbPath)
+  const db = await createDatabaseAsync(dbPath)
   const skillRepo = new SkillRepository(db)
 
   try {
