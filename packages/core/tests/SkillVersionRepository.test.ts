@@ -4,20 +4,16 @@
  * Tests for skill version hash tracking (SMI-skill-version-tracking Wave 1).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { createDatabase, closeDatabase } from '../src/db/schema.js'
-import { MIGRATION_V5_SQL } from '../src/db/migrations/v5-skill-versions.js'
+import { createTestDatabase, closeDatabase } from './helpers/database.js'
 import { SkillVersionRepository } from '../src/repositories/SkillVersionRepository.js'
-import type { Database } from '../src/db/database-interface.js'
+import type { Database } from './helpers/database.js'
 
 describe('SkillVersionRepository', () => {
   let db: Database
   let repo: SkillVersionRepository
 
   beforeEach(() => {
-    db = createDatabase(':memory:')
-    // initializeSchema sets SCHEMA_VERSION=5 but only runs SCHEMA_SQL — the
-    // skill_versions table lives in the v5 migration, so we run it explicitly.
-    db.exec(MIGRATION_V5_SQL)
+    db = createTestDatabase()
     repo = new SkillVersionRepository(db)
   })
 
