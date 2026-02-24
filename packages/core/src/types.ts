@@ -93,6 +93,7 @@ export interface Skill {
  * SMI-1491: Added repository field for transparency about installation source
  * SMI-825: Added security summary
  * SMI-1809: Added source field to identify local vs registry skills
+ * SMI-2734: Added installHint for ergonomic registry ID surfacing in search results
  */
 export interface SkillSearchResult {
   id: string
@@ -108,6 +109,9 @@ export interface SkillSearchResult {
   security?: SecuritySummary
   /** SMI-1809: Source of the skill ('local' for ~/.claude/skills/, 'registry' for API) */
   source?: 'local' | 'registry'
+  /** SMI-2734: Registry install ID in 'author/skill-name' format. Only set for registry skills.
+   *  Undefined for local skills since their author field is not a routable registry owner. */
+  installHint?: string
 }
 
 /**

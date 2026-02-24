@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { executeSearch, formatSearchResults } from '../tools/search.js'
-import { SkillsmithError } from '@skillsmith/core'
+import { SkillsmithError, type SkillSearchResult } from '@skillsmith/core'
 import { createSeededTestContext, type ToolContext } from './test-utils.js'
 
 let context: ToolContext
@@ -305,5 +305,73 @@ describe('Search Tool branch coverage', () => {
       expect(result.filters.safeOnly).toBe(true)
       expect(result.filters.maxRiskScore).toBe(40)
     })
+  })
+})
+
+/**
+ * SMI-2734: Tests for installHint field in formatSearchResults
+ * Verifies registry skills surface the owner/name install ID and local skills do not.
+ */
+describe('SMI-2734: formatSearchResults installHint', () => {
+  const baseSkill: SkillSearchResult = {
+    id: 'a129e127-a82c-47e5-8bc5-09d7ba2e8734',
+    name: 'performance',
+    description: 'Web performance auditing skill',
+    author: 'addyosmani',
+    category: 'development',
+    trustTier: 'verified',
+    score: 84,
+    source: 'registry',
+  }
+
+  const makeResponse = (results: SkillSearchResult[]) => ({
+    results,
+    total: results.length,
+    query: 'performance',
+    filters: {},
+    timing: { searchMs: 10, totalMs: 12 },
+  })
+
+  it('should display Install line for a registry skill with installHint set', () => {
+    const skill: SkillSearchResult = { ...baseSkill, installHint: 'addyosmani/performance' }
+    const formatted = formatSearchResults(makeResponse([skill]))
+
+    expect(formatted).toContain('Install: addyosmani/performance')
+  })
+
+  it('should not display Install line when installHint is absent', () => {
+    const skill: SkillSearchResult = { ...baseSkill }
+    // installHint intentionally not set (local skill or unknown author)
+    const formatted = formatSearchResults(makeResponse([skill]))
+
+    expect(formatted).not.toContain('Install:')
+  })
+
+  it('should display Install line only for skills that have installHint in a mixed result set', () => {
+    const registrySkill: SkillSearchResult = {
+      ...baseSkill,
+      id: 'b1',
+      name: 'commit',
+      author: 'anthropic',
+      installHint: 'anthropic/commit',
+      source: 'registry',
+    }
+    const localSkill: SkillSearchResult = {
+      ...baseSkill,
+      id: 'b2',
+      name: 'my-local-skill',
+      author: 'local-user',
+      source: 'local',
+      // installHint intentionally absent for local skill
+    }
+    const formatted = formatSearchResults(makeResponse([registrySkill, localSkill]))
+
+    expect(formatted).toContain('Install: anthropic/commit')
+    // The local skill section should not contain an Install line
+    // Split on blank lines between skill entries to isolate each block
+    const sections = formatted.split('\n\n')
+    const localSection = sections.find((s) => s.includes('my-local-skill'))
+    expect(localSection).toBeDefined()
+    expect(localSection).not.toContain('Install:')
   })
 })
