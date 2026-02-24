@@ -11,7 +11,7 @@
  * - Per-billing-period quota management
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '@skillsmith/core'
 import type { LicenseTier } from '../license/FeatureFlags.js'
 import {
   TIER_QUOTAS,

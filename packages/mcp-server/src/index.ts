@@ -347,7 +347,7 @@ function runStartupDiagnostics(): void {
 ║                                                              ║
 ║  To fix, run one of:                                         ║
 ║                                                              ║
-║    npm rebuild better-sqlite3                                ║
+║    SKILLSMITH_FORCE_WASM=true to use WASM SQLite fallback    ║
 ║                                                              ║
 ║  Or reinstall completely:                                    ║
 ║                                                              ║
@@ -431,7 +431,7 @@ async function main() {
     console.error('Troubleshooting:')
     console.error('  - In Docker: Ensure container is running')
     console.error('  - On macOS: sql.js WASM should load automatically')
-    console.error('  - Run: npm rebuild better-sqlite3 (if using native)')
+    console.error('  - Set SKILLSMITH_FORCE_WASM=true to use the WASM SQLite fallback')
     console.error('')
     process.exit(1)
   }

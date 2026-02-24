@@ -265,6 +265,7 @@ export function detectApiFramework(path: string): 'express' | 'fastapi' | 'nextj
  * Known native Node.js modules that require compilation
  */
 const NATIVE_MODULES = [
+  // Intentional: detects better-sqlite3 in user's project, not Skillsmith's own dependency
   'better-sqlite3',
   'sharp',
   'canvas',

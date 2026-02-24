@@ -19,7 +19,7 @@ import type {
   LicenseCheckInput,
 } from '../src/audit/AuditLogger.js'
 import { createDatabase, closeDatabase } from '@skillsmith/core'
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '@skillsmith/core'
 
 /**
  * Fixed timestamp for deterministic testing

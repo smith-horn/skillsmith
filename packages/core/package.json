@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/core",
-  "version": "0.4.13",
+  "version": "0.4.14",
   "description": "Core types and utilities for Skillsmith",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -60,7 +60,6 @@
     "@opentelemetry/sdk-trace-base": "2.5.0",
     "@opentelemetry/semantic-conventions": "1.39.0",
     "@huggingface/transformers": "3.8.1",
-    "better-sqlite3": "12.6.2",
     "fts5-sql-bundle": "1.0.2",
     "lru-cache": "10.4.3",
     "posthog-node": "5.21.0",
@@ -69,8 +68,6 @@
     "zod": "4.2.1"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "7.6.13",
-    "@types/sql.js": "1.4.9",
     "vitest": "4.0.16"
   },
   "files": [
