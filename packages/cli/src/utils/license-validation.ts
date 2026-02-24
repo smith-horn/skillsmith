@@ -74,7 +74,7 @@ export function decodeLicenseKey(licenseKey: string): LicensePayload | null {
     const payload = JSON.parse(decoded) as LicensePayload
 
     // Validate required fields
-    if (!payload.tier || !['team', 'enterprise'].includes(payload.tier)) {
+    if (!payload.tier || !['individual', 'team', 'enterprise'].includes(payload.tier)) {
       return null
     }
 

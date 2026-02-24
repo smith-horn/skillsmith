@@ -4,9 +4,16 @@
  */
 
 import { readdir, readFile, stat } from 'fs/promises'
+import { createHash } from 'crypto'
 import { join } from 'path'
 import { homedir } from 'os'
-import { SkillParser, type TrustTier } from '@skillsmith/core'
+import {
+  SkillParser,
+  createDatabase,
+  SkillVersionRepository,
+  type TrustTier,
+} from '@skillsmith/core'
+import { DEFAULT_DB_PATH } from '../config.js'
 
 export interface InstalledSkill {
   name: string
@@ -36,10 +43,34 @@ function getLocalSkillsDir(): string {
 }
 
 /**
- * Get skills from a specific directory
+ * Get skills from a specific directory.
+ *
+ * When dbPath is provided, opens the skill_versions table to determine
+ * whether a newer content hash has been recorded since the skill was installed.
+ * Falls back to hasUpdates: false when the database is unavailable.
+ *
+ * @param skillsDir Directory to scan for installed skills
+ * @param dbPath    Optional path to the Skillsmith SQLite database
  */
-export async function getSkillsFromDirectory(skillsDir: string): Promise<InstalledSkill[]> {
+export async function getSkillsFromDirectory(
+  skillsDir: string,
+  dbPath?: string
+): Promise<InstalledSkill[]> {
   const skills: InstalledSkill[] = []
+
+  // Open the version repository if a db path was provided
+  let versionRepo: SkillVersionRepository | null = null
+  let dbConn: ReturnType<typeof createDatabase> | null = null
+  if (dbPath) {
+    try {
+      dbConn = createDatabase(dbPath)
+      versionRepo = new SkillVersionRepository(dbConn)
+    } catch {
+      // DB not available yet — fall back to hasUpdates: false
+      versionRepo = null
+      dbConn = null
+    }
+  }
 
   try {
     const entries = await readdir(skillsDir, { withFileTypes: true })
@@ -55,13 +86,40 @@ export async function getSkillsFromDirectory(skillsDir: string): Promise<Install
           const parser = new SkillParser()
           const parsed = parser.parse(content)
 
+          // Determine hasUpdates by comparing the current SKILL.md hash to the
+          // most-recently recorded hash in skill_versions for this skill id.
+          let hasUpdates = false
+          if (versionRepo && parsed) {
+            try {
+              const parsedAny = parsed as unknown as Record<string, unknown>
+              const skillId = (parsedAny['id'] as string | undefined) ?? entry.name
+              const latestVersion = await versionRepo.getLatestVersion(skillId)
+              if (latestVersion) {
+                const currentHash = createHash('sha256').update(content, 'utf8').digest('hex')
+                const storedHash =
+                  (parsedAny['contentHash'] as string | undefined) ??
+                  (parsedAny['originalContentHash'] as string | undefined) ??
+                  ''
+                // hasUpdates = latest recorded hash differs from what we have locally
+                hasUpdates = storedHash !== '' && latestVersion.content_hash !== storedHash
+                // If we have no stored hash, compare against current content hash
+                if (!storedHash) {
+                  hasUpdates = latestVersion.content_hash !== currentHash
+                }
+              }
+            } catch {
+              // Version check failed — safe to ignore, fall back to false
+              hasUpdates = false
+            }
+          }
+
           skills.push({
             name: parsed?.name || entry.name,
             path: skillPath,
             version: parsed?.version || null,
             trustTier: parsed ? parser.inferTrustTier(parsed) : 'unknown',
             installDate: skillMdStat.mtime.toISOString().split('T')[0] || 'Unknown',
-            hasUpdates: false, // Would check remote for updates
+            hasUpdates,
           })
         } catch (error) {
           // Only treat ENOENT (file not found) as "no SKILL.md"
@@ -88,6 +146,8 @@ export async function getSkillsFromDirectory(skillsDir: string): Promise<Install
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
       throw error
     }
+  } finally {
+    dbConn?.close()
   }
 
   return skills
@@ -98,12 +158,15 @@ export async function getSkillsFromDirectory(skillsDir: string): Promise<Install
  * local (.claude/skills) directories.
  *
  * SMI-1630: Local skills take precedence over global skills with the same name.
+ *
+ * @param dbPath Optional path to the Skillsmith SQLite database for update detection
  */
-export async function getInstalledSkills(): Promise<InstalledSkill[]> {
+export async function getInstalledSkills(dbPath?: string): Promise<InstalledSkill[]> {
+  const resolvedDbPath = dbPath ?? DEFAULT_DB_PATH
   // Get skills from both directories
   const [globalSkills, localSkills] = await Promise.all([
-    getSkillsFromDirectory(GLOBAL_SKILLS_DIR),
-    getSkillsFromDirectory(getLocalSkillsDir()),
+    getSkillsFromDirectory(GLOBAL_SKILLS_DIR, resolvedDbPath),
+    getSkillsFromDirectory(getLocalSkillsDir(), resolvedDbPath),
   ])
 
   // Create a map for deduplication, local skills take precedence

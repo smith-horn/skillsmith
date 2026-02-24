@@ -38,6 +38,7 @@ import {
   SyncConfigRepository,
   SyncHistoryRepository,
   SyncEngine,
+  SkillVersionRepository,
   BackgroundSyncService,
   getApiKey,
   type ApiClientConfig,
@@ -304,11 +305,18 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
   if (backgroundSyncEnabled) {
     const syncConfigRepo = new SyncConfigRepository(db)
     const syncHistoryRepo = new SyncHistoryRepository(db)
+    const skillVersionRepo = new SkillVersionRepository(db)
 
     // Only start if user has auto-sync enabled in their config
     const syncConfig = syncConfigRepo.getConfig()
     if (syncConfig.enabled) {
-      const syncEngine = new SyncEngine(apiClient, skillRepository, syncConfigRepo, syncHistoryRepo)
+      const syncEngine = new SyncEngine(
+        apiClient,
+        skillRepository,
+        syncConfigRepo,
+        syncHistoryRepo,
+        skillVersionRepo
+      )
 
       backgroundSync = new BackgroundSyncService(syncEngine, syncConfigRepo, {
         syncOnStart: true,
@@ -577,10 +585,17 @@ export async function createToolContextAsync(
   if (backgroundSyncEnabled) {
     const syncConfigRepo = new SyncConfigRepository(db)
     const syncHistoryRepo = new SyncHistoryRepository(db)
+    const skillVersionRepo = new SkillVersionRepository(db)
 
     const syncConfig = syncConfigRepo.getConfig()
     if (syncConfig.enabled) {
-      const syncEngine = new SyncEngine(apiClient, skillRepository, syncConfigRepo, syncHistoryRepo)
+      const syncEngine = new SyncEngine(
+        apiClient,
+        skillRepository,
+        syncConfigRepo,
+        syncHistoryRepo,
+        skillVersionRepo
+      )
 
       backgroundSync = new BackgroundSyncService(syncEngine, syncConfigRepo, {
         syncOnStart: true,

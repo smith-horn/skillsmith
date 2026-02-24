@@ -6,10 +6,23 @@
  * on updated_at timestamps.
  */
 
+import { createHash } from 'crypto'
 import type { SkillsmithApiClient, ApiSearchResult } from '../api/client.js'
 import type { SkillRepository } from '../repositories/SkillRepository.js'
 import type { SyncConfigRepository } from '../repositories/SyncConfigRepository.js'
 import type { SyncHistoryRepository } from '../repositories/SyncHistoryRepository.js'
+import type { SkillVersionRepository } from '../repositories/SkillVersionRepository.js'
+
+/**
+ * Hash a content string using SHA-256 and return the hex digest.
+ *
+ * NOTE: Duplicated from packages/mcp-server/src/tools/install.conflict-helpers.ts
+ * to avoid a circular dependency (core → mcp-server). Implementation is identical.
+ * If the hashing algorithm is ever changed it must be updated in both locations.
+ */
+function hashContent(content: string): string {
+  return createHash('sha256').update(content, 'utf8').digest('hex')
+}
 
 /**
  * Sync options
@@ -68,17 +81,20 @@ export class SyncEngine {
   private skillRepo: SkillRepository
   private syncConfigRepo: SyncConfigRepository
   private syncHistoryRepo: SyncHistoryRepository
+  private skillVersionRepo: SkillVersionRepository
 
   constructor(
     apiClient: SkillsmithApiClient,
     skillRepo: SkillRepository,
     syncConfigRepo: SyncConfigRepository,
-    syncHistoryRepo: SyncHistoryRepository
+    syncHistoryRepo: SyncHistoryRepository,
+    skillVersionRepo: SkillVersionRepository
   ) {
     this.apiClient = apiClient
     this.skillRepo = skillRepo
     this.syncConfigRepo = syncConfigRepo
     this.syncHistoryRepo = syncHistoryRepo
+    this.skillVersionRepo = skillVersionRepo
   }
 
   /**
@@ -348,6 +364,15 @@ export class SyncEngine {
             tags: skill.tags,
           })
           updated++
+
+          // Record version hash after successful update
+          const contentProxy = JSON.stringify({
+            id: skill.id,
+            name: skill.name,
+            description: skill.description ?? null,
+            updated_at: skill.updated_at ?? null,
+          })
+          await this.skillVersionRepo.recordVersion(skill.id, hashContent(contentProxy))
         } else {
           unchanged++
         }
@@ -363,6 +388,15 @@ export class SyncEngine {
           tags: skill.tags,
         })
         added++
+
+        // Record version hash after successful create
+        const contentProxy = JSON.stringify({
+          id: skill.id,
+          name: skill.name,
+          description: skill.description ?? null,
+          updated_at: skill.updated_at ?? null,
+        })
+        await this.skillVersionRepo.recordVersion(skill.id, hashContent(contentProxy))
       }
 
       onProgress?.(i + 1)
