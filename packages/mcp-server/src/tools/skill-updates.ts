@@ -40,7 +40,7 @@ export type SkillUpdatesInput = z.infer<typeof skillUpdatesInputSchema>
 export interface SkillUpdateInfo {
   /** Registry skill identifier (e.g. "author/skill-name") */
   skillId: string
-  /** 8-char prefix of the oldest recorded hash (what the CLI installed with) */
+  /** 8-char prefix of the oldest recorded hash in skill_versions (earliest registry sync) */
   installedHash: string
   /** 8-char prefix of the most-recent recorded hash (current registry state) */
   latestHash: string

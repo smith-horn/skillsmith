@@ -262,9 +262,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!license.valid) {
           return createLicenseErrorResponse(license)
         }
+        // SMI-2679: Enforce monthly API quota BEFORE executing — quota must not be
+        // consumed for requests that are blocked by license, and results must not
+        // be returned before the quota gate fires.
         const licenseInfo = await licenseMiddleware.getLicenseInfo()
+        const quotaResult = await quotaMiddleware.checkAndTrack('skill_updates', licenseInfo)
+        if (!quotaResult.allowed) {
+          return quotaMiddleware.buildExceededResponse(quotaResult)
+        }
         const result = await executeSkillUpdates(input, toolContext)
-        await quotaMiddleware.checkAndTrack('skill_updates', licenseInfo)
         return {
           content: [
             {
