@@ -116,11 +116,11 @@ export class EmbeddingService {
         if (!transformers) {
           throw new Error(
             getTransformersLoadError()?.message ||
-              'Failed to load @xenova/transformers module (sharp may not be available)'
+              'Failed to load @huggingface/transformers module (check network access or model cache)'
           )
         }
         return transformers.pipeline('feature-extraction', this.modelName, {
-          quantized: true,
+          dtype: 'q8',
         }) as Promise<FeatureExtractionPipeline>
       })()
     }

@@ -63,17 +63,17 @@ export function generateMockEmbedding(text: string, dimension: number): Float32A
 }
 
 // Lazy-loaded pipeline function - only loaded when embeddings are actually used
-let pipelineModule: typeof import('@xenova/transformers') | null = null
-let pipelineLoadPromise: Promise<typeof import('@xenova/transformers')> | null = null
+let pipelineModule: typeof import('@huggingface/transformers') | null = null
+let pipelineLoadPromise: Promise<typeof import('@huggingface/transformers')> | null = null
 let pipelineLoadFailed = false
 let pipelineLoadError: Error | null = null
 
 /**
- * Lazily load the @xenova/transformers module.
- * This avoids loading sharp at startup, which causes CLI crashes.
+ * Lazily load the @huggingface/transformers module.
+ * Uses dynamic import so the module is not loaded at CLI startup.
  */
 export async function loadTransformersModule(): Promise<
-  typeof import('@xenova/transformers') | null
+  typeof import('@huggingface/transformers') | null
 > {
   // Return cached module if already loaded
   if (pipelineModule) {
@@ -87,7 +87,7 @@ export async function loadTransformersModule(): Promise<
 
   // Start loading if not already in progress
   if (!pipelineLoadPromise) {
-    pipelineLoadPromise = import('@xenova/transformers')
+    pipelineLoadPromise = import('@huggingface/transformers')
       .then((mod) => {
         pipelineModule = mod
         return mod
@@ -95,7 +95,7 @@ export async function loadTransformersModule(): Promise<
       .catch((err) => {
         pipelineLoadFailed = true
         pipelineLoadError = err instanceof Error ? err : new Error(String(err))
-        return null as unknown as typeof import('@xenova/transformers')
+        return null as unknown as typeof import('@huggingface/transformers')
       })
   }
 
