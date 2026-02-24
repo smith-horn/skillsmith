@@ -246,16 +246,21 @@ if (existsSync('Dockerfile')) {
   fail('Dockerfile not found', 'Create Dockerfile for development container')
 }
 
-// Check if Docker container is running
-try {
-  const result = execSync('docker ps --format "{{.Names}}" 2>/dev/null', { encoding: 'utf8' })
-  if (result.includes('skillsmith-dev-1')) {
-    pass('Docker container is running (skillsmith-dev-1)')
-  } else {
-    warn('Docker container not running', 'Run: docker compose --profile dev up -d')
+// Check if Docker container is running (skip when running inside Docker — no socket access)
+const insideDocker = existsSync('/.dockerenv')
+if (insideDocker) {
+  pass('Docker container check skipped (running inside container)')
+} else {
+  try {
+    const result = execSync('docker ps --format "{{.Names}}" 2>/dev/null', { encoding: 'utf8' })
+    if (result.includes('skillsmith-dev-1')) {
+      pass('Docker container is running (skillsmith-dev-1)')
+    } else {
+      warn('Docker container not running', 'Run: docker compose --profile dev up -d')
+    }
+  } catch (e) {
+    warn('Could not check Docker status', 'Ensure Docker is installed and running')
   }
-} catch (e) {
-  warn('Could not check Docker status', 'Ensure Docker is installed and running')
 }
 
 // 9. Script Docker Compliance
