@@ -181,26 +181,73 @@ else
 fi
 
 # =============================================================================
-# SMI-2536: Branch Integrity Guard — Verify branch didn't switch
-# lint-staged's internal stash/pop can trigger smudge filter branch switch.
-# Abort BEFORE the commit is created to prevent it landing on the wrong branch.
+# SMI-2536 / SMI-2747: Branch Integrity Guard — Verify branch didn't switch.
+# If it did, auto-restore using smudge-safe checkout so the user only needs to
+# re-run `git commit` (no manual recovery steps required).
 # =============================================================================
 if [ -n "$EXPECTED_BRANCH" ]; then
   CURRENT_BRANCH=$(git branch --show-current)
   if [ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]; then
     echo ""
     echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo "${RED}  ABORTING: Branch switched during pre-commit (smudge filter bug)${NC}"
+    echo "${RED}  ABORTING: Branch switched — auto-restoring to $EXPECTED_BRANCH${NC}"
     echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     echo "  Expected branch: ${YELLOW}$EXPECTED_BRANCH${NC}"
     echo "  Current branch:  ${YELLOW}$CURRENT_BRANCH${NC}"
     echo ""
-    echo "  ${YELLOW}Recovery:${NC}"
-    echo "    git checkout $EXPECTED_BRANCH"
-    echo "    git commit  # retry"
-    echo ""
-    rm -f "$(git rev-parse --git-dir)/expected-branch"
+    # SMI-2747: Smudge-safe auto-restore.
+    # Only capture/manipulate the filter if it is currently configured — avoids
+    # adding unexpected git config entries on repos without git-crypt.
+    SMUDGE_CMD=$(git config --local filter.git-crypt.smudge 2>/dev/null)
+    CLEAN_CMD=$(git config --local filter.git-crypt.clean 2>/dev/null)
+    if [ -n "$SMUDGE_CMD" ] || [ -n "$CLEAN_CMD" ]; then
+      # Restore function — called explicitly on success and via trap on crash/signal.
+      _restore_smudge_filter() {
+        if [ -n "$SMUDGE_CMD" ]; then
+          git config --local filter.git-crypt.smudge "$SMUDGE_CMD"
+        else
+          git config --local --unset filter.git-crypt.smudge 2>/dev/null || true
+        fi
+        if [ -n "$CLEAN_CMD" ]; then
+          git config --local filter.git-crypt.clean "$CLEAN_CMD"
+        else
+          git config --local --unset filter.git-crypt.clean 2>/dev/null || true
+        fi
+      }
+      # Register trap BEFORE disabling the filter so any unexpected exit restores it.
+      trap '_restore_smudge_filter' EXIT INT TERM
+      git config --local filter.git-crypt.smudge "cat"
+      git config --local filter.git-crypt.clean "cat"
+    fi
+    echo "  ${YELLOW}Running smudge-safe checkout...${NC}"
+    git checkout "$EXPECTED_BRANCH"
+    RESTORE_EXIT=$?
+    if [ -n "$SMUDGE_CMD" ] || [ -n "$CLEAN_CMD" ]; then
+      _restore_smudge_filter
+      trap - EXIT INT TERM
+    fi
+    if [ $RESTORE_EXIT -eq 0 ]; then
+      rm -f "$(git rev-parse --git-dir)/expected-branch"
+      echo "${GREEN}  ✓ Restored to $EXPECTED_BRANCH. Staged changes preserved.${NC}"
+      echo "    Re-run: ${YELLOW}git commit${NC}"
+      echo ""
+      echo "  ${YELLOW}Emergency bypass:${NC} git commit --no-verify"
+    else
+      echo ""
+      echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+      echo "${RED}  Auto-restore failed. Manual recovery:${NC}"
+      echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+      echo ""
+      echo "    git config --local filter.git-crypt.smudge cat"
+      echo "    git config --local filter.git-crypt.clean cat"
+      echo "    git checkout $EXPECTED_BRANCH  # <- main recovery step"
+      echo "    git config --local filter.git-crypt.smudge 'git-crypt smudge'  # or your actual smudge command"
+      echo "    git config --local filter.git-crypt.clean 'git-crypt clean'    # or your actual clean command"
+      echo "    git commit  # retry"
+      echo ""
+      echo "  ${YELLOW}Emergency bypass:${NC} git commit --no-verify"
+    fi
     exit 1
   fi
 fi
