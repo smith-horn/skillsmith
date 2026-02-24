@@ -10,7 +10,7 @@
  */
 
 import type { Database } from '../db/database-interface.js'
-import { createDatabaseSync, createDatabaseAsync } from '../db/createDatabase.js'
+import { createDatabaseAsync } from '../db/createDatabase.js'
 
 // Import types and utilities from extracted modules
 export type {

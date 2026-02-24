@@ -289,4 +289,4 @@ Skillsmith uses six project-level Claude Code skills for its own development: `l
 
 ---
 
-*The skills, YAML configs, and ADRs referenced in this post are part of the Skillsmith development workflow. If you're building with Claude Code and want to explore the patterns here, the [Skillsmith MCP server](https://skillsmith.app/docs) is a good place to start.*
+*The skills, YAML configs, and ADRs referenced in this post are part of the Skillsmith development workflow. If you're building with Claude Code and want to explore the patterns here, the [Skillsmith MCP server](https://www.skillsmith.app/docs) is a good place to start.*
