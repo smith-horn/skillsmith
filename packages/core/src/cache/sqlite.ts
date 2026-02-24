@@ -4,7 +4,7 @@
  */
 
 import type { Database, Statement } from '../db/database-interface.js'
-import { createDatabaseSync } from '../db/createDatabase.js'
+import { createDatabaseSync, createDatabaseAsync } from '../db/createDatabase.js'
 import type { SearchResult, SearchCacheEntry, CacheStats } from './lru.js'
 import { isValidCacheKey } from './CacheEntry.js'
 
@@ -13,15 +13,20 @@ export interface L2CacheOptions {
   ttlSeconds?: number // Default: 1 hour
 }
 
+// Internal options used by the async factory to bypass the throwing constructor
+interface L2CacheInternalOptions {
+  ttlSeconds?: number
+}
+
 export class L2Cache {
-  private db: Database
+  private db!: Database
   private readonly ttlSeconds: number
   private hits = 0
   private misses = 0
 
   // Prepared statements (created once, reused for performance)
   // Type parameter represents the return type of get()/all() queries
-  private stmts: {
+  private stmts!: {
     get: Statement<{ results_json: string; total_count: number; created_at: number }>
     set: Statement<unknown>
     has: Statement<{ '1': number }>
@@ -30,11 +35,32 @@ export class L2Cache {
     stats: Statement<{ total: number; expired: number }>
   }
 
-  constructor(options: L2CacheOptions) {
-    this.db = createDatabaseSync(options.dbPath)
+  /**
+   * @deprecated Use L2Cache.create(options) — async factory with WASM fallback.
+   * The dbPath passed to this constructor throws to prevent silent data loss.
+   */
+  constructor(options: L2CacheOptions | L2CacheInternalOptions) {
     this.ttlSeconds = options.ttlSeconds ?? 3600 // 1 hour default
-    this.initTable()
-    this.stmts = this.prepareStatements()
+    if ('dbPath' in options) {
+      throw new Error(
+        '[L2Cache] Cannot open a database file in the sync constructor. ' +
+          'Use await L2Cache.create(options) instead.'
+      )
+    }
+  }
+
+  /**
+   * Async factory — supports both native and WASM SQLite.
+   *
+   * @param options - Cache options including dbPath
+   * @returns Fully initialised L2Cache instance
+   */
+  static async create(options: L2CacheOptions): Promise<L2Cache> {
+    const instance = new L2Cache({ ttlSeconds: options.ttlSeconds })
+    instance.db = await createDatabaseAsync(options.dbPath)
+    instance.initTable()
+    instance.stmts = instance.prepareStatements()
+    return instance
   }
 
   private initTable(): void {

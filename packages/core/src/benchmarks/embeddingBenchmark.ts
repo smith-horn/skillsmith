@@ -274,7 +274,7 @@ export class EmbeddingBenchmark {
    * Setup embedding service
    */
   private async setup(): Promise<void> {
-    this.embeddingService = new EmbeddingService(':memory:')
+    this.embeddingService = await EmbeddingService.create(':memory:')
     await this.embeddingService.loadModel()
 
     // Pre-compute test embeddings for similarity benchmarks

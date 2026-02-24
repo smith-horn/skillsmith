@@ -10,7 +10,7 @@
  */
 
 import type { Database } from '../db/database-interface.js'
-import { createDatabaseSync } from '../db/createDatabase.js'
+import { createDatabaseAsync } from '../db/createDatabase.js'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
 import { existsSync, mkdirSync } from 'fs'
@@ -32,19 +32,31 @@ const ANALYTICS_DB = join(ANALYTICS_DIR, 'analytics.db')
  * SQLite storage for skill usage analytics
  */
 export class AnalyticsStorage {
-  private db: Database
+  private db!: Database
 
   /**
-   * Create an analytics storage instance
+   * @deprecated Use AnalyticsStorage.create(dbPath) — async factory with WASM fallback.
+   * This constructor always throws to prevent silent data loss.
+   */
+  constructor(_dbPath?: string) {
+    throw new Error(
+      '[AnalyticsStorage] Cannot construct synchronously. ' +
+        'Use await AnalyticsStorage.create(dbPath) instead.'
+    )
+  }
+
+  /**
+   * Async factory — supports both native and WASM SQLite.
    *
    * @param dbPath - Optional custom database path (defaults to ~/.skillsmith/analytics.db)
+   * @returns Fully initialised AnalyticsStorage instance
    * @throws Error if dbPath contains path traversal attempt
    *
    * @see SMI-898: Path traversal protection
    * - Validates custom dbPath against path traversal attacks
    * - Rejects paths with ".." or outside allowed directories
    */
-  constructor(dbPath: string = ANALYTICS_DB) {
+  static async create(dbPath: string = ANALYTICS_DB): Promise<AnalyticsStorage> {
     let resolvedPath = dbPath
 
     // SMI-898: Validate custom paths for path traversal
@@ -72,8 +84,10 @@ export class AnalyticsStorage {
       }
     }
 
-    this.db = createDatabaseSync(resolvedPath)
-    this.initSchema()
+    const instance = Object.create(AnalyticsStorage.prototype) as AnalyticsStorage
+    instance.db = await createDatabaseAsync(resolvedPath)
+    instance.initSchema()
+    return instance
   }
 
   /**

@@ -230,10 +230,10 @@ describe('EnhancedTieredCache', () => {
   let cache: EnhancedTieredCache
   let dbPath: string
 
-  beforeEach(() => {
+  beforeEach(async () => {
     setupFakeTimers()
     dbPath = getTempDbPath()
-    cache = new EnhancedTieredCache({
+    cache = await EnhancedTieredCache.create({
       l1: { maxEntries: 10 },
       l2: { dbPath },
     })
@@ -286,9 +286,9 @@ describe('EnhancedTieredCache', () => {
   })
 
   describe('TTL expiration', () => {
-    it('should not return expired entries from L1', () => {
+    it('should not return expired entries from L1', async () => {
       // Create L1-only cache for this test
-      const l1OnlyCache = new EnhancedTieredCache({
+      const l1OnlyCache = await EnhancedTieredCache.create({
         l1: { maxEntries: 10 },
         // No L2
       })
@@ -331,12 +331,12 @@ describe('EnhancedTieredCache', () => {
       expect(stats.promotions).toBe(1)
     })
 
-    it('should not promote with enablePromotion=false', () => {
+    it('should not promote with enablePromotion=false', async () => {
       cache.close()
       cleanupDb(dbPath)
 
       dbPath = getTempDbPath()
-      cache = new EnhancedTieredCache({
+      cache = await EnhancedTieredCache.create({
         l1: { maxEntries: 5 },
         l2: { dbPath },
         enablePromotion: false,
@@ -384,13 +384,13 @@ describe('EnhancedTieredCache', () => {
   })
 
   describe('memory bounds', () => {
-    it('should respect maxEntries limit', () => {
+    it('should respect maxEntries limit', async () => {
       // Create cache with limit of 5
       cache.close()
       cleanupDb(dbPath)
 
       dbPath = getTempDbPath()
-      cache = new EnhancedTieredCache({
+      cache = await EnhancedTieredCache.create({
         l1: { maxEntries: 5 },
         l2: { dbPath },
       })
@@ -433,10 +433,10 @@ describe('CacheManager', () => {
   let manager: CacheManager
   let dbPath: string
 
-  beforeEach(() => {
+  beforeEach(async () => {
     setupFakeTimers()
     dbPath = getTempDbPath()
-    manager = new CacheManager({
+    manager = await CacheManager.create({
       l1: { maxEntries: 10 },
       l2: { dbPath },
       enableBackgroundRefresh: false, // Disable for tests

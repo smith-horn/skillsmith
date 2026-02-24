@@ -45,6 +45,38 @@ describe('Database Abstraction Layer', () => {
       const available = isBetterSqlite3Available()
       expect(typeof available).toBe('boolean')
     })
+
+    it('SKILLSMITH_FORCE_WASM=true should route getBestDriver() to sql.js (SMI-2721)', () => {
+      const original = process.env.SKILLSMITH_FORCE_WASM
+      try {
+        process.env.SKILLSMITH_FORCE_WASM = 'true'
+        const driver = getBestDriver()
+        // sql.js (WASM) must be available in this environment
+        expect(driver).toBe('sql.js')
+      } finally {
+        if (original === undefined) delete process.env.SKILLSMITH_FORCE_WASM
+        else process.env.SKILLSMITH_FORCE_WASM = original
+      }
+    })
+
+    it('SKILLSMITH_FORCE_WASM=true should route createDatabaseAsync to WASM (SMI-2721)', async () => {
+      const original = process.env.SKILLSMITH_FORCE_WASM
+      try {
+        process.env.SKILLSMITH_FORCE_WASM = 'true'
+        const db = await createDatabaseAsync(':memory:')
+        expect(db).toBeDefined()
+        // Verify the DB is functional
+        db.exec('CREATE TABLE t (x INTEGER)')
+        const stmt = db.prepare('INSERT INTO t VALUES (?)')
+        stmt.run(42)
+        const row = db.prepare('SELECT x FROM t').get() as { x: number }
+        expect(row.x).toBe(42)
+        db.close()
+      } finally {
+        if (original === undefined) delete process.env.SKILLSMITH_FORCE_WASM
+        else process.env.SKILLSMITH_FORCE_WASM = original
+      }
+    })
   })
 
   describe('Database Interface Contract', () => {

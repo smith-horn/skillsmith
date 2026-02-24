@@ -4,7 +4,7 @@
  */
 
 import type { Database } from '../db/database-interface.js'
-import { createDatabaseSync } from '../db/createDatabase.js'
+import { createDatabaseSync, createDatabaseAsync } from '../db/createDatabase.js'
 import { EmbeddingService } from '../embeddings/index.js'
 import { TieredCache, L1Cache, type SearchResult } from '../cache/index.js'
 
@@ -59,21 +59,38 @@ function reciprocalRankFusion(
 }
 
 export class HybridSearch {
-  private db: Database
-  private embeddings: EmbeddingService
-  private cache: TieredCache
-  private readonly k: number
-  private readonly ftsWeight: number
-  private readonly semanticWeight: number
+  private db!: Database
+  private embeddings!: EmbeddingService
+  private cache!: TieredCache
+  private k!: number
+  private ftsWeight!: number
+  private semanticWeight!: number
 
-  constructor(options: HybridSearchOptions) {
-    this.db = createDatabaseSync(options.dbPath)
-    this.embeddings = new EmbeddingService(options.dbPath)
-    this.k = options.k ?? 60
-    this.ftsWeight = options.ftsWeight ?? 0.5
-    this.semanticWeight = options.semanticWeight ?? 0.5
+  /**
+   * @deprecated Use HybridSearch.create(options) — async factory with WASM fallback.
+   * This constructor always throws to prevent silent data loss.
+   */
+  constructor(_options: HybridSearchOptions) {
+    throw new Error(
+      '[HybridSearch] Cannot construct synchronously. ' +
+        'Use await HybridSearch.create(options) instead.'
+    )
+  }
 
-    this.cache = new TieredCache({
+  /**
+   * Async factory — supports both native and WASM SQLite.
+   *
+   * @param options - Search options; dbPath is opened via createDatabaseAsync
+   * @returns Fully initialised HybridSearch instance
+   */
+  static async create(options: HybridSearchOptions): Promise<HybridSearch> {
+    const instance = Object.create(HybridSearch.prototype) as HybridSearch
+    instance.db = await createDatabaseAsync(options.dbPath)
+    instance.embeddings = await EmbeddingService.create(options.dbPath)
+    instance.k = options.k ?? 60
+    instance.ftsWeight = options.ftsWeight ?? 0.5
+    instance.semanticWeight = options.semanticWeight ?? 0.5
+    instance.cache = await TieredCache.create({
       l1MaxSize: 100,
       l2Options: options.cachePath
         ? {
@@ -82,8 +99,8 @@ export class HybridSearch {
           }
         : undefined,
     })
-
-    this.initFTS()
+    instance.initFTS()
+    return instance
   }
 
   private initFTS(): void {

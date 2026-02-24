@@ -5,7 +5,7 @@
 
 import { LRUCache } from 'lru-cache'
 import type { Database, Statement } from '../db/database-interface.js'
-import { createDatabaseSync } from '../db/createDatabase.js'
+import { createDatabaseAsync } from '../db/createDatabase.js'
 import type { SearchResult } from './lru.js'
 import {
   type CacheEntry,
@@ -83,9 +83,9 @@ interface ResolvedCacheConfig {
  * Enhanced two-tier cache with TTL management
  */
 export class EnhancedTieredCache {
-  private l1: LRUCache<string, CacheEntry>
+  private l1!: LRUCache<string, CacheEntry>
   private db: Database | null = null
-  private readonly config: ResolvedCacheConfig
+  private config!: ResolvedCacheConfig
   private pruneTimer: ReturnType<typeof setInterval> | null = null
 
   // Statistics
@@ -111,7 +111,42 @@ export class EnhancedTieredCache {
     countByTier: Statement<{ count: number }>
   } | null = null
 
+  /**
+   * @deprecated If l2.dbPath is passed, use EnhancedTieredCache.create(config) instead —
+   * the async factory supports both native and WASM SQLite. Passing l2.dbPath to this
+   * constructor throws to prevent silent data loss.
+   */
   constructor(config: TieredCacheConfig = {}) {
+    if (config.l2?.dbPath) {
+      throw new Error(
+        '[EnhancedTieredCache] Cannot open a database file in the sync constructor. ' +
+          'Use await EnhancedTieredCache.create(config) instead.'
+      )
+    }
+
+    this.initFromConfig(config)
+  }
+
+  /**
+   * Async factory — supports both native and WASM SQLite.
+   *
+   * @param config - Cache configuration; l2.dbPath is opened via createDatabaseAsync
+   * @returns Fully initialised EnhancedTieredCache instance
+   */
+  static async create(config: TieredCacheConfig = {}): Promise<EnhancedTieredCache> {
+    // Bypass the throwing constructor by omitting l2.dbPath
+    const { l2, ...rest } = config
+    const instance = new EnhancedTieredCache(rest)
+    if (l2?.dbPath) {
+      await instance.initL2Async(l2.dbPath)
+      const pruneInterval = l2.pruneIntervalMs ?? 5 * 60 * 1000
+      instance.pruneTimer = setInterval(() => instance.prune(), pruneInterval)
+      instance.pruneTimer.unref()
+    }
+    return instance
+  }
+
+  private initFromConfig(config: TieredCacheConfig): void {
     const l1MaxEntries = config.l1?.maxEntries ?? 1000
     const l1MaxMemoryBytes = config.l1?.maxMemoryBytes ?? 100 * 1024 * 1024 // 100MB
 
@@ -138,86 +173,40 @@ export class EnhancedTieredCache {
         this.stats.evictions++
       },
     })
-
-    // Initialize L2 if configured
-    if (config.l2?.dbPath) {
-      this.initL2(config.l2.dbPath)
-
-      // Set up periodic pruning (unref to not block process exit)
-      const pruneInterval = config.l2.pruneIntervalMs ?? 5 * 60 * 1000
-      this.pruneTimer = setInterval(() => this.prune(), pruneInterval)
-      this.pruneTimer.unref()
-    }
   }
 
-  private initL2(dbPath: string): void {
-    this.db = createDatabaseSync(dbPath)
-    this.db.pragma('journal_mode = WAL')
-    this.db.pragma('cache_size = -16000') // 16MB cache
-
-    // Create table with enhanced schema for TTL management
-    this.db.exec(`
+  private async initL2Async(dbPath: string): Promise<void> {
+    const db = (this.db = await createDatabaseAsync(dbPath))
+    db.pragma('cache_size = -16000')
+    db.exec(`
       CREATE TABLE IF NOT EXISTS cache_entries (
-        key TEXT PRIMARY KEY,
-        data_json TEXT NOT NULL,
-        total_count INTEGER NOT NULL,
-        created_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL,
-        hit_count INTEGER NOT NULL DEFAULT 0,
-        last_accessed_at INTEGER NOT NULL,
-        ttl_tier INTEGER NOT NULL
-      )
+        key TEXT PRIMARY KEY, data_json TEXT NOT NULL, total_count INTEGER NOT NULL,
+        created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+        hit_count INTEGER NOT NULL DEFAULT 0, last_accessed_at INTEGER NOT NULL, ttl_tier INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache_entries(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_cache_tier ON cache_entries(ttl_tier);
     `)
-
-    // Index for expiration pruning
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_cache_expires
-      ON cache_entries(expires_at)
-    `)
-
-    // Index for TTL tier queries
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_cache_tier
-      ON cache_entries(ttl_tier)
-    `)
-
-    // Prepare statements
     this.stmts = {
-      get: this.db.prepare(`
-        SELECT key, data_json, total_count, created_at, expires_at,
-               hit_count, last_accessed_at, ttl_tier
-        FROM cache_entries
-        WHERE key = ? AND expires_at > ?
-      `),
-      set: this.db.prepare(`
-        INSERT OR REPLACE INTO cache_entries
-        (key, data_json, total_count, created_at, expires_at,
-         hit_count, last_accessed_at, ttl_tier)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `),
-      has: this.db.prepare(`
-        SELECT 1 FROM cache_entries
-        WHERE key = ? AND expires_at > ?
-      `),
-      delete: this.db.prepare(`
-        DELETE FROM cache_entries WHERE key = ?
-      `),
-      prune: this.db.prepare(`
-        DELETE FROM cache_entries WHERE expires_at <= ?
-      `),
-      count: this.db.prepare(`
-        SELECT COUNT(*) as count FROM cache_entries
-        WHERE expires_at > ?
-      `),
-      updateHit: this.db.prepare(`
-        UPDATE cache_entries
-        SET hit_count = ?, last_accessed_at = ?, ttl_tier = ?
-        WHERE key = ?
-      `),
-      countByTier: this.db.prepare(`
-        SELECT COUNT(*) as count FROM cache_entries
-        WHERE ttl_tier = ? AND expires_at > ?
-      `),
+      get: db.prepare(
+        `SELECT key, data_json, total_count, created_at, expires_at,
+               hit_count, last_accessed_at, ttl_tier FROM cache_entries WHERE key = ? AND expires_at > ?`
+      ),
+      set: db.prepare(
+        `INSERT OR REPLACE INTO cache_entries
+        (key, data_json, total_count, created_at, expires_at, hit_count, last_accessed_at, ttl_tier)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ),
+      has: db.prepare(`SELECT 1 FROM cache_entries WHERE key = ? AND expires_at > ?`),
+      delete: db.prepare(`DELETE FROM cache_entries WHERE key = ?`),
+      prune: db.prepare(`DELETE FROM cache_entries WHERE expires_at <= ?`),
+      count: db.prepare(`SELECT COUNT(*) as count FROM cache_entries WHERE expires_at > ?`),
+      updateHit: db.prepare(
+        `UPDATE cache_entries SET hit_count = ?, last_accessed_at = ?, ttl_tier = ? WHERE key = ?`
+      ),
+      countByTier: db.prepare(
+        `SELECT COUNT(*) as count FROM cache_entries WHERE ttl_tier = ? AND expires_at > ?`
+      ),
     }
   }
 

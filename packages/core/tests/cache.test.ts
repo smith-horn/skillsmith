@@ -91,15 +91,14 @@ describe('L2Cache (SQLite)', () => {
   let cache: L2Cache
   let dbPath: string
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // SMI-992: Use mocked time for deterministic file naming
     vi.useFakeTimers()
     vi.setSystemTime(new Date(TEST_TIMESTAMP))
     // Use unique prefix to avoid collision with TieredCache tests in parallel runs
     dbPath = path.join(os.tmpdir(), 'test-cache-l2-' + Date.now() + '.db')
-    cache = new L2Cache({ dbPath, ttlSeconds: 3600 })
-    // Restore real timers for actual test execution
     vi.useRealTimers()
+    cache = await L2Cache.create({ dbPath, ttlSeconds: 3600 })
   })
 
   afterEach(() => {
@@ -125,12 +124,12 @@ describe('L2Cache (SQLite)', () => {
     expect(retrieved?.results).toEqual(results)
   })
 
-  it('should prune expired entries', () => {
+  it('should prune expired entries', async () => {
     // SMI-973: Use 5-second TTL to avoid timing race condition
     // With ttlSeconds: 1, the second boundary could be crossed between
     // set() and has(), causing the entry to appear expired immediately.
     // 5 seconds provides sufficient buffer while still testing expiration logic.
-    const shortCache = new L2Cache({ dbPath: dbPath + '.short', ttlSeconds: 5 })
+    const shortCache = await L2Cache.create({ dbPath: dbPath + '.short', ttlSeconds: 5 })
 
     shortCache.set('key1', [], 0)
     expect(shortCache.has('key1')).toBe(true)
@@ -151,18 +150,17 @@ describe('TieredCache', () => {
   let cache: TieredCache
   let dbPath: string
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // SMI-992: Use mocked time for deterministic file naming
     vi.useFakeTimers()
     vi.setSystemTime(new Date(TEST_TIMESTAMP))
     // Use unique prefix to avoid collision with L2Cache tests in parallel runs
     dbPath = path.join(os.tmpdir(), 'test-cache-tiered-' + Date.now() + '.db')
-    cache = new TieredCache({
+    vi.useRealTimers()
+    cache = await TieredCache.create({
       l1MaxSize: 5,
       l2Options: { dbPath, ttlSeconds: 3600 },
     })
-    // Restore real timers for actual test execution
-    vi.useRealTimers()
   })
 
   afterEach(() => {

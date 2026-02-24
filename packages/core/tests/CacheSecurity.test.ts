@@ -166,11 +166,11 @@ describe('SMI-683: Race Condition in Background Refresh', () => {
   let dbPath: string
   let refreshCallCount: number
 
-  beforeEach(() => {
+  beforeEach(async () => {
     dbPath = getTempDbPath()
     refreshCallCount = 0
 
-    manager = new CacheManager({
+    manager = await CacheManager.create({
       l1: { maxEntries: 100 },
       l2: { dbPath },
       enableBackgroundRefresh: true,
@@ -246,7 +246,7 @@ describe('SMI-683: Race Condition in Background Refresh', () => {
     cleanupDb(dbPath)
     dbPath = getTempDbPath()
 
-    manager = new CacheManager({
+    manager = await CacheManager.create({
       l1: { maxEntries: 100 },
       l2: { dbPath },
       enableBackgroundRefresh: true,
@@ -325,7 +325,7 @@ describe('Additional Security Tests', () => {
   describe('QueryFrequencies Memory Bound', () => {
     it('should not grow unbounded under many unique queries', async () => {
       const dbPath = getTempDbPath()
-      const manager = new CacheManager({
+      const manager = await CacheManager.create({
         l1: { maxEntries: 100 },
         l2: { dbPath },
         enableBackgroundRefresh: false,

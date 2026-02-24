@@ -9,7 +9,7 @@
  */
 
 import type { Database as DatabaseType } from '../db/database-interface.js'
-import { createDatabaseSync } from '../db/createDatabase.js'
+import { createDatabaseSync, createDatabaseAsync } from '../db/createDatabase.js'
 // IMPORTANT: Keep this type-only import here (prevents circular runtime dependency)
 import type { SimilarityResult } from './index.js'
 
@@ -63,7 +63,19 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
   private vectorDB: VectorDB | null = null
   private initPromise: Promise<void> | null = null
 
+  /**
+   * @deprecated If dbPath is passed, use HNSWEmbeddingStore.create(options) instead —
+   * the async factory supports both native and WASM SQLite. Passing dbPath to this
+   * constructor throws to prevent silent data loss.
+   */
   constructor(options: HNSWEmbeddingStoreOptions = {}) {
+    if (options.dbPath) {
+      throw new Error(
+        '[HNSWEmbeddingStore] Cannot open a database file in the sync constructor. ' +
+          'Use await HNSWEmbeddingStore.create(options) instead.'
+      )
+    }
+
     this.hnswEnabled = shouldUseHNSW(options.useHNSW)
     this.config = { ...DEFAULT_HNSW_CONFIG, ...options.hnswConfig }
     this.maxElements = options.maxElements ?? 100000
@@ -71,14 +83,26 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
     this.distanceMetric = options.distanceMetric ?? 'cosine'
     this.autoSave = options.autoSave ?? false
 
-    if (options.dbPath) {
-      this.initDatabase(options.dbPath)
-    }
-
     // IMPORTANT: Keep dynamic import here for V3 lazy loading / graceful degradation
     if (this.hnswEnabled) {
       this.initPromise = this.initHNSWIndex()
     }
+  }
+
+  /**
+   * Async factory — supports both native and WASM SQLite.
+   *
+   * @param options - Store options; dbPath is opened via createDatabaseAsync
+   * @returns Fully initialised HNSWEmbeddingStore instance
+   */
+  static async create(options: HNSWEmbeddingStoreOptions = {}): Promise<HNSWEmbeddingStore> {
+    // Bypass the throwing constructor by omitting dbPath
+    const { dbPath, ...rest } = options
+    const instance = new HNSWEmbeddingStore(rest)
+    if (dbPath) {
+      await instance.initDatabaseAsync(dbPath)
+    }
+    return instance
   }
 
   async ensureInitialized(): Promise<void> {
@@ -354,7 +378,16 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
   // Private methods
   private initDatabase(dbPath: string): void {
     this.db = createDatabaseSync(dbPath)
-    this.db.exec(`
+    this.initEmbeddingsTable()
+  }
+
+  private async initDatabaseAsync(dbPath: string): Promise<void> {
+    this.db = await createDatabaseAsync(dbPath)
+    this.initEmbeddingsTable()
+  }
+
+  private initEmbeddingsTable(): void {
+    this.db!.exec(`
       CREATE TABLE IF NOT EXISTS skill_embeddings (
         skill_id TEXT PRIMARY KEY,
         embedding BLOB NOT NULL,

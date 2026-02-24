@@ -21,14 +21,14 @@ describe('AnalyticsStorage', () => {
   let testDbPath: string
   let testDir: string
 
-  beforeEach(() => {
+  beforeEach(async () => {
     setupFakeTimers()
     // Create a unique test directory for each test using counter instead of Date.now()
     testDirCounter++
     testDir = join(tmpdir(), `skillsmith-test-${FIXED_TIMESTAMP}-${testDirCounter.toString(36)}`)
     mkdirSync(testDir, { recursive: true })
     testDbPath = join(testDir, 'test-analytics.db')
-    storage = new AnalyticsStorage(testDbPath)
+    storage = await AnalyticsStorage.create(testDbPath)
   })
 
   afterEach(() => {
