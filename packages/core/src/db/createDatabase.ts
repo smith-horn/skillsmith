@@ -132,8 +132,16 @@ export function createDatabaseSync(path: string = ':memory:', options?: Database
  *
  * @param path - Path to database file, or ':memory:' for in-memory
  * @param options - Database connection options
- * @returns Promise resolving to Database instance
+ * @returns Promise resolving to Database instance (bare connection — caller must call initializeSchema)
  * @throws Error if no database driver is available
+ *
+ * @important This factory returns a **bare connection with no schema tables**. Unlike the
+ * sync path, no schema initialization happens automatically. Always call `initializeSchema(db)`
+ * immediately after for new/application databases:
+ * ```typescript
+ * const db = await createDatabaseAsync(path)
+ * initializeSchema(db)  // required — creates tables if they don't exist
+ * ```
  */
 export async function createDatabaseAsync(
   path: string = ':memory:',

@@ -249,6 +249,21 @@ describe('Database Abstraction Layer', () => {
       expect(db.open).toBe(true)
       db.close()
     })
+
+    it('createDatabaseAsync (factory) returns bare connection with no schema tables', async () => {
+      // Regression guard for SMI-2207: createDatabaseAsync is a pure driver factory.
+      // It does NOT call initializeSchema. Callers must do so explicitly.
+      // If this test fails, someone added schema init to the factory — that breaks
+      // L2Cache, EmbeddingService, and HybridSearch which manage their own schemas.
+      if (!isBetterSqlite3Available()) return
+
+      const db = await createDatabaseAsync(':memory:')
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {
+        name: string
+      }[]
+      expect(tables).toHaveLength(0)
+      db.close()
+    })
   })
 
   describe('BetterSqlite3Database Wrapper', () => {
