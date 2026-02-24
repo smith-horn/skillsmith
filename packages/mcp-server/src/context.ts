@@ -27,6 +27,7 @@ import {
   // SMI-2207: Async database functions with WASM fallback
   createDatabaseAsync,
   openDatabaseAsync,
+  initializeSchema,
   SearchService,
   SkillRepository,
   validateDbPath,
@@ -522,6 +523,10 @@ export async function createToolContextAsync(
     db = await openDatabaseAsync(dbPath)
   } else {
     db = await createDatabaseAsync(dbPath)
+    // SMI-2207: createDatabaseAsync returns a bare connection (no schema).
+    // openDatabaseAsync runs runMigrationsSafe internally; for new/in-memory
+    // databases we must call initializeSchema explicitly to match the sync path.
+    initializeSchema(db)
   }
 
   // Initialize services

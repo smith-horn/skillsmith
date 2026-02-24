@@ -496,6 +496,7 @@ export async function installSkill(
       if (
         error.message.includes('already installed') ||
         error.message.includes('Could not find SKILL.md') ||
+        error.message.includes('registry data quality issue') ||
         error.message.includes('Invalid SKILL.md') ||
         error.message.includes('Security scan failed') ||
         error.message.includes('exceeds maximum length') ||
