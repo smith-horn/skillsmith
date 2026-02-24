@@ -2,6 +2,12 @@
 
 Command-line interface for Skillsmith - discover, manage, and author agent skills.
 
+## What's New in v0.3.8
+
+- **CLI Authentication**: `skillsmith login` opens your browser, you copy the API key and paste it — done. Stored securely in your OS keyring.
+- **Session Commands**: `skillsmith logout` clears stored credentials; `skillsmith whoami` shows your current auth status and key source.
+- **Headless/CI Support**: `skillsmith login --no-browser` prints the URL for environments without a display. Use `SKILLSMITH_API_KEY` env var for fully non-interactive auth.
+
 ## What's New in v0.3.1
 
 - **Database Fix**: Fixed "no such table: skills" error on fresh installations
@@ -402,12 +408,71 @@ skillsmith sync config --enable --frequency weekly
 - `--disable` - Disable automatic sync
 - `--frequency <freq>` - Set frequency: `daily` or `weekly`
 
+### login
+
+Authenticate the Skillsmith CLI with your API key. Opens your browser to [skillsmith.app/account/cli-token](https://skillsmith.app/account/cli-token), where you generate and copy a key, then paste it into the terminal prompt.
+
+```bash
+skillsmith login
+```
+
+```
+Opening https://skillsmith.app/account/cli-token in your browser...
+
+After authenticating, copy the API key shown and paste it below.
+? Paste your API key: [input is masked]
+
+✓ Logged in successfully.
+  Note: your API key may still be in your clipboard. Clear it when done.
+```
+
+**Options:**
+- `--no-browser` — Print the URL instead of opening a browser (for headless/CI/SSH environments)
+
+**Headless/CI environments:** Use `SKILLSMITH_API_KEY` as an environment variable — no browser needed.
+
+**Key storage:** Keys are stored in your OS keyring (macOS Keychain, GNOME Keyring, Windows Credential Store) when available, with `~/.skillsmith/config.json` as fallback.
+
+### logout
+
+Remove the stored API key.
+
+```bash
+skillsmith logout
+```
+
+```
+? Log out and remove stored API key? (y/N) y
+✓ Logged out. Key removed from OS keyring.
+```
+
+### whoami
+
+Show current authentication status.
+
+```bash
+skillsmith whoami
+```
+
+```
+Skillsmith CLI
+  Key:    sk_live_xxxx...
+  Source: OS keyring
+  Format: valid
+```
+
+**Source** indicates where the active key was read from:
+- `OS keyring` — stored by `skillsmith login` (most secure)
+- `config file (~/.skillsmith/config.json)` — file-based fallback
+- `environment variable (SKILLSMITH_API_KEY)` — injected at runtime
+
 ## Configuration
 
 ### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `SKILLSMITH_API_KEY` | API key for authenticated requests (alternative to `skillsmith login`) | - |
 | `SKILLSMITH_DB_PATH` | Database file location | `~/.skillsmith/skills.db` |
 | `SKILLSMITH_IMPORT_DELAY_MS` | Delay between GitHub API calls during import | `150` |
 | `GITHUB_TOKEN` | GitHub token for imports | - |

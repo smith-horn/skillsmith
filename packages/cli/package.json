@@ -1,7 +1,7 @@
 {
   "name": "@skillsmith/cli",
   "version": "0.3.8",
-  "description": "CLI tools for Skillsmith skill discovery",
+  "description": "CLI tools for Skillsmith skill discovery and authentication",
   "type": "module",
   "bin": {
     "skillsmith": "dist/src/index.js",

@@ -71,7 +71,18 @@ After adding to your MCP client settings and restarting, you can search for skil
 
 ### API Key Configuration (Optional)
 
-For higher rate limits and usage tracking, add your API key:
+For higher rate limits and usage tracking, authenticate with your API key.
+
+**Easiest — CLI login (interactive):**
+
+```bash
+npm install -g @skillsmith/cli
+skillsmith login
+```
+
+This opens [skillsmith.app/account/cli-token](https://skillsmith.app/account/cli-token) in your browser. Generate a key, copy it, and paste it when prompted. The key is stored securely in your OS keyring.
+
+**MCP server config — add the key to your settings:**
 
 ```json
 {
@@ -87,7 +98,7 @@ For higher rate limits and usage tracking, add your API key:
 }
 ```
 
-Get your API key at [skillsmith.app/account](https://skillsmith.app/account).
+Get your API key at [skillsmith.app/account/cli-token](https://skillsmith.app/account/cli-token).
 
 | Tier | Rate Limit | Cost |
 |------|------------|------|
