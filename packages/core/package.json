@@ -68,6 +68,7 @@
     "zod": "4.2.1"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "7.6.13",
     "vitest": "4.0.16"
   },
   "files": [
