@@ -3,10 +3,12 @@
  * @module @skillsmith/core/config
  *
  * SMI-1851: Shared Config Module
+ * SMI-2714: CLI Login Device Flow - credential storage
  *
  * Provides cross-platform configuration loading from:
  * - Environment variables (highest precedence)
  * - ~/.skillsmith/config.json
+ * - OS keyring (via @isaacs/keytar, optional)
  *
  * @example
  * ```typescript
@@ -20,6 +22,12 @@
  *
  * // Save config (creates file with 0600 permissions)
  * saveConfig({ apiKey: 'sk_live_...' })
+ *
+ * // Store API key (tries keyring first, falls back to config file)
+ * await storeApiKey('sk_live_...')
+ *
+ * // Get auth status
+ * const status = await getAuthStatus()
  * ```
  */
 
@@ -56,6 +64,53 @@ const CONFIG_DIR = '.skillsmith'
 
 /** Default config file name */
 const CONFIG_FILE = 'config.json'
+
+// ============================================================================
+// Keyring integration (SMI-2714)
+// @isaacs/keytar is optional — gracefully absent in Docker/CI environments.
+// We use a structural interface to avoid a hard dependency on the types package.
+// ============================================================================
+
+/**
+ * Structural interface matching @isaacs/keytar's public API.
+ * Avoids importing the types package in core (keytar is optional in cli).
+ */
+interface KeytarLike {
+  setPassword(service: string, account: string, password: string): Promise<void>
+  getPassword(service: string, account: string): Promise<string | null>
+  deletePassword(service: string, account: string): Promise<boolean>
+}
+
+/** Lazy-loaded keytar module; null means unavailable */
+let keytarModule: KeytarLike | null | undefined = undefined
+
+/**
+ * Lazily import @isaacs/keytar and cache the result.
+ * Returns null if the module is unavailable (CI, Docker, unsupported platform).
+ */
+async function getKeytar(): Promise<KeytarLike | null> {
+  if (keytarModule !== undefined) return keytarModule
+  try {
+    // @ts-expect-error — @isaacs/keytar is an optional dependency with no type declarations
+    // in @skillsmith/core. We use a structural interface (KeytarLike) to type the
+    // result. The import is a standard dynamic import so Vitest can intercept it.
+    const mod = (await import('@isaacs/keytar')) as { default?: KeytarLike } & KeytarLike
+    keytarModule = mod.default ?? mod
+  } catch {
+    keytarModule = null
+  }
+  return keytarModule
+}
+
+/** Service name used in the OS keyring */
+const KEYTAR_SERVICE = 'skillsmith-cli'
+
+/** Account key used in the OS keyring */
+const KEYTAR_ACCOUNT = 'api-key'
+
+// ============================================================================
+// Config file helpers
+// ============================================================================
 
 /**
  * Get the config directory path
@@ -128,7 +183,21 @@ export function saveConfig(
     existingConfig = loadConfig()
   }
 
-  const mergedConfig = { ...existingConfig, ...config }
+  // Remove undefined values so they are omitted from JSON output
+  const updates = Object.fromEntries(
+    Object.entries(config).filter(([, v]) => v !== undefined)
+  ) as Partial<SkillsmithConfig>
+
+  // Explicit undefined fields are deletions — remove them from existing config
+  const deletions = Object.keys(config).filter(
+    (k) => config[k as keyof SkillsmithConfig] === undefined
+  )
+  const cleaned = { ...existingConfig }
+  for (const key of deletions) {
+    delete cleaned[key as keyof SkillsmithConfig]
+  }
+
+  const mergedConfig = { ...cleaned, ...updates }
   const configJson = JSON.stringify(mergedConfig, null, 2)
 
   writeFileSync(configPath, configJson, { encoding: 'utf-8', mode: 0o600 })
@@ -210,11 +279,145 @@ export function isTelemetryEnabled(): boolean {
 }
 
 /**
- * Validate API key format
+ * Validate API key format.
+ *
+ * Expected format: sk_live_ followed by 32-128 alphanumeric/dash/underscore chars.
+ * The 200-char pre-check is a ReDoS guard per security standards.
  *
  * @param key - API key to validate
  * @returns true if key has valid format (sk_live_...)
  */
 export function isValidApiKeyFormat(key: string): boolean {
-  return /^sk_live_[A-Za-z0-9_-]{32,}$/.test(key)
+  if (key.length > 200) return false // ReDoS guard
+  return /^sk_live_[A-Za-z0-9_-]{32,128}$/.test(key)
+}
+
+// ============================================================================
+// Credential storage (SMI-2714)
+// ============================================================================
+
+/**
+ * Store an API key securely.
+ *
+ * Attempts to use the OS keyring first (via @isaacs/keytar).
+ * Falls back to saving in ~/.skillsmith/config.json when keyring is unavailable.
+ *
+ * @param apiKey - The API key to store (must pass isValidApiKeyFormat)
+ */
+export async function storeApiKey(apiKey: string): Promise<void> {
+  const keytar = await getKeytar()
+  if (keytar) {
+    try {
+      await keytar.setPassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT, apiKey)
+      return
+    } catch {
+      // Keyring failed — fall through to config file
+    }
+  }
+  saveConfig({ apiKey })
+}
+
+/**
+ * Clear the stored API key from all storage locations.
+ *
+ * Attempts to delete from the OS keyring AND removes apiKey from the config file.
+ * Returns explicit success/failure info so callers can report partial failures.
+ *
+ * @returns Result indicating which storage locations were cleared and any errors
+ */
+export async function clearApiKey(): Promise<{
+  success: boolean
+  source: string
+  error?: string
+}> {
+  const keyringSources: string[] = []
+  let keyringError: string | undefined
+
+  const keytar = await getKeytar()
+  if (keytar) {
+    try {
+      const deleted = await keytar.deletePassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT)
+      if (deleted) {
+        keyringSources.push('keyring')
+      }
+    } catch (err) {
+      keyringError = err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  // Always clear from config file — never leave a stale key there
+  saveConfig({ apiKey: undefined })
+  keyringSources.push('config file')
+
+  if (keyringError) {
+    return {
+      success: false,
+      source: keyringSources.join(' and '),
+      error: keyringError,
+    }
+  }
+
+  return {
+    success: true,
+    source: keyringSources.join(' and '),
+  }
+}
+
+/**
+ * Get current authentication status.
+ *
+ * Checks in precedence order:
+ * 1. SKILLSMITH_API_KEY environment variable
+ * 2. OS keyring (via @isaacs/keytar)
+ * 3. ~/.skillsmith/config.json apiKey field
+ *
+ * @returns Authentication status with masked key prefix and storage source
+ */
+export async function getAuthStatus(): Promise<{
+  authenticated: boolean
+  keyPrefix: string | null
+  source: 'keyring' | 'config' | 'env' | 'none'
+}> {
+  // 1. Environment variable (highest precedence)
+  const envKey = process.env.SKILLSMITH_API_KEY
+  if (envKey && isValidApiKeyFormat(envKey)) {
+    return {
+      authenticated: true,
+      keyPrefix: envKey.substring(0, 12),
+      source: 'env',
+    }
+  }
+
+  // 2. OS keyring
+  const keytar = await getKeytar()
+  if (keytar) {
+    try {
+      const keyrKey = await keytar.getPassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT)
+      if (keyrKey && isValidApiKeyFormat(keyrKey)) {
+        return {
+          authenticated: true,
+          keyPrefix: keyrKey.substring(0, 12),
+          source: 'keyring',
+        }
+      }
+    } catch {
+      // Keyring unavailable or locked — fall through to config file
+    }
+  }
+
+  // 3. Config file
+  const config = loadConfig()
+  if (config.apiKey && isValidApiKeyFormat(config.apiKey)) {
+    return {
+      authenticated: true,
+      keyPrefix: config.apiKey.substring(0, 12),
+      source: 'config',
+    }
+  }
+
+  return {
+    authenticated: false,
+    keyPrefix: null,
+    source: 'none',
+  }
 }

@@ -37,3 +37,8 @@ export { createMergeCommand } from './merge.js'
 
 // SMI-824: Install Skillsmith Skill Command
 export { createInstallSkillCommand } from './install-skill.js'
+
+// SMI-2715: CLI Login Device Flow
+export { createLoginCommand } from './login.js'
+export { createLogoutCommand } from './logout.js'
+export { createWhoamiCommand } from './whoami.js'

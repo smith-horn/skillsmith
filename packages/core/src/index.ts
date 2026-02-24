@@ -192,7 +192,7 @@ export type {
   SourceIndexerOptions,
 } from './sources/index.js'
 
-// Configuration (SMI-1851)
+// Configuration (SMI-1851, SMI-2714)
 export {
   loadConfig,
   saveConfig,
@@ -204,6 +204,9 @@ export {
   isDebugEnabled,
   isTelemetryEnabled,
   isValidApiKeyFormat,
+  storeApiKey,
+  clearApiKey,
+  getAuthStatus,
   type SkillsmithConfig,
 } from './config/index.js'
 

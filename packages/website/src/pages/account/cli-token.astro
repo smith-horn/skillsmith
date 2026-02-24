@@ -1,0 +1,571 @@
+---
+/**
+ * CLI Token Page
+ *
+ * SMI-2717: CLI Login Device Flow
+ *
+ * Allows authenticated users to generate a Skillsmith API key for use
+ * with the `skillsmith login` CLI command. Reuses the existing
+ * generate-license edge function.
+ *
+ * Auth: Redirects unauthenticated users to /login?redirect=/account/cli-token
+ * UX: Explicit "I've copied it — close" dismissal (no auto-hide timer)
+ */
+
+// Disable prerendering — SSR required to inject Supabase config
+export const prerender = false
+
+import { ClientRouter } from 'astro:transitions'
+import { getSupabaseConfig } from '../../lib/supabase-config'
+import Nav from '../../components/Nav.astro'
+
+const supabaseConfig = getSupabaseConfig()
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+    <meta
+      name="description"
+      content="Generate a Skillsmith CLI API token to authenticate the skillsmith login command"
+    />
+    <title>CLI Token | Skillsmith</title>
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
+    <!-- Inject Supabase config for client script -->
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig
+    </script>
+    <!-- JSON-LD: Page metadata (skillsmith.app, no www) -->
+    <script is:inline type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "name": "CLI Token | Skillsmith",
+        "url": "https://skillsmith.app/account/cli-token",
+        "description": "Generate a Skillsmith CLI API token"
+      }
+    </script>
+    <!-- Enable smooth page transitions (SMI-2066) -->
+    <ClientRouter />
+  </head>
+  <body>
+    <Nav activePath="/account" />
+
+    <main class="page-container">
+      <!-- Loading State -->
+      <div id="loading-state" class="loading-state">
+        <div class="spinner-container">
+          <svg class="spinner" viewBox="0 0 24 24" aria-hidden="true">
+            <circle
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              stroke-width="4"
+              fill="none"
+              opacity="0.25"></circle>
+            <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+            ></path>
+          </svg>
+        </div>
+        <p>Loading...</p>
+      </div>
+
+      <!-- Error State -->
+      <div id="error-state" class="error-state" style="display: none;">
+        <div class="error-content">
+          <h2>Something went wrong</h2>
+          <p id="error-message">Please try again.</p>
+          <button onclick="location.reload()" class="btn btn-primary">Try Again</button>
+        </div>
+      </div>
+
+      <!-- Page Content (hidden until authenticated) -->
+      <div id="page-content" style="display: none;">
+        <div class="page-header">
+          <a href="/account" class="back-link">← Account</a>
+          <h1>CLI Token</h1>
+          <p class="page-description">
+            Generate an API key to authenticate the <code>skillsmith login</code> command.
+          </p>
+        </div>
+
+        <!-- Instructions -->
+        <div class="instructions-card">
+          <h2>How to use</h2>
+          <ol class="steps">
+            <li>Run <code>skillsmith login</code> in your terminal</li>
+            <li>Click <strong>Generate CLI Token</strong> below</li>
+            <li>Click <strong>Copy</strong> to copy the key</li>
+            <li>Return to your terminal and paste the key when prompted</li>
+          </ol>
+        </div>
+
+        <!-- Key Generation Section -->
+        <div class="token-card">
+          <!-- Initial state: generate button -->
+          <div id="generate-section">
+            <p class="token-hint">
+              Each key is shown <strong>once only</strong> — copy it immediately.
+            </p>
+            <button id="generate-btn" class="btn btn-primary"> Generate CLI Token </button>
+            <p id="generate-error" class="error-text" style="display: none;"></p>
+          </div>
+
+          <!-- Key display state (hidden until generated) -->
+          <div id="key-section" style="display: none;">
+            <div id="key-container" aria-live="polite" aria-atomic="true" class="key-container">
+              <p class="key-label">Your CLI API key:</p>
+              <div class="key-display-row">
+                <code id="key-value" class="key-value">sk_live_...</code>
+                <button
+                  id="copy-btn"
+                  class="btn btn-secondary btn-sm"
+                  aria-label="Copy API key to clipboard"
+                >
+                  Copy
+                </button>
+              </div>
+              <p class="key-warning">
+                <strong>Save this key now.</strong> It will not be shown again after you close this page.
+              </p>
+            </div>
+
+            <p class="return-hint">Return to your terminal and paste the key when prompted.</p>
+
+            <button id="done-btn" class="btn btn-primary" aria-label="Close">
+              I've copied it — close
+            </button>
+          </div>
+        </div>
+
+        <!-- Tier info -->
+        <p class="tier-note" id="tier-note" style="display: none;"></p>
+      </div>
+    </main>
+
+    <script>
+      import { createClient } from '@supabase/supabase-js'
+
+      document.addEventListener('astro:page-load', async () => {
+        const config = window.__SUPABASE_CONFIG__
+        const supabaseUrl = config?.url
+        const supabaseAnonKey = config?.anonKey
+
+        const loadingState = document.getElementById('loading-state') as HTMLDivElement
+        const errorState = document.getElementById('error-state') as HTMLDivElement
+        const errorMessage = document.getElementById('error-message') as HTMLParagraphElement
+        const pageContent = document.getElementById('page-content') as HTMLDivElement
+
+        const generateSection = document.getElementById('generate-section') as HTMLDivElement
+        const generateBtn = document.getElementById('generate-btn') as HTMLButtonElement
+        const generateError = document.getElementById('generate-error') as HTMLParagraphElement
+
+        const keySection = document.getElementById('key-section') as HTMLDivElement
+        const keyContainer = document.getElementById('key-container') as HTMLDivElement
+        const keyValue = document.getElementById('key-value') as HTMLElement
+        const copyBtn = document.getElementById('copy-btn') as HTMLButtonElement
+        const doneBtn = document.getElementById('done-btn') as HTMLButtonElement
+        const tierNote = document.getElementById('tier-note') as HTMLParagraphElement
+
+        function showState(state: 'loading' | 'content' | 'error') {
+          loadingState.style.display = 'none'
+          pageContent.style.display = 'none'
+          errorState.style.display = 'none'
+          if (state === 'loading') loadingState.style.display = 'flex'
+          if (state === 'content') pageContent.style.display = 'block'
+          if (state === 'error') errorState.style.display = 'block'
+        }
+
+        if (!supabaseUrl || !supabaseAnonKey) {
+          errorMessage.textContent = 'Configuration error. Please try again later.'
+          showState('error')
+          return
+        }
+
+        const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+        // Check authentication — redirect if not logged in
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession()
+
+        if (!session || sessionError) {
+          window.location.href = '/login?redirect=/account/cli-token'
+          return
+        }
+
+        // Load profile to show tier info
+        try {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('tier')
+            .eq('id', session.user.id)
+            .single()
+
+          const tier = profile?.tier || 'community'
+          const maxKeys =
+            tier === 'community' ? 1 : tier === 'individual' ? 3 : tier === 'team' ? 10 : 50
+          if (tierNote) {
+            tierNote.textContent = `Your ${tier} plan allows up to ${maxKeys} active key${maxKeys === 1 ? '' : 's'}.`
+            tierNote.style.display = 'block'
+          }
+        } catch {
+          // Non-critical — tier note is informational only
+        }
+
+        showState('content')
+
+        // Generate button handler
+        generateBtn.addEventListener('click', async () => {
+          generateBtn.disabled = true
+          generateBtn.textContent = 'Generating...'
+          generateError.style.display = 'none'
+
+          try {
+            const response = await fetch(`${supabaseUrl}/functions/v1/generate-license`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${session.access_token}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ name: 'CLI Token' }),
+            })
+
+            const data = await response.json()
+
+            if (!response.ok) {
+              throw new Error(data.error || 'Failed to generate key')
+            }
+
+            // Show the key
+            keyValue.textContent = data.key
+            generateSection.style.display = 'none'
+            keySection.style.display = 'block'
+          } catch (err) {
+            generateError.textContent =
+              err instanceof Error ? err.message : 'Failed to generate key. Please try again.'
+            generateError.style.display = 'block'
+            generateBtn.disabled = false
+            generateBtn.textContent = 'Generate CLI Token'
+          }
+        })
+
+        // Copy button handler
+        copyBtn.addEventListener('click', async () => {
+          const key = keyValue.textContent || ''
+          try {
+            await navigator.clipboard.writeText(key)
+            copyBtn.textContent = 'Copied!'
+            copyBtn.setAttribute('aria-label', 'API key copied to clipboard')
+            setTimeout(() => {
+              copyBtn.textContent = 'Copy'
+              copyBtn.setAttribute('aria-label', 'Copy API key to clipboard')
+            }, 2000)
+          } catch {
+            // Fallback: select the text for manual copy
+            const range = document.createRange()
+            range.selectNodeContents(keyValue)
+            const selection = window.getSelection()
+            if (selection) {
+              selection.removeAllRanges()
+              selection.addRange(range)
+            }
+          }
+        })
+
+        // Done button handler — explicit dismissal (no auto-hide timer)
+        doneBtn.addEventListener('click', () => {
+          // Announce to screen readers via aria-live region
+          keyContainer.setAttribute('aria-label', 'API key hidden')
+          keyValue.textContent = '(key hidden)'
+          keySection.style.display = 'none'
+
+          // Navigate back to account dashboard
+          window.location.href = '/account'
+        })
+      })
+    </script>
+
+    <style>
+      body {
+        margin: 0;
+        background: #0a0a0c;
+        color: #fafafa;
+        font-family:
+          'Satoshi',
+          -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+        min-height: 100vh;
+      }
+
+      .page-container {
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 2rem 1.5rem 4rem;
+      }
+
+      /* Loading state */
+      .loading-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 50vh;
+        gap: 1rem;
+        color: #71717a;
+      }
+
+      .spinner-container {
+        width: 40px;
+        height: 40px;
+      }
+
+      .spinner {
+        width: 100%;
+        height: 100%;
+        animation: spin 0.8s linear infinite;
+        color: #7c3aed;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* Error state */
+      .error-state {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 50vh;
+      }
+
+      .error-content {
+        text-align: center;
+        max-width: 400px;
+      }
+
+      .error-content h2 {
+        margin-bottom: 0.5rem;
+      }
+
+      /* Page header */
+      .page-header {
+        margin-bottom: 2rem;
+      }
+
+      .back-link {
+        display: inline-flex;
+        align-items: center;
+        color: #71717a;
+        text-decoration: none;
+        font-size: 0.875rem;
+        margin-bottom: 1rem;
+        transition: color 0.15s;
+      }
+
+      .back-link:hover {
+        color: #fafafa;
+      }
+
+      .page-header h1 {
+        font-size: 1.875rem;
+        font-weight: 700;
+        margin: 0 0 0.5rem;
+        line-height: 1.2;
+      }
+
+      .page-description {
+        color: #a1a1aa;
+        margin: 0;
+        font-size: 1rem;
+      }
+
+      .page-description code {
+        background: #18181b;
+        border: 1px solid #27272a;
+        border-radius: 4px;
+        padding: 0.1em 0.4em;
+        font-size: 0.875em;
+        color: #a78bfa;
+      }
+
+      /* Instructions card */
+      .instructions-card {
+        background: #111114;
+        border: 1px solid #27272a;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .instructions-card h2 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin: 0 0 1rem;
+        color: #a1a1aa;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-size: 0.75rem;
+      }
+
+      .steps {
+        margin: 0;
+        padding-left: 1.5rem;
+        color: #d4d4d8;
+        line-height: 1.75;
+      }
+
+      .steps li {
+        margin-bottom: 0.25rem;
+      }
+
+      .steps code {
+        background: #18181b;
+        border: 1px solid #27272a;
+        border-radius: 4px;
+        padding: 0.1em 0.4em;
+        font-size: 0.875em;
+        color: #a78bfa;
+      }
+
+      /* Token card */
+      .token-card {
+        background: #111114;
+        border: 1px solid #27272a;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+      }
+
+      .token-hint {
+        color: #a1a1aa;
+        font-size: 0.875rem;
+        margin: 0 0 1.25rem;
+      }
+
+      /* Key display */
+      .key-container {
+        margin-bottom: 1.25rem;
+      }
+
+      .key-label {
+        font-size: 0.875rem;
+        color: #a1a1aa;
+        margin: 0 0 0.5rem;
+      }
+
+      .key-display-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+      }
+
+      .key-value {
+        flex: 1;
+        background: #0a0a0c;
+        border: 1px solid #3f3f46;
+        border-radius: 8px;
+        padding: 0.75rem 1rem;
+        font-family: 'SF Mono', 'Fira Code', monospace;
+        font-size: 0.875rem;
+        color: #a78bfa;
+        word-break: break-all;
+        user-select: all;
+      }
+
+      .key-warning {
+        font-size: 0.8125rem;
+        color: #f59e0b;
+        margin: 0;
+        padding: 0.625rem 0.875rem;
+        background: rgba(245, 158, 11, 0.08);
+        border: 1px solid rgba(245, 158, 11, 0.2);
+        border-radius: 6px;
+      }
+
+      .return-hint {
+        color: #a1a1aa;
+        font-size: 0.875rem;
+        margin: 0 0 1.25rem;
+      }
+
+      .error-text {
+        color: #ef4444;
+        font-size: 0.875rem;
+        margin: 0.75rem 0 0;
+      }
+
+      /* Tier note */
+      .tier-note {
+        font-size: 0.8125rem;
+        color: #52525b;
+        margin: 0;
+        text-align: center;
+      }
+
+      /* Buttons */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        padding: 0.625rem 1.25rem;
+        border-radius: 8px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        font-family: inherit;
+        cursor: pointer;
+        transition: all 0.15s;
+        border: 1px solid transparent;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .btn-primary {
+        background: #7c3aed;
+        color: #fafafa;
+        border-color: #7c3aed;
+      }
+
+      .btn-primary:hover:not(:disabled) {
+        background: #6d28d9;
+        border-color: #6d28d9;
+      }
+
+      .btn-secondary {
+        background: #18181b;
+        color: #d4d4d8;
+        border-color: #3f3f46;
+      }
+
+      .btn-secondary:hover:not(:disabled) {
+        background: #27272a;
+        color: #fafafa;
+      }
+
+      .btn-sm {
+        padding: 0.375rem 0.75rem;
+        font-size: 0.8125rem;
+        border-radius: 6px;
+      }
+    </style>
+  </body>
+</html>

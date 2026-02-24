@@ -35,6 +35,9 @@ import {
   createRecommendCommand,
   createSyncCommand,
   createInstallSkillCommand,
+  createLoginCommand,
+  createLogoutCommand,
+  createWhoamiCommand,
 } from './commands/index.js'
 import { DEFAULT_DB_PATH } from './config.js'
 import { sanitizeError } from './utils/sanitize.js'
@@ -67,9 +70,12 @@ program
   .description('Claude Skill Discovery and Management CLI (alias: sklx)')
   .version(CLI_VERSION)
 
-// Display startup header with license status before parsing commands
-// Use hook to display header before any command runs
-program.hook('preAction', async () => {
+// Display startup header with license status before parsing commands.
+// Skip for auth commands (login/logout/whoami) which manage credentials and
+// must not emit extra output that could interfere with scripted use.
+const NO_HEADER_COMMANDS = ['login', 'logout', 'whoami']
+program.hook('preAction', async (_thisCommand, actionCommand) => {
+  if (NO_HEADER_COMMANDS.includes(actionCommand.name())) return
   await displayStartupHeader(CLI_VERSION)
 })
 
@@ -133,5 +139,10 @@ program.addCommand(createSyncCommand())
 
 // SMI-824: Install skillsmith skill for /skillsmith slash command
 program.addCommand(createInstallSkillCommand())
+
+// SMI-2715: CLI Login Device Flow
+program.addCommand(createLoginCommand())
+program.addCommand(createLogoutCommand())
+program.addCommand(createWhoamiCommand())
 
 program.parse()
