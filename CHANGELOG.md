@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@skillsmith/cli` users at install time. `@huggingface/transformers` is the official successor
   and exposes the same `pipeline()` API. The `Xenova/all-MiniLM-L6-v2` model ID is unchanged.
   The `quantized: true` pipeline option has been replaced with `dtype: 'q8'` to match the v3 API.
-- **Packages**: `@skillsmith/core@0.4.12`, `@skillsmith/cli@0.4.1`, `@skillsmith/mcp-server@0.4.1`
+- **Packages**: `@skillsmith/core@0.4.12`, `@skillsmith/cli@0.4.2`, `@skillsmith/mcp-server@0.4.1`
 
 ---
 
