@@ -154,6 +154,16 @@ const supabaseConfig = getSupabaseConfig()
     <script>
       import { createClient } from '@supabase/supabase-js'
 
+      // XSS-safe HTML escaping helper (module scope — defined once across navigations)
+      function escapeHtml(str: string): string {
+        return str
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;')
+      }
+
       document.addEventListener('astro:page-load', async () => {
         const config = window.__SUPABASE_CONFIG__
         const supabaseUrl = config?.url
@@ -222,6 +232,93 @@ const supabaseConfig = getSupabaseConfig()
           // Non-critical — tier note is informational only
         }
 
+        // Fetch active CLI tokens for display
+        const { data: cliKeys } = await supabase
+          .from('license_keys')
+          .select('id, key_prefix, name, tier, created_at, last_used_at')
+          .eq('user_id', session.user.id)
+          .eq('status', 'active')
+          .eq('name', 'CLI Token')
+          .order('created_at', { ascending: false })
+
+        // Render active CLI tokens section
+        const tokenCard = document.querySelector('.token-card')
+        if (cliKeys && cliKeys.length > 0 && tokenCard) {
+          const keysHtml = `
+            <section class="keys-section">
+              <h2 class="keys-section-heading">
+                Active CLI Token${cliKeys.length > 1 ? 's' : ''}
+              </h2>
+              <p class="section-desc">
+                This token is used by the <code>skillsmith</code> CLI. Revoke it here before
+                generating a replacement.
+              </p>
+              <ul class="key-list">
+                ${cliKeys
+                  .map(
+                    (key) => `
+                  <li class="key-item">
+                    <div class="key-info">
+                      <span class="key-prefix">${escapeHtml(key.key_prefix)}&hellip;</span>
+                      <span class="key-meta">
+                        Created ${new Date(key.created_at).toLocaleDateString()}${
+                          key.last_used_at
+                            ? ` &middot; Last used ${new Date(key.last_used_at).toLocaleDateString()}`
+                            : ''
+                        }
+                      </span>
+                      <span class="tier-badge ${escapeHtml(key.tier)}">${escapeHtml(key.tier)}</span>
+                    </div>
+                    <button
+                      class="revoke-btn btn btn-danger btn-sm"
+                      data-key-id="${escapeHtml(key.id)}"
+                      aria-label="Revoke CLI token ending in ${escapeHtml(key.key_prefix)}"
+                    >
+                      Revoke
+                    </button>
+                  </li>
+                `
+                  )
+                  .join('')}
+              </ul>
+            </section>
+          `
+          tokenCard.insertAdjacentHTML('beforebegin', keysHtml)
+
+          // When token(s) exist, hide the instructions card — it directs users to Generate,
+          // which is wrong when they need to revoke first.
+          const instructionsCard = document.querySelector('.instructions-card')
+          if (instructionsCard) {
+            ;(instructionsCard as HTMLElement).style.display = 'none'
+          }
+        }
+
+        // Revoke handlers
+        document.querySelectorAll<HTMLButtonElement>('.revoke-btn').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const keyId = btn.dataset.keyId
+            if (!keyId) return
+            if (!confirm('Are you sure you want to revoke this key? This cannot be undone.')) return
+
+            btn.disabled = true
+            btn.textContent = 'Revoking\u2026'
+
+            const { error } = await supabase
+              .from('license_keys')
+              .update({ status: 'revoked', revoked_at: new Date().toISOString() })
+              .eq('id', keyId)
+              .eq('user_id', session.user.id) // defense-in-depth; RLS also enforces ownership
+
+            if (error) {
+              alert('Failed to revoke token. Please try again.')
+              btn.disabled = false
+              btn.textContent = 'Revoke'
+            } else {
+              location.reload()
+            }
+          })
+        })
+
         showState('content')
 
         // Generate button handler
@@ -243,6 +340,22 @@ const supabaseConfig = getSupabaseConfig()
             const data = await response.json()
 
             if (!response.ok) {
+              // Provide a targeted message for key-limit errors; fall back to API message otherwise.
+              // Check status 429/400 and error text to avoid fragile exact-string dependency.
+              const isLimitError =
+                (response.status === 429 || response.status === 400) &&
+                typeof data?.error === 'string' &&
+                data.error.toLowerCase().includes('limit')
+
+              if (isLimitError) {
+                generateError.textContent =
+                  'You already have an active CLI token. Revoke it above before generating a new one.'
+                generateError.style.display = 'block'
+                generateBtn.disabled = false
+                generateBtn.textContent = 'Generate CLI Token'
+                return
+              }
+
               throw new Error(data.error || 'Failed to generate key')
             }
 
@@ -565,6 +678,119 @@ const supabaseConfig = getSupabaseConfig()
         padding: 0.375rem 0.75rem;
         font-size: 0.8125rem;
         border-radius: 6px;
+      }
+
+      .btn-danger {
+        background: #7f1d1d;
+        color: #fca5a5;
+        border-color: #991b1b;
+      }
+
+      .btn-danger:hover:not(:disabled) {
+        background: #991b1b;
+        border-color: #b91c1c;
+        color: #fecaca;
+      }
+
+      /* Active CLI tokens section */
+      .keys-section {
+        background: #111114;
+        border: 1px solid #27272a;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .keys-section-heading {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #a1a1aa;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin: 0 0 0.5rem;
+      }
+
+      .section-desc {
+        font-size: 0.875rem;
+        color: #71717a;
+        margin: 0 0 1rem;
+      }
+
+      .section-desc code {
+        background: #18181b;
+        border: 1px solid #27272a;
+        border-radius: 4px;
+        padding: 0.1em 0.4em;
+        font-size: 0.875em;
+        color: #a78bfa;
+      }
+
+      .key-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+
+      .key-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem;
+        background: #18181b;
+        border-radius: 8px;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+
+      .key-info {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+
+      .key-prefix {
+        font-family: 'SF Mono', 'Fira Code', monospace;
+        font-size: 0.875rem;
+        color: #a78bfa;
+      }
+
+      .key-meta {
+        font-size: 0.75rem;
+        color: #52525b;
+      }
+
+      /* Tier badges (must use static class names, not dynamic .tier-${tier}) */
+      .tier-badge {
+        display: inline-block;
+        padding: 0.2rem 0.6rem;
+        border-radius: 9999px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .tier-badge.community {
+        background: rgba(113, 113, 122, 0.2);
+        color: #a1a1aa;
+      }
+
+      .tier-badge.individual {
+        background: rgba(59, 130, 246, 0.2);
+        color: #60a5fa;
+      }
+
+      .tier-badge.team {
+        background: rgba(124, 58, 237, 0.2);
+        color: #a78bfa;
+      }
+
+      .tier-badge.enterprise {
+        background: rgba(245, 158, 11, 0.2);
+        color: #f59e0b;
       }
     </style>
   </body>

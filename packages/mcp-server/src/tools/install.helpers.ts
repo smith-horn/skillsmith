@@ -179,6 +179,19 @@ export function parseSkillId(input: string): ParsedSkillId {
     }
   }
 
+  // Handle UUID skill IDs — returned by the search tool, route through registry lookup
+  // UUID format: 8-4-4-4-12 hex characters (e.g. "a129e127-a82c-47e5-8bc5-09d7ba2e8734")
+  // SMI-2722: UUIDs must route through isRegistryId: true so lookupSkillFromRegistry is called
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (UUID_REGEX.test(input)) {
+    return {
+      owner: '',
+      repo: '',
+      path: '',
+      isRegistryId: true,
+    }
+  }
+
   // Handle skill ID from registry
   throw new Error('Invalid skill ID format: ' + input + '. Use owner/repo or GitHub URL.')
 }

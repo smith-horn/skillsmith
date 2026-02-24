@@ -152,6 +152,11 @@ export async function installSkill(
       skillName = parsed.path ? path.basename(parsed.path) : repo
     }
 
+    // SMI-2723: Track whether this install originated from a registry lookup so that
+    // SKILL.md fetch failures can surface registry data quality issues instead of
+    // misleading "path format" error messages.
+    const fromRegistry = parsed.isRegistryId
+
     const installPath = path.join(CLAUDE_SKILLS_DIR, skillName)
 
     // Check if already installed
@@ -192,24 +197,41 @@ export async function installSkill(
       skillMdContent = await fetchFromGitHub(owner, repo, skillMdPath, branch)
     } catch {
       // SMI-1491: Improved error message
+      // SMI-2723: Distinguish registry data quality issues from user path errors
       const repoUrl = 'https://github.com/' + owner + '/' + repo
       return {
         success: false,
         skillId: input.skillId,
         installPath,
-        error:
-          'Could not find SKILL.md at ' +
-          (basePath || 'repository root') +
-          '. ' +
-          'Skills must have a SKILL.md file with YAML frontmatter (name, description) to be installable. ' +
-          'Repository: ' +
-          repoUrl,
-        tips: [
-          'This skill may be browse-only (no SKILL.md at expected location)',
-          'Verify the repository exists: ' + repoUrl,
-          'You can manually install by: 1) Clone the repo, 2) Create a SKILL.md, 3) Copy to ~/.claude/skills/',
-          'Check if the skill has a SKILL.md in a subdirectory and use the full path',
-        ],
+        error: fromRegistry
+          ? 'This skill is indexed in the Skillsmith registry but its installation source ' +
+            'appears broken (SKILL.md not found at ' +
+            (basePath || 'repository root') +
+            '). ' +
+            'This is a registry data quality issue — the path registered does not match the ' +
+            'actual repository structure. ' +
+            'Please report it at https://skillsmith.app/contact?topic=registry-quality. ' +
+            'Repository: ' +
+            repoUrl
+          : 'Could not find SKILL.md at ' +
+            (basePath || 'repository root') +
+            '. ' +
+            'Skills must have a SKILL.md file with YAML frontmatter (name, description) to be installable. ' +
+            'Repository: ' +
+            repoUrl,
+        tips: fromRegistry
+          ? [
+              'This is a registry data quality issue, not a path format error',
+              'The other skills in this repository may still be installable',
+              'Report the broken entry: https://skillsmith.app/contact?topic=registry-quality',
+              'Workaround: clone the repo and manually copy the skill directory to ~/.claude/skills/',
+            ]
+          : [
+              'This skill may be browse-only (no SKILL.md at expected location)',
+              'Verify the repository exists: ' + repoUrl,
+              'You can manually install by: 1) Clone the repo, 2) Create a SKILL.md, 3) Copy to ~/.claude/skills/',
+              'Check if the skill has a SKILL.md in a subdirectory and use the full path',
+            ],
       }
     }
 
