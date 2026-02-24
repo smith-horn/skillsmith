@@ -75,6 +75,33 @@ describe('install.helpers', () => {
     it('throws for invalid format', () => {
       expect(() => parseSkillId('invalid')).toThrow('Invalid skill ID format')
     })
+
+    // SMI-2722: UUID skill IDs returned by the search tool must be accepted
+    it('returns isRegistryId: true for UUID skill IDs', () => {
+      const result = parseSkillId('a129e127-a82c-47e5-8bc5-09d7ba2e8734')
+      expect(result).toEqual({
+        owner: '',
+        repo: '',
+        path: '',
+        isRegistryId: true,
+      })
+    })
+
+    it('accepts UUID regardless of hex case', () => {
+      const result = parseSkillId('A129E127-A82C-47E5-8BC5-09D7BA2E8734')
+      expect(result).toEqual({
+        owner: '',
+        repo: '',
+        path: '',
+        isRegistryId: true,
+      })
+    })
+
+    it('does not match partial UUID-like strings as registry IDs', () => {
+      // Short hyphenated strings (e.g., slug-based IDs) must not be confused with UUIDs
+      // UUID regex requires exact 8-4-4-4-12 hex structure
+      expect(() => parseSkillId('abc-def-ghi')).toThrow('Invalid skill ID format')
+    })
   })
 
   describe('parseRepoUrl', () => {
