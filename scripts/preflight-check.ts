@@ -99,6 +99,10 @@ const IGNORED_MODULES = new Set([
   'tree-sitter-java',
   'hnswlib-node',
   '@e2b/code-interpreter',
+  // better-sqlite3 removed in PR #214 (security vulnerability — SMI-2750).
+  // betterSqlite3Driver.ts retains type imports and guarded require() calls;
+  // isBetterSqlite3Available() wraps all access in try/catch with WASM fallback.
+  'better-sqlite3',
   // Astro virtual modules — resolved by the Astro compiler, not npm
   'astro:content',
   'astro:middleware',

@@ -55,7 +55,11 @@ git checkout -- path/to/encrypted/file
 
 ## Rebasing with Git-Crypt
 
-`git pull --rebase` fails in git-crypt repos because the smudge filter creates persistent dirty files that block rebasing. Use `format-patch` to preserve local commits:
+`git pull --rebase` fails in git-crypt repos because the smudge filter creates persistent dirty files that block rebasing.
+
+### Standard rebase (branch behind main, no squash-merge involved)
+
+Use `format-patch` to preserve local commits:
 
 ```bash
 # 1. Save local commits as patches
@@ -73,7 +77,50 @@ git am --abort
 # Then apply changes by hand (e.g., sed for bulk replacements)
 ```
 
-**When to use**: Any time `git pull --rebase` fails with "You have unstaged changes" due to git-crypt smudge filter artifacts.
+**When to use**: Any time `git pull --rebase` fails with "You have unstaged changes" due to git-crypt smudge filter artifacts, **and** no sibling squash-merge has occurred.
+
+### Post-squash wave rebase (SMI-2751)
+
+When a Wave N PR is squash-merged to main and Wave N+1 needs rebasing, **`git format-patch`/`git am` will fail** — the squash commit rewrites the encrypted file blob with a new git-crypt nonce, so the patch content no longer matches the index. **`git cherry-pick` will also fail** because the smudge filter leaves encrypted files permanently dirty.
+
+**Working approach**: recover the Wave N+1 files directly from the reflog commit.
+
+```bash
+# 1. Find the Wave N+1 commit(s) in the reflog before the reset
+git reflog | head -20
+# Look for the commit hash of your wave work (e.g. ed87250b)
+
+# 2. Reset to main
+git fetch origin main
+git reset --hard origin/main
+
+# 3. Restore only the wave-specific files from the reflog commit
+git checkout <sha> -- supabase/functions/some-handler.ts \
+                       supabase/functions/_shared/email.ts \
+                       supabase/migrations/056_pending_checkouts_trial.sql
+# List ALL files changed in Wave N+1 — omit any files that existed unchanged in Wave N
+
+# 4. Stage and commit fresh
+git add <wave-files>
+git commit -m "feat(scope): Wave N+1 changes"
+git push --force-with-lease
+```
+
+**Why `git am` fails**: after a squash-merge, GitHub may not apply the git-crypt clean filter, so the encrypted file lands as plaintext in the squash commit on main. The patch blob was encrypted with a different nonce → `does not match index` error.
+
+**Why `cherry-pick` fails**: the smudge filter marks encrypted files as permanently dirty in the working tree after `git reset --hard`. Git refuses to cherry-pick over dirty files.
+
+### Post-squash encryption verification
+
+After any squash-merge of a branch that contains encrypted files, verify the key files landed correctly:
+
+```bash
+# Should print "GITCRYPT" (hex: 47 49 54 43 52 59 50 54) — not plaintext TypeScript
+git show HEAD:supabase/functions/stripe-webhook/index.ts | xxd | head -1
+
+# If it shows plaintext (e.g., "/**"), the squash bypassed git-crypt.
+# Notify the team — the plaintext content is in git history.
+```
 
 ## Worktree Setup
 
