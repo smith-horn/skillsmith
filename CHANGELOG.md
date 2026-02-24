@@ -35,6 +35,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 6 alerts auto-fixed by Dependabot
   - Patched: eslint@9.39.2, fast-xml-parser@5.3.4, diff@8.0.3, tar@7.5.7, hono@4.11.7
 
+## [0.4.12] - 2026-02-23
+
+### Changed
+
+- **Migrated `@xenova/transformers` → `@huggingface/transformers` in `@skillsmith/core`** (SMI-2719):
+  Removes the `sharp@0.32.x` → `prebuild-install@7.1.3` deprecation warning that appeared for all
+  `@skillsmith/cli` users at install time. `@huggingface/transformers` is the official successor
+  and exposes the same `pipeline()` API. The `Xenova/all-MiniLM-L6-v2` model ID is unchanged.
+  The `quantized: true` pipeline option has been replaced with `dtype: 'q8'` to match the v3 API.
+- **Packages**: `@skillsmith/core@0.4.12`, `@skillsmith/cli@0.4.1`, `@skillsmith/mcp-server@0.4.1`
+
+---
+
 ## [0.3.6] - 2026-01-18
 
 ### CLI Hotfix Release (SMI-1575)

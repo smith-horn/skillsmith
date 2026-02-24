@@ -1,7 +1,7 @@
 /**
  * SMI-584: Semantic Embeddings Service
  * SMI-754: Added fallback mode for deterministic mock embeddings
- * SMI-1127: Lazy loading of @xenova/transformers to avoid CLI crashes
+ * SMI-1127: Lazy loading of @huggingface/transformers to avoid blocking CLI startup
  *
  * Uses all-MiniLM-L6-v2 model for fast, accurate skill embeddings.
  * Supports fallback mode for tests and when model unavailable.
