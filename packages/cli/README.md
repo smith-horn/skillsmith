@@ -2,7 +2,7 @@
 
 Command-line interface for Skillsmith - discover, manage, and author agent skills.
 
-## What's New in v0.3.8
+## What's New in v0.4.0
 
 - **CLI Authentication**: `skillsmith login` opens your browser, you copy the API key and paste it — done. Stored securely in your OS keyring.
 - **Session Commands**: `skillsmith logout` clears stored credentials; `skillsmith whoami` shows your current auth status and key source.
