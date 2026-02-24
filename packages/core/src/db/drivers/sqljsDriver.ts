@@ -48,6 +48,13 @@ interface SqlJsStatement {
 type SqlJsValue = string | number | null | Uint8Array
 type SqlJsBindParams = SqlJsValue[] | Record<string, SqlJsValue>
 
+// fts5-sql-bundle export shapes (ESM named, ESM default with named, CJS interop)
+type InitSqlJsFn = (config?: object) => Promise<SqlJsStatic>
+interface Fts5SqlBundleModule {
+  initSqlJs?: InitSqlJsFn
+  default?: InitSqlJsFn & { initSqlJs?: InitSqlJsFn; default?: InitSqlJsFn }
+}
+
 // Cached sql.js module to avoid reloading WASM
 let sqlJsModule: SqlJsStatic | null = null
 
@@ -63,15 +70,19 @@ async function loadSqlJs(): Promise<SqlJsStatic> {
   try {
     // Dynamic import to avoid loading at module evaluation time
     // Using fts5-sql-bundle for FTS5 full-text search support
-    // Handle both ESM and CJS module formats
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const module = (await import('fts5-sql-bundle')) as any
+    // Handle both ESM and CJS module formats. fts5-sql-bundle's declared types
+    // don't fully reflect its runtime export shapes, so we cast through unknown.
+    const module = (await import('fts5-sql-bundle')) as unknown as Fts5SqlBundleModule
     // Extract initSqlJs function from various export shapes:
     // - ESM named export: module.initSqlJs
     // - ESM default with named: module.default.initSqlJs
     // - CJS interop: module.default.default
     const initSqlJs =
       module.initSqlJs || module.default?.initSqlJs || module.default?.default || module.default
+
+    if (!initSqlJs) {
+      throw new Error('[Skillsmith] fts5-sql-bundle: could not locate initSqlJs export')
+    }
 
     // Initialize with bundled WASM - fts5-sql-bundle has a built-in locateFile
     // that correctly resolves the WASM file in its dist/ directory
