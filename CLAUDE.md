@@ -122,7 +122,7 @@ Git-crypt smudge filters can silently switch branches during stash/pop operation
 **If branch switched during pre-commit**, the hook auto-restores to the correct branch
 and exits 1 (SMI-2747). You will see:
 
-```
+```text
   ✓ Restored to <branch>. Staged changes preserved.
     Re-run: git commit
 
