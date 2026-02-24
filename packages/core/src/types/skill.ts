@@ -55,6 +55,11 @@ export interface Skill {
   securityPassed: boolean | null
   createdAt: string
   updatedAt: string
+  // SMI-skill-version-tracking Wave 1: version tracking fields
+  /** SHA-256 hex of the most recently recorded content proxy (optional, populated by SkillVersionRepository) */
+  latestContentHash?: string
+  /** Number of distinct content hashes recorded for this skill */
+  versionCount?: number
 }
 
 export interface SkillCreateInput {

@@ -27,6 +27,7 @@ import {
   // SMI-2207: Async database functions with WASM fallback
   createDatabaseAsync,
   openDatabaseAsync,
+  initializeSchema,
   SearchService,
   SkillRepository,
   validateDbPath,
@@ -37,6 +38,7 @@ import {
   SyncConfigRepository,
   SyncHistoryRepository,
   SyncEngine,
+  SkillVersionRepository,
   BackgroundSyncService,
   getApiKey,
   type ApiClientConfig,
@@ -303,11 +305,18 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
   if (backgroundSyncEnabled) {
     const syncConfigRepo = new SyncConfigRepository(db)
     const syncHistoryRepo = new SyncHistoryRepository(db)
+    const skillVersionRepo = new SkillVersionRepository(db)
 
     // Only start if user has auto-sync enabled in their config
     const syncConfig = syncConfigRepo.getConfig()
     if (syncConfig.enabled) {
-      const syncEngine = new SyncEngine(apiClient, skillRepository, syncConfigRepo, syncHistoryRepo)
+      const syncEngine = new SyncEngine(
+        apiClient,
+        skillRepository,
+        syncConfigRepo,
+        syncHistoryRepo,
+        skillVersionRepo
+      )
 
       backgroundSync = new BackgroundSyncService(syncEngine, syncConfigRepo, {
         syncOnStart: true,
@@ -522,6 +531,10 @@ export async function createToolContextAsync(
     db = await openDatabaseAsync(dbPath)
   } else {
     db = await createDatabaseAsync(dbPath)
+    // SMI-2207: createDatabaseAsync returns a bare connection (no schema).
+    // openDatabaseAsync runs runMigrationsSafe internally; for new/in-memory
+    // databases we must call initializeSchema explicitly to match the sync path.
+    initializeSchema(db)
   }
 
   // Initialize services
@@ -572,10 +585,17 @@ export async function createToolContextAsync(
   if (backgroundSyncEnabled) {
     const syncConfigRepo = new SyncConfigRepository(db)
     const syncHistoryRepo = new SyncHistoryRepository(db)
+    const skillVersionRepo = new SkillVersionRepository(db)
 
     const syncConfig = syncConfigRepo.getConfig()
     if (syncConfig.enabled) {
-      const syncEngine = new SyncEngine(apiClient, skillRepository, syncConfigRepo, syncHistoryRepo)
+      const syncEngine = new SyncEngine(
+        apiClient,
+        skillRepository,
+        syncConfigRepo,
+        syncHistoryRepo,
+        skillVersionRepo
+      )
 
       backgroundSync = new BackgroundSyncService(syncEngine, syncConfigRepo, {
         syncOnStart: true,

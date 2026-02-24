@@ -233,6 +233,12 @@ export interface SkillManifestEntry {
   lastUpdated: string
   /** SMI-1864: SHA-256 hash of SKILL.md at install time for modification detection */
   originalContentHash?: string
+  /** SMI-skill-version-tracking Wave 1: SHA-256 hash of the content at last update */
+  contentHash?: string
+  /** SMI-skill-version-tracking Wave 1: Pinned semver (Wave 2: update policy enforcement) */
+  pinnedVersion?: string
+  /** SMI-skill-version-tracking Wave 1: How updates are handled (Wave 2: enforcement) */
+  updatePolicy?: 'auto' | 'manual' | 'never'
 }
 
 export interface SkillManifest {

@@ -164,13 +164,11 @@ async function updateSkill(skillName: string, dbPath: string): Promise<boolean> 
     }
 
     const updateSpinner = ora(`Updating ${skillName}...`).start()
+    updateSpinner.stop()
 
-    // In a real implementation, this would fetch and install the new version
-    // For now, we just simulate success
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
-    updateSpinner.succeed(`Successfully updated ${skillName}`)
-    return true
+    // SMI-skill-version-tracking Wave 1: updateSkill not yet implemented
+    // Wave 2 will wire this to the install tool with conflict resolution.
+    throw new Error('updateSkill not yet implemented')
   } catch (error) {
     spinner.fail(`Failed to update ${skillName}: ${sanitizeError(error)}`)
     return false
@@ -259,10 +257,22 @@ export function createListCommand(): Command {
   return new Command('list')
     .alias('ls')
     .description('List all installed skills')
-    .action(async () => {
+    .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
+    .option('--outdated', 'Show only skills with available updates (requires Individual tier)')
+    .action(async (opts: Record<string, string | boolean | undefined>) => {
       try {
-        const skills = await getInstalledSkills()
-        displaySkillsTable(skills)
+        const dbPath = opts['db'] as string
+        const outdated = (opts['outdated'] as boolean) ?? false
+
+        const skills = await getInstalledSkills(dbPath)
+        const filtered = outdated ? skills.filter((s) => s.hasUpdates) : skills
+
+        if (outdated && filtered.length === 0) {
+          console.log(chalk.green('\nAll installed skills are up to date.\n'))
+          return
+        }
+
+        displaySkillsTable(filtered)
       } catch (error) {
         console.error(chalk.red('Error listing skills:'), sanitizeError(error))
         process.exit(1)

@@ -10,8 +10,24 @@ import { SyncConfigRepository } from '../../src/repositories/SyncConfigRepositor
 import { SyncHistoryRepository } from '../../src/repositories/SyncHistoryRepository.js'
 import { SkillRepository } from '../../src/repositories/SkillRepository.js'
 import { SyncEngine } from '../../src/sync/SyncEngine.js'
+import type { SkillVersionRepository } from '../../src/repositories/SkillVersionRepository.js'
 import type { DatabaseType } from '../../src/db/schema.js'
 import type { SkillsmithApiClient, ApiSearchResult } from '../../src/api/client.js'
+
+/**
+ * Create a mock SkillVersionRepository for testing.
+ * All methods return resolved promises so SyncEngine can call recordVersion
+ * after each upsert without errors.
+ */
+function createMockSkillVersionRepo(): SkillVersionRepository {
+  return {
+    recordVersion: vi.fn().mockResolvedValue(undefined),
+    pruneVersions: vi.fn().mockResolvedValue(undefined),
+    getLatestVersion: vi.fn().mockResolvedValue(null),
+    getVersionHistory: vi.fn().mockResolvedValue([]),
+    getVersionByHash: vi.fn().mockResolvedValue(null),
+  } as unknown as SkillVersionRepository
+}
 
 /**
  * Create a mock skill for testing
@@ -92,7 +108,13 @@ describe('SyncEngine', () => {
   describe('constructor', () => {
     it('should create sync engine with all dependencies', () => {
       const apiClient = createMockApiClient()
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
       expect(engine).toBeDefined()
     })
   })
@@ -100,7 +122,13 @@ describe('SyncEngine', () => {
   describe('sync - offline and health checks', () => {
     it('should fail when API client is offline', async () => {
       const apiClient = createMockApiClient({ offline: true })
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       const result = await engine.sync()
 
@@ -110,7 +138,13 @@ describe('SyncEngine', () => {
 
     it('should fail when API health check fails', async () => {
       const apiClient = createMockApiClient({ healthStatus: 'unhealthy' })
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       const result = await engine.sync()
 
@@ -127,7 +161,13 @@ describe('SyncEngine', () => {
         createMockSkill('test/skill-3'),
       ]
       const apiClient = createMockApiClient({ skills })
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       const result = await engine.sync()
 
@@ -151,7 +191,13 @@ describe('SyncEngine', () => {
       // API returns updated version with new updated_at
       const skills = [createMockSkill('test/skill-1', new Date(Date.now() + 1000).toISOString())]
       const apiClient = createMockApiClient({ skills })
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       const result = await engine.sync()
 
@@ -177,7 +223,13 @@ describe('SyncEngine', () => {
       // API returns skill with same timestamp
       const skills = [createMockSkill('test/skill-1', timestamp)]
       const apiClient = createMockApiClient({ skills })
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       const result = await engine.sync()
 
@@ -202,7 +254,13 @@ describe('SyncEngine', () => {
       const newSkill = createMockSkill('test/new-skill', new Date().toISOString())
 
       const apiClient = createMockApiClient({ skills: [oldSkill, newSkill] })
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       const result = await engine.sync()
 
@@ -223,7 +281,13 @@ describe('SyncEngine', () => {
         createMockSkill('test/skill-2', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()),
       ]
       const apiClient = createMockApiClient({ skills })
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       const result = await engine.sync({ force: true })
 
@@ -236,7 +300,13 @@ describe('SyncEngine', () => {
     it('should not modify database in dry run mode', async () => {
       const skills = [createMockSkill('test/skill-1')]
       const apiClient = createMockApiClient({ skills })
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       const result = await engine.sync({ dryRun: true })
 
@@ -258,7 +328,13 @@ describe('SyncEngine', () => {
     it('should call onProgress callback with phases', async () => {
       const skills = [createMockSkill('test/skill-1')]
       const apiClient = createMockApiClient({ skills })
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       const progressCalls: string[] = []
       const onProgress = vi.fn((progress) => {
@@ -281,7 +357,13 @@ describe('SyncEngine', () => {
       // Create 150 skills (more than one page of 100)
       const skills = Array.from({ length: 150 }, (_, i) => createMockSkill(`test/skill-${i}`))
       const apiClient = createMockApiClient({ skills })
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       const result = await engine.sync({ pageSize: 100 })
 
@@ -299,7 +381,13 @@ describe('SyncEngine', () => {
     it('should record sync history on success', async () => {
       const skills = [createMockSkill('test/skill-1')]
       const apiClient = createMockApiClient({ skills })
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       await engine.sync()
 
@@ -313,7 +401,13 @@ describe('SyncEngine', () => {
       const apiClient = createMockApiClient({
         throwOnSearch: new Error('Network failure'),
       })
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       await engine.sync()
 
@@ -326,7 +420,13 @@ describe('SyncEngine', () => {
     it('should update sync config on success', async () => {
       const skills = [createMockSkill('test/skill-1')]
       const apiClient = createMockApiClient({ skills })
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       await engine.sync()
 
@@ -338,7 +438,13 @@ describe('SyncEngine', () => {
 
     it('should set error in config on failure', async () => {
       const apiClient = createMockApiClient({ offline: true })
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       await engine.sync()
 
@@ -350,7 +456,13 @@ describe('SyncEngine', () => {
   describe('getStatus', () => {
     it('should return sync status summary', () => {
       const apiClient = createMockApiClient()
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       const status = engine.getStatus()
 
@@ -362,7 +474,13 @@ describe('SyncEngine', () => {
 
     it('should show sync is due when never synced', () => {
       const apiClient = createMockApiClient()
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       const status = engine.getStatus()
 
@@ -372,7 +490,13 @@ describe('SyncEngine', () => {
 
     it('should reflect running state', async () => {
       const apiClient = createMockApiClient()
-      const engine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const engine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        createMockSkillVersionRepo()
+      )
 
       // Start a run manually
       syncHistoryRepo.startRun()

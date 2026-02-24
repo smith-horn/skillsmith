@@ -33,13 +33,18 @@ import {
 } from './tools/index-local.js'
 import { publishToolSchema, publishInputSchema, executePublish } from './tools/publish.js'
 import {
+  skillUpdatesToolSchema,
+  skillUpdatesInputSchema,
+  executeSkillUpdates,
+} from './tools/skill-updates.js'
+import {
   isFirstRun,
   markFirstRunComplete,
   getWelcomeMessage,
   TIER1_SKILLS,
 } from './onboarding/first-run.js'
 import { checkForUpdates, formatUpdateNotification } from '@skillsmith/core'
-import { createLicenseMiddleware } from './middleware/license.js'
+import { createLicenseMiddleware, createLicenseErrorResponse } from './middleware/license.js'
 import { createQuotaMiddleware } from './middleware/quota.js'
 
 // Package version - keep in sync with package.json
@@ -72,6 +77,7 @@ const toolDefinitions = [
   suggestToolSchema,
   indexLocalToolSchema,
   publishToolSchema,
+  skillUpdatesToolSchema,
 ]
 
 // Create server
@@ -238,6 +244,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'skill_publish': {
         const input = publishInputSchema.parse(args)
         const result = await executePublish(input, toolContext)
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        }
+      }
+
+      case 'skill_updates': {
+        // Validate input before consuming quota or checking license
+        const input = skillUpdatesInputSchema.parse(args)
+        // Check license — skill_updates requires Individual tier (version_tracking feature)
+        const license = await licenseMiddleware.checkTool('skill_updates')
+        if (!license.valid) {
+          return createLicenseErrorResponse(license)
+        }
+        const licenseInfo = await licenseMiddleware.getLicenseInfo()
+        const result = await executeSkillUpdates(input, toolContext)
+        await quotaMiddleware.checkAndTrack('skill_updates', licenseInfo)
         return {
           content: [
             {

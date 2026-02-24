@@ -24,6 +24,7 @@ import {
   SyncConfigRepository,
   SyncHistoryRepository,
   SyncEngine,
+  SkillVersionRepository,
   type SyncProgress,
   type SyncFrequency,
 } from '@skillsmith/core'
@@ -50,9 +51,16 @@ async function runSync(options: {
       const skillRepo = new SkillRepository(db)
       const syncConfigRepo = new SyncConfigRepository(db)
       const syncHistoryRepo = new SyncHistoryRepository(db)
+      const skillVersionRepo = new SkillVersionRepository(db)
       const apiClient = createApiClient()
 
-      const syncEngine = new SyncEngine(apiClient, skillRepo, syncConfigRepo, syncHistoryRepo)
+      const syncEngine = new SyncEngine(
+        apiClient,
+        skillRepo,
+        syncConfigRepo,
+        syncHistoryRepo,
+        skillVersionRepo
+      )
 
       spinner.text = options.force ? 'Starting full sync...' : 'Starting differential sync...'
 

@@ -81,3 +81,11 @@ export {
   formatPublishResults,
 } from './publish.js'
 export type { PublishInput, PublishResponse, ReferenceWarning, PreflightResult } from './publish.js'
+
+// Skill Updates tool (SMI-skill-version-tracking Wave 1)
+export {
+  skillUpdatesToolSchema,
+  skillUpdatesInputSchema,
+  executeSkillUpdates,
+} from './skill-updates.js'
+export type { SkillUpdatesInput, SkillUpdateInfo, CheckUpdatesResponse } from './skill-updates.js'

@@ -48,11 +48,13 @@ const FEATURE_DESCRIPTIONS: Record<FeatureFlag, string> = {
   // Individual tier features
   basic_analytics: 'Track your personal skill usage and activity',
   email_support: 'Get help from our support team via email',
+  version_tracking: 'Track skill versions and check for updates',
   // Team tier features
   private_skills: 'Create and manage private skills for your organization',
   team_workspaces: 'Collaborate with your team on shared skill collections',
   usage_analytics: 'Track skill usage and adoption across your organization',
   priority_support: 'Get faster response times from our support team',
+  skill_security_audit: 'View security advisories for installed skills',
   // Enterprise tier features
   sso_saml: 'Integrate with your identity provider for secure single sign-on',
   rbac: 'Fine-grained access control with custom roles and permissions',

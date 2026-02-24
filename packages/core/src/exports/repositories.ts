@@ -99,3 +99,12 @@ export type {
 // ============================================================================
 
 export { initializeAnalyticsSchema, AnalyticsRepository } from '../analytics/index.js'
+
+// ============================================================================
+// Skill Version Repository (SMI-skill-version-tracking Wave 1)
+// ============================================================================
+
+export {
+  SkillVersionRepository,
+  type SkillVersionRow,
+} from '../repositories/SkillVersionRepository.js'

@@ -22,11 +22,13 @@ export type FeatureFlag =
   // Individual tier features
   | 'basic_analytics'
   | 'email_support'
+  | 'version_tracking'
   // Team tier features
   | 'private_skills'
   | 'team_workspaces'
   | 'usage_analytics'
   | 'priority_support'
+  | 'skill_security_audit'
   // Enterprise tier features (canonical names from enterprise package)
   | 'sso_saml'
   | 'rbac'
@@ -55,7 +57,11 @@ export const TOOL_FEATURES: Record<string, FeatureFlag | null> = {
   skill_compare: null,
   skill_suggest: null,
 
+  // Individual tools
+  skill_updates: 'version_tracking',
+
   // Team tools - require team features
+  skill_audit: 'skill_security_audit',
   publish_private: 'private_skills',
   team_workspace: 'team_workspaces',
   share_skill: 'team_workspaces',
@@ -89,11 +95,13 @@ export const FEATURE_DISPLAY_NAMES: Record<FeatureFlag, string> = {
   // Individual tier features
   basic_analytics: 'Basic Analytics',
   email_support: 'Email Support',
+  version_tracking: 'Version Tracking',
   // Team tier features
   private_skills: 'Private Skills',
   team_workspaces: 'Team Workspaces',
   usage_analytics: 'Usage Analytics',
   priority_support: 'Priority Support',
+  skill_security_audit: 'Security Audit',
   // Enterprise tier features
   sso_saml: 'SSO/SAML Integration',
   rbac: 'Role-Based Access Control',
@@ -113,11 +121,13 @@ export const FEATURE_TIERS: Record<FeatureFlag, 'individual' | 'team' | 'enterpr
   // Individual tier features
   basic_analytics: 'individual',
   email_support: 'individual',
+  version_tracking: 'individual',
   // Team tier features
   private_skills: 'team',
   team_workspaces: 'team',
   usage_analytics: 'team',
   priority_support: 'team',
+  skill_security_audit: 'team',
   // Enterprise tier features
   sso_saml: 'enterprise',
   rbac: 'enterprise',
