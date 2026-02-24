@@ -20,7 +20,7 @@ const globalIgnores = {
     // TypeScript template files in .claude/templates/ should be linted
     '!.claude/templates/*.ts',
     // Git worktrees - lint separately within each worktree context
-    'worktrees/**',
+    '.worktrees/**',
     // Supabase edge functions use Deno runtime + are git-crypt encrypted in CI
     // Deno files have incompatible module semantics; lint them with deno lint instead
     'supabase/functions/**',

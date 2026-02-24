@@ -18,7 +18,7 @@ import chalk from 'chalk'
 import ora from 'ora'
 import Table from 'cli-table3'
 import {
-  createDatabase,
+  createDatabaseAsync,
   SkillRepository,
   createApiClient,
   SyncConfigRepository,
@@ -45,7 +45,7 @@ async function runSync(options: {
 
   try {
     spinner.start('Opening database...')
-    const db = createDatabase(options.dbPath)
+    const db = await createDatabaseAsync(options.dbPath)
 
     try {
       const skillRepo = new SkillRepository(db)
@@ -139,7 +139,7 @@ async function runSync(options: {
  */
 async function showStatus(options: { dbPath: string; json: boolean }): Promise<void> {
   try {
-    const db = createDatabase(options.dbPath)
+    const db = await createDatabaseAsync(options.dbPath)
 
     try {
       const syncConfigRepo = new SyncConfigRepository(db)
@@ -234,7 +234,7 @@ async function showHistory(options: {
   json: boolean
 }): Promise<void> {
   try {
-    const db = createDatabase(options.dbPath)
+    const db = await createDatabaseAsync(options.dbPath)
 
     try {
       const syncHistoryRepo = new SyncHistoryRepository(db)
@@ -314,7 +314,7 @@ async function configureSync(options: {
   json: boolean
 }): Promise<void> {
   try {
-    const db = createDatabase(options.dbPath)
+    const db = await createDatabaseAsync(options.dbPath)
 
     try {
       const syncConfigRepo = new SyncConfigRepository(db)

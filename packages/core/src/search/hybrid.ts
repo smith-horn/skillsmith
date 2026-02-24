@@ -4,7 +4,7 @@
  */
 
 import type { Database } from '../db/database-interface.js'
-import { createDatabaseSync, createDatabaseAsync } from '../db/createDatabase.js'
+import { createDatabaseAsync } from '../db/createDatabase.js'
 import { EmbeddingService } from '../embeddings/index.js'
 import { TieredCache, L1Cache, type SearchResult } from '../cache/index.js'
 

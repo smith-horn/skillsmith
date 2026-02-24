@@ -37,7 +37,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-cloudwatch-logs": "3.980.0",
-    "@skillsmith/core": "0.4.1",
+    "@skillsmith/core": "0.4.14",
     "jose": "5.10.0",
     "zod": "4.2.1"
   },

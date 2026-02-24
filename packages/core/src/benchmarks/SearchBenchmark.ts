@@ -9,7 +9,7 @@
  */
 
 import type { Database as DatabaseType } from '../db/database-interface.js'
-import { createDatabase, closeDatabase } from '../db/schema.js'
+import { createDatabaseAsync, closeDatabase } from '../db/schema.js'
 import { SkillRepository } from '../repositories/SkillRepository.js'
 import { SearchService } from '../services/SearchService.js'
 import { BenchmarkRunner, type BenchmarkReport, type BenchmarkConfig } from './BenchmarkRunner.js'
@@ -273,7 +273,7 @@ export class SearchBenchmark {
    * Setup database and seed test data
    */
   private async setup(): Promise<void> {
-    this.db = createDatabase(':memory:')
+    this.db = await createDatabaseAsync(':memory:')
     this.repo = new SkillRepository(this.db)
     this.search = new SearchService(this.db, { cacheTtl: 60 })
 

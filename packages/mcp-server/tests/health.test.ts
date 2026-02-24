@@ -7,7 +7,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import Database from 'better-sqlite3'
+import { createDatabaseAsync } from '@skillsmith/core'
+import type { Database } from '@skillsmith/core'
 import {
   HealthCheck,
   checkHealth,
@@ -144,10 +145,10 @@ describe('Health Check (SMI-740)', () => {
 })
 
 describe('Readiness Check (SMI-740)', () => {
-  let db: Database.Database
+  let db: Database
 
-  beforeEach(() => {
-    db = new Database(':memory:')
+  beforeEach(async () => {
+    db = await createDatabaseAsync(':memory:')
     db.exec('CREATE TABLE test (id INTEGER PRIMARY KEY)')
   })
 
@@ -186,7 +187,7 @@ describe('Readiness Check (SMI-740)', () => {
 
     it('should return not ready when database fails', async () => {
       // Close the database to simulate failure
-      const closedDb = new Database(':memory:')
+      const closedDb = await createDatabaseAsync(':memory:')
       closedDb.close()
 
       const readinessCheck = new ReadinessCheck({ database: closedDb })

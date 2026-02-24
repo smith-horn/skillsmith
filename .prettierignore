@@ -23,5 +23,8 @@ docs/
 supabase/functions/
 supabase/migrations/
 
+# Git worktrees - each worktree has its own encrypted content and Prettier config
+.worktrees/
+
 # Local settings (untracked, varies per developer)
 .claude/settings.local.json

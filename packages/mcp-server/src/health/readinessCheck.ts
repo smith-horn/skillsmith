@@ -9,7 +9,7 @@
  * Returns 503 if any critical dependency fails.
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '@skillsmith/core'
 
 /**
  * Dependency check result

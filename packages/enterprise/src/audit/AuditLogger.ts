@@ -17,7 +17,7 @@ import type {
   AuditQueryFilter,
   AuditLoggerConfig,
 } from '@skillsmith/core'
-import type { Database as DatabaseType } from 'better-sqlite3'
+import type { Database as DatabaseType } from '@skillsmith/core'
 
 // Re-export types from extracted module
 export {

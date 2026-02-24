@@ -4,7 +4,7 @@
  */
 
 import type { Database, Statement } from '../db/database-interface.js'
-import { createDatabaseSync, createDatabaseAsync } from '../db/createDatabase.js'
+import { createDatabaseAsync } from '../db/createDatabase.js'
 import type { SearchResult, SearchCacheEntry, CacheStats } from './lru.js'
 import { isValidCacheKey } from './CacheEntry.js'
 
