@@ -119,7 +119,20 @@ Git-crypt smudge filters can silently switch branches during stash/pop operation
 3. **After `git stash pop`**: `git branch --show-current` — stash pop is the most common trigger
 4. **After `git checkout`**: `git branch --show-current` — checkout can report false success
 
-**If branch switched during commit**, the post-commit hook prints recovery commands:
+**If branch switched during pre-commit**, the hook auto-restores to the correct branch
+and exits 1 (SMI-2747). You will see:
+
+```text
+  ✓ Restored to <branch>. Staged changes preserved.
+    Re-run: git commit
+
+  Emergency bypass: git commit --no-verify
+```
+
+Re-run `git commit` — staged changes are preserved.
+
+**If branch switched during commit** (post-commit fallback, rare), the post-commit hook prints
+recovery commands:
 
 ```bash
 git checkout <expected-branch>
