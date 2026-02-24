@@ -7,7 +7,12 @@
 import { Command } from 'commander'
 import { input, checkbox, number, select } from '@inquirer/prompts'
 import chalk from 'chalk'
-import { createDatabase, SearchService, type SearchOptions, type TrustTier } from '@skillsmith/core'
+import {
+  createDatabaseAsync,
+  SearchService,
+  type SearchOptions,
+  type TrustTier,
+} from '@skillsmith/core'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { type InteractiveSearchState, type SearchPhase, PAGE_SIZE } from './search-types.js'
@@ -30,7 +35,7 @@ export {
  * Uses iterative while loop instead of recursion for new searches.
  */
 async function runInteractiveSearch(dbPath: string): Promise<void> {
-  const db = createDatabase(dbPath)
+  const db = await createDatabaseAsync(dbPath)
   const searchService = new SearchService(db)
 
   console.log(chalk.bold.blue('\n=== Skillsmith Interactive Search ===\n'))
@@ -221,7 +226,7 @@ async function runSearch(
     maxRisk?: number
   }
 ): Promise<void> {
-  const db = createDatabase(options.db)
+  const db = await createDatabaseAsync(options.db)
   const searchService = new SearchService(db)
 
   try {
