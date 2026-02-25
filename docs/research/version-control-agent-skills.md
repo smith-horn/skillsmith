@@ -1,7 +1,5 @@
 # Version Control & Update Notification System for Agent Skills
 
-> **Note**: This document should be moved to `docs/internal/research/` once the private submodule is accessible.
-
 ## Context
 
 The daily indexer report shows 26 new skills and 121 metadata updates in a single run. Teams who install agent skills currently have **zero visibility** into what changed, no way to assess update risk, and no vulnerability notification mechanism. The `updateSkill` function is a stub (`setTimeout` at `manage.ts:291`), and `hasUpdates` is hardcoded `false` (`manage.ts:98`).
