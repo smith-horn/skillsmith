@@ -43,6 +43,8 @@ export interface LocalSkill {
   hasSkillMd: boolean
   /** Last modified timestamp */
   lastModified: string | null
+  /** SMI-2759: Source repository URL from frontmatter */
+  repository: string | null
 }
 
 /**
@@ -184,6 +186,7 @@ export class LocalIndexer {
       path: skillDir,
       hasSkillMd,
       lastModified,
+      repository: frontmatter.repository,
     }
   }
 

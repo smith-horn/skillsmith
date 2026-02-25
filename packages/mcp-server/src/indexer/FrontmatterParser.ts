@@ -19,6 +19,12 @@ export interface SkillFrontmatter {
   tags: string[]
   version: string | null
   triggers: string[]
+  /** SMI-2759: Source repository URL (parity with SkillParser in core) */
+  repository: string | null
+  /** SMI-2759: Homepage URL — parsed for parity; not yet surfaced in API responses */
+  homepage: string | null
+  /** SMI-2760: Compatibility tags (platform/IDE/LLM); stored in Wave 3a migration */
+  compatibility: string[]
 }
 
 /** Parsing mode for the current value being accumulated */
@@ -43,6 +49,9 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
     tags: [],
     version: null,
     triggers: [],
+    repository: null,
+    homepage: null,
+    compatibility: [],
   }
 
   // Check for frontmatter (starts with ---)
@@ -85,6 +94,12 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
       case 'version':
         result.version = value
         break
+      case 'repository':
+        result.repository = value
+        break
+      case 'homepage':
+        result.homepage = value
+        break
     }
   }
 
@@ -112,6 +127,8 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
         result.tags.push(value)
       } else if (currentKey === 'triggers' && value) {
         result.triggers.push(value)
+      } else if (currentKey === 'compatibility' && value) {
+        result.compatibility.push(value)
       }
       continue
     }
@@ -167,6 +184,8 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
         result.tags = items.filter(Boolean)
       } else if (key === 'triggers') {
         result.triggers = items.filter(Boolean)
+      } else if (key === 'compatibility') {
+        result.compatibility = items.filter(Boolean)
       }
       currentKey = null
       currentMode = 'none'
