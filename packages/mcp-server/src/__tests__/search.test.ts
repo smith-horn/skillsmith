@@ -3,10 +3,12 @@
  * Updated for SMI-789: Wire to SearchService
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi, beforeEach, afterEach } from 'vitest'
 import { executeSearch, formatSearchResults } from '../tools/search.js'
 import { SkillsmithError, type SkillSearchResult } from '@skillsmith/core'
-import { createSeededTestContext, type ToolContext } from './test-utils.js'
+import * as CoreModule from '@skillsmith/core'
+import { createSeededTestContext, createTestContext, type ToolContext } from './test-utils.js'
+import * as LocalSkillSearchModule from '../tools/LocalSkillSearch.js'
 
 let context: ToolContext
 
@@ -39,8 +41,9 @@ describe('Search Tool', () => {
         context
       )
 
-      // With real search, we filter by category
-      expect(result.results.length).toBeGreaterThanOrEqual(0)
+      // Seeded DB has testing-category skills; filter must return results
+      expect(result.results.length).toBeGreaterThan(0)
+      expect(result.results.every((r) => r.category === 'testing')).toBe(true)
     })
 
     it('should filter by trust tier', async () => {
@@ -75,7 +78,7 @@ describe('Search Tool', () => {
       const result = await executeSearch({ query: 'commit' }, context)
 
       // Results are sorted by BM25 rank, not score
-      expect(result.results.length).toBeGreaterThanOrEqual(0)
+      expect(result.results.length).toBeGreaterThan(0)
     })
 
     it('should limit results to 10', async () => {
@@ -115,6 +118,43 @@ describe('Search Tool', () => {
 
       expect(formatted).toContain('No skills found')
       expect(formatted).toContain('Suggestions:')
+    })
+  })
+
+  describe('offline/fallback path tracking', () => {
+    let offlineContext: ToolContext
+
+    beforeAll(() => {
+      offlineContext = createTestContext()
+    })
+
+    afterAll(() => {
+      offlineContext.db.close()
+    })
+
+    beforeEach(() => {
+      vi.spyOn(LocalSkillSearchModule, 'searchLocalSkills').mockResolvedValue([])
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('calls trackSkillSearch when context.distinctId is set in offline/fallback path', async () => {
+      const trackSpy = vi.spyOn(CoreModule, 'trackSkillSearch').mockImplementation(() => {})
+
+      // Offline path: isOffline() returns true (default for createTestContext), goes to local DB
+      const contextWithId: ToolContext = { ...offlineContext, distinctId: 'offline-track-user' }
+
+      await executeSearch({ query: 'commit' }, contextWithId)
+
+      expect(trackSpy).toHaveBeenCalledWith(
+        'offline-track-user',
+        'commit',
+        expect.any(Number),
+        expect.any(Number),
+        expect.any(Object)
+      )
     })
   })
 })
