@@ -12,6 +12,7 @@ import type { SkillRepository } from '../repositories/SkillRepository.js'
 import type { SyncConfigRepository } from '../repositories/SyncConfigRepository.js'
 import type { SyncHistoryRepository } from '../repositories/SyncHistoryRepository.js'
 import type { SkillVersionRepository } from '../repositories/SkillVersionRepository.js'
+import type { AdvisoryRepository } from '../repositories/AdvisoryRepository.js'
 
 /**
  * Hash a content string using SHA-256 and return the hex digest.
@@ -82,19 +83,37 @@ export class SyncEngine {
   private syncConfigRepo: SyncConfigRepository
   private syncHistoryRepo: SyncHistoryRepository
   private skillVersionRepo: SkillVersionRepository
+  private advisoryRepo: AdvisoryRepository | null
 
   constructor(
     apiClient: SkillsmithApiClient,
     skillRepo: SkillRepository,
     syncConfigRepo: SyncConfigRepository,
     syncHistoryRepo: SyncHistoryRepository,
-    skillVersionRepo: SkillVersionRepository
+    skillVersionRepo: SkillVersionRepository,
+    advisoryRepo?: AdvisoryRepository | null
   ) {
     this.apiClient = apiClient
     this.skillRepo = skillRepo
     this.syncConfigRepo = syncConfigRepo
     this.syncHistoryRepo = syncHistoryRepo
     this.skillVersionRepo = skillVersionRepo
+    this.advisoryRepo = advisoryRepo ?? null
+  }
+
+  /**
+   * Stub: sync advisories from the registry.
+   *
+   * The server-side advisory endpoint does not exist yet. This method logs
+   * a diagnostic message and returns immediately. It will be wired to the
+   * actual endpoint in a future wave when the registry ships advisory data.
+   */
+  private syncAdvisories(): void {
+    if (this.advisoryRepo) {
+      // Advisory sync endpoint not yet available server-side.
+      // This stub will be replaced when the endpoint ships.
+      console.debug('[skillsmith] Advisory sync: no endpoint configured yet')
+    }
   }
 
   /**
@@ -290,6 +309,11 @@ export class SyncEngine {
             })
           }
         }
+      }
+
+      // Stub: advisory sync (no endpoint yet — logs diagnostic only)
+      if (!dryRun) {
+        this.syncAdvisories()
       }
 
       onProgress?.({

@@ -121,3 +121,9 @@ export {
   type Recommendation,
   type UpdateRisk,
 } from '../versioning/update-risk.js'
+
+// ============================================================================
+// Advisory Repository (SMI-skill-version-tracking Wave 3)
+// ============================================================================
+
+export { AdvisoryRepository, type SkillAdvisory } from '../repositories/AdvisoryRepository.js'

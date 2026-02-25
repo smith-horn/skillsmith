@@ -46,3 +46,6 @@ export { createWhoamiCommand } from './whoami.js'
 // SMI-skill-version-tracking Wave 2: diff, pin, unpin
 export { createDiffCommand } from './diff.js'
 export { createPinCommand, createUnpinCommand } from './pin.js'
+
+// SMI-skill-version-tracking Wave 3: Security Advisory Audit
+export { createAuditCommand } from './audit.js'
