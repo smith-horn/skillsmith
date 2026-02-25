@@ -2,6 +2,13 @@
 
 MCP (Model Context Protocol) server for agent skill discovery, installation, and management.
 
+## What's New in v0.4.2
+
+- **Co-install recommendations** (SMI-2761): `get_skill` responses now include an `also_installed` array — skills frequently installed alongside this one, surfaced once ≥5 co-installs are observed. Also shown on skill detail pages at [www.skillsmith.app/skills](https://www.skillsmith.app/skills).
+- **Repository and homepage links** (SMI-2759): `search` and `get_skill` responses now include `repository_url` and `homepage_url` when declared by the skill author.
+- **Compatibility tags** (SMI-2760): Skills can declare `compatibility` frontmatter (LLMs, IDEs, platforms). Tags surface in search results and skill detail pages.
+- **6,054 tests passing** across all packages.
+
 ## What's New in v0.4.0
 
 - **Quota-based throttling** (SMI-2679): `skill_suggest` now counts against your monthly API quota instead of an undocumented per-session rate limit. Community (1,000/mo), Individual (10,000/mo), Team (100,000/mo), Enterprise (unlimited). See [www.skillsmith.app/pricing](https://www.skillsmith.app/pricing).
@@ -202,6 +209,8 @@ Search for skills matching a query.
 | `min_score` | number | No | Minimum quality score (0-100) |
 | `limit` | number | No | Max results (default 10) |
 
+**Response fields include:** `repository_url`, `homepage_url` (when declared by the skill author), and `compatibility` tags (LLMs, IDEs, platforms supported).
+
 ### get_skill
 
 Get detailed information about a specific skill.
@@ -209,6 +218,8 @@ Get detailed information about a specific skill.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `id` | string | Yes | Skill ID in format `author/name` |
+
+**Response fields include:** `also_installed` — an array of skills frequently co-installed alongside this one (surfaced once ≥5 co-installs are observed). Each entry contains `skillId`, `name`, `description`, and `installCount`.
 
 ### install_skill
 
