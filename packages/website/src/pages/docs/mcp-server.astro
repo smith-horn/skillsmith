@@ -215,6 +215,11 @@ EOF`}</code></pre>
   "limit": 10                   // Max results
 }`}</code></pre>
 
+  <p>
+    Results include <code>repository_url</code> and <code>homepage_url</code> when declared by the
+    skill author, plus <code>compatibility</code> tags indicating supported LLMs, IDEs, and platforms.
+  </p>
+
   <p><strong>Example prompts:</strong></p>
   <ul>
     <li>"Search for testing skills"</li>
@@ -231,6 +236,13 @@ EOF`}</code></pre>
 {
   "id": "community/jest-helper"  // Skill ID (required)
 }`}</code></pre>
+
+  <p>
+    The response includes an <code>also_installed</code> array — skills that users frequently install
+    alongside this one. Each entry contains <code>skillId</code>, <code>name</code>,
+    <code>description</code>, and <code>installCount</code>. Only surfaces once a skill pair has
+    reached 5 or more co-installs.
+  </p>
 
   <p><strong>Example prompts:</strong></p>
   <ul>
