@@ -30,6 +30,7 @@ import { indexLocalToolSchema } from './tools/index-local.js'
 import { publishToolSchema } from './tools/publish.js'
 import { skillUpdatesToolSchema } from './tools/skill-updates.js'
 import { skillDiffToolSchema } from './tools/skill-diff.js'
+import { skillAuditToolSchema } from './tools/skill-audit.js'
 import { dispatchToolCall } from './tool-dispatch.js'
 import {
   isFirstRun,
@@ -73,6 +74,7 @@ const toolDefinitions = [
   publishToolSchema,
   skillUpdatesToolSchema,
   skillDiffToolSchema,
+  skillAuditToolSchema,
 ]
 
 // Create server

@@ -98,3 +98,12 @@ export {
   formatSkillDiffResults,
 } from './skill-diff.js'
 export type { SkillDiffInput, SkillDiffResponse } from './skill-diff.js'
+
+// Skill Audit tool (SMI-skill-version-tracking Wave 3)
+export { skillAuditToolSchema, skillAuditInputSchema, executeSkillAudit } from './skill-audit.js'
+export type {
+  SkillAuditInput,
+  AdvisoryEntry,
+  AdvisorySummary,
+  SkillAuditResponse,
+} from './skill-audit.js'
