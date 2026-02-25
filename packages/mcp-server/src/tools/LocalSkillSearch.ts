@@ -45,6 +45,11 @@ export function localSkillToSearchResult(skill: LocalSkill): SkillSearchResult {
     trustTier: 'local' as TrustTier,
     score: skill.qualityScore,
     source: 'local',
+    // SMI-2759: Surface repository link for source transparency
+    repository: skill.repository || undefined,
+    // SMI-2760: Compatibility tags from frontmatter
+    compatibility:
+      skill.compatibility && skill.compatibility.length > 0 ? skill.compatibility : undefined,
   }
 }
 

@@ -449,6 +449,13 @@ export async function installSkill(
       },
     }))
 
+    // SMI-2761: Record session co-install pairs for "also installed" recommendations
+    context.coInstallRepository.recordSessionCoInstalls([
+      ...context.sessionInstalledSkillIds,
+      input.skillId,
+    ])
+    context.sessionInstalledSkillIds.push(input.skillId)
+
     return {
       success: true,
       skillId: input.skillId,

@@ -205,6 +205,8 @@ tags:
         author: 'test-author',
         version: '1.0.0',
         tags: ['testing'],
+        repository: 'https://github.com/test/my-skill',
+        compatibility: ['claude-code'],
       }
 
       const errors = validateMetadata(metadata, false)
@@ -343,6 +345,88 @@ tags:
       const errors = validateMetadata(metadata, true)
 
       expect(errors.some((e) => e.field === 'tags' && e.message.includes('recommended'))).toBe(true)
+    })
+
+    // SMI-2759: Repository warnings for versioned skills
+    it('warns on missing repository for versioned skill', () => {
+      const metadata = { name: 'test', description: 'Test', version: '1.0.0' }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'repository' && e.severity === 'warning')).toBe(true)
+    })
+
+    it('does not warn on missing repository for non-versioned skill', () => {
+      const metadata = { name: 'test', description: 'Test' }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'repository')).toBe(false)
+    })
+
+    it('warns on missing repository in strict mode even without version', () => {
+      const metadata = { name: 'test', description: 'Test' }
+
+      const errors = validateMetadata(metadata, true)
+
+      expect(errors.some((e) => e.field === 'repository' && e.severity === 'warning')).toBe(true)
+    })
+
+    // SMI-2760: Compatibility warnings
+    it('warns on missing compatibility for versioned skill', () => {
+      const metadata = {
+        name: 'test',
+        description: 'Test',
+        version: '1.0.0',
+        repository: 'https://github.com/test/test',
+      }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'compatibility' && e.severity === 'warning')).toBe(true)
+    })
+
+    it('does not warn on missing compatibility for non-versioned skill', () => {
+      const metadata = { name: 'test', description: 'Test' }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'compatibility')).toBe(false)
+    })
+
+    it('warns on unknown compatibility value', () => {
+      const metadata = {
+        name: 'test',
+        description: 'Test',
+        compatibility: ['unknown-ide-xyz'],
+      }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(
+        errors.some(
+          (e) =>
+            e.field === 'compatibility' &&
+            e.severity === 'warning' &&
+            e.message.includes('Unknown compatibility value')
+        )
+      ).toBe(true)
+    })
+
+    it('does not warn on known compatibility values', () => {
+      const metadata = {
+        name: 'test',
+        description: 'Test',
+        compatibility: ['claude-code', 'cursor', 'claude'],
+      }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(
+        errors.some(
+          (e) => e.field === 'compatibility' && e.message.includes('Unknown compatibility')
+        )
+      ).toBe(false)
     })
   })
 

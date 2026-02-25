@@ -214,6 +214,20 @@ const { id } = Astro.params
         </div>
       </div>
 
+      <!-- Users Also Installed (SMI-2761) — omit section entirely when no data -->
+      <div
+        id="also-installed-section"
+        class="bg-dark-900 rounded-xl border border-dark-800 p-8 mb-8 hidden"
+      >
+        <h2 class="text-xl font-semibold text-white mb-6">Users Also Installed</h2>
+        <div
+          id="also-installed-skills"
+          class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+        >
+          <!-- Co-installed skills inserted here -->
+        </div>
+      </div>
+
       <!-- Related Skills -->
       <div id="related-section" class="bg-dark-900 rounded-xl border border-dark-800 p-8 hidden">
         <h2 class="text-xl font-semibold text-white mb-6">Related Skills</h2>
@@ -388,10 +402,32 @@ const { id } = Astro.params
           })
         }
 
+        // SMI-2761: Load "Users also installed" if present and non-empty
+        if (skill.also_installed && skill.also_installed.length > 0) {
+          loadAlsoInstalled(skill.also_installed)
+        }
+
         // Load related skills if available
         if (skill.related_skills && skill.related_skills.length > 0) {
           loadRelatedSkills(skill.related_skills)
         }
+      }
+
+      // SMI-2761: Render "Users also installed" section — omit entirely when empty
+      function loadAlsoInstalled(alsoInstalled) {
+        if (!alsoInstalled || alsoInstalled.length === 0) return
+        const section = document.getElementById('also-installed-section')
+        const container = document.getElementById('also-installed-skills')
+        container.innerHTML = alsoInstalled
+          .map(
+            (s) => `
+          <a href="/skills/${encodeURIComponent(s.skillId)}" class="block bg-dark-800 rounded-lg p-4 hover:bg-dark-700 transition-colors">
+            <p class="text-white font-medium">${escapeHtml(s.name || s.skillId)}</p>
+            ${s.description ? `<p class="text-dark-400 text-sm mt-1">${escapeHtml(s.description)}</p>` : ''}
+          </a>`
+          )
+          .join('')
+        section.classList.remove('hidden')
       }
 
       // Load related skills

@@ -17,10 +17,12 @@ import {
 import { MIGRATION_V5_SQL } from './migrations/v5-skill-versions.js'
 import { MIGRATION_V5B_SQL } from './migrations/v5b-change-type.js'
 import { MIGRATION_V6_SQL } from './migrations/v6-advisories.js'
+import { MIGRATION_V7_SQL } from './migrations/v7-compatibility.js'
+import { MIGRATION_V8_SQL } from './migrations/v8-co-installs.js'
 
 export type DatabaseType = Database
 
-export const SCHEMA_VERSION = 7
+export const SCHEMA_VERSION = 9
 
 /**
  * SQL statements for creating the database schema
@@ -48,11 +50,11 @@ CREATE TABLE IF NOT EXISTS skills (
   quality_score REAL CHECK(quality_score IS NULL OR (quality_score >= 0 AND quality_score <= 1)),
   trust_tier TEXT CHECK(trust_tier IN ('verified', 'community', 'experimental', 'unknown')) DEFAULT 'unknown',
   tags TEXT DEFAULT '[]', -- JSON array of tags
-  -- SMI-825: Security scan columns
-  risk_score INTEGER CHECK(risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 100)),
+  risk_score INTEGER CHECK(risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 100)), -- SMI-825
   security_findings_count INTEGER DEFAULT 0,
   security_scanned_at TEXT,
   security_passed INTEGER, -- boolean: 1 = passed, 0 = failed, NULL = not scanned
+  compatibility TEXT DEFAULT '[]', -- SMI-2760: JSON array of IDE/LLM/platform slugs
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -255,6 +257,16 @@ CREATE INDEX IF NOT EXISTS idx_skills_security_passed ON skills(security_passed)
     description: 'SMI-skill-version-tracking Wave 3: skill_advisories table',
     sql: MIGRATION_V6_SQL,
   },
+  {
+    version: 8,
+    description: 'SMI-2760: compatibility column on skills table',
+    sql: MIGRATION_V7_SQL,
+  },
+  {
+    version: 9,
+    description: 'SMI-2761: skill_co_installs table for co-install recommendations',
+    sql: MIGRATION_V8_SQL,
+  },
 ]
 
 /**
@@ -336,14 +348,7 @@ export function runMigrations(db: DatabaseType): number {
   return migrationsRun
 }
 
-/**
- * Create a new database connection with proper configuration
- * This initializes the full schema - use openDatabase for existing databases
- *
- * @deprecated Use createDatabaseAsync() for cross-platform WASM support.
- * This function requires better-sqlite3 native module and will fail on
- * platforms where native modules are unavailable.
- */
+/** @deprecated Use createDatabaseAsync() — requires better-sqlite3 native module. */
 export function createDatabase(path: string = ':memory:'): DatabaseType {
   const db = createDatabaseSync(path)
 
@@ -357,9 +362,7 @@ export function createDatabase(path: string = ':memory:'): DatabaseType {
 }
 
 /**
- * SMI-974: Open an existing database and run any pending migrations
- * Use this for databases that may have been created by different versions
- *
+ * SMI-974: Open an existing database and run pending migrations.
  * @deprecated Use openDatabaseAsync() for cross-platform WASM support.
  */
 export function openDatabase(path: string): DatabaseType {
@@ -391,9 +394,7 @@ export function openDatabase(path: string): DatabaseType {
   return db
 }
 
-/**
- * SMI-974: Run migrations with error handling for existing columns
- */
+/** SMI-974: Run migrations with error handling for existing columns */
 export function runMigrationsSafe(db: DatabaseType): number {
   const currentVersion = getSchemaVersion(db)
   let migrationsRun = 0

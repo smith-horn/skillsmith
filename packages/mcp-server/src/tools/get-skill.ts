@@ -26,6 +26,7 @@ import { z } from 'zod'
 import {
   type MCPSkill as Skill,
   type GetSkillResponse,
+  type AlsoInstalledSkill,
   type MCPTrustTier as TrustTier,
   TrustTierDescriptions,
   SkillsmithError,
@@ -150,9 +151,15 @@ export async function executeGetSkill(
         trackSkillView(context.distinctId, skill.id, 'mcp')
       }
 
+      // SMI-2761: Populate also_installed from local co-install repository
+      const alsoInstalled: AlsoInstalledSkill[] = context.coInstallRepository.getTopCoInstalls(
+        skill.id
+      )
+
       return {
         skill,
         installCommand: skill.installCommand || 'claude skill add ' + skill.id,
+        also_installed: alsoInstalled.length > 0 ? alsoInstalled : undefined,
         timing: {
           totalMs: Math.round(endTime - startTime),
         },
@@ -209,9 +216,13 @@ export async function executeGetSkill(
     trackSkillView(context.distinctId, skill.id, 'mcp')
   }
 
+  // SMI-2761: Populate also_installed from co-install repository
+  const alsoInstalled: AlsoInstalledSkill[] = context.coInstallRepository.getTopCoInstalls(skill.id)
+
   return {
     skill,
     installCommand: skill.installCommand || 'claude skill add ' + skill.id,
+    also_installed: alsoInstalled.length > 0 ? alsoInstalled : undefined,
     timing: {
       totalMs: Math.round(endTime - startTime),
     },
@@ -310,6 +321,15 @@ export function formatSkillDetails(response: GetSkillResponse): string {
     lines.push('  Status: Not scanned')
   }
   lines.push('')
+
+  // SMI-2761: Co-install recommendations
+  if (response.also_installed && response.also_installed.length > 0) {
+    lines.push('--- Users Also Installed ---')
+    for (const co of response.also_installed) {
+      lines.push('  ' + co.skillId + (co.description ? ' — ' + co.description : ''))
+    }
+    lines.push('')
+  }
 
   // Installation
   lines.push('--- Installation ---')

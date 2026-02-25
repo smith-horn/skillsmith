@@ -27,6 +27,8 @@ interface SkillRow {
   security_findings_count: number | null
   security_scanned_at: string | null
   security_passed: number | null // SQLite uses 0/1 for boolean
+  // SMI-2760: Compatibility tags (JSON array)
+  compatibility: string | null
   created_at: string
   updated_at: string
 }
@@ -60,8 +62,8 @@ export class SkillRepository {
     // Cast to our custom types for better-sqlite3 compatibility
     this.stmts = {
       insert: this.db.prepare(`
-        INSERT INTO skills (id, name, description, author, repo_url, quality_score, trust_tier, tags, risk_score, security_findings_count, security_scanned_at, security_passed, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        INSERT INTO skills (id, name, description, author, repo_url, quality_score, trust_tier, tags, risk_score, security_findings_count, security_scanned_at, security_passed, compatibility, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
       `) as unknown as typeof this.stmts.insert,
 
       selectById: this.db.prepare(`
@@ -93,6 +95,7 @@ export class SkillRepository {
           security_findings_count = COALESCE(?, security_findings_count),
           security_scanned_at = COALESCE(?, security_scanned_at),
           security_passed = COALESCE(?, security_passed),
+          compatibility = COALESCE(?, compatibility),
           updated_at = datetime('now')
         WHERE id = ?
       `) as unknown as typeof this.stmts.update,
@@ -126,6 +129,11 @@ export class SkillRepository {
       securityFindingsCount: row.security_findings_count ?? 0,
       securityScannedAt: row.security_scanned_at,
       securityPassed: row.security_passed === null ? null : row.security_passed === 1,
+      // SMI-2760: Compatibility tags
+      compatibility:
+        row.compatibility && row.compatibility !== '[]'
+          ? (JSON.parse(row.compatibility) as string[])
+          : undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }
@@ -151,7 +159,9 @@ export class SkillRepository {
       input.riskScore ?? null,
       input.securityFindingsCount ?? 0,
       input.securityScannedAt ?? null,
-      input.securityPassed === undefined ? null : input.securityPassed ? 1 : 0
+      input.securityPassed === undefined ? null : input.securityPassed ? 1 : 0,
+      // SMI-2760: Compatibility tags
+      JSON.stringify(input.compatibility || [])
     )
 
     const row = this.stmts.selectById.get(id) as SkillRow
@@ -183,7 +193,9 @@ export class SkillRepository {
             input.riskScore ?? null,
             input.securityFindingsCount ?? 0,
             input.securityScannedAt ?? null,
-            input.securityPassed === undefined ? null : input.securityPassed ? 1 : 0
+            input.securityPassed === undefined ? null : input.securityPassed ? 1 : 0,
+            // SMI-2760: Compatibility tags
+            JSON.stringify(input.compatibility || [])
           )
 
           const row = this.stmts.selectById.get(id) as SkillRow
@@ -273,6 +285,8 @@ export class SkillRepository {
       input.securityFindingsCount ?? null,
       input.securityScannedAt ?? null,
       input.securityPassed === undefined ? null : input.securityPassed ? 1 : 0,
+      // SMI-2760: Compatibility tags
+      input.compatibility !== undefined ? JSON.stringify(input.compatibility) : null,
       id
     )
 

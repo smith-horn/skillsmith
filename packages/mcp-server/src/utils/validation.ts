@@ -217,3 +217,32 @@ export function getTrustBadge(tier: MCPTrustTier): string {
   }
   return badges[tier] ?? '[UNKNOWN]'
 }
+
+/**
+ * SMI-2760: Canonical IDE slug list for compatibility validation.
+ * KNOWN_IDES / KNOWN_LLMS — versioned enum, updated as the ecosystem evolves.
+ * To add new values: update this array and bump the SMI-2760 Linear issue.
+ *
+ * Note: 'vscode' = GitHub Copilot Chat (highest market share). 'codex' removed — deprecated/rebranded.
+ */
+export const KNOWN_IDES: readonly string[] = [
+  'claude-code',
+  'cursor',
+  'roo',
+  'kiro',
+  'windsurf',
+  'vscode',
+] as const
+
+/**
+ * SMI-2760: Canonical LLM slug list for compatibility validation.
+ * @see KNOWN_IDES for update process.
+ */
+export const KNOWN_LLMS: readonly string[] = [
+  'claude',
+  'gpt-4o',
+  'gpt-4.1',
+  'gemini',
+  'o3',
+  'o4-mini',
+] as const

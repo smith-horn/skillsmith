@@ -114,6 +114,7 @@ describe('Recommend Tool - Local Skill Integration (SMI-1837)', () => {
       path: '/home/user/.claude/skills/my-commit-helper',
       hasSkillMd: true,
       lastModified: new Date().toISOString(),
+      repository: null,
     },
     {
       id: 'local/react-patterns',
@@ -127,6 +128,7 @@ describe('Recommend Tool - Local Skill Integration (SMI-1837)', () => {
       path: '/home/user/.claude/skills/react-patterns',
       hasSkillMd: true,
       lastModified: new Date().toISOString(),
+      repository: null,
     },
     {
       id: 'local/testing-utils',
@@ -140,6 +142,7 @@ describe('Recommend Tool - Local Skill Integration (SMI-1837)', () => {
       path: '/home/user/.claude/skills/testing-utils',
       hasSkillMd: true,
       lastModified: new Date().toISOString(),
+      repository: null,
     },
   ]
 
@@ -297,6 +300,7 @@ describe('Recommend Tool - Local Skill Integration (SMI-1837)', () => {
           path: '/home/user/.claude/skills/commit',
           hasSkillMd: true,
           lastModified: new Date().toISOString(),
+          repository: null,
         },
       ]
 

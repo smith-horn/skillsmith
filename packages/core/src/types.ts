@@ -112,6 +112,18 @@ export interface SkillSearchResult {
   /** SMI-2734: Registry install ID in 'author/skill-name' format. Only set for registry skills.
    *  Undefined for local skills since their author field is not a routable registry owner. */
   installHint?: string
+  /** SMI-2760: Flat array of compatible IDE/LLM/platform slugs (e.g. ["claude-code", "cursor", "claude"]) */
+  compatibility?: string[]
+}
+
+/**
+ * SMI-2760: Compatibility filter for search
+ */
+export interface CompatibilityFilter {
+  /** IDE slugs to match (e.g. ['cursor', 'claude-code']) */
+  ides?: string[]
+  /** LLM slugs to match (e.g. ['claude', 'gpt-4o']) */
+  llms?: string[]
 }
 
 /**
@@ -125,6 +137,8 @@ export interface SearchFilters {
   safeOnly?: boolean
   /** SMI-825: Maximum risk score (0-100, lower is safer) */
   maxRiskScore?: number
+  /** SMI-2760: Filter by IDE/LLM compatibility */
+  compatibleWith?: CompatibilityFilter
 }
 
 /**
@@ -150,4 +164,22 @@ export interface GetSkillResponse {
   timing: {
     totalMs: number
   }
+  /** SMI-2761: Skills frequently installed alongside this one (≥5 co-installs) */
+  also_installed?: AlsoInstalledSkill[]
+}
+
+/**
+ * SMI-2761: Minimal skill summary used in co-install recommendations
+ */
+export interface AlsoInstalledSkill {
+  /** Skill ID (e.g. "anthropic/commit") */
+  skillId: string
+  /** Human-readable name */
+  name: string
+  /** Short description */
+  description?: string
+  /** Author slug */
+  author?: string
+  /** Co-install count */
+  installCount: number
 }

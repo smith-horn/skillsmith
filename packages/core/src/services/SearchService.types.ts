@@ -25,6 +25,8 @@ export interface FTSRow {
   security_findings_count: number | null
   security_scanned_at: string | null
   security_passed: number | null // SQLite uses 0/1 for boolean
+  // SMI-2760: Compatibility JSON array
+  compatibility: string | null
   created_at: string
   updated_at: string
   rank: number

@@ -127,3 +127,9 @@ export {
 // ============================================================================
 
 export { AdvisoryRepository, type SkillAdvisory } from '../repositories/AdvisoryRepository.js'
+
+// ============================================================================
+// Co-Install Repository (SMI-2761)
+// ============================================================================
+
+export { CoInstallRepository, type CoInstallSummary } from '../repositories/CoInstallRepository.js'

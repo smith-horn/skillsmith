@@ -5,6 +5,7 @@
 
 import type { ValidationError } from './validate.types.js'
 import { FIELD_LIMITS, SSRF_PATTERNS, PATH_TRAVERSAL_PATTERNS } from './validate.types.js'
+import { KNOWN_IDES, KNOWN_LLMS } from '../utils/validation.js'
 
 /**
  * Parse YAML frontmatter from markdown content
@@ -240,6 +241,41 @@ export function validateMetadata(
       message: 'Field "tags" is recommended for discoverability',
       severity: 'warning',
     })
+  }
+
+  // SMI-2759: Warn on missing repository for published (versioned) skills or --strict
+  if (metadata.repository === undefined && (metadata.version !== undefined || strict)) {
+    errors.push({
+      field: 'repository',
+      message:
+        'Field "repository" is recommended for published skills (links to source for transparency)',
+      severity: 'warning',
+    })
+  }
+
+  // SMI-2760: Warn on missing compatibility for published (versioned) skills or --strict
+  if (metadata.compatibility === undefined && (metadata.version !== undefined || strict)) {
+    errors.push({
+      field: 'compatibility',
+      message:
+        'Field "compatibility" is recommended for published skills (e.g. ["claude-code", "cursor", "claude"]). ' +
+        `Known IDEs: ${KNOWN_IDES.join(', ')}. Known LLMs: ${KNOWN_LLMS.join(', ')}.`,
+      severity: 'warning',
+    })
+  }
+
+  // SMI-2760: Validate known compatibility values if present
+  if (metadata.compatibility !== undefined && Array.isArray(metadata.compatibility)) {
+    const knownValues = new Set([...KNOWN_IDES, ...KNOWN_LLMS])
+    for (const tag of metadata.compatibility) {
+      if (typeof tag === 'string' && !knownValues.has(tag)) {
+        errors.push({
+          field: 'compatibility',
+          message: `Unknown compatibility value "${tag}". Known IDEs: ${KNOWN_IDES.join(', ')}. Known LLMs: ${KNOWN_LLMS.join(', ')}.`,
+          severity: 'warning',
+        })
+      }
+    }
   }
 
   // Security: Check repository URL for SSRF
