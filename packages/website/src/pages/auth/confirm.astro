@@ -1,0 +1,342 @@
+---
+/**
+ * Auth Confirm Page
+ *
+ * SMI-2762: Branded token_hash email verification
+ *
+ * Handles token_hash-based OTP verification for all email auth flows:
+ * signup, magiclink, recovery, email_change, invite.
+ *
+ * Email templates send users here via:
+ *   https://www.skillsmith.app/auth/confirm?token_hash={{ .TokenHash }}&type=<type>
+ *
+ * No redirect_to param accepted — destinations are hardcoded per flow type
+ * to eliminate open-redirect attack surface.
+ */
+
+// Disable prerendering - this page needs SSR to read env vars
+export const prerender = false
+
+import { ClientRouter } from 'astro:transitions'
+import { getSupabaseConfig } from '../../lib/supabase-config'
+
+// Read env vars at SSR time to inject into client script
+const supabaseConfig = getSupabaseConfig()
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+
+    <meta name="description" content="Confirming your Skillsmith action..." />
+    <title>Confirming... | Skillsmith</title>
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig
+    </script>
+    <ClientRouter />
+  </head>
+  <body>
+    <main class="confirm-container">
+      <div class="confirm-card">
+        <div id="loading-state" class="state-content">
+          <div class="spinner-container">
+            <svg class="spinner" viewBox="0 0 24 24">
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+                fill="none"
+                opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+              ></path>
+            </svg>
+          </div>
+          <h1>Confirming...</h1>
+          <p>Please wait while we verify your link.</p>
+        </div>
+
+        <div id="success-state" class="state-content" style="display: none;">
+          <div class="icon-container success">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </div>
+          <h1 id="success-heading">Confirmed!</h1>
+          <p id="success-body">Redirecting...</p>
+          <a id="continue-link" href="/account" class="btn btn-primary">Continue</a>
+        </div>
+
+        <div id="error-state" class="state-content" style="display: none;">
+          <div class="icon-container error">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="15" y1="9" x2="9" y2="15"></line>
+              <line x1="9" y1="9" x2="15" y2="15"></line>
+            </svg>
+          </div>
+          <h1>Confirmation Failed</h1>
+          <p id="error-message">The confirmation link may have expired or is invalid.</p>
+          <div class="error-actions">
+            <a href="/login" class="btn btn-primary">Go to Login</a>
+            <a href="/signup" class="btn btn-secondary">Create New Account</a>
+          </div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>
+
+<style>
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family:
+      'Satoshi',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
+    line-height: 1.6;
+    color: #fafafa;
+    background: #0d0d0f;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .confirm-container {
+    padding: 2rem;
+    width: 100%;
+    max-width: 400px;
+  }
+
+  .confirm-card {
+    background: #121214;
+    border-radius: 1rem;
+    padding: 2.5rem 2rem;
+    border: 1px solid #2a2a2f;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+  }
+
+  .state-content {
+    text-align: center;
+  }
+
+  .state-content h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+  }
+
+  .state-content p {
+    color: #9ca3af;
+    margin-bottom: 1.5rem;
+  }
+
+  .spinner-container {
+    margin-bottom: 1.5rem;
+  }
+
+  .spinner {
+    width: 3rem;
+    height: 3rem;
+    color: #e07a5f;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .icon-container {
+    width: 4rem;
+    height: 4rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 1.5rem;
+  }
+
+  .icon-container svg {
+    width: 2rem;
+    height: 2rem;
+  }
+
+  .icon-container.success {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+  }
+
+  .icon-container.error {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    cursor: pointer;
+    border: none;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #e07a5f 0%, #d4694e 100%);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(224, 122, 95, 0.4);
+  }
+
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid #2a2a2f;
+    color: #fafafa;
+  }
+
+  .btn-secondary:hover {
+    border-color: #e07a5f;
+    color: #e07a5f;
+  }
+
+  .error-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+</style>
+
+<script>
+  import { createClient } from '@supabase/supabase-js'
+
+  const VALID_TYPES = ['signup', 'magiclink', 'recovery', 'email_change', 'invite'] as const
+  type EmailOtpType = (typeof VALID_TYPES)[number]
+
+  const REDIRECT_AFTER_VERIFY: Record<EmailOtpType, string> = {
+    signup: '/account',
+    magiclink: '/account',
+    recovery: '/auth/reset-password',
+    email_change: '/account',
+    invite: '/account',
+  }
+
+  const SUCCESS_MESSAGES: Record<EmailOtpType, { heading: string; body: string }> = {
+    signup: { heading: 'Email Verified!', body: 'Your account has been confirmed. Redirecting...' },
+    magiclink: {
+      heading: 'Signed In!',
+      body: 'You have been signed in. Redirecting to your dashboard...',
+    },
+    recovery: { heading: 'Link Verified', body: 'Redirecting to password reset...' },
+    email_change: {
+      heading: 'Email Updated!',
+      body: 'Your new email address has been confirmed.',
+    },
+    invite: { heading: 'Invitation Accepted!', body: 'Setting up your account. Redirecting...' },
+  }
+
+  // Read config injected by SSR script in head
+  const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } })
+    .__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+  const supabaseUrl = config.url
+  const supabaseAnonKey = config.anonKey
+
+  document.addEventListener('astro:page-load', async () => {
+    const loadingState = document.getElementById('loading-state') as HTMLDivElement | null
+    const successState = document.getElementById('success-state') as HTMLDivElement | null
+    const errorState = document.getElementById('error-state') as HTMLDivElement | null
+    const successHeading = document.getElementById('success-heading') as HTMLHeadingElement | null
+    const successBody = document.getElementById('success-body') as HTMLParagraphElement | null
+    const continueLink = document.getElementById('continue-link') as HTMLAnchorElement | null
+    const errorMessageEl = document.getElementById('error-message') as HTMLParagraphElement | null
+
+    function showSuccess(type: EmailOtpType) {
+      const msg = SUCCESS_MESSAGES[type]
+      const redirectTo = REDIRECT_AFTER_VERIFY[type]
+
+      if (successHeading) successHeading.textContent = msg.heading
+      if (successBody) successBody.textContent = msg.body
+      if (continueLink) continueLink.href = redirectTo
+
+      if (loadingState) loadingState.style.display = 'none'
+      if (successState) successState.style.display = 'block'
+
+      // Auto-redirect after 2 seconds
+      setTimeout(() => {
+        window.location.href = redirectTo
+      }, 2000)
+    }
+
+    function showError(message?: string) {
+      if (loadingState) loadingState.style.display = 'none'
+      if (errorState) errorState.style.display = 'block'
+      if (message && errorMessageEl) {
+        errorMessageEl.textContent = message
+      }
+    }
+
+    try {
+      if (!supabaseUrl || !supabaseAnonKey) {
+        showError('Authentication service not configured.')
+        return
+      }
+
+      const url = new URL(window.location.href)
+      const token_hash = url.searchParams.get('token_hash') ?? ''
+      const type = url.searchParams.get('type') ?? ''
+
+      if (!token_hash || !VALID_TYPES.includes(type as EmailOtpType)) {
+        showError('Invalid or missing confirmation link parameters.')
+        return
+      }
+
+      const validType = type as EmailOtpType
+      const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+      const { error } = await supabase.auth.verifyOtp({
+        token_hash,
+        type: validType,
+      })
+
+      if (error) {
+        showError(error.message)
+      } else {
+        showSuccess(validType)
+      }
+    } catch (error) {
+      console.error('Auth confirm error:', error)
+      showError('An unexpected error occurred. Please try again.')
+    }
+  })
+</script>
