@@ -10,7 +10,10 @@
  */
 
 import type { Database } from './database-interface.js'
-import { createDatabaseSync } from './createDatabase.js'
+import {
+  createDatabaseSync,
+  createDatabaseAsync as createDatabaseAsyncFactory,
+} from './createDatabase.js'
 import { MIGRATION_V5_SQL } from './migrations/v5-skill-versions.js'
 import { MIGRATION_V5B_SQL } from './migrations/v5b-change-type.js'
 import { MIGRATION_V6_SQL } from './migrations/v6-advisories.js'
@@ -436,12 +439,6 @@ export function runMigrationsSafe(db: DatabaseType): number {
 export function closeDatabase(db: DatabaseType): void {
   db.close()
 }
-
-// ============================================================================
-// SMI-2206: Async Schema Functions with WASM Fallback
-// ============================================================================
-
-import { createDatabaseAsync as createDatabaseAsyncFactory } from './createDatabase.js'
 
 /**
  * Create a new database connection asynchronously with WASM fallback

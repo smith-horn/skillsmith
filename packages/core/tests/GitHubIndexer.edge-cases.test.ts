@@ -312,19 +312,17 @@ describe('GitHubIndexer — edge cases', () => {
       })
 
       // Return only 5 items — less than perPage — so pagination should stop after page 1
-      const fetchSpy = vi
-        .spyOn(global, 'fetch')
-        .mockImplementation(
-          mockFetchSuccess(
-            Array.from({ length: 5 }, (_, i) =>
-              makeApiRepo({
-                id: i,
-                full_name: `owner/skill-${i}`,
-                html_url: `https://github.com/owner/skill-${i}`,
-              })
-            )
+      const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(
+        mockFetchSuccess(
+          Array.from({ length: 5 }, (_, i) =>
+            makeApiRepo({
+              id: i,
+              full_name: `owner/skill-${i}`,
+              html_url: `https://github.com/owner/skill-${i}`,
+            })
           )
         )
+      )
 
       await indexer.indexAllTopics(3)
 
