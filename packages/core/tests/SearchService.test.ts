@@ -192,15 +192,17 @@ describe('SearchService', () => {
 
   describe('findSimilar', () => {
     it('should find similar skills based on content', () => {
-      // Get a skill with distinct tags to find similarity
-      const _jsLinter = repo.findByRepoUrl('')
+      expect.hasAssertions()
       const all = repo.findAll(10, 0).items
       const jsSkill = all.find((s) => s.name === 'JavaScript Linter')
 
       if (jsSkill) {
         const similar = search.findSimilar(jsSkill.id)
-        // Should return some results (skills with javascript/typescript content)
-        expect(similar.length).toBeGreaterThanOrEqual(0)
+        // Returns skills that share javascript/typescript content — may be 0 or more
+        expect(similar.length).toBeGreaterThan(0)
+      } else {
+        // Seed data guarantee: jsSkill must always be present
+        expect(jsSkill).toBeDefined()
       }
     })
 

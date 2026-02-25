@@ -5,8 +5,7 @@
  * to deterministically verify TTL expiry and LRU eviction ordering.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { CacheManager } from '../../src/cache/CacheManager.js'
 import type { SearchOptions } from '../../src/cache/CacheManager.js'
 import type { SearchResult } from '../../src/cache/lru.js'
@@ -113,7 +112,8 @@ describe('CacheManager', () => {
       vi.advanceTimersByTime(100)
 
       const elapsed = manager.getTimeSinceInvalidation()
-      expect(elapsed).toBeGreaterThanOrEqual(0)
+      // After advancing fake timers by 100ms, elapsed must be strictly positive
+      expect(elapsed).toBeGreaterThan(0)
     })
   })
 

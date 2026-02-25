@@ -122,20 +122,23 @@ describe('License middleware — supplemental branch coverage', () => {
   // ---------------------------------------------------------------------------
 
   describe('getExpirationWarning additional edge cases', () => {
-    it('returns warning at exactly 1 day remaining (singular)', () => {
+    const FIXED_NOW = new Date('2026-02-01T00:00:00Z')
+
+    beforeEach(() => {
       vi.useFakeTimers()
-      try {
-        const now = new Date('2026-02-01T00:00:00Z')
-        vi.setSystemTime(now)
+      vi.setSystemTime(FIXED_NOW)
+    })
 
-        const expires = new Date(now.getTime() + 1 * MS_PER_DAY)
-        const warning = getExpirationWarning(expires)
+    afterEach(() => {
+      vi.useRealTimers()
+    })
 
-        expect(warning).toContain('1 day')
-        expect(warning).not.toContain('1 days')
-      } finally {
-        vi.useRealTimers()
-      }
+    it('returns warning at exactly 1 day remaining (singular)', () => {
+      const expires = new Date(FIXED_NOW.getTime() + 1 * MS_PER_DAY)
+      const warning = getExpirationWarning(expires)
+
+      expect(warning).toContain('1 day')
+      expect(warning).not.toContain('1 days')
     })
 
     it('returns no warning for undefined expiresAt (renewal not required)', () => {
@@ -144,17 +147,9 @@ describe('License middleware — supplemental branch coverage', () => {
     })
 
     it('returns no warning for expiry > 30 days away', () => {
-      vi.useFakeTimers()
-      try {
-        const now = new Date('2026-02-01T00:00:00Z')
-        vi.setSystemTime(now)
-
-        const expires = new Date(now.getTime() + 31 * MS_PER_DAY)
-        const warning = getExpirationWarning(expires)
-        expect(warning).toBeUndefined()
-      } finally {
-        vi.useRealTimers()
-      }
+      const expires = new Date(FIXED_NOW.getTime() + 31 * MS_PER_DAY)
+      const warning = getExpirationWarning(expires)
+      expect(warning).toBeUndefined()
     })
   })
 

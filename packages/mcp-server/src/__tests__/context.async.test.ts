@@ -80,12 +80,10 @@ import {
   validateDbPath,
   createDatabaseAsync,
   openDatabaseAsync,
-  initializeSchema,
   initializePostHog,
   shutdownPostHog,
   generateAnonymousId,
   BackgroundSyncService,
-  SyncConfigRepository as _SyncConfigRepository,
 } from '@skillsmith/core'
 import { LLMFailoverChain } from '../llm/failover.js'
 import { getDefaultDbPath, ensureDbDirectory } from '../context.helpers.js'
@@ -98,7 +96,6 @@ import { existsSync } from 'fs'
 const mockValidateDbPath = vi.mocked(validateDbPath)
 const mockCreateDatabaseAsync = vi.mocked(createDatabaseAsync)
 const mockOpenDatabaseAsync = vi.mocked(openDatabaseAsync)
-const _mockInitializeSchema = vi.mocked(initializeSchema)
 const mockInitializePostHog = vi.mocked(initializePostHog)
 const mockShutdownPostHog = vi.mocked(shutdownPostHog)
 const mockGenerateAnonymousId = vi.mocked(generateAnonymousId)
@@ -130,8 +127,10 @@ describe('createToolContextAsync', () => {
     vi.clearAllMocks()
     // Default: valid path, creates new DB
     mockValidateDbPath.mockReturnValue({ valid: true, resolvedPath: ':memory:' })
-    mockCreateDatabaseAsync.mockResolvedValue(makeFakeDb() as unknown as ReturnType<typeof makeFakeDb>)
-    mockOpenDatabaseAsync.mockResolvedValue(makeFakeDb() as unknown as ReturnType<typeof makeFakeDb>)
+    // cast needed: mockResolvedValue expects the full Database interface but the
+    // stub only implements the subset exercised by these tests
+    mockCreateDatabaseAsync.mockResolvedValue(makeFakeDb() as unknown as Awaited<ReturnType<typeof createDatabaseAsync>>)
+    mockOpenDatabaseAsync.mockResolvedValue(makeFakeDb() as unknown as Awaited<ReturnType<typeof openDatabaseAsync>>)
     mockExistsSync.mockReturnValue(false)
     mockGetDefaultDbPath.mockReturnValue(':memory:')
     delete process.env.SKILLSMITH_TELEMETRY_ENABLED
@@ -228,7 +227,9 @@ describe('getToolContextAsync', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockValidateDbPath.mockReturnValue({ valid: true, resolvedPath: ':memory:' })
-    mockCreateDatabaseAsync.mockResolvedValue(makeFakeDb() as unknown as ReturnType<typeof makeFakeDb>)
+    // cast needed: mockResolvedValue expects the full Database interface but the
+    // stub only implements the subset exercised by these tests
+    mockCreateDatabaseAsync.mockResolvedValue(makeFakeDb() as unknown as Awaited<ReturnType<typeof createDatabaseAsync>>)
     mockExistsSync.mockReturnValue(false)
     mockGetDefaultDbPath.mockReturnValue(':memory:')
     delete process.env.SKILLSMITH_BACKGROUND_SYNC
@@ -265,7 +266,9 @@ describe('resetAsyncToolContext', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockValidateDbPath.mockReturnValue({ valid: true, resolvedPath: ':memory:' })
-    mockCreateDatabaseAsync.mockResolvedValue(makeFakeDb() as unknown as ReturnType<typeof makeFakeDb>)
+    // cast needed: mockResolvedValue expects the full Database interface but the
+    // stub only implements the subset exercised by these tests
+    mockCreateDatabaseAsync.mockResolvedValue(makeFakeDb() as unknown as Awaited<ReturnType<typeof createDatabaseAsync>>)
     mockExistsSync.mockReturnValue(false)
     mockGetDefaultDbPath.mockReturnValue(':memory:')
     delete process.env.SKILLSMITH_BACKGROUND_SYNC
@@ -274,6 +277,7 @@ describe('resetAsyncToolContext', () => {
   })
 
   it('with backgroundSync stop() called if context has backgroundSync', async () => {
+    expect.hasAssertions()
     // Default mock: SyncConfigRepository.getConfig returns { enabled: false }
     // so backgroundSync will not be created. Reset is still safe to call.
     const ctx = await getToolContextAsync()
