@@ -204,6 +204,7 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `validate` | Validate skill structure (SKILL.md frontmatter, content) |
 | `compare` | Compare 2-5 skills side-by-side (quality, trust, features, scores) |
 | `analyze` | Analyze codebase for framework detection, dependencies, skill recommendations |
+| `suggest` | Proactive skill suggestions from context (files, commands, errors, project) — quota-counted |
 | `index_local` | Index local skills from `~/.claude/skills` and `./.claude/skills` |
 | `publish` | Publish a skill to the Skillsmith registry with preflight checks |
 
