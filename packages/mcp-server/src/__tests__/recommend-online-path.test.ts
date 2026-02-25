@@ -36,6 +36,7 @@ describe('Recommend Tool - Online API Path (SMI-2755)', () => {
       path: '/home/user/.claude/skills/my-tool',
       hasSkillMd: true,
       lastModified: new Date().toISOString(),
+      repository: null,
     },
   ]
 
