@@ -13,6 +13,7 @@ import {
   type LocalSkill,
 } from '../indexer/LocalIndexer.js'
 import { parseFrontmatter } from '../indexer/FrontmatterParser.js'
+import { localSkillToSearchResult } from '../tools/LocalSkillSearch.js'
 
 // Test fixtures directory
 let testSkillsDir: string
@@ -659,5 +660,120 @@ description: |-
     const result = parseFrontmatter(content)
     expect(result.name).toBe('crlf-skill')
     expect(result.description).toBe('Windows line endings')
+  })
+})
+
+/**
+ * SMI-2759: Tests for repository, homepage, and compatibility frontmatter fields
+ */
+describe('parseFrontmatter: SMI-2759 repository, homepage, compatibility', () => {
+  it('should parse repository scalar field', () => {
+    const content = `---
+name: test-skill
+repository: https://github.com/example/test-skill
+---
+
+# Test`
+
+    const result = parseFrontmatter(content)
+    expect(result.repository).toBe('https://github.com/example/test-skill')
+  })
+
+  it('should parse homepage scalar field', () => {
+    const content = `---
+name: test-skill
+homepage: https://example.com/docs
+---
+
+# Test`
+
+    const result = parseFrontmatter(content)
+    expect(result.homepage).toBe('https://example.com/docs')
+  })
+
+  it('should parse compatibility as dash list', () => {
+    const content = `---
+name: test-skill
+compatibility:
+  - vscode
+  - cursor
+  - claude-sonnet
+---
+
+# Test`
+
+    const result = parseFrontmatter(content)
+    expect(result.compatibility).toEqual(['vscode', 'cursor', 'claude-sonnet'])
+  })
+
+  it('should parse compatibility as inline array', () => {
+    const content = `---
+name: test-skill
+compatibility: [vscode, cursor, claude-sonnet]
+---
+
+# Test`
+
+    const result = parseFrontmatter(content)
+    expect(result.compatibility).toEqual(['vscode', 'cursor', 'claude-sonnet'])
+  })
+
+  it('should default repository and homepage to null when absent', () => {
+    const content = `---
+name: test-skill
+description: A test skill
+---
+
+# Test`
+
+    const result = parseFrontmatter(content)
+    expect(result.repository).toBeNull()
+    expect(result.homepage).toBeNull()
+  })
+
+  it('should default compatibility to empty array when absent', () => {
+    const content = `---
+name: test-skill
+description: A test skill
+---
+
+# Test`
+
+    const result = parseFrontmatter(content)
+    expect(result.compatibility).toEqual([])
+  })
+})
+
+/**
+ * SMI-2759: Tests for repository propagation through localSkillToSearchResult
+ */
+describe('localSkillToSearchResult: SMI-2759 repository propagation', () => {
+  const baseLocalSkill: LocalSkill = {
+    id: 'local/my-skill',
+    name: 'my-skill',
+    description: 'A local skill',
+    author: 'local',
+    tags: ['testing'],
+    qualityScore: 60,
+    trustTier: 'local',
+    source: 'local',
+    path: '/home/user/.claude/skills/my-skill',
+    hasSkillMd: true,
+    lastModified: '2026-02-25T00:00:00Z',
+    repository: null,
+  }
+
+  it('should include repository when set on LocalSkill', () => {
+    const skill: LocalSkill = {
+      ...baseLocalSkill,
+      repository: 'https://github.com/example/my-skill',
+    }
+    const result = localSkillToSearchResult(skill)
+    expect(result.repository).toBe('https://github.com/example/my-skill')
+  })
+
+  it('should omit repository when LocalSkill.repository is null', () => {
+    const result = localSkillToSearchResult(baseLocalSkill)
+    expect(result.repository).toBeUndefined()
   })
 })

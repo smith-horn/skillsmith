@@ -375,3 +375,42 @@ describe('SMI-2734: formatSearchResults installHint', () => {
     expect(localSection).not.toContain('Install:')
   })
 })
+
+/**
+ * SMI-2759: Tests for repository field in formatSearchResults
+ */
+describe('SMI-2759: formatSearchResults repository', () => {
+  const baseSkill: SkillSearchResult = {
+    id: 'c1-repo-test',
+    name: 'repo-skill',
+    description: 'A skill with a source repository',
+    author: 'testauthor',
+    category: 'development',
+    trustTier: 'community',
+    score: 75,
+    source: 'registry',
+  }
+
+  const makeResponse = (results: SkillSearchResult[]) => ({
+    results,
+    total: results.length,
+    query: 'repo',
+    filters: {},
+    timing: { searchMs: 5, totalMs: 7 },
+  })
+
+  it('should display Repository line when repository is set', () => {
+    const skill: SkillSearchResult = {
+      ...baseSkill,
+      repository: 'https://github.com/testauthor/repo-skill',
+    }
+    const formatted = formatSearchResults(makeResponse([skill]))
+    expect(formatted).toContain('Repository: https://github.com/testauthor/repo-skill')
+  })
+
+  it('should not display Repository line when repository is absent', () => {
+    const skill: SkillSearchResult = { ...baseSkill }
+    const formatted = formatSearchResults(makeResponse([skill]))
+    expect(formatted).not.toContain('Repository:')
+  })
+})
