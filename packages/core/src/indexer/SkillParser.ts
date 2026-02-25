@@ -24,6 +24,8 @@ export interface SkillFrontmatter {
   license?: string
   repository?: string
   homepage?: string
+  /** SMI-2760: Compatibility tags — IDE, LLM, and platform values */
+  compatibility?: string[]
   [key: string]: unknown
 }
 

@@ -53,6 +53,8 @@ export interface Skill {
   securityFindingsCount: number
   securityScannedAt: string | null
   securityPassed: boolean | null
+  /** SMI-2760: Flat array of compatible IDE/LLM/platform slugs */
+  compatibility?: string[]
   createdAt: string
   updatedAt: string
   // SMI-skill-version-tracking Wave 1: version tracking fields

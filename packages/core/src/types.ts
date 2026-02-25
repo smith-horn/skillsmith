@@ -112,6 +112,18 @@ export interface SkillSearchResult {
   /** SMI-2734: Registry install ID in 'author/skill-name' format. Only set for registry skills.
    *  Undefined for local skills since their author field is not a routable registry owner. */
   installHint?: string
+  /** SMI-2760: Flat array of compatible IDE/LLM/platform slugs (e.g. ["claude-code", "cursor", "claude"]) */
+  compatibility?: string[]
+}
+
+/**
+ * SMI-2760: Compatibility filter for search
+ */
+export interface CompatibilityFilter {
+  /** IDE slugs to match (e.g. ['cursor', 'claude-code']) */
+  ides?: string[]
+  /** LLM slugs to match (e.g. ['claude', 'gpt-4o']) */
+  llms?: string[]
 }
 
 /**
@@ -125,6 +137,8 @@ export interface SearchFilters {
   safeOnly?: boolean
   /** SMI-825: Maximum risk score (0-100, lower is safer) */
   maxRiskScore?: number
+  /** SMI-2760: Filter by IDE/LLM compatibility */
+  compatibleWith?: CompatibilityFilter
 }
 
 /**

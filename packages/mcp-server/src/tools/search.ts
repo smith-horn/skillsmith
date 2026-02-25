@@ -27,6 +27,7 @@
 import {
   type SkillSearchResult,
   type SearchFilters,
+  type CompatibilityFilter,
   type MCPSearchResponse as SearchResponse,
   type SkillCategory,
   type MCPTrustTier as TrustTier,
@@ -42,6 +43,26 @@ import {
 } from '../utils/validation.js'
 import { searchLocalSkills } from './LocalSkillSearch.js'
 export { formatSearchResults } from './search.formatter.js'
+
+/**
+ * SMI-2760: Filter search results by compatibility tags.
+ * Skills with no compatibility data are included (permissive — they may be compatible
+ * but simply haven't declared it yet). Skills that HAVE declared compatibility must
+ * include at least one of the requested IDE or LLM slugs.
+ */
+function filterByCompatibility(
+  results: SkillSearchResult[],
+  filter: CompatibilityFilter
+): SkillSearchResult[] {
+  const wanted = new Set([...(filter.ides ?? []), ...(filter.llms ?? [])])
+  if (wanted.size === 0) return results
+  return results.filter(
+    (skill) =>
+      !skill.compatibility ||
+      skill.compatibility.length === 0 ||
+      skill.compatibility.some((tag) => wanted.has(tag))
+  )
+}
 
 /**
  * Search tool schema for MCP
@@ -94,6 +115,23 @@ export const searchToolSchema = {
         minimum: 0,
         maximum: 100,
       },
+      // SMI-2760: Compatibility filter
+      compatible_with: {
+        type: 'object',
+        description: 'Filter by IDE and/or LLM compatibility',
+        properties: {
+          ides: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'IDE slugs (e.g. ["cursor", "claude-code"])',
+          },
+          llms: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'LLM slugs (e.g. ["claude", "gpt-4o"])',
+          },
+        },
+      },
     },
     required: [], // Query is optional if filters are provided
   },
@@ -116,6 +154,8 @@ export interface SearchInput {
   safe_only?: boolean
   /** SMI-825: Maximum risk score (0-100, lower is safer) */
   max_risk?: number
+  /** SMI-2760: Filter by IDE/LLM compatibility */
+  compatible_with?: CompatibilityFilter
 }
 
 /**
@@ -149,7 +189,8 @@ export async function executeSearch(
     input.trust_tier ||
     input.min_score !== undefined ||
     input.safe_only !== undefined ||
-    input.max_risk !== undefined
+    input.max_risk !== undefined ||
+    input.compatible_with !== undefined
 
   if (!hasQuery && !hasFilters) {
     throw new SkillsmithError(
@@ -203,6 +244,11 @@ export async function executeSearch(
     filters.safeOnly = input.safe_only
   }
 
+  // SMI-2760: Apply compatibility filter
+  if (input.compatible_with !== undefined) {
+    filters.compatibleWith = input.compatible_with
+  }
+
   if (input.max_risk !== undefined) {
     if (input.max_risk < 0 || input.max_risk > 100) {
       throw new SkillsmithError(
@@ -244,6 +290,11 @@ export async function executeSearch(
         repository: item.repo_url || undefined,
         // SMI-2734: 'author/name' install ID — valid for all registry API results
         installHint: item.author ? item.author + '/' + item.name : undefined,
+        // SMI-2760: Compatibility tags (populated when API returns them)
+        compatibility:
+          Array.isArray((item as Record<string, unknown>).compatibility)
+            ? ((item as Record<string, unknown>).compatibility as string[])
+            : undefined,
       }))
 
       // SMI-1809: Search local skills and merge with API results
@@ -258,7 +309,11 @@ export async function executeSearch(
       }
 
       // Merge results: local skills first (since they're user's own), then registry
-      const mergedResults = [...localResults, ...results]
+      // SMI-2760: Apply compatibility filter if requested
+      const merged = [...localResults, ...results]
+      const mergedResults = filters.compatibleWith
+        ? filterByCompatibility(merged, filters.compatibleWith)
+        : merged
 
       const endTime = performance.now()
 
@@ -344,6 +399,8 @@ export async function executeSearch(
       findingsCount: item.skill.securityFindingsCount,
       scannedAt: item.skill.securityScannedAt,
     },
+    // SMI-2760: Compatibility tags
+    compatibility: item.skill.compatibility,
   }))
 
   // SMI-1809: Search local skills and merge with local DB results
@@ -358,7 +415,11 @@ export async function executeSearch(
   }
 
   // Merge results: local skills first (since they're user's own), then registry
-  const mergedResults = [...localResults, ...results]
+  // SMI-2760: Apply compatibility filter if requested
+  const merged = [...localResults, ...results]
+  const mergedResults = filters.compatibleWith
+    ? filterByCompatibility(merged, filters.compatibleWith)
+    : merged
 
   const endTime = performance.now()
 

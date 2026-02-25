@@ -492,8 +492,39 @@ const trustTiers = [
             </div>`
               : ''
           }
+          ${createCompatibilityBadges(skill.compatibility)}
         </a>
       `
+      }
+
+      // SMI-2760: Create compatibility badge row (max 4 visible; +N more expand)
+      function createCompatibilityBadges(compatibility) {
+        if (!Array.isArray(compatibility) || compatibility.length === 0) return ''
+
+        const MAX_VISIBLE = 4
+        const visible = compatibility.slice(0, MAX_VISIBLE)
+        const extra = compatibility.slice(MAX_VISIBLE)
+
+        const badge = (tag) =>
+          `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-primary-500/10 text-primary-400 border border-primary-500/20">${escapeHtml(tag)}</span>`
+
+        const visibleHtml = visible.map(badge).join('')
+
+        if (extra.length === 0) {
+          return `<div class="mt-3 pt-3 border-t border-dark-800 flex flex-wrap gap-1">${visibleHtml}</div>`
+        }
+
+        const hiddenHtml = extra.map(badge).join('')
+
+        return `<div class="mt-3 pt-3 border-t border-dark-800 flex flex-wrap gap-1 items-center">
+          ${visibleHtml}
+          <span style="display:none">${hiddenHtml}</span>
+          <button
+            class="px-1.5 py-0.5 rounded text-xs text-dark-400 hover:text-primary-400 transition-colors focus:outline-none focus:ring-1 focus:ring-primary-500"
+            aria-label="Show ${extra.length} more compatibility tags"
+            onclick="event.stopPropagation(); this.previousElementSibling.style.display='contents'; this.style.display='none';"
+          >+${extra.length} more</button>
+        </div>`
       }
 
       // Format number with locale formatting

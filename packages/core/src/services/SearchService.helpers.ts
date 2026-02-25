@@ -83,6 +83,11 @@ export function rowToSkill(row: FTSRow): Skill {
     securityFindingsCount: row.security_findings_count ?? 0,
     securityScannedAt: row.security_scanned_at,
     securityPassed: row.security_passed === null ? null : row.security_passed === 1,
+    // SMI-2760: Compatibility tags
+    compatibility:
+      row.compatibility && row.compatibility !== '[]'
+        ? (JSON.parse(row.compatibility) as string[])
+        : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

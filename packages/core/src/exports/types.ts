@@ -75,6 +75,7 @@ export {
   type Skill as MCPSkill,
   type SkillSearchResult,
   type SearchFilters,
+  type CompatibilityFilter,
   type SearchResponse as MCPSearchResponse,
   type GetSkillResponse,
 } from '../types.js'
