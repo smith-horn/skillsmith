@@ -44,9 +44,11 @@ white. All other modern clients (Gmail, Apple Mail, Outlook 365, iOS Mail) rende
 | `{{ .NewEmail }}` | New email address (email-change template only) |
 
 **Branded URL pattern** (SMI-2762): All 5 templates now use:
-```
+
+```text
 https://www.skillsmith.app/auth/confirm?token_hash={{ .TokenHash }}&type=<type>
 ```
+
 The `/auth/confirm` Astro page calls `supabase.auth.verifyOtp({ token_hash, type })` and redirects to the appropriate destination per flow type.
 
 ---
