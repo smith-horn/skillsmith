@@ -2,6 +2,8 @@
 
 Core library for Skillsmith - provides database operations, search services, caching, security, analytics, and **multi-language codebase analysis** for agent skill discovery.
 
+**v0.4.15** adds co-install recommendations (`CoInstallRepository`, `AlsoInstalledSkill`), compatibility tags on skills, repository/homepage link fields, and SCHEMA_VERSION 9 with migrations for both.
+
 **v0.4.7** includes multi-language support for analyzing TypeScript, JavaScript, Python, Go, Rust, and Java codebases, with improved dependency management.
 
 ## Installation

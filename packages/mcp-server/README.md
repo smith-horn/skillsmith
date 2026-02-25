@@ -2,7 +2,7 @@
 
 MCP (Model Context Protocol) server for agent skill discovery, installation, and management.
 
-## What's New in v0.4.2
+## What's New in v0.4.3
 
 - **Co-install recommendations** (SMI-2761): `get_skill` responses now include an `also_installed` array — skills frequently installed alongside this one, surfaced once ≥5 co-installs are observed. Also shown on skill detail pages at [www.skillsmith.app/skills](https://www.skillsmith.app/skills).
 - **Repository and homepage links** (SMI-2759): `search` and `get_skill` responses now include `repository_url` and `homepage_url` when declared by the skill author.
