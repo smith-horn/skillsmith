@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { executeCompare, formatComparisonResults } from '../tools/compare.js'
 import type { CompareResponse, SkillSummary } from '../tools/compare.js'
+import { SkillsmithError } from '@skillsmith/core'
 import { createSeededTestContext, type ToolContext } from './test-utils.js'
 
 let context: ToolContext
@@ -83,7 +84,8 @@ describe('executeCompare', () => {
     expect(result.comparison.b.name).toBe('vitest-helper')
     expect(result.differences).toBeDefined()
     expect(Array.isArray(result.differences)).toBe(true)
-    expect(result.recommendation).toBeTruthy()
+    expect(typeof result.recommendation).toBe('string')
+    expect(result.recommendation.length).toBeGreaterThan(0)
     expect(['a', 'b', 'tie']).toContain(result.winner)
   })
 
@@ -93,7 +95,7 @@ describe('executeCompare', () => {
         { skill_a: 'community/nonexistent-skill', skill_b: 'community/jest-helper' },
         context
       )
-    ).rejects.toThrow()
+    ).rejects.toThrow(SkillsmithError)
   })
 
   it('throws SkillsmithError when skill_b is not found', async () => {
@@ -102,7 +104,7 @@ describe('executeCompare', () => {
         { skill_a: 'community/jest-helper', skill_b: 'community/nonexistent-skill' },
         context
       )
-    ).rejects.toThrow()
+    ).rejects.toThrow(SkillsmithError)
   })
 
   it('throws SkillsmithError when comparing a skill with itself', async () => {
@@ -111,7 +113,7 @@ describe('executeCompare', () => {
         { skill_a: 'community/jest-helper', skill_b: 'community/jest-helper' },
         context
       )
-    ).rejects.toThrow()
+    ).rejects.toThrow(SkillsmithError)
   })
 })
 

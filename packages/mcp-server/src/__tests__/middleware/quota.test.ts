@@ -170,6 +170,7 @@ describe('withQuotaEnforcement()', () => {
     expect(innerHandler).not.toHaveBeenCalled()
 
     // Result must be MCP error response shape
+    expect(result).toMatchObject({ isError: true })
     const errorResult = result as { isError: boolean; content: Array<{ type: string }> }
     expect(errorResult.isError).toBe(true)
     expect(Array.isArray(errorResult.content)).toBe(true)
