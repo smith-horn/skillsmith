@@ -18,25 +18,19 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 
 // SMI-2208: Use async context for WASM fallback support
 import { getToolContextAsync, type ToolContext } from './context.js'
-import { searchToolSchema, executeSearch, type SearchInput } from './tools/search.js'
-import { getSkillToolSchema, executeGetSkill, type GetSkillInput } from './tools/get-skill.js'
-import { installTool, installSkill, installInputSchema } from './tools/install.js'
-import { uninstallTool, uninstallSkill, uninstallInputSchema } from './tools/uninstall.js'
-import { recommendToolSchema, recommendInputSchema, executeRecommend } from './tools/recommend.js'
-import { validateToolSchema, validateInputSchema, executeValidate } from './tools/validate.js'
-import { compareToolSchema, compareInputSchema, executeCompare } from './tools/compare.js'
-import { suggestToolSchema, suggestInputSchema, executeSuggest } from './tools/suggest.js'
-import {
-  indexLocalToolSchema,
-  indexLocalInputSchema,
-  executeIndexLocal,
-} from './tools/index-local.js'
-import { publishToolSchema, publishInputSchema, executePublish } from './tools/publish.js'
-import {
-  skillUpdatesToolSchema,
-  skillUpdatesInputSchema,
-  executeSkillUpdates,
-} from './tools/skill-updates.js'
+import { searchToolSchema } from './tools/search.js'
+import { getSkillToolSchema } from './tools/get-skill.js'
+import { installTool, installSkill } from './tools/install.js'
+import { uninstallTool } from './tools/uninstall.js'
+import { recommendToolSchema } from './tools/recommend.js'
+import { validateToolSchema } from './tools/validate.js'
+import { compareToolSchema } from './tools/compare.js'
+import { suggestToolSchema } from './tools/suggest.js'
+import { indexLocalToolSchema } from './tools/index-local.js'
+import { publishToolSchema } from './tools/publish.js'
+import { skillUpdatesToolSchema } from './tools/skill-updates.js'
+import { skillDiffToolSchema } from './tools/skill-diff.js'
+import { dispatchToolCall } from './tool-dispatch.js'
 import {
   isFirstRun,
   markFirstRunComplete,
@@ -44,7 +38,7 @@ import {
   TIER1_SKILLS,
 } from './onboarding/first-run.js'
 import { checkForUpdates, formatUpdateNotification } from '@skillsmith/core'
-import { createLicenseMiddleware, createLicenseErrorResponse } from './middleware/license.js'
+import { createLicenseMiddleware } from './middleware/license.js'
 import { createQuotaMiddleware } from './middleware/quota.js'
 
 // Package version - keep in sync with package.json
@@ -78,6 +72,7 @@ const toolDefinitions = [
   indexLocalToolSchema,
   publishToolSchema,
   skillUpdatesToolSchema,
+  skillDiffToolSchema,
 ]
 
 // Create server
@@ -104,186 +99,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   }
 })
 
-// Handle tool calls
+// Handle tool calls — dispatch delegated to tool-dispatch.ts (SMI-skill-version-tracking Wave 2)
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params
 
   try {
-    switch (name) {
-      case 'search': {
-        const input = (args ?? {}) as unknown as SearchInput
-        const result = await executeSearch(input, toolContext)
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'get_skill': {
-        const input = (args ?? {}) as unknown as GetSkillInput
-        const result = await executeGetSkill(input, toolContext)
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'install_skill': {
-        const input = installInputSchema.parse(args)
-        const result = await installSkill(input, toolContext)
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'uninstall_skill': {
-        const input = uninstallInputSchema.parse(args)
-        const result = await uninstallSkill(input, toolContext)
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'skill_recommend': {
-        const input = recommendInputSchema.parse(args)
-        const result = await executeRecommend(input, toolContext)
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'skill_validate': {
-        const input = validateInputSchema.parse(args)
-        const result = await executeValidate(input, toolContext)
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'skill_compare': {
-        const input = compareInputSchema.parse(args)
-        const result = await executeCompare(input, toolContext)
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'skill_suggest': {
-        // Validate input first — quota must not be consumed for malformed requests.
-        const input = suggestInputSchema.parse(args)
-        // SMI-2679: Enforce monthly API quota. buildExceededResponse returns
-        // MCPErrorResponse (content + isError:true) — returned directly, not thrown.
-        // getLicenseInfo failures fall back to community tier via the inner catch.
-        let licenseInfo = null
-        try {
-          licenseInfo = await licenseMiddleware.getLicenseInfo()
-        } catch {
-          // Enterprise package absent or network error — degrade to community tier.
-        }
-        const quotaResult = await quotaMiddleware.checkAndTrack('skill_suggest', licenseInfo)
-        if (!quotaResult.allowed) {
-          return quotaMiddleware.buildExceededResponse(quotaResult)
-        }
-        const result = await executeSuggest(input, toolContext)
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'index_local': {
-        const input = indexLocalInputSchema.parse(args)
-        const result = await executeIndexLocal(input, toolContext)
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'skill_publish': {
-        const input = publishInputSchema.parse(args)
-        const result = await executePublish(input, toolContext)
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        }
-      }
-
-      case 'skill_updates': {
-        // Validate input before consuming quota or checking license
-        const input = skillUpdatesInputSchema.parse(args)
-        // Check license — skill_updates requires Individual tier (version_tracking feature)
-        const license = await licenseMiddleware.checkTool('skill_updates')
-        if (!license.valid) {
-          return createLicenseErrorResponse(license)
-        }
-        // SMI-2679: Enforce monthly API quota BEFORE executing — quota must not be
-        // consumed for requests that are blocked by license, and results must not
-        // be returned before the quota gate fires.
-        const licenseInfo = await licenseMiddleware.getLicenseInfo()
-        const quotaResult = await quotaMiddleware.checkAndTrack('skill_updates', licenseInfo)
-        if (!quotaResult.allowed) {
-          return quotaMiddleware.buildExceededResponse(quotaResult)
-        }
-        const result = await executeSkillUpdates(input, toolContext)
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        }
-      }
-
-      default:
-        throw new Error('Unknown tool: ' + name)
-    }
+    return await dispatchToolCall(
+      name,
+      args as Record<string, unknown> | undefined,
+      toolContext,
+      licenseMiddleware,
+      quotaMiddleware
+    )
   } catch (error) {
     return {
       content: [

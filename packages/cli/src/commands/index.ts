@@ -42,3 +42,7 @@ export { createInstallSkillCommand } from './install-skill.js'
 export { createLoginCommand } from './login.js'
 export { createLogoutCommand } from './logout.js'
 export { createWhoamiCommand } from './whoami.js'
+
+// SMI-skill-version-tracking Wave 2: diff, pin, unpin
+export { createDiffCommand } from './diff.js'
+export { createPinCommand, createUnpinCommand } from './pin.js'

@@ -108,3 +108,16 @@ export {
   SkillVersionRepository,
   type SkillVersionRow,
 } from '../repositories/SkillVersionRepository.js'
+
+// ============================================================================
+// Versioning Utilities (SMI-skill-version-tracking Wave 2)
+// ============================================================================
+
+export { classifyChange, type ChangeType } from '../versioning/change-classifier.js'
+
+export {
+  computeUpdateRisk,
+  type RiskLevel,
+  type Recommendation,
+  type UpdateRisk,
+} from '../versioning/update-risk.js'
