@@ -12,10 +12,11 @@
 import type { Database } from './database-interface.js'
 import { createDatabaseSync } from './createDatabase.js'
 import { MIGRATION_V5_SQL } from './migrations/v5-skill-versions.js'
+import { MIGRATION_V5B_SQL } from './migrations/v5b-change-type.js'
 
 export type DatabaseType = Database
 
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 /**
  * SQL statements for creating the database schema
@@ -239,6 +240,11 @@ CREATE INDEX IF NOT EXISTS idx_skills_security_passed ON skills(security_passed)
     version: 5,
     description: 'SMI-skill-version-tracking Wave 1: skill_versions table',
     sql: MIGRATION_V5_SQL,
+  },
+  {
+    version: 6,
+    description: 'SMI-skill-version-tracking Wave 2: add change_type to skill_versions',
+    sql: MIGRATION_V5B_SQL,
   },
 ]
 

@@ -59,6 +59,7 @@ export const TOOL_FEATURES: Record<string, FeatureFlag | null> = {
 
   // Individual tools
   skill_updates: 'version_tracking',
+  skill_diff: 'version_tracking',
 
   // Team tools - require team features
   skill_audit: 'skill_security_audit',
