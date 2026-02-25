@@ -195,9 +195,7 @@ export function createDiffCommand(): Command {
           }
 
           if (!oldContent) {
-            console.error(
-              chalk.red(`Skill "${skillName}" is not installed or SKILL.md not found.`)
-            )
+            console.error(chalk.red(`Skill "${skillName}" is not installed or SKILL.md not found.`))
             process.exit(1)
           }
 

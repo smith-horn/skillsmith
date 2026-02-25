@@ -240,9 +240,7 @@ describe('createDiffCommand', () => {
 
   describe('content resolution — file override path', () => {
     it('uses --old-content and --new-content file overrides when provided', async () => {
-      mockReadFile
-        .mockResolvedValueOnce(OLD_CONTENT)
-        .mockResolvedValueOnce(NEW_CONTENT_PATCH)
+      mockReadFile.mockResolvedValueOnce(OLD_CONTENT).mockResolvedValueOnce(NEW_CONTENT_PATCH)
       mockClassifyChange.mockReturnValue('patch')
 
       const cmd = createDiffCommand()
@@ -263,9 +261,7 @@ describe('createDiffCommand', () => {
 
   describe('URL conversion — buildRawUrl', () => {
     it('converts github.com URL to raw.githubusercontent.com', async () => {
-      mockLoadManifest.mockResolvedValue(
-        buildManifest('https://github.com/anthropic/test-skill')
-      )
+      mockLoadManifest.mockResolvedValue(buildManifest('https://github.com/anthropic/test-skill'))
       mockReadFile.mockResolvedValue(OLD_CONTENT)
       mockFetch.mockResolvedValue({
         ok: true,
@@ -282,8 +278,7 @@ describe('createDiffCommand', () => {
     })
 
     it('passes raw.githubusercontent.com URLs through unchanged', async () => {
-      const rawUrl =
-        'https://raw.githubusercontent.com/anthropic/test-skill/main/SKILL.md'
+      const rawUrl = 'https://raw.githubusercontent.com/anthropic/test-skill/main/SKILL.md'
       mockLoadManifest.mockResolvedValue(buildManifest(rawUrl))
       mockReadFile.mockResolvedValue(OLD_CONTENT)
       mockFetch.mockResolvedValue({
@@ -298,17 +293,11 @@ describe('createDiffCommand', () => {
     })
 
     it('exits with error for non-GitHub source URLs', async () => {
-      mockLoadManifest.mockResolvedValue(
-        buildManifest('https://gitlab.com/anthropic/test-skill')
-      )
+      mockLoadManifest.mockResolvedValue(buildManifest('https://gitlab.com/anthropic/test-skill'))
       mockReadFile.mockResolvedValue(OLD_CONTENT)
 
       const cmd = createDiffCommand()
-      const { exitCode } = await runCommand(cmd, [
-        'test-skill',
-        '--old-content',
-        '/tmp/old.md',
-      ])
+      const { exitCode } = await runCommand(cmd, ['test-skill', '--old-content', '/tmp/old.md'])
 
       expect(exitCode).toBe(1)
     })
@@ -317,9 +306,7 @@ describe('createDiffCommand', () => {
   describe('output formatting', () => {
     it('includes change type label and skill name in output', async () => {
       mockLoadManifest.mockResolvedValue(buildManifest())
-      mockReadFile
-        .mockResolvedValueOnce(OLD_CONTENT)
-        .mockResolvedValueOnce(NEW_CONTENT_MINOR)
+      mockReadFile.mockResolvedValueOnce(OLD_CONTENT).mockResolvedValueOnce(NEW_CONTENT_MINOR)
       mockClassifyChange.mockReturnValue('minor')
 
       const cmd = createDiffCommand()

@@ -112,11 +112,9 @@ describe('createPinCommand', () => {
     mockLoadManifest.mockResolvedValue(manifest)
 
     let capturedUpdateFn: ((m: SkillManifest) => SkillManifest) | null = null
-    mockUpdateManifestEntry.mockImplementation(
-      async (fn: (m: SkillManifest) => SkillManifest) => {
-        capturedUpdateFn = fn
-      }
-    )
+    mockUpdateManifestEntry.mockImplementation(async (fn: (m: SkillManifest) => SkillManifest) => {
+      capturedUpdateFn = fn
+    })
 
     const cmd = createPinCommand()
     const { exitCode, consoleOutput } = await runCommand(cmd, ['commit-helper'])
@@ -147,11 +145,9 @@ describe('createPinCommand', () => {
     mockLoadManifest.mockResolvedValue(manifest)
 
     let capturedUpdateFn: ((m: SkillManifest) => SkillManifest) | null = null
-    mockUpdateManifestEntry.mockImplementation(
-      async (fn: (m: SkillManifest) => SkillManifest) => {
-        capturedUpdateFn = fn
-      }
-    )
+    mockUpdateManifestEntry.mockImplementation(async (fn: (m: SkillManifest) => SkillManifest) => {
+      capturedUpdateFn = fn
+    })
 
     const cmd = createPinCommand()
     await runCommand(cmd, ['no-content-hash'])
@@ -212,11 +208,9 @@ describe('createUnpinCommand', () => {
     mockLoadManifest.mockResolvedValue(manifest)
 
     let capturedUpdateFn: ((m: SkillManifest) => SkillManifest) | null = null
-    mockUpdateManifestEntry.mockImplementation(
-      async (fn: (m: SkillManifest) => SkillManifest) => {
-        capturedUpdateFn = fn
-      }
-    )
+    mockUpdateManifestEntry.mockImplementation(async (fn: (m: SkillManifest) => SkillManifest) => {
+      capturedUpdateFn = fn
+    })
 
     const cmd = createUnpinCommand()
     const { exitCode, consoleOutput } = await runCommand(cmd, ['commit-helper'])

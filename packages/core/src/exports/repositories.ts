@@ -113,10 +113,7 @@ export {
 // Versioning Utilities (SMI-skill-version-tracking Wave 2)
 // ============================================================================
 
-export {
-  classifyChange,
-  type ChangeType,
-} from '../versioning/change-classifier.js'
+export { classifyChange, type ChangeType } from '../versioning/change-classifier.js'
 
 export {
   computeUpdateRisk,

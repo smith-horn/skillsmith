@@ -41,7 +41,11 @@ function ok(result: unknown): CallToolResult {
  * MCPErrorResponse is structurally compatible but lacks the index signature
  * that Zod's $loose schema infers on CallToolResult.
  */
-function errResponse(response: { content: Array<{ type: 'text'; text: string }>; isError?: boolean; _meta?: Record<string, unknown> }): CallToolResult {
+function errResponse(response: {
+  content: Array<{ type: 'text'; text: string }>
+  isError?: boolean
+  _meta?: Record<string, unknown>
+}): CallToolResult {
   return response as unknown as CallToolResult
 }
 
@@ -98,7 +102,8 @@ export async function dispatchToolCall(
         // Enterprise package absent or network error — degrade to community tier.
       }
       const quotaResult = await quotaMiddleware.checkAndTrack('skill_suggest', licenseInfo)
-      if (!quotaResult.allowed) return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
+      if (!quotaResult.allowed)
+        return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
       return ok(await executeSuggest(input, toolContext))
     }
 
@@ -114,7 +119,8 @@ export async function dispatchToolCall(
       if (!license.valid) return errResponse(createLicenseErrorResponse(license))
       const licenseInfo = await licenseMiddleware.getLicenseInfo()
       const quotaResult = await quotaMiddleware.checkAndTrack('skill_updates', licenseInfo)
-      if (!quotaResult.allowed) return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
+      if (!quotaResult.allowed)
+        return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
       return ok(await executeSkillUpdates(input, toolContext))
     }
 
@@ -124,7 +130,8 @@ export async function dispatchToolCall(
       if (!licenseResult.valid) return errResponse(createLicenseErrorResponse(licenseResult))
       const licenseInfo = await licenseMiddleware.getLicenseInfo()
       const quotaResult = await quotaMiddleware.checkAndTrack('skill_diff', licenseInfo)
-      if (!quotaResult.allowed) return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
+      if (!quotaResult.allowed)
+        return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
       return ok(await executeSkillDiff(input, toolContext))
     }
 
