@@ -23,6 +23,8 @@ beforeAll(async () => {
     db: testDbContext.db,
     searchService: testDbContext.searchService,
     skillRepository: testDbContext.skillRepository,
+    coInstallRepository: testDbContext.coInstallRepository,
+    sessionInstalledSkillIds: [],
     apiClient: testDbContext.apiClient,
   }
 })

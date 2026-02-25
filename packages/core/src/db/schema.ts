@@ -14,10 +14,11 @@ import { createDatabaseSync } from './createDatabase.js'
 import { MIGRATION_V5_SQL } from './migrations/v5-skill-versions.js'
 import { MIGRATION_V6_SQL } from './migrations/v6-advisories.js'
 import { MIGRATION_V7_SQL } from './migrations/v7-compatibility.js'
+import { MIGRATION_V8_SQL } from './migrations/v8-co-installs.js'
 
 export type DatabaseType = Database
 
-export const SCHEMA_VERSION = 7
+export const SCHEMA_VERSION = 8
 
 /**
  * SQL statements for creating the database schema
@@ -252,6 +253,11 @@ CREATE INDEX IF NOT EXISTS idx_skills_security_passed ON skills(security_passed)
     description: 'SMI-2760: compatibility column on skills table',
     sql: MIGRATION_V7_SQL,
   },
+  {
+    version: 8,
+    description: 'SMI-2761: skill_co_installs table for co-install recommendations',
+    sql: MIGRATION_V8_SQL,
+  },
 ]
 
 /**
@@ -333,14 +339,7 @@ export function runMigrations(db: DatabaseType): number {
   return migrationsRun
 }
 
-/**
- * Create a new database connection with proper configuration
- * This initializes the full schema - use openDatabase for existing databases
- *
- * @deprecated Use createDatabaseAsync() for cross-platform WASM support.
- * This function requires better-sqlite3 native module and will fail on
- * platforms where native modules are unavailable.
- */
+/** @deprecated Use createDatabaseAsync() — requires better-sqlite3 native module. */
 export function createDatabase(path: string = ':memory:'): DatabaseType {
   const db = createDatabaseSync(path)
 

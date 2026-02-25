@@ -78,6 +78,7 @@ export {
   type CompatibilityFilter,
   type SearchResponse as MCPSearchResponse,
   type GetSkillResponse,
+  type AlsoInstalledSkill,
 } from '../types.js'
 
 // ============================================================================

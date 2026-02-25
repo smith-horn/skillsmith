@@ -34,6 +34,7 @@ import {
   SyncHistoryRepository,
   SyncEngine,
   SkillVersionRepository,
+  CoInstallRepository,
   BackgroundSyncService,
   getApiKey,
   type SyncResult,
@@ -125,6 +126,7 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
   })
 
   const skillRepository = new SkillRepository(db)
+  const coInstallRepository = new CoInstallRepository(db)
 
   // SMI-XXXX: Get API key from options, env, or config file
   // SMI-1851: Use shared config module (handles env var > config file precedence)
@@ -259,6 +261,8 @@ export function createToolContext(options: ToolContextOptions = {}): ToolContext
     db,
     searchService,
     skillRepository,
+    coInstallRepository,
+    sessionInstalledSkillIds: [],
     apiClient,
     distinctId,
     backgroundSync,

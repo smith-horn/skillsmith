@@ -11,6 +11,7 @@ import {
   createDatabase,
   closeDatabase,
   SkillRepository,
+  CoInstallRepository,
   SearchService,
   SkillsmithApiClient,
   type DatabaseType,
@@ -27,6 +28,8 @@ export { TEST_SKILLS, TEST_SKILLS_STATS } from './fixtures/test-skills.js'
 export interface TestDatabaseContext {
   db: DatabaseType
   skillRepository: SkillRepository
+  coInstallRepository: CoInstallRepository
+  sessionInstalledSkillIds: string[]
   searchService: SearchService
   apiClient: SkillsmithApiClient
   cleanup: () => Promise<void>
@@ -40,6 +43,7 @@ export interface TestDatabaseContext {
 export async function createTestDatabase(): Promise<TestDatabaseContext> {
   const db = createDatabase(':memory:')
   const skillRepository = new SkillRepository(db)
+  const coInstallRepository = new CoInstallRepository(db)
   const searchService = new SearchService(db)
 
   // SMI-1183: Create API client in offline mode for tests
@@ -54,6 +58,8 @@ export async function createTestDatabase(): Promise<TestDatabaseContext> {
   return {
     db,
     skillRepository,
+    coInstallRepository,
+    sessionInstalledSkillIds: [],
     searchService,
     apiClient,
     cleanup: async () => {

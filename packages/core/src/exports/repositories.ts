@@ -108,3 +108,9 @@ export {
   SkillVersionRepository,
   type SkillVersionRow,
 } from '../repositories/SkillVersionRepository.js'
+
+// ============================================================================
+// Co-Install Repository (SMI-2761)
+// ============================================================================
+
+export { CoInstallRepository, type CoInstallSummary } from '../repositories/CoInstallRepository.js'

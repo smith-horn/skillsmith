@@ -164,4 +164,22 @@ export interface GetSkillResponse {
   timing: {
     totalMs: number
   }
+  /** SMI-2761: Skills frequently installed alongside this one (≥5 co-installs) */
+  also_installed?: AlsoInstalledSkill[]
+}
+
+/**
+ * SMI-2761: Minimal skill summary used in co-install recommendations
+ */
+export interface AlsoInstalledSkill {
+  /** Skill ID (e.g. "anthropic/commit") */
+  skillId: string
+  /** Human-readable name */
+  name: string
+  /** Short description */
+  description?: string
+  /** Author slug */
+  author?: string
+  /** Co-install count */
+  installCount: number
 }

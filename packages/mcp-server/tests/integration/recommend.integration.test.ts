@@ -19,6 +19,8 @@ describe('Recommend Tool Integration', () => {
       db: ctx.db,
       searchService: ctx.searchService,
       skillRepository: ctx.skillRepository,
+      coInstallRepository: ctx.coInstallRepository,
+      sessionInstalledSkillIds: [],
       apiClient: ctx.apiClient,
     }
   })
