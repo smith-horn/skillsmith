@@ -39,8 +39,17 @@ white. All other modern clients (Gmail, Apple Mail, Outlook 365, iOS Mail) rende
 
 | Variable | Description |
 |----------|-------------|
-| `{{ .ConfirmationURL }}` | Full confirmation/reset/magic-link URL |
+| `{{ .ConfirmationURL }}` | Full confirmation/reset/magic-link URL (no longer used — replaced by branded URL below) |
+| `{{ .TokenHash }}` | Raw token hash for use in branded URL query param |
 | `{{ .NewEmail }}` | New email address (email-change template only) |
+
+**Branded URL pattern** (SMI-2762): All 5 templates now use:
+
+```text
+https://www.skillsmith.app/auth/confirm?token_hash={{ .TokenHash }}&type=<type>
+```
+
+The `/auth/confirm` Astro page calls `supabase.auth.verifyOtp({ token_hash, type })` and redirects to the appropriate destination per flow type.
 
 ---
 
@@ -146,7 +155,7 @@ Used at the top of every template:
               </tr>
               <tr>
                 <td align="center" style="padding-bottom:32px;">
-                  <a href="{{ .ConfirmationURL }}"
+                  <a href="https://www.skillsmith.app/auth/confirm?token_hash={{ .TokenHash }}&type=signup"
                      style="display:inline-block;background-color:#e07a5f;color:#ffffff;
                             font-size:16px;font-weight:600;text-decoration:none;
                             padding:14px 32px;border-radius:8px;line-height:1;">
@@ -168,7 +177,7 @@ Used at the top of every template:
                   </p>
                   <p style="margin:8px 0 0;font-size:12px;color:#e07a5f;word-break:break-all;
                              font-family:'JetBrains Mono',Menlo,monospace;">
-                    {{ .ConfirmationURL }}
+                    https://www.skillsmith.app/auth/confirm?token_hash={{ .TokenHash }}&type=signup
                   </p>
                 </td>
               </tr>
@@ -263,7 +272,7 @@ Used at the top of every template:
               </tr>
               <tr>
                 <td align="center" style="padding-bottom:32px;">
-                  <a href="{{ .ConfirmationURL }}"
+                  <a href="https://www.skillsmith.app/auth/confirm?token_hash={{ .TokenHash }}&type=magiclink"
                      style="display:inline-block;background-color:#e07a5f;color:#ffffff;
                             font-size:16px;font-weight:600;text-decoration:none;
                             padding:14px 32px;border-radius:8px;line-height:1;">
@@ -291,7 +300,7 @@ Used at the top of every template:
                   </p>
                   <p style="margin:8px 0 0;font-size:12px;color:#e07a5f;word-break:break-all;
                              font-family:'JetBrains Mono',Menlo,monospace;">
-                    {{ .ConfirmationURL }}
+                    https://www.skillsmith.app/auth/confirm?token_hash={{ .TokenHash }}&type=magiclink
                   </p>
                 </td>
               </tr>
@@ -386,7 +395,7 @@ Used at the top of every template:
               </tr>
               <tr>
                 <td align="center" style="padding-bottom:32px;">
-                  <a href="{{ .ConfirmationURL }}"
+                  <a href="https://www.skillsmith.app/auth/confirm?token_hash={{ .TokenHash }}&type=recovery"
                      style="display:inline-block;background-color:#e07a5f;color:#ffffff;
                             font-size:16px;font-weight:600;text-decoration:none;
                             padding:14px 32px;border-radius:8px;line-height:1;">
@@ -414,7 +423,7 @@ Used at the top of every template:
                   </p>
                   <p style="margin:8px 0 0;font-size:12px;color:#e07a5f;word-break:break-all;
                              font-family:'JetBrains Mono',Menlo,monospace;">
-                    {{ .ConfirmationURL }}
+                    https://www.skillsmith.app/auth/confirm?token_hash={{ .TokenHash }}&type=recovery
                   </p>
                 </td>
               </tr>
@@ -526,7 +535,7 @@ Used at the top of every template:
               </tr>
               <tr>
                 <td align="center" style="padding-bottom:32px;">
-                  <a href="{{ .ConfirmationURL }}"
+                  <a href="https://www.skillsmith.app/auth/confirm?token_hash={{ .TokenHash }}&type=email_change"
                      style="display:inline-block;background-color:#e07a5f;color:#ffffff;
                             font-size:16px;font-weight:600;text-decoration:none;
                             padding:14px 32px;border-radius:8px;line-height:1;">
@@ -548,7 +557,7 @@ Used at the top of every template:
                   </p>
                   <p style="margin:8px 0 0;font-size:12px;color:#e07a5f;word-break:break-all;
                              font-family:'JetBrains Mono',Menlo,monospace;">
-                    {{ .ConfirmationURL }}
+                    https://www.skillsmith.app/auth/confirm?token_hash={{ .TokenHash }}&type=email_change
                   </p>
                 </td>
               </tr>
@@ -650,7 +659,7 @@ Used at the top of every template:
               </tr>
               <tr>
                 <td align="center" style="padding-bottom:32px;">
-                  <a href="{{ .ConfirmationURL }}"
+                  <a href="https://www.skillsmith.app/auth/confirm?token_hash={{ .TokenHash }}&type=invite"
                      style="display:inline-block;background-color:#e07a5f;color:#ffffff;
                             font-size:16px;font-weight:600;text-decoration:none;
                             padding:14px 32px;border-radius:8px;line-height:1;">
@@ -672,7 +681,7 @@ Used at the top of every template:
                   </p>
                   <p style="margin:8px 0 0;font-size:12px;color:#e07a5f;word-break:break-all;
                              font-family:'JetBrains Mono',Menlo,monospace;">
-                    {{ .ConfirmationURL }}
+                    https://www.skillsmith.app/auth/confirm?token_hash={{ .TokenHash }}&type=invite
                   </p>
                 </td>
               </tr>
