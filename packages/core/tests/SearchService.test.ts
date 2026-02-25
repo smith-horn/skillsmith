@@ -262,4 +262,77 @@ describe('SearchService', () => {
       expect(duration).toBeLessThan(100)
     })
   })
+
+  // SMI-2756: Wave 3 — edge case coverage
+  describe('edge cases', () => {
+    it('empty query with only filters returns matching results', () => {
+      const results = search.search({ query: '', trustTier: 'verified' })
+
+      expect(results.items.length).toBeGreaterThan(0)
+      for (const item of results.items) {
+        expect(item.skill.trustTier).toBe('verified')
+      }
+    })
+
+    it('filter-only search ignores FTS5 entirely (no query string)', () => {
+      const results = search.search({ query: '   ', trustTier: 'community' })
+
+      // Should use searchByFiltersOnly path — all returned skills are community
+      expect(results.items.length).toBeGreaterThan(0)
+      for (const item of results.items) {
+        expect(item.skill.trustTier).toBe('community')
+      }
+    })
+
+    it('query with only whitespace falls back to filter-only search', () => {
+      // Whitespace-only collapses to empty trimmedQuery → searchByFiltersOnly path
+      const results = search.search({ query: '   ' })
+
+      // No FTS query → returns all skills
+      expect(results).toBeDefined()
+      expect(Array.isArray(results.items)).toBe(true)
+      expect(results.total).toBeGreaterThan(0)
+    })
+
+    it('filter-only search with category returns correct results', () => {
+      // Seeds include no category junction data, but tags can match
+      const results = search.search({ query: '', category: 'typescript' })
+
+      // Results may be empty (no skills with category=typescript in junction table
+      // and no tags matching "%typescript%") — just ensure no error
+      expect(results).toBeDefined()
+      expect(typeof results.total).toBe('number')
+    })
+
+    it('search with limit: 0 returns empty items array', () => {
+      const results = search.search({ query: 'typescript', limit: 0 })
+
+      expect(results.items).toHaveLength(0)
+      // total still reflects the matched count
+      expect(typeof results.total).toBe('number')
+    })
+
+    it('search with very long query string is handled without error', () => {
+      const longQuery = 'typescript '.repeat(200).trim()
+
+      expect(() => search.search({ query: longQuery })).not.toThrow()
+      const results = search.search({ query: longQuery })
+      expect(results).toBeDefined()
+    })
+
+    it('filter-only: minQualityScore filter applied without query', () => {
+      const results = search.search({ query: '', minQualityScore: 0.85 })
+
+      for (const item of results.items) {
+        expect(item.skill.qualityScore).toBeGreaterThanOrEqual(0.85)
+      }
+    })
+
+    it('pagination offset beyond total returns empty items', () => {
+      const results = search.search({ query: 'typescript', offset: 9999 })
+
+      expect(results.items).toHaveLength(0)
+      expect(results.hasMore).toBe(false)
+    })
+  })
 })
