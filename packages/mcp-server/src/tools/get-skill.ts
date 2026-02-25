@@ -152,9 +152,9 @@ export async function executeGetSkill(
       }
 
       // SMI-2761: Populate also_installed from local co-install repository
-      const alsoInstalled = context.coInstallRepository
-        .getTopCoInstalls(skill.id)
-        .map<AlsoInstalledSkill>((s) => s)
+      const alsoInstalled: AlsoInstalledSkill[] = context.coInstallRepository.getTopCoInstalls(
+        skill.id
+      )
 
       return {
         skill,
@@ -217,9 +217,7 @@ export async function executeGetSkill(
   }
 
   // SMI-2761: Populate also_installed from co-install repository
-  const alsoInstalled = context.coInstallRepository
-    .getTopCoInstalls(skill.id)
-    .map<AlsoInstalledSkill>((s) => s)
+  const alsoInstalled: AlsoInstalledSkill[] = context.coInstallRepository.getTopCoInstalls(skill.id)
 
   return {
     skill,

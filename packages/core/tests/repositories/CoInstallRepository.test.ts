@@ -6,7 +6,7 @@
  * Uses createTestDatabase() which runs all migrations including v8.
  */
 
-import { describe, it, expect, beforeEach, afterAll } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createTestDatabase, closeDatabase } from '../helpers/database.js'
 import type { Database } from '../../src/db/database-interface.js'
 import { CoInstallRepository } from '../../src/repositories/CoInstallRepository.js'
@@ -28,7 +28,7 @@ beforeEach(() => {
   `)
 })
 
-afterAll(() => {
+afterEach(() => {
   closeDatabase(db)
 })
 
