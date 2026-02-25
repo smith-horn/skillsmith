@@ -89,3 +89,21 @@ export {
   executeSkillUpdates,
 } from './skill-updates.js'
 export type { SkillUpdatesInput, SkillUpdateInfo, CheckUpdatesResponse } from './skill-updates.js'
+
+// Skill Diff tool (SMI-skill-version-tracking Wave 2)
+export {
+  skillDiffToolSchema,
+  skillDiffInputSchema,
+  executeSkillDiff,
+  formatSkillDiffResults,
+} from './skill-diff.js'
+export type { SkillDiffInput, SkillDiffResponse } from './skill-diff.js'
+
+// Skill Audit tool (SMI-skill-version-tracking Wave 3)
+export { skillAuditToolSchema, skillAuditInputSchema, executeSkillAudit } from './skill-audit.js'
+export type {
+  SkillAuditInput,
+  AdvisoryEntry,
+  AdvisorySummary,
+  SkillAuditResponse,
+} from './skill-audit.js'

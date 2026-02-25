@@ -38,6 +38,10 @@ import {
   createLoginCommand,
   createLogoutCommand,
   createWhoamiCommand,
+  createDiffCommand,
+  createPinCommand,
+  createUnpinCommand,
+  createAuditCommand,
 } from './commands/index.js'
 import { DEFAULT_DB_PATH } from './config.js'
 import { sanitizeError } from './utils/sanitize.js'
@@ -144,5 +148,13 @@ program.addCommand(createInstallSkillCommand())
 program.addCommand(createLoginCommand())
 program.addCommand(createLogoutCommand())
 program.addCommand(createWhoamiCommand())
+
+// SMI-skill-version-tracking Wave 2: diff, pin, unpin
+program.addCommand(createDiffCommand())
+program.addCommand(createPinCommand())
+program.addCommand(createUnpinCommand())
+
+// SMI-skill-version-tracking Wave 3: Security Advisory Audit
+program.addCommand(createAuditCommand())
 
 program.parse()

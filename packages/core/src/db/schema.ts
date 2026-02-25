@@ -10,15 +10,19 @@
  */
 
 import type { Database } from './database-interface.js'
-import { createDatabaseSync } from './createDatabase.js'
+import {
+  createDatabaseSync,
+  createDatabaseAsync as createDatabaseAsyncFactory,
+} from './createDatabase.js'
 import { MIGRATION_V5_SQL } from './migrations/v5-skill-versions.js'
+import { MIGRATION_V5B_SQL } from './migrations/v5b-change-type.js'
 import { MIGRATION_V6_SQL } from './migrations/v6-advisories.js'
 import { MIGRATION_V7_SQL } from './migrations/v7-compatibility.js'
 import { MIGRATION_V8_SQL } from './migrations/v8-co-installs.js'
 
 export type DatabaseType = Database
 
-export const SCHEMA_VERSION = 8
+export const SCHEMA_VERSION = 9
 
 /**
  * SQL statements for creating the database schema
@@ -245,16 +249,21 @@ CREATE INDEX IF NOT EXISTS idx_skills_security_passed ON skills(security_passed)
   },
   {
     version: 6,
+    description: 'SMI-skill-version-tracking Wave 2: add change_type to skill_versions',
+    sql: MIGRATION_V5B_SQL,
+  },
+  {
+    version: 7,
     description: 'SMI-skill-version-tracking Wave 3: skill_advisories table',
     sql: MIGRATION_V6_SQL,
   },
   {
-    version: 7,
+    version: 8,
     description: 'SMI-2760: compatibility column on skills table',
     sql: MIGRATION_V7_SQL,
   },
   {
-    version: 8,
+    version: 9,
     description: 'SMI-2761: skill_co_installs table for co-install recommendations',
     sql: MIGRATION_V8_SQL,
   },
@@ -431,12 +440,6 @@ export function runMigrationsSafe(db: DatabaseType): number {
 export function closeDatabase(db: DatabaseType): void {
   db.close()
 }
-
-// ============================================================================
-// SMI-2206: Async Schema Functions with WASM Fallback
-// ============================================================================
-
-import { createDatabaseAsync as createDatabaseAsyncFactory } from './createDatabase.js'
 
 /**
  * Create a new database connection asynchronously with WASM fallback

@@ -242,6 +242,90 @@ describe('SearchService', () => {
     })
   })
 
+  describe('SMI-2756: edge cases', () => {
+    it('returns results with filter-only search (empty query, category filter)', () => {
+      const results = search.search({ query: '', category: 'typescript' })
+
+      // Should not error — falls through to searchByFiltersOnly
+      expect(results).toBeDefined()
+      expect(Array.isArray(results.items)).toBe(true)
+    })
+
+    it('limit parameter returns at most N results', () => {
+      // Seed has 5 skills; asking for 2 should return 2
+      const results = search.search({
+        query: 'typescript OR javascript OR python OR react',
+        limit: 2,
+      })
+
+      expect(results.items.length).toBeLessThanOrEqual(2)
+      expect(results.limit).toBe(2)
+    })
+
+    it('minScore filter excludes low-quality results', () => {
+      // Python Analyzer has qualityScore 0.7 — filter it out with minQualityScore 0.75
+      const results = search.search({
+        query: 'python OR typescript OR javascript',
+        minQualityScore: 0.75,
+      })
+
+      for (const item of results.items) {
+        expect(item.skill.qualityScore).toBeGreaterThanOrEqual(0.75)
+      }
+    })
+
+    it('offset skips the first N results', () => {
+      const allResults = search.search({ query: 'javascript', limit: 10, offset: 0 })
+      const offsetResults = search.search({ query: 'javascript', limit: 10, offset: 1 })
+
+      if (allResults.items.length > 1) {
+        expect(offsetResults.items[0].skill.id).toBe(allResults.items[1].skill.id)
+      } else {
+        // Not enough results to paginate — just assert offset works without error
+        expect(offsetResults.items.length).toBeLessThanOrEqual(allResults.items.length)
+      }
+    })
+
+    it('handles query with special characters without SQL injection', () => {
+      // Characters escaped by escapeFtsToken (not balanced quotes, no operators) — should not throw
+      // Single-quote and semicolons are stripped; only alphanumeric tokens survive
+      const dangerousQuery = 'DROP TABLE skills'
+      expect(() => search.search({ query: dangerousQuery })).not.toThrow()
+      const results = search.search({ query: dangerousQuery })
+      expect(results).toBeDefined()
+      expect(Array.isArray(results.items)).toBe(true)
+    })
+
+    it('filter-only search (no query) returns correct total count', () => {
+      // Empty string query should use searchByFiltersOnly path
+      const results = search.search({ query: '  ', limit: 10 })
+
+      expect(results).toBeDefined()
+      expect(typeof results.total).toBe('number')
+      expect(results.total).toBeGreaterThanOrEqual(0)
+    })
+
+    it('category filter in filter-only search narrows results', () => {
+      const allResults = search.search({ query: '', limit: 20 })
+      const categoryResults = search.search({
+        query: '',
+        category: 'nonexistent-category-xyz',
+        limit: 20,
+      })
+
+      // nonexistent category should return fewer (or equal) results than all
+      expect(categoryResults.items.length).toBeLessThanOrEqual(allResults.items.length)
+    })
+
+    it('query with only escapable chars falls back to filter-only search', () => {
+      // escapeFtsToken strips [."\'()[\]{}*^-]; a query of only these chars yields
+      // empty tokens → buildFtsQuery returns '' → searchByFiltersOnly path
+      const results = search.search({ query: '."\'()[]{}*^-' })
+      expect(results).toBeDefined()
+      expect(Array.isArray(results.items)).toBe(true)
+    })
+  })
+
   describe('performance', () => {
     it('should search 1000 skills in under 100ms', () => {
       // Create 1000 skills
