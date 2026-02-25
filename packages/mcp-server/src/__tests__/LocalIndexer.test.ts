@@ -160,6 +160,9 @@ description: 'Single quoted description'
         tags: ['testing', 'documentation', 'quality', 'best-practices', 'automation'],
         version: '1.0.0',
         triggers: [],
+        repository: null,
+        homepage: null,
+        compatibility: [],
       }
 
       const score = indexer.calculateQualityScore(frontmatter, true)
@@ -177,6 +180,9 @@ description: 'Single quoted description'
         tags: [],
         version: null,
         triggers: [],
+        repository: null,
+        homepage: null,
+        compatibility: [],
       }
 
       const score = indexer.calculateQualityScore(frontmatter, false)
@@ -194,6 +200,9 @@ description: 'Single quoted description'
         tags: [],
         version: null,
         triggers: [],
+        repository: null,
+        homepage: null,
+        compatibility: [],
       }
 
       const scoreWithout = indexer.calculateQualityScore(frontmatter, false)
@@ -211,6 +220,9 @@ description: 'Single quoted description'
         tags: [],
         version: null,
         triggers: [],
+        repository: null,
+        homepage: null,
+        compatibility: [],
       }
       const longDesc = {
         name: 'test',
@@ -220,6 +232,9 @@ description: 'Single quoted description'
         tags: [],
         version: null,
         triggers: [],
+        repository: null,
+        homepage: null,
+        compatibility: [],
       }
 
       const shortScore = indexer.calculateQualityScore(shortDesc, true)
@@ -237,6 +252,9 @@ description: 'Single quoted description'
         tags: ['one'],
         version: null,
         triggers: [],
+        repository: null,
+        homepage: null,
+        compatibility: [],
       }
       const fiveTags = {
         name: 'test',
@@ -245,6 +263,9 @@ description: 'Single quoted description'
         tags: ['one', 'two', 'three', 'four', 'five'],
         version: null,
         triggers: [],
+        repository: null,
+        homepage: null,
+        compatibility: [],
       }
 
       const oneScore = indexer.calculateQualityScore(oneTags, true)
@@ -775,5 +796,45 @@ describe('localSkillToSearchResult: SMI-2759 repository propagation', () => {
   it('should omit repository when LocalSkill.repository is null', () => {
     const result = localSkillToSearchResult(baseLocalSkill)
     expect(result.repository).toBeUndefined()
+  })
+})
+
+/**
+ * SMI-2760: Tests for compatibility propagation through localSkillToSearchResult
+ */
+describe('localSkillToSearchResult: SMI-2760 compatibility propagation', () => {
+  const baseLocalSkill: LocalSkill = {
+    id: 'local/compat-skill',
+    name: 'compat-skill',
+    description: 'A compatibility-tagged skill',
+    author: 'local',
+    tags: ['testing'],
+    qualityScore: 65,
+    trustTier: 'local',
+    source: 'local',
+    path: '/home/user/.claude/skills/compat-skill',
+    hasSkillMd: true,
+    lastModified: '2026-02-25T00:00:00Z',
+    repository: null,
+  }
+
+  it('should include compatibility tags when set', () => {
+    const skill: LocalSkill = {
+      ...baseLocalSkill,
+      compatibility: ['claude-code', 'cursor'],
+    }
+    const result = localSkillToSearchResult(skill)
+    expect(result.compatibility).toEqual(['claude-code', 'cursor'])
+  })
+
+  it('should omit compatibility when undefined', () => {
+    const result = localSkillToSearchResult(baseLocalSkill)
+    expect(result.compatibility).toBeUndefined()
+  })
+
+  it('should omit compatibility when empty array', () => {
+    const skill: LocalSkill = { ...baseLocalSkill, compatibility: [] }
+    const result = localSkillToSearchResult(skill)
+    expect(result.compatibility).toBeUndefined()
   })
 })

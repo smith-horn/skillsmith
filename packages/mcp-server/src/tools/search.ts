@@ -291,10 +291,9 @@ export async function executeSearch(
         // SMI-2734: 'author/name' install ID — valid for all registry API results
         installHint: item.author ? item.author + '/' + item.name : undefined,
         // SMI-2760: Compatibility tags (populated when API returns them)
-        compatibility:
-          Array.isArray((item as Record<string, unknown>).compatibility)
-            ? ((item as Record<string, unknown>).compatibility as string[])
-            : undefined,
+        compatibility: Array.isArray((item as unknown as Record<string, unknown>).compatibility)
+          ? ((item as unknown as Record<string, unknown>).compatibility as string[])
+          : undefined,
       }))
 
       // SMI-1809: Search local skills and merge with API results
@@ -450,4 +449,3 @@ export async function executeSearch(
 
   return response
 }
-

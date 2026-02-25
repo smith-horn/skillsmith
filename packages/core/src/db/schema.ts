@@ -45,11 +45,11 @@ CREATE TABLE IF NOT EXISTS skills (
   quality_score REAL CHECK(quality_score IS NULL OR (quality_score >= 0 AND quality_score <= 1)),
   trust_tier TEXT CHECK(trust_tier IN ('verified', 'community', 'experimental', 'unknown')) DEFAULT 'unknown',
   tags TEXT DEFAULT '[]', -- JSON array of tags
-  -- SMI-825: Security scan columns
-  risk_score INTEGER CHECK(risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 100)),
+  risk_score INTEGER CHECK(risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 100)), -- SMI-825
   security_findings_count INTEGER DEFAULT 0,
   security_scanned_at TEXT,
   security_passed INTEGER, -- boolean: 1 = passed, 0 = failed, NULL = not scanned
+  compatibility TEXT DEFAULT '[]', -- SMI-2760: JSON array of IDE/LLM/platform slugs
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -354,9 +354,7 @@ export function createDatabase(path: string = ':memory:'): DatabaseType {
 }
 
 /**
- * SMI-974: Open an existing database and run any pending migrations
- * Use this for databases that may have been created by different versions
- *
+ * SMI-974: Open an existing database and run pending migrations.
  * @deprecated Use openDatabaseAsync() for cross-platform WASM support.
  */
 export function openDatabase(path: string): DatabaseType {
@@ -388,9 +386,7 @@ export function openDatabase(path: string): DatabaseType {
   return db
 }
 
-/**
- * SMI-974: Run migrations with error handling for existing columns
- */
+/** SMI-974: Run migrations with error handling for existing columns */
 export function runMigrationsSafe(db: DatabaseType): number {
   const currentVersion = getSchemaVersion(db)
   let migrationsRun = 0

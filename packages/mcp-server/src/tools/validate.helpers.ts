@@ -247,7 +247,8 @@ export function validateMetadata(
   if (metadata.repository === undefined && (metadata.version !== undefined || strict)) {
     errors.push({
       field: 'repository',
-      message: 'Field "repository" is recommended for published skills (links to source for transparency)',
+      message:
+        'Field "repository" is recommended for published skills (links to source for transparency)',
       severity: 'warning',
     })
   }
