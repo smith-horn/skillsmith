@@ -203,8 +203,6 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `validate` | Validate skill structure |
 | `compare` | Compare 2-5 skills side-by-side |
 | `skill_diff` | Diff two installed skill versions side-by-side |
-| `skill_pin` | Pin a skill to a specific version |
-| `skill_unpin` | Remove version pin from a skill |
 | `skill_audit` | Audit skill for security advisories (Team+) |
 
 **Auth**: Personal API Key (`X-API-Key: sk_live_*`, tier-based), Supabase Anon Key (30/min), No Auth (10 trial). Configure in `~/.skillsmith/config.json` or `SKILLSMITH_API_KEY` env in Claude settings. Shell exports don't reach MCP subprocesses.
