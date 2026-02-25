@@ -161,6 +161,75 @@ const buttonId = `github-login-${Math.random().toString(36).substring(2, 9)}`
 <script>
   import { createClient } from '@supabase/supabase-js'
 
+  // UA hint for known in-app browsers that swallow OAuth redirects (SMI-2757)
+  function isInAppBrowser(): boolean {
+    return /LinkedIn|FBAN|FBAV|Instagram|Twitter\/|twttr/i.test(navigator.userAgent)
+  }
+
+  // Inject a sticky bottom banner with a copyable OAuth URL.
+  // Inline styles are intentional — the element is created dynamically at runtime.
+  function showInAppBrowserBanner(url: string): void {
+    document.getElementById('ib-banner')?.remove()
+
+    const banner = document.createElement('div')
+    banner.id = 'ib-banner'
+    banner.setAttribute(
+      'style',
+      'position:fixed;bottom:0;left:0;right:0;z-index:9999;' +
+        'background:#1a1a1f;border-top:1px solid #2a2a2f;' +
+        'padding:1rem 1.25rem;display:flex;flex-direction:column;gap:0.625rem;' +
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif'
+    )
+
+    const safeUrl = url.replace(/"/g, '&quot;')
+    banner.innerHTML =
+      '<p style="margin:0;color:#fafafa;font-size:0.875rem;line-height:1.4">' +
+      '<strong>In-app browsers may block GitHub sign-in.</strong> ' +
+      'Copy the link and open it in Safari or Chrome.</p>' +
+      '<div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">' +
+      '<input id="ib-url" value="' +
+      safeUrl +
+      '" readonly ' +
+      'style="flex:1;min-width:0;background:#0d0d0f;border:1px solid #2a2a2f;' +
+      'border-radius:0.375rem;padding:0.5rem 0.75rem;color:#9ca3af;' +
+      'font-size:0.75rem;font-family:monospace" />' +
+      '<button id="ib-copy" style="flex-shrink:0;background:#e07a5f;color:#fff;border:none;' +
+      'border-radius:0.375rem;padding:0.5rem 1rem;font-size:0.875rem;font-weight:600;cursor:pointer">' +
+      'Copy link</button>' +
+      '<button id="ib-dismiss" style="flex-shrink:0;background:transparent;color:#9ca3af;' +
+      'border:1px solid #2a2a2f;border-radius:0.375rem;padding:0.5rem 0.75rem;' +
+      'font-size:0.875rem;cursor:pointer">Dismiss</button>' +
+      '</div>'
+
+    document.body.appendChild(banner)
+
+    document.getElementById('ib-copy')?.addEventListener('click', async () => {
+      const copyBtn = document.getElementById('ib-copy') as HTMLButtonElement
+      try {
+        await navigator.clipboard.writeText(url)
+        copyBtn.textContent = 'Copied!'
+        setTimeout(() => {
+          copyBtn.textContent = 'Copy link'
+        }, 2000)
+      } catch {
+        // Fallback: select input text for manual copy
+        ;(document.getElementById('ib-url') as HTMLInputElement | null)?.select()
+      }
+    })
+
+    document.getElementById('ib-dismiss')?.addEventListener('click', () => {
+      banner.remove()
+    })
+  }
+
+  function resetButton(btn: HTMLButtonElement): void {
+    const btnText = btn.querySelector('.btn-text') as HTMLSpanElement | null
+    const btnLoading = btn.querySelector('.btn-loading') as HTMLSpanElement | null
+    if (btnText) btnText.style.display = 'inline'
+    if (btnLoading) btnLoading.style.display = 'none'
+    btn.disabled = false
+  }
+
   // Initialize all GitHub login buttons on the page
   document.querySelectorAll('.github-login-btn').forEach((button) => {
     button.addEventListener('click', async (e) => {
@@ -172,8 +241,7 @@ const buttonId = `github-login-${Math.random().toString(36).substring(2, 9)}`
         window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } }
       ).__SUPABASE_CONFIG__
       if (!config?.url || !config?.anonKey) {
-        console.error('Supabase config not found')
-        alert('Authentication service not configured')
+        console.error('Supabase config not found — check __SUPABASE_CONFIG__ injection')
         return
       }
 
@@ -187,28 +255,78 @@ const buttonId = `github-login-${Math.random().toString(36).substring(2, 9)}`
       try {
         const supabase = createClient(config.url, config.anonKey)
 
-        // Initiate GitHub OAuth flow
-        const { error } = await supabase.auth.signInWithOAuth({
+        // Fetch OAuth URL without immediately redirecting so we can inspect it
+        // and use it in the fallback banner if the redirect is swallowed (SMI-2757)
+        const { data, error } = await supabase.auth.signInWithOAuth({
           provider: 'github',
           options: {
             redirectTo: `${window.location.origin}/auth/callback?redirect=${encodeURIComponent(redirectTo)}`,
             scopes: 'read:user user:email',
+            skipBrowserRedirect: true,
           },
         })
 
-        if (error) {
-          throw error
+        if (error) throw error
+        if (!data?.url) throw new Error('No OAuth URL returned')
+
+        // In-app browser detected: show copy banner immediately rather than
+        // attempting a redirect that will be silently swallowed
+        if (isInAppBrowser()) {
+          resetButton(btn)
+          showInAppBrowserBanner(data.url)
+          return
         }
 
-        // OAuth will redirect, so we don't need to do anything else
-      } catch (error) {
-        console.error('GitHub login error:', error)
-        alert(error instanceof Error ? error.message : 'Failed to initiate GitHub login')
+        // Normal browser: perform redirect manually and arm a swallowed-redirect
+        // guard — if the page is still visible after 3 s, the redirect failed
+        window.location.href = data.url
 
-        // Reset button state
-        btnText.style.display = 'inline'
-        btnLoading.style.display = 'none'
-        btn.disabled = false
+        const oauthUrl = data.url
+        const swallowGuard = setTimeout(() => {
+          if (!document.hidden) {
+            resetButton(btn)
+            showInAppBrowserBanner(oauthUrl)
+          }
+        }, 3000)
+
+        const cancelGuard = () => clearTimeout(swallowGuard)
+        document.addEventListener(
+          'visibilitychange',
+          () => {
+            if (document.hidden) cancelGuard()
+          },
+          { once: true }
+        )
+        window.addEventListener('pagehide', cancelGuard, { once: true })
+      } catch (err) {
+        console.error('GitHub login error:', err)
+        resetButton(btn)
+        // Show error inline rather than alert() — CCTs may block alert()
+        const msg = err instanceof Error ? err.message : 'Failed to initiate GitHub login'
+        const existing = document.getElementById('ib-banner')
+        if (!existing) {
+          const errBanner = document.createElement('div')
+          errBanner.id = 'ib-banner'
+          errBanner.setAttribute(
+            'style',
+            'position:fixed;bottom:0;left:0;right:0;z-index:9999;' +
+              'background:#1a1a1f;border-top:1px solid #2a2a2f;' +
+              'padding:1rem 1.25rem;display:flex;justify-content:space-between;align-items:center;gap:1rem;' +
+              'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif'
+          )
+          errBanner.innerHTML =
+            '<p style="margin:0;color:#fafafa;font-size:0.875rem">' +
+            '<strong>Sign-in failed:</strong> ' +
+            msg.replace(/</g, '&lt;') +
+            '</p>' +
+            '<button id="ib-dismiss" style="flex-shrink:0;background:transparent;color:#9ca3af;' +
+            'border:1px solid #2a2a2f;border-radius:0.375rem;padding:0.5rem 0.75rem;' +
+            'font-size:0.875rem;cursor:pointer">Dismiss</button>'
+          document.body.appendChild(errBanner)
+          document.getElementById('ib-dismiss')?.addEventListener('click', () => {
+            errBanner.remove()
+          })
+        }
       }
     })
   })
