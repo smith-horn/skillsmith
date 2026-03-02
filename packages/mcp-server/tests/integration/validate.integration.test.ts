@@ -133,10 +133,9 @@ version: 1.0.0
     })
 
     it('should enforce strict mode', async () => {
-      // Create skill with warnings
+      // Fixture has no description: non-strict → warning; strict → error
       const warningContent = `---
 name: warning-skill
-description: Short
 version: 1.0.0
 ---
 
