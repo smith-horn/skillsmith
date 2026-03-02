@@ -331,12 +331,76 @@ tags:
       ).toBe(true)
     })
 
-    it('recommends version in strict mode', () => {
+    // SMI-2902: version is now required, always errors when absent
+    it('requires version field (non-strict)', () => {
+      const metadata = { name: 'test', description: 'Test' }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'version' && e.severity === 'error')).toBe(true)
+    })
+
+    it('requires version field (strict)', () => {
       const metadata = { name: 'test', description: 'Test' }
 
       const errors = validateMetadata(metadata, true)
 
-      expect(errors.some((e) => e.field === 'version' && e.severity === 'warning')).toBe(true)
+      expect(errors.some((e) => e.field === 'version' && e.severity === 'error')).toBe(true)
+    })
+
+    it('errors on invalid semver version with v-prefix', () => {
+      const metadata = { name: 'test', description: 'Test', version: 'v1.0.0' }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'version' && e.severity === 'error')).toBe(true)
+    })
+
+    it('errors on non-semver version string', () => {
+      const metadata = { name: 'test', description: 'Test', version: 'latest' }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'version' && e.severity === 'error')).toBe(true)
+    })
+
+    it('errors on partial semver missing patch', () => {
+      const metadata = { name: 'test', description: 'Test', version: '1.0' }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'version' && e.severity === 'error')).toBe(true)
+    })
+
+    it('errors on semver with leading zeros (01.0.0)', () => {
+      const metadata = { name: 'test', description: 'Test', version: '01.0.0' }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'version' && e.severity === 'error')).toBe(true)
+    })
+
+    it('errors on numeric YAML integer version', () => {
+      // YAML `version: 1` is parsed as a number by parseYamlFrontmatter — type check catches it
+      const metadata = { name: 'test', description: 'Test', version: 1 }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'version' && e.severity === 'error')).toBe(true)
+    })
+
+    it('accepts valid semver version', () => {
+      const metadata = {
+        name: 'test',
+        description: 'Test',
+        version: '2.3.1',
+        repository: 'https://github.com/test/test',
+        compatibility: ['claude-code'],
+      }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'version')).toBe(false)
     })
 
     it('recommends tags in strict mode', () => {
@@ -356,7 +420,7 @@ tags:
       expect(errors.some((e) => e.field === 'repository' && e.severity === 'warning')).toBe(true)
     })
 
-    it('does not warn on missing repository for non-versioned skill', () => {
+    it('does not warn on missing repository when version field is absent', () => {
       const metadata = { name: 'test', description: 'Test' }
 
       const errors = validateMetadata(metadata, false)
@@ -386,7 +450,7 @@ tags:
       expect(errors.some((e) => e.field === 'compatibility' && e.severity === 'warning')).toBe(true)
     })
 
-    it('does not warn on missing compatibility for non-versioned skill', () => {
+    it('does not warn on missing compatibility when version field is absent', () => {
       const metadata = { name: 'test', description: 'Test' }
 
       const errors = validateMetadata(metadata, false)

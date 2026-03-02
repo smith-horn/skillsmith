@@ -108,6 +108,7 @@ No frontmatter fields at all.
       const skillContent = `---
 name: dir-skill
 description: A skill in a directory
+version: 1.0.0
 ---
 
 # Directory Skill
@@ -132,10 +133,10 @@ description: A skill in a directory
     })
 
     it('should enforce strict mode', async () => {
-      // Create skill with warnings
+      // Fixture has no description: non-strict → warning; strict → error
       const warningContent = `---
 name: warning-skill
-description: Short
+version: 1.0.0
 ---
 
 # Warning Skill
@@ -206,6 +207,7 @@ url: file:///etc/passwd
       const validContent = `---
 name: format-test
 description: Testing format output
+version: 1.0.0
 ---
 
 # Format Test
