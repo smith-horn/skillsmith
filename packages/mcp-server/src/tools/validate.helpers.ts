@@ -179,26 +179,31 @@ export function validateMetadata(
     }
   }
 
-  // Version validation
-  if (metadata.version !== undefined) {
-    if (typeof metadata.version !== 'string') {
-      errors.push({
-        field: 'version',
-        message: 'Field "version" must be a string',
-        severity: 'error',
-      })
-    } else if (metadata.version.length > FIELD_LIMITS.version) {
-      errors.push({
-        field: 'version',
-        message: `Field "version" exceeds maximum length of ${FIELD_LIMITS.version} characters`,
-        severity: 'error',
-      })
-    }
-  } else if (strict) {
+  // Version validation (SMI-2902: required field, must be semver)
+  if (metadata.version === undefined) {
     errors.push({
       field: 'version',
-      message: 'Field "version" is recommended',
-      severity: 'warning',
+      message:
+        'Required field "version" is missing. Add version: "1.0.0" to your SKILL.md frontmatter.',
+      severity: 'error',
+    })
+  } else if (typeof metadata.version !== 'string') {
+    errors.push({
+      field: 'version',
+      message: 'Field "version" must be a string',
+      severity: 'error',
+    })
+  } else if (!/^\d+\.\d+\.\d+$/.test(metadata.version)) {
+    errors.push({
+      field: 'version',
+      message: `Field "version" must use semver format (e.g. "1.0.0"). Got: "${metadata.version}". Add version: "1.0.0" to your SKILL.md frontmatter.`,
+      severity: 'error',
+    })
+  } else if (metadata.version.length > FIELD_LIMITS.version) {
+    errors.push({
+      field: 'version',
+      message: `Field "version" exceeds maximum length of ${FIELD_LIMITS.version} characters`,
+      severity: 'error',
     })
   }
 
