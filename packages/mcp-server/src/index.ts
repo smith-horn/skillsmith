@@ -31,6 +31,7 @@ import { publishToolSchema } from './tools/publish.js'
 import { skillUpdatesToolSchema } from './tools/skill-updates.js'
 import { skillDiffToolSchema } from './tools/skill-diff.js'
 import { skillAuditToolSchema } from './tools/skill-audit.js'
+import { skillPackAuditToolSchema } from './tools/skill-pack-audit.js'
 import { dispatchToolCall } from './tool-dispatch.js'
 import {
   isFirstRun,
@@ -75,6 +76,7 @@ const toolDefinitions = [
   skillUpdatesToolSchema,
   skillDiffToolSchema,
   skillAuditToolSchema,
+  skillPackAuditToolSchema,
 ]
 
 // Create server
