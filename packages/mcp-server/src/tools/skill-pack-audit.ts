@@ -211,8 +211,9 @@ export async function executeSkillPackAudit(
 
     // Look up the most recently recorded registry version for this skill name.
     // skill_id format is "author/skill-name"; we match by name suffix.
-    // Escape LIKE wildcards in name to prevent injection (e.g. name: "foo%" must not match "foobar").
-    const escapedName = name.replace(/%/g, '\\%').replace(/_/g, '\\_')
+    // Escape LIKE special characters in name to prevent injection.
+    // Backslash must be escaped first (before adding backslash-prefixed escapes for % and _).
+    const escapedName = name.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
     const row = context.db
       .prepare(
         `SELECT skill_id, semver

@@ -192,6 +192,22 @@ describe('skill_pack_audit', () => {
       // "linear%" is not a real skill_id suffix — both seeded IDs should be non-matches
       expect(result.skills[0].status).toBe('no_registry_data')
     })
+
+    it('does not match unrelated skills when name contains a backslash', async () => {
+      // Without escaping backslash first, name "lin\ear" corrupts the ESCAPE pattern
+      seedVersion(db, 'smith-horn/linear', '1.0.0')
+
+      const skillDir = join(skillsDir, 'backslash-skill')
+      await fs.mkdir(skillDir)
+      await fs.writeFile(
+        join(skillDir, 'SKILL.md'),
+        '---\nname: "lin\\\\ear"\ndescription: Test\nversion: 1.0.0\n---\n'
+      )
+
+      const result = await executeSkillPackAudit({ pack_path: testDir }, toolContext)
+
+      expect(result.skills[0].status).toBe('no_registry_data')
+    })
   })
 
   // ============================================================================
