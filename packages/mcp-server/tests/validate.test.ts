@@ -361,6 +361,7 @@ description: No name field
     it('should show warning count in formatted output', async () => {
       const skillContent = `---
 name: warning-skill
+version: 1.0.0
 ---
 `
       const filePath = join(testDir, 'SKILL.md')
@@ -377,6 +378,7 @@ name: warning-skill
       const skillContent = `---
 name: timing-skill
 description: Test timing
+version: 1.0.0
 ---
 `
       const filePath = join(testDir, 'SKILL.md')

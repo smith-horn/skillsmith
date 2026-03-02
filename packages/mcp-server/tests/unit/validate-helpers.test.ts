@@ -372,6 +372,23 @@ tags:
       expect(errors.some((e) => e.field === 'version' && e.severity === 'error')).toBe(true)
     })
 
+    it('errors on semver with leading zeros (01.0.0)', () => {
+      const metadata = { name: 'test', description: 'Test', version: '01.0.0' }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'version' && e.severity === 'error')).toBe(true)
+    })
+
+    it('errors on numeric YAML integer version', () => {
+      // YAML `version: 1` is parsed as a number by parseYamlFrontmatter — type check catches it
+      const metadata = { name: 'test', description: 'Test', version: 1 }
+
+      const errors = validateMetadata(metadata, false)
+
+      expect(errors.some((e) => e.field === 'version' && e.severity === 'error')).toBe(true)
+    })
+
     it('accepts valid semver version', () => {
       const metadata = {
         name: 'test',
@@ -403,7 +420,7 @@ tags:
       expect(errors.some((e) => e.field === 'repository' && e.severity === 'warning')).toBe(true)
     })
 
-    it('does not warn on missing repository for non-versioned skill', () => {
+    it('does not warn on missing repository when version field is absent', () => {
       const metadata = { name: 'test', description: 'Test' }
 
       const errors = validateMetadata(metadata, false)
@@ -433,7 +450,7 @@ tags:
       expect(errors.some((e) => e.field === 'compatibility' && e.severity === 'warning')).toBe(true)
     })
 
-    it('does not warn on missing compatibility for non-versioned skill', () => {
+    it('does not warn on missing compatibility when version field is absent', () => {
       const metadata = { name: 'test', description: 'Test' }
 
       const errors = validateMetadata(metadata, false)

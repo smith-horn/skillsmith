@@ -193,7 +193,7 @@ export function validateMetadata(
       message: 'Field "version" must be a string',
       severity: 'error',
     })
-  } else if (!/^\d+\.\d+\.\d+$/.test(metadata.version)) {
+  } else if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(metadata.version)) {
     errors.push({
       field: 'version',
       message: `Field "version" must use semver format (e.g. "1.0.0"). Got: "${metadata.version}". Add version: "1.0.0" to your SKILL.md frontmatter.`,
