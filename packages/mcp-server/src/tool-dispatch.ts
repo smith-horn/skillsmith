@@ -24,6 +24,7 @@ import { publishInputSchema, executePublish } from './tools/publish.js'
 import { skillUpdatesInputSchema, executeSkillUpdates } from './tools/skill-updates.js'
 import { skillDiffInputSchema, executeSkillDiff } from './tools/skill-diff.js'
 import { skillAuditInputSchema, executeSkillAudit } from './tools/skill-audit.js'
+import { skillPackAuditInputSchema, executeSkillPackAudit } from './tools/skill-pack-audit.js'
 import { createLicenseErrorResponse } from './middleware/license.js'
 import type { LicenseMiddleware } from './middleware/license.js'
 import type { QuotaMiddleware } from './middleware/quota.js'
@@ -145,6 +146,17 @@ export async function dispatchToolCall(
       if (!quotaResult.allowed)
         return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
       return ok(await executeSkillAudit(input, toolContext))
+    }
+
+    case 'skill_pack_audit': {
+      const input = skillPackAuditInputSchema.parse(args)
+      const licenseResult = await licenseMiddleware.checkTool('skill_pack_audit')
+      if (!licenseResult.valid) return errResponse(createLicenseErrorResponse(licenseResult))
+      const licenseInfo = await licenseMiddleware.getLicenseInfo()
+      const quotaResult = await quotaMiddleware.checkAndTrack('skill_pack_audit', licenseInfo)
+      if (!quotaResult.allowed)
+        return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
+      return ok(await executeSkillPackAudit(input, toolContext))
     }
 
     default:
