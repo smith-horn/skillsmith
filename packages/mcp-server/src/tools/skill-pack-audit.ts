@@ -20,7 +20,7 @@
 
 import { z } from 'zod'
 import { promises as fs } from 'fs'
-import { join, resolve } from 'path'
+import { join, resolve, sep } from 'path'
 import { SkillsmithError, ErrorCodes } from '@skillsmith/core'
 import { parseYamlFrontmatter, hasPathTraversal } from './validate.helpers.js'
 import type { ToolContext } from '../context.js'
@@ -169,14 +169,18 @@ export async function executeSkillPackAudit(
   let skillDirNames: string[]
   try {
     const entries = await fs.readdir(skillsDir, { withFileTypes: true })
-    skillDirNames = entries
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name)
-      .sort()
+    skillDirNames = entries.filter((e) => e.isDirectory()).map((e) => e.name)
   } catch {
     throw new SkillsmithError(
       ErrorCodes.SKILL_NOT_FOUND,
       `No skills/ directory found at ${skillsDir}`
+    )
+  }
+
+  if (skillDirNames.length > 500) {
+    throw new SkillsmithError(
+      ErrorCodes.VALIDATION_INVALID_TYPE,
+      `Pack contains ${skillDirNames.length} skill directories; maximum is 500`
     )
   }
 
@@ -185,11 +189,18 @@ export async function executeSkillPackAudit(
   for (const dirName of skillDirNames) {
     const skillMdPath = join(skillsDir, dirName, 'SKILL.md')
 
+    let resolvedMdPath: string
+    try {
+      resolvedMdPath = await fs.realpath(skillMdPath)
+    } catch {
+      continue
+    }
+    if (!resolvedMdPath.startsWith(packPath + sep)) continue
+
     let content: string
     try {
-      content = await fs.readFile(skillMdPath, 'utf-8')
+      content = await fs.readFile(resolvedMdPath, 'utf-8')
     } catch {
-      // No SKILL.md in this subdirectory — skip silently
       continue
     }
 
@@ -200,15 +211,17 @@ export async function executeSkillPackAudit(
 
     // Look up the most recently recorded registry version for this skill name.
     // skill_id format is "author/skill-name"; we match by name suffix.
+    // Escape LIKE wildcards in name to prevent injection (e.g. name: "foo%" must not match "foobar").
+    const escapedName = name.replace(/%/g, '\\%').replace(/_/g, '\\_')
     const row = context.db
       .prepare(
         `SELECT skill_id, semver
            FROM skill_versions
-          WHERE skill_id LIKE '%/' || ?
+          WHERE skill_id LIKE '%/' || ? ESCAPE '\\'
           ORDER BY recorded_at DESC
           LIMIT 1`
       )
-      .get(name) as { skill_id: string; semver: string | null } | undefined
+      .get(escapedName) as { skill_id: string; semver: string | null } | undefined
 
     let status: PackSkillStatus
     let registryVersion: string | null = null
@@ -229,6 +242,8 @@ export async function executeSkillPackAudit(
 
     skills.push({ name, bundledVersion, registryVersion, skillId, status })
   }
+
+  skills.sort((a, b) => a.name.localeCompare(b.name))
 
   const driftCount = skills.filter((s) => s.status === 'outdated' || s.status === 'ahead').length
   const noRegistryDataCount = skills.filter((s) => s.status === 'no_registry_data').length

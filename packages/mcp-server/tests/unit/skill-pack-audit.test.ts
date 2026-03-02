@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { promises as fs } from 'fs'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { tmpdir } from 'os'
 import {
   executeSkillPackAudit,
@@ -25,7 +25,7 @@ import type { ToolContext } from '../../src/context.js'
 function seedVersion(
   db: ReturnType<typeof createTestDatabase>,
   skillId: string,
-  semver: string,
+  semver: string | null,
   recordedAt = Math.floor(Date.now() / 1000)
 ): void {
   // Include semver+recordedAt in hash to keep each row unique across calls
@@ -166,12 +166,30 @@ describe('skill_pack_audit', () => {
     })
 
     it('marks skill as no_registry_data when registry row has null semver', async () => {
-      seedVersion(db, 'smith-horn/linear', null as unknown as string)
+      seedVersion(db, 'smith-horn/linear', null)
       const skillDir = join(skillsDir, 'linear')
       await fs.mkdir(skillDir)
       await writeSkillMd(skillDir, 'linear', '1.2.0')
 
       const result = await executeSkillPackAudit({ pack_path: testDir }, toolContext)
+      expect(result.skills[0].status).toBe('no_registry_data')
+    })
+
+    it('does not match unrelated skills when name contains LIKE wildcard character', async () => {
+      // Without escaping, name "linear%" would match both "smith-horn/linear" and "smith-horn/linearfoo"
+      seedVersion(db, 'smith-horn/linear', '1.0.0')
+      seedVersion(db, 'smith-horn/linearfoo', '2.0.0')
+
+      const skillDir = join(skillsDir, 'linear-wildcard')
+      await fs.mkdir(skillDir)
+      await fs.writeFile(
+        join(skillDir, 'SKILL.md'),
+        '---\nname: linear%\ndescription: Test\nversion: 1.0.0\n---\n'
+      )
+
+      const result = await executeSkillPackAudit({ pack_path: testDir }, toolContext)
+
+      // "linear%" is not a real skill_id suffix — both seeded IDs should be non-matches
       expect(result.skills[0].status).toBe('no_registry_data')
     })
   })
@@ -279,6 +297,19 @@ describe('skill_pack_audit', () => {
       })
     })
 
+    it('uses directory name as skill name when SKILL.md has no name field', async () => {
+      const skillDir = join(skillsDir, 'my-tool')
+      await fs.mkdir(skillDir)
+      await fs.writeFile(
+        join(skillDir, 'SKILL.md'),
+        '---\ndescription: A tool with no name field\n---\n'
+      )
+
+      const result = await executeSkillPackAudit({ pack_path: testDir }, toolContext)
+
+      expect(result.skills[0].name).toBe('my-tool')
+    })
+
     it('marks skill as missing_version when version is non-semver', async () => {
       const skillDir = join(skillsDir, 'docker')
       await fs.mkdir(skillDir)
@@ -364,9 +395,28 @@ describe('skill_pack_audit', () => {
     it('returns resolved absolute packPath in response', async () => {
       const result = await executeSkillPackAudit({ pack_path: testDir }, toolContext)
 
-      // resolve() normalises any symlinks; testDir from mkdtemp is already absolute
       expect(result.packPath).toBeTruthy()
-      expect(result.packPath).toContain('pack-audit-test')
+      expect(result.packPath).toBe(resolve(testDir))
+    })
+  })
+
+  // ============================================================================
+  // Directory cap
+  // ============================================================================
+
+  describe('directory cap', () => {
+    it('throws VALIDATION_INVALID_TYPE when pack has more than 500 skill directories', async () => {
+      await Promise.all(
+        Array.from({ length: 501 }, (_, i) =>
+          fs.mkdir(join(skillsDir, `skill-${String(i).padStart(4, '0')}`))
+        )
+      )
+
+      await expect(
+        executeSkillPackAudit({ pack_path: testDir }, toolContext)
+      ).rejects.toMatchObject({
+        code: ErrorCodes.VALIDATION_INVALID_TYPE,
+      })
     })
   })
 
