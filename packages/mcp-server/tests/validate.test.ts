@@ -89,6 +89,7 @@ This is a test skill.
       const skillContent = `---
 name: dir-skill
 description: Skill in directory
+version: 1.0.0
 ---
 `
       await fs.writeFile(join(testDir, 'SKILL.md'), skillContent)
@@ -117,6 +118,7 @@ description: A skill without a name
     it('should warn for missing description in non-strict mode', async () => {
       const skillContent = `---
 name: no-description-skill
+version: 1.0.0
 ---
 `
       const filePath = join(testDir, 'SKILL.md')
