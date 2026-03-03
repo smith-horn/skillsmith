@@ -302,6 +302,38 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
       }
 
       // Handle different auth flows
+      // Helper: fetch GitHub org memberships and store in profile (SMI-2978).
+      // Must be called BEFORE showSuccess() — showSuccess() starts a 2-second redirect timer.
+      // Non-fatal: errors are swallowed so the auth flow always completes.
+      async function fetchAndStoreGitHubOrgs() {
+        try {
+          const {
+            data: { session: currentSession },
+          } = await supabase.auth.getSession()
+          if (
+            currentSession?.provider_token &&
+            currentSession.user.app_metadata?.provider === 'github'
+          ) {
+            const orgsRes = await fetch('https://api.github.com/user/orgs?per_page=100', {
+              headers: {
+                Authorization: `token ${currentSession.provider_token}`,
+                Accept: 'application/vnd.github+json',
+              },
+            })
+            if (orgsRes.ok) {
+              const orgs = (await orgsRes.json()) as Array<{ login: string }>
+              await supabase
+                .from('profiles')
+                .update({ github_orgs: orgs.map((o) => o.login) })
+                .eq('id', currentSession.user.id)
+                .neq('id', '')
+            }
+          }
+        } catch {
+          console.warn('[Callback] Could not fetch GitHub orgs — non-fatal')
+        }
+      }
+
       if (type === 'signup' || type === 'email') {
         // Email verification callback
         if (accessToken && refreshToken) {
@@ -313,6 +345,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
           if (error) {
             showError(error.message)
           } else {
+            await fetchAndStoreGitHubOrgs()
             showSuccess()
           }
         } else {
@@ -321,6 +354,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
           if (error) {
             showError(error.message)
           } else {
+            await fetchAndStoreGitHubOrgs()
             showSuccess()
           }
         }
@@ -328,7 +362,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
         // Password reset callback - redirect to reset password page
         window.location.href = `/auth/reset-password${window.location.hash}`
       } else if (accessToken) {
-        // Generic OAuth callback
+        // Generic OAuth callback (primary GitHub OAuth path)
         const { error } = await supabase.auth.setSession({
           access_token: accessToken,
           refresh_token: refreshToken || '',
@@ -337,6 +371,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
         if (error) {
           showError(error.message)
         } else {
+          await fetchAndStoreGitHubOrgs()
           showSuccess()
         }
       } else {
