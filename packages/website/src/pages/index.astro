@@ -290,6 +290,7 @@ const jsonLd = {
           >
             <a
               href="/signup"
+              data-cta="signup"
               class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
             >
               Get Started Free →
@@ -703,6 +704,7 @@ const jsonLd = {
           <div class="flex flex-col sm:flex-row gap-4 justify-center">
             <a
               href="/signup"
+              data-cta="signup"
               class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
             >
               Create Free Account →
@@ -874,14 +876,26 @@ const jsonLd = {
       })
     </script>
 
-    <!-- GA4: Track A/B variant for all visitors (SMI-2709) -->
+    <!-- GA4: Track A/B variant (SMI-2709) + page_variant dataLayer + signup_intent (SMI-2689) -->
     <script is:inline define:vars={{ abVariant }}>
       document.addEventListener('astro:page-load', function () {
         if (typeof gtag === 'function') {
           gtag('event', 'homepage_ab_variant', { variant: abVariant })
-          // Set user property so copy_config and other events can be segmented by variant in GA4 Explore
           gtag('set', { user_properties: { homepage_ab_variant: abVariant } })
         }
+        window.dataLayer = window.dataLayer || []
+        window.dataLayer.push({ page_variant: abVariant })
+        document.querySelectorAll('a[data-cta="signup"]').forEach(function (el) {
+          el.addEventListener('click', function () {
+            if (typeof gtag === 'function') {
+              gtag('event', 'signup_intent', {
+                event_category: 'conversion',
+                event_label: 'homepage_cta',
+                variant: abVariant,
+              })
+            }
+          })
+        })
       })
     </script>
 

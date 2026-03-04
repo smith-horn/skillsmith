@@ -23,8 +23,10 @@ import {
   isProtectedRoute,
   isAuthRoute,
   getAuthSecurityHeaders,
+  isValidAbVariant,
   parseAbVariantFromCookie,
-  assignAbVariant,
+  parseAbWeights,
+  assignAbVariantWeighted,
   buildAbVariantCookie,
 } from './middleware.utils'
 
@@ -42,14 +44,34 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // A/B variant assignment for homepage (kill switch: HOMEPAGE_AB_ENABLED=false disables)
   const abEnabled = import.meta.env.HOMEPAGE_AB_ENABLED !== 'false'
   const cookieHeader = context.request.headers.get('cookie')
-  const existingVariant = parseAbVariantFromCookie(cookieHeader)
+
+  // Read X-AB-Variant header first (set by Cloudflare Worker edge split — Wave 4).
+  // Fall back to cookie if header is absent or invalid.
+  const headerVariantRaw = context.request.headers.get('X-AB-Variant')
+  const headerVariant =
+    headerVariantRaw && isValidAbVariant(headerVariantRaw) ? headerVariantRaw : null
+  const existingVariant = headerVariant ?? parseAbVariantFromCookie(cookieHeader)
+
   let freshlyAssigned = false
   let abVariant: import('./middleware.utils').AbVariant = existingVariant ?? 'control'
   if (abEnabled && pathname === '/' && !existingVariant) {
-    abVariant = assignAbVariant()
+    const weights = parseAbWeights(import.meta.env.AB_HOME_WEIGHTS)
+    abVariant = assignAbVariantWeighted(weights)
     freshlyAssigned = true
   }
   context.locals.abVariant = abVariant
+
+  // Homepage variant routing (HOMEPAGE_V2_ENABLED guards until Wave 2+3 ship).
+  // When enabled, variant-a → /index-v2, variant-b → /index-v3.
+  const homepageV2Enabled = import.meta.env.HOMEPAGE_V2_ENABLED === 'true'
+  if (abEnabled && homepageV2Enabled && pathname === '/') {
+    if (abVariant === 'variant-a') {
+      return context.rewrite(new Request('/index-v2', context.request))
+    }
+    if (abVariant === 'variant-b') {
+      return context.rewrite(new Request('/index-v3', context.request))
+    }
+  }
 
   // Continue to the next middleware or page
   const response = await next()
@@ -58,6 +80,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (freshlyAssigned) {
     response.headers.append('Set-Cookie', buildAbVariantCookie(abVariant))
   }
+
+  // Forward variant to downstream (Vercel Edge Cache, CDN, etc.)
+  response.headers.set('X-AB-Variant', abVariant)
 
   // Add security headers for auth-related pages
   if (protectedRoute || authRoute) {
