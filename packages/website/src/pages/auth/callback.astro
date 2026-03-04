@@ -388,6 +388,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
             if (error) {
               showError('Invalid or expired verification link. Please request a new one.')
             } else {
+              await fetchAndStoreGitHubOrgs()
               showSuccess()
             }
           } catch (pkceError) {
