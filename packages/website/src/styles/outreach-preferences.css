@@ -1,0 +1,229 @@
+/* SMI-2978: Outreach Preferences page styles */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+body {
+  font-family:
+    'Satoshi',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  line-height: 1.6;
+  color: #fafafa;
+  background: #0d0d0f;
+  min-height: 100vh;
+}
+.container {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+.center-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 50vh;
+  gap: 1rem;
+  color: #9ca3af;
+}
+.center-card {
+  max-width: 440px;
+  margin: 0 auto;
+  text-align: center;
+}
+.spinner {
+  width: 2.5rem;
+  height: 2.5rem;
+  color: #e07a5f;
+  animation: spin 1s linear infinite;
+}
+.spinner-sm {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+.error-text {
+  color: #ef4444;
+  margin-bottom: 1rem;
+}
+.page-header {
+  margin-bottom: 2rem;
+}
+.back-link {
+  color: #9ca3af;
+  text-decoration: none;
+  font-size: 0.875rem;
+  display: inline-block;
+  margin-bottom: 0.75rem;
+}
+.back-link:hover {
+  color: #e07a5f;
+}
+.page-header h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+}
+.subtitle {
+  color: #9ca3af;
+}
+.card {
+  background: #121214;
+  border: 1px solid #2a2a2f;
+  border-radius: 0.75rem;
+  padding: 2rem;
+}
+.card h2 {
+  font-size: 1.2rem;
+  margin-bottom: 0.6rem;
+}
+.card p {
+  color: #9ca3af;
+  margin-bottom: 1.25rem;
+}
+.notice {
+  background: rgba(234, 179, 8, 0.08);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  color: #fbbf24;
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+}
+.toolbar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.filter-input {
+  flex: 1;
+  min-width: 180px;
+  background: #121214;
+  border: 1px solid #2a2a2f;
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  color: #fafafa;
+  font-size: 0.875rem;
+  outline: none;
+}
+.filter-input:focus {
+  border-color: #e07a5f;
+}
+.repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+.repo-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #121214;
+  border: 1px solid #2a2a2f;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  gap: 1rem;
+}
+.repo-row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.repo-row-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-row-score {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+.repo-row-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+.empty-text {
+  color: #6b7280;
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 2rem 0;
+}
+.save-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.625rem 1.25rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-radius: 0.5rem;
+  transition: all 0.2s;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+}
+.btn-sm {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8rem;
+}
+.btn-primary {
+  background: linear-gradient(135deg, #e07a5f, #d4694e);
+  color: white;
+}
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(224, 122, 95, 0.4);
+}
+.btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn-secondary {
+  background: transparent;
+  border: 1px solid #2a2a2f;
+  color: #fafafa;
+}
+.btn-secondary:hover {
+  border-color: #e07a5f;
+  color: #e07a5f;
+}
+.footer {
+  border-top: 1px solid #1a1a1f;
+  padding: 1.25rem 1.5rem;
+  margin-top: 3rem;
+  text-align: center;
+  color: #6b7280;
+  font-size: 0.875rem;
+}
