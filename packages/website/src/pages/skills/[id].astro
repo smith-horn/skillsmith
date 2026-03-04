@@ -1,528 +1,820 @@
 ---
+/**
+ * Skills: Category Landing Pages + Skill Detail Pages
+ *
+ * SMI-3018 / SMI-2706: Single SSR route handles two cases:
+ *   1. Known category slugs → category landing page with live skill grid + JSON-LD
+ *   2. Everything else → individual skill detail page (client-side fetch)
+ *
+ * This avoids a route collision between [category].astro and [id].astro in SSR mode.
+ * Edge cache for category pages: s-maxage=300, stale-while-revalidate=60
+ */
 import BaseLayout from '../../layouts/BaseLayout.astro'
 
-// Enable server-side rendering for dynamic routes
 export const prerender = false
 
-// Get the skill ID from the URL
 const { id } = Astro.params
+
+// ─── Category Landing Page Logic (SMI-3018) ──────────────────────────────────
+
+interface CategoryMeta {
+  slug: string
+  label: string
+  h1: string
+  metaDescription: string
+  description: string
+  jsonLdDescription: string
+}
+
+interface SkillItem {
+  id: string
+  name: string
+  description: string
+  trust_tier: string
+}
+
+const CATEGORIES: CategoryMeta[] = [
+  {
+    slug: 'development',
+    label: 'Development',
+    h1: 'Development Skills for Claude Code',
+    metaDescription:
+      'Browse 14,000+ development skills for Claude Code. Code generation, refactoring, PR reviews, and IDE integrations. Free to try.',
+    description:
+      'Skills for software development workflows — code generation, refactoring, PR reviews, and IDE integrations that make Claude Code a better coding partner.',
+    jsonLdDescription:
+      'Claude Code skills for software development workflows including code generation, refactoring, and PR reviews.',
+  },
+  {
+    slug: 'integrations',
+    label: 'Integrations',
+    h1: 'Integration Skills — MCP Servers & APIs',
+    metaDescription:
+      'Connect Claude Code to your tools. Browse MCP server skills, API integrations, and protocol implementations. Free to try.',
+    description:
+      'MCP servers, API integrations, and protocol implementations that connect Claude Code to your existing tools and services.',
+    jsonLdDescription:
+      'Claude Code skills for MCP servers, API integrations, and protocol implementations.',
+  },
+  {
+    slug: 'testing',
+    label: 'Testing',
+    h1: 'Testing Skills for Claude Code',
+    metaDescription:
+      'Automate your tests with Claude Code. Browse skills for Vitest, Jest, Playwright, and more testing frameworks. Free to try.',
+    description:
+      'Testing frameworks and utilities for unit, integration, and end-to-end test automation across all major testing tools.',
+    jsonLdDescription:
+      'Claude Code skills for automated testing including unit tests, integration tests, and end-to-end test automation.',
+  },
+  {
+    slug: 'devops',
+    label: 'DevOps',
+    h1: 'DevOps Skills for Claude Code',
+    metaDescription:
+      'Automate your DevOps pipelines. Browse skills for Docker, CI/CD, Kubernetes, and infrastructure tools. Free to try.',
+    description:
+      'CI/CD, Docker, Kubernetes, and infrastructure automation skills for DevOps workflows and deployment pipelines.',
+    jsonLdDescription:
+      'Claude Code skills for DevOps including CI/CD automation, Docker, Kubernetes, and infrastructure management.',
+  },
+  {
+    slug: 'documentation',
+    label: 'Documentation',
+    h1: 'Documentation Skills for Claude Code',
+    metaDescription:
+      'Generate docs automatically with Claude Code. Browse skills for changelogs, API docs, and README generation. Free to try.',
+    description:
+      'Documentation generation, changelog automation, and API doc skills that keep your docs current with your code.',
+    jsonLdDescription:
+      'Claude Code skills for documentation generation including changelogs, API docs, and README automation.',
+  },
+  {
+    slug: 'productivity',
+    label: 'Productivity',
+    h1: 'Productivity Skills for Claude Code',
+    metaDescription:
+      'Work smarter with Claude Code. Browse skills for workflow automation, task management, and developer productivity. Free to try.',
+    description:
+      'Workflow automation, task management, and productivity skills for developers who want to move faster on every task.',
+    jsonLdDescription:
+      'Claude Code skills for developer productivity including workflow automation and task management.',
+  },
+  {
+    slug: 'security',
+    label: 'Security',
+    h1: 'Security Skills for Claude Code',
+    metaDescription:
+      'Harden your codebase with Claude Code. Browse skills for security scanning, vulnerability detection, and compliance. Free to try.',
+    description:
+      'Security scanning, vulnerability detection, and compliance skills that help you build secure by default.',
+    jsonLdDescription:
+      'Claude Code skills for security scanning, vulnerability detection, and compliance automation.',
+  },
+]
+
+const categoryMeta = CATEGORIES.find((c) => c.slug === id)
+const isCategory = categoryMeta !== undefined
+
+let categorySkills: SkillItem[] = []
+let categoryFetchFailed = false
+
+if (isCategory && categoryMeta) {
+  try {
+    const apiUrl = `https://api.skillsmith.app/v1/skills?category=${encodeURIComponent(categoryMeta.slug)}&limit=12&sort=score`
+    const res = await fetch(apiUrl, { cache: 'default' })
+    if (res.ok) {
+      const data = (await res.json()) as { skills?: SkillItem[] }
+      categorySkills = data.skills ?? []
+    } else {
+      categoryFetchFailed = true
+    }
+  } catch {
+    categoryFetchFailed = true
+  }
+  Astro.response.headers.set('Cache-Control', 's-maxage=300, stale-while-revalidate=60')
+}
+
+function badgeClasses(tier: string): string {
+  if (tier === 'verified')
+    return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-400 flex-shrink-0'
+  if (tier === 'community')
+    return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/20 text-blue-400 flex-shrink-0'
+  return 'px-1.5 py-0.5 rounded text-[10px] font-medium bg-dark-700 text-dark-400 flex-shrink-0'
+}
+
+// Build JSON-LD for category pages
+const categoryJsonLd =
+  isCategory && categoryMeta
+    ? [
+        {
+          '@context': 'https://schema.org',
+          '@type': 'BreadcrumbList',
+          itemListElement: [
+            { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://www.skillsmith.app' },
+            {
+              '@type': 'ListItem',
+              position: 2,
+              name: 'Skills',
+              item: 'https://www.skillsmith.app/skills',
+            },
+            {
+              '@type': 'ListItem',
+              position: 3,
+              name: categoryMeta.label,
+              item: `https://www.skillsmith.app/skills/${categoryMeta.slug}`,
+            },
+          ],
+        },
+        {
+          '@context': 'https://schema.org',
+          '@type': 'CollectionPage',
+          name: `${categoryMeta.label} Skills — Skillsmith`,
+          description: categoryMeta.metaDescription,
+          url: `https://www.skillsmith.app/skills/${categoryMeta.slug}`,
+          isPartOf: { '@id': 'https://www.skillsmith.app/#website' },
+        },
+        ...(categorySkills.length > 0
+          ? [
+              {
+                '@context': 'https://schema.org',
+                '@type': 'ItemList',
+                name: `Top ${categoryMeta.label} Skills`,
+                description: categoryMeta.jsonLdDescription,
+                url: `https://www.skillsmith.app/skills/${categoryMeta.slug}`,
+                itemListElement: categorySkills.map((s, i) => ({
+                  '@type': 'ListItem',
+                  position: i + 1,
+                  name: s.name,
+                  url: `https://www.skillsmith.app/skills/${encodeURIComponent(s.id)}`,
+                  description: s.description,
+                })),
+              },
+            ]
+          : []),
+      ]
+    : null
 ---
 
-<BaseLayout title="Skill Details" description="View skill details and installation instructions">
-  <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-    <!-- Breadcrumb -->
-    <nav class="mb-8">
-      <ol class="flex items-center space-x-2 text-sm">
-        <li><a href="/" class="text-dark-500 hover:text-primary-400 transition-colors">Home</a></li>
-        <li class="text-dark-600">/</li>
-        <li>
-          <a href="/skills" class="text-dark-500 hover:text-primary-400 transition-colors">Skills</a
+{
+  isCategory && categoryMeta && (
+    <BaseLayout
+      title={`${categoryMeta.label} Skills — Skillsmith`}
+      description={categoryMeta.metaDescription}
+    >
+      {categoryJsonLd &&
+        categoryJsonLd.map((ld) => (
+          <script is:inline type="application/ld+json" slot="head" set:html={JSON.stringify(ld)} />
+        ))}
+      <link
+        rel="canonical"
+        href={`https://www.skillsmith.app/skills/${categoryMeta.slug}`}
+        slot="head"
+      />
+
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <nav aria-label="Breadcrumb" class="mb-8">
+          <ol class="flex items-center space-x-2 text-sm">
+            <li>
+              <a href="/" class="text-dark-500 hover:text-primary-400 transition-colors">
+                Home
+              </a>
+            </li>
+            <li class="text-dark-600" aria-hidden="true">
+              /
+            </li>
+            <li>
+              <a href="/skills" class="text-dark-500 hover:text-primary-400 transition-colors">
+                Skills
+              </a>
+            </li>
+            <li class="text-dark-600" aria-hidden="true">
+              /
+            </li>
+            <li class="text-dark-300" aria-current="page">
+              {categoryMeta.label}
+            </li>
+          </ol>
+        </nav>
+
+        <header class="mb-10">
+          <h1 class="text-3xl sm:text-4xl font-bold mb-4">{categoryMeta.h1}</h1>
+          <p class="text-lg text-dark-400 max-w-2xl">{categoryMeta.description}</p>
+        </header>
+
+        <div class="flex flex-col sm:flex-row gap-4 mb-12">
+          <a
+            href={`/skills?category=${categoryMeta.slug}`}
+            class="inline-flex items-center px-6 py-3 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] transition-all text-center focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:outline-none"
           >
-        </li>
-        <li class="text-dark-600">/</li>
-        <li id="breadcrumb-name" class="text-dark-300">Loading...</li>
-      </ol>
-    </nav>
+            Browse {categoryMeta.label} skills &rarr;
+          </a>
+          <a
+            href="/skills"
+            class="inline-flex items-center px-6 py-3 border border-white/10 rounded-xl font-medium text-white hover:border-white/20 transition-colors text-center focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:outline-none"
+          >
+            All categories
+          </a>
+        </div>
 
-    <!-- Loading State -->
-    <div id="loading-state" class="text-center py-20">
-      <div
-        class="inline-block animate-spin rounded-full h-12 w-12 border-2 border-primary-500 border-t-transparent"
-      >
-      </div>
-      <p class="text-dark-400 mt-6">Loading skill details...</p>
-    </div>
-
-    <!-- Error State -->
-    <div id="error-state" class="hidden text-center py-20">
-      <svg
-        class="w-20 h-20 mx-auto text-red-500 mb-6"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="1.5"
-          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-        ></path>
-      </svg>
-      <h2 class="text-2xl font-bold text-dark-200 mb-2">Skill not found</h2>
-      <p id="error-message" class="text-dark-500 mb-6">The requested skill could not be loaded.</p>
-      <a
-        href="/skills"
-        class="inline-flex items-center px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
-      >
-        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
-        </svg>
-        Back to Skills
-      </a>
-    </div>
-
-    <!-- Skill Content -->
-    <div id="skill-content" class="hidden">
-      <!-- Header -->
-      <div class="bg-dark-900 rounded-xl border border-dark-800 p-8 mb-8">
-        <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
-          <div class="flex-1">
-            <div class="flex items-center gap-4 mb-4">
-              <h1 id="skill-name" class="text-3xl md:text-4xl font-bold text-white"></h1>
-              <span id="skill-trust-badge" class="px-3 py-1 text-sm font-medium rounded-full border"
-              ></span>
+        {!categoryFetchFailed && categorySkills.length > 0 && (
+          <div class="mb-12">
+            <h2 class="text-lg font-semibold mb-4">Top {categoryMeta.label} Skills</h2>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {categorySkills.map((s) => (
+                <a
+                  href={`/skills/${encodeURIComponent(s.id)}`}
+                  class="flex flex-col gap-2 p-4 rounded-xl border border-white/[0.06] hover:border-primary-400/40 bg-dark-900/40 hover:bg-dark-900 transition-all"
+                >
+                  <div class="flex items-center gap-2">
+                    <span class="font-semibold text-white text-sm truncate">{s.name}</span>
+                    <span class={badgeClasses(s.trust_tier)}>{s.trust_tier}</span>
+                  </div>
+                  <p class="text-xs text-dark-400 line-clamp-2">{s.description}</p>
+                </a>
+              ))}
             </div>
-            <p id="skill-author" class="text-dark-400 text-lg mb-2"></p>
-            <p id="skill-version" class="text-dark-500"></p>
           </div>
-          <div class="flex flex-col items-end gap-4">
-            <div class="text-right">
-              <p class="text-dark-500 text-sm mb-1">Quality</p>
-              <p id="skill-tier" class="text-2xl font-bold"></p>
-              <p id="skill-stars" class="text-dark-500 text-sm"></p>
+        )}
+
+        <div class="bg-[#18181B] border border-white/[0.06] rounded-xl p-8">
+          <h2 class="text-lg font-semibold mb-3">About {categoryMeta.label} Skills</h2>
+          <p class="text-dark-400">{categoryMeta.description}</p>
+          <p class="text-dark-500 text-sm mt-4">
+            Skillsmith indexes 14,000+ curated skills from GitHub. Use the{' '}
+            <a
+              href={`/skills?category=${categoryMeta.slug}`}
+              class="text-primary-400 hover:text-primary-300 underline underline-offset-2"
+            >
+              {categoryMeta.label.toLowerCase()} skills browser
+            </a>{' '}
+            to search, filter by trust tier, and install with one command.
+          </p>
+        </div>
+      </div>
+    </BaseLayout>
+  )
+}
+
+{
+  !isCategory && (
+    <BaseLayout
+      title="Skill Details"
+      description="View skill details and installation instructions"
+    >
+      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <nav class="mb-8">
+          <ol class="flex items-center space-x-2 text-sm">
+            <li>
+              <a href="/" class="text-dark-500 hover:text-primary-400 transition-colors">
+                Home
+              </a>
+            </li>
+            <li class="text-dark-600">/</li>
+            <li>
+              <a href="/skills" class="text-dark-500 hover:text-primary-400 transition-colors">
+                Skills
+              </a>
+            </li>
+            <li class="text-dark-600">/</li>
+            <li id="breadcrumb-name" class="text-dark-300">
+              Loading...
+            </li>
+          </ol>
+        </nav>
+
+        <div id="loading-state" class="text-center py-20">
+          <div class="inline-block animate-spin rounded-full h-12 w-12 border-2 border-primary-500 border-t-transparent" />
+          <p class="text-dark-400 mt-6">Loading skill details...</p>
+        </div>
+
+        <div id="error-state" class="hidden text-center py-20">
+          <svg
+            class="w-20 h-20 mx-auto text-red-500 mb-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="1.5"
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            />
+          </svg>
+          <h2 class="text-2xl font-bold text-dark-200 mb-2">Skill not found</h2>
+          <p id="error-message" class="text-dark-500 mb-6">
+            The requested skill could not be loaded.
+          </p>
+          <a
+            href="/skills"
+            class="inline-flex items-center px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
+          >
+            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M10 19l-7-7m0 0l7-7m-7 7h18"
+              />
+            </svg>
+            Back to Skills
+          </a>
+        </div>
+
+        <div id="skill-content" class="hidden">
+          <div class="bg-dark-900 rounded-xl border border-dark-800 p-8 mb-8">
+            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
+              <div class="flex-1">
+                <div class="flex items-center gap-4 mb-4">
+                  <h1 id="skill-name" class="text-3xl md:text-4xl font-bold text-white" />
+                  <span
+                    id="skill-trust-badge"
+                    class="px-3 py-1 text-sm font-medium rounded-full border"
+                  />
+                </div>
+                <p id="skill-author" class="text-dark-400 text-lg mb-2" />
+                <p id="skill-version" class="text-dark-500" />
+              </div>
+              <div class="flex flex-col items-end gap-4">
+                <div class="text-right">
+                  <p class="text-dark-500 text-sm mb-1">Quality</p>
+                  <p id="skill-tier" class="text-2xl font-bold" />
+                  <p id="skill-stars" class="text-dark-500 text-sm" />
+                </div>
+              </div>
             </div>
+          </div>
+
+          <div class="bg-dark-900 rounded-xl border border-dark-800 p-8 mb-8">
+            <h2 class="text-xl font-semibold text-white mb-4">Description</h2>
+            <p id="skill-description" class="text-dark-300 leading-relaxed" />
+          </div>
+
+          <div class="bg-dark-900 rounded-xl border border-dark-800 p-8 mb-8">
+            <h2 class="text-xl font-semibold text-white mb-4">Installation</h2>
+            <p class="text-dark-400 mb-4">
+              Install this skill using the Skillsmith CLI or MCP server:
+            </p>
+
+            <div class="space-y-4">
+              <div>
+                <p class="text-dark-500 text-sm mb-2">Using npx (recommended):</p>
+                <div class="relative">
+                  <pre
+                    id="install-command-npx"
+                    class="bg-dark-950 rounded-lg p-4 text-sm font-mono text-primary-400 overflow-x-auto"
+                  />
+                  <button
+                    class="copy-button absolute top-2 right-2 p-2 bg-dark-800 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white transition-colors"
+                    data-target="install-command-npx"
+                  >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <p class="text-dark-500 text-sm mb-2">Using Skillsmith CLI:</p>
+                <div class="relative">
+                  <pre
+                    id="install-command-cli"
+                    class="bg-dark-950 rounded-lg p-4 text-sm font-mono text-primary-400 overflow-x-auto"
+                  />
+                  <button
+                    class="copy-button absolute top-2 right-2 p-2 bg-dark-800 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white transition-colors"
+                    data-target="install-command-cli"
+                  >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <p class="text-dark-500 text-sm mb-2">Or ask your assistant:</p>
+                <div class="relative">
+                  <pre
+                    id="install-command-claude"
+                    class="bg-dark-950 rounded-lg p-4 text-sm font-mono text-green-400 overflow-x-auto"
+                  />
+                  <button
+                    class="copy-button absolute top-2 right-2 p-2 bg-dark-800 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white transition-colors"
+                    data-target="install-command-claude"
+                  >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+            <div class="bg-dark-900 rounded-xl border border-dark-800 p-8">
+              <h2 class="text-xl font-semibold text-white mb-6">Details</h2>
+              <dl class="space-y-4">
+                <div class="flex justify-between">
+                  <dt class="text-dark-500">Category</dt>
+                  <dd id="skill-category" class="text-dark-300" />
+                </div>
+                <div class="flex justify-between">
+                  <dt class="text-dark-500">Trust Tier</dt>
+                  <dd id="skill-trust-tier" class="text-dark-300" />
+                </div>
+                <div class="flex justify-between">
+                  <dt class="text-dark-500">Version</dt>
+                  <dd id="skill-version-detail" class="text-dark-300" />
+                </div>
+                <div id="downloads-row" class="flex justify-between hidden">
+                  <dt class="text-dark-500">Downloads</dt>
+                  <dd id="skill-downloads" class="text-dark-300" />
+                </div>
+                <div id="updated-row" class="flex justify-between hidden">
+                  <dt class="text-dark-500">Last Updated</dt>
+                  <dd id="skill-updated" class="text-dark-300" />
+                </div>
+              </dl>
+            </div>
+
+            <div class="bg-dark-900 rounded-xl border border-dark-800 p-8">
+              <h2 class="text-xl font-semibold text-white mb-6">Tags</h2>
+              <div id="skill-tags" class="flex flex-wrap gap-2" />
+              <p id="no-tags" class="text-dark-500 hidden">
+                No tags available
+              </p>
+            </div>
+          </div>
+
+          <div
+            id="also-installed-section"
+            class="bg-dark-900 rounded-xl border border-dark-800 p-8 mb-8 hidden"
+          >
+            <h2 class="text-xl font-semibold text-white mb-6">Users Also Installed</h2>
+            <div
+              id="also-installed-skills"
+              class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+            />
+          </div>
+
+          <div
+            id="related-section"
+            class="bg-dark-900 rounded-xl border border-dark-800 p-8 hidden"
+          >
+            <h2 class="text-xl font-semibold text-white mb-6">Related Skills</h2>
+            <div id="related-skills" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" />
           </div>
         </div>
       </div>
+    </BaseLayout>
+  )
+}
 
-      <!-- Description -->
-      <div class="bg-dark-900 rounded-xl border border-dark-800 p-8 mb-8">
-        <h2 class="text-xl font-semibold text-white mb-4">Description</h2>
-        <p id="skill-description" class="text-dark-300 leading-relaxed"></p>
-      </div>
+<script
+  is:inline
+  define:vars={{
+    skillId: id,
+    apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1`,
+  }}
+>
+  const API_BASE = apiBase
 
-      <!-- Installation -->
-      <div class="bg-dark-900 rounded-xl border border-dark-800 p-8 mb-8">
-        <h2 class="text-xl font-semibold text-white mb-4">Installation</h2>
-        <p class="text-dark-400 mb-4">Install this skill using the Skillsmith CLI or MCP server:</p>
+  // Use astro:page-load for View Transitions compatibility
+  document.addEventListener('astro:page-load', () => {
+    // Only run on skill detail pages (not category pages)
+    if (!document.getElementById('loading-state')) return
 
-        <div class="space-y-4">
-          <!-- NPX Command -->
-          <div>
-            <p class="text-dark-500 text-sm mb-2">Using npx (recommended):</p>
-            <div class="relative">
-              <pre
-                id="install-command-npx"
-                class="bg-dark-950 rounded-lg p-4 text-sm font-mono text-primary-400 overflow-x-auto">
-              </pre>
-              <button
-                class="copy-button absolute top-2 right-2 p-2 bg-dark-800 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white transition-colors"
-                data-target="install-command-npx"
-              >
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                  ></path>
-                </svg>
-              </button>
-            </div>
-          </div>
+    // Get Supabase config for API authentication
+    const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+    const supabaseAnonKey = config.anonKey
 
-          <!-- CLI Command -->
-          <div>
-            <p class="text-dark-500 text-sm mb-2">Using Skillsmith CLI:</p>
-            <div class="relative">
-              <pre
-                id="install-command-cli"
-                class="bg-dark-950 rounded-lg p-4 text-sm font-mono text-primary-400 overflow-x-auto">
-              </pre>
-              <button
-                class="copy-button absolute top-2 right-2 p-2 bg-dark-800 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white transition-colors"
-                data-target="install-command-cli"
-              >
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                  ></path>
-                </svg>
-              </button>
-            </div>
-          </div>
+    // Trust tier badge colors
+    const trustBadgeClasses = {
+      verified: 'bg-green-500/10 text-green-400 border-green-500/20',
+      community: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+      experimental: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+      unknown: 'bg-dark-500/10 text-dark-400 border-dark-500/20',
+    }
 
-          <!-- Ask Assistant -->
-          <div>
-            <p class="text-dark-500 text-sm mb-2">Or ask your assistant:</p>
-            <div class="relative">
-              <pre
-                id="install-command-claude"
-                class="bg-dark-950 rounded-lg p-4 text-sm font-mono text-green-400 overflow-x-auto">
-              </pre>
-              <button
-                class="copy-button absolute top-2 right-2 p-2 bg-dark-800 hover:bg-dark-700 rounded-lg text-dark-400 hover:text-white transition-colors"
-                data-target="install-command-claude"
-              >
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                  ></path>
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+    // Quality tier thresholds (matches packages/website/src/utils/quality-tiers.ts)
+    const TIER_THRESHOLDS = { ELITE: 10000, HIGH_QUALITY: 500, GROWING: 50 }
 
-      <!-- Details Grid -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-        <!-- Metadata -->
-        <div class="bg-dark-900 rounded-xl border border-dark-800 p-8">
-          <h2 class="text-xl font-semibold text-white mb-6">Details</h2>
-          <dl class="space-y-4">
-            <div class="flex justify-between">
-              <dt class="text-dark-500">Category</dt>
-              <dd id="skill-category" class="text-dark-300"></dd>
-            </div>
-            <div class="flex justify-between">
-              <dt class="text-dark-500">Trust Tier</dt>
-              <dd id="skill-trust-tier" class="text-dark-300"></dd>
-            </div>
-            <div class="flex justify-between">
-              <dt class="text-dark-500">Version</dt>
-              <dd id="skill-version-detail" class="text-dark-300"></dd>
-            </div>
-            <div id="downloads-row" class="flex justify-between hidden">
-              <dt class="text-dark-500">Downloads</dt>
-              <dd id="skill-downloads" class="text-dark-300"></dd>
-            </div>
-            <div id="updated-row" class="flex justify-between hidden">
-              <dt class="text-dark-500">Last Updated</dt>
-              <dd id="skill-updated" class="text-dark-300"></dd>
-            </div>
-          </dl>
-        </div>
+    // Get quality tier info from star count
+    function getQualityTier(stars) {
+      const count = stars ?? 0
+      if (count >= TIER_THRESHOLDS.ELITE) return { color: 'text-blue-400', label: 'Elite' }
+      if (count >= TIER_THRESHOLDS.HIGH_QUALITY)
+        return { color: 'text-green-400', label: 'High Quality' }
+      if (count >= TIER_THRESHOLDS.GROWING) return { color: 'text-yellow-400', label: 'Growing' }
+      return { color: 'text-red-400', label: 'New' }
+    }
 
-        <!-- Tags -->
-        <div class="bg-dark-900 rounded-xl border border-dark-800 p-8">
-          <h2 class="text-xl font-semibold text-white mb-6">Tags</h2>
-          <div id="skill-tags" class="flex flex-wrap gap-2">
-            <!-- Tags will be inserted here -->
-          </div>
-          <p id="no-tags" class="text-dark-500 hidden">No tags available</p>
-        </div>
-      </div>
+    // DOM Elements
+    const loadingState = document.getElementById('loading-state')
+    const errorState = document.getElementById('error-state')
+    const errorMessage = document.getElementById('error-message')
+    const skillContent = document.getElementById('skill-content')
+    const breadcrumbName = document.getElementById('breadcrumb-name')
 
-      <!-- Users Also Installed (SMI-2761) — omit section entirely when no data -->
-      <div
-        id="also-installed-section"
-        class="bg-dark-900 rounded-xl border border-dark-800 p-8 mb-8 hidden"
-      >
-        <h2 class="text-xl font-semibold text-white mb-6">Users Also Installed</h2>
-        <div
-          id="also-installed-skills"
-          class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
-        >
-          <!-- Co-installed skills inserted here -->
-        </div>
-      </div>
+    // Escape HTML to prevent XSS
+    function escapeHtml(str) {
+      if (!str) return ''
+      const div = document.createElement('div')
+      div.textContent = str
+      return div.innerHTML
+    }
 
-      <!-- Related Skills -->
-      <div id="related-section" class="bg-dark-900 rounded-xl border border-dark-800 p-8 hidden">
-        <h2 class="text-xl font-semibold text-white mb-6">Related Skills</h2>
-        <div id="related-skills" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <!-- Related skills will be inserted here -->
-        </div>
-      </div>
-    </div>
-  </div>
+    // Format number with commas
+    function formatNumber(num) {
+      return new Intl.NumberFormat().format(num)
+    }
 
-  <script
-    is:inline
-    define:vars={{
-      skillId: id,
-      apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1`,
-    }}
-  >
-    const API_BASE = apiBase
+    // Format date
+    function formatDate(dateStr) {
+      if (!dateStr) return 'Unknown'
+      const date = new Date(dateStr)
+      return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+    }
 
-    // Use astro:page-load for View Transitions compatibility
-    document.addEventListener('astro:page-load', () => {
-      // Get Supabase config for API authentication
-      const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
-      const supabaseAnonKey = config.anonKey
+    // Show error state
+    function showError(message) {
+      loadingState.classList.add('hidden')
+      skillContent.classList.add('hidden')
+      errorState.classList.remove('hidden')
+      errorMessage.textContent = message
+    }
 
-      // Trust tier badge colors
-      const trustBadgeClasses = {
-        verified: 'bg-green-500/10 text-green-400 border-green-500/20',
-        community: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-        experimental: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
-        unknown: 'bg-dark-500/10 text-dark-400 border-dark-500/20',
+    // Render skill details
+    function renderSkill(skill) {
+      // Update breadcrumb
+      breadcrumbName.textContent = skill.name || skillId
+
+      // Update page title
+      document.title = `${skill.name || skillId} | Skillsmith`
+
+      // Header
+      document.getElementById('skill-name').textContent = skill.name || skillId
+      document.getElementById('skill-author').textContent = `by ${skill.author || 'Unknown author'}`
+      document.getElementById('skill-version').textContent = skill.version
+        ? `Version ${skill.version}`
+        : ''
+
+      // Trust badge
+      const trustBadge = document.getElementById('skill-trust-badge')
+      const trustTier = skill.trust_tier || 'unknown'
+      trustBadge.textContent = trustTier
+      trustBadge.className = `px-3 py-1 text-sm font-medium rounded-full border ${trustBadgeClasses[trustTier] || trustBadgeClasses.unknown}`
+
+      // Quality tier based on stars
+      const stars = skill.stars ?? 0
+      const tier = getQualityTier(stars)
+      const tierEl = document.getElementById('skill-tier')
+      tierEl.textContent = tier.label
+      tierEl.className = `text-2xl font-bold ${tier.color}`
+      document.getElementById('skill-stars').textContent = `${formatNumber(stars)} ★`
+
+      // Description
+      document.getElementById('skill-description').textContent =
+        skill.description || 'No description available.'
+
+      // Installation commands
+      const skillName = skill.name || skillId.split('/').pop()
+      document.getElementById('install-command-npx').textContent =
+        `npx @skillsmith/cli install ${skill.id || skillId}`
+      document.getElementById('install-command-cli').textContent =
+        `skillsmith install ${skill.id || skillId}`
+      document.getElementById('install-command-claude').textContent =
+        `"Install the ${skillName} skill"`
+
+      // Details
+      document.getElementById('skill-category').textContent =
+        skill.categories?.[0] || 'Uncategorized'
+      document.getElementById('skill-trust-tier').textContent =
+        trustTier.charAt(0).toUpperCase() + trustTier.slice(1)
+      document.getElementById('skill-version-detail').textContent = skill.version || 'Unknown'
+
+      // Optional fields
+      if (skill.downloads) {
+        document.getElementById('downloads-row').classList.remove('hidden')
+        document.getElementById('skill-downloads').textContent = formatNumber(skill.downloads)
+      }
+      if (skill.updated_at) {
+        document.getElementById('updated-row').classList.remove('hidden')
+        document.getElementById('skill-updated').textContent = formatDate(skill.updated_at)
       }
 
-      // Quality tier thresholds (matches packages/website/src/utils/quality-tiers.ts)
-      const TIER_THRESHOLDS = { ELITE: 10000, HIGH_QUALITY: 500, GROWING: 50 }
+      // Tags
+      const tagsContainer = document.getElementById('skill-tags')
+      const noTagsEl = document.getElementById('no-tags')
+      const tags = skill.tags || []
 
-      // Get quality tier info from star count
-      function getQualityTier(stars) {
-        const count = stars ?? 0
-        if (count >= TIER_THRESHOLDS.ELITE) return { color: 'text-blue-400', label: 'Elite' }
-        if (count >= TIER_THRESHOLDS.HIGH_QUALITY)
-          return { color: 'text-green-400', label: 'High Quality' }
-        if (count >= TIER_THRESHOLDS.GROWING) return { color: 'text-yellow-400', label: 'Growing' }
-        return { color: 'text-red-400', label: 'New' }
-      }
-
-      // DOM Elements
-      const loadingState = document.getElementById('loading-state')
-      const errorState = document.getElementById('error-state')
-      const errorMessage = document.getElementById('error-message')
-      const skillContent = document.getElementById('skill-content')
-      const breadcrumbName = document.getElementById('breadcrumb-name')
-
-      // Escape HTML to prevent XSS
-      function escapeHtml(str) {
-        if (!str) return ''
-        const div = document.createElement('div')
-        div.textContent = str
-        return div.innerHTML
-      }
-
-      // Format number with commas
-      function formatNumber(num) {
-        return new Intl.NumberFormat().format(num)
-      }
-
-      // Format date
-      function formatDate(dateStr) {
-        if (!dateStr) return 'Unknown'
-        const date = new Date(dateStr)
-        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
-      }
-
-      // Show error state
-      function showError(message) {
-        loadingState.classList.add('hidden')
-        skillContent.classList.add('hidden')
-        errorState.classList.remove('hidden')
-        errorMessage.textContent = message
-      }
-
-      // Render skill details
-      function renderSkill(skill) {
-        // Update breadcrumb
-        breadcrumbName.textContent = skill.name || skillId
-
-        // Update page title
-        document.title = `${skill.name || skillId} | Skillsmith`
-
-        // Header
-        document.getElementById('skill-name').textContent = skill.name || skillId
-        document.getElementById('skill-author').textContent =
-          `by ${skill.author || 'Unknown author'}`
-        document.getElementById('skill-version').textContent = skill.version
-          ? `Version ${skill.version}`
-          : ''
-
-        // Trust badge
-        const trustBadge = document.getElementById('skill-trust-badge')
-        const trustTier = skill.trust_tier || 'unknown'
-        trustBadge.textContent = trustTier
-        trustBadge.className = `px-3 py-1 text-sm font-medium rounded-full border ${trustBadgeClasses[trustTier] || trustBadgeClasses.unknown}`
-
-        // Quality tier based on stars
-        const stars = skill.stars ?? 0
-        const tier = getQualityTier(stars)
-        const tierEl = document.getElementById('skill-tier')
-        tierEl.textContent = tier.label
-        tierEl.className = `text-2xl font-bold ${tier.color}`
-        document.getElementById('skill-stars').textContent = `${formatNumber(stars)} ★`
-
-        // Description
-        document.getElementById('skill-description').textContent =
-          skill.description || 'No description available.'
-
-        // Installation commands
-        const skillName = skill.name || skillId.split('/').pop()
-        document.getElementById('install-command-npx').textContent =
-          `npx @skillsmith/cli install ${skill.id || skillId}`
-        document.getElementById('install-command-cli').textContent =
-          `skillsmith install ${skill.id || skillId}`
-        document.getElementById('install-command-claude').textContent =
-          `"Install the ${skillName} skill"`
-
-        // Details
-        document.getElementById('skill-category').textContent =
-          skill.categories?.[0] || 'Uncategorized'
-        document.getElementById('skill-trust-tier').textContent =
-          trustTier.charAt(0).toUpperCase() + trustTier.slice(1)
-        document.getElementById('skill-version-detail').textContent = skill.version || 'Unknown'
-
-        // Optional fields
-        if (skill.downloads) {
-          document.getElementById('downloads-row').classList.remove('hidden')
-          document.getElementById('skill-downloads').textContent = formatNumber(skill.downloads)
-        }
-        if (skill.updated_at) {
-          document.getElementById('updated-row').classList.remove('hidden')
-          document.getElementById('skill-updated').textContent = formatDate(skill.updated_at)
-        }
-
-        // Tags
-        const tagsContainer = document.getElementById('skill-tags')
-        const noTagsEl = document.getElementById('no-tags')
-        const tags = skill.tags || []
-
-        if (tags.length > 0) {
-          tagsContainer.innerHTML = tags
-            .map(
-              (tag) =>
-                `<span class="px-3 py-1 bg-dark-800 border border-dark-700 rounded-full text-dark-300 text-sm">${escapeHtml(tag)}</span>`
-            )
-            .join('')
-          noTagsEl.classList.add('hidden')
-        } else {
-          tagsContainer.innerHTML = ''
-          noTagsEl.classList.remove('hidden')
-        }
-
-        // Show content
-        loadingState.classList.add('hidden')
-        errorState.classList.add('hidden')
-        skillContent.classList.remove('hidden')
-
-        // GA4: Track skill view (SMI-2453)
-        if (typeof window.gtag === 'function') {
-          window.gtag('event', 'skill_view', {
-            skill_id: skillId,
-            skill_name: skill.name || skillId,
-            trust_tier: skill.trust_tier || 'unknown',
-            category: skill.categories?.[0] || 'uncategorized',
-          })
-        }
-
-        // SMI-2761: Load "Users also installed" if present and non-empty
-        if (skill.also_installed && skill.also_installed.length > 0) {
-          loadAlsoInstalled(skill.also_installed)
-        }
-
-        // Load related skills if available
-        if (skill.related_skills && skill.related_skills.length > 0) {
-          loadRelatedSkills(skill.related_skills)
-        }
-      }
-
-      // SMI-2761: Render "Users also installed" section — omit entirely when empty
-      function loadAlsoInstalled(alsoInstalled) {
-        if (!alsoInstalled || alsoInstalled.length === 0) return
-        const section = document.getElementById('also-installed-section')
-        const container = document.getElementById('also-installed-skills')
-        container.innerHTML = alsoInstalled
+      if (tags.length > 0) {
+        tagsContainer.innerHTML = tags
           .map(
-            (s) => `
+            (tag) =>
+              `<span class="px-3 py-1 bg-dark-800 border border-dark-700 rounded-full text-dark-300 text-sm">${escapeHtml(tag)}</span>`
+          )
+          .join('')
+        noTagsEl.classList.add('hidden')
+      } else {
+        tagsContainer.innerHTML = ''
+        noTagsEl.classList.remove('hidden')
+      }
+
+      // Show content
+      loadingState.classList.add('hidden')
+      errorState.classList.add('hidden')
+      skillContent.classList.remove('hidden')
+
+      // GA4: Track skill view (SMI-2453)
+      if (typeof window.gtag === 'function') {
+        window.gtag('event', 'skill_view', {
+          skill_id: skillId,
+          skill_name: skill.name || skillId,
+          trust_tier: skill.trust_tier || 'unknown',
+          category: skill.categories?.[0] || 'uncategorized',
+        })
+      }
+
+      // SMI-2761: Load "Users also installed" if present and non-empty
+      if (skill.also_installed && skill.also_installed.length > 0) {
+        loadAlsoInstalled(skill.also_installed)
+      }
+
+      // Load related skills if available
+      if (skill.related_skills && skill.related_skills.length > 0) {
+        loadRelatedSkills(skill.related_skills)
+      }
+    }
+
+    // SMI-2761: Render "Users also installed" section — omit entirely when empty
+    function loadAlsoInstalled(alsoInstalled) {
+      if (!alsoInstalled || alsoInstalled.length === 0) return
+      const section = document.getElementById('also-installed-section')
+      const container = document.getElementById('also-installed-skills')
+      container.innerHTML = alsoInstalled
+        .map(
+          (s) => `
           <a href="/skills/${encodeURIComponent(s.skillId)}" class="block bg-dark-800 rounded-lg p-4 hover:bg-dark-700 transition-colors">
             <p class="text-white font-medium">${escapeHtml(s.name || s.skillId)}</p>
             ${s.description ? `<p class="text-dark-400 text-sm mt-1">${escapeHtml(s.description)}</p>` : ''}
           </a>`
-          )
-          .join('')
-        section.classList.remove('hidden')
-      }
+        )
+        .join('')
+      section.classList.remove('hidden')
+    }
 
-      // Load related skills
-      async function loadRelatedSkills(relatedIds) {
-        const relatedSection = document.getElementById('related-section')
-        const relatedContainer = document.getElementById('related-skills')
+    // Load related skills
+    async function loadRelatedSkills(relatedIds) {
+      const relatedSection = document.getElementById('related-section')
+      const relatedContainer = document.getElementById('related-skills')
 
-        try {
-          // For now, just show the IDs as links
-          relatedContainer.innerHTML = relatedIds
-            .slice(0, 6)
-            .map(
-              (id) => `
+      try {
+        // For now, just show the IDs as links
+        relatedContainer.innerHTML = relatedIds
+          .slice(0, 6)
+          .map(
+            (id) => `
           <a href="/skills/${encodeURIComponent(id)}" class="block bg-dark-800 rounded-lg p-4 hover:bg-dark-700 transition-colors">
             <p class="text-white font-medium">${escapeHtml(id)}</p>
           </a>
         `
-            )
-            .join('')
-
-          relatedSection.classList.remove('hidden')
-        } catch (error) {
-          // Silent fail for related skills (non-critical feature)
-        }
-      }
-
-      // Fetch skill details
-      async function fetchSkill() {
-        try {
-          // Decode first to normalize (Astro params may already be URL-encoded), then re-encode
-          const decodedSkillId = decodeURIComponent(skillId)
-          const response = await fetch(
-            `${API_BASE}/skills-get/${encodeURIComponent(decodedSkillId)}`,
-            {
-              headers: {
-                Authorization: `Bearer ${supabaseAnonKey}`,
-                'Content-Type': 'application/json',
-              },
-            }
           )
+          .join('')
 
-          if (!response.ok) {
-            if (response.status === 404) {
-              throw new Error('This skill does not exist or has been removed.')
-            }
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-          }
-
-          const result = await response.json()
-          if (!result.data) {
-            throw new Error(result.error || 'Invalid response from server')
-          }
-          renderSkill(result.data)
-        } catch (error) {
-          showError(error.message)
-        }
+        relatedSection.classList.remove('hidden')
+      } catch (error) {
+        // Silent fail for related skills (non-critical feature)
       }
+    }
 
-      // Copy to clipboard
-      document.querySelectorAll('.copy-button').forEach((button) => {
-        button.addEventListener('click', async () => {
-          const targetId = button.getAttribute('data-target')
-          const targetEl = document.getElementById(targetId)
-          const text = targetEl.textContent
+    // Fetch skill details
+    async function fetchSkill() {
+      try {
+        // Decode first to normalize (Astro params may already be URL-encoded), then re-encode
+        const decodedSkillId = decodeURIComponent(skillId)
+        const response = await fetch(
+          `${API_BASE}/skills-get/${encodeURIComponent(decodedSkillId)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${supabaseAnonKey}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        )
 
-          try {
-            await navigator.clipboard.writeText(text)
+        if (!response.ok) {
+          if (response.status === 404) {
+            throw new Error('This skill does not exist or has been removed.')
+          }
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
 
-            // GA4: Track install command copy (SMI-2453)
-            if (typeof window.gtag === 'function') {
-              window.gtag('event', 'skill_install_copy', {
-                skill_id: skillId,
-                command_type: targetId.replace('install-command-', ''),
-              })
-            }
+        const result = await response.json()
+        if (!result.data) {
+          throw new Error(result.error || 'Invalid response from server')
+        }
+        renderSkill(result.data)
+      } catch (error) {
+        showError(error.message)
+      }
+    }
 
-            // Show feedback
-            const originalHTML = button.innerHTML
-            button.innerHTML = `
+    // Copy to clipboard
+    document.querySelectorAll('.copy-button').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const targetId = button.getAttribute('data-target')
+        const targetEl = document.getElementById(targetId)
+        const text = targetEl.textContent
+
+        try {
+          await navigator.clipboard.writeText(text)
+
+          // GA4: Track install command copy (SMI-2453)
+          if (typeof window.gtag === 'function') {
+            window.gtag('event', 'skill_install_copy', {
+              skill_id: skillId,
+              command_type: targetId.replace('install-command-', ''),
+            })
+          }
+
+          // Show feedback
+          const originalHTML = button.innerHTML
+          button.innerHTML = `
             <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
             </svg>
           `
 
-            setTimeout(() => {
-              button.innerHTML = originalHTML
-            }, 2000)
-          } catch (error) {
-            // Silent fail for clipboard
-          }
-        })
+          setTimeout(() => {
+            button.innerHTML = originalHTML
+          }, 2000)
+        } catch (error) {
+          // Silent fail for clipboard
+        }
       })
+    })
 
-      // Initialize
-      fetchSkill()
-    }) // End astro:page-load handler
-  </script>
-</BaseLayout>
+    // Initialize
+    fetchSkill()
+  }) // End astro:page-load handler
+</script>
