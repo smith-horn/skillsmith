@@ -1,0 +1,28 @@
+# Cloudflare Worker — Skillsmith Homepage A/B Traffic Split
+#
+# SMI-3019 / SMI-2695: Stateless edge Worker that assigns the ab_home cookie
+# and forwards X-AB-Variant to Vercel for 80/10/10 homepage A/B split.
+#
+# Deploy:
+#   npx wrangler deploy --env preview   (preview environment)
+#   npx wrangler deploy                 (production)
+#
+# Adjust weights without redeploy:
+#   Cloudflare dashboard → Workers → skillsmith-homepage-ab → Settings → Variables
+
+name = "skillsmith-homepage-ab"
+main = "src/worker.ts"
+compatibility_date = "2026-03-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Split weights: control%, variant-a%, variant-b%. Must sum to 100.
+# Adjust via Cloudflare dashboard without redeploy.
+AB_HOME_WEIGHTS = "80,10,10"
+
+[[routes]]
+pattern = "skillsmith.app/"
+zone_name = "skillsmith.app"
+
+[build]
+command = "npm run build:worker"

@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "test:a11y": "playwright test tests/a11y/",
     "test:visual": "playwright test --config playwright.config.ts",
-    "test:visual:update": "playwright test --config playwright.config.ts --update-snapshots"
+    "test:visual:update": "playwright test --config playwright.config.ts --update-snapshots",
+    "build:worker": "npx wrangler deploy --dry-run --outdir dist-worker"
   },
   "dependencies": {
     "@astrojs/check": "0.9.6",

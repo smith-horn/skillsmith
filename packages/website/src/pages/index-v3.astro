@@ -1,0 +1,400 @@
+---
+/**
+ * Skillsmith Homepage — Variant B: Trending Verified Skills + Category Grid
+ *
+ * SMI-3017: A/B test. Routes here when ab_home=variant-b.
+ * Visible URL: www.skillsmith.app/ (internal rewrite from middleware)
+ * Hypothesis: social proof (trending installs) above category grid lifts engagement.
+ * VARIANT B: Intentional divergence from index.astro — see SMI-3017
+ */
+export const prerender = false
+
+import { ClientRouter } from 'astro:transitions'
+import Nav from '../components/Nav.astro'
+import Footer from '../components/Footer.astro'
+import TrendingSkills from '../components/TrendingSkills.astro'
+import HomepageCategoryGrid from '../components/HomepageCategoryGrid.astro'
+import { getSupabaseConfig } from '../lib/supabase-config'
+import '../styles/global.css'
+
+const supabaseConfig = getSupabaseConfig()
+---
+
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Skillsmith - Agent Skill Discovery & Management</title>
+    <meta
+      name="description"
+      content="Find the right agent skills for your stack. 14,000+ curated from 20,000+ skills on GitHub. Get started for free."
+    />
+    <meta name="robots" content="max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <link rel="canonical" href="https://www.skillsmith.app/" />
+
+    <!-- Fonts: Satoshi + JetBrains Mono -->
+    <link rel="preconnect" href="https://api.fontshare.com" />
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+      fetchpriority="low"
+    />
+
+    <!-- Google Analytics with Consent Mode v2 -->
+    <script is:inline>
+      window.dataLayer = window.dataLayer || []
+      function gtag() {
+        dataLayer.push(arguments)
+      }
+      var consent = localStorage.getItem('skillsmith_cookie_consent')
+      gtag('consent', 'default', {
+        analytics_storage: consent === 'accepted' ? 'granted' : 'denied',
+        ad_storage: 'denied',
+        ad_user_data: 'denied',
+        ad_personalization: 'denied',
+        wait_for_update: 500,
+      })
+      gtag('js', new Date())
+      gtag('config', 'G-GGZQZM1Y1L')
+    </script>
+    <script
+      is:inline
+      async
+      src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"
+      fetchpriority="low"></script>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+
+    <ClientRouter />
+
+    <!-- Supabase config for auth-aware navigation -->
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig
+    </script>
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="Skillsmith - Agent Skill Discovery & Management" />
+    <meta
+      property="og:description"
+      content="Find the right agent skills for your stack. 14,000+ curated from 20,000+ skills on GitHub. Get started for free."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://www.skillsmith.app/" />
+    <meta property="og:image" content="https://www.skillsmith.app/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+
+    <!-- NO TWITTER: Skillsmith has no Twitter/X account. Do not add twitter: meta tags. See standards-astro.md Section 12. -->
+
+    <link rel="alternate" type="application/rss+xml" title="Skillsmith Blog" href="/blog/rss.xml" />
+  </head>
+
+  <body class="bg-dark-950 text-dark-50 font-sans antialiased">
+    <!-- Background atmosphere -->
+    <div class="fixed inset-0 overflow-hidden pointer-events-none">
+      <div
+        class="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] bg-[radial-gradient(circle,rgba(224,122,95,0.08)_0%,transparent_70%)] animate-float will-change-transform"
+      >
+      </div>
+      <div
+        class="absolute bottom-[-10%] right-[-10%] w-[400px] h-[400px] bg-[radial-gradient(circle,rgba(129,178,154,0.05)_0%,transparent_70%)] animate-float will-change-transform"
+        style="animation-direction: reverse; animation-duration: 25s;"
+      >
+      </div>
+    </div>
+
+    <Nav activePath="/" />
+
+    <main id="main-content">
+      <!-- Hero Section — identical to control (index.astro) -->
+      <section class="relative min-h-screen flex items-center justify-center pt-[72px]">
+        <div class="max-w-[800px] mx-auto px-6 py-24 text-center">
+          <h1
+            class="text-5xl sm:text-6xl lg:text-7xl font-black tracking-tight leading-[1.1] mb-6 opacity-0 animate-fade-up"
+            style="animation-delay: 0.05s;"
+          >
+            Save Hours Finding<br />the Right Skills.
+          </h1>
+
+          <p
+            class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up"
+            style="animation-delay: 0.08s;"
+          >
+            <span id="github-total" class="hidden"
+              ><span id="github-total-count">20,000+</span> skills on GitHub &mdash;
+            </span><span id="skill-count">14,000+</span> curated &amp; verified. Finally searchable.<br
+            />
+            Get stack-aware recommendations before anyone else.
+          </p>
+
+          <!-- CTA Buttons -->
+          <div
+            class="flex flex-col sm:flex-row gap-4 justify-center mb-6 opacity-0 animate-fade-up"
+            style="animation-delay: 0.12s;"
+          >
+            <a
+              href="/signup"
+              data-cta="signup"
+              class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+            >
+              Get Started Free →
+            </a>
+            <a
+              href="#mcp-install-block"
+              class="px-8 py-4 border border-white/10 rounded-xl font-medium text-white hover:border-white/20 transition-colors text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+            >
+              Install MCP Server
+            </a>
+          </div>
+
+          <p
+            class="text-sm text-[#8E8E96] opacity-0 animate-fade-up"
+            style="animation-delay: 0.15s;"
+          >
+            <span class="inline-block w-2 h-2 bg-[#81B29A] rounded-full mr-2 animate-pulse"></span>
+            Free tier available — no credit card required
+          </p>
+        </div>
+      </section>
+
+      <!-- Trending Verified Skills (VARIANT B differentiator) -->
+      <TrendingSkills />
+
+      <!-- Category Grid -->
+      <HomepageCategoryGrid abVariant="variant-b" />
+
+      <!-- Value Props Section -->
+      <section class="py-24 border-t border-white/[0.06]">
+        <div class="max-w-[1200px] mx-auto px-6">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+            <div class="text-center">
+              <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+                <svg
+                  class="w-8 h-8 text-[#E07A5F]"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  stroke-width="2"
+                  aria-hidden="true"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                </svg>
+              </div>
+              <h3 class="text-lg font-bold mb-2">Semantic Search</h3>
+              <p class="text-sm text-[#A1A1AA]">
+                Search by intent, not keywords. AI-powered skill discovery.
+              </p>
+            </div>
+            <div class="text-center">
+              <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+                <svg
+                  class="w-8 h-8 text-[#E07A5F]"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  stroke-width="2"
+                  aria-hidden="true"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"
+                  ></path>
+                </svg>
+              </div>
+              <h3 class="text-lg font-bold mb-2">Quality Scores</h3>
+              <p class="text-sm text-[#A1A1AA]">
+                0-100 scores based on docs, tests, maintenance, security.
+              </p>
+            </div>
+            <div class="text-center">
+              <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+                <svg
+                  class="w-8 h-8 text-[#E07A5F]"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  stroke-width="2"
+                  aria-hidden="true"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"
+                  ></path>
+                </svg>
+              </div>
+              <h3 class="text-lg font-bold mb-2">Stack-Aware</h3>
+              <p class="text-sm text-[#A1A1AA]">
+                Recommendations tailored to your project's tech stack.
+              </p>
+            </div>
+            <div class="text-center">
+              <div class="w-12 h-12 mx-auto mb-4 flex items-center justify-center">
+                <svg
+                  class="w-8 h-8 text-[#E07A5F]"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  stroke-width="2"
+                  aria-hidden="true"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                </svg>
+              </div>
+              <h3 class="text-lg font-bold mb-2">One-Click Install</h3>
+              <p class="text-sm text-[#A1A1AA]">Install directly. Uninstall just as fast.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MCP Install Section -->
+      <section id="mcp-install-block" class="py-20 border-t border-white/[0.06]">
+        <div class="max-w-[800px] mx-auto px-6">
+          <div class="text-center mb-10">
+            <h2 class="text-2xl sm:text-3xl font-bold mb-3">Get Started in Seconds</h2>
+            <p class="text-[#A1A1AA]">Copy this snippet to configure your MCP client</p>
+          </div>
+          <div class="relative group mb-8">
+            <pre
+              class="bg-[#0D0D0F] border border-white/10 rounded-xl p-6 overflow-x-auto font-mono text-sm text-[#E5E5E5] leading-relaxed"><code id="mcp-install-code">{`Add this MCP server to my settings.json:
+
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"]
+    }
+  }
+}`}</code></pre>
+            <button
+              type="button"
+              id="copy-mcp-config"
+              class="absolute top-4 right-4 px-5 py-2.5 bg-[#E07A5F] hover:bg-[#D4694E] text-dark-950 text-sm font-bold rounded-lg transition-all duration-200 flex items-center gap-2 shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+              aria-label="Copy to Clipboard"
+            >
+              <svg
+                id="copy-icon"
+                class="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                stroke-width="2"
+                aria-hidden="true"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                ></path>
+              </svg>
+              <svg
+                id="check-icon"
+                class="w-4 h-4 hidden"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                stroke-width="2"
+                aria-hidden="true"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+              </svg>
+              <span id="copy-text">Copy to Clipboard</span>
+            </button>
+          </div>
+          <p class="text-center text-[#A1A1AA] mb-8">
+            After adding this to your settings file and restarting, ask:
+            <span class="block mt-2 text-[#E07A5F] font-medium"
+              >"Find testing skills for my project"</span
+            >
+          </p>
+          <div class="flex flex-col sm:flex-row gap-4 justify-center">
+            <a
+              href="/signup"
+              data-cta="signup"
+              class="px-8 py-4 bg-gradient-to-br from-[#E07A5F] to-[#D4694E] rounded-xl font-bold text-white shadow-cta hover:scale-[1.02] hover:shadow-[0_12px_40px_rgba(224,122,95,0.3)] active:scale-[0.98] transition-all text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+            >
+              Create Free Account →
+            </a>
+            <a
+              href="/pricing"
+              class="px-8 py-4 border border-white/10 rounded-xl font-medium text-white hover:border-white/20 transition-colors text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
+            >
+              View Pricing
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <Footer />
+
+    <!-- GA4: page_variant dataLayer + signup_intent (SMI-3017 / SMI-2689) -->
+    <script is:inline>
+      document.addEventListener('astro:page-load', function () {
+        window.dataLayer = window.dataLayer || []
+        window.dataLayer.push({ page_variant: 'variant-b' })
+        if (typeof gtag === 'function') {
+          gtag('event', 'homepage_ab_variant', { variant: 'variant-b' })
+          gtag('set', { user_properties: { homepage_ab_variant: 'variant-b' } })
+        }
+        document.querySelectorAll('a[data-cta="signup"]').forEach(function (el) {
+          el.addEventListener('click', function () {
+            if (typeof gtag === 'function') {
+              gtag('event', 'signup_intent', {
+                event_category: 'conversion',
+                event_label: 'homepage_cta',
+                variant: 'variant-b',
+              })
+            }
+          })
+        })
+      })
+    </script>
+
+    <!-- MCP config copy button -->
+    <script is:inline>
+      document.addEventListener('astro:page-load', function () {
+        var btn = document.getElementById('copy-mcp-config')
+        if (!btn) return
+        btn.addEventListener('click', function () {
+          var code = document.getElementById('mcp-install-code')
+          if (!code) return
+          navigator.clipboard.writeText(code.textContent || '').then(function () {
+            var copyIcon = document.getElementById('copy-icon')
+            var checkIcon = document.getElementById('check-icon')
+            var copyText = document.getElementById('copy-text')
+            if (copyIcon) copyIcon.classList.add('hidden')
+            if (checkIcon) checkIcon.classList.remove('hidden')
+            if (copyText) copyText.textContent = 'Copied!'
+            if (typeof gtag === 'function') {
+              gtag('event', 'copy_config', { variant: 'variant-b' })
+            }
+            setTimeout(function () {
+              if (copyIcon) copyIcon.classList.remove('hidden')
+              if (checkIcon) checkIcon.classList.add('hidden')
+              if (copyText) copyText.textContent = 'Copy to Clipboard'
+            }, 2000)
+          })
+        })
+      })
+    </script>
+  </body>
+</html>

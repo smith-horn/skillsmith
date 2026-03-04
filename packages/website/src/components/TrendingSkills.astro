@@ -1,0 +1,135 @@
+---
+/**
+ * TrendingSkills
+ *
+ * SMI-3017: SSR component — fetches top 5 verified skills by install count.
+ * Falls back to EDITOR_PICKS if API fails or top skill has fewer than 200 installs.
+ */
+
+interface Skill {
+  id: string
+  name: string
+  author: string
+  description: string
+  install_count: number
+  trust_tier: string
+}
+
+const EDITOR_PICKS: Skill[] = [
+  {
+    id: 'anthropic/commit',
+    name: 'commit',
+    author: 'anthropic',
+    description: 'AI-powered commit message generation',
+    install_count: 0,
+    trust_tier: 'verified',
+  },
+  {
+    id: 'anthropic/review-pr',
+    name: 'review-pr',
+    author: 'anthropic',
+    description: 'Automated pull request code review',
+    install_count: 0,
+    trust_tier: 'verified',
+  },
+  {
+    id: 'anthropic/test-gen',
+    name: 'test-gen',
+    author: 'anthropic',
+    description: 'Generate tests from source code',
+    install_count: 0,
+    trust_tier: 'verified',
+  },
+  {
+    id: 'community/jest-helper',
+    name: 'jest-helper',
+    author: 'community',
+    description: 'Jest test configuration and helpers',
+    install_count: 0,
+    trust_tier: 'community',
+  },
+  {
+    id: 'community/docker-optimizer',
+    name: 'docker-optimizer',
+    author: 'community',
+    description: 'Dockerfile optimization and best practices',
+    install_count: 0,
+    trust_tier: 'community',
+  },
+]
+
+let skills: Skill[] = []
+let useFallback = false
+
+try {
+  const res = await fetch(
+    'https://api.skillsmith.app/v1/skills?trust_tier=verified&sort=installs&limit=5',
+    { cache: 'default' }
+  )
+  if (res.ok) {
+    const data = (await res.json()) as { skills?: Skill[] }
+    const fetched = data.skills ?? []
+    if (fetched.length === 0 || (fetched[0]?.install_count ?? 0) < 200) {
+      useFallback = true
+      skills = EDITOR_PICKS
+    } else {
+      skills = fetched
+    }
+  } else {
+    useFallback = true
+    skills = EDITOR_PICKS
+  }
+} catch {
+  useFallback = true
+  skills = EDITOR_PICKS
+}
+
+const sectionLabel = useFallback ? 'Editor Picks' : 'Trending verified skills this week'
+---
+
+<section class="py-16 border-t border-white/[0.06]">
+  <div class="max-w-[800px] mx-auto px-6">
+    <div class="text-center mb-8">
+      <h2 class="text-2xl sm:text-3xl font-bold mb-2">{sectionLabel}</h2>
+      {!useFallback && <p class="text-dark-400 text-sm">Install count updated daily</p>}
+    </div>
+
+    <div class="flex flex-col gap-3">
+      {
+        skills.map((skill, i) => (
+          <a
+            href={`/skills/${encodeURIComponent(skill.id)}`}
+            class="flex items-center gap-4 p-4 rounded-xl border border-white/[0.06] hover:border-primary-400/40 bg-dark-900/40 hover:bg-dark-900 transition-all group"
+          >
+            <span class="text-2xl font-bold text-dark-600 w-8 text-center flex-shrink-0">
+              {i + 1}
+            </span>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 mb-0.5">
+                <span class="font-semibold text-white truncate">{skill.name}</span>
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-400 flex-shrink-0">
+                  verified
+                </span>
+              </div>
+              <p class="text-sm text-dark-400 truncate">{skill.description}</p>
+            </div>
+            {!useFallback && (
+              <span class="text-sm text-dark-500 flex-shrink-0">
+                {skill.install_count.toLocaleString()} installs
+              </span>
+            )}
+          </a>
+        ))
+      }
+    </div>
+
+    <div class="text-center mt-6">
+      <a
+        href="/skills"
+        class="text-sm text-primary-400 hover:text-primary-300 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:rounded"
+      >
+        Browse all 14,000+ skills &rarr;
+      </a>
+    </div>
+  </div>
+</section>

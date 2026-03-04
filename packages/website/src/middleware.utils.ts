@@ -95,14 +95,51 @@ export const AB_VARIANT_COOKIE = 'sk_ab_variant'
 export const AB_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
 
 /** Valid A/B variant values */
-export const AB_VARIANTS = ['control', 'variant-b'] as const
+export const AB_VARIANTS = ['control', 'variant-a', 'variant-b'] as const
 export type AbVariant = (typeof AB_VARIANTS)[number]
+
+/** Default traffic split weights: [control%, variant-a%, variant-b%]. Must sum to 100. */
+export const DEFAULT_AB_WEIGHTS = [80, 10, 10] as const
 
 /**
  * Returns true if the value is a known AbVariant.
  */
 export function isValidAbVariant(value: unknown): value is AbVariant {
   return AB_VARIANTS.includes(value as AbVariant)
+}
+
+/**
+ * Parses the AB_HOME_WEIGHTS environment variable into a weight tuple.
+ * Expected format: "80,10,10" — three comma-separated integers summing to 100.
+ * Falls back to DEFAULT_AB_WEIGHTS with a console.warn on any parse failure.
+ *
+ * @param raw - Raw env var string (e.g. "80,10,10") or undefined
+ * @returns Tuple of [controlWeight, variantAWeight, variantBWeight]
+ */
+export function parseAbWeights(raw: string | undefined): [number, number, number] {
+  if (!raw) return [...DEFAULT_AB_WEIGHTS]
+  const parts = raw.split(',').map((s) => Number(s.trim()))
+  if (parts.length !== 3 || parts.some(isNaN) || parts.reduce((a, b) => a + b, 0) !== 100) {
+    console.warn(
+      `[A/B] Invalid AB_HOME_WEIGHTS "${raw}" — expected 3 comma-separated integers summing to 100. Using defaults.`
+    )
+    return [...DEFAULT_AB_WEIGHTS]
+  }
+  return parts as unknown as [number, number, number]
+}
+
+/**
+ * Assigns a variant using weighted random selection.
+ * Rolls Math.random() * 100 against cumulative thresholds.
+ *
+ * @param weights - Tuple of [controlWeight, variantAWeight, variantBWeight]
+ * @returns The assigned AbVariant
+ */
+export function assignAbVariantWeighted(weights: [number, number, number]): AbVariant {
+  const roll = Math.random() * 100
+  if (roll < weights[0]) return 'control'
+  if (roll < weights[0] + weights[1]) return 'variant-a'
+  return 'variant-b'
 }
 
 /**
@@ -122,9 +159,11 @@ export function parseAbVariantFromCookie(cookieHeader: string | null): AbVariant
 
 /**
  * Randomly assigns a variant with equal 50/50 probability.
+ *
+ * @deprecated Use assignAbVariantWeighted with parseAbWeights instead.
  */
 export function assignAbVariant(): AbVariant {
-  return Math.random() < 0.5 ? 'control' : 'variant-b'
+  return assignAbVariantWeighted([...DEFAULT_AB_WEIGHTS])
 }
 
 /**
