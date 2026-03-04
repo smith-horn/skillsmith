@@ -101,3 +101,21 @@ If required checks are stuck or GitHub Actions is down:
 ```bash
 gh api repos/Smith-Horn/skillsmith/branches/main/protection -X PUT --input .github/branch-protection.json
 ```
+
+## Wave Merge CI Polling (SMI-3010)
+
+When monitoring CI between sequential wave merges, always use `${VAR:-0}` not `$VAR` for `jq | length` results:
+
+```bash
+# WRONG — returns "" when statusCheckRollup is empty (checks not yet started)
+FAILED=$(gh pr view $PR --json statusCheckRollup \
+  --jq '[.statusCheckRollup[] | select(.conclusion == "FAILURE")] | length')
+[ "$FAILED" != "0" ] && echo "FAILED"  # "" != "0" is TRUE → false FAILURE
+
+# CORRECT — defaults to 0 when jq returns empty string
+FAILED=$(gh pr view $PR --json statusCheckRollup \
+  --jq '[.statusCheckRollup[] | select(.conclusion == "FAILURE")] | length')
+[ "${FAILED:-0}" != "0" ] && echo "FAILED"
+```
+
+**Rule**: Always wait for Wave N CI to show green before starting Wave N+1 rebase. Starting early saves <30s but risks a reflog recovery if Wave N's checks later fail.

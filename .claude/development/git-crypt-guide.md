@@ -168,6 +168,22 @@ cd worktrees/<name> && git reset --hard HEAD
 
 Includes Docker network cleanup. Use `--force` flag if smudge artifacts block removal.
 
+### Worktree `git reset` Footgun (SMI-3011)
+
+**Worktrees share branch refs with the main repo.** Running `git reset --hard` inside a worktree moves the branch pointer in every checkout of that branch.
+
+```bash
+# DANGEROUS — this also moves smi-foo in the main repo
+cd .worktrees/smi-foo && git reset --hard origin/e2e-testing
+
+# SAFE — selectively restore files without touching branch pointers
+git checkout <sha> -- supabase/functions/my-fn/index.ts
+```
+
+If you need to land your Wave work after an accidental reset, use `git reflog` in the main repo to find the pre-reset commit and `git checkout <sha> -- <exclusive-files>` to restore only the files that belong to that wave.
+
+**Key rule**: Never use `git reset` inside a worktree for file-restoration purposes. Use `git checkout <sha> -- <paths>` instead.
+
 ### Important
 
 Git-crypt must be unlocked in the **main repo first** before creating worktrees:
