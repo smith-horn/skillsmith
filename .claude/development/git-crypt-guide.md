@@ -212,3 +212,51 @@ done
 ## History Cleanup
 
 The git history contains encrypted blobs from the pre-migration era. These are harmless — they are unreadable without the git-crypt key and pose no security risk. History rewriting (`git filter-repo`) was considered and rejected because it would rewrite all commit hashes, breaking PR references and contributor attribution. If repo size becomes a concern, this can be revisited as a separate initiative.
+
+---
+
+## Working with docs/internal (Submodule) — SMI-3009
+
+`docs/internal/` is a private git submodule with its own commit history. You **cannot** stage files inside it from the main repo:
+
+```bash
+# ❌ This fails — always
+git add docs/internal/adr/110-foo.md
+# fatal: Pathspec 'docs/internal/adr/110-foo.md' is in submodule 'docs/internal'
+```
+
+### Correct Workflow
+
+```bash
+# 1. Commit inside the submodule using absolute path (CRITICAL: avoid cd persistence)
+cd /Users/williamsmith/Documents/GitHub/Smith-Horn/skillsmith/docs/internal
+git add adr/110-foo.md retros/2026-03-03-bar.md code_review/2026-03-03-baz.md
+git commit -m "docs: add ADR-110, retro, and code review"
+
+# 2. Return to main repo and stage the updated submodule pointer
+cd /Users/williamsmith/Documents/GitHub/Smith-Horn/skillsmith
+git add docs/internal
+git commit -m "chore(docs): update internal submodule pointer"
+```
+
+### Path Discipline
+
+**Always use absolute paths** when switching between the main repo and the submodule. The shell cwd persists across Bash tool calls. If you `cd docs/internal` and forget to switch back, subsequent `git branch --show-current` will show the submodule's `main` branch rather than your feature branch.
+
+```bash
+# ✅ Safe — explicit absolute path
+git -C /Users/williamsmith/Documents/GitHub/Smith-Horn/skillsmith status
+
+# ❌ Risky — cwd may still be inside docs/internal/
+git status
+```
+
+### Verifying Submodule State
+
+```bash
+# Check submodule pointer is staged
+git -C /path/to/skillsmith diff --cached docs/internal
+
+# Check submodule's HEAD (should be the commit you just made)
+git -C /path/to/skillsmith/docs/internal log --oneline -1
+```
