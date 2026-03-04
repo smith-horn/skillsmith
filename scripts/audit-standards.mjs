@@ -350,6 +350,7 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   'regenerate-license',
   'create-portal-session',
   'list-invoices',
+  'skills-outreach-preferences',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'

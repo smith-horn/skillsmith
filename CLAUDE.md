@@ -222,8 +222,10 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `health` | Anonymous (health check) | Yes |
 | `email-inbound` | Anonymous (Resend webhook) | Yes |
 | `generate-license`, `regenerate-license`, `create-portal-session`, `list-invoices` | Authenticated (internal JWT) | Yes |
+| `skills-outreach-preferences` | Authenticated (User JWT, handler-level) | Yes |
 | `update-seat-count` | Authenticated | No |
 | `indexer`, `skills-refresh-metadata`, `ops-report`, `alert-notify` | Service Role | No |
+| `skills-outreach` | Service Role | No |
 
 **Adding anonymous functions** (CI validates): Add to `supabase/config.toml` with `verify_jwt = false`, add to `NO_VERIFY_JWT_FUNCTIONS` in `scripts/audit-standards.mjs`, and add deploy command below.
 
@@ -245,6 +247,7 @@ npx supabase functions deploy generate-license --no-verify-jwt
 npx supabase functions deploy regenerate-license --no-verify-jwt
 npx supabase functions deploy create-portal-session --no-verify-jwt
 npx supabase functions deploy list-invoices --no-verify-jwt
+npx supabase functions deploy skills-outreach-preferences --no-verify-jwt
 ```
 
 **CORS & monitoring details**: [deployment-guide.md](.claude/development/deployment-guide.md)
@@ -258,6 +261,7 @@ npx supabase functions deploy list-invoices --no-verify-jwt
 | Skill Indexer | Daily 2 AM UTC | `indexer` |
 | Metadata Refresh | Hourly :30 | `skills-refresh-metadata` |
 | Ops Report | Monday 9 AM UTC | `ops-report` |
+| Quality Outreach | Manual (beta) | `skills-outreach` |
 | Weekly Analytics | Monday 9 AM UTC | GitHub Actions (`analytics-report.yml`) |
 | Billing Monitor | Monday 9 AM UTC | GitHub Actions |
 | A/B Experiment Results | Monday 9 AM UTC | GitHub Actions (`ab-results.yml`) — creates issue with verdict |
