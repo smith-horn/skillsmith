@@ -24,5 +24,3 @@ AB_HOME_WEIGHTS = "80,10,10"
 pattern = "skillsmith.app/"
 zone_name = "skillsmith.app"
 
-[build]
-command = "npm run build:worker"
