@@ -1,0 +1,618 @@
+---
+/**
+ * Outreach Preferences Page — SMI-2978
+ * Lets GitHub-authenticated users opt repos out of Skillsmith quality outreach.
+ */
+
+export const prerender = false
+
+import { ClientRouter } from 'astro:transitions'
+import { getSupabaseConfig } from '../../lib/supabase-config'
+
+const supabaseConfig = getSupabaseConfig()
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+    <meta
+      name="description"
+      content="Manage which repositories receive Skillsmith quality-report issues"
+    />
+    <title>Outreach Preferences | Skillsmith</title>
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig
+    </script>
+    <ClientRouter />
+  </head>
+  <body>
+    <main class="container">
+      <div id="loading-state" class="center-state">
+        <svg class="spinner" viewBox="0 0 24 24">
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            stroke-width="4"
+            fill="none"
+            opacity="0.25"></circle>
+          <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+          ></path>
+        </svg>
+        <p>Loading...</p>
+      </div>
+
+      <div id="error-state" class="center-state" style="display:none;">
+        <p id="error-message" class="error-text">Something went wrong</p>
+        <button onclick="location.reload()" class="btn btn-primary">Try Again</button>
+      </div>
+
+      <div id="page-content" style="display:none;">
+        <div class="page-header">
+          <a href="/account" class="back-link">&larr; Account</a>
+          <h1>Outreach Preferences</h1>
+          <p class="subtitle">
+            Control which repositories receive Skillsmith quality-report issues.
+          </p>
+        </div>
+
+        <div id="no-github-state" class="card center-card" style="display:none;">
+          <h2>GitHub Account Required</h2>
+          <p>Connect your GitHub account to manage outreach preferences.</p>
+          <button id="connect-github-btn" class="btn btn-primary">Connect GitHub</button>
+        </div>
+
+        <div id="prefs-content" style="display:none;">
+          <div
+            id="pre-save-notice"
+            role="status"
+            aria-live="polite"
+            class="notice"
+            style="display:none;"
+          >
+            <strong>Before you save:</strong> Opting out will immediately create a suppression record.
+            Any open quality-report issues will be auto-closed within 24 hours. To re-enable outreach
+            for a repo, toggle it back on this page.
+          </div>
+
+          <div class="toolbar">
+            <input
+              id="filter-input"
+              type="text"
+              class="filter-input"
+              placeholder="Filter repositories..."
+              aria-label="Filter repositories"
+            />
+            <button id="select-all-btn" class="btn btn-secondary btn-sm">Select All</button>
+            <button id="deselect-all-btn" class="btn btn-secondary btn-sm">Deselect All</button>
+          </div>
+
+          <div id="repo-list" class="repo-list" aria-label="Repository list"></div>
+          <p id="empty-state" class="empty-text" style="display:none;">
+            No indexed repos found. Skillsmith has not yet indexed any repositories under your
+            GitHub account or your GitHub organizations. Skills are indexed daily.
+          </p>
+
+          <div class="save-row">
+            <button id="save-btn" class="btn btn-primary" disabled aria-disabled="true"
+              >Save Preferences</button
+            >
+            <svg
+              id="save-spinner"
+              class="spinner spinner-sm"
+              viewBox="0 0 24 24"
+              style="display:none;"
+              aria-hidden="true"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+                fill="none"
+                opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+              ></path>
+            </svg>
+          </div>
+          <p id="save-result" style="display:none;font-size:.875rem;"></p>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <p>&copy; 2026 Smith Horn Group Ltd. All rights reserved.</p>
+    </footer>
+  </body>
+</html>
+
+<style>
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    font-family:
+      'Satoshi',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
+    line-height: 1.6;
+    color: #fafafa;
+    background: #0d0d0f;
+    min-height: 100vh;
+  }
+  .container {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+  }
+  .center-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 50vh;
+    gap: 1rem;
+    color: #9ca3af;
+  }
+  .center-card {
+    max-width: 440px;
+    margin: 0 auto;
+    text-align: center;
+  }
+  .spinner {
+    width: 2.5rem;
+    height: 2.5rem;
+    color: #e07a5f;
+    animation: spin 1s linear infinite;
+  }
+  .spinner-sm {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .error-text {
+    color: #ef4444;
+    margin-bottom: 1rem;
+  }
+  .page-header {
+    margin-bottom: 2rem;
+  }
+  .back-link {
+    color: #9ca3af;
+    text-decoration: none;
+    font-size: 0.875rem;
+    display: inline-block;
+    margin-bottom: 0.75rem;
+  }
+  .back-link:hover {
+    color: #e07a5f;
+  }
+  .page-header h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+  }
+  .subtitle {
+    color: #9ca3af;
+  }
+  .card {
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 2rem;
+  }
+  .card h2 {
+    font-size: 1.2rem;
+    margin-bottom: 0.6rem;
+  }
+  .card p {
+    color: #9ca3af;
+    margin-bottom: 1.25rem;
+  }
+  .notice {
+    background: rgba(234, 179, 8, 0.08);
+    border: 1px solid rgba(234, 179, 8, 0.3);
+    border-radius: 0.5rem;
+    padding: 1rem 1.25rem;
+    color: #fbbf24;
+    font-size: 0.9rem;
+    margin-bottom: 1.5rem;
+  }
+  .toolbar {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+  .filter-input {
+    flex: 1;
+    min-width: 180px;
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    color: #fafafa;
+    font-size: 0.875rem;
+    outline: none;
+  }
+  .filter-input:focus {
+    border-color: #e07a5f;
+  }
+  .repo-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .repo-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    gap: 1rem;
+  }
+  .repo-row-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+  .repo-row-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .repo-row-score {
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+  .repo-row-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-shrink: 0;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: #9ca3af;
+    white-space: nowrap;
+  }
+  .empty-text {
+    color: #6b7280;
+    font-size: 0.9rem;
+    text-align: center;
+    padding: 2rem 0;
+  }
+  .save-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.625rem 1.25rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+    cursor: pointer;
+    border: none;
+    font-family: inherit;
+  }
+  .btn-sm {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.8rem;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, #e07a5f, #d4694e);
+    color: white;
+  }
+  .btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(224, 122, 95, 0.4);
+  }
+  .btn-primary:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid #2a2a2f;
+    color: #fafafa;
+  }
+  .btn-secondary:hover {
+    border-color: #e07a5f;
+    color: #e07a5f;
+  }
+  .footer {
+    border-top: 1px solid #1a1a1f;
+    padding: 1.25rem 1.5rem;
+    margin-top: 3rem;
+    text-align: center;
+    color: #6b7280;
+    font-size: 0.875rem;
+  }
+</style>
+
+<script>
+  import { createClient } from '@supabase/supabase-js'
+
+  const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } })
+    .__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+
+  interface RepoRow {
+    repoOwner: string
+    repoName: string
+    skillId: string
+    skillName: string
+    qualityScore: number | null
+    optedOut: boolean
+  }
+
+  document.addEventListener('astro:page-load', async () => {
+    const $ = (id: string) => document.getElementById(id)
+    const loadingEl = $('loading-state') as HTMLDivElement | null
+    const errorEl = $('error-state') as HTMLDivElement | null
+    const errorMsgEl = $('error-message') as HTMLParagraphElement | null
+    const pageEl = $('page-content') as HTMLDivElement | null
+    const noGithubEl = $('no-github-state') as HTMLDivElement | null
+    const prefsEl = $('prefs-content') as HTMLDivElement | null
+    const noticeEl = $('pre-save-notice') as HTMLDivElement | null
+    const filterEl = $('filter-input') as HTMLInputElement | null
+    const repoListEl = $('repo-list') as HTMLDivElement | null
+    const emptyEl = $('empty-state') as HTMLParagraphElement | null
+    const saveBtnEl = $('save-btn') as HTMLButtonElement | null
+    const saveSpinnerEl = $('save-spinner') as SVGSVGElement | null
+    const saveResultEl = $('save-result') as HTMLParagraphElement | null
+
+    function showError(msg: string) {
+      if (loadingEl) loadingEl.style.display = 'none'
+      if (errorEl) errorEl.style.display = 'flex'
+      if (errorMsgEl) errorMsgEl.textContent = msg
+    }
+
+    if (!config.url || !config.anonKey) {
+      showError('Auth service not configured.')
+      return
+    }
+    const supabase = createClient(config.url, config.anonKey)
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session) {
+      window.location.href = '/login?redirect=/account/outreach-preferences'
+      return
+    }
+
+    if (loadingEl) loadingEl.style.display = 'none'
+    if (pageEl) pageEl.style.display = 'block'
+
+    const { data: prof } = await supabase
+      .from('profiles')
+      .select('auth_provider')
+      .eq('id', session.user.id)
+      .single()
+    if (prof?.auth_provider !== 'github') {
+      if (noGithubEl) noGithubEl.style.display = 'block'
+      const ghBtn = $('connect-github-btn') as HTMLButtonElement | null
+      if (ghBtn)
+        ghBtn.addEventListener('click', () =>
+          supabase.auth.signInWithOAuth({
+            provider: 'github',
+            options: { redirectTo: window.location.href },
+          })
+        )
+      return
+    }
+
+    let repos: RepoRow[] = []
+    try {
+      const res = await fetch(`${config.url}/functions/v1/skills-outreach-preferences`, {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+      })
+      if (!res.ok) {
+        const e = (await res.json()) as { error?: string }
+        showError(e.error ?? 'Failed to load')
+        if (pageEl) pageEl.style.display = 'none'
+        return
+      }
+      repos = ((await res.json()) as { repos: RepoRow[] }).repos ?? []
+    } catch {
+      showError('Failed to load preferences.')
+      if (pageEl) pageEl.style.display = 'none'
+      return
+    }
+
+    if (prefsEl) prefsEl.style.display = 'block'
+
+    const original = new Map<string, boolean>(
+      repos.map((r) => [`${r.repoOwner}/${r.repoName}`, r.optedOut])
+    )
+    const current = new Map<string, boolean>(original)
+    let noticeSeen = false
+    let filterVal = ''
+
+    function isDirty() {
+      for (const [k, v] of current) {
+        if (original.get(k) !== v) return true
+      }
+      return false
+    }
+
+    function updateSave() {
+      if (!saveBtnEl) return
+      const on = isDirty() && noticeSeen
+      saveBtnEl.disabled = !on
+      saveBtnEl.setAttribute('aria-disabled', on ? 'false' : 'true')
+    }
+
+    function maybeShowNotice() {
+      if (noticeSeen || !noticeEl) return
+      const hasOut = [...current.values()].some((v) => v)
+      if (hasOut) {
+        noticeEl.style.display = 'block'
+        noticeSeen = true
+        updateSave()
+      }
+    }
+
+    function render() {
+      if (!repoListEl || !emptyEl) return
+      const q = filterVal.toLowerCase()
+      const filtered = repos.filter(
+        (r) => r.repoOwner.toLowerCase().includes(q) || r.repoName.toLowerCase().includes(q)
+      )
+      if (repos.length === 0) {
+        repoListEl.style.display = 'none'
+        emptyEl.style.display = 'block'
+        return
+      }
+      emptyEl.style.display = 'none'
+      repoListEl.style.display = 'flex'
+      repoListEl.innerHTML = ''
+      for (const r of filtered) {
+        const key = `${r.repoOwner}/${r.repoName}`
+        const row = document.createElement('div')
+        row.className = 'repo-row'
+        const scoreText =
+          r.qualityScore != null
+            ? `<span class="repo-row-score">Quality: ${Math.round(r.qualityScore * 100)}%</span>`
+            : ''
+        const chkId = `chk-${key.replace(/\//g, '-')}`
+        row.innerHTML = `<div class="repo-row-info"><span class="repo-row-name">${r.repoOwner}/${r.repoName}</span>${scoreText}</div><label class="repo-row-toggle" for="${chkId}"><input id="${chkId}" type="checkbox" ${current.get(key) ? 'checked' : ''} aria-label="Opt out ${r.repoOwner}/${r.repoName}" /><span>Opt out</span></label>`
+        const chk = row.querySelector('input') as HTMLInputElement
+        chk.addEventListener('change', () => {
+          current.set(key, chk.checked)
+          maybeShowNotice()
+          updateSave()
+        })
+        repoListEl.appendChild(row)
+      }
+    }
+
+    render()
+
+    if (filterEl)
+      filterEl.addEventListener('input', () => {
+        filterVal = filterEl.value
+        render()
+      })
+
+    const selAll = $('select-all-btn') as HTMLButtonElement | null
+    const deselAll = $('deselect-all-btn') as HTMLButtonElement | null
+    if (selAll)
+      selAll.addEventListener('click', () => {
+        repos.forEach((r) => current.set(`${r.repoOwner}/${r.repoName}`, true))
+        render()
+        maybeShowNotice()
+        updateSave()
+      })
+    if (deselAll)
+      deselAll.addEventListener('click', () => {
+        repos.forEach((r) => current.set(`${r.repoOwner}/${r.repoName}`, false))
+        render()
+        updateSave()
+      })
+
+    updateSave()
+
+    if (saveBtnEl) {
+      saveBtnEl.addEventListener('click', async () => {
+        const dirty = repos
+          .filter(
+            (r) =>
+              current.get(`${r.repoOwner}/${r.repoName}`) !==
+              original.get(`${r.repoOwner}/${r.repoName}`)
+          )
+          .map((r) => ({
+            repoOwner: r.repoOwner,
+            repoName: r.repoName,
+            optedOut: current.get(`${r.repoOwner}/${r.repoName}`) ?? false,
+          }))
+        if (!dirty.length) return
+        saveBtnEl.disabled = true
+        saveBtnEl.setAttribute('aria-disabled', 'true')
+        if (saveSpinnerEl) saveSpinnerEl.style.display = 'block'
+        if (saveResultEl) saveResultEl.style.display = 'none'
+        try {
+          const res = await fetch(`${config.url}/functions/v1/skills-outreach-preferences`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ repos: dirty }),
+          })
+          const data = (await res.json()) as {
+            saved?: number
+            suppressedCount?: number
+            error?: string
+          }
+          if (!res.ok) {
+            if (saveResultEl) {
+              saveResultEl.style.color = '#ef4444'
+              saveResultEl.textContent = data.error ?? 'Save failed.'
+              saveResultEl.style.display = 'block'
+            }
+          } else {
+            dirty.forEach((d) => original.set(`${d.repoOwner}/${d.repoName}`, d.optedOut))
+            if (saveResultEl) {
+              const n = data.saved ?? dirty.length
+              let msg = `Saved ${n} preference${n !== 1 ? 's' : ''}.`
+              if ((data.suppressedCount ?? 0) > 0)
+                msg += ` ${data.suppressedCount} issue${data.suppressedCount !== 1 ? 's' : ''} suppressed.`
+              saveResultEl.style.color = '#10b981'
+              saveResultEl.textContent = msg
+              saveResultEl.style.display = 'block'
+            }
+          }
+        } catch {
+          if (saveResultEl) {
+            saveResultEl.style.color = '#ef4444'
+            saveResultEl.textContent = 'Save failed. Please try again.'
+            saveResultEl.style.display = 'block'
+          }
+        } finally {
+          if (saveSpinnerEl) saveSpinnerEl.style.display = 'none'
+          updateSave()
+        }
+      })
+    }
+  })
+</script>
