@@ -5,8 +5,8 @@
  *
  * Responsibilities:
  *   - Intercepts requests to pathname '/' only; all other paths pass through
- *   - Reads `ab_home` cookie; assigns variant if absent using AB_HOME_WEIGHTS
- *   - Sets `ab_home` cookie (7-day, SameSite=Lax, Secure) on fresh assignment
+ *   - Reads `sk_ab_variant` cookie; assigns variant if absent using AB_HOME_WEIGHTS
+ *   - Sets `sk_ab_variant` cookie (7-day, Domain=.skillsmith.app, SameSite=Lax, Secure) on fresh assignment
  *   - Forwards X-AB-Variant header to Vercel (consumed by Astro middleware)
  *   - No external API calls; no PII logged; latency target < 5ms
  *
@@ -19,14 +19,14 @@
  *   5. Set Cloudflare Cache Rule: www.skillsmith.app/og-*.png → Cache Everything, Edge TTL 7 days
  *
  * Verify post-deploy:
- *   curl -v https://www.skillsmith.app/ 2>&1 | grep -i 'x-ab-variant\|ab_home'
+ *   curl -v https://www.skillsmith.app/ 2>&1 | grep -i 'x-ab-variant\|sk_ab_variant'
  */
 
 export interface Env {
   AB_HOME_WEIGHTS: string
 }
 
-const AB_COOKIE_NAME = 'ab_home'
+const AB_COOKIE_NAME = 'sk_ab_variant'
 const AB_COOKIE_MAX_AGE = 60 * 60 * 24 * 7 // 7 days
 const DEFAULT_WEIGHTS: [number, number, number] = [80, 10, 10]
 const VARIANTS = ['control', 'variant-a', 'variant-b'] as const
@@ -64,12 +64,12 @@ function assignVariant(weights: [number, number, number]): Variant {
 }
 
 /**
- * Parse ab_home=[value] from the Cookie header.
+ * Parse sk_ab_variant=[value] from the Cookie header.
  * Returns null if absent or not a valid variant.
  */
 function parseCookieVariant(cookieHeader: string | null): Variant | null {
   if (!cookieHeader) return null
-  const match = cookieHeader.match(/(?:^|;\s*)ab_home=([^;]+)/)
+  const match = cookieHeader.match(/(?:^|;\s*)sk_ab_variant=([^;]+)/)
   if (!match) return null
   const value = match[1]
   return VARIANTS.includes(value as Variant) ? (value as Variant) : null
@@ -101,7 +101,7 @@ export default {
     if (!existing) {
       mutableResponse.headers.append(
         'Set-Cookie',
-        `${AB_COOKIE_NAME}=${variant}; Max-Age=${AB_COOKIE_MAX_AGE}; Path=/; SameSite=Lax; Secure`
+        `${AB_COOKIE_NAME}=${variant}; Max-Age=${AB_COOKIE_MAX_AGE}; Domain=.skillsmith.app; Path=/; SameSite=Lax; Secure`
       )
     }
 

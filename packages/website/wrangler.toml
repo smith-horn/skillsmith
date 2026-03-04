@@ -24,3 +24,7 @@ AB_HOME_WEIGHTS = "80,10,10"
 pattern = "skillsmith.app/"
 zone_name = "skillsmith.app"
 
+[[routes]]
+pattern = "www.skillsmith.app/"
+zone_name = "skillsmith.app"
+
