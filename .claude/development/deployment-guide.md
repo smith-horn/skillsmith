@@ -234,6 +234,48 @@ varlock run -- sh -c 'curl -s \
 - JSON-LD `<script>` tags in `.astro` files must use the `is:inline` directive
 - Blog post pages use `@graph` arrays to combine BlogPosting + BreadcrumbList (+ HowTo when applicable)
 
+## Cloudflare Worker Deploy (SMI-3019)
+
+```bash
+npx wrangler deploy --env preview   # Preview environment
+npx wrangler deploy                 # Production
+```
+
+Worker: `skillsmith-homepage-ab` — stateless edge A/B traffic split for `skillsmith.app/` and `www.skillsmith.app/`.
+
+Adjust weights without redeploy: Cloudflare dashboard → Workers → skillsmith-homepage-ab → Settings → Variables → `AB_HOME_WEIGHTS` (format: `"80,10,10"`).
+
+### Post-Deploy Verification (SMI-3034)
+
+Run all four curl scenarios after every Worker or website deploy. All four must pass.
+
+```bash
+# 1. Fresh visit — must receive exactly one Set-Cookie
+curl -sv https://www.skillsmith.app/ 2>&1 | grep -i 'set-cookie\|x-ab-variant'
+
+# 2. Return visit variant-a — must receive NO Set-Cookie
+curl -sv -H 'Cookie: sk_ab_variant=variant-a' https://www.skillsmith.app/ 2>&1 | grep -i 'set-cookie\|x-ab-variant'
+
+# 3. Return visit variant-b — must receive NO Set-Cookie
+curl -sv -H 'Cookie: sk_ab_variant=variant-b' https://www.skillsmith.app/ 2>&1 | grep -i 'set-cookie\|x-ab-variant'
+
+# 4. Return visit control — must receive NO Set-Cookie
+curl -sv -H 'Cookie: sk_ab_variant=control' https://www.skillsmith.app/ 2>&1 | grep -i 'set-cookie\|x-ab-variant'
+```
+
+Expected output per scenario:
+
+| Scenario | `set-cookie` in response | `x-ab-variant` in response |
+|---|---|---|
+| Fresh visit | Yes — `sk_ab_variant=<variant>; Max-Age=604800; Domain=.skillsmith.app` | Yes |
+| Return variant-a | **None** | `variant-a` |
+| Return variant-b | **None** | `variant-b` |
+| Return control | **None** | `control` |
+
+A `set-cookie` on a return visit means the middleware freshly assigned a variant — indicates the Astro rewrite is not forwarding the Cookie header. See ADR-111 and SMI-3032.
+
+---
+
 ## Staging Verification (ADR-108)
 
 Preview deployments are protected by Vercel's deployment protection. To test staging programmatically:

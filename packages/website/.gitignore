@@ -1,5 +1,6 @@
 # Astro build output
 dist/
+dist-worker/
 .astro/
 
 # Dependencies
