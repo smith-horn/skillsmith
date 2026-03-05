@@ -342,6 +342,65 @@ EOF
 }
 
 #######################################
+# Patch .mcp.json in worktree to use npx for skillsmith
+#
+# The main repo .mcp.json uses a local dist path that doesn't exist in
+# worktrees (worktrees share the git history but not build artefacts).
+# Worktrees use the published npm package instead — works on any machine
+# without requiring a local build.
+#
+# @latest is intentional: worktrees are for feature development, not MCP
+# server changes. Always using the latest published version is correct.
+#
+# NOTE: jq is guaranteed in Docker/CI (node:22-slim/Debian) but NOT on
+# macOS developer machines. The command -v guard below is therefore
+# essential, not just defensive.
+#######################################
+patch_mcp_json() {
+    local worktree_path="$1"
+    local mcp_json="$worktree_path/.mcp.json"
+
+    if [[ ! -f "$mcp_json" ]]; then
+        return 0
+    fi
+
+    if ! command -v jq >/dev/null 2>&1; then
+        warn ".mcp.json found but jq is unavailable — skillsmith MCP entry not patched"
+        echo "  Install jq (brew install jq) and re-run create-worktree.sh, or"
+        echo "  manually set .mcp.json skillsmith entry to: npx -y @skillsmith/mcp-server"
+        return 0
+    fi
+
+    # -r is load-bearing: returns "true"/"false" strings, not JSON booleans
+    local has_skillsmith
+    has_skillsmith=$(jq -r 'has("mcpServers") and (.mcpServers | has("skillsmith"))' "$mcp_json" 2>/dev/null || echo "false")
+    # || echo "false" is intentional: safe with set -e — command substitution
+    # suppresses errexit inside $(...); the fallback handles jq failures cleanly
+
+    if [[ "$has_skillsmith" != "true" ]]; then
+        return 0
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp)
+    trap 'rm -f "$tmp_file"' EXIT  # clean up on SIGINT/SIGTERM/EXIT
+
+    # Use cat+redirect instead of mv to preserve original file permissions
+    # (mktemp creates 0600; original .mcp.json is typically 0644)
+    if jq '.mcpServers.skillsmith = {"command": "npx", "args": ["-y", "@skillsmith/mcp-server"]}' \
+        "$mcp_json" > "$tmp_file" 2>/dev/null; then
+        cat "$tmp_file" > "$mcp_json"
+        rm -f "$tmp_file"
+        trap - EXIT
+        success "  Patched .mcp.json: skillsmith → npx (worktrees have no local dist)"
+    else
+        rm -f "$tmp_file"
+        trap - EXIT
+        warn "Failed to patch .mcp.json — skillsmith MCP may not connect in this worktree"
+    fi
+}
+
+#######################################
 # Create worktree with git-crypt support
 #######################################
 create_worktree() {
@@ -354,7 +413,7 @@ create_worktree() {
     echo ""
 
     # Step 1: Create worktree without checkout
-    info "Step 1/4: Creating worktree without checkout..."
+    info "Step 1: Creating worktree without checkout..."
     if [[ "$USE_EXISTING_BRANCH" == true ]]; then
         git worktree add --no-checkout "$worktree_path" "$branch_name"
     else
@@ -363,7 +422,7 @@ create_worktree() {
     success "  Worktree created (without checkout)"
 
     # Step 2: Find worktree's gitdir
-    info "Step 2/4: Locating worktree gitdir..."
+    info "Step 2: Locating worktree gitdir..."
     local git_file="$worktree_path/.git"
     if [[ ! -f "$git_file" ]]; then
         error "Could not find .git file in worktree at $git_file"
@@ -387,7 +446,7 @@ create_worktree() {
     success "  Found gitdir: $gitdir"
 
     # Step 3: Copy git-crypt keys
-    info "Step 3/4: Copying git-crypt keys..."
+    info "Step 3: Copying git-crypt keys..."
     local source_keys="$MAIN_GIT_DIR/git-crypt/keys"
     local dest_keys="$gitdir/git-crypt/keys"
 
@@ -396,7 +455,7 @@ create_worktree() {
     success "  Keys copied to worktree gitdir"
 
     # Step 4: Checkout files with decryption
-    info "Step 4/4: Checking out files (with decryption)..."
+    info "Step 4: Checking out files (with decryption)..."
     (cd "$worktree_path" && git reset --hard HEAD)
     success "  Files checked out successfully"
 
@@ -421,6 +480,10 @@ create_worktree() {
         info "Step 5: Skipping Docker setup (no docker-compose.yml found)"
     fi
 
+    # Step 6: Patch .mcp.json skillsmith entry for worktree compatibility
+    info "Step 6: Patching .mcp.json (skillsmith → npx)..."
+    patch_mcp_json "$worktree_path"
+
     echo ""
     success "Worktree created successfully!"
     echo ""
@@ -434,6 +497,9 @@ create_worktree() {
         echo "To start Docker in this worktree:"
         echo "  cd $worktree_path && docker compose --profile dev up -d"
     fi
+    echo ""
+    echo "Note: existing worktrees need a one-time manual fix if skillsmith MCP fails:"
+    echo "  Edit .mcp.json: set skillsmith command to 'npx', args to ['-y', '@skillsmith/mcp-server']"
 }
 
 #######################################
