@@ -7,7 +7,7 @@
  *   - Intercepts requests to pathname '/' only; all other paths pass through
  *   - Reads `sk_ab_variant` cookie; assigns variant if absent using AB_HOME_WEIGHTS
  *   - Sets `sk_ab_variant` cookie (7-day, Domain=.skillsmith.app, SameSite=Lax, Secure) on fresh assignment
- *   - Forwards X-AB-Variant header to Vercel (consumed by Astro middleware)
+ *   - Forwards X-AB-Variant header to Vercel (may be stripped; Cookie injection is the reliable path)
  *   - No external API calls; no PII logged; latency target < 5ms
  *
  * Deployment:
@@ -89,9 +89,26 @@ export default {
     const weights = parseWeights(env.AB_HOME_WEIGHTS)
     const variant: Variant = existing ?? assignVariant(weights)
 
-    // Forward with X-AB-Variant header (consumed by Astro middleware)
+    // Forward with X-AB-Variant header (consumed by Astro middleware if not stripped).
+    // Also inject into Cookie header as a reliable fallback: Vercel's SSR runtime
+    // strips non-standard X-* request headers before they reach the Astro adapter,
+    // but the Cookie header is always forwarded. Injecting here prevents the middleware
+    // from running its own weighted assignment, ensuring the Worker is the single
+    // source of truth for variant selection. (SMI-3032)
     const newHeaders = new Headers(request.headers)
     newHeaders.set('X-AB-Variant', variant)
+    // Always explicitly set the Cookie header in the outgoing fetch request.
+    // Cloudflare strips inherited browser Cookie headers from Worker subrequests
+    // as a security feature, but honours explicitly-set headers. Without this,
+    // existing sk_ab_variant cookies from return visitors are silently dropped
+    // before reaching the Vercel SSR runtime. (SMI-3032)
+    const existingCookieStr = cookieHeader ?? ''
+    const cookieToForward = existing
+      ? existingCookieStr
+      : existingCookieStr
+        ? `${existingCookieStr}; ${AB_COOKIE_NAME}=${variant}`
+        : `${AB_COOKIE_NAME}=${variant}`
+    newHeaders.set('Cookie', cookieToForward)
     const forwardedRequest = new Request(request, { headers: newHeaders })
 
     const response = await fetch(forwardedRequest)

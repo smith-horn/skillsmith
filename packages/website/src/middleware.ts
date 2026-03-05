@@ -63,13 +63,21 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   // Homepage variant routing (HOMEPAGE_V2_ENABLED guards until Wave 2+3 ship).
   // When enabled, variant-a → /index-v2, variant-b → /index-v3.
+  //
+  // Use string paths rather than `new Request(path, context.request)` here.
+  // In Node.js (undici), `new Request('/relative-path', init)` does NOT resolve
+  // the relative path against the base URL, producing a malformed Request URL.
+  // Astro's `copyRequest` (used for string/URL payloads) correctly copies all
+  // request headers — including Cookie and X-AB-Variant — to the rewritten
+  // request, so the cookie-based variant detection works in the rewritten
+  // middleware run without triggering a spurious fresh assignment. (SMI-3032)
   const homepageV2Enabled = import.meta.env.HOMEPAGE_V2_ENABLED === 'true'
   if (abEnabled && homepageV2Enabled && pathname === '/') {
     if (abVariant === 'variant-a') {
-      return context.rewrite(new Request('/index-v2', context.request))
+      return context.rewrite('/index-v2')
     }
     if (abVariant === 'variant-b') {
-      return context.rewrite(new Request('/index-v3', context.request))
+      return context.rewrite('/index-v3')
     }
   }
 
