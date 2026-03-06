@@ -24,6 +24,7 @@ const supabaseConfig = getSupabaseConfig()
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
     <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
 
     <meta
@@ -105,7 +106,7 @@ const supabaseConfig = getSupabaseConfig()
           <div class="stat-card">
             <div class="stat-label">Current Plan</div>
             <div class="stat-value" id="current-tier">Community</div>
-            <a href="/account/subscription" class="stat-link">Manage subscription</a>
+            <a href="/account/subscription/" class="stat-link">Manage subscription</a>
           </div>
 
           <div class="stat-card">
@@ -125,7 +126,7 @@ const supabaseConfig = getSupabaseConfig()
         <section class="dashboard-section">
           <div class="section-header">
             <h2>Subscription</h2>
-            <a href="/account/subscription" class="btn btn-secondary btn-sm">Manage</a>
+            <a href="/account/subscription/" class="btn btn-secondary btn-sm">Manage</a>
           </div>
 
           <div class="subscription-card" id="subscription-card">
@@ -207,7 +208,7 @@ const supabaseConfig = getSupabaseConfig()
               </svg>
               <span>Billing History</span>
             </a>
-            <a href="/account/cli-token" class="quick-link">
+            <a href="/account/cli-token/" class="quick-link">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="4 17 10 11 4 5"></polyline>
                 <line x1="12" y1="19" x2="20" y2="19"></line>
@@ -942,7 +943,7 @@ const supabaseConfig = getSupabaseConfig()
 
         if (subscriptionActions) {
           subscriptionActions.innerHTML = `
-            <a href="/account/subscription" class="btn btn-secondary">Manage Subscription</a>
+            <a href="/account/subscription/" class="btn btn-secondary">Manage Subscription</a>
           `
         }
       } else {

@@ -29,6 +29,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
     <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
 
     <!-- Google Analytics with Consent Mode v2 -->
@@ -55,6 +56,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
       content="Sign in to your Skillsmith account to manage skills, view your subscription, and access your dashboard."
     />
     <title>Sign In | Skillsmith</title>
+    <link rel="canonical" href={`${import.meta.env.SITE}/login/`} />
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
     <link
       href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
