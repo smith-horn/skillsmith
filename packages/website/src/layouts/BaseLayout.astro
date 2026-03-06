@@ -22,12 +22,15 @@ interface Props {
   description?: string
   /** Current page path for nav highlighting */
   activePath?: string
+  /** Prevent search engines from indexing this page */
+  noindex?: boolean
 }
 
 const {
   title,
   description = 'Skillsmith - AI-powered agent skill discovery and management',
   activePath = '',
+  noindex = false,
 } = Astro.props
 
 // Get Supabase config for auth-aware navigation
@@ -40,7 +43,12 @@ const supabaseConfig = getSupabaseConfig()
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
-    <meta name="robots" content="max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta
+      name="robots"
+      content={noindex
+        ? 'noindex, nofollow'
+        : 'max-image-preview:large, max-snippet:-1, max-video-preview:-1'}
+    />
     <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
     <meta name="generator" content={Astro.generator} />
 

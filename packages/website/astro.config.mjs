@@ -10,6 +10,23 @@ export default defineConfig({
   integrations: [
     sitemap({
       serialize(item) {
+        // Exclude private/auth/account pages and A/B test variants from sitemap.
+        // Use pathname.startsWith() not includes() to avoid false positives (SMI-3077).
+        // Also check exact match (no trailing slash) for redirect-only pages like /verify.
+        const pathname = new URL(item.url).pathname
+        const excluded = [
+          '/account/',
+          '/auth/',
+          '/login/',
+          '/signup/',
+          '/verify/',
+          '/index-v2/',
+          '/index-v3/',
+        ]
+        if (excluded.some((p) => pathname === p.slice(0, -1) || pathname.startsWith(p))) {
+          return undefined
+        }
+
         // High-priority pages
         if (item.url === 'https://www.skillsmith.app/') {
           item.priority = 1.0

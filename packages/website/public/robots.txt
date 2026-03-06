@@ -4,6 +4,17 @@
 User-agent: *
 Allow: /
 
+# Block crawlers from private/auth/account paths to preserve crawl budget.
+# These paths are disallowed to save crawl budget — they are not intended for
+# indexing. /login/ is intentionally omitted from Disallow: it carries a
+# noindex meta tag, but Googlebot must be able to crawl it to read and honor
+# that directive. Disallowed pages cannot be read by Googlebot, so their
+# noindex tags have no effect — the Disallow rule itself prevents indexing.
+Disallow: /account/
+Disallow: /auth/
+Disallow: /verify/
+Disallow: /signup/success/
+
 # AI Crawlers - Explicitly Allowed
 # These crawlers power AI search and answer engines
 
