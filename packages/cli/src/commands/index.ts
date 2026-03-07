@@ -49,3 +49,6 @@ export { createPinCommand, createUnpinCommand } from './pin.js'
 
 // SMI-skill-version-tracking Wave 3: Security Advisory Audit
 export { createAuditCommand } from './audit.js'
+
+// SMI-3083: Embedded skill scaffolding
+export { createCreateCommand, createSkill, validateSkillName } from './create.js'

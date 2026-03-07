@@ -16,6 +16,7 @@ import { SkillParser } from '@skillsmith/core'
 
 import { SKILL_MD_TEMPLATE, README_MD_TEMPLATE } from '../../templates/index.js'
 import { sanitizeError } from '../../utils/sanitize.js'
+import { validateSkillName } from '../../utils/skill-name.js'
 import { printValidationResult } from './utils.js'
 
 /**
@@ -53,13 +54,7 @@ export async function initSkill(
     name ||
     (await input({
       message: 'Skill name:',
-      validate: (value: string) => {
-        if (!value.trim()) return 'Name is required'
-        if (!/^[a-zA-Z][a-zA-Z0-9-_]*$/.test(value)) {
-          return 'Name must start with a letter and contain only letters, numbers, hyphens, and underscores'
-        }
-        return true
-      },
+      validate: validateSkillName,
     }))
 
   // Use provided options or prompt interactively
@@ -135,6 +130,7 @@ export async function initSkill(
       .replace(/\{\{author\}\}/g, author)
       .replace(/\{\{category\}\}/g, category)
       .replace(/\{\{date\}\}/g, new Date().toISOString().split('T')[0] || '')
+      .replace(/\{\{behavioralClassification\}\}/g, '')
 
     await writeFile(join(skillDir, 'SKILL.md'), skillMdContent, 'utf-8')
 
