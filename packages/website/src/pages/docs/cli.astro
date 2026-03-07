@@ -206,6 +206,101 @@ skillsmith recommend --analyze ./package.json`}</code></pre>
     </tbody>
   </table>
 
+  <h2>Skill Authoring</h2>
+
+  <p>Commands for creating and developing skills locally.</p>
+
+  <h3>create</h3>
+
+  <p>Scaffold a new Claude Code skill into <code>~/.claude/skills/&lt;name&gt;/</code>. No registry or network access required — everything runs locally.</p>
+
+  <pre><code>{`skillsmith create <name> [options]
+sklx create <name> [options]
+
+# Examples
+skillsmith create my-skill
+skillsmith create git-helper --description "Git workflow automation" --author myuser
+skillsmith create ci-bot --type advanced --behavior autonomous --scripts
+skillsmith create my-skill --dry-run`}</code></pre>
+
+  <p>With no flags, <code>create</code> runs interactively, prompting for description, author, category, skill type, behavioral classification, and whether to include a scripts directory. Pass flags to skip individual prompts or use <code>--yes</code> to run fully non-interactively.</p>
+
+  <h4>Options</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th>Description</th>
+        <th>Default</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>--output, -o</code></td>
+        <td>Parent directory for the skill folder</td>
+        <td>~/.claude/skills/</td>
+      </tr>
+      <tr>
+        <td><code>--description</code></td>
+        <td>One-line description (skips prompt)</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><code>--author</code></td>
+        <td>GitHub username (skips prompt)</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><code>--category</code></td>
+        <td>Category: development, testing, devops, security, productivity, other</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><code>--type</code></td>
+        <td>Skill type: basic, intermediate, advanced</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><code>--behavior</code></td>
+        <td>Behavioral classification: autonomous, guided, interactive, configurable</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><code>--scripts</code></td>
+        <td>Include a <code>scripts/</code> directory with an example script</td>
+        <td>false</td>
+      </tr>
+      <tr>
+        <td><code>--yes, -y</code></td>
+        <td>Auto-confirm overwrite if skill directory already exists</td>
+        <td>false</td>
+      </tr>
+      <tr>
+        <td><code>--dry-run</code></td>
+        <td>Preview scaffold output without writing any files</td>
+        <td>false</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h4>Scaffolded files</h4>
+
+  <p>Running <code>skillsmith create my-skill</code> produces:</p>
+
+  <pre><code>{`~/.claude/skills/my-skill/
+├── SKILL.md          # Skill definition with Behavioral Classification section
+├── README.md         # Usage documentation
+├── CHANGELOG.md      # Release history
+├── .gitignore        # Ignores common build artifacts
+└── resources/        # Resource files directory
+    # scripts/        # (included only when --scripts is passed)
+    #   example.js`}</code></pre>
+
+  <p>On completion, a publishing checklist is printed that covers the requirements for submitting to the Skillsmith registry.</p>
+
+  <p>See also: <code>skillsmith author init</code> — an older interactive scaffolder that places skills in the current directory. <code>create</code> is recommended for new skills.</p>
+
   <h2>Author Commands</h2>
 
   <p>Commands for skill authoring and development.</p>
