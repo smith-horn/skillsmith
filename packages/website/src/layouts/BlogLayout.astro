@@ -310,14 +310,14 @@ const formattedUpdated = updated ? formatDate(updated) : null
   }
 
   .prose-content a {
-    color: #e07a5f;
+    color: var(--color-coral);
     text-decoration: underline;
     text-underline-offset: 2px;
     transition: color 0.2s;
   }
 
   .prose-content a:hover {
-    color: #f09080;
+    color: var(--color-coral-light);
   }
 
   .prose-content strong {
@@ -350,7 +350,7 @@ const formattedUpdated = updated ? formatDate(updated) : null
   }
 
   .prose-content blockquote {
-    border-left: 4px solid #e07a5f;
+    border-left: 4px solid var(--color-coral);
     padding-left: 1.25rem;
     margin: 1.5rem 0;
     font-style: italic;
@@ -371,16 +371,16 @@ const formattedUpdated = updated ? formatDate(updated) : null
 
   .prose-content img:hover {
     opacity: 0.9;
-    box-shadow: 0 0 0 2px rgba(224, 122, 95, 0.3);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-coral) 30%, transparent);
   }
 
   .prose-content img:focus {
     outline: none;
-    box-shadow: 0 0 0 2px #e07a5f;
+    box-shadow: 0 0 0 2px var(--color-coral);
   }
 
   .prose-content img:focus-visible {
-    outline: 2px solid #e07a5f;
+    outline: 2px solid var(--color-coral);
     outline-offset: 2px;
   }
 
@@ -467,7 +467,7 @@ const formattedUpdated = updated ? formatDate(updated) : null
   /* Superscript footnotes */
   .prose-content sup {
     font-size: 0.75rem;
-    color: #e07a5f;
+    color: var(--color-coral);
   }
 
   .prose-content sup a {

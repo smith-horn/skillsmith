@@ -154,20 +154,8 @@
   @apply btn bg-dark-800 text-dark-50 hover:bg-dark-700;
 }
 
-@utility btn-outline {
-  @apply btn border border-dark-700 bg-transparent text-dark-300 hover:bg-dark-800;
-}
-
 @utility btn-ghost {
   @apply btn text-dark-300 hover:bg-dark-800 hover:text-dark-50;
-}
-
-@utility btn-lg {
-  @apply px-6 py-3 text-base;
-}
-
-@utility btn-sm {
-  @apply px-3 py-1.5 text-xs;
 }
 
 @utility card {
@@ -194,78 +182,6 @@
 
 @utility badge-experimental {
   @apply badge bg-yellow-100 text-yellow-800;
-}
-
-@utility input {
-  /* Input styles */
-  @apply block w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-900 placeholder-gray-500 focus:border-primary-500 focus:outline-hidden focus:ring-1 focus:ring-primary-500;
-}
-
-@utility input-lg {
-  @apply input px-5 py-3 text-base;
-}
-
-@utility section {
-  /* Section styles */
-  @apply py-16 sm:py-24;
-}
-
-@utility section-dark {
-  @apply section bg-gray-900 text-white;
-}
-
-@utility container-narrow {
-  /* Container variants */
-  @apply mx-auto max-w-3xl px-4;
-}
-
-@utility container-wide {
-  @apply mx-auto max-w-7xl px-4 sm:px-6 lg:px-8;
-}
-
-@utility prose-custom {
-  /* Prose styles for documentation */
-  @apply prose prose-gray max-w-none prose-headings:font-semibold prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline prose-code:before:content-none prose-code:after:content-none;
-}
-
-@utility text-gradient {
-  /* Text gradient */
-  @apply bg-clip-text text-transparent bg-linear-to-r from-primary-600 to-secondary-600;
-}
-
-@utility backdrop-blur-safe {
-  /* Backdrop blur with @supports fallback for older browsers */
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-
-  @supports (backdrop-filter: blur(0)) {
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-  }
-}
-
-@utility animate-in {
-  /* Animation utilities */
-  animation: animate-in 0.3s ease-out;
-}
-
-@utility no-scrollbar {
-  /* Hide scrollbar */
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-
-  &::-webkit-scrollbar {
-    display: none;
-  }
-}
-
-@utility aspect-hero {
-  /* Aspect ratio utilities */
-  aspect-ratio: 16 / 9;
-}
-
-@utility aspect-card {
-  aspect-ratio: 4 / 3;
 }
 
 @layer base {
@@ -338,18 +254,5 @@
 
   pre code {
     @apply bg-transparent p-0 rounded-none;
-  }
-}
-
-@layer utilities {
-  @keyframes animate-in {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
   }
 }
