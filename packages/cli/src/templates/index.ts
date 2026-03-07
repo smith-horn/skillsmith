@@ -6,6 +6,7 @@
 
 export { SKILL_MD_TEMPLATE } from './skill.md.template.js'
 export { README_MD_TEMPLATE } from './readme.md.template.js'
+export { CHANGELOG_MD_TEMPLATE } from './changelog.md.template.js'
 export {
   SUBAGENT_MD_TEMPLATE,
   CLAUDE_MD_SNIPPET_TEMPLATE,

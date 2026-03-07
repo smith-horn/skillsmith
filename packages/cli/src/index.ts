@@ -42,6 +42,7 @@ import {
   createPinCommand,
   createUnpinCommand,
   createAuditCommand,
+  createCreateCommand,
 } from './commands/index.js'
 import { DEFAULT_DB_PATH } from './config.js'
 import { sanitizeError } from './utils/sanitize.js'
@@ -156,5 +157,8 @@ program.addCommand(createUnpinCommand())
 
 // SMI-skill-version-tracking Wave 3: Security Advisory Audit
 program.addCommand(createAuditCommand())
+
+// SMI-3083: Embedded skill scaffolding (also available as `sklx create`)
+program.addCommand(createCreateCommand())
 
 program.parse()
