@@ -400,3 +400,52 @@ All scheduled jobs log to the `audit_logs` table:
 - `refresh:run` - Metadata refresh results
 - `ops-report:sent` - Weekly report sent
 - `alert:sent` - Alert notification sent
+
+---
+
+## npm Package Releases
+
+### Manual release checklist
+
+Use when publishing a package manually (hotfix, CLI-only bump, etc.). **Every step is required** — skipping the GitHub Release step has caused gaps (SMI-3083).
+
+**1. Pre-release**
+
+- [ ] Version bumped in `packages/<pkg>/package.json`
+- [ ] `packages/<pkg>/CHANGELOG.md` updated with the new version entry
+- [ ] PR merged to `main` with CI green
+
+**2. Publish to npm**
+
+```bash
+# Always publish @skillsmith/core before @skillsmith/cli
+# Use --ignore-scripts — prepublishOnly scripts run in Docker (CI already validated them)
+cd packages/core && npm publish --ignore-scripts --access public
+sleep 30   # wait for registry propagation
+cd ../cli  && npm publish --ignore-scripts --access public
+```
+
+**3. Tag and GitHub Release**
+
+```bash
+# Tag (if not already pushed by branch workflow)
+git tag cli-v<version>          # e.g. cli-v0.5.0
+git push origin cli-v<version>
+
+# GitHub Release — REQUIRED, not optional
+gh release create cli-v<version> \
+  --title "@skillsmith/cli v<version>" \
+  --notes "<paste CHANGELOG entry for this version>" \
+  --target main
+```
+
+**4. Verify**
+
+```bash
+npm info @skillsmith/cli version          # should return new version
+gh release view cli-v<version>            # should exist
+```
+
+### Publish order
+
+Always publish in dependency order: `@skillsmith/core` → `@skillsmith/cli` / `@skillsmith/mcp-server`.
