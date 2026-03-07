@@ -547,6 +547,29 @@ const categoryJsonLd =
     const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
     const supabaseAnonKey = config.anonKey
 
+    // SMI-2075: Get authenticated user's JWT if available
+    // JWT auth provides tier-based rate limits vs anon key's community limits
+    let authToken = supabaseAnonKey // Default to anon key
+
+    async function initAuth() {
+      try {
+        const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2')
+        const supabase = createClient(config.url, config.anonKey)
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+
+        if (session?.access_token) {
+          authToken = session.access_token
+          console.debug('[Skills] Using JWT auth for tier-based rate limits')
+        } else {
+          console.debug('[Skills] Using anon key (community rate limits)')
+        }
+      } catch (e) {
+        console.warn('[Skills] Auth init failed, using anon key:', e.message)
+      }
+    }
+
     // Trust tier badge colors
     const trustBadgeClasses = {
       verified: 'bg-green-500/10 text-green-400 border-green-500/20',
@@ -756,7 +779,7 @@ const categoryJsonLd =
           `${API_BASE}/skills-get/${encodeURIComponent(decodedSkillId)}`,
           {
             headers: {
-              Authorization: `Bearer ${supabaseAnonKey}`,
+              Authorization: `Bearer ${authToken}`,
               'Content-Type': 'application/json',
             },
           }
@@ -814,7 +837,9 @@ const categoryJsonLd =
       })
     })
 
-    // Initialize
-    fetchSkill()
+    // SMI-2075: Initialize auth then fetch skill (JWT provides tier-based rate limits)
+    initAuth().then(() => {
+      fetchSkill()
+    })
   }) // End astro:page-load handler
 </script>
