@@ -52,6 +52,7 @@ const savingsPercent = period === 'annual' ? 17 : 0 // ~17% savings
     <link rel="canonical" href={`${import.meta.env.SITE}/signup/`} />
 
     <!-- Google Analytics with Consent Mode v2 -->
+    <!-- SMI-2421: Consent setup synchronous; gtag.js fetch deferred to idle (requestIdleCallback / setTimeout fallback). -->
     <script is:inline>
       window.dataLayer = window.dataLayer || []
       function gtag() {
@@ -67,8 +68,18 @@ const savingsPercent = period === 'annual' ? 17 : 0 // ~17% savings
       })
       gtag('js', new Date())
       gtag('config', 'G-GGZQZM1Y1L')
+      function loadGtag() {
+        var s = document.createElement('script')
+        s.async = true
+        s.src = 'https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L'
+        document.head.appendChild(s)
+      }
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(loadGtag, { timeout: 3000 })
+      } else {
+        setTimeout(loadGtag, 1)
+      }
     </script>
-    <script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"></script>
 
     <meta
       name="description"

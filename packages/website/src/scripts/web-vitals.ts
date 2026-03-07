@@ -1,9 +1,14 @@
 /**
- * Web Vitals RUM tracking (SMI-2344, SMI-2363)
+ * Web Vitals RUM tracking (SMI-2344, SMI-2363, SMI-2420)
  *
  * Shared module for Core Web Vitals reporting.
  * Used by BaseLayout and standalone pages (index.astro).
- * Side-effect import: registers LCP, CLS, INP observers on load.
+ *
+ * SMI-2420: Changed from side-effect import to named export.
+ * Call registerWebVitals() inside an astro:page-load listener to defer
+ * the web-vitals bundle load without missing LCP events.
+ * onLCP must register promptly on page-load — it uses a PerformanceObserver
+ * that cannot capture LCP if registered after the LCP event fires.
  */
 import { onLCP, onCLS, onINP } from 'web-vitals'
 import type { Metric } from 'web-vitals'
@@ -24,6 +29,13 @@ function reportMetric(metric: Metric): void {
   }
 }
 
-onLCP(reportMetric)
-onCLS(reportMetric)
-onINP(reportMetric)
+/**
+ * Register Core Web Vitals observers.
+ * Must be called promptly on astro:page-load — do not defer inside
+ * requestIdleCallback as LCP events may already have fired by idle time.
+ */
+export function registerWebVitals(): void {
+  onLCP(reportMetric)
+  onCLS(reportMetric)
+  onINP(reportMetric)
+}

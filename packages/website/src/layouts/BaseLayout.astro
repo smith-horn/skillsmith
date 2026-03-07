@@ -69,6 +69,8 @@ const supabaseConfig = getSupabaseConfig()
     />
 
     <!-- Google Analytics with Consent Mode v2 -->
+    <!-- SMI-2421: Consent setup is synchronous (GA4 Consent Mode v2 requires defaults before gtag.js loads). -->
+    <!-- gtag.js script fetch is deferred to idle time via requestIdleCallback (setTimeout fallback for Safari <16.4). -->
     <script is:inline>
       window.dataLayer = window.dataLayer || []
       function gtag() {
@@ -85,12 +87,19 @@ const supabaseConfig = getSupabaseConfig()
       })
       gtag('js', new Date())
       gtag('config', 'G-GGZQZM1Y1L')
+      // Defer the 149KB gtag.js network fetch until idle — removes it from the critical path
+      function loadGtag() {
+        var s = document.createElement('script')
+        s.async = true
+        s.src = 'https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L'
+        document.head.appendChild(s)
+      }
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(loadGtag, { timeout: 3000 })
+      } else {
+        setTimeout(loadGtag, 1)
+      }
     </script>
-    <script
-      is:inline
-      async
-      src="https://www.googletagmanager.com/gtag/js?id=G-GGZQZM1Y1L"
-      fetchpriority="low"></script>
 
     <!-- Open Graph -->
     <meta property="og:title" content={title} />
@@ -145,8 +154,13 @@ const supabaseConfig = getSupabaseConfig()
     <CookieConsent />
 
     <!-- SMI-2344: Web Vitals RUM tracking (SMI-2363: shared module) -->
+    <!-- SMI-2420: Lazy-load via named export. Non-inline <script> so Astro/Vite can bundle correctly. -->
+    <!-- onLCP registers on astro:page-load (not inside idle callback) to avoid missing LCP events. -->
     <script>
-      import '../scripts/web-vitals'
+      import { registerWebVitals } from '../scripts/web-vitals'
+      document.addEventListener('astro:page-load', () => {
+        registerWebVitals()
+      })
     </script>
   </body>
 </html>
