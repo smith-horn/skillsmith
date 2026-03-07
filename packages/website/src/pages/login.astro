@@ -15,6 +15,7 @@ export const prerender = false
 import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../lib/supabase-config'
 import LoginButton from '../components/auth/LoginButton.astro'
+import Footer from '../components/Footer.astro'
 import Nav from '../components/Nav.astro'
 
 // Read env vars at SSR time to inject into client script
@@ -162,16 +163,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
       </div>
     </main>
 
-    <footer class="footer">
-      <div class="footer-content">
-        <p>&copy; 2026 Smith Horn Group Ltd. All rights reserved.</p>
-        <p class="license-note">
-          Licensed under <a href="https://www.elastic.co/licensing/elastic-license"
-            >Elastic License 2.0</a
-          >
-        </p>
-      </div>
-    </footer>
+    <Footer compact />
 
     <!-- Cookie consent banner (standalone page, not using BaseLayout) -->
     <div
@@ -533,31 +525,6 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
 
   .auth-footer a:hover {
     color: #f3f4f6;
-  }
-
-  /* Footer */
-  .footer {
-    margin-top: auto;
-    background: #1a1a2e;
-    color: white;
-    padding: 2rem;
-  }
-
-  .footer-content {
-    max-width: 1280px;
-    margin: 0 auto;
-    text-align: center;
-    font-size: 0.875rem;
-    color: #9ca3af;
-  }
-
-  .license-note a {
-    color: #9ca3af;
-    text-decoration: underline;
-  }
-
-  .license-note a:hover {
-    color: white;
   }
 
   /* Responsive */

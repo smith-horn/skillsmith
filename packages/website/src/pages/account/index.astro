@@ -13,6 +13,7 @@ export const prerender = false
 
 import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../../lib/supabase-config'
+import Footer from '../../components/Footer.astro'
 import Nav from '../../components/Nav.astro'
 
 // Read env vars at SSR time to inject into client script
@@ -228,11 +229,7 @@ const supabaseConfig = getSupabaseConfig()
       </div>
     </main>
 
-    <footer class="footer">
-      <div class="footer-content">
-        <p>&copy; 2026 Smith Horn Group Ltd. All rights reserved.</p>
-      </div>
-    </footer>
+    <Footer compact />
   </body>
 </html>
 
@@ -747,21 +744,6 @@ const supabaseConfig = getSupabaseConfig()
     border-top: 1px solid #2a2a2f;
     display: flex;
     justify-content: flex-end;
-  }
-
-  /* Footer */
-  .footer {
-    margin-top: auto;
-    background: #1a1a2e;
-    padding: 1.5rem 2rem;
-  }
-
-  .footer-content {
-    max-width: 1280px;
-    margin: 0 auto;
-    text-align: center;
-    font-size: 0.875rem;
-    color: #9ca3af;
   }
 
   /* Responsive */

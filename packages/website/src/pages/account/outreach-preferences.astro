@@ -8,6 +8,7 @@ export const prerender = false
 
 import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../../lib/supabase-config'
+import Footer from '../../components/Footer.astro'
 import '../../styles/outreach-preferences.css'
 
 const supabaseConfig = getSupabaseConfig()
@@ -132,9 +133,7 @@ const supabaseConfig = getSupabaseConfig()
       </div>
     </main>
 
-    <footer class="footer">
-      <p>&copy; 2026 Smith Horn Group Ltd. All rights reserved.</p>
-    </footer>
+    <Footer compact />
   </body>
 </html>
 
