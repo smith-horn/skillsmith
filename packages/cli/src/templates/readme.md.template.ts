@@ -81,7 +81,7 @@ MIT License
 
 ## Author
 
-Created with [Skillsmith](https://github.com/skillsmith/skillsmith)
+Created with [Skillsmith](https://github.com/smith-horn/skillsmith)
 `
 
 export default README_MD_TEMPLATE

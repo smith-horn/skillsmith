@@ -97,7 +97,7 @@ function buildSkillMd(opts: {
   behavior: string
   date: string
 }): string {
-  const behavioralClassification = `\n## Behavioral Classification\n\n**Type**: ${capitalize(opts.type)}\n**Behavior**: ${capitalize(opts.behavior)}\n\n${behaviorDescription(opts.behavior)}\n`
+  const behavioralClassification = `## Behavioral Classification\n\n**Type**: ${capitalize(opts.type)}\n**Behavior**: ${capitalize(opts.behavior)}\n\n${behaviorDescription(opts.behavior)}\n\n`
 
   return SKILL_MD_TEMPLATE.replace(/\{\{name\}\}/g, opts.name)
     .replace(/\{\{description\}\}/g, sanitizeYamlScalar(opts.description))
