@@ -430,7 +430,12 @@ if (existsSync(MIGRATIONS_DIR)) {
 
     for (const file of migrationFiles) {
       const filePath = join(MIGRATIONS_DIR, file)
-      const content = readFileSync(filePath, 'utf8')
+      const contentBuf = readFileSync(filePath)
+      // Skip git-crypt encrypted files (binary blobs starting with \x00GITCRYPT)
+      if (contentBuf[0] === 0x00 && contentBuf.toString('utf8', 1, 9) === 'GITCRYPT') {
+        continue
+      }
+      const content = contentBuf.toString('utf8')
       const lines = content.split('\n')
       const headerLines = lines.slice(0, 10).join('\n')
 
@@ -1162,6 +1167,49 @@ console.log(`\n${BOLD}20. Stale Doc Path References in Skills (SMI-2637)${RESET}
     }
   } else {
     warn('.claude/skills/ directory not found - skipping stale doc path check')
+  }
+}
+
+// npm override exact-pin check (SMI-3099 lesson)
+// Verifies that all scoped overrides target dependencies with range specifiers (^/~),
+// not exact pins — because npm cannot override exact-pinned versions.
+{
+  const pkgPath = 'package.json'
+  if (existsSync(pkgPath)) {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
+    const overrides = pkg.overrides || {}
+    const exactPinIssues = []
+
+    for (const [parent, value] of Object.entries(overrides)) {
+      if (typeof value !== 'object') continue // global overrides, skip
+      for (const dep of Object.keys(value)) {
+        // Check the actual installed package's dependency specifier
+        const parentPkgPath = join('node_modules', parent, 'package.json')
+        if (!existsSync(parentPkgPath)) continue
+        const parentPkg = JSON.parse(readFileSync(parentPkgPath, 'utf8'))
+        const depSpec = parentPkg.dependencies?.[dep] || parentPkg.devDependencies?.[dep]
+        if (
+          depSpec &&
+          !depSpec.startsWith('^') &&
+          !depSpec.startsWith('~') &&
+          !depSpec.startsWith('>')
+        ) {
+          exactPinIssues.push({ parent, dep, spec: depSpec })
+        }
+      }
+    }
+
+    if (exactPinIssues.length > 0) {
+      warn(
+        `${exactPinIssues.length} npm override(s) target exact-pinned dependencies (override will not take effect)`,
+        'Remove ineffective overrides and dismiss the alert with documented rationale'
+      )
+      exactPinIssues.forEach(({ parent, dep, spec }) => {
+        console.log(`    ${parent} → ${dep}: "${spec}" (exact pin, override ineffective)`)
+      })
+    } else {
+      pass('npm overrides: no exact-pin conflicts detected')
+    }
   }
 }
 
