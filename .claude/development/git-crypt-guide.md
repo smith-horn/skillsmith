@@ -157,11 +157,14 @@ The script handles:
 1. Validates git-crypt is unlocked in main repo
 2. Creates worktree with `--no-checkout` to avoid smudge filter errors
 3. Copies git-crypt keys to worktree's gitdir
+   - 3b. Symlinks `.env` from main repo — Varlock needs it for `GIT_CRYPT_KEY_PATH` resolution during git-crypt unlock
 4. Checks out files with decryption working
    - 4b. Initializes submodules (`docs/internal`)
-   - 4c. Scans `.claude/skills/**` for encrypted files; warns with `varlock run -- git-crypt unlock` command if any remain binary (SMI-2676)
+   - 4c. Scans `.claude/skills/**` for encrypted files; if `.env` is present, attempts auto-unlock via `varlock run -- git-crypt unlock` before warning (SMI-2676)
 5. Generates Docker override file
 6. Patches `.mcp.json` skillsmith entry to `npx -y @skillsmith/mcp-server` — the main repo uses a local dist path that doesn't exist in worktrees; this prevents "Failed to reconnect to skillsmith" on every worktree session
+
+**`.env` in worktrees**: New worktrees get `.env` auto-symlinked from the main repo (Step 3b). Existing worktrees need a manual symlink: `ln -sf /path/to/main/repo/.env .env`
 
 **If step 4c warns**: skills like `/launchpad` Stage 4 (`hive-mind-execution`) will silently degrade until git-crypt is unlocked in the worktree. Run the printed unlock command before using `/launchpad`.
 
