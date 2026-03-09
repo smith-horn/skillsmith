@@ -27,19 +27,17 @@ const GIT_ENV = {
 
 /** Create a unique temp directory with Date.now() + random suffix */
 function makeTempDir(prefix: string): string {
-  const base = join(
-    tmpdir(),
-    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  )
+  const base = join(tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
   return mkdtempSync(base)
 }
 
 /** Run a git command in a directory, returning stdout */
 function git(cwd: string, args: string): string {
-  return execSync(
-    `git -c init.defaultBranch=main -c protocol.file.allow=always ${args}`,
-    { cwd, encoding: 'utf8', env: GIT_ENV }
-  ).trim()
+  return execSync(`git -c init.defaultBranch=main -c protocol.file.allow=always ${args}`, {
+    cwd,
+    encoding: 'utf8',
+    env: GIT_ENV,
+  }).trim()
 }
 
 /** Run a shell command with the standard git env */
@@ -226,7 +224,11 @@ describe('SMI-3102: rebase-worktree.sh', () => {
     expect(combined).toContain('conflict.txt')
 
     // Clean up: abort the in-progress rebase so rmSync can remove the dir
-    try { git(worktreeDir, 'rebase --abort') } catch { /* may already be clean */ }
+    try {
+      git(worktreeDir, 'rebase --abort')
+    } catch {
+      /* may already be clean */
+    }
   })
 
   // Scenario 5: Invalid worktree path
