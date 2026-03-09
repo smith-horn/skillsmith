@@ -57,7 +57,28 @@ git checkout -- path/to/encrypted/file
 
 `git pull --rebase` fails in git-crypt repos because the smudge filter creates persistent dirty files that block rebasing.
 
-### Standard rebase (branch behind main, no squash-merge involved)
+### Automated (Recommended)
+
+For worktree branches, use the rebase script which handles all steps automatically:
+
+```bash
+./scripts/rebase-worktree.sh <worktree-path> [target-branch]
+# target-branch defaults to origin/main
+
+# Preview steps without executing:
+./scripts/rebase-worktree.sh --dry-run <worktree-path>
+
+# Skip submodule steps:
+./scripts/rebase-worktree.sh --no-submodule <worktree-path>
+```
+
+The script handles: submodule cross-fetching, git-crypt filter disable/restore, stash management, submodule conflict auto-resolution, and branch verification. See `./scripts/rebase-worktree.sh --help` for full details.
+
+**Exit codes**: 0 (success), 1 (validation failure), 2 (rebase conflict -- manual resolution needed), 3 (rebase succeeded but stash pop had conflicts).
+
+**When to use manual methods below**: Non-worktree branches, or when the script exits 2 (conflict requires manual resolution with filters already disabled).
+
+### Manual fallback: Standard rebase (branch behind main, no squash-merge involved)
 
 Use `format-patch` to preserve local commits:
 
@@ -79,7 +100,7 @@ git am --abort
 
 **When to use**: Any time `git pull --rebase` fails with "You have unstaged changes" due to git-crypt smudge filter artifacts, **and** no sibling squash-merge has occurred.
 
-### Post-squash wave rebase (SMI-2751)
+### Manual fallback: Post-squash wave rebase (SMI-2751)
 
 When a Wave N PR is squash-merged to main and Wave N+1 needs rebasing, **`git format-patch`/`git am` will fail** — the squash commit rewrites the encrypted file blob with a new git-crypt nonce, so the patch content no longer matches the index. **`git cherry-pick` will also fail** because the smudge filter leaves encrypted files permanently dirty.
 
