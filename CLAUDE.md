@@ -110,7 +110,7 @@ git submodule update --init                           # Init internal docs (auth
 
 **Worktrees**: Unlock main repo first, then `./scripts/create-worktree.sh`. Remove with `./scripts/remove-worktree.sh --prune`.
 
-**Rebasing**: `git pull --rebase` may fail due to smudge filter on remaining encrypted paths. Use `git format-patch` workaround.
+**Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Use `--dry-run` to preview. Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
 
 **Full guide**: [git-crypt-guide.md](.claude/development/git-crypt-guide.md)
 

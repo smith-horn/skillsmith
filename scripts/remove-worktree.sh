@@ -12,12 +12,10 @@
 
 set -euo pipefail
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Source shared utilities (colors, logging, get_main_git_dir, is_git_crypt_encrypted)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_lib.sh
+source "$SCRIPT_DIR/_lib.sh"
 
 # Network count threshold for warning
 NETWORK_WARN_THRESHOLD=5
@@ -51,23 +49,6 @@ What this script does:
   4. Optionally prunes stale Docker networks (--prune)
 
 EOF
-}
-
-error() {
-    echo -e "${RED}Error: $1${NC}" >&2
-    exit 1
-}
-
-warn() {
-    echo -e "${YELLOW}Warning: $1${NC}" >&2
-}
-
-info() {
-    echo -e "${BLUE}$1${NC}"
-}
-
-success() {
-    echo -e "${GREEN}$1${NC}"
 }
 
 #######################################
