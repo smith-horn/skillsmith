@@ -54,6 +54,7 @@ Process:
   1. Creates worktree without checkout (avoids encrypted file issues)
   2. Locates the worktree's gitdir from .git file
   3. Copies git-crypt keys from main repo to worktree gitdir
+  3b. Symlinks .env from main repo (Varlock needs it for git-crypt unlock)
   4. Performs git reset --hard HEAD to checkout decrypted files
 
 EOF
@@ -140,6 +141,30 @@ verify_skill_readability() {
     done < <(find "$skills_dir" \( -name "agent-prompt.md" -o -name "SKILL.md" \) -print0 2>/dev/null)
 
     if [[ $encrypted_count -gt 0 ]]; then
+        # Auto-remedy: attempt git-crypt unlock if .env symlink is present
+        if [[ -L "$worktree_path/.env" ]] || [[ -f "$worktree_path/.env" ]]; then
+            info "  Attempting auto-unlock (git-crypt) in worktree..."
+            local unlock_output
+            if unlock_output=$(cd "$worktree_path" && varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"' 2>&1); then
+                # Re-check after unlock
+                encrypted_count=0
+                while IFS= read -r -d '' skill_file; do
+                    if is_git_crypt_encrypted "$skill_file"; then
+                        encrypted_count=$((encrypted_count + 1))
+                    fi
+                done < <(find "$skills_dir" \( -name "agent-prompt.md" -o -name "SKILL.md" \) -print0 2>/dev/null)
+
+                if [[ $encrypted_count -eq 0 ]]; then
+                    success "  Auto-unlock succeeded — all skill files now readable"
+                    return 0
+                else
+                    warn "  Auto-unlock ran but $encrypted_count file(s) still encrypted"
+                fi
+            else
+                warn "  Auto-unlock failed: $unlock_output"
+            fi
+        fi
+
         echo ""
         warn "$encrypted_count of $checked_count skill file(s) are encrypted in this worktree."
         warn "Skills requiring git-crypt (e.g., /launchpad Stage 4 hive-mind-execution) will silently degrade."
@@ -354,11 +379,19 @@ create_worktree() {
     # Step 3: Copy git-crypt keys
     info "Step 3: Copying git-crypt keys..."
     local source_keys="$MAIN_GIT_DIR/git-crypt/keys"
-    local dest_keys="$gitdir/git-crypt/keys"
 
     mkdir -p "$gitdir/git-crypt"
     cp -r "$source_keys" "$gitdir/git-crypt/"
     success "  Keys copied to worktree gitdir"
+
+    # Step 3b: Symlink .env from main repo (Varlock needs it for git-crypt unlock)
+    info "Step 3b: Symlinking .env from main repo..."
+    if [[ -f "$REPO_ROOT/.env" ]]; then
+        ln -sf "$REPO_ROOT/.env" "$worktree_path/.env"
+        success "  .env symlinked from main repo"
+    else
+        warn "  No .env in main repo ($REPO_ROOT/.env) — Varlock commands will fail in this worktree"
+    fi
 
     # Step 4: Checkout files with decryption
     info "Step 4: Checking out files (with decryption)..."
