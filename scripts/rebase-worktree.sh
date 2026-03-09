@@ -54,6 +54,15 @@ Examples:
 EOF
 }
 
+# Extract encrypted path prefixes from .gitattributes (strips trailing /**)
+# Falls back to empty string if .gitattributes is missing or has no git-crypt entries
+get_encrypted_paths() {
+    grep 'filter=git-crypt' "$WORKTREE_PATH/.gitattributes" 2>/dev/null \
+        | awk '{print $1}' \
+        | sed 's|/\*\*$||' \
+        || echo ""
+}
+
 # Restore git-crypt filters to their original values
 restore_filters() {
     if [ "$FILTERS_DISABLED" != true ]; then return 0; fi
@@ -70,10 +79,12 @@ restore_filters() {
     fi
     FILTERS_DISABLED=false
     # Re-checkout encrypted paths to restore plaintext via smudge filter
-    # All 5 encrypted prefixes per .gitattributes (CLAUDE.md § Git-Crypt)
-    git -C "$WORKTREE_PATH" checkout HEAD -- \
-        .claude/skills/ .claude/plans/ .claude/hive-mind/ \
-        supabase/functions/ supabase/migrations/ 2>/dev/null || true
+    local encrypted_paths
+    encrypted_paths=$(get_encrypted_paths)
+    if [ -n "$encrypted_paths" ]; then
+        # shellcheck disable=SC2086
+        git -C "$WORKTREE_PATH" checkout HEAD -- $encrypted_paths 2>/dev/null || true
+    fi
     success "  Git-crypt filters restored"
 }
 
@@ -282,7 +293,9 @@ step_rebase_parent() {
                 echo "After resolving, restore git-crypt filters:"
                 echo "  git -C $WORKTREE_PATH config --local --unset filter.git-crypt.smudge"
                 echo "  git -C $WORKTREE_PATH config --local --unset filter.git-crypt.clean"
-                echo "  git -C $WORKTREE_PATH checkout HEAD -- .claude/skills/ .claude/plans/ .claude/hive-mind/ supabase/functions/ supabase/migrations/"
+                local enc_paths
+                enc_paths=$(get_encrypted_paths | tr '\n' ' ')
+                echo "  git -C $WORKTREE_PATH checkout HEAD -- $enc_paths"
             fi
             echo ""
             echo "To abort: git -C $WORKTREE_PATH rebase --abort"
