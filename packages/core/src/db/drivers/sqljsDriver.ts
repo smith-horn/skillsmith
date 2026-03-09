@@ -48,13 +48,6 @@ interface SqlJsStatement {
 type SqlJsValue = string | number | null | Uint8Array
 type SqlJsBindParams = SqlJsValue[] | Record<string, SqlJsValue>
 
-// fts5-sql-bundle export shapes (ESM named, ESM default with named, CJS interop)
-type InitSqlJsFn = (config?: object) => Promise<SqlJsStatic>
-interface Fts5SqlBundleModule {
-  initSqlJs?: InitSqlJsFn
-  default?: InitSqlJsFn & { initSqlJs?: InitSqlJsFn; default?: InitSqlJsFn }
-}
-
 // Cached sql.js module to avoid reloading WASM
 let sqlJsModule: SqlJsStatic | null = null
 
@@ -70,15 +63,17 @@ async function loadSqlJs(): Promise<SqlJsStatic> {
   try {
     // Dynamic import to avoid loading at module evaluation time
     // Using fts5-sql-bundle for FTS5 full-text search support
-    // Handle both ESM and CJS module formats. fts5-sql-bundle's declared types
-    // don't fully reflect its runtime export shapes, so we cast through unknown.
-    const module = (await import('fts5-sql-bundle')) as unknown as Fts5SqlBundleModule
-    // Extract initSqlJs function from various export shapes:
-    // - ESM named export: module.initSqlJs
-    // - ESM default with named: module.default.initSqlJs
-    // - CJS interop: module.default.default
-    const initSqlJs =
-      module.initSqlJs || module.default?.initSqlJs || module.default?.default || module.default
+    // Typed via ambient declaration in fts5-sql-bundle.d.ts (SMI-2742)
+    const module = await import('fts5-sql-bundle')
+    // Extract initSqlJs from the typed module. The .d.ts declares the named export;
+    // the fallback chain handles CJS interop shapes at runtime (module.default.initSqlJs,
+    // module.default.default). These edge cases require a Record cast.
+    type InitFn = (config?: object) => Promise<SqlJsStatic>
+    const fallback = module.default as unknown as
+      | (InitFn & { initSqlJs?: InitFn; default?: InitFn })
+      | undefined
+    const initSqlJs: InitFn | undefined =
+      module.initSqlJs || fallback?.initSqlJs || fallback?.default || fallback
 
     if (!initSqlJs) {
       throw new Error('[Skillsmith] fts5-sql-bundle: could not locate initSqlJs export')
