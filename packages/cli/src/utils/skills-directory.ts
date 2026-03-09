@@ -9,8 +9,10 @@ import { join } from 'path'
 import { homedir } from 'os'
 import {
   SkillParser,
-  createDatabase,
+  createDatabaseAsync,
+  initializeSchema,
   SkillVersionRepository,
+  type Database,
   type TrustTier,
 } from '@skillsmith/core'
 import { DEFAULT_DB_PATH } from '../config.js'
@@ -60,10 +62,11 @@ export async function getSkillsFromDirectory(
 
   // Open the version repository if a db path was provided
   let versionRepo: SkillVersionRepository | null = null
-  let dbConn: ReturnType<typeof createDatabase> | null = null
+  let dbConn: Database | null = null
   if (dbPath) {
     try {
-      dbConn = createDatabase(dbPath)
+      dbConn = await createDatabaseAsync(dbPath)
+      initializeSchema(dbConn)
       versionRepo = new SkillVersionRepository(dbConn)
     } catch {
       // DB not available yet — fall back to hasUpdates: false

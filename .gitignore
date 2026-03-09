@@ -17,6 +17,8 @@ packages/**/*.d.ts.map
 !packages/**/vitest.config.ts
 # Allow hand-written type declarations (not generated)
 !packages/**/src/types/*.d.ts
+# SMI-2742: Ambient module declaration for fts5-sql-bundle
+!packages/core/src/db/drivers/fts5-sql-bundle.d.ts
 !packages/**/eslint.config.js
 !packages/**/astro.config.mjs
 vitest.config.js
