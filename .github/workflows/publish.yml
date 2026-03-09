@@ -236,7 +236,7 @@ jobs:
         run: docker save skillsmith-publish:${{ github.sha }} | gzip > /tmp/skillsmith-publish.tar.gz
 
       - name: Upload Docker image artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         continue-on-error: true # Don't fail if storage quota exceeded
         with:
           name: docker-image-publish
@@ -251,7 +251,7 @@ jobs:
           tar -czf /tmp/node_modules.tar.gz -C /tmp node_modules
 
       - name: Upload node_modules artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         continue-on-error: true # Don't fail if storage quota exceeded
         with:
           name: node-modules-publish
