@@ -390,7 +390,7 @@ jobs:
       - name: Post summary to PR
         if: github.event_name == 'pull_request'
         continue-on-error: true # SMI-1256: Don't fail workflow if comment posting fails
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const fs = require('fs');

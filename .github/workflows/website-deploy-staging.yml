@@ -436,7 +436,7 @@ jobs:
 
       - name: Update deployment status
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const status = '${{ steps.smoke.outcome }}' === 'success' ? 'success' : 'failure';
