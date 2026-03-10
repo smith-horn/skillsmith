@@ -67,7 +67,7 @@ export class SkillDependencyRepository {
             dep.dep_version,
             source,
             dep.confidence,
-            dep.metadata,
+            dep.metadata
           )
         }
       })
