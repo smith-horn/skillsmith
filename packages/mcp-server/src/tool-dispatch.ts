@@ -25,6 +25,7 @@ import { skillUpdatesInputSchema, executeSkillUpdates } from './tools/skill-upda
 import { skillDiffInputSchema, executeSkillDiff } from './tools/skill-diff.js'
 import { skillAuditInputSchema, executeSkillAudit } from './tools/skill-audit.js'
 import { skillPackAuditInputSchema, executeSkillPackAudit } from './tools/skill-pack-audit.js'
+import { outdatedInputSchema, executeOutdated } from './tools/outdated.js'
 import { createLicenseErrorResponse } from './middleware/license.js'
 import type { LicenseMiddleware } from './middleware/license.js'
 import type { QuotaMiddleware } from './middleware/quota.js'
@@ -111,6 +112,9 @@ export async function dispatchToolCall(
 
     case 'index_local':
       return ok(await executeIndexLocal(indexLocalInputSchema.parse(args), toolContext))
+
+    case 'skill_outdated':
+      return ok(await executeOutdated(outdatedInputSchema.parse(args), toolContext))
 
     case 'skill_publish':
       return ok(await executePublish(publishInputSchema.parse(args), toolContext))
