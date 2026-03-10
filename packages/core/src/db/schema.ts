@@ -14,6 +14,9 @@ import {
   createDatabaseSync,
   createDatabaseAsync as createDatabaseAsyncFactory,
 } from './createDatabase.js'
+import { MIGRATION_V2_SQL } from './migrations/v2-phase5-columns.js'
+import { MIGRATION_V3_SQL } from './migrations/v3-sync-tables.js'
+import { MIGRATION_V4_SQL } from './migrations/v4-security-columns.js'
 import { MIGRATION_V5_SQL } from './migrations/v5-skill-versions.js'
 import { MIGRATION_V5B_SQL } from './migrations/v5b-change-type.js'
 import { MIGRATION_V6_SQL } from './migrations/v6-advisories.js'
@@ -178,71 +181,17 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 2,
     description: 'SMI-974: Add missing columns for Phase 5 imported databases',
-    sql: `
--- Add updated_at column if missing (for Phase 5 imported databases)
-ALTER TABLE skills ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'));
-
--- Add source column if missing (from import scripts)
-ALTER TABLE skills ADD COLUMN source TEXT;
-
--- Add stars column if missing (from import scripts)
-ALTER TABLE skills ADD COLUMN stars INTEGER;
-`,
+    sql: MIGRATION_V2_SQL,
   },
   {
     version: 3,
     description: 'Registry sync tables for local-to-live synchronization',
-    sql: `
--- Sync configuration table (singleton pattern)
-CREATE TABLE IF NOT EXISTS sync_config (
-  id TEXT PRIMARY KEY DEFAULT 'default',
-  enabled INTEGER NOT NULL DEFAULT 1,
-  frequency TEXT NOT NULL DEFAULT 'daily' CHECK(frequency IN ('daily', 'weekly')),
-  interval_ms INTEGER NOT NULL DEFAULT 86400000,
-  last_sync_at TEXT,
-  next_sync_at TEXT,
-  last_sync_count INTEGER DEFAULT 0,
-  last_sync_error TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- Initialize default config if empty
-INSERT OR IGNORE INTO sync_config (id) VALUES ('default');
-
--- Sync history table for tracking sync runs
-CREATE TABLE IF NOT EXISTS sync_history (
-  id TEXT PRIMARY KEY,
-  started_at TEXT NOT NULL,
-  completed_at TEXT,
-  status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running', 'success', 'failed', 'partial')),
-  skills_added INTEGER DEFAULT 0,
-  skills_updated INTEGER DEFAULT 0,
-  skills_unchanged INTEGER DEFAULT 0,
-  error_message TEXT,
-  duration_ms INTEGER,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- Index for efficient history queries
-CREATE INDEX IF NOT EXISTS idx_sync_history_started ON sync_history(started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_sync_history_status ON sync_history(status);
-`,
+    sql: MIGRATION_V3_SQL,
   },
   {
     version: 4,
     description: 'SMI-825: Add security scan columns to skills table',
-    sql: `
--- Add security columns to skills table
-ALTER TABLE skills ADD COLUMN risk_score INTEGER CHECK(risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 100));
-ALTER TABLE skills ADD COLUMN security_findings_count INTEGER DEFAULT 0;
-ALTER TABLE skills ADD COLUMN security_scanned_at TEXT;
-ALTER TABLE skills ADD COLUMN security_passed INTEGER;
-
--- Index for efficient security queries
-CREATE INDEX IF NOT EXISTS idx_skills_risk_score ON skills(risk_score);
-CREATE INDEX IF NOT EXISTS idx_skills_security_passed ON skills(security_passed);
-`,
+    sql: MIGRATION_V4_SQL,
   },
   {
     version: 5,
