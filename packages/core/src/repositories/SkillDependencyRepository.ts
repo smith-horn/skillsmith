@@ -43,6 +43,8 @@ export class SkillDependencyRepository {
    * @param source - The dep_source value to stamp on each row
    */
   setDependencies(skillId: string, deps: SkillDependencyRow[], source: DepSource): void {
+    if (deps.length === 0) return
+
     try {
       const upsert = this.db.prepare(`
         INSERT INTO skill_dependencies
@@ -56,17 +58,21 @@ export class SkillDependencyRepository {
           updated_at  = datetime('now')
       `)
 
-      for (const dep of deps) {
-        upsert.run(
-          skillId,
-          dep.dep_type,
-          dep.dep_target,
-          dep.dep_version,
-          source,
-          dep.confidence,
-          dep.metadata
-        )
-      }
+      const runAll = this.db.transaction(() => {
+        for (const dep of deps) {
+          upsert.run(
+            skillId,
+            dep.dep_type,
+            dep.dep_target,
+            dep.dep_version,
+            source,
+            dep.confidence,
+            dep.metadata,
+          )
+        }
+      })
+
+      runAll()
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       if (msg.includes('no such table')) return

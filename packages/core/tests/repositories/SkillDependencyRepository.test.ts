@@ -175,10 +175,7 @@ describe('SkillDependencyRepository', () => {
 
       const dependents = repo.getDependents('github')
       expect(dependents).toHaveLength(2)
-      expect(dependents.map((r) => r.skill_id).sort()).toEqual([
-        'author/skill-a',
-        'author/skill-b',
-      ])
+      expect(dependents.map((r) => r.skill_id).sort()).toEqual(['author/skill-a', 'author/skill-b'])
     })
 
     it('filters by depType when provided', () => {
