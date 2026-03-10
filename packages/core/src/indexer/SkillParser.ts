@@ -1,14 +1,10 @@
 /**
- * SMI-628: SkillParser - Parse SKILL.md files with YAML frontmatter
- *
- * Parses skill definition files from repositories to extract metadata.
- * Supports the standard SKILL.md format with YAML frontmatter containing:
- * - name, description, author, version
- * - tags, dependencies, category
- * - Additional metadata fields
+ * SMI-628: SkillParser - Parse SKILL.md files with YAML frontmatter.
+ * Extracts metadata from the standard SKILL.md format.
  */
 
 import type { TrustTier } from '../types/skill.js'
+import type { ConflictDeclaration, DependencyDeclaration } from '../types/dependencies.js'
 
 /**
  * Raw metadata extracted from SKILL.md frontmatter
@@ -19,13 +15,22 @@ export interface SkillFrontmatter {
   author?: string
   version?: string
   tags?: string[]
-  dependencies?: string[]
+  /** SMI-3135: Structured dependency declaration (replaces string[]) */
+  dependencies?: DependencyDeclaration
   category?: string
   license?: string
   repository?: string
   homepage?: string
   /** SMI-2760: Compatibility tags — IDE, LLM, and platform values */
   compatibility?: string[]
+  /** SMI-3135: Conflict declarations */
+  conflicts?: ConflictDeclaration[]
+  /** SMI-3135: Deprecation flag */
+  deprecated?: boolean
+  /** SMI-3135: Skill that supersedes this one */
+  superseded_by?: string | null
+  /** @deprecated Use dependencies.skills instead */
+  composes?: string[]
   [key: string]: unknown
 }
 
@@ -38,7 +43,8 @@ export interface ParsedSkillMetadata {
   author: string | null
   version: string | null
   tags: string[]
-  dependencies: string[]
+  /** SMI-3135: Structured dependency declaration (replaces string[]) */
+  dependencies?: DependencyDeclaration
   category: string | null
   license: string | null
   repository: string | null
@@ -302,8 +308,11 @@ export class SkillParser {
       errors.push('Field "tags" must be an array')
     }
 
-    if (frontmatter.dependencies && !Array.isArray(frontmatter.dependencies)) {
-      errors.push('Field "dependencies" must be an array')
+    // SMI-3135: composes deprecation warning
+    if (frontmatter.composes) {
+      warnings.push(
+        "'composes' is deprecated. Migrate to 'dependencies.skills'. See: skillsmith.app/docs/dependencies"
+      )
     }
 
     // Warnings for recommended fields
@@ -343,7 +352,7 @@ export class SkillParser {
       author: frontmatter.author ?? null,
       version: frontmatter.version ?? null,
       tags: Array.isArray(frontmatter.tags) ? frontmatter.tags : [],
-      dependencies: Array.isArray(frontmatter.dependencies) ? frontmatter.dependencies : [],
+      dependencies: frontmatter.dependencies,
       category: frontmatter.category ?? null,
       license: frontmatter.license ?? null,
       repository: frontmatter.repository ?? null,
@@ -401,6 +410,18 @@ export class SkillParser {
     }
 
     return 'unknown'
+  }
+
+  /**
+   * Parse the dependencies block from raw YAML frontmatter content.
+   * Best-effort using the built-in parser; nested objects need js-yaml.
+   */
+  static parseDependencyBlock(rawYaml: string): DependencyDeclaration | undefined {
+    const parsed = parseYamlFrontmatter(rawYaml)
+    if (!parsed.dependencies || typeof parsed.dependencies !== 'object') {
+      return undefined
+    }
+    return parsed.dependencies as DependencyDeclaration
   }
 
   /**

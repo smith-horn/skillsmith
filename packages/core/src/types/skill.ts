@@ -2,6 +2,8 @@
  * Core type definitions for Skillsmith skills
  */
 
+import type { DependencyDeclaration } from './dependencies.js'
+
 /**
  * SMI-1809: Added 'local' for local skills from ~/.claude/skills/
  *
@@ -55,6 +57,8 @@ export interface Skill {
   securityPassed: boolean | null
   /** SMI-2760: Flat array of compatible IDE/LLM/platform slugs */
   compatibility?: string[]
+  /** SMI-3135: Structured dependency declaration */
+  dependencies?: DependencyDeclaration
   createdAt: string
   updatedAt: string
   // SMI-skill-version-tracking Wave 1: version tracking fields

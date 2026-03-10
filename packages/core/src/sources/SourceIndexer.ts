@@ -10,6 +10,7 @@ import type {
   BatchIndexResult,
   SkillIndexResult,
 } from './types.js'
+import type { DependencyDeclaration } from '../types/dependencies.js'
 
 /**
  * Parsed skill metadata (matches existing SkillParser output)
@@ -20,7 +21,8 @@ export interface ParsedSkillMetadata {
   author: string | null
   version: string | null
   tags: string[]
-  dependencies: string[]
+  /** SMI-3135: Structured dependency declaration (replaces string[]) */
+  dependencies?: DependencyDeclaration
   category: string | null
   license: string | null
   rawContent: string

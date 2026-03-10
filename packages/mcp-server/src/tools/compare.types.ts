@@ -110,7 +110,14 @@ export const compareToolSchema = {
 /**
  * Extended skill type with comparison metadata
  */
-export type ExtendedSkill = Skill & { dependencies: string[]; features: string[] }
+/**
+ * SMI-3135: Omit Skill.dependencies (now DependencyDeclaration) and replace
+ * with string[] for the compare response shape.
+ */
+export type ExtendedSkill = Omit<Skill, 'dependencies'> & {
+  dependencies: string[]
+  features: string[]
+}
 
 /**
  * Trust tier ranking for comparison

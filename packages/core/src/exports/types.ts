@@ -25,6 +25,24 @@ export type {
 export { SKILL_ROLES } from '../types/skill.js'
 
 // ============================================================================
+// Dependency Types (SMI-3135)
+// ============================================================================
+
+export type {
+  DependencyDeclaration,
+  SkillDep,
+  PlatformDep,
+  McpServerDep,
+  ModelDep,
+  EnvironmentDep,
+  ToolDep,
+  ConflictDeclaration,
+  SkillDependencyRow,
+  DepType,
+  DepSource,
+} from '../types/dependencies.js'
+
+// ============================================================================
 // Search Types
 // ============================================================================
 
