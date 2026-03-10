@@ -9,20 +9,22 @@
  * - Indexes for common query patterns
  */
 
-import type { Database } from './database-interface.js'
+import type { Database } from "./database-interface.js";
 import {
   createDatabaseSync,
   createDatabaseAsync as createDatabaseAsyncFactory,
-} from './createDatabase.js'
-import { MIGRATION_V5_SQL } from './migrations/v5-skill-versions.js'
-import { MIGRATION_V5B_SQL } from './migrations/v5b-change-type.js'
-import { MIGRATION_V6_SQL } from './migrations/v6-advisories.js'
-import { MIGRATION_V7_SQL } from './migrations/v7-compatibility.js'
-import { MIGRATION_V8_SQL } from './migrations/v8-co-installs.js'
+} from "./createDatabase.js";
+import { MIGRATION_V5_SQL } from "./migrations/v5-skill-versions.js";
+import { MIGRATION_V5B_SQL } from "./migrations/v5b-change-type.js";
+import { MIGRATION_V6_SQL } from "./migrations/v6-advisories.js";
+import { MIGRATION_V7_SQL } from "./migrations/v7-compatibility.js";
+import { MIGRATION_V8_SQL } from "./migrations/v8-co-installs.js";
+import { MIGRATION_V10_SQL } from "./migrations/v10-dependencies.js";
 
-export type DatabaseType = Database
+export type DatabaseType = Database;
 
-export const SCHEMA_VERSION = 9
+// v10 reserved: skill-dependency-intelligence (SMI-3134)
+export const SCHEMA_VERSION = 10;
 
 /**
  * SQL statements for creating the database schema
@@ -156,26 +158,26 @@ CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_logs(resource);
 CREATE INDEX IF NOT EXISTS idx_audit_result ON audit_logs(result);
 CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_logs(actor);
-`
+`;
 
 /**
  * Migration definitions for schema upgrades
  */
 export interface Migration {
-  version: number
-  description: string
-  sql: string
+  version: number;
+  description: string;
+  sql: string;
 }
 
 export const MIGRATIONS: Migration[] = [
   {
     version: 1,
-    description: 'Initial schema creation',
+    description: "Initial schema creation",
     sql: SCHEMA_SQL,
   },
   {
     version: 2,
-    description: 'SMI-974: Add missing columns for Phase 5 imported databases',
+    description: "SMI-974: Add missing columns for Phase 5 imported databases",
     sql: `
 -- Add updated_at column if missing (for Phase 5 imported databases)
 ALTER TABLE skills ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'));
@@ -189,7 +191,7 @@ ALTER TABLE skills ADD COLUMN stars INTEGER;
   },
   {
     version: 3,
-    description: 'Registry sync tables for local-to-live synchronization',
+    description: "Registry sync tables for local-to-live synchronization",
     sql: `
 -- Sync configuration table (singleton pattern)
 CREATE TABLE IF NOT EXISTS sync_config (
@@ -229,7 +231,7 @@ CREATE INDEX IF NOT EXISTS idx_sync_history_status ON sync_history(status);
   },
   {
     version: 4,
-    description: 'SMI-825: Add security scan columns to skills table',
+    description: "SMI-825: Add security scan columns to skills table",
     sql: `
 -- Add security columns to skills table
 ALTER TABLE skills ADD COLUMN risk_score INTEGER CHECK(risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 100));
@@ -244,30 +246,37 @@ CREATE INDEX IF NOT EXISTS idx_skills_security_passed ON skills(security_passed)
   },
   {
     version: 5,
-    description: 'SMI-skill-version-tracking Wave 1: skill_versions table',
+    description: "SMI-skill-version-tracking Wave 1: skill_versions table",
     sql: MIGRATION_V5_SQL,
   },
   {
     version: 6,
-    description: 'SMI-skill-version-tracking Wave 2: add change_type to skill_versions',
+    description:
+      "SMI-skill-version-tracking Wave 2: add change_type to skill_versions",
     sql: MIGRATION_V5B_SQL,
   },
   {
     version: 7,
-    description: 'SMI-skill-version-tracking Wave 3: skill_advisories table',
+    description: "SMI-skill-version-tracking Wave 3: skill_advisories table",
     sql: MIGRATION_V6_SQL,
   },
   {
     version: 8,
-    description: 'SMI-2760: compatibility column on skills table',
+    description: "SMI-2760: compatibility column on skills table",
     sql: MIGRATION_V7_SQL,
   },
   {
     version: 9,
-    description: 'SMI-2761: skill_co_installs table for co-install recommendations',
+    description:
+      "SMI-2761: skill_co_installs table for co-install recommendations",
     sql: MIGRATION_V8_SQL,
   },
-]
+  {
+    version: 10,
+    description: "Skill dependency intelligence: skill_dependencies table",
+    sql: MIGRATION_V10_SQL,
+  },
+];
 
 /**
  * SMI-974: Migration SQL for adding FTS5 to existing database
@@ -288,17 +297,19 @@ CREATE VIRTUAL TABLE IF NOT EXISTS skills_fts USING fts5(
 -- Populate FTS from existing skills (safe to run multiple times)
 INSERT OR IGNORE INTO skills_fts(rowid, name, description, tags, author)
 SELECT rowid, name, description, tags, author FROM skills;
-`
+`;
 
 /**
  * Initialize the database with the complete schema
  */
 export function initializeSchema(db: DatabaseType): void {
-  db.exec(SCHEMA_SQL)
+  db.exec(SCHEMA_SQL);
 
   // Record the schema version
-  const stmt = db.prepare('INSERT OR REPLACE INTO schema_version (version) VALUES (?)')
-  stmt.run(SCHEMA_VERSION)
+  const stmt = db.prepare(
+    "INSERT OR REPLACE INTO schema_version (version) VALUES (?)",
+  );
+  stmt.run(SCHEMA_VERSION);
 }
 
 /**
@@ -306,12 +317,12 @@ export function initializeSchema(db: DatabaseType): void {
  */
 export function getSchemaVersion(db: DatabaseType): number {
   try {
-    const result = db.prepare('SELECT MAX(version) as version FROM schema_version').get() as
-      | { version: number }
-      | undefined
-    return result?.version ?? 0
+    const result = db
+      .prepare("SELECT MAX(version) as version FROM schema_version")
+      .get() as { version: number } | undefined;
+    return result?.version ?? 0;
   } catch {
-    return 0
+    return 0;
   }
 }
 
@@ -322,43 +333,45 @@ export function getSchemaVersion(db: DatabaseType): number {
  * created by other means (e.g., Phase 5 import scripts)
  */
 export function runMigrations(db: DatabaseType): number {
-  const currentVersion = getSchemaVersion(db)
-  let migrationsRun = 0
+  const currentVersion = getSchemaVersion(db);
+  let migrationsRun = 0;
 
   for (const migration of MIGRATIONS) {
     if (migration.version > currentVersion) {
       // Execute each statement separately to handle duplicate column errors
-      const statements = migration.sql.split(';').filter((s) => s.trim())
+      const statements = migration.sql.split(";").filter((s) => s.trim());
       for (const stmt of statements) {
         try {
-          db.exec(stmt)
+          db.exec(stmt);
         } catch (error) {
           // Ignore "duplicate column" errors - column already exists from initial schema
-          const msg = error instanceof Error ? error.message : String(error)
-          if (!msg.includes('duplicate column')) {
-            throw error
+          const msg = error instanceof Error ? error.message : String(error);
+          if (!msg.includes("duplicate column")) {
+            throw error;
           }
         }
       }
-      db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(migration.version)
-      migrationsRun++
+      db.prepare("INSERT INTO schema_version (version) VALUES (?)").run(
+        migration.version,
+      );
+      migrationsRun++;
     }
   }
 
-  return migrationsRun
+  return migrationsRun;
 }
 
 /** @deprecated Use createDatabaseAsync() — requires better-sqlite3 native module. */
-export function createDatabase(path: string = ':memory:'): DatabaseType {
-  const db = createDatabaseSync(path)
+export function createDatabase(path: string = ":memory:"): DatabaseType {
+  const db = createDatabaseSync(path);
 
   // Enable foreign keys
-  db.pragma('foreign_keys = ON')
+  db.pragma("foreign_keys = ON");
 
   // Initialize schema
-  initializeSchema(db)
+  initializeSchema(db);
 
-  return db
+  return db;
 }
 
 /**
@@ -366,15 +379,17 @@ export function createDatabase(path: string = ':memory:'): DatabaseType {
  * @deprecated Use openDatabaseAsync() for cross-platform WASM support.
  */
 export function openDatabase(path: string): DatabaseType {
-  const db = createDatabaseSync(path)
+  const db = createDatabaseSync(path);
 
   // Enable foreign keys
-  db.pragma('foreign_keys = ON')
+  db.pragma("foreign_keys = ON");
 
   // Check if schema_version table exists
   const hasSchemaVersion = db
-    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'")
-    .get()
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'",
+    )
+    .get();
 
   if (!hasSchemaVersion) {
     // Database has no version tracking - assume it's a Phase 5 import or similar
@@ -385,60 +400,62 @@ export function openDatabase(path: string): DatabaseType {
         applied_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       INSERT OR IGNORE INTO schema_version (version) VALUES (1);
-    `)
+    `);
   }
 
   // Run pending migrations safely
-  runMigrationsSafe(db)
+  runMigrationsSafe(db);
 
-  return db
+  return db;
 }
 
 /** SMI-974: Run migrations with error handling for existing columns */
 export function runMigrationsSafe(db: DatabaseType): number {
-  const currentVersion = getSchemaVersion(db)
-  let migrationsRun = 0
+  const currentVersion = getSchemaVersion(db);
+  let migrationsRun = 0;
 
   for (const migration of MIGRATIONS) {
     if (migration.version > currentVersion) {
       try {
         // Try to run migration, but handle "duplicate column" errors gracefully
-        const statements = migration.sql.split(';').filter((s) => s.trim())
+        const statements = migration.sql.split(";").filter((s) => s.trim());
         for (const stmt of statements) {
           try {
-            db.exec(stmt)
+            db.exec(stmt);
           } catch (error) {
             // Ignore "duplicate column" errors - column already exists
-            const msg = error instanceof Error ? error.message : String(error)
-            if (!msg.includes('duplicate column')) {
-              throw error
+            const msg = error instanceof Error ? error.message : String(error);
+            if (!msg.includes("duplicate column")) {
+              throw error;
             }
           }
         }
-        db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(migration.version)
-        migrationsRun++
+        db.prepare("INSERT INTO schema_version (version) VALUES (?)").run(
+          migration.version,
+        );
+        migrationsRun++;
       } catch (error) {
         // Log but don't fail on migration errors
-        console.warn(`Migration ${migration.version} failed:`, error)
+        console.warn(`Migration ${migration.version} failed:`, error);
       }
     }
   }
 
   // Try to create FTS5 table (may already exist)
   try {
-    db.exec(FTS5_MIGRATION_SQL)
+    db.exec(FTS5_MIGRATION_SQL);
   } catch {
     // FTS5 may already exist or have issues - that's ok
   }
 
-  return migrationsRun
+  return migrationsRun;
 }
 
 /**
  * Close the database connection safely
  */
 export function closeDatabase(db: DatabaseType): void {
-  db.close()
+  db.close();
 }
 
 /**
@@ -450,16 +467,18 @@ export function closeDatabase(db: DatabaseType): void {
  * @throws Error if database creation fails (e.g., invalid path, permission denied)
  * @throws Error if WASM module fails to load when native SQLite is unavailable
  */
-export async function createDatabaseAsync(path: string = ':memory:'): Promise<DatabaseType> {
-  const db = await createDatabaseAsyncFactory(path)
+export async function createDatabaseAsync(
+  path: string = ":memory:",
+): Promise<DatabaseType> {
+  const db = await createDatabaseAsyncFactory(path);
 
   // Enable foreign keys
-  db.pragma('foreign_keys = ON')
+  db.pragma("foreign_keys = ON");
 
   // Initialize schema
-  initializeSchema(db)
+  initializeSchema(db);
 
-  return db
+  return db;
 }
 
 /**
@@ -472,15 +491,17 @@ export async function createDatabaseAsync(path: string = ':memory:'): Promise<Da
  * @throws Error if WASM module fails to load when native SQLite is unavailable
  */
 export async function openDatabaseAsync(path: string): Promise<DatabaseType> {
-  const db = await createDatabaseAsyncFactory(path, { fileMustExist: true })
+  const db = await createDatabaseAsyncFactory(path, { fileMustExist: true });
 
   // Enable foreign keys
-  db.pragma('foreign_keys = ON')
+  db.pragma("foreign_keys = ON");
 
   // Check if schema_version table exists
   const hasSchemaVersion = db
-    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'")
-    .get()
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'",
+    )
+    .get();
 
   if (!hasSchemaVersion) {
     // Database has no version tracking - assume it's a legacy import
@@ -490,11 +511,11 @@ export async function openDatabaseAsync(path: string): Promise<DatabaseType> {
         applied_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       INSERT OR IGNORE INTO schema_version (version) VALUES (1);
-    `)
+    `);
   }
 
   // Run pending migrations safely
-  runMigrationsSafe(db)
+  runMigrationsSafe(db);
 
-  return db
+  return db;
 }
