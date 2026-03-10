@@ -156,10 +156,14 @@ export async function executeGetSkill(
         skill.id
       )
 
+      // SMI-3137: Include dependency data
+      const dependencies = context.skillDependencyRepository.getDependencies(skill.id)
+
       return {
         skill,
         installCommand: skill.installCommand || 'claude skill add ' + skill.id,
         also_installed: alsoInstalled.length > 0 ? alsoInstalled : undefined,
+        dependencies: dependencies.length > 0 ? dependencies : undefined,
         timing: {
           totalMs: Math.round(endTime - startTime),
         },
@@ -219,10 +223,14 @@ export async function executeGetSkill(
   // SMI-2761: Populate also_installed from co-install repository
   const alsoInstalled: AlsoInstalledSkill[] = context.coInstallRepository.getTopCoInstalls(skill.id)
 
+  // SMI-3137: Include dependency data
+  const dbDependencies = context.skillDependencyRepository.getDependencies(skill.id)
+
   return {
     skill,
     installCommand: skill.installCommand || 'claude skill add ' + skill.id,
     also_installed: alsoInstalled.length > 0 ? alsoInstalled : undefined,
+    dependencies: dbDependencies.length > 0 ? dbDependencies : undefined,
     timing: {
       totalMs: Math.round(endTime - startTime),
     },
@@ -321,6 +329,17 @@ export function formatSkillDetails(response: GetSkillResponse): string {
     lines.push('  Status: Not scanned')
   }
   lines.push('')
+
+  // SMI-3137: Dependency intelligence
+  if (response.dependencies && response.dependencies.length > 0) {
+    lines.push('--- Dependencies ---')
+    for (const dep of response.dependencies) {
+      const version = dep.dep_version ? '@' + dep.dep_version : ''
+      const source = dep.dep_source === 'declared' ? '' : ' (inferred)'
+      lines.push('  [' + dep.dep_type + '] ' + dep.dep_target + version + source)
+    }
+    lines.push('')
+  }
 
   // SMI-2761: Co-install recommendations
   if (response.also_installed && response.also_installed.length > 0) {

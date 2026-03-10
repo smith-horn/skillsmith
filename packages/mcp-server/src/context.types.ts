@@ -11,6 +11,7 @@ import type {
   SearchService,
   SkillRepository,
   CoInstallRepository,
+  SkillDependencyRepository,
   SkillsmithApiClient,
   BackgroundSyncService,
   DatabaseType,
@@ -33,6 +34,8 @@ export interface ToolContext {
   skillRepository: SkillRepository
   /** Co-install repository for also-installed recommendations (SMI-2761) */
   coInstallRepository: CoInstallRepository
+  /** Skill dependency repository for dependency intelligence (SMI-3137) */
+  skillDependencyRepository: SkillDependencyRepository
   /** SMI-2761: Skill IDs installed in the current session (session-scoped co-install) */
   sessionInstalledSkillIds: string[]
   /** API client for live Supabase API (primary) */

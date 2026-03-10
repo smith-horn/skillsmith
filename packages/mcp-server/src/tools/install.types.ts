@@ -188,6 +188,8 @@ export interface InstallResult {
   requiresAction?: ConflictAction[]
   /** SMI-1895: Path to backup file created during conflict resolution */
   backupPath?: string
+  /** SMI-3137: Dependency intelligence extracted during install */
+  depIntel?: import('./install.dep-helpers.js').DepIntelResult
 }
 
 /** Optimization info included in install result */

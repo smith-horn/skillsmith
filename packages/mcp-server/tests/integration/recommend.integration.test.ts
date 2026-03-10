@@ -20,6 +20,7 @@ describe('Recommend Tool Integration', () => {
       searchService: ctx.searchService,
       skillRepository: ctx.skillRepository,
       coInstallRepository: ctx.coInstallRepository,
+      skillDependencyRepository: ctx.skillDependencyRepository,
       sessionInstalledSkillIds: [],
       apiClient: ctx.apiClient,
     }

@@ -238,6 +238,15 @@ export async function uninstallSkill(
       // Already removed, continue to update manifest
     }
 
+    // SMI-3137: Clean up dependency records
+    if (_context?.skillDependencyRepository) {
+      try {
+        _context.skillDependencyRepository.clearAll(skillEntry.id)
+      } catch {
+        // Dependency cleanup is best-effort — table may not exist pre-migration
+      }
+    }
+
     // Update manifest
     delete manifest.installedSkills[skillName]
     await saveManifest(manifest)

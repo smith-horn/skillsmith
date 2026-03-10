@@ -1,36 +1,24 @@
 /**
  * @fileoverview MCP Install Skill Tool for downloading and installing skills
  * @module @skillsmith/mcp-server/tools/install
- * @see {@link https://github.com/wrsmith108/skillsmith|Skillsmith Repository}
  * @see SMI-2741: Split to meet 500-line standard
- *
- * Provides skill installation functionality with:
- * - GitHub repository fetching (supports owner/repo and full URLs)
- * - Automatic security scanning before installation
- * - SKILL.md validation
- * - Manifest tracking of installed skills
- * - Optional file fetching (README.md, examples.md, config.json)
+ * @see SMI-3137: Wave 4 — Dependency intelligence persistence
  *
  * Skills are installed to ~/.claude/skills/ and tracked in ~/.skillsmith/manifest.json
  */
 
-import { SecurityScanner, safeWriteFile } from '@skillsmith/core'
-import type { TrustTier } from '@skillsmith/core'
+import { SecurityScanner, safeWriteFile, type TrustTier } from '@skillsmith/core'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import type { ToolContext } from '../context.js'
 import { getToolContext } from '../context.js'
-
-// Import types
 import {
   TRUST_TIER_SCANNER_OPTIONS,
   CLAUDE_SKILLS_DIR,
   type InstallInput,
   type InstallResult,
 } from './install.types.js'
-
-// Import helpers
 import {
   loadManifest,
   updateManifestSafely,
@@ -49,6 +37,8 @@ import { checkForConflicts, handleMergeAction } from './install.conflict.js'
 
 // SMI-1788/SMI-2741: Optimization layer extracted to companion file
 import { applySkillOptimization } from './install.optimize.js'
+// SMI-3137: Dependency intelligence persistence
+import { extractDepIntel, persistDependencies } from './install.dep-helpers.js'
 
 // SMI-2741: MCP tool definition extracted to companion file
 export { installTool } from './install.tool.js'
@@ -60,21 +50,9 @@ export { installInputSchema, type InstallInput, type InstallResult } from './ins
 /**
  * Install a skill from GitHub to the local Claude Code skills directory.
  *
- * This function:
- * 1. Parses the skill ID or GitHub URL
- * 2. Checks if already installed (returns error unless force=true)
- * 3. Fetches SKILL.md from GitHub (required)
- * 4. Validates SKILL.md content
- * 5. Runs security scan (unless skipScan=true)
- * 6. Creates installation directory at ~/.claude/skills/{skillName}
- * 7. Writes skill files
- * 8. Updates manifest at ~/.skillsmith/manifest.json
- *
- * @param input - Installation parameters
- * @param input.skillId - Skill ID (owner/repo) or full GitHub URL
- * @param input.force - Force reinstall if skill already exists (default: false)
- * @param input.skipScan - Skip security scan (default: false, not recommended)
- * @returns Promise resolving to installation result with success status
+ * @param input - Installation parameters (skillId, force, skipScan)
+ * @param _context - Optional tool context (falls back to singleton)
+ * @returns Installation result with success status, security report, and dep intel
  */
 export async function installSkill(
   input: InstallInput,
@@ -456,6 +434,19 @@ export async function installSkill(
     ])
     context.sessionInstalledSkillIds.push(input.skillId)
 
+    // SMI-3137: Extract and persist dependency intelligence
+    const depIntel = extractDepIntel(skillMdContent, null)
+    try {
+      persistDependencies(
+        context.skillDependencyRepository,
+        input.skillId,
+        skillMdContent,
+        depIntel.dep_declared
+      )
+    } catch {
+      // Dependency persistence is best-effort
+    }
+
     return {
       success: true,
       skillId: input.skillId,
@@ -464,6 +455,7 @@ export async function installSkill(
       trustTier, // SMI-1533: Include trust tier in result
       optimization: optimizationInfo,
       backupPath, // SMI-1895: Include backup path if created during conflict resolution
+      depIntel, // SMI-3137: Dependency intelligence
       tips: generateOptimizedTips(skillName, optimizationInfo, claudeMdSnippet),
     }
   } catch (error) {
@@ -471,20 +463,20 @@ export async function installSkill(
     let safeErrorMessage = 'Installation failed'
     if (error instanceof Error) {
       // Allow specific known error types through
-      if (
-        error.message.includes('already installed') ||
-        error.message.includes('Could not find SKILL.md') ||
-        error.message.includes('registry data quality issue') ||
-        error.message.includes('Invalid SKILL.md') ||
-        error.message.includes('Security scan failed') ||
-        error.message.includes('exceeds maximum length') ||
-        error.message.includes('Refusing to write to symlink') ||
-        error.message.includes('Refusing to write to hardlinked file') ||
-        error.message.includes('Install path escapes skills directory')
-      ) {
+      const knownPrefixes = [
+        'already installed',
+        'Could not find SKILL.md',
+        'registry data quality issue',
+        'Invalid SKILL.md',
+        'Security scan failed',
+        'exceeds maximum length',
+        'Refusing to write to symlink',
+        'Refusing to write to hardlinked file',
+        'Install path escapes skills directory',
+      ]
+      if (knownPrefixes.some((p) => error.message.includes(p))) {
         safeErrorMessage = error.message
       } else {
-        // Log the full error for debugging, return sanitized message
         console.error('[install] Error during installation:', error)
         safeErrorMessage = 'Installation failed due to an internal error'
       }

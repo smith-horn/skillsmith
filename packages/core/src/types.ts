@@ -166,6 +166,8 @@ export interface GetSkillResponse {
   }
   /** SMI-2761: Skills frequently installed alongside this one (≥5 co-installs) */
   also_installed?: AlsoInstalledSkill[]
+  /** SMI-3137: Dependency intelligence data from skill_dependencies table */
+  dependencies?: import('./types/dependencies.js').SkillDependencyRow[]
 }
 
 /**
