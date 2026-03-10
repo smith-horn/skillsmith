@@ -46,4 +46,4 @@ CREATE INDEX IF NOT EXISTS idx_skill_deps_source ON skill_dependencies(dep_sourc
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_deps_unique
   ON skill_dependencies(skill_id, dep_type, dep_target, dep_source);
-`;
+`
