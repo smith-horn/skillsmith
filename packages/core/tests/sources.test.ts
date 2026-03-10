@@ -343,7 +343,7 @@ describe('Source Adapter Architecture (SMI-589)', () => {
           author: 'test',
           version: '1.0.0',
           tags: ['test'],
-          dependencies: [],
+          dependencies: undefined,
           category: null,
           license: 'MIT',
           rawContent: '# Test',

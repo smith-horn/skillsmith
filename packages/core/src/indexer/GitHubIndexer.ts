@@ -8,6 +8,7 @@
  */
 
 import type { SkillCreateInput } from '../types/skill.js'
+import type { DependencyDeclaration } from '../types/dependencies.js'
 
 /**
  * Skill metadata extracted from repository indexing
@@ -19,7 +20,8 @@ export interface SkillMetadata {
   author: string | null
   version: string | null
   tags: string[]
-  dependencies: string[]
+  /** SMI-3135: Structured dependency declaration (replaces string[]) */
+  dependencies?: DependencyDeclaration
   category: string | null
   license: string | null
   rawContent: string

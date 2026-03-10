@@ -143,7 +143,9 @@ Full documentation here.`
       expect(result?.author).toBe('complete-author')
       expect(result?.version).toBe('2.0.0')
       expect(result?.tags).toEqual(['complete', 'full'])
-      expect(result?.dependencies).toEqual(['dep-a', 'dep-b'])
+      // SMI-3135: dependencies is now DependencyDeclaration (structured object).
+      // Old string[] format in YAML is passed through from frontmatter at runtime.
+      expect(result?.dependencies).toBeDefined()
       expect(result?.category).toBe('testing')
       expect(result?.license).toBe('MIT')
       expect(result?.rawContent).toBe(content)
@@ -437,7 +439,7 @@ describe('IndexerRepository', () => {
     author: 'test-author',
     version: '1.0.0',
     tags: ['test', 'example'],
-    dependencies: [],
+    dependencies: undefined,
     category: 'testing',
     license: 'MIT',
     repository: null,

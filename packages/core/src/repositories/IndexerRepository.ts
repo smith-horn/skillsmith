@@ -423,7 +423,14 @@ export class IndexerRepository {
     if (metadata.license) score += 10
 
     // Has dependencies (10 points)
-    if (metadata.dependencies.length > 0) score += 10
+    if (
+      metadata.dependencies &&
+      (metadata.dependencies.skills?.length ||
+        metadata.dependencies.platform ||
+        metadata.dependencies.models ||
+        metadata.dependencies.environment)
+    )
+      score += 10
 
     // Has category (10 points)
     if (metadata.category) score += 10

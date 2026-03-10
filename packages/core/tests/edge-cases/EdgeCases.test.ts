@@ -304,7 +304,10 @@ ${manyDependencies.map((d) => `  - ${d}`).join('\n')}
         const result = parser.parse(content)
         expect(result).not.toBeNull()
         if (result) {
-          expect(result.dependencies.length).toBe(150)
+          // SMI-3135: old string[] format is passed through from frontmatter
+          const rawDeps = result.frontmatter.dependencies as unknown
+          expect(Array.isArray(rawDeps)).toBe(true)
+          expect((rawDeps as string[]).length).toBe(150)
         }
       })
 
