@@ -133,3 +133,9 @@ export { AdvisoryRepository, type SkillAdvisory } from '../repositories/Advisory
 // ============================================================================
 
 export { CoInstallRepository, type CoInstallSummary } from '../repositories/CoInstallRepository.js'
+
+// ============================================================================
+// Skill Dependency Repository (SMI-3143)
+// ============================================================================
+
+export { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'

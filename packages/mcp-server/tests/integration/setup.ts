@@ -12,6 +12,7 @@ import {
   closeDatabase,
   SkillRepository,
   CoInstallRepository,
+  SkillDependencyRepository,
   SearchService,
   SkillsmithApiClient,
   type DatabaseType,
@@ -29,6 +30,7 @@ export interface TestDatabaseContext {
   db: DatabaseType
   skillRepository: SkillRepository
   coInstallRepository: CoInstallRepository
+  skillDependencyRepository: SkillDependencyRepository
   sessionInstalledSkillIds: string[]
   searchService: SearchService
   apiClient: SkillsmithApiClient
@@ -44,6 +46,7 @@ export async function createTestDatabase(): Promise<TestDatabaseContext> {
   const db = createDatabase(':memory:')
   const skillRepository = new SkillRepository(db)
   const coInstallRepository = new CoInstallRepository(db)
+  const skillDependencyRepository = new SkillDependencyRepository(db)
   const searchService = new SearchService(db)
 
   // SMI-1183: Create API client in offline mode for tests
@@ -59,6 +62,7 @@ export async function createTestDatabase(): Promise<TestDatabaseContext> {
     db,
     skillRepository,
     coInstallRepository,
+    skillDependencyRepository,
     sessionInstalledSkillIds: [],
     searchService,
     apiClient,

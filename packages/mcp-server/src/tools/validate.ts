@@ -38,6 +38,7 @@ import {
   hasPathTraversal,
   validateMetadata,
   detectClaudeMdModification,
+  validateDependencies,
 } from './validate.helpers.js'
 
 // Re-export only public API types (SMI-1718: trimmed internal exports)
@@ -137,6 +138,9 @@ export async function executeValidate(
       severity: 'warning',
     })
   }
+
+  // SMI-3137: Dependency intelligence warnings
+  errors.push(...validateDependencies(metadata ?? {}, body))
 
   // Determine validity
   const hasErrors = errors.some((e) => e.severity === 'error')

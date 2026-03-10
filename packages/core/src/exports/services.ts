@@ -306,6 +306,18 @@ export {
 } from '../sync/index.js'
 
 // ============================================================================
+// Dependency Intelligence (SMI-3145, SMI-3146)
+// ============================================================================
+
+export {
+  extractMcpReferences,
+  type McpReference,
+  type McpExtractionResult,
+} from '../analysis/McpReferenceExtractor.js'
+
+export { mergeDependencies, type MergedDependency } from '../analysis/DependencyMerger.js'
+
+// ============================================================================
 // Billing (SMI-1062 to SMI-1070)
 // ============================================================================
 
