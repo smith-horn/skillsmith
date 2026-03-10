@@ -107,3 +107,13 @@ export type {
   AdvisorySummary,
   SkillAuditResponse,
 } from './skill-audit.js'
+
+// Skill Outdated tool (SMI-3138 Wave 5)
+export { outdatedToolSchema, outdatedInputSchema, executeOutdated } from './outdated.js'
+export type {
+  OutdatedInput,
+  OutdatedSkillInfo,
+  DependencyStatus,
+  OutdatedSummary,
+  OutdatedResponse,
+} from './outdated.js'

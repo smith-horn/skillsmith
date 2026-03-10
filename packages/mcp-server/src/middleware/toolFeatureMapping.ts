@@ -56,6 +56,7 @@ export const TOOL_FEATURES: Record<string, FeatureFlag | null> = {
   skill_validate: null,
   skill_compare: null,
   skill_suggest: null,
+  skill_outdated: null,
 
   // Individual tools
   skill_updates: 'version_tracking',
