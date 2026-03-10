@@ -8,7 +8,7 @@ import { SkillVersionRepository, SkillDependencyRepository } from '@skillsmith/c
 import { createTestDatabase, closeDatabase } from '../../../core/tests/helpers/database.js'
 import { executeOutdated } from './outdated.js'
 import type { ToolContext } from '../context.js'
-import type { Database } from '../../../core/src/db/database-interface.js'
+import type { Database } from '@skillsmith/core'
 import type { SkillManifest } from './install.types.js'
 
 // ============================================================================
