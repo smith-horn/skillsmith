@@ -203,8 +203,8 @@ export async function executeOutdated(
   const versionRepo = new SkillVersionRepository(context.db)
   const depRepo = context.skillDependencyRepository
 
-  // Build set of installed skill IDs for dependency checking
-  const installedSkillIds = new Set<string>(entries.map((e) => e.id))
+  // Build set of installed skill IDs for dependency checking — filter out corrupt entries
+  const installedSkillIds = new Set<string>(entries.filter((e) => e.id).map((e) => e.id))
 
   const skills: OutdatedSkillInfo[] = []
   let outdatedCount = 0
@@ -213,6 +213,23 @@ export async function executeOutdated(
   let missingDepsCount = 0
 
   for (const entry of entries) {
+    // SMI-3177: Skip corrupt manifest entries with missing installPath
+    if (!entry.installPath) {
+      console.warn(
+        `[skill_outdated] Skipping corrupt manifest entry (missing installPath): ${entry.id ?? 'unknown'}`
+      )
+      skills.push({
+        id: entry.id ?? 'unknown',
+        installed_hash: '--------',
+        latest_hash: '--------',
+        status: 'unknown',
+        semver: null,
+        ...(input.include_deps ? { dependencies: { total: 0, satisfied: [], missing: [] } } : {}),
+      })
+      unknownCount++
+      continue
+    }
+
     // Hash the currently installed SKILL.md
     const localHash = await readInstalledHash(entry.installPath)
 

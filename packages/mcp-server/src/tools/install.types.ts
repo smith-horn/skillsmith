@@ -230,6 +230,11 @@ export interface SkillManifestEntry {
   name: string
   version: string
   source: string
+  /**
+   * Absolute path where the skill is installed.
+   * Required by type, but runtime JSON may omit it — consumers must guard.
+   * @see SMI-3177
+   */
   installPath: string
   installedAt: string
   lastUpdated: string

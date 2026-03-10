@@ -9,7 +9,7 @@ import { createTestDatabase, closeDatabase } from '../../../core/tests/helpers/d
 import { executeOutdated } from './outdated.js'
 import type { ToolContext } from '../context.js'
 import type { Database } from '@skillsmith/core'
-import type { SkillManifest } from './install.types.js'
+import type { SkillManifest, SkillManifestEntry } from './install.types.js'
 
 // ============================================================================
 // Mocks
@@ -268,5 +268,101 @@ describe('executeOutdated', () => {
     expect(skill.dependencies!.missing).toHaveLength(1)
     expect(skill.dependencies!.missing[0]).toContain('missing-skill')
     expect(result.summary.missing_deps).toBe(1)
+  })
+
+  // ===========================================================================
+  // SMI-3177: Corrupt manifest entries (missing installPath)
+  // ===========================================================================
+
+  it('handles manifest entry with missing installPath gracefully', async () => {
+    // Simulate corrupt manifest entry (runtime JSON, not type-checked)
+    const corruptManifest: SkillManifest = {
+      version: '1',
+      installedSkills: {
+        'test-skill': {
+          id: 'test/test-skill',
+          name: 'test-skill',
+          version: '1.0.0',
+          source: 'registry',
+          installedAt: '2026-01-01T00:00:00Z',
+          lastUpdated: '2026-01-01T00:00:00Z',
+        } as SkillManifestEntry, // Cast to bypass TS required field
+      },
+    }
+    mockedLoadManifest.mockResolvedValue(corruptManifest)
+
+    const result = await executeOutdated({ include_deps: true }, makeContext(db))
+
+    expect(result.skills).toHaveLength(1)
+    expect(result.skills[0].status).toBe('unknown')
+    expect(result.skills[0].installed_hash).toBe('--------')
+    expect(result.skills[0].id).toBe('test/test-skill')
+    expect(result.skills[0].dependencies).toEqual({ total: 0, satisfied: [], missing: [] })
+    expect(result.summary.unknown).toBe(1)
+    expect(result.summary.total_installed).toBe(1)
+  })
+
+  it('processes valid entries alongside corrupt entries', async () => {
+    const manifest: SkillManifest = {
+      version: '1',
+      installedSkills: {
+        'good-skill': {
+          id: 'community/good-skill',
+          name: 'good-skill',
+          version: '1.0.0',
+          source: 'registry',
+          installPath: '/tmp/skills/good-skill',
+          installedAt: '2026-01-01T00:00:00Z',
+          lastUpdated: '2026-01-01T00:00:00Z',
+        },
+        'bad-skill': {
+          id: 'test/bad-skill',
+          name: 'bad-skill',
+          version: '1.0.0',
+          source: 'registry',
+          installedAt: '2026-01-01T00:00:00Z',
+          lastUpdated: '2026-01-01T00:00:00Z',
+        } as SkillManifestEntry,
+      },
+    }
+    mockedLoadManifest.mockResolvedValue(manifest)
+    mockedReadFile.mockResolvedValue('latest-content')
+
+    await versionRepo.recordVersion('community/good-skill', 'aabbccdd11223344', '1.0.0')
+
+    const result = await executeOutdated({ include_deps: true }, makeContext(db))
+
+    expect(result.skills).toHaveLength(2)
+    expect(result.summary.total_installed).toBe(2)
+
+    const good = result.skills.find((s) => s.id === 'community/good-skill')
+    const bad = result.skills.find((s) => s.id === 'test/bad-skill')
+
+    expect(good?.status).toBe('current')
+    expect(bad?.status).toBe('unknown')
+    expect(bad?.installed_hash).toBe('--------')
+  })
+
+  it('handles corrupt entry with include_deps false', async () => {
+    const corruptManifest: SkillManifest = {
+      version: '1',
+      installedSkills: {
+        broken: {
+          id: 'test/broken',
+          name: 'broken',
+          version: '1.0.0',
+          source: 'registry',
+          installedAt: '2026-01-01T00:00:00Z',
+          lastUpdated: '2026-01-01T00:00:00Z',
+        } as SkillManifestEntry,
+      },
+    }
+    mockedLoadManifest.mockResolvedValue(corruptManifest)
+
+    const result = await executeOutdated({ include_deps: false }, makeContext(db))
+
+    expect(result.skills).toHaveLength(1)
+    expect(result.skills[0].status).toBe('unknown')
+    expect(result.skills[0].dependencies).toBeUndefined()
   })
 })
