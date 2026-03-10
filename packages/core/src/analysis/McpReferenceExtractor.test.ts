@@ -40,14 +40,14 @@ describe('McpReferenceExtractor', () => {
     it('should handle multiple servers', () => {
       const content = [
         'Use mcp__linear__save_issue for issues.',
-        'Use mcp__claude_flow__agent_spawn for agents.',
+        'Use mcp__claude-flow__agent_spawn for agents.',
         'Use mcp__skillsmith__search for skills.',
       ].join('\n')
 
       const result = extractMcpReferences(content)
 
       expect(result.references).toHaveLength(3)
-      expect(result.servers).toEqual(['claude_flow', 'linear', 'skillsmith'])
+      expect(result.servers).toEqual(['claude-flow', 'linear', 'skillsmith'])
     })
 
     it('should handle servers with hyphens', () => {
