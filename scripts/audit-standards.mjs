@@ -572,6 +572,9 @@ if (existsSync(PACKAGES_DIR)) {
       const deps = pkg.dependencies || {}
 
       for (const [name, version] of Object.entries(deps)) {
+        // Skip workspace siblings — caret ranges required for npm workspace resolution
+        // (exact pins break symlink resolution). See MEMORY.md "Database Patterns".
+        if (name.startsWith('@skillsmith/')) continue
         if (typeof version === 'string' && (version.startsWith('^') || version.startsWith('~'))) {
           violations.push({ package: dir, dep: name, version })
         }
