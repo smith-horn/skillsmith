@@ -1213,6 +1213,136 @@ console.log(`\n${BOLD}20. Stale Doc Path References in Skills (SMI-2637)${RESET}
   }
 }
 
+// 21. Workflow continue-on-error Validation (SMI-3217)
+console.log(`\n${BOLD}21. Workflow continue-on-error Validation (SMI-3217)${RESET}`)
+
+{
+  const workflowDir = '.github/workflows'
+  if (existsSync(workflowDir)) {
+    const workflowFiles = readdirSync(workflowDir).filter((f) => f.endsWith('.yml'))
+    const violations = []
+
+    for (const file of workflowFiles) {
+      const content = readFileSync(join(workflowDir, file), 'utf8')
+      const lines = content.split('\n')
+
+      // Parse steps with continue-on-error: true
+      // Track step ids and downstream if: conditions per job
+      const jobs = []
+      let currentJob = null
+      let currentStep = null
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]
+        const trimmed = line.trim()
+
+        // Detect job boundaries (top-level keys under jobs:)
+        if (/^\s{4}\w[\w-]*:$/.test(line) && !trimmed.startsWith('-')) {
+          if (currentJob) jobs.push(currentJob)
+          currentJob = { steps: [], ifRefs: [] }
+        }
+
+        // Detect step boundaries
+        if (/^\s+- name:/.test(line) || /^\s+- uses:/.test(line) || /^\s+- id:/.test(line)) {
+          if (currentStep && currentJob) currentJob.steps.push(currentStep)
+          currentStep = {
+            name: '',
+            id: '',
+            continueOnError: false,
+            line: i + 1,
+            runHasOrTrue: false,
+          }
+        }
+
+        if (currentStep) {
+          const nameMatch = trimmed.match(/^name:\s*(.+)/)
+          if (nameMatch) currentStep.name = nameMatch[1]
+
+          const idMatch = trimmed.match(/^id:\s*(\S+)/)
+          if (idMatch) currentStep.id = idMatch[1]
+
+          if (/continue-on-error:\s*true/.test(trimmed)) {
+            currentStep.continueOnError = true
+          }
+
+          // Check for explicit audit exemption comment
+          if (/audit:allow-continue-on-error/.test(trimmed)) {
+            currentStep.runHasOrTrue = true
+          }
+
+          // Check if run block contains || true (idempotent intent)
+          if (/\|\|\s*true/.test(trimmed)) {
+            currentStep.runHasOrTrue = true
+          }
+        }
+
+        // Collect all if: references to step outcomes
+        if (currentJob && /steps\.\w[\w-]*\.outcome/.test(trimmed)) {
+          const refs = trimmed.match(/steps\.(\w[\w-]*)\.outcome/g) || []
+          for (const ref of refs) {
+            const stepId = ref.match(/steps\.(\w[\w-]*)\.outcome/)?.[1]
+            if (stepId) currentJob.ifRefs.push(stepId)
+          }
+        }
+        // Also catch steps.<id>.outputs patterns (used in if: conditions)
+        if (currentJob && /steps\.\w[\w-]*\.outputs/.test(trimmed)) {
+          const refs = trimmed.match(/steps\.(\w[\w-]*)\.outputs/g) || []
+          for (const ref of refs) {
+            const stepId = ref.match(/steps\.(\w[\w-]*)\.outputs/)?.[1]
+            if (stepId) currentJob.ifRefs.push(stepId)
+          }
+        }
+      }
+
+      // Push final step and job
+      if (currentStep && currentJob) currentJob.steps.push(currentStep)
+      if (currentJob) jobs.push(currentJob)
+
+      // Validate: each continue-on-error step must have id referenced downstream
+      for (const job of jobs) {
+        for (const step of job.steps) {
+          if (!step.continueOnError) continue
+
+          // Exempt: steps where run block uses || true (idempotent operations like label creation)
+          if (step.runHasOrTrue) continue
+
+          if (!step.id) {
+            violations.push({
+              file: join(workflowDir, file),
+              line: step.line,
+              name: step.name,
+              issue:
+                'continue-on-error: true without step id — no downstream step can check outcome',
+            })
+          } else if (!job.ifRefs.includes(step.id)) {
+            violations.push({
+              file: join(workflowDir, file),
+              line: step.line,
+              name: step.name,
+              issue: `continue-on-error: true on step "${step.id}" but no downstream step references steps.${step.id}.outcome`,
+            })
+          }
+        }
+      }
+    }
+
+    if (violations.length === 0) {
+      pass('All continue-on-error steps have downstream outcome checks')
+    } else {
+      warn(
+        `${violations.length} continue-on-error step(s) without downstream outcome check`,
+        'Add step id + downstream if: steps.<id>.outcome check, or add a comment explaining why (e.g., # audit:allow-continue-on-error)'
+      )
+      violations.forEach(({ file, line, name, issue }) => {
+        console.log(`    ${file}:${line} — ${name || '(unnamed step)'}`)
+        console.log(`      ${YELLOW}→${RESET} ${issue}`)
+      })
+    }
+  } else {
+    pass('No .github/workflows/ directory found')
+  }
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)
