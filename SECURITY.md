@@ -143,7 +143,7 @@ For the full security architecture deep-dive, see [Security, Quarantine, and Saf
 | Package | Current Version | Supported |
 |---------|----------------|-----------|
 | @skillsmith/core | 0.4.x | Yes |
-| @skillsmith/mcp-server | 0.3.x | Yes |
+| @skillsmith/mcp-server | 0.4.x | Yes |
 | @skillsmith/cli | 0.3.x | Yes |
 | @smith-horn/enterprise | 0.1.x | Yes |
 
