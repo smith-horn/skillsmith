@@ -256,6 +256,24 @@ export async function lookupSkillFromRegistry(
 // ============================================================================
 
 /**
+ * SMI-3221: Detect git-crypt encrypted content fetched from GitHub.
+ * raw.githubusercontent.com serves encrypted bytes for repos using git-crypt.
+ * The magic header is \x00GITCRYPT (hex 00474954435259505400).
+ */
+export function assertNotEncrypted(content: string, filePath: string): void {
+  if (content.startsWith('\x00GITCRYPT')) {
+    throw new Error(
+      'File "' +
+        filePath +
+        '" is git-crypt encrypted. ' +
+        'The repository uses git-crypt and this file cannot be fetched from GitHub. ' +
+        'Workaround: clone the repo locally, unlock with git-crypt, then install with:\n' +
+        '  cp -r /path/to/repo/.claude/skills/<skill-name> ~/.claude/skills/<skill-name>'
+    )
+  }
+}
+
+/**
  * Fetch file from GitHub
  * SMI-1491: Added optional branch parameter to use branch from repo_url
  */
@@ -280,13 +298,17 @@ export async function fetchFromGitHub(
         throw new Error('Failed to fetch ' + filePath + ': ' + response.status)
       }
 
-      return masterResponse.text()
+      const masterText = await masterResponse.text()
+      assertNotEncrypted(masterText, filePath)
+      return masterText
     }
 
     throw new Error('Failed to fetch ' + filePath + ': ' + response.status)
   }
 
-  return response.text()
+  const text = await response.text()
+  assertNotEncrypted(text, filePath)
+  return text
 }
 
 // ============================================================================

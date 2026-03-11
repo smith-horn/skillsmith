@@ -20,6 +20,7 @@ import {
   updateManifestSafely,
   lookupSkillFromRegistry,
   fetchFromGitHub,
+  assertNotEncrypted,
 } from '../../src/tools/install.helpers.js'
 import type { ToolContext } from '../../src/context.js'
 
@@ -567,6 +568,38 @@ Use this skill to do things.
     })
   })
 
+  // ==========================================================================
+  // SMI-3221: git-crypt encrypted content detection
+  // ==========================================================================
+
+  describe('assertNotEncrypted', () => {
+    it('does not throw for normal markdown content', () => {
+      expect(() => assertNotEncrypted('# My Skill\n\nThis is a skill.', 'SKILL.md')).not.toThrow()
+    })
+
+    it('does not throw for empty content', () => {
+      expect(() => assertNotEncrypted('', 'SKILL.md')).not.toThrow()
+    })
+
+    it('throws for git-crypt encrypted content', () => {
+      // git-crypt magic header: \x00GITCRYPT followed by encrypted bytes
+      const encrypted = '\x00GITCRYPT\x00\x12\x34\x56'
+      expect(() => assertNotEncrypted(encrypted, 'SKILL.md')).toThrow('git-crypt encrypted')
+    })
+
+    it('includes file path in error message', () => {
+      const encrypted = '\x00GITCRYPT\x00'
+      expect(() => assertNotEncrypted(encrypted, '.claude/skills/my-skill/SKILL.md')).toThrow(
+        '.claude/skills/my-skill/SKILL.md'
+      )
+    })
+
+    it('includes cp -r workaround in error message', () => {
+      const encrypted = '\x00GITCRYPT\x00'
+      expect(() => assertNotEncrypted(encrypted, 'SKILL.md')).toThrow('cp -r')
+    })
+  })
+
   describe('fetchFromGitHub', () => {
     beforeEach(() => {
       vi.clearAllMocks()
@@ -635,6 +668,30 @@ Use this skill to do things.
 
       // Should only call once, no master fallback
       expect(mockFetch).toHaveBeenCalledTimes(1)
+    })
+
+    // SMI-3221: git-crypt encrypted content detection in fetch paths
+    it('throws encrypted error when main returns git-crypt content', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve('\x00GITCRYPT\x00\x12\x34'),
+      })
+
+      await expect(fetchFromGitHub('owner', 'repo', 'SKILL.md')).rejects.toThrow(
+        'git-crypt encrypted'
+      )
+    })
+
+    it('throws encrypted error when master fallback returns git-crypt content', async () => {
+      // main fails with 404, master returns encrypted content
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 404 }).mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve('\x00GITCRYPT\x00\x56\x78'),
+      })
+
+      await expect(fetchFromGitHub('owner', 'repo', 'SKILL.md')).rejects.toThrow(
+        'git-crypt encrypted'
+      )
     })
   })
 })
