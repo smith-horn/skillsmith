@@ -447,7 +447,7 @@ jobs:
           echo "✓ Saved image with tag: ${{ github.sha }}"
 
       - name: Upload Docker image artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: docker-image
           path: /tmp/skillsmith-ci.tar.gz
@@ -491,7 +491,7 @@ jobs:
           tar -tzf /tmp/node_modules.tar.gz | grep "^packages/" | head -20
 
       - name: Upload node_modules artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: node-modules
           path: /tmp/node_modules.tar.gz
@@ -1444,7 +1444,7 @@ jobs:
             bash scripts/ci-code-review.sh audit-report.json
 
       - name: Upload audit report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: code-review-report
@@ -1557,7 +1557,7 @@ jobs:
           cp -r packages/*/dist build-output/ 2>/dev/null || true
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-output
           path: build-output/
