@@ -11,6 +11,7 @@ on:
         type: string
 
 permissions:
+  contents: read
   id-token: write
   issues: write
 
@@ -31,6 +32,20 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - name: Validate Variables
+        run: |
+          MISSING=""
+          [ -z "$GA4_PROPERTY_ID" ] && MISSING="$MISSING GA4_PROPERTY_ID"
+          [ -z "$GCP_PROJECT_ID" ] && MISSING="$MISSING GCP_PROJECT_ID"
+          [ -z "$GCP_WIF_PROVIDER" ] && MISSING="$MISSING GCP_WIF_PROVIDER"
+          [ -z "$GCP_SERVICE_ACCOUNT" ] && MISSING="$MISSING GCP_SERVICE_ACCOUNT"
+          if [ -n "$MISSING" ]; then
+            echo "::error::Missing required repository variables:$MISSING"
+            echo "Set these at: Settings > Secrets and variables > Actions > Variables"
+            exit 1
+          fi
+          echo "Variables validated"
+
       - name: Authenticate to Google Cloud
         id: auth
         uses: google-github-actions/auth@v2
@@ -41,9 +56,38 @@ jobs:
           token_format: access_token
           access_token_scopes: https://www.googleapis.com/auth/analytics.readonly
 
-      - name: Query GA4 copy_config by variant
+      - name: Query GA4 baseline (no custom dimensions)
+        id: baseline
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"dateRanges\":[{\"startDate\":\"${EXPERIMENT_START}\",\"endDate\":\"yesterday\"}],\"metrics\":[{\"name\":\"sessions\"}]}" \
+            "https://analyticsdata.googleapis.com/v1beta/${GA4_PROPERTY_ID}:runReport")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "::error::GA4 baseline query returned HTTP $HTTP_CODE"
+            echo "$BODY" | head -20
+            exit 1
+          fi
+
+          ERROR=$(echo "$BODY" | jq -r '.error.message // empty')
+          if [ -n "$ERROR" ]; then
+            echo "::error::GA4 API error: $ERROR"
+            exit 1
+          fi
+
+          TOTAL=$(echo "$BODY" | jq -r '[.rows[]?.metricValues[0].value | tonumber] | add // 0')
+          echo "total_sessions=${TOTAL}" >> "$GITHUB_OUTPUT"
+          echo "Baseline total sessions (no custom dimension): ${TOTAL}"
+
+      - name: Query GA4 sessions and events by variant
         id: ga4
-        continue-on-error: true
         env:
           TOKEN: ${{ steps.auth.outputs.access_token }}
         run: |
@@ -52,28 +96,73 @@ jobs:
           echo "runtime_days=${RUNTIME_DAYS}" >> "$GITHUB_OUTPUT"
           echo "Runtime: ${RUNTIME_DAYS} days"
 
-          SESSIONS_RESP=$(curl -s -X POST \
+          # Sessions by variant
+          SESSIONS_FULL=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d "{\"dateRanges\":[{\"startDate\":\"${EXPERIMENT_START}\",\"endDate\":\"yesterday\"}],\"dimensions\":[{\"name\":\"customUser:homepage_ab_variant\"}],\"metrics\":[{\"name\":\"sessions\"}]}" \
             "https://analyticsdata.googleapis.com/v1beta/${GA4_PROPERTY_ID}:runReport")
 
-          EVENTS_RESP=$(curl -s -X POST \
+          SESSIONS_HTTP=$(echo "$SESSIONS_FULL" | tail -n1)
+          SESSIONS_RESP=$(echo "$SESSIONS_FULL" | sed '$d')
+
+          if [ "$SESSIONS_HTTP" -ne 200 ]; then
+            echo "::error::GA4 sessions query returned HTTP $SESSIONS_HTTP"
+            echo "$SESSIONS_RESP" | head -20
+            exit 1
+          fi
+
+          SESSIONS_ERROR=$(echo "$SESSIONS_RESP" | jq -r '.error.message // empty')
+          if [ -n "$SESSIONS_ERROR" ]; then
+            echo "::error::GA4 sessions API error: $SESSIONS_ERROR"
+            exit 1
+          fi
+
+          SESSIONS_ROW_COUNT=$(echo "$SESSIONS_RESP" | jq '[.rows[]?] | length')
+          echo "Sessions response row count: ${SESSIONS_ROW_COUNT}"
+
+          # Events (copy_config) by variant
+          EVENTS_FULL=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
             -d "{\"dateRanges\":[{\"startDate\":\"${EXPERIMENT_START}\",\"endDate\":\"yesterday\"}],\"dimensions\":[{\"name\":\"customUser:homepage_ab_variant\"}],\"metrics\":[{\"name\":\"eventCount\"}],\"dimensionFilter\":{\"filter\":{\"fieldName\":\"eventName\",\"stringFilter\":{\"matchType\":\"EXACT\",\"value\":\"copy_config\"}}}}" \
             "https://analyticsdata.googleapis.com/v1beta/${GA4_PROPERTY_ID}:runReport")
 
-          CTRL_SESSIONS=$(echo "$SESSIONS_RESP" | jq -r '.rows[]? | select(.dimensionValues[0].value == "control") | .metricValues[0].value' 2>/dev/null)
-          VARB_SESSIONS=$(echo "$SESSIONS_RESP" | jq -r '.rows[]? | select(.dimensionValues[0].value == "variant-b") | .metricValues[0].value' 2>/dev/null)
-          CTRL_EVENTS=$(echo "$EVENTS_RESP" | jq -r '.rows[]? | select(.dimensionValues[0].value == "control") | .metricValues[0].value' 2>/dev/null)
-          VARB_EVENTS=$(echo "$EVENTS_RESP" | jq -r '.rows[]? | select(.dimensionValues[0].value == "variant-b") | .metricValues[0].value' 2>/dev/null)
+          EVENTS_HTTP=$(echo "$EVENTS_FULL" | tail -n1)
+          EVENTS_RESP=$(echo "$EVENTS_FULL" | sed '$d')
+
+          if [ "$EVENTS_HTTP" -ne 200 ]; then
+            echo "::error::GA4 events query returned HTTP $EVENTS_HTTP"
+            echo "$EVENTS_RESP" | head -20
+            exit 1
+          fi
+
+          EVENTS_ERROR=$(echo "$EVENTS_RESP" | jq -r '.error.message // empty')
+          if [ -n "$EVENTS_ERROR" ]; then
+            echo "::error::GA4 events API error: $EVENTS_ERROR"
+            exit 1
+          fi
+
+          EVENTS_ROW_COUNT=$(echo "$EVENTS_RESP" | jq '[.rows[]?] | length')
+          echo "Events response row count: ${EVENTS_ROW_COUNT}"
+
+          # Extract all three cohorts
+          CTRL_SESSIONS=$(echo "$SESSIONS_RESP" | jq -r '.rows[]? | select(.dimensionValues[0].value == "control") | .metricValues[0].value')
+          VARA_SESSIONS=$(echo "$SESSIONS_RESP" | jq -r '.rows[]? | select(.dimensionValues[0].value == "variant-a") | .metricValues[0].value')
+          VARB_SESSIONS=$(echo "$SESSIONS_RESP" | jq -r '.rows[]? | select(.dimensionValues[0].value == "variant-b") | .metricValues[0].value')
+          CTRL_EVENTS=$(echo "$EVENTS_RESP" | jq -r '.rows[]? | select(.dimensionValues[0].value == "control") | .metricValues[0].value')
+          VARA_EVENTS=$(echo "$EVENTS_RESP" | jq -r '.rows[]? | select(.dimensionValues[0].value == "variant-a") | .metricValues[0].value')
+          VARB_EVENTS=$(echo "$EVENTS_RESP" | jq -r '.rows[]? | select(.dimensionValues[0].value == "variant-b") | .metricValues[0].value')
 
           echo "ctrl_sessions=${CTRL_SESSIONS:-0}" >> "$GITHUB_OUTPUT"
+          echo "vara_sessions=${VARA_SESSIONS:-0}" >> "$GITHUB_OUTPUT"
           echo "varb_sessions=${VARB_SESSIONS:-0}" >> "$GITHUB_OUTPUT"
           echo "ctrl_events=${CTRL_EVENTS:-0}" >> "$GITHUB_OUTPUT"
+          echo "vara_events=${VARA_EVENTS:-0}" >> "$GITHUB_OUTPUT"
           echo "varb_events=${VARB_EVENTS:-0}" >> "$GITHUB_OUTPUT"
+          echo "sessions_row_count=${SESSIONS_ROW_COUNT}" >> "$GITHUB_OUTPUT"
           echo "control: ${CTRL_SESSIONS:-0} sessions, ${CTRL_EVENTS:-0} events"
+          echo "variant-a: ${VARA_SESSIONS:-0} sessions, ${VARA_EVENTS:-0} events"
           echo "variant-b: ${VARB_SESSIONS:-0} sessions, ${VARB_EVENTS:-0} events"
 
       - name: Compute statistics
@@ -85,8 +174,10 @@ jobs:
           VARB_K: ${{ steps.ga4.outputs.varb_events }}
           RUNTIME: ${{ steps.ga4.outputs.runtime_days }}
         run: |
-          CTRL_N="${CTRL_N:-0}" VARB_N="${VARB_N:-0}"
-          CTRL_K="${CTRL_K:-0}" VARB_K="${VARB_K:-0}"
+          CTRL_N="${CTRL_N:-0}"
+          VARB_N="${VARB_N:-0}"
+          CTRL_K="${CTRL_K:-0}"
+          VARB_K="${VARB_K:-0}"
           RUNTIME="${RUNTIME:-0}"
 
           if [ "$CTRL_N" -gt 0 ]; then
@@ -152,9 +243,20 @@ jobs:
           echo "lift=${LIFT}" >> "$GITHUB_OUTPUT"
           echo "z_score=${Z_SCORE}" >> "$GITHUB_OUTPUT"
           echo "p_value=${P_VALUE}" >> "$GITHUB_OUTPUT"
-          echo "verdict=${VERDICT}" >> "$GITHUB_OUTPUT"
+          {
+            echo "verdict<<GHEOF"
+            echo "$VERDICT"
+            echo "GHEOF"
+          } >> "$GITHUB_OUTPUT"
           echo "recommendation=${REC}" >> "$GITHUB_OUTPUT"
           echo "=== RESULTS === control: ${CTRL_RATE}% (${CTRL_K}/${CTRL_N}) | variant-b: ${VARB_RATE}% (${VARB_K}/${VARB_N}) | lift: ${LIFT}% | z: ${Z_SCORE} | p: ${P_VALUE} | ${VERDICT}"
+
+      - name: Ensure analytics label exists
+        if: ${{ github.event.inputs.create_issue != 'false' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create analytics --color "4A90D9" --description "Analytics reports and metrics" --repo smith-horn/skillsmith 2>/dev/null || true
 
       - name: Create GitHub issue
         if: ${{ github.event.inputs.create_issue != 'false' }}
@@ -162,8 +264,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RUNTIME: ${{ steps.ga4.outputs.runtime_days }}
           CTRL_N: ${{ steps.ga4.outputs.ctrl_sessions }}
+          VARA_N: ${{ steps.ga4.outputs.vara_sessions }}
           VARB_N: ${{ steps.ga4.outputs.varb_sessions }}
           CTRL_K: ${{ steps.ga4.outputs.ctrl_events }}
+          VARA_K: ${{ steps.ga4.outputs.vara_events }}
           VARB_K: ${{ steps.ga4.outputs.varb_events }}
           CTRL_RATE: ${{ steps.stats.outputs.ctrl_rate }}
           VARB_RATE: ${{ steps.stats.outputs.varb_rate }}
@@ -172,6 +276,8 @@ jobs:
           P: ${{ steps.stats.outputs.p_value }}
           VERDICT: ${{ steps.stats.outputs.verdict }}
           REC: ${{ steps.stats.outputs.recommendation }}
+          BASELINE_SESSIONS: ${{ steps.baseline.outputs.total_sessions }}
+          SESSIONS_ROW_COUNT: ${{ steps.ga4.outputs.sessions_row_count }}
         run: |
           WEEK=$(date +"%Y-%m-%d")
           case "$REC" in
@@ -179,29 +285,73 @@ jobs:
             revert)  EMOJI="red_circle" ;;
             *)       EMOJI="yellow_circle" ;;
           esac
+
+          # Build diagnostic note if variant data is missing but baseline has data
+          DIAG_NOTE=""
+          CTRL_N="${CTRL_N:-0}"
+          VARB_N="${VARB_N:-0}"
+          VARA_N="${VARA_N:-0}"
+          BASELINE_SESSIONS="${BASELINE_SESSIONS:-0}"
+          SESSIONS_ROW_COUNT="${SESSIONS_ROW_COUNT:-0}"
+          VARIANT_TOTAL=$(( CTRL_N + VARA_N + VARB_N ))
+          if [ "$VARIANT_TOTAL" -eq 0 ] && [ "$BASELINE_SESSIONS" -gt 0 ]; then
+            DIAG_NOTE=$(cat <<'DIAGEOF'
+
+> **Diagnostic**: GA4 returned 0 sessions when grouped by `homepage_ab_variant` but baseline shows sessions.
+> The custom user property may not yet be populated. It was registered on 2026-03-11;
+> GA4 does not backfill custom dimensions — only new sessions after registration will have data.
+> Allow 24-48h for data to accumulate.
+DIAGEOF
+)
+          fi
+
           TITLE=":${EMOJI}: A/B Results (${WEEK}): ${VERDICT}"
-          BODY="## Homepage A/B Results - ${WEEK}
+          BODY=$(cat <<EOF
+## Homepage A/B Results - ${WEEK}
 
-          Experiment: Category Grid (variant-b) vs Control | Runtime: ${RUNTIME} days
+Experiment: Category Grid (variant-b) vs Control | Runtime: ${RUNTIME} days
 
-          | Cohort | Sessions | copy_config | Rate |
-          |--------|----------|-------------|------|
-          | control | ${CTRL_N} | ${CTRL_K} | ${CTRL_RATE}% |
-          | variant-b | ${VARB_N} | ${VARB_K} | ${VARB_RATE}% |
+| Cohort | Sessions | copy_config | Rate |
+|--------|----------|-------------|------|
+| control | ${CTRL_N} | ${CTRL_K:-0} | ${CTRL_RATE}% |
+| variant-a | ${VARA_N} | ${VARA_K:-0} | - |
+| variant-b | ${VARB_N} | ${VARB_K:-0} | ${VARB_RATE}% |
 
-          Lift: ${LIFT}% | z: ${Z} | p: ${P}
+Lift: ${LIFT}% | z: ${Z} | p: ${P}
 
-          Verdict: ${VERDICT}
+**Verdict**: ${VERDICT}
+${DIAG_NOTE}
 
-          Criteria: >=7 days runtime (${RUNTIME}d), >=500/cohort, >=+20% lift, p<0.05
+<details><summary>Debug</summary>
 
-          Baseline (pre-experiment 2026-02-21): 1.18% (6/506 sessions)
-          Kill switch: set HOMEPAGE_AB_ENABLED=false in Vercel to stop experiment.
+baseline_sessions=${BASELINE_SESSIONS}, variant_rows=${SESSIONS_ROW_COUNT}
 
-          Auto-generated by ab-results.yml | SMI-2700"
+</details>
+
+Criteria: >=7 days runtime (${RUNTIME}d), >=500/cohort, >=+20% lift, p<0.05
+
+Baseline (pre-experiment 2026-02-21): 1.18% (6/506 sessions)
+Kill switch: set HOMEPAGE_AB_ENABLED=false in Vercel to stop experiment.
+
+Auto-generated by ab-results.yml | SMI-2700
+EOF
+)
 
           gh issue create \
             --repo smith-horn/skillsmith \
             --title "$TITLE" \
             --body "$BODY" \
             --label "analytics"
+
+      - name: Report Failure
+        if: failure() || cancelled()
+        run: |
+          echo "### A/B Results Workflow Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the workflow logs for details." >> $GITHUB_STEP_SUMMARY
+          echo "Common issues:" >> $GITHUB_STEP_SUMMARY
+          echo "- Repository variables not set (Settings > Actions > Variables)" >> $GITHUB_STEP_SUMMARY
+          echo "- WIF provider misconfigured" >> $GITHUB_STEP_SUMMARY
+          echo "- Service account lacks GA4 Viewer role" >> $GITHUB_STEP_SUMMARY
+          echo "- GA4 Data API not enabled in GCP project" >> $GITHUB_STEP_SUMMARY
+          echo "- Custom dimension \`homepage_ab_variant\` not registered" >> $GITHUB_STEP_SUMMARY
