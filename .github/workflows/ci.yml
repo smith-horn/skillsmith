@@ -604,7 +604,7 @@ jobs:
       - name: Download node_modules
         uses: actions/download-artifact@v4
         id: download-modules
-        continue-on-error: true
+        continue-on-error: true # audit:allow-continue-on-error — best-effort cache; falls back to npm install
         with:
           name: node-modules
           path: /tmp
@@ -703,7 +703,7 @@ jobs:
       - name: Download node_modules
         uses: actions/download-artifact@v4
         id: download-modules
-        continue-on-error: true
+        continue-on-error: true # audit:allow-continue-on-error — best-effort cache; falls back to npm install
         with:
           name: node-modules
           path: /tmp
@@ -813,7 +813,7 @@ jobs:
       - name: Download node_modules
         uses: actions/download-artifact@v4
         id: download-modules
-        continue-on-error: true
+        continue-on-error: true # audit:allow-continue-on-error — best-effort cache; falls back to npm install
         with:
           name: node-modules
           path: /tmp
@@ -1393,7 +1393,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [lint, test, classify]
-    # Non-blocking initially while we stabilize
+    # audit:allow-continue-on-error — non-blocking initially while we stabilize
     continue-on-error: true
     # Only run for code changes - skip for docs/config
     if: needs.classify.outputs.tier == 'code'
@@ -1495,7 +1495,7 @@ jobs:
       - name: Download node_modules
         uses: actions/download-artifact@v4
         id: download-modules
-        continue-on-error: true
+        continue-on-error: true # audit:allow-continue-on-error — best-effort cache; falls back to npm install
         with:
           name: node-modules
           path: /tmp

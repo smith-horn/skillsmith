@@ -1216,6 +1216,109 @@ console.log(`\n${BOLD}20. Stale Doc Path References in Skills (SMI-2637)${RESET}
   }
 }
 
+// 21. Workflow continue-on-error Anti-Pattern (SMI-3217)
+console.log(`\n${BOLD}21. Workflow continue-on-error Validation (SMI-3217)${RESET}`)
+{
+  const workflowDir = '.github/workflows'
+  if (existsSync(workflowDir)) {
+    const workflowFiles = readdirSync(workflowDir)
+      .filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'))
+      .map((f) => join(workflowDir, f))
+
+    const violations = []
+
+    for (const file of workflowFiles) {
+      const content = readFileSync(file, 'utf8')
+      const lines = content.split('\n')
+      const relPath = relative(process.cwd(), file)
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]
+        if (!line.match(/^\s+continue-on-error:\s*true/)) continue
+
+        // Check for inline exemption comment
+        if (line.includes('# audit:allow-continue-on-error')) continue
+
+        // Check preceding lines for exemption comment (up to 3 lines back)
+        const hasPrecedingExemption = lines
+          .slice(Math.max(0, i - 3), i)
+          .some((l) => l.includes('# audit:allow-continue-on-error'))
+        if (hasPrecedingExemption) continue
+
+        // Check if the step's run block contains || true (intent is clear)
+        const stepLines = []
+        for (let j = i - 1; j >= 0; j--) {
+          stepLines.unshift(lines[j])
+          if (lines[j].match(/^\s+- name:/) || lines[j].match(/^\s+- uses:/)) break
+        }
+        const stepBlock = stepLines.join('\n')
+        if (stepBlock.includes('|| true')) continue
+
+        // Find the step's id (scan backward from continue-on-error line)
+        let stepId = null
+        for (let j = i - 1; j >= 0; j--) {
+          const idMatch = lines[j].match(/^\s+id:\s*(\S+)/)
+          if (idMatch) {
+            stepId = idMatch[1]
+            break
+          }
+          // Stop if we hit another step boundary
+          if (lines[j].match(/^\s+- name:/) || lines[j].match(/^\s+- uses:/)) break
+        }
+        // Also check lines after continue-on-error for id (id can come after)
+        if (!stepId) {
+          for (let j = i + 1; j < lines.length; j++) {
+            const idMatch = lines[j].match(/^\s+id:\s*(\S+)/)
+            if (idMatch) {
+              stepId = idMatch[1]
+              break
+            }
+            // Stop if we hit next step or non-indented content
+            if (lines[j].match(/^\s+- name:/) || lines[j].match(/^\s+- uses:/)) break
+            if (lines[j].match(/^\s+continue-on-error:/)) break
+          }
+        }
+
+        if (!stepId) {
+          // No id at all — violation
+          const nameMatch = stepBlock.match(/- name:\s*(.+)/)
+          const stepName = nameMatch ? nameMatch[1].trim() : `line ${i + 1}`
+          violations.push({ file: relPath, line: i + 1, step: stepName, reason: 'no id field' })
+          continue
+        }
+
+        // Check if stepId is referenced in a downstream if: condition
+        const downstream =
+          content.includes(`steps.${stepId}.outcome`) ||
+          content.includes(`steps.${stepId}.outputs`) ||
+          content.includes(`steps.${stepId}.conclusion`)
+        if (!downstream) {
+          violations.push({
+            file: relPath,
+            line: i + 1,
+            step: stepId,
+            reason: 'id not referenced in downstream if: condition',
+          })
+        }
+      }
+    }
+
+    if (violations.length > 0) {
+      fail(
+        `${violations.length} continue-on-error step(s) without downstream outcome check`,
+        'Add id: + downstream if: condition, or add # audit:allow-continue-on-error'
+      )
+      violations.slice(0, 10).forEach(({ file, line, step, reason }) => {
+        console.log(`    ${file}:${line} — ${step} (${reason})`)
+      })
+    } else {
+      pass('All continue-on-error steps have proper downstream outcome checks')
+    }
+  } else {
+    pass('Skipped (no .github/workflows/ directory)')
+  }
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)

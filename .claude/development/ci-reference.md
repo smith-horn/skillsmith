@@ -102,6 +102,44 @@ If required checks are stuck or GitHub Actions is down:
 gh api repos/Smith-Horn/skillsmith/branches/main/protection -X PUT --input .github/branch-protection.json
 ```
 
+## `continue-on-error` Audit (SMI-3217)
+
+Check 21 in `audit-standards.mjs` flags `continue-on-error: true` steps that lack downstream outcome checks — the pattern that caused 18 days of silent zero-data in `ab-results.yml`.
+
+### Rules
+
+A step with `continue-on-error: true` must either:
+
+1. Have an `id:` field **and** that id must be referenced downstream via `steps.<id>.outcome`, `steps.<id>.outputs`, or `steps.<id>.conclusion`
+2. Be explicitly exempted with `# audit:allow-continue-on-error`
+
+### Exemption Syntax
+
+Add the comment inline or within 3 lines above the `continue-on-error` directive:
+
+```yaml
+# Inline (preferred)
+continue-on-error: true # audit:allow-continue-on-error — reason
+
+# Above the directive
+# audit:allow-continue-on-error — reason
+continue-on-error: true
+```
+
+Steps with `|| true` in their `run:` block are auto-exempted (intent is clear).
+
+### When to Exempt
+
+- Artifact uploads/downloads (storage quota or missing artifacts)
+- Cosmetic PR comments or report generation
+- Best-effort cache downloads with npm install fallback
+
+### When NOT to Exempt
+
+- Data-fetching steps where zero/empty results would go unnoticed
+- Steps whose failure should change downstream behavior
+- API calls without HTTP status or error message checking
+
 ## Wave Merge CI Polling (SMI-3010)
 
 When monitoring CI between sequential wave merges, always use `${VAR:-0}` not `$VAR` for `jq | length` results:

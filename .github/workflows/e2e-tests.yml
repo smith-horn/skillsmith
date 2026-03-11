@@ -348,14 +348,14 @@ jobs:
         with:
           name: cli-e2e-results
           path: test-results/cli
-        continue-on-error: true
+        continue-on-error: true # audit:allow-continue-on-error — test artifacts may not exist
 
       - name: Download MCP results
         uses: actions/download-artifact@v4
         with:
           name: mcp-e2e-results
           path: test-results/mcp
-        continue-on-error: true
+        continue-on-error: true # audit:allow-continue-on-error — test artifacts may not exist
 
       - name: Generate combined report in Docker
         run: |
@@ -364,7 +364,7 @@ jobs:
             -w /app \
             skillsmith-e2e:${{ github.sha }} \
             npm run test:e2e:report
-        continue-on-error: true
+        continue-on-error: true # audit:allow-continue-on-error — best-effort reporting
 
       - name: Create Linear issues for failures in Docker
         if: failure()
@@ -375,7 +375,7 @@ jobs:
             -e LINEAR_API_KEY=${{ secrets.LINEAR_API_KEY }} \
             skillsmith-e2e:${{ github.sha }} \
             npm run test:e2e:create-issues
-        continue-on-error: true
+        continue-on-error: true # audit:allow-continue-on-error — best-effort issue creation
 
       - name: Upload combined reports
         if: always()
@@ -389,7 +389,7 @@ jobs:
 
       - name: Post summary to PR
         if: github.event_name == 'pull_request'
-        continue-on-error: true # SMI-1256: Don't fail workflow if comment posting fails
+        continue-on-error: true # audit:allow-continue-on-error — SMI-1256: Don't fail workflow if comment posting fails
         uses: actions/github-script@v7
         with:
           script: |
