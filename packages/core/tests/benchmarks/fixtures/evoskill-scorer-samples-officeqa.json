@@ -1,0 +1,702 @@
+[
+  {
+    "question": "What is 2+2?",
+    "predicted": "4",
+    "groundTruth": "4",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Capital of France?",
+    "predicted": "Paris",
+    "groundTruth": "Paris",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Who wrote Hamlet?",
+    "predicted": "Shakespeare",
+    "groundTruth": "Shakespeare",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Who?",
+    "predicted": "paris",
+    "groundTruth": "Paris",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Who?",
+    "predicted": "PARIS",
+    "groundTruth": "Paris",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Who?",
+    "predicted": "shakespeare",
+    "groundTruth": "Shakespeare",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": " 4 ",
+    "groundTruth": "4",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "\"Paris\"",
+    "groundTruth": "Paris",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "'Paris'",
+    "groundTruth": "Paris",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "42",
+    "groundTruth": "42",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "3.14",
+    "groundTruth": "3.14",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "0.5",
+    "groundTruth": "0.5",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "100",
+    "groundTruth": "100",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "1,000",
+    "groundTruth": "1000",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "1,234,567",
+    "groundTruth": "1234567",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "12,345.67",
+    "groundTruth": "12345.67",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "100",
+    "groundTruth": "100",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "101",
+    "groundTruth": "100",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "105",
+    "groundTruth": "100",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "106",
+    "groundTruth": "100",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "200",
+    "groundTruth": "100",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "-5",
+    "groundTruth": "-5",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "-5.5",
+    "groundTruth": "-5.5",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "50%",
+    "groundTruth": "50%",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "3.5%",
+    "groundTruth": "3.5%",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "543 million",
+    "groundTruth": "543 million",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "2 billion",
+    "groundTruth": "2 billion",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "1.5 trillion",
+    "groundTruth": "1.5 trillion",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "When?",
+    "predicted": "March 1977",
+    "groundTruth": "March 1977",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "When?",
+    "predicted": "April 1977",
+    "groundTruth": "March 1977",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "When?",
+    "predicted": "1977",
+    "groundTruth": "March 1977",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "When?",
+    "predicted": "March 1978",
+    "groundTruth": "March 1977",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Who?",
+    "predicted": "The answer is Paris",
+    "groundTruth": "Paris",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Who?",
+    "predicted": "I think it's Shakespeare",
+    "groundTruth": "Shakespeare",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Capital?",
+    "predicted": "London",
+    "groundTruth": "Paris",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "What?",
+    "predicted": "5",
+    "groundTruth": "4",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Who?",
+    "predicted": "Dickens",
+    "groundTruth": "Shakespeare",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "What?",
+    "predicted": "completely wrong answer",
+    "groundTruth": "42",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "The answer is 0",
+    "groundTruth": "0",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "What?",
+    "predicted": "Federal Old-Age and Survivors Insurance (OASI) Trust Fund",
+    "groundTruth": "Federal Old-Age and Survivors Insurance Trust Fund",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "When?",
+    "predicted": "2003",
+    "groundTruth": "2003",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "When?",
+    "predicted": "1999",
+    "groundTruth": "1999",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "The values are 10 and 20",
+    "groundTruth": "10 and 20",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many Kannada films have grossed at least \u20b9100 crore worldwide and also earned at least \u20b950 crore",
+    "predicted": "6",
+    "groundTruth": "6",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many Kannada films have grossed at least \u20b9100 crore worldwide and also earned at least \u20b950 crore",
+    "predicted": "wrong answer",
+    "groundTruth": "6",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "What was the average 911 call answer time in Washington D.C. on April 30, 2025?",
+    "predicted": "3 seconds",
+    "groundTruth": "3 seconds",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "What was the average 911 call answer time in Washington D.C. on April 30, 2025?",
+    "predicted": "wrong answer",
+    "groundTruth": "3 seconds",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many YouTube videos have surpassed 4 billion views?",
+    "predicted": "28",
+    "groundTruth": "28",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many YouTube videos have surpassed 4 billion views?",
+    "predicted": "wrong answer",
+    "groundTruth": "28",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many videos on YouTube have received more than 29 million likes?",
+    "predicted": "27",
+    "groundTruth": "27",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many videos on YouTube have received more than 29 million likes?",
+    "predicted": "wrong answer",
+    "groundTruth": "27",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many NBA players have scored 60 or more points in a regular season game since 2023?",
+    "predicted": "12 players",
+    "groundTruth": "12 players",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many NBA players have scored 60 or more points in a regular season game since 2023?",
+    "predicted": "wrong answer",
+    "groundTruth": "12 players",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many YouTube music videos have surpassed 7 billion views?",
+    "predicted": "5",
+    "groundTruth": "5",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many YouTube music videos have surpassed 7 billion views?",
+    "predicted": "wrong answer",
+    "groundTruth": "5",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many Studio Ghibli feature films have received a Rotten Tomatoes Tomatometer score below 90%?",
+    "predicted": "6",
+    "groundTruth": "6",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many Studio Ghibli feature films have received a Rotten Tomatoes Tomatometer score below 90%?",
+    "predicted": "wrong answer",
+    "groundTruth": "6",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many hotels in the United States have more than 3,500 rooms?",
+    "predicted": "13",
+    "groundTruth": "13",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many hotels in the United States have more than 3,500 rooms?",
+    "predicted": "wrong answer",
+    "groundTruth": "13",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many badminton athletes have won Olympic Gold and more than 2 Olympic medals in total?",
+    "predicted": "8",
+    "groundTruth": "8",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many badminton athletes have won Olympic Gold and more than 2 Olympic medals in total?",
+    "predicted": "wrong answer",
+    "groundTruth": "8",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "If I randomly select i.i.d. samples from a distribution n times, the distribution of the sampled var",
+    "predicted": "There is no theory that supports this statement.",
+    "groundTruth": "There is no theory that supports this statement.",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "If I randomly select i.i.d. samples from a distribution n times, the distribution of the sampled var",
+    "predicted": "wrong answer",
+    "groundTruth": "There is no theory that supports this statement.",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "What is the most widely used ride booking application in India that offers a wide variety of vehicle",
+    "predicted": "Uber",
+    "groundTruth": "Uber",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "What is the most widely used ride booking application in India that offers a wide variety of vehicle",
+    "predicted": "wrong answer",
+    "groundTruth": "Uber",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Among artists with multiple wins for Album of the Year at the Grammys, who has received the most nom",
+    "predicted": "George Harrison",
+    "groundTruth": "George Harrison",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Among artists with multiple wins for Album of the Year at the Grammys, who has received the most nom",
+    "predicted": "wrong answer",
+    "groundTruth": "George Harrison",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many national flags of countries recognized as United Nations (UN) member or observer states hav",
+    "predicted": "16",
+    "groundTruth": "16",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many national flags of countries recognized as United Nations (UN) member or observer states hav",
+    "predicted": "wrong answer",
+    "groundTruth": "16",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many countries did both Donald Trump (during his first term) and Joe Biden visit during their pr",
+    "predicted": "18",
+    "groundTruth": "18",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How many countries did both Donald Trump (during his first term) and Joe Biden visit during their pr",
+    "predicted": "wrong answer",
+    "groundTruth": "18",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How much did the infant mortality rate (per 1,000 live births) decline in Northern Africa between 20",
+    "predicted": "8.7",
+    "groundTruth": "8.7",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "How much did the infant mortality rate (per 1,000 live births) decline in Northern Africa between 20",
+    "predicted": "wrong answer",
+    "groundTruth": "8.7",
+    "pythonScore": 0.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "reward.score_answer"
+  }
+]

@@ -52,3 +52,6 @@ export { createAuditCommand } from './audit.js'
 
 // SMI-3083: Embedded skill scaffolding
 export { createCreateCommand, createSkill, validateSkillName } from './create.js'
+
+// SMI-3275: EvoSkill Benchmark CLI
+export { createEvoskillBenchmarkCommand } from './benchmark/evoskill.js'
