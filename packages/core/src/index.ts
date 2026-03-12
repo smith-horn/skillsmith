@@ -102,6 +102,62 @@ export {
   validateEmbeddingResults,
 } from './benchmarks/index.js'
 
+// EvoSkill benchmark harness (SMI-3255, SMI-3258)
+export {
+  // IR metrics
+  ndcg, mrr, mapAtK, precisionAtK, recallAtK,
+  // Scorers
+  exactMatchScorer, createLlmJudgeScorer, getScorerForBenchmark,
+  // Constants
+  EVOSKILL_DEFAULTS, CONDITIONS, NotImplementedError,
+  // Dataset
+  loadDataset, loadCSVDataset, loadJSONDataset,
+  // Skill selectors
+  createBaselineSelector, createEvoSkillEvolvedSelector,
+  createSearchSelector, createRecommendSelector,
+  createOptimizedSelector, createSkillCreateSelector,
+  createIterativeSelector, createHybridSelector, createCuratedSelector,
+  // Agent runner
+  runEvoSkillTask, runEvoSkillBatch, calculateCost,
+  // Evaluator
+  evaluate, aggregateSeeds,
+  // Harness
+  runHarness,
+  // Report
+  generateMarkdownReport, generateJsonReport,
+} from './benchmarks/evoskill/index.js'
+
+// EvoSkill types (SMI-3255, SMI-3258)
+export type {
+  BenchmarkTask, ConditionConfig, EvoSkillBenchmarkResult, ScorerFn, HarnessConfig,
+  LlmJudgeClient, DatasetLoadResult, SkillSelectorFn,
+  SkillsmithSearchClient, SkillsmithRecommendClient,
+  TransformationService, SkillCreateRunner,
+  ConditionNumber, ConditionName,
+  AgentClient, AgentRunnerConfig, TaskResult, TaskTokenUsage,
+  EvaluatorConfig, HarnessDependencies, HarnessResult,
+  HarnessProgressFn, HarnessProgressEvent, ReportOptions,
+} from './benchmarks/evoskill/index.js'
+
+// EvoSkill evaluation (Study B: SMI-3284)
+export {
+  FailureAnalyzer,
+  SkillVariantGenerator,
+  VariantSelector,
+  IterativeEvaluator,
+} from './evaluation/index.js'
+
+export type {
+  RewriteClient, VariantGeneratorConfig,
+  AgentRunner, EvalTask, IterativeConfig, IterativeResult, IterationSnapshot,
+  FailureAnalyzerConfig, FailureCategory, FailurePattern, TaskFailure,
+  GenerationMethod, SkillVariant, ScoredVariant,
+  BenchmarkId, SplitType, ScorerType,
+  BenchmarkResultRow, BenchmarkResultInput,
+  SkillVariantRow, SkillVariantInput,
+  FailurePatternRow, FailurePatternInput,
+} from './evaluation/index.js'
+
 // Telemetry (SMI-739)
 export {
   SkillsmithTracer,

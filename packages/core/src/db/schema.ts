@@ -23,11 +23,12 @@ import { MIGRATION_V6_SQL } from './migrations/v6-advisories.js'
 import { MIGRATION_V7_SQL } from './migrations/v7-compatibility.js'
 import { MIGRATION_V8_SQL } from './migrations/v8-co-installs.js'
 import { MIGRATION_V10_SQL } from './migrations/v10-dependencies.js'
+import { MIGRATION_V11_SQL } from './migrations/v11-benchmark-evaluator.js'
 
 export type DatabaseType = Database
 
-// v10 reserved: skill-dependency-intelligence (SMI-3134)
-export const SCHEMA_VERSION = 10
+// v11 reserved: evoskill-task-accuracy-evaluator (Study B — SMI-3284)
+export const SCHEMA_VERSION = 11
 
 /**
  * SQL statements for creating the database schema
@@ -222,6 +223,11 @@ export const MIGRATIONS: Migration[] = [
     version: 10,
     description: 'Skill dependency intelligence: skill_dependencies table',
     sql: MIGRATION_V10_SQL,
+  },
+  {
+    version: 11,
+    description: 'SMI-3284: EvoSkill benchmark evaluator tables (Study B)',
+    sql: MIGRATION_V11_SQL,
   },
 ]
 

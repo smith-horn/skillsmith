@@ -365,3 +365,9 @@ export {
   type BillingErrorCode,
   type LicenseTier,
 } from '../billing/index.js'
+
+// ============================================================================
+// Evaluation (SMI-3284: EvoSkill Task-Accuracy Evaluator)
+// ============================================================================
+
+export { FailureAnalyzer } from '../evaluation/FailureAnalyzer.js'
