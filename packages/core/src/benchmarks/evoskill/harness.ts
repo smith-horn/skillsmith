@@ -5,8 +5,9 @@
 import type { BenchmarkTask, ConditionConfig, EvoSkillBenchmarkResult, HarnessConfig } from './types.js'
 import type { AgentClient, TaskResult } from './agent-runner.js'
 import type { ScorerFn } from './types.js'
+import * as pathModule from 'path'
 import { loadDataset } from './dataset-loader.js'
-import { runBatch } from './agent-runner.js'
+import { runEvoSkillBatch } from './agent-runner.js'
 import { evaluate, aggregateSeeds } from './evaluator.js'
 
 /** Progress callback for harness execution */
@@ -24,7 +25,8 @@ export interface HarnessProgressEvent {
 /** Dependencies injected from CLI layer */
 export interface HarnessDependencies {
   agentClient: AgentClient
-  scorer: ScorerFn
+  /** Scorer per benchmark — each benchmark may need a different scorer */
+  getScorer: (benchmark: 'officeqa' | 'sealqa' | 'browsecomp') => ScorerFn
   /** Read file content from path */
   readFile: (path: string) => Promise<string>
 }
@@ -48,19 +50,22 @@ export async function runHarness(
   const allResults: EvoSkillBenchmarkResult[] = []
 
   for (const benchmark of config.benchmarks) {
-    // Load dataset once per benchmark
-    const datasetContent = await deps.readFile(getDatasetPath(benchmark))
-    const dataset = loadDataset(datasetContent, benchmark)
-
-    // Use test split (or sample fraction thereof)
-    let testTasks = dataset.test
-    if (config.sampleFraction < 1) {
-      const sampleSize = Math.max(1, Math.round(testTasks.length * config.sampleFraction))
-      testTasks = testTasks.slice(0, sampleSize)
-    }
+    // Load raw dataset content once per benchmark
+    const datasetPath = pathModule.join(config.datasetDir, getDatasetPath(benchmark))
+    const datasetContent = await deps.readFile(datasetPath)
 
     for (const seed of config.seeds) {
       onProgress?.({ type: 'seed_start', seed, benchmark })
+
+      // Re-split dataset with this seed for different train/val/test shuffle
+      const dataset = loadDataset(datasetContent, benchmark, { seed })
+
+      // Use test split (or sample fraction thereof)
+      let testTasks = dataset.test
+      if (config.sampleFraction < 1) {
+        const sampleSize = Math.max(1, Math.round(testTasks.length * config.sampleFraction))
+        testTasks = testTasks.slice(0, sampleSize)
+      }
 
       // Run conditions concurrently within this seed
       const conditionPromises = config.conditions.map(async (condition) => {
@@ -114,15 +119,16 @@ async function runCondition(
   const skills = await condition.skillSelector(testTasks)
 
   // Run tasks through agent
-  const taskResults: TaskResult[] = await runBatch(testTasks, {
+  const taskResults: TaskResult[] = await runEvoSkillBatch(testTasks, {
     client: deps.agentClient,
     modelId: condition.modelId,
     skills,
   })
 
-  // Evaluate
+  // Evaluate with benchmark-specific scorer
+  const scorer = deps.getScorer(benchmark as 'officeqa' | 'sealqa' | 'browsecomp')
   return evaluate(testTasks, taskResults, {
-    scorer: deps.scorer,
+    scorer,
     condition: condition.name,
     benchmark,
     split: 'test',

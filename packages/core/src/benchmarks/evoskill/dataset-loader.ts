@@ -111,18 +111,32 @@ export function loadJSONDataset(
   benchmark: 'browsecomp',
   options: { seed?: number; trainRatio?: number; valRatio?: number } = {}
 ): DatasetLoadResult {
-  const data = JSON.parse(jsonContent) as Array<{ question: string; answer: string }>
-  if (!Array.isArray(data) || data.length === 0) {
-    throw new Error(`Dataset ${benchmark} is empty or not an array`)
+  const parsed: unknown = JSON.parse(jsonContent)
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error(
+      `Dataset ${benchmark} is empty or not an array (got ${typeof parsed})`
+    )
   }
 
-  const tasks: BenchmarkTask[] = data.map((item, i) => ({
-    id: `${benchmark}-${i + 1}`,
-    question: item.question,
-    groundTruth: item.answer,
-    split: 'test' as const, // placeholder
-    benchmark,
-  }))
+  const tasks: BenchmarkTask[] = []
+  for (let i = 0; i < parsed.length; i++) {
+    const item = parsed[i] as Record<string, unknown>
+    if (typeof item?.question !== 'string' || typeof item?.answer !== 'string') {
+      throw new Error(
+        `Dataset ${benchmark} item ${i} missing required string fields: question=${typeof item?.question}, answer=${typeof item?.answer}`
+      )
+    }
+    if (!item.question.trim() || !item.answer.trim()) {
+      throw new Error(`Dataset ${benchmark} item ${i} has empty question or answer`)
+    }
+    tasks.push({
+      id: `${benchmark}-${i + 1}`,
+      question: item.question,
+      groundTruth: item.answer,
+      split: 'test' as const,
+      benchmark,
+    })
+  }
 
   return splitDataset(tasks, benchmark, options)
 }

@@ -46,7 +46,7 @@ export interface AgentRunnerConfig {
  * Run a single benchmark task through the agent.
  * Skills are injected as system prompt prefix.
  */
-export async function runTask(
+export async function runEvoSkillTask(
   task: BenchmarkTask,
   config: AgentRunnerConfig
 ): Promise<TaskResult> {
@@ -90,7 +90,7 @@ export async function runTask(
 }
 
 /** Run all tasks in a batch, sequentially to respect rate limits */
-export async function runBatch(
+export async function runEvoSkillBatch(
   tasks: BenchmarkTask[],
   config: AgentRunnerConfig,
   onProgress?: (completed: number, total: number) => void
@@ -98,7 +98,7 @@ export async function runBatch(
   const results: TaskResult[] = []
 
   for (let i = 0; i < tasks.length; i++) {
-    const result = await runTask(tasks[i], config)
+    const result = await runEvoSkillTask(tasks[i], config)
     results.push(result)
     onProgress?.(i + 1, tasks.length)
   }

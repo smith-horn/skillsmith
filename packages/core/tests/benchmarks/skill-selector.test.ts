@@ -5,6 +5,9 @@ import {
   createIterativeSelector,
   createSearchSelector,
   createRecommendSelector,
+  createOptimizedSelector,
+  createHybridSelector,
+  createEvoSkillEvolvedSelector,
   NotImplementedError,
   CONDITIONS,
 } from '../../src/benchmarks/evoskill/skill-selector.js'
@@ -75,6 +78,40 @@ describe('createIterativeSelector (condition 7)', () => {
     const selector = createIterativeSelector()
     await expect(selector(tasks)).rejects.toThrow(NotImplementedError)
     await expect(selector(tasks)).rejects.toThrow('Study B')
+  })
+})
+
+describe('createOptimizedSelector (condition 5)', () => {
+  it('searches then optimizes the top result', async () => {
+    const mockSearch = { search: async () => [{ content: 'base skill', score: 0.9 }] }
+    const mockTransform = { optimize: async (s: string) => `optimized: ${s}` }
+    const selector = createOptimizedSelector(mockSearch, mockTransform)
+    const result = await selector(tasks)
+    expect(result).toEqual(['optimized: base skill'])
+  })
+
+  it('returns empty when search finds nothing', async () => {
+    const mockSearch = { search: async () => [] }
+    const mockTransform = { optimize: async (s: string) => s }
+    const selector = createOptimizedSelector(mockSearch, mockTransform)
+    const result = await selector(tasks)
+    expect(result).toEqual([])
+  })
+})
+
+describe('createHybridSelector (condition 8)', () => {
+  it('searches then evolves the top result', async () => {
+    const mockSearch = { search: async () => [{ content: 'base', score: 0.8 }] }
+    const evolve = async (s: string) => `evolved: ${s}`
+    const selector = createHybridSelector(mockSearch, evolve)
+    const result = await selector(tasks)
+    expect(result).toEqual(['evolved: base'])
+  })
+})
+
+describe('createEvoSkillEvolvedSelector (condition 2)', () => {
+  it('rejects path traversal', () => {
+    expect(() => createEvoSkillEvolvedSelector('/foo/../bar')).toThrow("must not contain '..'")
   })
 })
 

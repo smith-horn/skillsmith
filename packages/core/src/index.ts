@@ -118,7 +118,7 @@ export {
   createOptimizedSelector, createSkillCreateSelector,
   createIterativeSelector, createHybridSelector, createCuratedSelector,
   // Agent runner
-  runTask, runBatch, calculateCost,
+  runEvoSkillTask, runEvoSkillBatch, calculateCost,
   // Evaluator
   evaluate, aggregateSeeds,
   // Harness

@@ -22,6 +22,7 @@ import {
   type AgentClient,
   type LlmJudgeClient,
   type HarnessProgressEvent,
+  type SkillSelectorFn,
 } from '@skillsmith/core'
 
 type BenchmarkName = 'officeqa' | 'sealqa' | 'browsecomp'
@@ -32,6 +33,7 @@ interface EvoskillOptions {
   seeds: string
   sample: string
   output: string
+  datasetDir: string
   dryRun: boolean
   model: string
 }
@@ -44,6 +46,7 @@ export function createEvoskillBenchmarkCommand(): Command {
     .option('-s, --seeds <n>', 'Number of seeds', '3')
     .option('--sample <fraction>', 'Sample fraction of test set (0-1)', '1.0')
     .option('-o, --output <dir>', 'Output directory', '/app/results/evoskill/')
+    .option('-d, --dataset-dir <dir>', 'Base directory for dataset files', '/app/data/')
     .option('--dry-run', 'Validate config without API calls', false)
     .option('-m, --model <id>', 'Agent model ID', EVOSKILL_DEFAULTS.AGENT_MODEL_ID)
     .action(async (opts: EvoskillOptions) => {
@@ -81,6 +84,7 @@ async function runEvoskillBenchmark(opts: EvoskillOptions): Promise<void> {
     conditions,
     seeds,
     sampleFraction,
+    datasetDir: opts.datasetDir,
     outputDir: opts.output,
     dryRun: opts.dryRun,
   }
@@ -89,16 +93,13 @@ async function runEvoskillBenchmark(opts: EvoskillOptions): Promise<void> {
   const agentClient = createAgentClient()
   const judgeClient = createJudgeClient()
 
-  // For each benchmark, select the appropriate scorer
-  const scorer = getScorerForBenchmark(
-    benchmarks[0] === 'officeqa' ? 'officeqa' : 'sealqa',
-    EVOSKILL_DEFAULTS.JUDGE_MODEL_ID,
-    benchmarks[0] !== 'officeqa' ? judgeClient : undefined
-  )
-
   const result = await runHarness(config, {
     agentClient,
-    scorer,
+    getScorer: (benchmark) => getScorerForBenchmark(
+      benchmark === 'officeqa' ? 'officeqa' : benchmark === 'browsecomp' ? 'browsecomp' : 'sealqa',
+      EVOSKILL_DEFAULTS.JUDGE_MODEL_ID,
+      benchmark !== 'officeqa' ? judgeClient : undefined
+    ),
     readFile: async (filePath: string) => fs.readFileSync(filePath, 'utf-8'),
   }, (event: HarnessProgressEvent) => {
     switch (event.type) {
@@ -167,17 +168,24 @@ function buildConditions(ids: number[], modelId: string, seeds: number[]): Condi
   for (const id of ids) {
     const name = CONDITIONS[id as keyof typeof CONDITIONS]
 
-    let selectorFn
+    let selectorFn: SkillSelectorFn
     switch (id) {
       case 1: selectorFn = createBaselineSelector(); break
       case 3: selectorFn = createSearchSelector({ search: async () => [] }); break
       case 4: selectorFn = createRecommendSelector({ recommend: async () => [] }); break
       case 7: selectorFn = createIterativeSelector(); break
       case 9: selectorFn = createCuratedSelector([]); break
+      case 2:
+      case 5:
+      case 6:
+      case 8:
+        throw new Error(
+          `Condition ${id} (${name}) requires runtime dependencies not yet configured. ` +
+          `Condition 2 needs --evolved-skill path, 5 needs TransformationService, ` +
+          `6 needs SkillCreateRunner, 8 needs search client + evolve function.`
+        )
       default:
-        // Conditions 2, 5, 6, 8 need runtime dependencies (files, services)
-        selectorFn = createBaselineSelector()
-        console.warn(chalk.yellow(`  Warning: Condition ${id} (${name}) using baseline fallback — configure dependencies`))
+        throw new Error(`Unknown condition ID: ${id}`)
     }
 
     for (const seed of seeds) {

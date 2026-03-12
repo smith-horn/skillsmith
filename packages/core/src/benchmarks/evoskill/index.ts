@@ -51,8 +51,8 @@ export {
 
 // Agent runner
 export {
-  runTask,
-  runBatch,
+  runEvoSkillTask,
+  runEvoSkillBatch,
   calculateCost,
   type AgentClient,
   type AgentRunnerConfig,

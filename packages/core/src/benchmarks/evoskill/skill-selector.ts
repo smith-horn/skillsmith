@@ -30,9 +30,13 @@ export function createBaselineSelector(): SkillSelectorFn {
 
 /** Condition 2: EvoSkill-Evolved — load pre-evolved skill from file */
 export function createEvoSkillEvolvedSelector(evolvedSkillPath: string): SkillSelectorFn {
+  // Validate path at construction time — no traversal allowed
+  if (evolvedSkillPath.includes('..')) {
+    throw new Error(`Evolved skill path must not contain '..': ${evolvedSkillPath}`)
+  }
   return async () => {
-    const fs = await import('fs')
-    const content = fs.readFileSync(evolvedSkillPath, 'utf-8')
+    const fs = await import('fs/promises')
+    const content = await fs.readFile(evolvedSkillPath, 'utf-8')
     return [content]
   }
 }

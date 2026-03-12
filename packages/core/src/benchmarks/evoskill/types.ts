@@ -61,6 +61,8 @@ export interface HarnessConfig {
   seeds: number[]
   /** Fraction of test set to use (0-1, default 1.0) */
   sampleFraction: number
+  /** Base directory for dataset files (absolute path) */
+  datasetDir: string
   /** Output directory for results */
   outputDir: string
   /** Dry run — validate config without executing API calls */

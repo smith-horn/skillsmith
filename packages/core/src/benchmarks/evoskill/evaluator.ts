@@ -18,6 +18,8 @@ export interface EvaluatorConfig {
   rankedSkillIds?: string[]
   /** Relevant skill IDs (ground truth) for IR metrics */
   relevantSkillIds?: Set<string>
+  /** Score threshold for counting as correct (default: 0.5) */
+  scoreThreshold?: number
 }
 
 /**
@@ -28,13 +30,14 @@ export async function evaluate(
   results: TaskResult[],
   config: EvaluatorConfig
 ): Promise<EvoSkillBenchmarkResult> {
-  const { scorer, condition, benchmark, split, modelId, computeIrMetrics } = config
+  const { scorer, condition, benchmark, split, modelId, computeIrMetrics, scoreThreshold = 0.5 } = config
 
   // Build task map for lookup
   const taskMap = new Map(tasks.map((t) => [t.id, t]))
 
   let correctCount = 0
-  let totalTokens = { inputTokens: 0, outputTokens: 0 }
+  let totalInputTokens = 0
+  let totalOutputTokens = 0
   let totalDurationMs = 0
 
   for (const result of results) {
@@ -43,17 +46,20 @@ export async function evaluate(
 
     if (!result.error && result.predicted) {
       const score = await scorer(task.question, result.predicted, task.groundTruth)
-      if (score >= 0.5) correctCount++
+      if (score >= scoreThreshold) correctCount++
     }
 
-    totalTokens.inputTokens += result.tokens.inputTokens
-    totalTokens.outputTokens += result.tokens.outputTokens
+    totalInputTokens += result.tokens.inputTokens
+    totalOutputTokens += result.tokens.outputTokens
     totalDurationMs += result.durationMs
   }
 
   const taskCount = results.length
   const accuracy = taskCount > 0 ? correctCount / taskCount : 0
-  const costDollars = calculateCost(totalTokens, modelId)
+  const costDollars = calculateCost(
+    { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+    modelId
+  )
 
   const evalResult: EvoSkillBenchmarkResult = {
     condition,
@@ -62,7 +68,7 @@ export async function evaluate(
     accuracy,
     taskCount,
     correctCount,
-    costTokens: totalTokens.inputTokens + totalTokens.outputTokens,
+    costTokens: totalInputTokens + totalOutputTokens,
     costDollars,
     wallClockMs: totalDurationMs,
   }

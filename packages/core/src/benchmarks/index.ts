@@ -124,8 +124,8 @@ export {
   createHybridSelector,
   createCuratedSelector,
   // Agent runner
-  runTask,
-  runBatch,
+  runEvoSkillTask,
+  runEvoSkillBatch,
   calculateCost,
   // Evaluator
   evaluate,
