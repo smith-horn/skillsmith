@@ -61,7 +61,7 @@
     "@opentelemetry/auto-instrumentations-node": "0.69.0",
     "@opentelemetry/exporter-trace-otlp-http": "0.211.0",
     "@opentelemetry/resources": "2.5.0",
-    "@opentelemetry/sdk-node": "0.211.0",
+    "@opentelemetry/sdk-node": "0.213.0",
     "@opentelemetry/sdk-trace-base": "2.5.0",
     "@opentelemetry/semantic-conventions": "1.39.0",
     "@huggingface/transformers": "3.8.1",
