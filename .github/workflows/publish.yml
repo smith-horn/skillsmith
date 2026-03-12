@@ -237,7 +237,7 @@ jobs:
 
       - name: Upload Docker image artifact
         uses: actions/upload-artifact@v4
-        continue-on-error: true # Don't fail if storage quota exceeded
+        continue-on-error: true # audit:allow-continue-on-error — Don't fail if storage quota exceeded
         with:
           name: docker-image-publish
           path: /tmp/skillsmith-publish.tar.gz
@@ -252,7 +252,7 @@ jobs:
 
       - name: Upload node_modules artifact
         uses: actions/upload-artifact@v4
-        continue-on-error: true # Don't fail if storage quota exceeded
+        continue-on-error: true # audit:allow-continue-on-error — Don't fail if storage quota exceeded
         with:
           name: node-modules-publish
           path: /tmp/node_modules.tar.gz
@@ -283,7 +283,7 @@ jobs:
       - name: Download node_modules
         uses: actions/download-artifact@v4
         id: download-modules
-        continue-on-error: true
+        continue-on-error: true # audit:allow-continue-on-error — best-effort cache; falls back to npm ci
         with:
           name: node-modules-publish
           path: /tmp

@@ -7,8 +7,8 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { AdvisoryRepository } from '@skillsmith/core'
-import { createTestDatabase, closeDatabase } from '../../../core/tests/helpers/database.js'
-import type { Database as DatabaseType } from '../../../core/src/db/database-interface.js'
+import { createTestDatabase, closeDatabase } from '@skillsmith/core/testkit'
+import type { Database as DatabaseType } from '@skillsmith/core'
 import type { SkillAdvisory } from '@skillsmith/core'
 
 // ============================================================================
