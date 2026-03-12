@@ -303,6 +303,7 @@ function createJudgeClient(): LlmJudgeClient {
         userMessage: prompt,
         maxTokens: 16,
         timeoutMs: 60_000,
+        maxTurns: 1,
       })
 
       const grade = result.content.trim().toUpperCase()
@@ -331,6 +332,7 @@ async function runClaudeCli(params: {
   userMessage: string
   maxTokens: number
   timeoutMs: number
+  maxTurns?: number
 }): Promise<ClaudeCliResult> {
   const { spawn } = await import('child_process')
 
@@ -345,7 +347,7 @@ async function runClaudeCli(params: {
     '-p',
     '--output-format', 'json',
     '--model', modelAlias,
-    '--max-turns', '1',
+    '--max-turns', String(params.maxTurns ?? 10),
   ]
 
   return new Promise((resolve, reject) => {

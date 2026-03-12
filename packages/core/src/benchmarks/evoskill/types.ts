@@ -84,5 +84,5 @@ export const EVOSKILL_DEFAULTS = {
   /** Retry delays for rate-limited API calls (ms) */
   RETRY_DELAYS: [1000, 2000, 4000] as const,
   /** Per-task timeout in ms */
-  TASK_TIMEOUT_MS: 120_000,
+  TASK_TIMEOUT_MS: 300_000,
 } as const
