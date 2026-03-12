@@ -63,7 +63,7 @@
     "@opentelemetry/resources": "2.5.0",
     "@opentelemetry/sdk-node": "0.211.0",
     "@opentelemetry/sdk-trace-base": "2.5.0",
-    "@opentelemetry/semantic-conventions": "1.39.0",
+    "@opentelemetry/semantic-conventions": "1.40.0",
     "@huggingface/transformers": "3.8.1",
     "fts5-sql-bundle": "1.0.2",
     "lru-cache": "10.4.3",
