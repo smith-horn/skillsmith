@@ -246,3 +246,26 @@ export type {
   AuditLoggerConfig,
   AuditStats,
 } from '../security/AuditLogger.js'
+
+// ============================================================================
+// Evaluation Types (SMI-3284: EvoSkill Task-Accuracy Evaluator)
+// ============================================================================
+
+export type {
+  FailureCategory,
+  TaskFailure,
+  FailurePattern,
+  FailureAnalyzerConfig,
+  GenerationMethod,
+  SkillVariant,
+  ScoredVariant,
+  BenchmarkId,
+  SplitType,
+  ScorerType,
+  BenchmarkResultRow,
+  BenchmarkResultInput,
+  SkillVariantRow,
+  SkillVariantInput,
+  FailurePatternRow,
+  FailurePatternInput,
+} from '../evaluation/types.js'

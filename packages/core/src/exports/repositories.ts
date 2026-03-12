@@ -139,3 +139,9 @@ export { CoInstallRepository, type CoInstallSummary } from '../repositories/CoIn
 // ============================================================================
 
 export { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
+
+// ============================================================================
+// Benchmark Repository (SMI-3292)
+// ============================================================================
+
+export { BenchmarkRepository } from '../repositories/BenchmarkRepository.js'
