@@ -225,7 +225,22 @@ Use Claude's tool-use API to run benchmark tasks. The agent receives:
 
 ---
 
-## 7. Risks & Mitigations
+## 7. Skillsmith Infrastructure Gaps (Codebase Audit)
+
+An internal audit of the Skillsmith codebase surfaced four issues that must be addressed before or during benchmark implementation:
+
+| # | Gap | Impact on Benchmark | Remediation |
+|---|-----|---------------------|-------------|
+| 1 | **No offline evaluation dataset** — no query→expected-results mapping exists; `SearchQuality.test.ts` tests structural ranking properties on hand-crafted data, not recall/precision at scale | Cannot measure whether `search`/`recommend` finds the *right* skills for EvoSkill tasks | Build an evaluation dataset as part of Phase 3 (coverage audit): for each benchmark task category, define expected-skill labels |
+| 2 | **No IR metrics** — nDCG, MRR, MAP are absent from the codebase; quality measurement is limited to latency thresholds and hand-written ranking assertions | No way to quantify *how good* Skillsmith's ranking is beyond exact-match accuracy on downstream tasks | Add IR metric utilities to the benchmark harness (`evaluator.ts`); report nDCG@5 and MRR alongside task accuracy |
+| 3 | **`SkillMatcher` always uses `useFallback: true`** in the recommendation offline path — real semantic embeddings (MiniLM-L6-v2) are never exercised when the API is offline, only deterministic hash-based mocks | Benchmark results would reflect mock similarity, not real semantic matching, if run offline | Ensure benchmark harness either (a) uses the online API path or (b) forces `useFallback: false` with a real embedding model loaded |
+| 4 | **Existing benchmark script uses simulated/mock implementations** (`scripts/benchmark-v3-migration.ts`) — measures latency of fake V3 operations, not the real search/recommend pipeline | Cannot reuse existing benchmark infra for EvoSkill comparison | Build new harness from scratch in `packages/core/src/benchmarks/evoskill/`; keep existing perf benchmarks as-is |
+
+These gaps are not blockers — they define Phase 2 work items — but they set expectations: this benchmark will be Skillsmith's first *quality* evaluation, not just a latency test.
+
+---
+
+## 8. Risks & Mitigations
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
@@ -234,10 +249,11 @@ Use Claude's tool-use API to run benchmark tasks. The agent receives:
 | Cost explosion | LLM-based scoring on full test sets | Budget cap per condition; sample 20% for preliminary runs |
 | Model version drift | EvoSkill used specific Claude model version | Pin model version in harness config; document exact model IDs |
 | Non-determinism | LLM outputs vary across runs | 3 seeds minimum; report mean ± std |
+| Mock embeddings in offline path | `SkillMatcher` fallback uses hash mocks, not real vectors | Force real embeddings or use API path (see Section 7, Gap 3) |
 
 ---
 
-## 8. Success Criteria
+## 9. Success Criteria
 
 | Criterion | Threshold |
 |-----------|-----------|
@@ -248,7 +264,7 @@ Use Claude's tool-use API to run benchmark tasks. The agent receives:
 
 ---
 
-## 9. Deliverables
+## 10. Deliverables
 
 1. **Benchmark harness** in `packages/core/src/benchmarks/evoskill/` — reusable for future benchmark papers
 2. **Comparison report** with tables matching EvoSkill's paper format
@@ -258,7 +274,7 @@ Use Claude's tool-use API to run benchmark tasks. The agent receives:
 
 ---
 
-## 10. Open Questions for Review
+## 11. Open Questions for Review
 
 1. **Registry seeding**: Should we add benchmark-domain skills to the registry before running, or test against the registry as-is? (Tests coverage vs. discovery quality)
 2. **Hybrid condition**: Is the EvoSkill-seeded-with-Skillsmith condition worth the compute cost, or should we defer it?
