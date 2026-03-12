@@ -216,6 +216,7 @@ function createAgentClient(): AgentClient {
         userMessage: params.userMessage,
         maxTokens: params.maxTokens,
         timeoutMs: params.timeoutMs,
+        allowedTools: ['WebSearch', 'WebFetch', 'Read', 'Bash'],
       })
     },
   }
@@ -333,6 +334,7 @@ async function runClaudeCli(params: {
   maxTokens: number
   timeoutMs: number
   maxTurns?: number
+  allowedTools?: string[]
 }): Promise<ClaudeCliResult> {
   const { spawn } = await import('child_process')
 
@@ -349,6 +351,11 @@ async function runClaudeCli(params: {
     '--model', modelAlias,
     '--max-turns', String(params.maxTurns ?? 10),
   ]
+
+  // Whitelist tools for agent execution (pipe mode auto-denies unapproved tools)
+  if (params.allowedTools && params.allowedTools.length > 0) {
+    args.push('--allowedTools', params.allowedTools.join(','))
+  }
 
   return new Promise((resolve, reject) => {
     const child = spawn('claude', args, {
