@@ -93,6 +93,25 @@ export {
   validateEmbeddingResults,
 } from './embeddingBenchmark.js'
 
+// EvoSkill benchmark evaluation
+export {
+  ndcg,
+  mrr,
+  mapAtK,
+  precisionAtK,
+  recallAtK,
+  exactMatchScorer,
+  createLlmJudgeScorer,
+  getScorerForBenchmark,
+  EVOSKILL_DEFAULTS,
+  type BenchmarkTask,
+  type ConditionConfig,
+  type EvoSkillBenchmarkResult,
+  type ScorerFn,
+  type HarnessConfig,
+  type LlmJudgeClient,
+} from './evoskill/index.js'
+
 // SMI-677: Shared statistical utilities
 export {
   percentile,
