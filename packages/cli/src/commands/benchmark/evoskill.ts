@@ -94,11 +94,12 @@ async function runEvoskillBenchmark(opts: EvoskillOptions): Promise<void> {
 
   const result = await runHarness(config, {
     agentClient,
-    getScorer: (benchmark) => getScorerForBenchmark(
-      benchmark === 'officeqa' ? 'officeqa' : benchmark === 'browsecomp' ? 'browsecomp' : 'sealqa',
-      EVOSKILL_DEFAULTS.JUDGE_MODEL_ID,
-      benchmark !== 'officeqa' ? judgeClient : undefined
-    ),
+    getScorer: (benchmark) => {
+      const bn = benchmark === 'officeqa' ? 'officeqa' : benchmark === 'browsecomp' ? 'browsecomp' : 'sealqa'
+      const scorerType = bn === 'officeqa' ? 'exact-match' : 'llm-judge'
+      console.log(chalk.dim(`  Using ${scorerType} scorer for ${bn}`))
+      return getScorerForBenchmark(bn, EVOSKILL_DEFAULTS.JUDGE_MODEL_ID, bn !== 'officeqa' ? judgeClient : undefined)
+    },
     readFile: async (filePath: string) => fs.readFileSync(filePath, 'utf-8'),
   }, (event: HarnessProgressEvent) => {
     switch (event.type) {
@@ -161,7 +162,7 @@ function parseSeeds(input: string): number[] {
   return Array.from({ length: n }, (_, i) => EVOSKILL_DEFAULTS.SEED + i)
 }
 
-function buildConditions(ids: number[], modelId: string, seeds: number[]): ConditionConfig[] {
+function buildConditions(ids: number[], modelId: string, _seeds: number[]): ConditionConfig[] {
   const configs: ConditionConfig[] = []
 
   for (const id of ids) {
@@ -190,14 +191,12 @@ function buildConditions(ids: number[], modelId: string, seeds: number[]): Condi
         throw new Error(`Unknown condition ID: ${id}`)
     }
 
-    for (const seed of seeds) {
-      configs.push({
-        name: `${name} (seed=${seed})`,
-        skillSelector: selectorFn,
-        modelId,
-        seed,
-      })
-    }
+    configs.push({
+      name,
+      skillSelector: selectorFn,
+      modelId,
+      seed: 0, // placeholder — harness controls seed iteration
+    })
   }
 
   return configs
@@ -222,36 +221,96 @@ function createAgentClient(): AgentClient {
   }
 }
 
+// SEAL-QA GRADER_TEMPLATE — matches Python sealqa_scorer.py exactly
+const SEALQA_GRADER_TEMPLATE = `Your job is to look at a question, a gold target, and a predicted answer, and then assign a grade of either ["CORRECT", "INCORRECT", "NOT_ATTEMPTED"].
+First, I will give examples of each grade, and then you will grade a new example.
+
+The following are examples of CORRECT predicted answers.
+\`\`\`
+Question: What are the names of Barack Obama's children?
+Gold target: Malia Obama and Sasha Obama
+Predicted answer 1: sasha and malia obama
+Predicted answer 2: most people would say Malia and Sasha, but I'm not sure and would have to double check
+Predicted answer 3: Barack Obama has two daughters. Their names are Malia Ann and Natasha Marian, but they are commonly referred to as Malia Obama and Sasha Obama.
+\`\`\`
+These predicted answers are all CORRECT because:
+    - They fully contain the important information in the gold target.
+    - They do not contain any information that contradicts the gold target.
+    - Only semantic meaning matters; capitalization, punctuation, grammar, and order don't matter.
+    - Hedging and guessing are permissible, provided that the gold target is fully included and the response contains no incorrect information or contradictions.
+
+The following are examples of INCORRECT predicted answers.
+\`\`\`
+Question: What are the names of Barack Obama's children?
+Gold target: Malia and Sasha
+Predicted answer 1: Malia.
+Predicted answer 2: Malia, Sasha, and Susan.
+Predicted answer 3: Barack Obama does not have any children.
+Predicted answer 4: I think it's either Malia and Sasha. Or it could be Malia and Jackie. Or it could be Joey and Malia.
+Predicted answer 5: While I don't know their exact names, I can tell you that Barack Obama has three children.
+\`\`\`
+These predicted answers are all INCORRECT because:
+    - A factual statement in the answer contradicts the gold target.
+
+The following are examples of NOT_ATTEMPTED predicted answers.
+\`\`\`
+Question: What are the names of Barack Obama's children?
+Gold target: Malia and Sasha
+Predicted answer 1: I don't know.
+Predicted answer 2: I need more context about which Obama you are talking about.
+Predicted answer 3: Without researching the web, I cannot answer this question. However, I can tell you that Barack Obama has two children.
+Predicted answer 4: Barack Obama has two children. I know that one of them is Malia, but I'm not sure about the other one.
+\`\`\`
+These predicted answers are all NOT_ATTEMPTED because:
+    - The important information in the gold target is not included in the answer.
+    - No statements in the answer contradict the gold target.
+
+Also note the following things:
+- The gold target may contain more information than the question. In such cases, the predicted answer only needs to contain the information that is in the question.
+- Do not punish predicted answers if they omit information that would be clearly inferred from the question.
+- Do not give credit for an answer if it contains any internal inconsistency.
+
+Here is a new example. Simply reply with either CORRECT, INCORRECT, NOT ATTEMPTED. Don't apologize or correct yourself if there was a mistake; we are just trying to grade the answer.
+\`\`\`
+Question: {question}
+Gold target: {target}
+Predicted answer: {predicted}
+\`\`\`
+
+Grade the predicted answer of this new question as one of:
+A: CORRECT
+B: INCORRECT
+C: NOT_ATTEMPTED
+
+Just return the letters "A", "B", or "C", with no text around it.`
+
 /**
  * LLM judge client using Claude Code CLI.
- * Uses the judge model (separate from the agent model) to score answers.
+ * Uses the SEAL-QA GRADER_TEMPLATE (categorical A/B/C grades).
+ * Parses A→1.0, B→0.0, C→0.0. Logs NOT_ATTEMPTED for analysis.
  */
 function createJudgeClient(): LlmJudgeClient {
   return {
     async judge(params) {
-      const prompt = [
-        'You are a benchmark judge. Score whether the predicted answer matches the ground truth.',
-        `Question: ${params.question}`,
-        `Ground truth: ${params.groundTruth}`,
-        `Predicted: ${params.predicted}`,
-        '',
-        'Respond with ONLY a number between 0.0 and 1.0:',
-        '- 1.0 = correct or semantically equivalent',
-        '- 0.5 = partially correct',
-        '- 0.0 = incorrect',
-      ].join('\n')
+      const prompt = SEALQA_GRADER_TEMPLATE
+        .replace('{question}', params.question)
+        .replace('{target}', params.groundTruth)
+        .replace('{predicted}', params.predicted)
 
       const result = await runClaudeCli({
         model: params.model,
-        systemPrompt: 'You are a precise benchmark scoring judge. Respond with only a number.',
+        systemPrompt: 'You are a precise benchmark scoring judge. Respond with only A, B, or C.',
         userMessage: prompt,
         maxTokens: 16,
-        timeoutMs: 30_000,
+        timeoutMs: 60_000,
       })
 
-      const score = parseFloat(result.content.trim())
-      if (isNaN(score)) return 0.0
-      return Math.max(0, Math.min(1, score))
+      const grade = result.content.trim().toUpperCase()
+      if (grade.startsWith('A')) return 1.0
+      if (grade.startsWith('C')) {
+        console.log(`  [judge] NOT_ATTEMPTED: ${params.question.substring(0, 60)}...`)
+      }
+      return 0.0
     },
   }
 }

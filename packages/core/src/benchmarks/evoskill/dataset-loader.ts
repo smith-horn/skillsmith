@@ -86,17 +86,34 @@ export function loadCSVDataset(
   }
 
   const tasks: BenchmarkTask[] = []
+  let skippedEmpty = 0
   for (let i = 1; i < lines.length; i++) {
     const fields = parseCSVLine(lines[i])
     if (fields.length <= Math.max(qIdx, aIdx)) continue
 
+    const question = fields[qIdx].trim()
+    const groundTruth = fields[aIdx].trim()
+
+    // Skip rows with empty ground truth (e.g., DABStep requires context-file injection)
+    if (!groundTruth) {
+      skippedEmpty++
+      continue
+    }
+
     tasks.push({
       id: `${benchmark}-${i}`,
-      question: fields[qIdx].trim(),
-      groundTruth: fields[aIdx].trim(),
+      question,
+      groundTruth,
       split: 'test', // placeholder — assigned below
       benchmark,
     })
+  }
+
+  if (skippedEmpty > 0 && tasks.length === 0) {
+    throw new Error(
+      `Dataset ${benchmark}: all ${skippedEmpty} rows have empty ground truth. ` +
+      `DABStep/OfficeQA requires context-file injection (not yet supported).`
+    )
   }
 
   return splitDataset(tasks, benchmark, options)
