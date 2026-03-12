@@ -100,13 +100,40 @@ export function createSkillCreateSelector(runner: SkillCreateRunner): SkillSelec
   }
 }
 
-/** Condition 7: Skillsmith-Iterative — NOT in this plan */
-export function createIterativeSelector(): SkillSelectorFn {
+/** Condition 7: Skillsmith-Iterative — uses IterativeEvaluator from Study B */
+export function createIterativeSelector(params: {
+  iterativeEvaluator: IterativeEvaluatorInstance
+  baselineSkillContent: string
+  skillId: string
+  trainTasks: BenchmarkTask[]
+  valTasks: BenchmarkTask[]
+}): SkillSelectorFn {
   return async () => {
-    throw new NotImplementedError(
-      'Condition 7 (Skillsmith-Iterative) is implemented in Study B (evoskill-task-accuracy-evaluator)'
+    const result = await params.iterativeEvaluator.run(
+      params.baselineSkillContent,
+      params.skillId,
+      params.trainTasks.map((t) => ({ id: t.id, question: t.question, groundTruth: t.groundTruth })),
+      params.valTasks.map((t) => ({ id: t.id, question: t.question, groundTruth: t.groundTruth })),
+      [] // test tasks handled by harness, not the selector
     )
+    if (result.finalFrontier.length === 0) return []
+    // Return best frontier variant's skill content
+    const best = result.finalFrontier.reduce((a, b) => (a.accuracy >= b.accuracy ? a : b))
+    return [best.variant.content]
   }
+}
+
+/** IterativeEvaluator interface to avoid circular imports */
+interface IterativeEvaluatorInstance {
+  run(
+    baselineContent: string,
+    skillId: string,
+    trainTasks: Array<{ id: string; question: string; groundTruth: string }>,
+    valTasks: Array<{ id: string; question: string; groundTruth: string }>,
+    testTasks: Array<{ id: string; question: string; groundTruth: string }>
+  ): Promise<{
+    finalFrontier: Array<{ variant: { content: string }; accuracy: number }>
+  }>
 }
 
 /** Condition 8: Hybrid — Skillsmith search → EvoSkill evolution */
