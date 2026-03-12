@@ -1,0 +1,702 @@
+[
+  {
+    "question": "Q?",
+    "predicted": "4",
+    "groundTruth": "4",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "42",
+    "groundTruth": "42",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "3.14",
+    "groundTruth": "3.14",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "0.5",
+    "groundTruth": "0.5",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "1,000",
+    "groundTruth": "1,000",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "1000",
+    "groundTruth": "1,000",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "12,345.67",
+    "groundTruth": "12,345.67",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "12345.67",
+    "groundTruth": "12,345.67",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "paris",
+    "groundTruth": "Paris",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "PARIS",
+    "groundTruth": "Paris",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "shakespeare",
+    "groundTruth": "Shakespeare",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "A; B; C",
+    "groundTruth": "A; B; C",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "C; B; A",
+    "groundTruth": "A; B; C",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "A; B",
+    "groundTruth": "A; B; C",
+    "pythonScore": 0.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "A, B, C",
+    "groundTruth": "A, B, C",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "C, B, A",
+    "groundTruth": "A, B, C",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "100",
+    "groundTruth": "100",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "100.0",
+    "groundTruth": "100",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "99.99",
+    "groundTruth": "100",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "Shakespear",
+    "groundTruth": "Shakespeare",
+    "pythonScore": 0.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "wrong",
+    "groundTruth": "Shakespeare",
+    "pythonScore": 0.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "50%",
+    "groundTruth": "50%",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "50.0%",
+    "groundTruth": "50%",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "London",
+    "groundTruth": "Paris",
+    "pythonScore": 0.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "5",
+    "groundTruth": "4",
+    "pythonScore": 0.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Q?",
+    "predicted": "xyz",
+    "groundTruth": "42",
+    "pythonScore": 0.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  },
+  {
+    "question": "Padding question?",
+    "predicted": "answer",
+    "groundTruth": "answer",
+    "pythonScore": 1.0,
+    "scorer": "dabstep_scorer.question_scorer"
+  }
+]

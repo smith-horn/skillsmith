@@ -20,7 +20,12 @@ export interface LlmJudgeClient {
  * - remove trailing punctuation (., !, ?)
  */
 function normalize(s: string): string {
-  return s.trim().toLowerCase().replace(/[.!?]+$/, '')
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/^["']+|["']+$/g, '') // strip surrounding quotes
+    .trim()
+    .replace(/[.!?]+$/, '')
 }
 
 /**
