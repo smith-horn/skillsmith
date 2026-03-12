@@ -273,9 +273,7 @@ async function runClaudeCli(params: {
   maxTokens: number
   timeoutMs: number
 }): Promise<ClaudeCliResult> {
-  const { execFile } = await import('child_process')
-  const { promisify } = await import('util')
-  const execFileAsync = promisify(execFile)
+  const { spawn } = await import('child_process')
 
   const fullPrompt = `${params.systemPrompt}\n\n${params.userMessage}`
 
@@ -291,23 +289,47 @@ async function runClaudeCli(params: {
     '--max-turns', '1',
   ]
 
-  const { stdout } = await execFileAsync('claude', args, {
-    input: fullPrompt,
-    timeout: params.timeoutMs,
-    maxBuffer: 1024 * 1024,
-    env: {
-      ...process.env,
-      CLAUDECODE: '', // Unset to allow nested execution
-    },
+  return new Promise((resolve, reject) => {
+    const child = spawn('claude', args, {
+      env: {
+        ...process.env,
+        CLAUDECODE: '', // Unset to allow nested execution
+      },
+    })
+
+    const chunks: Buffer[] = []
+    const errChunks: Buffer[] = []
+
+    child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
+    child.stderr.on('data', (chunk: Buffer) => errChunks.push(chunk))
+
+    child.on('error', reject)
+    child.on('close', (code) => {
+      const stdout = Buffer.concat(chunks).toString('utf-8')
+      if (code !== 0) {
+        const stderr = Buffer.concat(errChunks).toString('utf-8')
+        reject(new Error(`claude exited with code ${code}: ${stderr}`))
+        return
+      }
+
+      const parsed = JSON.parse(stdout)
+      resolve({
+        content: parsed.result ?? '',
+        inputTokens: parsed.usage?.input_tokens ?? parsed.usage?.inputTokens ?? 0,
+        outputTokens: parsed.usage?.output_tokens ?? parsed.usage?.outputTokens ?? 0,
+      })
+    })
+
+    // Write prompt to stdin and close
+    child.stdin.write(fullPrompt)
+    child.stdin.end()
+
+    // Timeout guard
+    setTimeout(() => {
+      child.kill('SIGTERM')
+      reject(new Error(`claude timed out after ${params.timeoutMs}ms`))
+    }, params.timeoutMs)
   })
-
-  const parsed = JSON.parse(stdout)
-
-  return {
-    content: parsed.result ?? '',
-    inputTokens: parsed.usage?.input_tokens ?? parsed.usage?.inputTokens ?? 0,
-    outputTokens: parsed.usage?.output_tokens ?? parsed.usage?.outputTokens ?? 0,
-  }
 }
 
 export default createEvoskillBenchmarkCommand

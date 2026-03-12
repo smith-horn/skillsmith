@@ -55,7 +55,7 @@ describe('Cross-validate OfficeQA scorer against Python (reward.py)', () => {
     'Federal Old-Age and Survivors Insurance (OASI) Trust Fund|Federal Old-Age and Survivors Insurance Trust Fund',
   ])
 
-  it('diverges ≤5% from Python scorer (excluding known divergences)', () => {
+  it('diverges ≤5% from Python scorer (excluding known divergences)', async () => {
     let disagreements = 0
     const diverged: string[] = []
 
@@ -63,7 +63,7 @@ describe('Cross-validate OfficeQA scorer against Python (reward.py)', () => {
       const key = `${sample.predicted}|${sample.groundTruth}`
       if (KNOWN_DIVERGENCES.has(key)) continue
 
-      const tsScore = exactMatchScorer(sample.question, sample.predicted, sample.groundTruth)
+      const tsScore = await exactMatchScorer(sample.question, sample.predicted, sample.groundTruth)
       const pyScore = sample.pythonScore
 
       if ((tsScore >= 0.5 ? 1 : 0) !== (pyScore >= 0.5 ? 1 : 0)) {
@@ -85,24 +85,24 @@ describe('Cross-validate OfficeQA scorer against Python (reward.py)', () => {
     expect(divergenceRate).toBeLessThanOrEqual(0.05)
   })
 
-  it('agrees on exact-match cases', () => {
+  it('agrees on exact-match cases', async () => {
     const exactCases = fixtures.filter(
       (f) => f.predicted.trim().toLowerCase() === f.groundTruth.trim().toLowerCase()
     )
     expect(exactCases.length).toBeGreaterThan(10)
 
     for (const sample of exactCases) {
-      const tsScore = exactMatchScorer(sample.question, sample.predicted, sample.groundTruth)
+      const tsScore = await exactMatchScorer(sample.question, sample.predicted, sample.groundTruth)
       expect(tsScore).toBe(1.0)
     }
   })
 
-  it('agrees on clearly wrong answers', () => {
+  it('agrees on clearly wrong answers', async () => {
     const wrongCases = fixtures.filter((f) => f.predicted === 'wrong answer')
     expect(wrongCases.length).toBeGreaterThan(5)
 
     for (const sample of wrongCases) {
-      const tsScore = exactMatchScorer(sample.question, sample.predicted, sample.groundTruth)
+      const tsScore = await exactMatchScorer(sample.question, sample.predicted, sample.groundTruth)
       expect(tsScore).toBe(0.0)
     }
   })
@@ -128,7 +128,7 @@ describe('Cross-validate DABStep scorer against Python (dabstep_scorer)', () => 
     '99.99|100',
   ])
 
-  it('diverges ≤5% from Python scorer (excluding known divergences)', () => {
+  it('diverges ≤5% from Python scorer (excluding known divergences)', async () => {
     let disagreements = 0
     const diverged: string[] = []
 
@@ -136,7 +136,7 @@ describe('Cross-validate DABStep scorer against Python (dabstep_scorer)', () => 
       const key = `${sample.predicted}|${sample.groundTruth}`
       if (KNOWN_DIVERGENCES.has(key)) continue
 
-      const tsScore = exactMatchScorer(sample.question, sample.predicted, sample.groundTruth)
+      const tsScore = await exactMatchScorer(sample.question, sample.predicted, sample.groundTruth)
       const pyScore = sample.pythonScore
 
       if ((tsScore >= 0.5 ? 1 : 0) !== (pyScore >= 0.5 ? 1 : 0)) {
@@ -158,7 +158,7 @@ describe('Cross-validate DABStep scorer against Python (dabstep_scorer)', () => 
     expect(divergenceRate).toBeLessThanOrEqual(0.05)
   })
 
-  it('agrees on exact-match cases', () => {
+  it('agrees on exact-match cases', async () => {
     // Skip list-pattern cases (contain commas or semicolons) where TS splits as alternatives
     const exactCases = fixtures.filter(
       (f) =>
@@ -169,16 +169,16 @@ describe('Cross-validate DABStep scorer against Python (dabstep_scorer)', () => 
     expect(exactCases.length).toBeGreaterThan(10)
 
     for (const sample of exactCases) {
-      const tsScore = exactMatchScorer(sample.question, sample.predicted, sample.groundTruth)
+      const tsScore = await exactMatchScorer(sample.question, sample.predicted, sample.groundTruth)
       expect(tsScore).toBe(1.0)
     }
   })
 
-  it('agrees on clearly wrong answers', () => {
+  it('agrees on clearly wrong answers', async () => {
     const wrongCases = fixtures.filter((f) => f.predicted === 'completely_wrong_answer_xyz')
 
     for (const sample of wrongCases) {
-      const tsScore = exactMatchScorer(sample.question, sample.predicted, sample.groundTruth)
+      const tsScore = await exactMatchScorer(sample.question, sample.predicted, sample.groundTruth)
       expect(tsScore).toBe(0.0)
     }
   })
