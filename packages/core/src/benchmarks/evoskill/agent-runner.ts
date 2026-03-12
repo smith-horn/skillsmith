@@ -106,17 +106,20 @@ export async function runEvoSkillBatch(
   return results
 }
 
+// Base prompt matching Python SEAL-QA agent (prompt.txt)
+const RESEARCH_PROMPT = 'You are an expert research assistant. You will answer questions using web search and information retrieval. Search for relevant information, cross-reference multiple sources, and provide accurate, well-sourced answers. Always verify claims against authoritative sources before responding.'
+
 /** Build system prompt from skill contents */
 function buildSystemPrompt(skills: string[]): string {
   if (skills.length === 0) {
-    return 'Answer the question concisely and accurately.'
+    return RESEARCH_PROMPT
   }
 
   const skillBlock = skills
     .map((s, i) => `<skill index="${i + 1}">\n${s}\n</skill>`)
     .join('\n\n')
 
-  return `You have the following skills available. Use them to answer the question concisely and accurately.\n\n${skillBlock}`
+  return `${RESEARCH_PROMPT}\n\nYou also have the following skills available. Use them to help answer the question.\n\n${skillBlock}`
 }
 
 /** Call with exponential backoff on rate limit (429) errors */
