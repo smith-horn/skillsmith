@@ -13,8 +13,9 @@ import {
   executeSkillPackAudit,
   skillPackAuditInputSchema,
 } from '../../src/tools/skill-pack-audit.js'
-import { createTestDatabase } from '../../../core/tests/helpers/database.js'
+import { createTestDatabase, closeDatabase } from '@skillsmith/core/testkit'
 import { ErrorCodes } from '@skillsmith/core'
+import type { Database } from '@skillsmith/core'
 import type { ToolContext } from '../../src/context.js'
 
 // ============================================================================
@@ -50,7 +51,7 @@ async function writeSkillMd(dir: string, skillName: string, version?: string): P
 describe('skill_pack_audit', () => {
   let testDir: string
   let skillsDir: string
-  let db: ReturnType<typeof createTestDatabase>
+  let db: Database
   let toolContext: ToolContext
 
   beforeEach(async () => {
@@ -63,6 +64,7 @@ describe('skill_pack_audit', () => {
   })
 
   afterEach(async () => {
+    closeDatabase(db)
     await fs.rm(testDir, { recursive: true, force: true })
   })
 

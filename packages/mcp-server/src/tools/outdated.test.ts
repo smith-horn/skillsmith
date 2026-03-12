@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { SkillVersionRepository, SkillDependencyRepository } from '@skillsmith/core'
-import { createTestDatabase, closeDatabase } from '../../../core/tests/helpers/database.js'
+import { createTestDatabase, closeDatabase } from '@skillsmith/core/testkit'
 import { executeOutdated } from './outdated.js'
 import type { ToolContext } from '../context.js'
 import type { Database } from '@skillsmith/core'

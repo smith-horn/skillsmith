@@ -35,6 +35,11 @@
       "types": "./dist/src/billing/index.d.ts",
       "import": "./dist/src/billing/index.js",
       "default": "./dist/src/billing/index.js"
+    },
+    "./testkit": {
+      "types": "./dist/tests/testkit.d.ts",
+      "import": "./dist/tests/testkit.js",
+      "default": "./dist/tests/testkit.js"
     }
   },
   "scripts": {
