@@ -173,10 +173,10 @@ function aggregateResults(results: EvoSkillBenchmarkResult[]): EvoSkillBenchmark
 function getDatasetPath(benchmark: 'officeqa' | 'sealqa' | 'browsecomp'): string {
   switch (benchmark) {
     case 'officeqa':
-      return 'datasets/dabstep/dabstep.csv'
+      return 'dabstep_data.csv'
     case 'sealqa':
-      return 'datasets/sealqa/sealqa.csv'
+      return 'seal-0.csv'
     case 'browsecomp':
-      return 'datasets/browsecomp/browsecomp.json'
+      return 'browsecomp_data.json'
   }
 }

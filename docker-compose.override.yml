@@ -6,8 +6,11 @@
 services:
   dev:
     container_name: evoskill-benchmark-harness-dev-1
+    entrypoint: ["tail", "-f", "/dev/null"]
     environment:
       - DEV_PORT=3811
+    volumes:
+      - /Users/williamsmith/Documents/GitHub/Smith-Horn/EvoSkill/.dataset:/app/data:ro
 
   test:
     container_name: evoskill-benchmark-harness-test-1
