@@ -95,21 +95,71 @@ export {
 
 // EvoSkill benchmark evaluation
 export {
+  // IR metrics
   ndcg,
   mrr,
   mapAtK,
   precisionAtK,
   recallAtK,
+  // Scorers
   exactMatchScorer,
   createLlmJudgeScorer,
   getScorerForBenchmark,
+  // Constants
   EVOSKILL_DEFAULTS,
+  CONDITIONS,
+  NotImplementedError,
+  // Dataset loader
+  loadDataset,
+  loadCSVDataset,
+  loadJSONDataset,
+  // Skill selectors
+  createBaselineSelector,
+  createEvoSkillEvolvedSelector,
+  createSearchSelector,
+  createRecommendSelector,
+  createOptimizedSelector,
+  createSkillCreateSelector,
+  createIterativeSelector,
+  createHybridSelector,
+  createCuratedSelector,
+  // Agent runner
+  runTask,
+  runBatch,
+  calculateCost,
+  // Evaluator
+  evaluate,
+  aggregateSeeds,
+  // Harness
+  runHarness,
+  // Report
+  generateMarkdownReport,
+  generateJsonReport,
+  // Types
   type BenchmarkTask,
   type ConditionConfig,
   type EvoSkillBenchmarkResult,
   type ScorerFn,
   type HarnessConfig,
   type LlmJudgeClient,
+  type DatasetLoadResult,
+  type SkillSelectorFn,
+  type SkillsmithSearchClient,
+  type SkillsmithRecommendClient,
+  type TransformationService,
+  type SkillCreateRunner,
+  type ConditionNumber,
+  type ConditionName,
+  type AgentClient,
+  type AgentRunnerConfig,
+  type TaskResult,
+  type TaskTokenUsage,
+  type EvaluatorConfig,
+  type HarnessDependencies,
+  type HarnessResult,
+  type HarnessProgressFn,
+  type HarnessProgressEvent,
+  type ReportOptions,
 } from './evoskill/index.js'
 
 // SMI-677: Shared statistical utilities
