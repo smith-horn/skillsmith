@@ -11,7 +11,6 @@ import {
   createCuratedSelector,
   createSearchSelector,
   createRecommendSelector,
-  createIterativeSelector,
   getScorerForBenchmark,
   generateMarkdownReport,
   generateJsonReport,
@@ -173,7 +172,10 @@ function buildConditions(ids: number[], modelId: string, seeds: number[]): Condi
       case 1: selectorFn = createBaselineSelector(); break
       case 3: selectorFn = createSearchSelector({ search: async () => [] }); break
       case 4: selectorFn = createRecommendSelector({ recommend: async () => [] }); break
-      case 7: selectorFn = createIterativeSelector(); break
+      case 7:
+        // Condition 7 (Skillsmith-Iterative) is Study B scope — skip in Study A runs
+        console.log(chalk.yellow(`  Skipping condition 7 (${name}) — implemented in Study B`))
+        continue
       case 9: selectorFn = createCuratedSelector([]); break
       case 2:
       case 5:
@@ -201,25 +203,110 @@ function buildConditions(ids: number[], modelId: string, seeds: number[]): Condi
   return configs
 }
 
-/** Placeholder agent client — replace with real Anthropic SDK calls */
+/**
+ * Agent client using Claude Code CLI (`claude -p --output-format json`).
+ * Uses the Claude subscription — no API key needed.
+ * The CLI is invoked with CLAUDECODE unset to allow nested execution.
+ */
 function createAgentClient(): AgentClient {
   return {
-    async runTask() {
-      throw new Error(
-        'AgentClient not configured. Set ANTHROPIC_API_KEY and provide a real implementation.'
-      )
+    async runTask(params) {
+      return runClaudeCli({
+        model: params.model,
+        systemPrompt: params.systemPrompt,
+        userMessage: params.userMessage,
+        maxTokens: params.maxTokens,
+        timeoutMs: params.timeoutMs,
+      })
     },
   }
 }
 
-/** Placeholder judge client — replace with real Anthropic SDK calls */
+/**
+ * LLM judge client using Claude Code CLI.
+ * Uses the judge model (separate from the agent model) to score answers.
+ */
 function createJudgeClient(): LlmJudgeClient {
   return {
-    async judge() {
-      throw new Error(
-        'LlmJudgeClient not configured. Set ANTHROPIC_API_KEY and provide a real implementation.'
-      )
+    async judge(params) {
+      const prompt = [
+        'You are a benchmark judge. Score whether the predicted answer matches the ground truth.',
+        `Question: ${params.question}`,
+        `Ground truth: ${params.groundTruth}`,
+        `Predicted: ${params.predicted}`,
+        '',
+        'Respond with ONLY a number between 0.0 and 1.0:',
+        '- 1.0 = correct or semantically equivalent',
+        '- 0.5 = partially correct',
+        '- 0.0 = incorrect',
+      ].join('\n')
+
+      const result = await runClaudeCli({
+        model: params.model,
+        systemPrompt: 'You are a precise benchmark scoring judge. Respond with only a number.',
+        userMessage: prompt,
+        maxTokens: 16,
+        timeoutMs: 30_000,
+      })
+
+      const score = parseFloat(result.content.trim())
+      if (isNaN(score)) return 0.0
+      return Math.max(0, Math.min(1, score))
     },
+  }
+}
+
+interface ClaudeCliResult {
+  content: string
+  inputTokens: number
+  outputTokens: number
+}
+
+/**
+ * Run Claude Code CLI in non-interactive mode.
+ * Parses JSON output for structured response with token usage.
+ */
+async function runClaudeCli(params: {
+  model: string
+  systemPrompt: string
+  userMessage: string
+  maxTokens: number
+  timeoutMs: number
+}): Promise<ClaudeCliResult> {
+  const { execFile } = await import('child_process')
+  const { promisify } = await import('util')
+  const execFileAsync = promisify(execFile)
+
+  const fullPrompt = `${params.systemPrompt}\n\n${params.userMessage}`
+
+  // Map full model IDs to CLI aliases for convenience
+  const modelAlias = params.model.includes('opus') ? 'opus'
+    : params.model.includes('haiku') ? 'haiku'
+    : 'sonnet'
+
+  const args = [
+    '-p',
+    '--output-format', 'json',
+    '--model', modelAlias,
+    '--max-turns', '1',
+  ]
+
+  const { stdout } = await execFileAsync('claude', args, {
+    input: fullPrompt,
+    timeout: params.timeoutMs,
+    maxBuffer: 1024 * 1024,
+    env: {
+      ...process.env,
+      CLAUDECODE: '', // Unset to allow nested execution
+    },
+  })
+
+  const parsed = JSON.parse(stdout)
+
+  return {
+    content: parsed.result ?? '',
+    inputTokens: parsed.usage?.input_tokens ?? parsed.usage?.inputTokens ?? 0,
+    outputTokens: parsed.usage?.output_tokens ?? parsed.usage?.outputTokens ?? 0,
   }
 }
 
