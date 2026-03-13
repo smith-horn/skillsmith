@@ -359,6 +359,8 @@ async function runClaudeCli(params: {
   }
 
   return new Promise((resolve, reject) => {
+    let settled = false
+
     const child = spawn('claude', args, {
       detached: true, // Create process group for clean timeout kills
       env: {
@@ -373,8 +375,16 @@ async function runClaudeCli(params: {
     child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
     child.stderr.on('data', (chunk: Buffer) => errChunks.push(chunk))
 
-    child.on('error', reject)
+    child.on('error', (err) => {
+      if (settled) return
+      settled = true
+      reject(err)
+    })
+
     child.on('close', (code) => {
+      if (settled) return
+      settled = true
+
       const stdout = Buffer.concat(chunks).toString('utf-8')
       if (code !== 0) {
         const stderr = Buffer.concat(errChunks).toString('utf-8')
@@ -395,15 +405,14 @@ async function runClaudeCli(params: {
     child.stdin.end()
 
     // Timeout guard: SIGTERM first, SIGKILL after 10s grace period
-    let settled = false
-    child.on('close', () => { settled = true })
-
     setTimeout(() => {
       if (settled) return
+      settled = true
+      // Kill process group; fall back to direct kill if ESRCH
       try { process.kill(-child.pid!, 'SIGTERM') } catch { child.kill('SIGTERM') }
       setTimeout(() => {
-        if (settled) return
-        try { process.kill(-child.pid!, 'SIGKILL') } catch { child.kill('SIGKILL') }
+        // SIGKILL fallback if SIGTERM didn't terminate
+        try { process.kill(-child.pid!, 'SIGKILL') } catch { /* already dead */ }
       }, 10_000)
       reject(new Error(`claude timed out after ${params.timeoutMs}ms`))
     }, params.timeoutMs)
