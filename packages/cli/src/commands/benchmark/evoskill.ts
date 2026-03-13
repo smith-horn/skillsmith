@@ -350,6 +350,7 @@ async function runClaudeCli(params: {
     '--output-format', 'json',
     '--model', modelAlias,
     '--max-turns', String(params.maxTurns ?? 10),
+    '--strict-mcp-config',  // SMI-3330: disable MCP auto-discovery (no --mcp-config = zero servers)
   ]
 
   // Whitelist tools for agent execution (pipe mode auto-denies unapproved tools)
@@ -359,6 +360,7 @@ async function runClaudeCli(params: {
 
   return new Promise((resolve, reject) => {
     const child = spawn('claude', args, {
+      detached: true, // Create process group for clean timeout kills
       env: {
         ...process.env,
         CLAUDECODE: '', // Unset to allow nested execution
@@ -392,9 +394,17 @@ async function runClaudeCli(params: {
     child.stdin.write(fullPrompt)
     child.stdin.end()
 
-    // Timeout guard
+    // Timeout guard: SIGTERM first, SIGKILL after 10s grace period
+    let settled = false
+    child.on('close', () => { settled = true })
+
     setTimeout(() => {
-      child.kill('SIGTERM')
+      if (settled) return
+      try { process.kill(-child.pid!, 'SIGTERM') } catch { child.kill('SIGTERM') }
+      setTimeout(() => {
+        if (settled) return
+        try { process.kill(-child.pid!, 'SIGKILL') } catch { child.kill('SIGKILL') }
+      }, 10_000)
       reject(new Error(`claude timed out after ${params.timeoutMs}ms`))
     }, params.timeoutMs)
   })
