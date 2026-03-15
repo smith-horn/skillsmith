@@ -910,7 +910,7 @@ jobs:
         run: npm run test:coverage --workspace=packages/${{ matrix.package }} || true
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           files: ./packages/${{ matrix.package }}/coverage/coverage-final.json
