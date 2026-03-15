@@ -68,9 +68,9 @@ jobs:
 
           # Run the security scanner on all skills
           node -e "
-            const { SecurityScanner } = require('./packages/core/dist/security/index.js');
-            const { SkillRepository } = require('./packages/core/dist/repositories/SkillRepository.js');
-            const { openDatabase } = require('./packages/core/dist/db/schema.js');
+            const { SecurityScanner } = require('./packages/core/dist/src/security/index.js');
+            const { SkillRepository } = require('./packages/core/dist/src/repositories/SkillRepository.js');
+            const { openDatabase } = require('./packages/core/dist/src/db/schema.js');
             const fs = require('fs');
             const path = require('path');
 
