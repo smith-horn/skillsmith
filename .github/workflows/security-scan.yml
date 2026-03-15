@@ -122,11 +122,17 @@ jobs:
                 annotations.join('\\n')
               );
 
-              // Combine SARIF results
+              // Combine SARIF results into a single run (CodeQL rejects multiple runs per category)
+              const allRuns = sarifs.flatMap(s => s.runs || []);
+              const mergedRun = {
+                tool: allRuns[0]?.tool || { driver: { name: 'skillsmith-security-scanner', rules: [] } },
+                results: allRuns.flatMap(r => r.results || []),
+                automationDetails: { id: 'skillsmith-security-scan/' }
+              };
               const combinedSarif = {
                 '\$schema': 'https://json.schemastore.org/sarif-2.1.0.json',
                 version: '2.1.0',
-                runs: sarifs.flatMap(s => s.runs || [])
+                runs: [mergedRun]
               };
               fs.writeFileSync(
                 'security-reports/results.sarif',
