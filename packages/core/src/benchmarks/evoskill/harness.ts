@@ -2,7 +2,12 @@
 // Coordinates dataset loading, skill selection, agent execution, and evaluation
 // Parallelism: conditions concurrent per seed; seeds serial
 
-import type { BenchmarkTask, ConditionConfig, EvoSkillBenchmarkResult, HarnessConfig } from './types.js'
+import type {
+  BenchmarkTask,
+  ConditionConfig,
+  EvoSkillBenchmarkResult,
+  HarnessConfig,
+} from './types.js'
 import type { AgentClient, TaskResult } from './agent-runner.js'
 import type { ScorerFn } from './types.js'
 import * as pathModule from 'path'
@@ -14,12 +19,24 @@ import { evaluate, aggregateSeeds } from './evaluator.js'
 export type HarnessProgressFn = (event: HarnessProgressEvent) => void
 
 export interface HarnessProgressEvent {
-  type: 'seed_start' | 'condition_start' | 'condition_complete' | 'seed_complete' | 'harness_complete'
+  type:
+    | 'seed_start'
+    | 'condition_start'
+    | 'condition_complete'
+    | 'seed_complete'
+    | 'harness_complete'
+    | 'task_complete'
   seed?: number
   condition?: string
   benchmark?: string
   result?: EvoSkillBenchmarkResult
   progress?: { completed: number; total: number }
+  /** Per-task fields (type === 'task_complete') */
+  taskId?: string
+  taskIndex?: number
+  totalTasks?: number
+  durationMs?: number
+  error?: string
 }
 
 /** Dependencies injected from CLI layer */
@@ -75,7 +92,7 @@ export async function runHarness(
           return createDryRunResult(condition, benchmark, testTasks.length)
         }
 
-        return runCondition(condition, benchmark, testTasks, seed, deps)
+        return runCondition(condition, benchmark, testTasks, seed, deps, onProgress)
       })
 
       const seedResults = await Promise.all(conditionPromises)
@@ -113,17 +130,34 @@ async function runCondition(
   benchmark: string,
   testTasks: BenchmarkTask[],
   seed: number,
-  deps: HarnessDependencies
+  deps: HarnessDependencies,
+  onProgress?: HarnessProgressFn
 ): Promise<EvoSkillBenchmarkResult> {
   // Select skills
   const skills = await condition.skillSelector(testTasks)
 
-  // Run tasks through agent
-  const taskResults: TaskResult[] = await runEvoSkillBatch(testTasks, {
-    client: deps.agentClient,
-    modelId: condition.modelId,
-    skills,
-  })
+  // Run tasks through agent — wire per-task progress (SMI-3331)
+  const taskResults: TaskResult[] = await runEvoSkillBatch(
+    testTasks,
+    {
+      client: deps.agentClient,
+      modelId: condition.modelId,
+      skills,
+    },
+    (completed, total, taskResult) => {
+      onProgress?.({
+        type: 'task_complete',
+        seed,
+        condition: condition.name,
+        benchmark,
+        taskId: taskResult.taskId,
+        taskIndex: completed,
+        totalTasks: total,
+        durationMs: taskResult.durationMs,
+        error: taskResult.error,
+      })
+    }
+  )
 
   // Evaluate with benchmark-specific scorer
   const scorer = deps.getScorer(benchmark as 'officeqa' | 'sealqa' | 'browsecomp')

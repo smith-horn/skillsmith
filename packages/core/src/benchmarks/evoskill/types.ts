@@ -38,6 +38,10 @@ export interface EvoSkillBenchmarkResult {
   costTokens: number
   costDollars: number
   wallClockMs: number
+  /** Number of tasks where scorer threw an error (graceful degradation, scored as 0) */
+  errorCount?: number
+  /** Scorer error details for diagnostics (not included in reports, available programmatically) */
+  scorerErrors?: Array<{ taskId: string; message: string }>
   /** Undefined for single-seed runs (Opus ablation); omit from JSON, render as "n/a" in markdown */
   accuracyStd?: number
   irMetrics?: {

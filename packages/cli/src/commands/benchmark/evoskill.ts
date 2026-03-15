@@ -92,33 +92,80 @@ async function runEvoskillBenchmark(opts: EvoskillOptions): Promise<void> {
   const agentClient = createAgentClient()
   const judgeClient = createJudgeClient()
 
-  const result = await runHarness(config, {
-    agentClient,
-    getScorer: (benchmark) => {
-      const bn = benchmark === 'officeqa' ? 'officeqa' : benchmark === 'browsecomp' ? 'browsecomp' : 'sealqa'
-      const scorerType = bn === 'officeqa' ? 'exact-match' : 'llm-judge'
-      console.log(chalk.dim(`  Using ${scorerType} scorer for ${bn}`))
-      return getScorerForBenchmark(bn, EVOSKILL_DEFAULTS.JUDGE_MODEL_ID, bn !== 'officeqa' ? judgeClient : undefined)
+  const result = await runHarness(
+    config,
+    {
+      agentClient,
+      getScorer: (benchmark) => {
+        const bn =
+          benchmark === 'officeqa'
+            ? 'officeqa'
+            : benchmark === 'browsecomp'
+              ? 'browsecomp'
+              : 'sealqa'
+        const scorerType = bn === 'officeqa' ? 'exact-match' : 'llm-judge'
+        console.log(chalk.dim(`  Using ${scorerType} scorer for ${bn}`))
+        return getScorerForBenchmark(
+          bn,
+          EVOSKILL_DEFAULTS.JUDGE_MODEL_ID,
+          bn !== 'officeqa' ? judgeClient : undefined
+        )
+      },
+      readFile: async (filePath: string) => fs.readFileSync(filePath, 'utf-8'),
     },
-    readFile: async (filePath: string) => fs.readFileSync(filePath, 'utf-8'),
-  }, (event: HarnessProgressEvent) => {
-    switch (event.type) {
-      case 'seed_start':
-        console.log(chalk.cyan(`[seed=${event.seed}] Starting ${event.benchmark}...`))
-        break
-      case 'condition_complete':
-        if (event.result) {
-          const acc = (event.result.accuracy * 100).toFixed(1)
+    (event: HarnessProgressEvent) => {
+      switch (event.type) {
+        case 'seed_start':
+          console.log(chalk.cyan(`[seed=${event.seed}] Starting ${event.benchmark}...`))
+          break
+        case 'task_complete': {
+          // SMI-3331: Per-task progress logging
+          const status = event.error ? chalk.red('FAIL') : chalk.green('OK')
+          const duration = event.durationMs ? `${event.durationMs}ms` : '?ms'
           console.log(
-            chalk.green(`  [${event.condition}] accuracy=${acc}% cost=$${event.result.costDollars.toFixed(2)}`)
+            chalk.dim(
+              `    [${event.taskIndex}/${event.totalTasks}] ${event.taskId} ${status} (${duration})`
+            )
           )
+          // Append to JSONL progress log for post-hoc analysis
+          const jsonlLine = JSON.stringify({
+            timestamp: new Date().toISOString(),
+            taskId: event.taskId,
+            condition: event.condition,
+            benchmark: event.benchmark,
+            seed: event.seed,
+            taskIndex: event.taskIndex,
+            totalTasks: event.totalTasks,
+            durationMs: event.durationMs,
+            error: event.error ?? null,
+          })
+          try {
+            fs.mkdirSync(opts.output, { recursive: true })
+            fs.appendFileSync(path.join(opts.output, 'progress.jsonl'), jsonlLine + '\n')
+          } catch {
+            // Non-fatal: progress log is best-effort
+          }
+          break
         }
-        break
-      case 'harness_complete':
-        console.log(chalk.bold('\nHarness complete.'))
-        break
+        case 'condition_complete':
+          if (event.result) {
+            const acc = (event.result.accuracy * 100).toFixed(1)
+            const errStr = event.result.errorCount
+              ? chalk.yellow(` errors=${event.result.errorCount}`)
+              : ''
+            console.log(
+              chalk.green(
+                `  [${event.condition}] accuracy=${acc}% cost=$${event.result.costDollars.toFixed(2)}`
+              ) + errStr
+            )
+          }
+          break
+        case 'harness_complete':
+          console.log(chalk.bold('\nHarness complete.'))
+          break
+      }
     }
-  })
+  )
 
   // Write outputs
   fs.mkdirSync(opts.output, { recursive: true })
@@ -170,22 +217,30 @@ function buildConditions(ids: number[], modelId: string, _seeds: number[]): Cond
 
     let selectorFn: SkillSelectorFn
     switch (id) {
-      case 1: selectorFn = createBaselineSelector(); break
-      case 3: selectorFn = createSearchSelector({ search: async () => [] }); break
-      case 4: selectorFn = createRecommendSelector({ recommend: async () => [] }); break
+      case 1:
+        selectorFn = createBaselineSelector()
+        break
+      case 3:
+        selectorFn = createSearchSelector({ search: async () => [] })
+        break
+      case 4:
+        selectorFn = createRecommendSelector({ recommend: async () => [] })
+        break
       case 7:
         // Condition 7 (Skillsmith-Iterative) is Study B scope — skip in Study A runs
         console.log(chalk.yellow(`  Skipping condition 7 (${name}) — implemented in Study B`))
         continue
-      case 9: selectorFn = createCuratedSelector([]); break
+      case 9:
+        selectorFn = createCuratedSelector([])
+        break
       case 2:
       case 5:
       case 6:
       case 8:
         throw new Error(
           `Condition ${id} (${name}) requires runtime dependencies not yet configured. ` +
-          `Condition 2 needs --evolved-skill path, 5 needs TransformationService, ` +
-          `6 needs SkillCreateRunner, 8 needs search client + evolve function.`
+            `Condition 2 needs --evolved-skill path, 5 needs TransformationService, ` +
+            `6 needs SkillCreateRunner, 8 needs search client + evolve function.`
         )
       default:
         throw new Error(`Unknown condition ID: ${id}`)
@@ -293,25 +348,49 @@ Just return the letters "A", "B", or "C", with no text around it.`
 function createJudgeClient(): LlmJudgeClient {
   return {
     async judge(params) {
-      const prompt = SEALQA_GRADER_TEMPLATE
-        .replace('{question}', params.question)
+      const prompt = SEALQA_GRADER_TEMPLATE.replace('{question}', params.question)
         .replace('{target}', params.groundTruth)
         .replace('{predicted}', params.predicted)
 
-      const result = await runClaudeCli({
-        model: params.model,
-        systemPrompt: 'You are a precise benchmark scoring judge. Respond with only A, B, or C.',
-        userMessage: prompt,
-        maxTokens: 16,
-        timeoutMs: 60_000,
-        maxTurns: 1,
-      })
+      // Retry once after 2s on failure (SMI-3332: judge crash protection)
+      let lastError: Error | undefined
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const result = await runClaudeCli({
+            model: params.model,
+            systemPrompt:
+              'You are a precise benchmark scoring judge. Respond with only A, B, or C.',
+            userMessage: prompt,
+            maxTokens: 16,
+            timeoutMs: 60_000,
+            maxTurns: 1,
+          })
 
-      const grade = result.content.trim().toUpperCase()
-      if (grade.startsWith('A')) return 1.0
-      if (grade.startsWith('C')) {
-        console.log(`  [judge] NOT_ATTEMPTED: ${params.question.substring(0, 60)}...`)
+          const grade = result.content.trim().toUpperCase()
+          if (grade.startsWith('A')) return 1.0
+          if (grade.startsWith('C')) {
+            console.log(`  [judge] NOT_ATTEMPTED: ${params.question.substring(0, 60)}...`)
+          }
+          return 0.0
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err))
+          if (attempt === 0) {
+            console.error(
+              chalk.yellow(
+                `  [judge] Attempt 1 failed, retrying in 2s: ${lastError.message.substring(0, 200)}`
+              )
+            )
+            await new Promise((resolve) => setTimeout(resolve, 2000))
+          }
+        }
       }
+
+      // Both attempts failed — return 0.0 instead of crashing the run
+      console.error(
+        chalk.red(
+          `  [judge] All attempts failed for: ${params.question.substring(0, 60)}... Error: ${lastError?.message.substring(0, 200)}`
+        )
+      )
       return 0.0
     },
   }
@@ -341,16 +420,21 @@ async function runClaudeCli(params: {
   const fullPrompt = `${params.systemPrompt}\n\n${params.userMessage}`
 
   // Map full model IDs to CLI aliases for convenience
-  const modelAlias = params.model.includes('opus') ? 'opus'
-    : params.model.includes('haiku') ? 'haiku'
-    : 'sonnet'
+  const modelAlias = params.model.includes('opus')
+    ? 'opus'
+    : params.model.includes('haiku')
+      ? 'haiku'
+      : 'sonnet'
 
   const args = [
     '-p',
-    '--output-format', 'json',
-    '--model', modelAlias,
-    '--max-turns', String(params.maxTurns ?? 10),
-    '--strict-mcp-config',  // SMI-3330: disable MCP auto-discovery (no --mcp-config = zero servers)
+    '--output-format',
+    'json',
+    '--model',
+    modelAlias,
+    '--max-turns',
+    String(params.maxTurns ?? 10),
+    '--strict-mcp-config', // SMI-3330: disable MCP auto-discovery (no --mcp-config = zero servers)
   ]
 
   // Whitelist tools for agent execution (pipe mode auto-denies unapproved tools)
@@ -388,6 +472,10 @@ async function runClaudeCli(params: {
       const stdout = Buffer.concat(chunks).toString('utf-8')
       if (code !== 0) {
         const stderr = Buffer.concat(errChunks).toString('utf-8')
+        // SMI-3332: Log stderr for diagnostics before rejecting
+        if (stderr) {
+          console.error(`[claude-cli] stderr (exit ${code}): ${stderr.substring(0, 500)}`)
+        }
         reject(new Error(`claude exited with code ${code}: ${stderr}`))
         return
       }
@@ -409,10 +497,18 @@ async function runClaudeCli(params: {
       if (settled) return
       settled = true
       // Kill process group; fall back to direct kill if ESRCH
-      try { process.kill(-child.pid!, 'SIGTERM') } catch { child.kill('SIGTERM') }
+      try {
+        process.kill(-child.pid!, 'SIGTERM')
+      } catch {
+        child.kill('SIGTERM')
+      }
       setTimeout(() => {
         // SIGKILL fallback if SIGTERM didn't terminate
-        try { process.kill(-child.pid!, 'SIGKILL') } catch { /* already dead */ }
+        try {
+          process.kill(-child.pid!, 'SIGKILL')
+        } catch {
+          /* already dead */
+        }
       }, 10_000)
       reject(new Error(`claude timed out after ${params.timeoutMs}ms`))
     }, params.timeoutMs)

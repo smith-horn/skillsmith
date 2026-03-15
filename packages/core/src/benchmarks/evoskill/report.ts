@@ -30,17 +30,26 @@ export function generateMarkdownReport(
   // Main comparison table
   lines.push('## Comparison Table')
   lines.push('')
-  lines.push('| Condition | OfficeQA Acc | SEAL-QA Acc | BrowseComp Acc | Cost ($) | Time (s) |')
-  lines.push('|-----------|-------------|------------|----------------|----------|----------|')
+  lines.push(
+    '| Condition | OfficeQA Acc | SEAL-QA Acc | BrowseComp Acc | Cost ($) | Time (s) | Errors |'
+  )
+  lines.push(
+    '|-----------|-------------|------------|----------------|----------|----------|--------|'
+  )
 
   const conditions = [...new Set(aggregated.map((r) => r.condition))]
-  const benchmarks: Array<'officeqa' | 'sealqa' | 'browsecomp'> = ['officeqa', 'sealqa', 'browsecomp']
+  const benchmarks: Array<'officeqa' | 'sealqa' | 'browsecomp'> = [
+    'officeqa',
+    'sealqa',
+    'browsecomp',
+  ]
 
   for (const cond of conditions) {
     const cells = [cond]
 
     let totalCost = 0
     let totalTime = 0
+    let totalErrors = 0
 
     for (const bm of benchmarks) {
       const result = aggregated.find((r) => r.condition === cond && r.benchmark === bm)
@@ -48,6 +57,7 @@ export function generateMarkdownReport(
         cells.push(formatAccuracy(result.accuracy, result.accuracyStd))
         totalCost += result.costDollars
         totalTime += result.wallClockMs / 1000
+        totalErrors += result.errorCount ?? 0
       } else {
         cells.push('—')
       }
@@ -55,6 +65,7 @@ export function generateMarkdownReport(
 
     cells.push(`$${totalCost.toFixed(2)}`)
     cells.push(totalTime.toFixed(1))
+    cells.push(totalErrors > 0 ? String(totalErrors) : '0')
     lines.push(`| ${cells.join(' | ')} |`)
   }
 
@@ -106,7 +117,12 @@ export function generateJsonReport(harnessResult: HarnessResult): string {
     results: harnessResult.results.map(serializeResult),
     paretoFrontier: computeParetoFrontier(harnessResult.aggregated)
       .filter((p) => p.isPareto)
-      .map((p) => ({ condition: p.condition, benchmark: p.benchmark, accuracy: p.accuracy, cost: p.cost })),
+      .map((p) => ({
+        condition: p.condition,
+        benchmark: p.benchmark,
+        accuracy: p.accuracy,
+        cost: p.cost,
+      })),
   }
   return JSON.stringify(output, null, 2)
 }
@@ -131,6 +147,7 @@ function serializeResult(r: EvoSkillBenchmarkResult): Record<string, unknown> {
     costDollars: r.costDollars,
     wallClockMs: r.wallClockMs,
   }
+  if (r.errorCount !== undefined && r.errorCount > 0) obj.errorCount = r.errorCount
   if (r.accuracyStd !== undefined) obj.accuracyStd = r.accuracyStd
   if (r.irMetrics) obj.irMetrics = r.irMetrics
   return obj

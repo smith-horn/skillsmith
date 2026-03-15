@@ -93,21 +93,22 @@ export async function runEvoSkillTask(
 export async function runEvoSkillBatch(
   tasks: BenchmarkTask[],
   config: AgentRunnerConfig,
-  onProgress?: (completed: number, total: number) => void
+  onProgress?: (completed: number, total: number, taskResult: TaskResult) => void
 ): Promise<TaskResult[]> {
   const results: TaskResult[] = []
 
   for (let i = 0; i < tasks.length; i++) {
     const result = await runEvoSkillTask(tasks[i], config)
     results.push(result)
-    onProgress?.(i + 1, tasks.length)
+    onProgress?.(i + 1, tasks.length, result)
   }
 
   return results
 }
 
 // Base prompt matching Python SEAL-QA agent (prompt.txt)
-const RESEARCH_PROMPT = 'You are an expert research assistant. You will answer questions using web search and information retrieval. Search for relevant information, cross-reference multiple sources, and provide accurate, well-sourced answers. Always verify claims against authoritative sources before responding.'
+const RESEARCH_PROMPT =
+  'You are an expert research assistant. You will answer questions using web search and information retrieval. Search for relevant information, cross-reference multiple sources, and provide accurate, well-sourced answers. Always verify claims against authoritative sources before responding.'
 
 /** Build system prompt from skill contents */
 function buildSystemPrompt(skills: string[]): string {
@@ -115,18 +116,13 @@ function buildSystemPrompt(skills: string[]): string {
     return RESEARCH_PROMPT
   }
 
-  const skillBlock = skills
-    .map((s, i) => `<skill index="${i + 1}">\n${s}\n</skill>`)
-    .join('\n\n')
+  const skillBlock = skills.map((s, i) => `<skill index="${i + 1}">\n${s}\n</skill>`).join('\n\n')
 
   return `${RESEARCH_PROMPT}\n\nYou also have the following skills available. Use them to help answer the question.\n\n${skillBlock}`
 }
 
 /** Call with exponential backoff on rate limit (429) errors */
-async function callWithRetry<T>(
-  fn: () => Promise<T>,
-  delays: readonly number[]
-): Promise<T> {
+async function callWithRetry<T>(fn: () => Promise<T>, delays: readonly number[]): Promise<T> {
   let lastError: Error | undefined
 
   // First attempt (no delay)
@@ -163,17 +159,14 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** Calculate cost in dollars from token counts */
-export function calculateCost(
-  tokens: TaskTokenUsage,
-  modelId: string
-): number {
+export function calculateCost(tokens: TaskTokenUsage, modelId: string): number {
   const pricing = MODEL_PRICING[modelId] ?? MODEL_PRICING['default']
-  return (tokens.inputTokens * pricing.inputPerToken) + (tokens.outputTokens * pricing.outputPerToken)
+  return tokens.inputTokens * pricing.inputPerToken + tokens.outputTokens * pricing.outputPerToken
 }
 
 /** Per-token pricing (dollars) — updated for current models */
 const MODEL_PRICING: Record<string, { inputPerToken: number; outputPerToken: number }> = {
   'claude-sonnet-4-6': { inputPerToken: 3e-6, outputPerToken: 15e-6 },
   'claude-opus-4-6': { inputPerToken: 15e-6, outputPerToken: 75e-6 },
-  'default': { inputPerToken: 3e-6, outputPerToken: 15e-6 },
+  default: { inputPerToken: 3e-6, outputPerToken: 15e-6 },
 }

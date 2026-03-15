@@ -30,12 +30,22 @@ export async function evaluate(
   results: TaskResult[],
   config: EvaluatorConfig
 ): Promise<EvoSkillBenchmarkResult> {
-  const { scorer, condition, benchmark, split, modelId, computeIrMetrics, scoreThreshold = 0.5 } = config
+  const {
+    scorer,
+    condition,
+    benchmark,
+    split,
+    modelId,
+    computeIrMetrics,
+    scoreThreshold = 0.5,
+  } = config
 
   // Build task map for lookup
   const taskMap = new Map(tasks.map((t) => [t.id, t]))
 
   let correctCount = 0
+  let errorCount = 0
+  const scorerErrors: Array<{ taskId: string; message: string }> = []
   let totalInputTokens = 0
   let totalOutputTokens = 0
   let totalDurationMs = 0
@@ -45,8 +55,16 @@ export async function evaluate(
     if (!task) continue
 
     if (!result.error && result.predicted) {
-      const score = await scorer(task.question, result.predicted, task.groundTruth)
-      if (score >= scoreThreshold) correctCount++
+      try {
+        const score = await scorer(task.question, result.predicted, task.groundTruth)
+        if (score >= scoreThreshold) correctCount++
+      } catch (err) {
+        errorCount++
+        scorerErrors.push({
+          taskId: result.taskId,
+          message: err instanceof Error ? err.message : String(err),
+        })
+      }
     }
 
     totalInputTokens += result.tokens.inputTokens
@@ -68,6 +86,8 @@ export async function evaluate(
     accuracy,
     taskCount,
     correctCount,
+    errorCount,
+    scorerErrors: scorerErrors.length > 0 ? scorerErrors : undefined,
     costTokens: totalInputTokens + totalOutputTokens,
     costDollars,
     wallClockMs: totalDurationMs,
@@ -90,9 +110,7 @@ export async function evaluate(
 /**
  * Aggregate multiple seed runs into a single result with mean ± std.
  */
-export function aggregateSeeds(
-  results: EvoSkillBenchmarkResult[]
-): EvoSkillBenchmarkResult {
+export function aggregateSeeds(results: EvoSkillBenchmarkResult[]): EvoSkillBenchmarkResult {
   if (results.length === 0) {
     throw new Error('Cannot aggregate 0 results')
   }
@@ -113,6 +131,7 @@ export function aggregateSeeds(
   const totalWallClock = results.reduce((s, r) => s + r.wallClockMs, 0)
   const totalTasks = results.reduce((s, r) => s + r.taskCount, 0)
   const totalCorrect = results.reduce((s, r) => s + r.correctCount, 0)
+  const totalErrors = results.reduce((s, r) => s + (r.errorCount ?? 0), 0)
 
   // Average IR metrics across seeds if present
   let irMetrics: EvoSkillBenchmarkResult['irMetrics']
@@ -133,6 +152,7 @@ export function aggregateSeeds(
     accuracyStd: std,
     taskCount: totalTasks,
     correctCount: totalCorrect,
+    errorCount: totalErrors > 0 ? totalErrors : undefined,
     costTokens: totalCostTokens,
     costDollars: totalCostDollars,
     wallClockMs: totalWallClock,
