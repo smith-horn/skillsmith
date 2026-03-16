@@ -15,6 +15,7 @@ permissions:
   actions: read
   contents: read
   security-events: write
+  issues: write
 
 jobs:
   analyze:
@@ -42,3 +43,20 @@ jobs:
         uses: github/codeql-action/analyze@v3
         with:
           category: '/language:${{ matrix.language }}'
+
+      # SMI-3335: Alert on scheduled workflow failure
+      - name: Alert on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --label "ci-alert" --search "CodeQL failed" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Still failing (${{ matrix.language }}): ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "CI: CodeQL failed ($(date -u +%Y-%m-%d))" --label "ci-alert" --body "**Workflow**: CodeQL (${{ matrix.language }})
+          **Run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          **Branch**: ${{ github.ref_name }}
+
+          This issue was auto-created by SMI-3335. Close when resolved."
+          fi

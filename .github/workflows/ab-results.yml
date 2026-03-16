@@ -355,3 +355,20 @@ EOF
           echo "- Service account lacks GA4 Viewer role" >> $GITHUB_STEP_SUMMARY
           echo "- GA4 Data API not enabled in GCP project" >> $GITHUB_STEP_SUMMARY
           echo "- Custom dimension \`homepage_ab_variant\` not registered" >> $GITHUB_STEP_SUMMARY
+
+      # SMI-3335: Alert on scheduled workflow failure
+      - name: Alert on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --label "ci-alert" --search "A/B Results failed" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Still failing: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "CI: A/B Results failed ($(date -u +%Y-%m-%d))" --label "ci-alert" --body "**Workflow**: A/B Results
+          **Run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          **Branch**: ${{ github.ref_name }}
+
+          This issue was auto-created by SMI-3335. Close when resolved."
+          fi

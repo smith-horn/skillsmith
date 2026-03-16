@@ -43,6 +43,7 @@ jobs:
       contents: read
       security-events: write
       actions: read
+      issues: write
 
     steps:
       - name: Checkout
@@ -252,6 +253,23 @@ jobs:
         run: |
           if [ -f security-reports/annotations.txt ]; then
             cat security-reports/annotations.txt
+          fi
+
+      # SMI-3335: Alert on scheduled workflow failure
+      - name: Alert on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --label "ci-alert" --search "Security Scan failed" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Still failing: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "CI: Security Scan failed ($(date -u +%Y-%m-%d))" --label "ci-alert" --body "**Workflow**: Security Scan
+          **Run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          **Branch**: ${{ github.ref_name }}
+
+          This issue was auto-created by SMI-3335. Close when resolved."
           fi
 
   # SMI-1457: Create or update Security project tracking

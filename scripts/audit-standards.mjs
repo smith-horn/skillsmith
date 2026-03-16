@@ -1319,6 +1319,61 @@ console.log(`\n${BOLD}21. Workflow continue-on-error Validation (SMI-3217)${RESE
   }
 }
 
+// 22. Workflow Inline require() Path Validation (SMI-3336)
+console.log(`\n${BOLD}22. Workflow Inline require() Paths (SMI-3336)${RESET}`)
+{
+  const workflowDir = '.github/workflows'
+  if (existsSync(workflowDir)) {
+    const workflowFiles = readdirSync(workflowDir)
+      .filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'))
+      .map((f) => join(workflowDir, f))
+
+    // Skip if no build output exists (e.g., Standards Compliance job runs without building)
+    const hasDistOutput = existsSync('packages/core/dist')
+    if (!hasDistOutput) {
+      pass('Skipped (no dist/ output — run after build to validate)')
+    } else {
+      const missing = []
+      const requirePattern = /require\(['"](\.\/.+?)['"]\)/g
+
+      for (const file of workflowFiles) {
+        const content = readFileSync(file, 'utf8')
+        const relPath = relative(process.cwd(), file)
+        let match
+
+        while ((match = requirePattern.exec(content)) !== null) {
+          const reqPath = match[1]
+          // Skip template literals and dynamic paths
+          if (reqPath.includes('${') || reqPath.includes('`')) continue
+          // Only validate dist/ paths (build artifacts at risk of breaking)
+          if (!reqPath.includes('/dist/')) continue
+
+          // Resolve .js path
+          const resolved = reqPath.endsWith('.js') ? reqPath : `${reqPath}.js`
+          if (!existsSync(resolved)) {
+            const line = content.substring(0, match.index).split('\n').length
+            missing.push({ file: relPath, line, path: reqPath })
+          }
+        }
+      }
+
+      if (missing.length > 0) {
+        fail(
+          `${missing.length} broken require() path(s) in workflow files`,
+          'Update paths to match current build output (e.g., dist/src/ for Turborepo)'
+        )
+        missing.forEach(({ file, line, path }) => {
+          console.log(`    ${file}:${line} — ${path}`)
+        })
+      } else {
+        pass('All workflow inline require() paths resolve correctly')
+      }
+    } // end hasDistOutput
+  } else {
+    pass('Skipped (no .github/workflows/ directory)')
+  }
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)
