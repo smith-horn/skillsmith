@@ -1340,6 +1340,8 @@ console.log(`\n${BOLD}22. Workflow Inline require() Paths (SMI-3336)${RESET}`)
         const reqPath = match[1]
         // Skip template literals and dynamic paths
         if (reqPath.includes('${') || reqPath.includes('`')) continue
+        // Only validate dist/ paths (build artifacts at risk of breaking)
+        if (!reqPath.includes('/dist/')) continue
 
         // Resolve .js path
         const resolved = reqPath.endsWith('.js') ? reqPath : `${reqPath}.js`
