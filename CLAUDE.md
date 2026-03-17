@@ -231,6 +231,7 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `skills-outreach-preferences` | Authenticated (User JWT, handler-level) | Yes |
 | `update-seat-count` | Authenticated | No |
 | `indexer`, `skills-refresh-metadata`, `ops-report`, `alert-notify` | Service Role | No |
+| `process-pending-subscription` | Service Role | No |
 | `skills-outreach` | Service Role | No |
 
 **Adding anonymous functions** (CI validates): Add to `supabase/config.toml` with `verify_jwt = false`, add to `NO_VERIFY_JWT_FUNCTIONS` in `scripts/audit-standards.mjs`, and add deploy command below.
