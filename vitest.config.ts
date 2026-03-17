@@ -108,6 +108,13 @@ export default defineConfig({
         // Tree-sitter (requires native WASM bindings unavailable in test env)
         '**/analysis/tree-sitter/**',
 
+        // Barrel re-export directories (no testable logic, verified pure re-exports)
+        '**/exports/**',
+
+        // Type-only files (no runtime logic, just TypeScript interfaces/types)
+        '**/*-types.ts',
+        '**/*.types.ts',
+
         // Integration test setup
         '**/setup.ts',
       ],
