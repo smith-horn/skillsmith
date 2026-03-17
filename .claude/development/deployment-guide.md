@@ -392,6 +392,56 @@ varlock run -- bash -c 'curl -X POST \
   "$SUPABASE_URL/functions/v1/ops-report"'
 ```
 
+### Webhook Lifecycle Runbook (SMI-3344)
+
+Steps for webhook maintenance (disable, enable, migrate endpoint):
+
+**1. Pre-Maintenance**
+
+- Announce maintenance window: email `support@smithhorn.ca` with subject `[Skillsmith] Stripe Webhook Maintenance — <date> <time> UTC`
+- Include: expected downtime, affected events, recovery ETA
+- Stripe queues undelivered events for up to 72 hours and retries with exponential backoff
+
+**2. During Downtime**
+
+- No action needed — Stripe automatically queues events
+- Monitor the Stripe Dashboard > Developers > Webhooks > Event deliveries for pending events
+- Do NOT create a new webhook endpoint while the existing one is disabled (causes duplicate deliveries)
+
+**3. Post-Enable Verification**
+
+```bash
+# 1. Verify webhook status is 'enabled' (not 'disabled')
+#    Check Stripe Dashboard > Developers > Webhooks > endpoint status
+#    Endpoint ID: we_1Su2xWE9ISBFQw5JH0bWXtNi
+
+# 2. Run dry-run ops report to check billing health
+varlock run -- bash -c 'curl -X POST \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"days\": 1, \"dryRun\": true}" \
+  "$SUPABASE_URL/functions/v1/ops-report"' | jq '.data.report.billing'
+
+# 3. Verify: webhook.enabled === true, missingEvents === [], failedDeliveries === 0
+```
+
+**4. Reconciliation**
+
+- After re-enabling, wait 15 minutes for Stripe to deliver queued events
+- Run ops report again (non-dry-run) to confirm subscription counts match
+- If `subscriptions.mismatch === true`, check `audit_logs` for failed webhook processing
+- Manual reconciliation: compare Stripe Dashboard active subscriptions against Supabase `subscriptions` table
+
+**5. Confirm Zero Drift**
+
+- Subscription counts must match: `billing.subscriptions.stripeActive === billing.subscriptions.supabaseActive` (tolerance: delta <= 2 for in-flight propagation)
+- No failed deliveries in the past 24 hours
+- Close the maintenance window announcement
+
+**Ref**: SMI-3158 (Mar 9 2026 webhook disable incident)
+
+---
+
 ### Audit Logs
 
 All scheduled jobs log to the `audit_logs` table:
