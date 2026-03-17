@@ -88,8 +88,32 @@ export default defineConfig({
 
         // Core modules requiring complex mocking
         '**/search/hybrid.ts',
-        '**/benchmarks/MatrixBenchmark.ts',
+
+        // Benchmark harnesses (require runtime setup, not unit-testable)
+        '**/benchmarks/IndexBenchmark.ts',
         '**/benchmarks/SearchBenchmark.ts',
+        '**/benchmarks/embeddingBenchmark.ts',
+        '**/benchmarks/cacheBenchmark.ts',
+        '**/benchmarks/BenchmarkRunner.ts',
+        '**/benchmarks/MemoryProfiler.ts',
+        '**/benchmarks/cli.ts',
+        '**/benchmarks/memory/**',
+
+        // Telemetry exporter (requires Prometheus infrastructure)
+        '**/telemetry/prometheus.ts',
+
+        // VS Code activation (requires VS Code API)
+        'packages/core/src/activation/ActivationManager.ts',
+
+        // Tree-sitter (requires native WASM bindings unavailable in test env)
+        '**/analysis/tree-sitter/**',
+
+        // Barrel re-export directories (no testable logic, verified pure re-exports)
+        '**/exports/**',
+
+        // Type-only files (no runtime logic, just TypeScript interfaces/types)
+        '**/*-types.ts',
+        '**/*.types.ts',
 
         // Integration test setup
         '**/setup.ts',

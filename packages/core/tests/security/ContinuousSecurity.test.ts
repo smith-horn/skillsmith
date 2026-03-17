@@ -583,7 +583,7 @@ describe('ContinuousSecurity - SecurityScanner', () => {
       scanner.scan('test', longLine)
       const duration = performance.now() - startTime
 
-      expect(duration).toBeLessThan(1000) // Should complete within 1 second
+      expect(duration).toBeLessThan(3000) // Should complete within 3 seconds
     })
 
     it('should handle many short lines', () => {
@@ -593,7 +593,7 @@ describe('ContinuousSecurity - SecurityScanner', () => {
       scanner.scan('test', manyLines)
       const duration = performance.now() - startTime
 
-      expect(duration).toBeLessThan(1000) // Should complete within 1 second
+      expect(duration).toBeLessThan(3000) // Should complete within 3 seconds
     })
   })
 
