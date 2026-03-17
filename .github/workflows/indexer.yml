@@ -15,8 +15,13 @@ name: Skill Indexer
 
 on:
   schedule:
-    # Phase 1b: Run 4x daily instead of 1x
-    - cron: '0 0,6,12,18 * * *'
+    # Phase 1b: Run 4x daily — split into separate entries so
+    # github.event.schedule can distinguish which cron triggered the run.
+    # (SMI-3351: combined cron + date check broke due to GitHub Actions delay)
+    - cron: '0 0 * * *' # maintenance (stale cleanup, stale_days=3)
+    - cron: '0 6 * * *' # discovery
+    - cron: '0 12 * * *' # discovery
+    - cron: '0 18 * * *' # discovery
   workflow_dispatch:
     inputs:
       dry_run:
@@ -68,10 +73,10 @@ jobs:
       - name: Determine Run Type
         id: config
         run: |
-          # For scheduled runs, determine run type based on UTC hour
+          # For scheduled runs, determine run type from github.event.schedule
+          # (deterministic — matches the cron expression, not the wall clock)
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            HOUR=$(date -u +%H)
-            if [ "$HOUR" = "00" ]; then
+            if [ "${{ github.event.schedule }}" = "0 0 * * *" ]; then
               RUN_TYPE="maintenance"
               STALE_DAYS="3"
             else
