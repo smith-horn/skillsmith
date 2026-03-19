@@ -6,10 +6,11 @@
 # wasn't yet live on npm.
 #
 # Usage:
-#   ./scripts/publish-packages.sh           # publish all (core → cli)
-#   ./scripts/publish-packages.sh core      # publish core only
-#   ./scripts/publish-packages.sh cli       # publish cli only (verifies core dep first)
-#   ./scripts/publish-packages.sh --dry-run # show what would be published
+#   ./scripts/publish-packages.sh              # publish all (core → mcp-server → cli)
+#   ./scripts/publish-packages.sh core         # publish core only
+#   ./scripts/publish-packages.sh mcp-server   # publish mcp-server only (verifies core dep first)
+#   ./scripts/publish-packages.sh cli          # publish cli only (verifies core dep first)
+#   ./scripts/publish-packages.sh --dry-run    # show what would be published
 
 set -euo pipefail
 
@@ -41,6 +42,9 @@ publish_package() {
     ok "$name@$version already published — skipping"
     return 0
   fi
+
+  # Pre-publish tarball verification (SMI-3473)
+  verify_tarball "$dir"
 
   if [[ "$DRY_RUN" == "true" ]]; then
     ok "[dry-run] Would publish $name@$version"
@@ -81,8 +85,48 @@ verify_dep() {
   ok "$dep_name@$dep_version confirmed on npm"
 }
 
+verify_tarball() {
+  local dir="$1"
+  local name
+  name=$(node -e "process.stdout.write(require('$dir/package.json').name)")
+
+  log "Running pre-publish tarball check for $name..."
+
+  # Verify npm pack succeeds
+  if ! (cd "$dir" && npm pack --dry-run > /dev/null 2>&1); then
+    err "npm pack --dry-run failed for $name"
+  fi
+
+  # Check workspace dep versions in the package
+  local dep_lines
+  dep_lines=$(node -e "
+    const pkg = require('$dir/package.json');
+    const deps = pkg.dependencies || {};
+    Object.entries(deps)
+      .filter(([k]) => k.startsWith('@skillsmith/'))
+      .forEach(([k, v]) => console.log(k + '|' + v));
+  ")
+
+  while IFS='|' read -r dep_name dep_range; do
+    [[ -z "$dep_name" ]] && continue
+    local base_version="${dep_range#^}"
+    base_version="${base_version#~}"
+
+    # Verify dep version exists on npm
+    local dep_published
+    dep_published=$(npm view "$dep_name@$base_version" version 2>/dev/null || echo "")
+    if [[ -z "$dep_published" ]]; then
+      err "$name declares $dep_name@$dep_range but $dep_name@$base_version is not on npm. Publish $dep_name first."
+    fi
+    ok "$dep_name@$base_version confirmed on npm"
+  done <<< "$dep_lines"
+
+  ok "Tarball verification passed for $name"
+}
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE_DIR="$REPO_ROOT/packages/core"
+MCP_DIR="$REPO_ROOT/packages/mcp-server"
 CLI_DIR="$REPO_ROOT/packages/cli"
 
 echo ""
@@ -92,22 +136,31 @@ echo "────────────────────────�
 case "$TARGET" in
   all)
     publish_package "$CORE_DIR"
-    # Verify core dep version matches what CLI expects
-    CORE_DEP=$(node -e "process.stdout.write(require('$CLI_DIR/package.json').dependencies['@skillsmith/core'])")
-    verify_dep "@skillsmith/core" "$CORE_DEP"
+    # Verify core dep version matches what mcp-server and CLI expect
+    MCP_CORE_DEP=$(node -e "process.stdout.write(require('$MCP_DIR/package.json').dependencies['@skillsmith/core'])")
+    verify_dep "@skillsmith/core" "${MCP_CORE_DEP#^}"
+    publish_package "$MCP_DIR"
+    CLI_CORE_DEP=$(node -e "process.stdout.write(require('$CLI_DIR/package.json').dependencies['@skillsmith/core'])")
+    verify_dep "@skillsmith/core" "${CLI_CORE_DEP#^}"
     publish_package "$CLI_DIR"
     ;;
   core)
     publish_package "$CORE_DIR"
     ;;
+  mcp-server)
+    # Verify core dep is live before publishing mcp-server
+    MCP_CORE_DEP=$(node -e "process.stdout.write(require('$MCP_DIR/package.json').dependencies['@skillsmith/core'])")
+    verify_dep "@skillsmith/core" "${MCP_CORE_DEP#^}"
+    publish_package "$MCP_DIR"
+    ;;
   cli)
     # Verify core dep is live before publishing CLI
-    CORE_DEP=$(node -e "process.stdout.write(require('$CLI_DIR/package.json').dependencies['@skillsmith/core'])")
-    verify_dep "@skillsmith/core" "$CORE_DEP"
+    CLI_CORE_DEP=$(node -e "process.stdout.write(require('$CLI_DIR/package.json').dependencies['@skillsmith/core'])")
+    verify_dep "@skillsmith/core" "${CLI_CORE_DEP#^}"
     publish_package "$CLI_DIR"
     ;;
   *)
-    echo "Usage: $0 [all|core|cli|--dry-run]"
+    echo "Usage: $0 [all|core|mcp-server|cli|--dry-run]"
     exit 1
     ;;
 esac

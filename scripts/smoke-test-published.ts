@@ -113,6 +113,43 @@ export async function smokeTestPackage(
           })
         })
       )
+
+      // Test 4: Cross-package dependency resolution (SMI-3470)
+      // Catches the mcp-server@0.4.4 failure mode: consumer imports an export
+      // from core that doesn't exist in the version npm resolved.
+      tests.push(
+        await runTest('cross-package-deps', () => {
+          const testScript = `
+            import { readFileSync } from 'fs';
+            import { join } from 'path';
+
+            // Log which core version was resolved via mcp-server's deps
+            const corePkg = JSON.parse(readFileSync(
+              join(process.cwd(), 'node_modules/@skillsmith/core/package.json'), 'utf-8'
+            ));
+            console.log('Resolved @skillsmith/core@' + corePkg.version);
+
+            // Verify key core exports resolve (these are used by mcp-server)
+            const core = await import('@skillsmith/core');
+            const required = [
+              'SkillDependencyRepository', 'SkillsmithApiClient',
+              'HybridSearch', 'createDatabaseSync',
+              'SkillRepository', 'CategoryRepository'
+            ];
+            const missing = required.filter(fn => !(fn in core));
+            if (missing.length > 0) {
+              throw new Error('Missing core exports (resolved via mcp-server deps): ' + missing.join(', '));
+            }
+            console.log('Cross-package deps OK: ' + required.length + ' exports verified');
+          `
+          writeFileSync(join(tempDir, 'test-cross-deps.mjs'), testScript)
+          execSync('node test-cross-deps.mjs', {
+            cwd: tempDir,
+            stdio: 'pipe',
+            timeout: 30000,
+          })
+        })
+      )
     }
 
     if (packageName === '@skillsmith/core') {

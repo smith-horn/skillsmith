@@ -193,6 +193,16 @@ jobs:
           echo ""
           echo "All package configurations valid!"
 
+      # SMI-3471: Verify workspace dependency versions are consistent
+      # Catches: exact-pinned deps, version drift, unpublished dep versions
+      - name: Verify workspace dependency versions
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Audit workspace dependency versions
+        run: node scripts/verify-publish-deps.mjs --ci
+
   # SMI-1903: Validate Edge Function structure and configuration
   # Ensures all functions have proper structure and are categorized
   edge-function-validation:
