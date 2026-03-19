@@ -134,21 +134,28 @@ describe('SMI-824: Install Skillsmith Skill Command', () => {
   // ==========================================================================
 
   describe('command registration', () => {
-    it('should create a Command instance named "install-skill"', async () => {
+    it('should create a Command instance named "setup"', async () => {
       const { createInstallSkillCommand } = await import('../src/commands/install-skill.js')
       const cmd = createInstallSkillCommand()
 
       expect(cmd).toBeInstanceOf(Command)
-      expect(cmd.name()).toBe('install-skill')
+      expect(cmd.name()).toBe('setup')
     })
 
-    it('should have a description mentioning skillsmith skill', async () => {
+    it('should have "install-skill" as a deprecation alias', async () => {
+      const { createInstallSkillCommand } = await import('../src/commands/install-skill.js')
+      const cmd = createInstallSkillCommand()
+
+      expect(cmd.aliases()).toContain('install-skill')
+    })
+
+    it('should have a description mentioning slash command setup', async () => {
       const { createInstallSkillCommand } = await import('../src/commands/install-skill.js')
       const cmd = createInstallSkillCommand()
 
       const description = cmd.description()
       expect(description.toLowerCase()).toContain('skillsmith')
-      expect(description.toLowerCase()).toContain('skill')
+      expect(description.toLowerCase()).toContain('slash command')
     })
 
     it('should have --force option with short flag -f', async () => {

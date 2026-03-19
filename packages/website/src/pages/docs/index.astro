@@ -166,6 +166,67 @@ EOF`}</code></pre>
     </a>
   </div>
 
+  <h2>CLI or MCP?</h2>
+
+  <p>
+    Skillsmith offers two interfaces: a <strong>CLI</strong> for shell workflows, CI/CD pipelines,
+    and skill authoring, and an <strong>MCP server</strong> for interactive use inside Claude Code
+    with richer context and recommendations. Use whichever fits your workflow — they share the same
+    registry and installed skills.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Task</th>
+        <th>CLI</th>
+        <th>MCP</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Search for skills</td>
+        <td><a href="/docs/cli"><code>skillsmith search "testing"</code></a></td>
+        <td><a href="/docs/mcp-server"><code>search</code> tool</a></td>
+      </tr>
+      <tr>
+        <td>Install a skill</td>
+        <td><a href="/docs/cli"><code>skillsmith install author/name</code></a></td>
+        <td><a href="/docs/mcp-server"><code>install_skill</code> tool</a></td>
+      </tr>
+      <tr>
+        <td>Remove a skill</td>
+        <td><a href="/docs/cli"><code>skillsmith remove name</code></a></td>
+        <td><a href="/docs/mcp-server"><code>uninstall_skill</code> tool</a></td>
+      </tr>
+      <tr>
+        <td>Get skill details</td>
+        <td><a href="/docs/cli"><code>skillsmith info author/name</code></a></td>
+        <td><a href="/docs/mcp-server"><code>get_skill</code> tool</a></td>
+      </tr>
+      <tr>
+        <td>Compare skills</td>
+        <td>—</td>
+        <td><a href="/docs/mcp-server"><code>skill_compare</code> tool</a></td>
+      </tr>
+      <tr>
+        <td>Audit a skill</td>
+        <td><a href="/docs/cli"><code>skillsmith audit name</code></a></td>
+        <td><a href="/docs/mcp-server"><code>skill_audit</code> tool</a></td>
+      </tr>
+      <tr>
+        <td>Create a skill</td>
+        <td><a href="/docs/cli"><code>skillsmith create name</code></a></td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>Validate a skill</td>
+        <td><a href="/docs/cli"><code>skillsmith author validate .</code></a></td>
+        <td><a href="/docs/mcp-server"><code>skill_validate</code> tool</a></td>
+      </tr>
+    </tbody>
+  </table>
+
   <h2>Trust Tiers</h2>
 
   <p>Skillsmith categorizes skills by trust level to help you make informed decisions:</p>

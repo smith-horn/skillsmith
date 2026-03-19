@@ -28,7 +28,7 @@ created: {{date}}
 ## Installation
 
 \`\`\`bash
-skillsmith install {{name}}
+skillsmith install {{author}}/{{name}}
 \`\`\`
 
 Or manually:

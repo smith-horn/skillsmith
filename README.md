@@ -149,14 +149,20 @@ node packages/cli/dist/index.js install community/jest-helper
 
 ## Documentation
 
-Internal documentation is in a private submodule at `docs/internal/`. Access requires Smith Horn GitHub org membership. Run `git submodule update --init` after cloning.
+### Public
 
-- [**Skill Security Guide**](docs/internal/security/skill-security-guide.md) - Understanding skill trust, safety, and how Skillsmith protects you
-- [Getting Started](docs/internal/GETTING_STARTED.md) - Complete setup and usage guide
-- [Engineering Standards](docs/internal/architecture/standards.md) - Code quality policies
-- [ADR Index](docs/internal/adr/index.md) - Architecture Decision Records
-- [Security Checklist](docs/internal/security/checklists/code-review.md) - Security review guidelines (developers)
-- [Phase Retrospectives](docs/internal/retros/) - Phase learnings and improvements
+- [**Security Guide**](https://skillsmith.app/docs/security) - Understanding skill trust, safety, and protections
+- [5-Minute Setup](https://skillsmith.app/docs/quickstart) - Quick start guide
+- [Configuration Guide](https://skillsmith.app/docs/getting-started) - Complete setup and usage
+
+### Internal
+
+Internal documentation is in a private submodule at `docs/internal/`. Access requires repository membership. Run `git submodule update --init` after cloning.
+
+- [Engineering Standards](docs/internal/architecture/standards.md) - Code quality policies (requires repository access)
+- [ADR Index](docs/internal/adr/index.md) - Architecture Decision Records (requires repository access)
+- [Security Checklist](docs/internal/security/checklists/code-review.md) - Security review guidelines (requires repository access)
+- [Phase Retrospectives](docs/internal/retros/) - Phase learnings (requires repository access)
 
 ## Development
 
@@ -263,7 +269,7 @@ docker exec skillsmith-dev-1 npm test
 
 Skillsmith uses native Node.js modules (`better-sqlite3`, `onnxruntime-node`) that require **glibc**. Docker provides a consistent Debian-based environment with glibc, avoiding compatibility issues on systems using musl libc (like Alpine Linux).
 
-For the full technical decision, see [ADR-002: Docker with glibc for Native Module Compatibility](/docs/internal/adr/002-docker-glibc-requirement.md).
+For the full technical decision, see [ADR-002: Docker with glibc for Native Module Compatibility](docs/internal/adr/002-docker-glibc-requirement.md).
 
 See [CLAUDE.md](CLAUDE.md) for full development workflow and skill configuration.
 

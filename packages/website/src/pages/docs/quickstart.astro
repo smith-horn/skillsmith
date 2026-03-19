@@ -1,14 +1,14 @@
 ---
 /**
- * Skillsmith Quickstart Guide
+ * Skillsmith 5-Minute Setup
  * First-time user guide with two paths:
  * 1. Happy Path: MCP Client + MCP Server (recommended)
  * 2. Alternative: Direct CLI usage
  */
-import BaseLayout from '../../layouts/BaseLayout.astro';
+import DocsLayout from '../../layouts/DocsLayout.astro';
 ---
 
-<BaseLayout title="Quickstart | Skillsmith" description="Get started with Skillsmith in 5 minutes. Two ways to discover and install skills for your development environment.">
+<DocsLayout title="5-Minute Setup" description="Get started with Skillsmith in 5 minutes. Two ways to discover and install skills for your development environment.">
   <!-- JSON-LD HowTo Schema -->
   <script is:inline type="application/ld+json" slot="head">
   {
@@ -129,161 +129,135 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
   }
   </script>
 
-  <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-    <!-- Header -->
-    <div class="mb-12">
-      <h1 class="text-4xl font-bold text-white mb-4">Quickstart Guide</h1>
-      <p class="text-dark-300 text-lg">
-        Get Skillsmith running in 5 minutes. Choose your preferred workflow below.
+  <h1>5-Minute Setup</h1>
+
+  <p class="lead">
+    Get Skillsmith running in 5 minutes. Choose your preferred workflow below.
+  </p>
+
+  <!-- Prerequisites -->
+  <h2 id="prerequisites">Before You Begin</h2>
+
+  <div class="quickstart-prereqs">
+    <p>Make sure you have:</p>
+    <ul class="quickstart-checklist">
+      <li class="quickstart-check-item">
+        <svg class="quickstart-check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+        </svg>
+        <span><strong>Node.js 18+</strong> installed (<code>node --version</code> to check)</span>
+      </li>
+      <li class="quickstart-check-item">
+        <svg class="quickstart-check-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+        </svg>
+        <span><strong>npm</strong> or another package manager</span>
+      </li>
+    </ul>
+  </div>
+
+  <!-- Choose Your Path -->
+  <h2 id="choose-workflow">Choose Your Workflow</h2>
+
+  <div class="quickstart-card-grid">
+    <!-- Path A: MCP Client -->
+    <a href="#path-claude-code" class="quickstart-card quickstart-card-primary">
+      <div class="quickstart-card-header">
+        <div class="quickstart-card-icon quickstart-card-icon-primary">
+          <svg class="quickstart-icon-svg" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+        </div>
+        <div>
+          <span class="quickstart-badge quickstart-badge-primary">Recommended</span>
+          <h3 class="quickstart-card-title">MCP Client Setup</h3>
+        </div>
+      </div>
+      <p class="quickstart-card-desc">
+        Use natural language to discover and install skills. Just ask your assistant!
       </p>
+      <ul class="quickstart-card-examples">
+        <li>"Find skills for this React project"</li>
+        <li>"Install the commit helper skill"</li>
+        <li>"What testing skills do you recommend?"</li>
+      </ul>
+    </a>
+
+    <!-- Path B: CLI -->
+    <a href="#path-cli" class="quickstart-card quickstart-card-secondary">
+      <div class="quickstart-card-header">
+        <div class="quickstart-card-icon quickstart-card-icon-secondary">
+          <svg class="quickstart-icon-svg quickstart-icon-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+        </div>
+        <div>
+          <span class="quickstart-badge quickstart-badge-secondary">Alternative</span>
+          <h3 class="quickstart-card-title">Direct CLI</h3>
+        </div>
+      </div>
+      <p class="quickstart-card-desc">
+        Use traditional command-line tools in any terminal.
+      </p>
+      <ul class="quickstart-card-examples">
+        <li><code>skillsmith search testing</code></li>
+        <li><code>skillsmith install jest-helper</code></li>
+        <li><code>skillsmith list</code></li>
+      </ul>
+    </a>
+  </div>
+
+  <!-- PATH A: MCP Client -->
+  <h2 id="path-claude-code">Using an MCP Client (Recommended)</h2>
+
+  <div class="callout">
+    <p class="callout-heading">What is MCP?</p>
+    <p>
+      MCP (Model Context Protocol) lets AI assistants like Claude Code connect to external tool servers. Skillsmith provides an MCP server that gives your assistant the ability to search and install skills for you.
+    </p>
+  </div>
+
+  <h3 id="step-a1">Step 1: Install an MCP Client</h3>
+
+  <div class="quickstart-tabs-container">
+    <div class="quickstart-tabs">
+      <button class="platform-tab active" data-platform="mac">macOS</button>
+      <button class="platform-tab" data-platform="windows">Windows</button>
+      <button class="platform-tab" data-platform="linux">Linux</button>
     </div>
 
-    <!-- Prerequisites -->
-    <section class="mb-12">
-      <h2 class="text-2xl font-bold text-white mb-4">Before You Begin</h2>
-      <div class="bg-dark-900 border border-dark-700 rounded-lg p-6">
-        <p class="text-dark-300 mb-4">Make sure you have:</p>
-        <ul class="space-y-2 text-dark-300">
-          <li class="flex items-center gap-2">
-            <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-            </svg>
-            <span><strong class="text-white">Node.js 18+</strong> installed (<code class="text-sm bg-dark-800 px-1.5 py-0.5 rounded">node --version</code> to check)</span>
-          </li>
-          <li class="flex items-center gap-2">
-            <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-            </svg>
-            <span><strong class="text-white">npm</strong> or another package manager</span>
-          </li>
-        </ul>
-      </div>
-    </section>
-
-    <!-- Choose Your Path -->
-    <section class="mb-12">
-      <h2 class="text-2xl font-bold text-white mb-6">Choose Your Workflow</h2>
-
-      <div class="grid md:grid-cols-2 gap-6">
-        <!-- Path A: MCP Client -->
-        <a href="#path-claude-code" class="block bg-gradient-to-br from-primary-900/30 to-purple-900/30 border-2 border-primary-500/50 rounded-xl p-6 hover:border-primary-400 transition-colors">
-          <div class="flex items-center gap-3 mb-3">
-            <div class="w-10 h-10 bg-primary-500/20 rounded-lg flex items-center justify-center">
-              <svg class="w-5 h-5 text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-            </div>
-            <div>
-              <span class="text-xs font-semibold uppercase tracking-wider text-primary-400">Recommended</span>
-              <h3 class="text-lg font-bold text-white">MCP Client Setup</h3>
-            </div>
-          </div>
-          <p class="text-dark-300 text-sm mb-4">
-            Use natural language to discover and install skills. Just ask your assistant!
-          </p>
-          <ul class="text-sm text-dark-400 space-y-1">
-            <li>• "Find skills for this React project"</li>
-            <li>• "Install the commit helper skill"</li>
-            <li>• "What testing skills do you recommend?"</li>
-          </ul>
-        </a>
-
-        <!-- Path B: CLI -->
-        <a href="#path-cli" class="block bg-dark-900 border border-dark-700 rounded-xl p-6 hover:border-dark-500 transition-colors">
-          <div class="flex items-center gap-3 mb-3">
-            <div class="w-10 h-10 bg-dark-800 rounded-lg flex items-center justify-center">
-              <svg class="w-5 h-5 text-dark-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-            </div>
-            <div>
-              <span class="text-xs font-semibold uppercase tracking-wider text-dark-500">Alternative</span>
-              <h3 class="text-lg font-bold text-white">Direct CLI</h3>
-            </div>
-          </div>
-          <p class="text-dark-300 text-sm mb-4">
-            Use traditional command-line tools in any terminal.
-          </p>
-          <ul class="text-sm text-dark-400 space-y-1">
-            <li>• <code class="text-xs">skillsmith search testing</code></li>
-            <li>• <code class="text-xs">skillsmith install jest-helper</code></li>
-            <li>• <code class="text-xs">skillsmith list</code></li>
-          </ul>
-        </a>
-      </div>
-    </section>
-
-    <!-- Divider -->
-    <hr class="border-dark-700 my-12" />
-
-    <!-- PATH A: MCP Client -->
-    <section id="path-claude-code" class="mb-16 scroll-mt-8">
-      <div class="flex items-center gap-3 mb-6">
-        <div class="w-8 h-8 bg-primary-500 rounded-full flex items-center justify-center text-white font-bold">A</div>
-        <h2 class="text-2xl font-bold text-white">Using an MCP Client (Recommended)</h2>
-      </div>
-
-      <div class="bg-primary-900/10 border border-primary-800/30 rounded-lg p-4 mb-8">
-        <p class="text-primary-300 text-sm">
-          <strong>What is MCP?</strong> MCP (Model Context Protocol) lets AI assistants like Claude Code connect to external tool servers. Skillsmith provides an MCP server that gives your assistant the ability to search and install skills for you.
-        </p>
-      </div>
-
-      <!-- Step 1: Install an MCP Client -->
-      <div class="mb-8">
-        <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <span class="w-6 h-6 bg-dark-800 rounded-full flex items-center justify-center text-sm">1</span>
-          Install an MCP Client (if not already installed)
-        </h3>
-
-        <!-- Platform Tabs -->
-        <div class="bg-dark-900 border border-dark-700 rounded-lg overflow-hidden">
-          <div class="flex border-b border-dark-700">
-            <button class="platform-tab active px-4 py-2 text-sm font-medium" data-platform="mac">macOS</button>
-            <button class="platform-tab px-4 py-2 text-sm font-medium" data-platform="windows">Windows</button>
-            <button class="platform-tab px-4 py-2 text-sm font-medium" data-platform="linux">Linux</button>
-          </div>
-
-          <div class="p-4">
-            <div class="platform-content" data-platform="mac">
-              <pre class="bg-dark-950 rounded p-3 overflow-x-auto"><code class="text-sm text-dark-200"># Install via npm (recommended)
+    <div class="quickstart-tabs-content">
+      <div class="platform-content" data-platform="mac">
+        <pre><code>{`# Install via npm (recommended)
 npm install -g @anthropic-ai/claude-code
 
 # Or via Homebrew
-brew install claude-code</code></pre>
-            </div>
-            <div class="platform-content hidden" data-platform="windows">
-              <pre class="bg-dark-950 rounded p-3 overflow-x-auto"><code class="text-sm text-dark-200"># Install via npm (requires Node.js)
+brew install claude-code`}</code></pre>
+      </div>
+      <div class="platform-content hidden" data-platform="windows">
+        <pre><code>{`# Install via npm (requires Node.js)
 npm install -g @anthropic-ai/claude-code
 
 # Or download the installer from:
-# https://claude.ai/download</code></pre>
-            </div>
-            <div class="platform-content hidden" data-platform="linux">
-              <pre class="bg-dark-950 rounded p-3 overflow-x-auto"><code class="text-sm text-dark-200"># Install via npm
+# https://claude.ai/download`}</code></pre>
+      </div>
+      <div class="platform-content hidden" data-platform="linux">
+        <pre><code>{`# Install via npm
 npm install -g @anthropic-ai/claude-code
 
 # Or via the install script
-curl -fsSL https://claude.ai/install.sh | sh</code></pre>
-            </div>
-          </div>
-        </div>
+curl -fsSL https://claude.ai/install.sh | sh`}</code></pre>
       </div>
+    </div>
+  </div>
 
-      <!-- Step 2: Configure Skillsmith MCP -->
-      <div class="mb-8">
-        <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <span class="w-6 h-6 bg-dark-800 rounded-full flex items-center justify-center text-sm">2</span>
-          Add Skillsmith MCP Server
-        </h3>
+  <h3 id="step-a2">Step 2: Add Skillsmith MCP Server</h3>
 
-        <p class="text-dark-300 mb-4">
-          Add this configuration to your MCP client settings (e.g., <code class="bg-dark-800 px-1 rounded">~/.claude/settings.json</code>):
-        </p>
+  <p>
+    Add this configuration to your MCP client settings (e.g., <code>~/.claude/settings.json</code>):
+  </p>
 
-        <div class="bg-dark-900 border border-dark-700 rounded-lg overflow-hidden">
-          <div class="p-4">
-            <pre class="bg-dark-950 rounded p-3 overflow-x-auto"><code class="text-sm text-dark-200">{`Add this MCP server to my settings.json:
+  <pre><code>{`Add this MCP server to my settings.json:
 
 {
   "mcpServers": {
@@ -293,188 +267,151 @@ curl -fsSL https://claude.ai/install.sh | sh</code></pre>
     }
   }
 }`}</code></pre>
-          </div>
-        </div>
 
-        <div class="bg-primary-900/20 border border-primary-700/50 rounded-lg p-4 mt-4">
-          <p class="text-primary-300 text-sm">
-            <strong>Tip:</strong> You can also paste this snippet directly into your AI assistant's chat, and it can update your <code class="bg-dark-800 px-1 rounded">settings.json</code> for you.
-          </p>
-        </div>
+  <div class="callout">
+    <p class="callout-heading">Tip</p>
+    <p>
+      You can also paste this snippet directly into your AI assistant's chat, and it can update your <code>settings.json</code> for you.
+    </p>
+  </div>
 
-        <p class="text-dark-400 text-sm mt-3">
-          After updating your settings, restart your MCP client to load Skillsmith.
-        </p>
+  <p>
+    After updating your settings, restart your MCP client to load Skillsmith.
+  </p>
+
+  <h3 id="step-a3">Step 3: Discover Skills for Your Project</h3>
+
+  <p>
+    Navigate to your project directory and start your MCP client:
+  </p>
+
+  <pre><code>{`cd /path/to/your/project
+claude`}</code></pre>
+
+  <p>
+    Now just ask your assistant to find skills for your project:
+  </p>
+
+  <div class="quickstart-conversation">
+    <div class="quickstart-message">
+      <div class="quickstart-avatar quickstart-avatar-user">
+        <span>You</span>
       </div>
-
-      <!-- Step 3: Use It -->
-      <div class="mb-8">
-        <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <span class="w-6 h-6 bg-dark-800 rounded-full flex items-center justify-center text-sm">3</span>
-          Discover Skills for Your Project
-        </h3>
-
-        <p class="text-dark-300 mb-4">
-          Navigate to your project directory and start your MCP client:
-        </p>
-
-        <pre class="bg-dark-900 border border-dark-700 rounded-lg p-4 overflow-x-auto mb-4"><code class="text-sm text-dark-200">cd /path/to/your/project
-claude</code></pre>
-
-        <p class="text-dark-300 mb-4">
-          Now just ask your assistant to find skills for your project:
-        </p>
-
-        <div class="bg-dark-900 border border-dark-700 rounded-lg p-4">
-          <div class="space-y-4">
-            <div class="flex gap-3">
-              <div class="w-8 h-8 bg-blue-500/20 rounded-full flex items-center justify-center flex-shrink-0">
-                <span class="text-blue-400 text-sm font-bold">You</span>
-              </div>
-              <div class="bg-dark-800 rounded-lg px-4 py-2 text-dark-200">
-                "What skills would be helpful for this project?"
-              </div>
-            </div>
-            <div class="flex gap-3">
-              <div class="w-8 h-8 bg-purple-500/20 rounded-full flex items-center justify-center flex-shrink-0">
-                <span class="text-purple-400 text-xs font-bold">AI</span>
-              </div>
-              <div class="bg-dark-800 rounded-lg px-4 py-3 text-dark-300 text-sm">
-                <p class="mb-2">Based on your package.json, I can see this is a React project with Jest. Here are some recommended skills:</p>
-                <ul class="list-disc list-inside space-y-1 text-dark-400">
-                  <li><strong class="text-white">community/jest-helper</strong> - Enhanced Jest testing workflows</li>
-                  <li><strong class="text-white">community/react-patterns</strong> - React best practices</li>
-                  <li><strong class="text-white">verified/commit</strong> - Smart commit messages</li>
-                </ul>
-                <p class="mt-2">Would you like me to install any of these?</p>
-              </div>
-            </div>
-            <div class="flex gap-3">
-              <div class="w-8 h-8 bg-blue-500/20 rounded-full flex items-center justify-center flex-shrink-0">
-                <span class="text-blue-400 text-sm font-bold">You</span>
-              </div>
-              <div class="bg-dark-800 rounded-lg px-4 py-2 text-dark-200">
-                "Yes, install the jest-helper skill"
-              </div>
-            </div>
-          </div>
-        </div>
+      <div class="quickstart-bubble">
+        "What skills would be helpful for this project?"
       </div>
-
-      <!-- Success Box -->
-      <div class="bg-green-900/20 border border-green-700/50 rounded-lg p-6">
-        <h4 class="text-green-400 font-semibold mb-2 flex items-center gap-2">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-          </svg>
-          You're all set!
-        </h4>
-        <p class="text-dark-300 text-sm">
-          Skills are installed to <code class="bg-dark-800 px-1.5 py-0.5 rounded text-xs">~/.claude/skills/</code> and automatically available in all your sessions.
-        </p>
+    </div>
+    <div class="quickstart-message">
+      <div class="quickstart-avatar quickstart-avatar-ai">
+        <span>AI</span>
       </div>
-    </section>
-
-    <!-- Divider -->
-    <hr class="border-dark-700 my-12" />
-
-    <!-- PATH B: Direct CLI -->
-    <section id="path-cli" class="mb-16 scroll-mt-8">
-      <div class="flex items-center gap-3 mb-6">
-        <div class="w-8 h-8 bg-dark-600 rounded-full flex items-center justify-center text-white font-bold">B</div>
-        <h2 class="text-2xl font-bold text-white">Using the CLI Directly</h2>
+      <div class="quickstart-bubble quickstart-bubble-ai">
+        <p>Based on your package.json, I can see this is a React project with Jest. Here are some recommended skills:</p>
+        <ul>
+          <li><strong>community/jest-helper</strong> - Enhanced Jest testing workflows</li>
+          <li><strong>community/react-patterns</strong> - React best practices</li>
+          <li><strong>verified/commit</strong> - Smart commit messages</li>
+        </ul>
+        <p>Would you like me to install any of these?</p>
       </div>
-
-      <div class="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-4 mb-8">
-        <p class="text-yellow-300 text-sm">
-          <strong>When to use this:</strong> Use the CLI if you prefer traditional command-line tools, want to script skill management, or are not using an MCP client.
-        </p>
+    </div>
+    <div class="quickstart-message">
+      <div class="quickstart-avatar quickstart-avatar-user">
+        <span>You</span>
       </div>
+      <div class="quickstart-bubble">
+        "Yes, install the jest-helper skill"
+      </div>
+    </div>
+  </div>
 
-      <!-- Step 1: Install CLI -->
-      <div class="mb-8">
-        <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <span class="w-6 h-6 bg-dark-800 rounded-full flex items-center justify-center text-sm">1</span>
-          Install the Skillsmith CLI
-        </h3>
+  <div class="quickstart-success">
+    <h4>
+      <svg class="quickstart-success-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+      </svg>
+      You're all set!
+    </h4>
+    <p>
+      Skills are installed to <code>~/.claude/skills/</code> and automatically available in all your sessions.
+    </p>
+  </div>
 
-        <div class="bg-dark-900 border border-dark-700 rounded-lg overflow-hidden">
-          <div class="flex border-b border-dark-700">
-            <button class="cli-tab active px-4 py-2 text-sm font-medium" data-cli="global">Global Install</button>
-            <button class="cli-tab px-4 py-2 text-sm font-medium" data-cli="npx">npx (No Install)</button>
-          </div>
+  <!-- PATH B: Direct CLI -->
+  <h2 id="path-cli">Using the CLI Directly</h2>
 
-          <div class="p-4">
-            <div class="cli-content" data-cli="global">
-              <pre class="bg-dark-950 rounded p-3 overflow-x-auto"><code class="text-sm text-dark-200"># Install globally
+  <div class="callout callout-warning">
+    <p class="callout-heading">When to use this</p>
+    <p>
+      Use the CLI if you prefer traditional command-line tools, want to script skill management, or are not using an MCP client.
+    </p>
+  </div>
+
+  <h3 id="step-b1">Step 1: Install the Skillsmith CLI</h3>
+
+  <div class="quickstart-tabs-container">
+    <div class="quickstart-tabs">
+      <button class="cli-tab active" data-cli="global">Global Install</button>
+      <button class="cli-tab" data-cli="npx">npx (No Install)</button>
+    </div>
+
+    <div class="quickstart-tabs-content">
+      <div class="cli-content" data-cli="global">
+        <pre><code>{`# Install globally
 npm install -g @skillsmith/cli
 
 # Verify installation
-skillsmith --version</code></pre>
-              <p class="text-dark-500 text-xs mt-2">After this, <code class="bg-dark-800 px-1 rounded text-dark-300">skillsmith</code> command is available everywhere.</p>
-            </div>
-            <div class="cli-content hidden" data-cli="npx">
-              <pre class="bg-dark-950 rounded p-3 overflow-x-auto"><code class="text-sm text-dark-200"># Run without installing (downloads on first use)
+skillsmith --version`}</code></pre>
+        <p>After this, <code>skillsmith</code> command is available everywhere.</p>
+      </div>
+      <div class="cli-content hidden" data-cli="npx">
+        <pre><code>{`# Run without installing (downloads on first use)
 npx @skillsmith/cli search testing
 
 # Short alias
-npx sklx search testing</code></pre>
-              <p class="text-dark-500 text-xs mt-2">Use <code class="bg-dark-800 px-1 rounded text-dark-300">npx</code> to run without global installation.</p>
-            </div>
-          </div>
-        </div>
+npx sklx search testing`}</code></pre>
+        <p>Use <code>npx</code> to run without global installation.</p>
       </div>
+    </div>
+  </div>
 
-      <!-- Step 2: Navigate to Project -->
-      <div class="mb-8">
-        <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <span class="w-6 h-6 bg-dark-800 rounded-full flex items-center justify-center text-sm">2</span>
-          Navigate to Your Project
-        </h3>
+  <h3 id="step-b2">Step 2: Navigate to Your Project</h3>
 
-        <p class="text-dark-300 mb-4">
-          Open your terminal and navigate to your project directory:
-        </p>
+  <p>
+    Open your terminal and navigate to your project directory:
+  </p>
 
-        <div class="bg-dark-900 border border-dark-700 rounded-lg overflow-hidden">
-          <div class="flex border-b border-dark-700">
-            <button class="nav-tab active px-4 py-2 text-sm font-medium" data-nav="mac">macOS / Linux</button>
-            <button class="nav-tab px-4 py-2 text-sm font-medium" data-nav="windows">Windows</button>
-          </div>
+  <div class="quickstart-tabs-container">
+    <div class="quickstart-tabs">
+      <button class="nav-tab active" data-nav="mac">macOS / Linux</button>
+      <button class="nav-tab" data-nav="windows">Windows</button>
+    </div>
 
-          <div class="p-4">
-            <div class="nav-content" data-nav="mac">
-              <pre class="bg-dark-950 rounded p-3 overflow-x-auto"><code class="text-sm text-dark-200"># Navigate to your project
+    <div class="quickstart-tabs-content">
+      <div class="nav-content" data-nav="mac">
+        <pre><code>{`# Navigate to your project
 cd ~/projects/my-react-app
 
 # Verify you're in the right place
-ls package.json</code></pre>
-            </div>
-            <div class="nav-content hidden" data-nav="windows">
-              <pre class="bg-dark-950 rounded p-3 overflow-x-auto"><code class="text-sm text-dark-200"># Navigate to your project
-cd C:\Users\YourName\projects\my-react-app
+ls package.json`}</code></pre>
+      </div>
+      <div class="nav-content hidden" data-nav="windows">
+        <pre><code>{`# Navigate to your project
+cd C:\\Users\\YourName\\projects\\my-react-app
 
 # Verify you're in the right place
-dir package.json</code></pre>
-            </div>
-          </div>
-        </div>
-
-        <div class="bg-dark-800 border border-dark-600 rounded-lg p-4 mt-4">
-          <p class="text-dark-300 text-sm">
-            <strong class="text-white">Why navigate here?</strong> Skillsmith can analyze your project's <code class="bg-dark-700 px-1 rounded">package.json</code>, dependencies, and file structure to recommend relevant skills.
-          </p>
-        </div>
+dir package.json`}</code></pre>
       </div>
+    </div>
+  </div>
 
-      <!-- Step 3: Search for Skills -->
-      <div class="mb-8">
-        <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <span class="w-6 h-6 bg-dark-800 rounded-full flex items-center justify-center text-sm">3</span>
-          Search for Skills
-        </h3>
+  <p>
+    <strong>Why navigate here?</strong> Skillsmith can analyze your project's <code>package.json</code>, dependencies, and file structure to recommend relevant skills.
+  </p>
 
-        <pre class="bg-dark-900 border border-dark-700 rounded-lg p-4 overflow-x-auto mb-4"><code class="text-sm text-dark-200"># Search by keyword
+  <h3 id="step-b3">Step 3: Search for Skills</h3>
+
+  <pre><code>{`# Search by keyword
 skillsmith search testing
 
 # Search with filters
@@ -482,188 +419,166 @@ skillsmith search react --category development
 skillsmith search git --tier verified
 
 # Get recommendations for current project
-skillsmith recommend</code></pre>
+skillsmith recommend`}</code></pre>
 
-        <p class="text-dark-400 text-sm">
-          The <code class="bg-dark-800 px-1.5 py-0.5 rounded">recommend</code> command analyzes your project and suggests relevant skills.
-        </p>
-      </div>
+  <p>
+    The <code>recommend</code> command analyzes your project and suggests relevant skills.
+  </p>
 
-      <!-- Step 4: Install Skills -->
-      <div class="mb-8">
-        <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <span class="w-6 h-6 bg-dark-800 rounded-full flex items-center justify-center text-sm">4</span>
-          Install Skills
-        </h3>
+  <h3 id="step-b4">Step 4: Install Skills</h3>
 
-        <pre class="bg-dark-900 border border-dark-700 rounded-lg p-4 overflow-x-auto mb-4"><code class="text-sm text-dark-200"># Install by skill name
+  <pre><code>{`# Install by skill name
 skillsmith install jest-helper
 
 # Install by full ID
 skillsmith install community/react-patterns
 
 # Install multiple skills
-skillsmith install jest-helper commit react-patterns</code></pre>
-      </div>
+skillsmith install jest-helper commit react-patterns`}</code></pre>
 
-      <!-- Step 5: Verify -->
-      <div class="mb-8">
-        <h3 class="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-          <span class="w-6 h-6 bg-dark-800 rounded-full flex items-center justify-center text-sm">5</span>
-          Verify Installation
-        </h3>
+  <h3 id="step-b5">Step 5: Verify Installation</h3>
 
-        <pre class="bg-dark-900 border border-dark-700 rounded-lg p-4 overflow-x-auto mb-4"><code class="text-sm text-dark-200"># List installed skills
+  <pre><code>{`# List installed skills
 skillsmith list
 
 # Show skill details
-skillsmith info jest-helper</code></pre>
-      </div>
+skillsmith info jest-helper`}</code></pre>
 
-      <!-- Success Box -->
-      <div class="bg-green-900/20 border border-green-700/50 rounded-lg p-6">
-        <h4 class="text-green-400 font-semibold mb-2 flex items-center gap-2">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-          </svg>
-          Skills Installed!
-        </h4>
-        <p class="text-dark-300 text-sm">
-          Skills are installed to <code class="bg-dark-800 px-1.5 py-0.5 rounded text-xs">~/.claude/skills/</code>. They'll be automatically available when you use your MCP client.
-        </p>
-      </div>
-    </section>
+  <div class="quickstart-success">
+    <h4>
+      <svg class="quickstart-success-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+      </svg>
+      Skills Installed!
+    </h4>
+    <p>
+      Skills are installed to <code>~/.claude/skills/</code>. They'll be automatically available when you use your MCP client.
+    </p>
+  </div>
 
-    <!-- CLI Quick Reference -->
-    <section class="mb-12">
-      <h2 class="text-2xl font-bold text-white mb-6">CLI Quick Reference</h2>
+  <!-- CLI Quick Reference -->
+  <h2 id="quick-reference">CLI Quick Reference</h2>
 
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm border-collapse">
-          <thead>
-            <tr class="border-b border-dark-700">
-              <th class="text-left py-3 pr-4 text-white font-semibold">Command</th>
-              <th class="text-left py-3 text-white font-semibold">Description</th>
-            </tr>
-          </thead>
-          <tbody class="text-dark-300">
-            <tr class="border-b border-dark-800">
-              <td class="py-3 pr-4"><code class="text-primary-400">skillsmith search &lt;query&gt;</code></td>
-              <td class="py-3">Search for skills</td>
-            </tr>
-            <tr class="border-b border-dark-800">
-              <td class="py-3 pr-4"><code class="text-primary-400">skillsmith install &lt;skill&gt;</code></td>
-              <td class="py-3">Install a skill</td>
-            </tr>
-            <tr class="border-b border-dark-800">
-              <td class="py-3 pr-4"><code class="text-primary-400">skillsmith uninstall &lt;skill&gt;</code></td>
-              <td class="py-3">Remove a skill</td>
-            </tr>
-            <tr class="border-b border-dark-800">
-              <td class="py-3 pr-4"><code class="text-primary-400">skillsmith list</code></td>
-              <td class="py-3">List installed skills</td>
-            </tr>
-            <tr class="border-b border-dark-800">
-              <td class="py-3 pr-4"><code class="text-primary-400">skillsmith recommend</code></td>
-              <td class="py-3">Get project-based recommendations</td>
-            </tr>
-            <tr class="border-b border-dark-800">
-              <td class="py-3 pr-4"><code class="text-primary-400">skillsmith info &lt;skill&gt;</code></td>
-              <td class="py-3">Show skill details</td>
-            </tr>
-            <tr class="border-b border-dark-800">
-              <td class="py-3 pr-4"><code class="text-primary-400">skillsmith --help</code></td>
-              <td class="py-3">Show all commands</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+  <table>
+    <thead>
+      <tr>
+        <th>Command</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>skillsmith search &lt;query&gt;</code></td>
+        <td>Search for skills</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith install &lt;skill&gt;</code></td>
+        <td>Install a skill</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith uninstall &lt;skill&gt;</code></td>
+        <td>Remove a skill</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith list</code></td>
+        <td>List installed skills</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith recommend</code></td>
+        <td>Get project-based recommendations</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith info &lt;skill&gt;</code></td>
+        <td>Show skill details</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith --help</code></td>
+        <td>Show all commands</td>
+      </tr>
+    </tbody>
+  </table>
 
-    <!-- Troubleshooting -->
-    <section class="mb-12">
-      <h2 class="text-2xl font-bold text-white mb-6">Troubleshooting</h2>
+  <!-- Troubleshooting -->
+  <h2 id="troubleshooting">Troubleshooting</h2>
 
-      <div class="space-y-4">
-        <details class="bg-dark-900 border border-dark-700 rounded-lg">
-          <summary class="px-4 py-3 cursor-pointer text-white font-medium hover:bg-dark-800 rounded-lg transition-colors">
-            "skillsmith: command not found"
-          </summary>
-          <div class="px-4 pb-4 text-dark-300 text-sm">
-            <p class="mb-2">The CLI isn't installed globally or isn't in your PATH.</p>
-            <p class="mb-2"><strong class="text-white">Solution:</strong></p>
-            <pre class="bg-dark-950 rounded p-2 overflow-x-auto"><code># Reinstall globally
+  <details class="quickstart-details">
+    <summary>"skillsmith: command not found"</summary>
+    <div class="quickstart-details-body">
+      <p>The CLI isn't installed globally or isn't in your PATH.</p>
+      <p><strong>Solution:</strong></p>
+      <pre><code>{`# Reinstall globally
 npm install -g @skillsmith/cli
 
 # Or use npx instead
-npx @skillsmith/cli search testing</code></pre>
-          </div>
-        </details>
+npx @skillsmith/cli search testing`}</code></pre>
+    </div>
+  </details>
 
-        <details class="bg-dark-900 border border-dark-700 rounded-lg">
-          <summary class="px-4 py-3 cursor-pointer text-white font-medium hover:bg-dark-800 rounded-lg transition-colors">
-            Claude Code doesn't show Skillsmith tools
-          </summary>
-          <div class="px-4 pb-4 text-dark-300 text-sm">
-            <p class="mb-2">The MCP server isn't configured or Claude Code needs to restart.</p>
-            <p class="mb-2"><strong class="text-white">Solution:</strong></p>
-            <ol class="list-decimal list-inside space-y-1">
-              <li>Verify <code class="bg-dark-800 px-1 rounded">~/.claude/settings.json</code> has the skillsmith configuration</li>
-              <li>Restart Claude Code completely (quit and reopen)</li>
-              <li>Ask Claude: "List available MCP tools"</li>
-            </ol>
-          </div>
-        </details>
+  <details class="quickstart-details">
+    <summary>Claude Code doesn't show Skillsmith tools</summary>
+    <div class="quickstart-details-body">
+      <p>The MCP server isn't configured or Claude Code needs to restart.</p>
+      <p><strong>Solution:</strong></p>
+      <ol>
+        <li>Verify <code>~/.claude/settings.json</code> has the skillsmith configuration</li>
+        <li>Restart Claude Code completely (quit and reopen)</li>
+        <li>Ask Claude: "List available MCP tools"</li>
+      </ol>
+    </div>
+  </details>
 
-        <details class="bg-dark-900 border border-dark-700 rounded-lg">
-          <summary class="px-4 py-3 cursor-pointer text-white font-medium hover:bg-dark-800 rounded-lg transition-colors">
-            "Permission denied" when installing skills
-          </summary>
-          <div class="px-4 pb-4 text-dark-300 text-sm">
-            <p class="mb-2">The skills directory doesn't exist or has wrong permissions.</p>
-            <p class="mb-2"><strong class="text-white">Solution:</strong></p>
-            <pre class="bg-dark-950 rounded p-2 overflow-x-auto"><code># Create the directory with correct permissions
+  <details class="quickstart-details">
+    <summary>"Permission denied" when installing skills</summary>
+    <div class="quickstart-details-body">
+      <p>The skills directory doesn't exist or has wrong permissions.</p>
+      <p><strong>Solution:</strong></p>
+      <pre><code>{`# Create the directory with correct permissions
 mkdir -p ~/.claude/skills
-chmod 755 ~/.claude/skills</code></pre>
-          </div>
-        </details>
+chmod 755 ~/.claude/skills`}</code></pre>
+    </div>
+  </details>
 
-        <details class="bg-dark-900 border border-dark-700 rounded-lg">
-          <summary class="px-4 py-3 cursor-pointer text-white font-medium hover:bg-dark-800 rounded-lg transition-colors">
-            Skills installed but not showing in Claude Code
-          </summary>
-          <div class="px-4 pb-4 text-dark-300 text-sm">
-            <p class="mb-2">Claude Code may need to refresh its skill cache.</p>
-            <p class="mb-2"><strong class="text-white">Solution:</strong></p>
-            <ol class="list-decimal list-inside space-y-1">
-              <li>Verify skills are in <code class="bg-dark-800 px-1 rounded">~/.claude/skills/</code></li>
-              <li>Start a new Claude Code session</li>
-              <li>Skills should appear automatically</li>
-            </ol>
-          </div>
-        </details>
-      </div>
-    </section>
+  <details class="quickstart-details">
+    <summary>Skills installed but not showing in Claude Code</summary>
+    <div class="quickstart-details-body">
+      <p>Claude Code may need to refresh its skill cache.</p>
+      <p><strong>Solution:</strong></p>
+      <ol>
+        <li>Verify skills are in <code>~/.claude/skills/</code></li>
+        <li>Start a new Claude Code session</li>
+        <li>Skills should appear automatically</li>
+      </ol>
+    </div>
+  </details>
 
-    <!-- Next Steps -->
-    <section>
-      <h2 class="text-2xl font-bold text-white mb-6">Next Steps</h2>
+  <!-- Next Steps -->
+  <h2 id="next-steps">Next Steps</h2>
 
-      <div class="grid md:grid-cols-3 gap-4">
-        <a href="/skills" class="block bg-dark-900 border border-dark-700 rounded-lg p-5 hover:border-primary-500/50 transition-colors">
-          <h3 class="text-white font-semibold mb-2">Browse Skills</h3>
-          <p class="text-dark-400 text-sm">Explore available skills by category and trust tier.</p>
-        </a>
-        <a href="/docs/cli" class="block bg-dark-900 border border-dark-700 rounded-lg p-5 hover:border-primary-500/50 transition-colors">
-          <h3 class="text-white font-semibold mb-2">CLI Reference</h3>
-          <p class="text-dark-400 text-sm">Complete documentation for all CLI commands.</p>
-        </a>
-        <a href="/docs/mcp-server" class="block bg-dark-900 border border-dark-700 rounded-lg p-5 hover:border-primary-500/50 transition-colors">
-          <h3 class="text-white font-semibold mb-2">MCP Server</h3>
-          <p class="text-dark-400 text-sm">Advanced configuration for the MCP integration.</p>
-        </a>
-      </div>
-    </section>
+  <div class="card-grid">
+    <a href="/skills" class="doc-card">
+      <h3>Browse Skills</h3>
+      <p>Explore available skills by category and trust tier.</p>
+    </a>
+    <a href="/docs/getting-started" class="doc-card">
+      <h3>Configuration Guide</h3>
+      <p>Set up API keys and configure advanced options.</p>
+    </a>
+    <a href="/docs/cli" class="doc-card">
+      <h3>CLI Reference</h3>
+      <p>Complete documentation for all CLI commands.</p>
+    </a>
+    <a href="/docs/mcp-server" class="doc-card">
+      <h3>MCP Server</h3>
+      <p>Advanced configuration for the MCP integration.</p>
+    </a>
+  </div>
+
+  <div class="callout">
+    <p class="callout-heading">Ready to configure API keys?</p>
+    <p>
+      Continue to the <a href="/docs/getting-started">Configuration Guide</a> for API key setup,
+      verification, and advanced options.
+    </p>
   </div>
 
   <script is:inline>
@@ -679,7 +594,8 @@ chmod 755 ~/.claude/skills</code></pre>
           tab.classList.add('active');
 
           // Show corresponding content
-          const contentContainer = group.parentElement.querySelector('.p-4') || group.nextElementSibling;
+          const contentContainer = group.nextElementSibling;
+          if (!contentContainer) return;
           contentContainer.querySelectorAll(`.${contentClass}`).forEach(c => c.classList.add('hidden'));
           contentContainer.querySelector(`.${contentClass}[data-platform="${platform}"], .${contentClass}[data-config="${platform}"], .${contentClass}[data-cli="${platform}"], .${contentClass}[data-nav="${platform}"]`)?.classList.remove('hidden');
         });
@@ -695,10 +611,19 @@ chmod 755 ~/.claude/skills</code></pre>
   </script>
 
   <style>
+    /* Tab styles */
     .platform-tab, .config-tab, .cli-tab, .nav-tab {
       color: #9ca3af;
       border-bottom: 2px solid transparent;
       margin-bottom: -1px;
+      padding: 0.5rem 1rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      background: none;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+      cursor: pointer;
     }
     .platform-tab:hover, .config-tab:hover, .cli-tab:hover, .nav-tab:hover {
       color: #d1d5db;
@@ -707,5 +632,271 @@ chmod 755 ~/.claude/skills</code></pre>
       color: #38bdf8;
       border-bottom-color: #38bdf8;
     }
+
+    /* Tabs container */
+    .quickstart-tabs-container {
+      background-color: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 0.5rem;
+      overflow: hidden;
+      margin-bottom: 1rem;
+    }
+    .quickstart-tabs {
+      display: flex;
+      border-bottom: 1px solid #1e293b;
+    }
+    .quickstart-tabs-content {
+      padding: 1rem;
+    }
+    .quickstart-tabs-content pre {
+      margin-bottom: 0.5rem;
+    }
+
+    /* Prerequisites */
+    .quickstart-prereqs {
+      background-color: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 0.5rem;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .quickstart-checklist {
+      list-style: none !important;
+      padding-left: 0 !important;
+      margin-bottom: 0 !important;
+    }
+    .quickstart-check-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .quickstart-check-item:last-child {
+      margin-bottom: 0;
+    }
+    .quickstart-check-icon {
+      width: 1.25rem;
+      height: 1.25rem;
+      color: #4ade80;
+      flex-shrink: 0;
+    }
+
+    /* Card grid */
+    .quickstart-card-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1rem;
+      margin: 1.5rem 0;
+    }
+    @media (min-width: 640px) {
+      .quickstart-card-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    /* Cards */
+    .quickstart-card {
+      display: block;
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      transition: border-color 0.2s;
+      text-decoration: none !important;
+    }
+    .quickstart-card-primary {
+      background: linear-gradient(to bottom right, rgba(14, 165, 233, 0.1), rgba(168, 85, 247, 0.1));
+      border: 2px solid rgba(14, 165, 233, 0.3);
+    }
+    .quickstart-card-primary:hover {
+      border-color: rgba(14, 165, 233, 0.6);
+    }
+    .quickstart-card-secondary {
+      background-color: #0f172a;
+      border: 1px solid #1e293b;
+    }
+    .quickstart-card-secondary:hover {
+      border-color: #475569;
+    }
+    .quickstart-card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+    .quickstart-card-icon {
+      width: 2.5rem;
+      height: 2.5rem;
+      border-radius: 0.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .quickstart-card-icon-primary {
+      background-color: rgba(14, 165, 233, 0.2);
+    }
+    .quickstart-card-icon-secondary {
+      background-color: #1e293b;
+    }
+    .quickstart-icon-svg {
+      width: 1.25rem;
+      height: 1.25rem;
+      color: #38bdf8;
+    }
+    .quickstart-icon-muted {
+      color: #9ca3af;
+    }
+    .quickstart-badge {
+      font-size: 0.625rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .quickstart-badge-primary {
+      color: #38bdf8;
+    }
+    .quickstart-badge-secondary {
+      color: #6b7280;
+    }
+    .quickstart-card-title {
+      font-size: 1.125rem !important;
+      font-weight: 700 !important;
+      color: white !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: none !important;
+    }
+    .quickstart-card-desc {
+      font-size: 0.875rem;
+      color: #cbd5e1;
+      margin-bottom: 1rem;
+    }
+    .quickstart-card-examples {
+      list-style: none !important;
+      padding-left: 0 !important;
+      margin-bottom: 0 !important;
+      font-size: 0.875rem;
+      color: #9ca3af;
+    }
+    .quickstart-card-examples li {
+      margin-bottom: 0.25rem;
+    }
+    .quickstart-card-examples li::before {
+      content: '\2022\00a0';
+    }
+
+    /* Conversation mock */
+    .quickstart-conversation {
+      background-color: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 0.5rem;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    .quickstart-message {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .quickstart-message:last-child {
+      margin-bottom: 0;
+    }
+    .quickstart-avatar {
+      width: 2rem;
+      height: 2rem;
+      border-radius: 9999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .quickstart-avatar span {
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+    .quickstart-avatar-user {
+      background-color: rgba(59, 130, 246, 0.2);
+    }
+    .quickstart-avatar-user span {
+      color: #60a5fa;
+    }
+    .quickstart-avatar-ai {
+      background-color: rgba(168, 85, 247, 0.2);
+    }
+    .quickstart-avatar-ai span {
+      color: #c084fc;
+    }
+    .quickstart-bubble {
+      background-color: #1e293b;
+      border-radius: 0.5rem;
+      padding: 0.5rem 1rem;
+      color: #e2e8f0;
+    }
+    .quickstart-bubble-ai {
+      font-size: 0.875rem;
+      color: #cbd5e1;
+    }
+    .quickstart-bubble-ai p {
+      margin-bottom: 0.5rem;
+    }
+    .quickstart-bubble-ai p:last-child {
+      margin-bottom: 0;
+    }
+    .quickstart-bubble-ai ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+      margin-bottom: 0.5rem;
+    }
+    .quickstart-bubble-ai li {
+      margin-bottom: 0.25rem;
+    }
+
+    /* Success box */
+    .quickstart-success {
+      background-color: rgba(34, 197, 94, 0.1);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+      border-radius: 0.5rem;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .quickstart-success h4 {
+      color: #4ade80;
+      font-weight: 600;
+      margin: 0 0 0.5rem 0;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .quickstart-success p {
+      font-size: 0.875rem;
+      color: #cbd5e1;
+      margin-bottom: 0;
+    }
+    .quickstart-success-icon {
+      width: 1.25rem;
+      height: 1.25rem;
+    }
+
+    /* Details/Accordion */
+    .quickstart-details {
+      background-color: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .quickstart-details summary {
+      padding: 0.75rem 1rem;
+      cursor: pointer;
+      color: white;
+      font-weight: 500;
+      border-radius: 0.5rem;
+      transition: background-color 0.2s;
+    }
+    .quickstart-details summary:hover {
+      background-color: #1e293b;
+    }
+    .quickstart-details-body {
+      padding: 0 1rem 1rem;
+      font-size: 0.875rem;
+    }
   </style>
-</BaseLayout>
+</DocsLayout>

@@ -54,7 +54,7 @@ export function createPinCommand(): Command {
           console.error(
             chalk.red(
               `Skill "${skillName}" not found in manifest. ` +
-                `Install the skill first with: skillsmith install-skill`
+                `Install the skill first with: skillsmith setup`
             )
           )
           process.exit(1)

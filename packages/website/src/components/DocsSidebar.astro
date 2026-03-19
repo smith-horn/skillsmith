@@ -1,20 +1,51 @@
 ---
+interface NavItem {
+  href: string
+  label: string
+  icon: string
+}
+
+interface NavSection {
+  heading: string
+  items: NavItem[]
+}
+
 interface Props {
   currentPath?: string
 }
 
 const { currentPath = '' } = Astro.props
 
-const navItems = [
-  { href: '/docs', label: 'Overview', icon: 'book' },
-  { href: '/docs/getting-started', label: 'Getting Started', icon: 'rocket' },
-  { href: '/docs/cli', label: 'CLI Reference', icon: 'terminal' },
-  { href: '/docs/mcp-server', label: 'MCP Server', icon: 'server' },
-  { href: '/docs/api', label: 'API Reference', icon: 'code' },
-  { href: '/docs/security', label: 'Security', icon: 'shield' },
-  { href: '/docs/quarantine', label: 'Quarantine', icon: 'alert' },
-  { href: '/docs/trust-tiers', label: 'Trust Tiers', icon: 'badge' },
-  { href: '/docs/faq', label: 'FAQ', icon: 'help-circle' },
+const navSections: NavSection[] = [
+  {
+    heading: 'Getting Started',
+    items: [
+      { href: '/docs', label: 'Overview', icon: 'book' },
+      { href: '/docs/quickstart', label: '5-Minute Setup', icon: 'play-circle' },
+      { href: '/docs/getting-started', label: 'Configuration Guide', icon: 'rocket' },
+      { href: '/docs/authoring', label: 'Skill Authoring', icon: 'edit' },
+    ],
+  },
+  {
+    heading: 'Reference',
+    items: [
+      { href: '/docs/cli', label: 'CLI Reference', icon: 'terminal' },
+      { href: '/docs/mcp-server', label: 'MCP Server', icon: 'server' },
+      { href: '/docs/api', label: 'API Reference', icon: 'code' },
+    ],
+  },
+  {
+    heading: 'Security & Trust',
+    items: [
+      { href: '/docs/security', label: 'Security', icon: 'shield' },
+      { href: '/docs/quarantine', label: 'Quarantine', icon: 'alert' },
+      { href: '/docs/trust-tiers', label: 'Trust Tiers', icon: 'badge' },
+    ],
+  },
+  {
+    heading: 'Help',
+    items: [{ href: '/docs/faq', label: 'FAQ', icon: 'help-circle' }],
+  },
 ]
 
 function isActive(href: string): boolean {
@@ -30,32 +61,34 @@ function isActive(href: string): boolean {
     class="sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto p-6"
     aria-label="Documentation navigation"
   >
-    <div class="mb-8">
-      <h3 class="text-xs font-semibold uppercase tracking-wider text-dark-400 mb-3 px-3">
-        Documentation
-      </h3>
-      <ul class="space-y-1">
-        {
-          navItems.map((item) => (
-            <li>
-              <a
-                href={item.href}
-                class:list={[
-                  'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                  isActive(item.href)
-                    ? 'bg-primary-500/10 text-primary-400'
-                    : 'text-dark-300 hover:bg-dark-800 hover:text-white',
-                ]}
-                aria-current={isActive(item.href) ? 'page' : undefined}
-              >
-                <span class="nav-icon" data-icon={item.icon} />
-                <span>{item.label}</span>
-              </a>
-            </li>
-          ))
-        }
-      </ul>
-    </div>
+    {
+      navSections.map((section) => (
+        <div class="mb-6">
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-dark-400 mb-3 px-3">
+            {section.heading}
+          </h3>
+          <ul class="space-y-1">
+            {section.items.map((item) => (
+              <li>
+                <a
+                  href={item.href}
+                  class:list={[
+                    'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                    isActive(item.href)
+                      ? 'bg-primary-500/10 text-primary-400'
+                      : 'text-dark-300 hover:bg-dark-800 hover:text-white',
+                  ]}
+                  aria-current={isActive(item.href) ? 'page' : undefined}
+                >
+                  <span class="nav-icon" data-icon={item.icon} />
+                  <span>{item.label}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))
+    }
 
     <div>
       <h3 class="text-xs font-semibold uppercase tracking-wider text-dark-400 mb-3 px-3">
@@ -139,8 +172,16 @@ function isActive(href: string): boolean {
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M4 19.5A2.5 2.5 0 0 1 6.5 17H20'/%3E%3Cpath d='M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z'/%3E%3C/svg%3E");
   }
 
+  .nav-icon[data-icon='play-circle']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpolygon points='10 8 16 12 10 16 10 8'/%3E%3C/svg%3E");
+  }
+
   .nav-icon[data-icon='rocket']::before {
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z'/%3E%3Cpath d='M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z'/%3E%3Cpath d='M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0'/%3E%3Cpath d='M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='edit']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7'/%3E%3Cpath d='M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z'/%3E%3C/svg%3E");
   }
 
   .nav-icon[data-icon='terminal']::before {

@@ -1,0 +1,426 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="Skill Authoring" description="Create, validate, and publish Claude Code skills with the Skillsmith CLI">
+  <script is:inline type="application/ld+json" slot="head">
+  {
+    "@context": "https://schema.org",
+    "@type": "HowTo",
+    "name": "How to Create and Publish a Claude Code Skill",
+    "description": "Use the Skillsmith CLI to scaffold, validate, and publish reusable Claude Code skills",
+    "totalTime": "PT10M",
+    "tool": [
+      { "@type": "HowToTool", "name": "Skillsmith CLI" },
+      { "@type": "HowToTool", "name": "Node.js 18+" }
+    ],
+    "step": [
+      {
+        "@type": "HowToStep",
+        "position": 1,
+        "name": "Create a Skill",
+        "text": "Run skillsmith create my-awesome-skill to scaffold a new skill at ~/.claude/skills/my-awesome-skill/"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 2,
+        "name": "Edit SKILL.md",
+        "text": "Customize the generated SKILL.md with your skill's instructions, trigger phrases, and behavioral classification"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 3,
+        "name": "Validate",
+        "text": "Run skillsmith author validate to check frontmatter, required fields, and file structure"
+      },
+      {
+        "@type": "HowToStep",
+        "position": 4,
+        "name": "Publish",
+        "text": "Run skillsmith author publish to generate a checksum manifest and prepare for registry submission"
+      }
+    ]
+  }
+  </script>
+  <h1>Skill Authoring</h1>
+
+  <p class="lead">
+    Create, validate, and publish reusable Claude Code skills with the Skillsmith CLI.
+  </p>
+
+  <h2>Overview</h2>
+
+  <p>The Skillsmith CLI offers two paths for creating skills:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Command</th>
+        <th>Output Location</th>
+        <th>Best For</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>skillsmith create &lt;name&gt;</code></td>
+        <td><code>~/.claude/skills/&lt;name&gt;/</code></td>
+        <td>Skills you plan to share or publish. Includes behavioral classification, CHANGELOG, and full publishing structure.</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith author init &lt;name&gt;</code></td>
+        <td>Current working directory</td>
+        <td>In-project skills that live alongside your codebase. Lighter scaffold without CHANGELOG or behavioral classification.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Quick Start</h2>
+
+  <p>Create a skill, customize it, validate, and publish in four steps:</p>
+
+  <pre><code>{`# 1. Scaffold a new skill
+skillsmith create my-awesome-skill
+
+# 2. Edit the generated SKILL.md
+#    ~/.claude/skills/my-awesome-skill/SKILL.md
+
+# 3. Validate your skill
+skillsmith author validate ~/.claude/skills/my-awesome-skill
+
+# 4. Prepare for publishing
+skillsmith author publish ~/.claude/skills/my-awesome-skill`}</code></pre>
+
+  <p>
+    The <code>create</code> command runs interactively by default, prompting for description,
+    author, category, skill type, and behavioral classification. You can also pass these as flags
+    for non-interactive usage:
+  </p>
+
+  <pre><code>{`skillsmith create my-awesome-skill \\
+  --description "Automates code review checklists" \\
+  --author myusername \\
+  --category development \\
+  --type basic \\
+  --behavior guided`}</code></pre>
+
+  <p>
+    Use <code>--dry-run</code> to preview the scaffold output without writing any files.
+  </p>
+
+  <h2>Behavioral Classification</h2>
+
+  <p>
+    Skills created with <code>skillsmith create</code> include a behavioral classification section
+    that tells users what to expect when they run your skill.
+  </p>
+
+  <h3>Skill Types</h3>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Type</th>
+        <th>Description</th>
+        <th>When to Use</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>basic</code></td>
+        <td>Simple, single-purpose skill</td>
+        <td>Single-file skills with no external dependencies. Linters, formatters, simple generators.</td>
+      </tr>
+      <tr>
+        <td><code>intermediate</code></td>
+        <td>Multi-step with some decisions</td>
+        <td>Skills with multiple files, local dependencies, or multi-step workflows.</td>
+      </tr>
+      <tr>
+        <td><code>advanced</code></td>
+        <td>Complex orchestration or agent delegation</td>
+        <td>Skills that call external APIs, spawn subagents, or require complex logic.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Behavioral Modes</h3>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Behavior</th>
+        <th>Description</th>
+        <th>When to Use</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>autonomous</code></td>
+        <td>Runs without user input</td>
+        <td>Fully automated workflows where the skill executes its entire process without pausing for decisions.</td>
+      </tr>
+      <tr>
+        <td><code>guided</code></td>
+        <td>Asks key questions then executes</td>
+        <td>Skills that need a few choices upfront (e.g., target branch, output format) then run to completion.</td>
+      </tr>
+      <tr>
+        <td><code>interactive</code></td>
+        <td>Back-and-forth dialogue throughout</td>
+        <td>Conversational skills that maintain an ongoing dialogue with the user during execution.</td>
+      </tr>
+      <tr>
+        <td><code>configurable</code></td>
+        <td>Settings-driven, provided upfront</td>
+        <td>Skills whose behavior is controlled entirely by configuration values the user provides before execution.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Validation</h2>
+
+  <p>
+    Run <code>skillsmith author validate &lt;path&gt;</code> to check your skill before publishing.
+    The path can be a directory containing <code>SKILL.md</code> or a direct path to the file.
+  </p>
+
+  <pre><code>{`# Validate a skill directory
+skillsmith author validate ~/.claude/skills/my-awesome-skill
+
+# Validate the current directory
+skillsmith author validate .`}</code></pre>
+
+  <p>The validator checks:</p>
+
+  <ul>
+    <li><strong>SKILL.md presence</strong> — the file must exist in the skill directory</li>
+    <li><strong>YAML frontmatter</strong> — valid YAML between <code>---</code> delimiters</li>
+    <li><strong>Required fields</strong> — <code>name</code>, <code>description</code>, and <code>version</code> must be present</li>
+    <li><strong>Metadata parsing</strong> — author, tags, category, and other fields are parseable</li>
+    <li><strong>Trust tier inference</strong> — the validator reports the inferred trust tier based on skill metadata</li>
+  </ul>
+
+  <p>
+    Validation output includes parsed metadata (name, description, author, version, tags, trust tier)
+    and all frontmatter fields, so you can verify everything looks correct before publishing.
+  </p>
+
+  <h2>Publishing</h2>
+
+  <p>
+    When your skill is ready to share, use <code>skillsmith author publish &lt;path&gt;</code> to
+    prepare it for distribution.
+  </p>
+
+  <pre><code>{`skillsmith author publish ~/.claude/skills/my-awesome-skill`}</code></pre>
+
+  <p>The publish command:</p>
+
+  <ol>
+    <li>Validates your skill (publishing fails if validation fails)</li>
+    <li>Generates a SHA-256 checksum of your <code>SKILL.md</code></li>
+    <li>Writes a <code>.skillsmith-publish.json</code> manifest with name, version, checksum, and trust tier</li>
+  </ol>
+
+  <p>After running publish, share your skill through one of these methods:</p>
+
+  <h3>GitHub (Recommended)</h3>
+
+  <pre><code>{`# Push to a GitHub repository
+gh repo create my-awesome-skill --public
+cd ~/.claude/skills/my-awesome-skill
+git init && git add . && git commit -m "feat: initial skill"
+git remote add origin https://github.com/yourusername/my-awesome-skill
+git push -u origin main
+
+# Create a release
+gh release create v1.0.0 --title "v1.0.0" --notes "Initial release"
+
+# Add the topic "claude-skill" to your repository for automatic discovery`}</code></pre>
+
+  <h3>Manual Installation</h3>
+
+  <p>Share the skill directory directly. Users copy it to <code>~/.claude/skills/</code>.</p>
+
+  <h3>Archive</h3>
+
+  <pre><code>{`tar -czf my-awesome-skill.tar.gz -C ~/.claude/skills my-awesome-skill`}</code></pre>
+
+  <h3>Reference Scanning</h3>
+
+  <p>
+    Use <code>--check-references</code> to scan for project-specific references that might
+    leak internal details before publishing:
+  </p>
+
+  <pre><code>{`skillsmith author publish . --check-references`}</code></pre>
+
+  <p>
+    You can also supply custom regex patterns with <code>--reference-patterns</code>:
+  </p>
+
+  <pre><code>{`skillsmith author publish . --check-references --reference-patterns "JIRA-\\d+,internal-api"`}</code></pre>
+
+  <h3>Trust Tier Progression</h3>
+
+  <p>Published skills progress through trust tiers as they gain community adoption:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Tier</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Experimental</strong></td>
+        <td>New and beta skills. Default tier for all newly published skills.</td>
+      </tr>
+      <tr>
+        <td><strong>Community</strong></td>
+        <td>Reviewed skills with community usage and positive feedback.</td>
+      </tr>
+      <tr>
+        <td><strong>Verified</strong></td>
+        <td>Official skills that have passed rigorous review and meet quality standards.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    See <a href="/docs/trust-tiers">Trust Tiers</a> for details on the progression criteria.
+  </p>
+
+  <h2>Advanced Commands</h2>
+
+  <h3><code>skillsmith author subagent</code></h3>
+
+  <p>
+    Generate a companion subagent definition for your skill. Subagents allow your skill to delegate
+    tasks to specialized agents with specific tool permissions.
+  </p>
+
+  <pre><code>{`# Generate a subagent for a skill
+skillsmith author subagent ~/.claude/skills/my-awesome-skill`}</code></pre>
+
+  <p>
+    The command reads your <code>SKILL.md</code>, analyzes tool requirements, and generates a subagent
+    configuration alongside a <code>CLAUDE.md</code> snippet for integration.
+  </p>
+
+  <h3><code>skillsmith author transform</code></h3>
+
+  <p>
+    Upgrade an existing skill by generating a subagent configuration. This is non-destructive — it
+    adds new files without modifying your existing <code>SKILL.md</code>.
+  </p>
+
+  <pre><code>{`# Transform a single skill
+skillsmith author transform ~/.claude/skills/my-skill
+
+# Transform all installed skills (batch mode)
+skillsmith author transform --batch
+
+# Preview changes without writing files
+skillsmith author transform ~/.claude/skills/my-skill --dry-run`}</code></pre>
+
+  <h3><code>skillsmith author mcp-init</code></h3>
+
+  <p>
+    Scaffold an MCP server project alongside your skill. This creates a complete MCP server
+    with proper project structure, tool definitions, and configuration.
+  </p>
+
+  <pre><code>{`skillsmith author mcp-init my-mcp-server`}</code></pre>
+
+  <h2>Skill Structure Reference</h2>
+
+  <p>A fully scaffolded skill (created with <code>skillsmith create</code>) has this structure:</p>
+
+  <pre><code>{`my-skill/
+├── SKILL.md           # Main skill file (required)
+├── README.md          # Documentation
+├── CHANGELOG.md       # Version history
+├── .gitignore         # Git ignore rules
+├── resources/         # Supporting files (data, templates, etc.)
+└── scripts/           # Automation scripts (optional, use --scripts)`}</code></pre>
+
+  <p>
+    Skills created with <code>skillsmith author init</code> include <code>SKILL.md</code>,
+    <code>README.md</code>, <code>.gitignore</code>, <code>resources/</code>, and <code>scripts/</code>
+    but omit the <code>CHANGELOG.md</code> and behavioral classification section.
+  </p>
+
+  <h3>SKILL.md Frontmatter Fields</h3>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Field</th>
+        <th>Required</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>name</code></td>
+        <td>Yes</td>
+        <td>Skill name (lowercase, hyphens only)</td>
+      </tr>
+      <tr>
+        <td><code>description</code></td>
+        <td>Yes</td>
+        <td>Brief description of what the skill does</td>
+      </tr>
+      <tr>
+        <td><code>version</code></td>
+        <td>Yes</td>
+        <td>Semantic version (e.g., <code>1.0.0</code>)</td>
+      </tr>
+      <tr>
+        <td><code>author</code></td>
+        <td>No</td>
+        <td>GitHub username of the skill author</td>
+      </tr>
+      <tr>
+        <td><code>category</code></td>
+        <td>No</td>
+        <td>One of: <code>development</code>, <code>productivity</code>, <code>communication</code>, <code>data</code>, <code>security</code>, <code>other</code></td>
+      </tr>
+      <tr>
+        <td><code>tags</code></td>
+        <td>No</td>
+        <td>List of tags for search and discovery</td>
+      </tr>
+      <tr>
+        <td><code>license</code></td>
+        <td>No</td>
+        <td>License identifier (e.g., <code>MIT</code>)</td>
+      </tr>
+      <tr>
+        <td><code>created</code></td>
+        <td>No</td>
+        <td>Creation date in <code>YYYY-MM-DD</code> format</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Next Steps</h2>
+
+  <ul>
+    <li><a href="/docs/cli">CLI Reference</a> — Full list of all CLI commands and flags</li>
+    <li><a href="/docs/trust-tiers">Trust Tiers</a> — How skills are reviewed and promoted</li>
+    <li><a href="/docs/security">Security</a> — Skill security model and protections</li>
+    <li><a href="/docs/getting-started">Configuration Guide</a> — Set up API keys for publishing</li>
+  </ul>
+
+  <div class="callout">
+    <p class="callout-heading">Need Help?</p>
+    <p>
+      If you run into issues while authoring skills, check out our
+      <a href="https://github.com/smith-horn/skillsmith/issues">GitHub Issues</a>
+      or ask in the CLI: <code>skillsmith --help</code>.
+    </p>
+  </div>
+</DocsLayout>

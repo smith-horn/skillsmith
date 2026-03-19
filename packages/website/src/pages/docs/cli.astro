@@ -72,14 +72,20 @@ skillsmith search --category devops --limit 20`}</code></pre>
 
   <h3>install</h3>
 
-  <p>Install a skill to your local environment.</p>
+  <p>Install a skill from the registry or a GitHub URL to <code>~/.claude/skills/</code>.</p>
 
-  <pre><code>{`skillsmith install <skill-id> [options]
+  <pre><code>{`skillsmith install <author/name> [options]
 
 # Examples
-skillsmith install jest-helper
-skillsmith install community/git-commit
-skillsmith install anthropic/official-skill --force`}</code></pre>
+skillsmith install community/jest-helper
+skillsmith install anthropic/official-skill --force
+skillsmith install https://github.com/owner/repo
+skillsmith install community/git-commit --quiet --json`}</code></pre>
+
+  <p>
+    The skill ID must be in <code>author/name</code> format or a full GitHub URL.
+    Bare names (e.g., <code>jest-helper</code>) are not accepted &mdash; always include the author prefix.
+  </p>
 
   <h4>Options</h4>
 
@@ -93,32 +99,55 @@ skillsmith install anthropic/official-skill --force`}</code></pre>
     </thead>
     <tbody>
       <tr>
-        <td><code>--path</code></td>
-        <td>Installation directory</td>
-        <td>~/.claude/skills/</td>
-      </tr>
-      <tr>
-        <td><code>--force</code></td>
-        <td>Overwrite existing installation</td>
+        <td><code>-f, --force</code></td>
+        <td>Force reinstall if already installed</td>
         <td>false</td>
       </tr>
       <tr>
-        <td><code>--dry-run</code></td>
-        <td>Preview without installing</td>
+        <td><code>--skip-scan</code></td>
+        <td>Skip security scan (not recommended)</td>
         <td>false</td>
+      </tr>
+      <tr>
+        <td><code>--skip-optimize</code></td>
+        <td>Skip Skillsmith optimization (decomposition, subagent generation)</td>
+        <td>false</td>
+      </tr>
+      <tr>
+        <td><code>-q, --quiet</code></td>
+        <td>Suppress advisory output (security-critical warnings still print)</td>
+        <td>false</td>
+      </tr>
+      <tr>
+        <td><code>--json</code></td>
+        <td>Output structured JSON result</td>
+        <td>false</td>
+      </tr>
+      <tr>
+        <td><code>-d, --db &lt;path&gt;</code></td>
+        <td>Database file path</td>
+        <td>~/.skillsmith/skills.db</td>
       </tr>
     </tbody>
   </table>
 
-  <h3>uninstall</h3>
+  <h3>remove</h3>
 
-  <p>Remove an installed skill.</p>
+  <p>
+    Remove an installed skill. Uses the manifest at <code>~/.skillsmith/manifest.json</code> for
+    clean removal (directory + manifest entry + dependency records). Falls back to direct removal
+    for orphan skills that exist on disk but are not in the manifest.
+  </p>
 
-  <pre><code>{`skillsmith uninstall <skill-id> [options]
+  <pre><code>{`skillsmith remove <skill-name> [options]
 
 # Examples
-skillsmith uninstall jest-helper
-skillsmith uninstall community/git-commit --confirm`}</code></pre>
+skillsmith remove jest-helper
+skillsmith remove git-commit --force
+
+# Aliases
+skillsmith rm jest-helper
+skillsmith uninstall jest-helper`}</code></pre>
 
   <h4>Options</h4>
 
@@ -132,8 +161,45 @@ skillsmith uninstall community/git-commit --confirm`}</code></pre>
     </thead>
     <tbody>
       <tr>
-        <td><code>--confirm</code></td>
-        <td>Skip confirmation prompt</td>
+        <td><code>-f, --force</code></td>
+        <td>Skip confirmation prompt and force removal of modified or orphan skills</td>
+        <td>false</td>
+      </tr>
+      <tr>
+        <td><code>-d, --db &lt;path&gt;</code></td>
+        <td>Database file path</td>
+        <td>~/.skillsmith/skills.db</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>setup</h3>
+
+  <p>
+    Set up the bundled <code>/skillsmith</code> slash command skill. This copies the built-in skill
+    to <code>~/.claude/skills/skillsmith/</code> so you can use <code>/skillsmith</code> in Claude
+    Code sessions. Previously named <code>install-skill</code> (deprecated alias still works).
+  </p>
+
+  <pre><code>{`skillsmith setup [options]
+
+# Reinstall
+skillsmith setup --force`}</code></pre>
+
+  <h4>Options</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th>Description</th>
+        <th>Default</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>-f, --force</code></td>
+        <td>Reinstall even if already installed</td>
         <td>false</td>
       </tr>
     </tbody>

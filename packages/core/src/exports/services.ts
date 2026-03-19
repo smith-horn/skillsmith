@@ -365,3 +365,29 @@ export {
   type BillingErrorCode,
   type LicenseTier,
 } from '../billing/index.js'
+
+// ============================================================================
+// Skill Installation (SMI-3483: Wave 0)
+// ============================================================================
+
+export {
+  SkillInstallationService,
+  type SkillInstallationServiceParams,
+} from '../services/skill-installation.service.js'
+
+export {
+  TRUST_TIER_SCANNER_OPTIONS as INSTALL_TRUST_TIER_SCANNER_OPTIONS,
+  type ProgressCallback,
+  type InstallOptions,
+  type InstallResult as CoreInstallResult,
+  type UninstallOptions,
+  type UninstallResult as CoreUninstallResult,
+  type SkillManifest,
+  type SkillManifestEntry,
+  type RegistrySkillInfo,
+  type RegistryLookup,
+  type CoInstallRecorder,
+  type DepIntelResult,
+  type OptimizationInfo as CoreOptimizationInfo,
+  type ConflictAction as CoreConflictAction,
+} from '../services/skill-installation.types.js'
