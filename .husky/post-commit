@@ -26,8 +26,10 @@ if [ -f "$EXPECTED_BRANCH_FILE" ]; then
     COMMIT_HASH=$(git rev-parse --short HEAD)
     echo ""
     echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo "${RED}  WARNING: Branch switched during commit (smudge filter bug)${NC}"
+    echo "${RED}  ⚠️  ⚠️  ⚠️  BRANCH DRIFT DETECTED  ⚠️  ⚠️  ⚠️${NC}"
     echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "${RED}  WARNING: Branch switched during commit (smudge filter bug)${NC}"
     echo ""
     echo "  Expected branch: ${YELLOW}$EXPECTED${NC}"
     echo "  Actual branch:   ${YELLOW}$ACTUAL${NC}"
@@ -39,6 +41,9 @@ if [ -f "$EXPECTED_BRANCH_FILE" ]; then
     echo ""
     echo "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
+  else
+    # Always show current branch after commit (defense-in-depth for SMI-2536)
+    echo "  📍 Committed on branch: $ACTUAL"
   fi
 fi
 

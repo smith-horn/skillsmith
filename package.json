@@ -29,7 +29,7 @@
     "validate:anon-functions": "npx tsx scripts/validate-anonymous-functions.ts",
     "ci:local": "npm run lint && npm run typecheck && npm run test:coverage",
     "ci:quick": "npm run lint -- --cache && npm run typecheck && npm run test",
-    "preflight": "npx tsx scripts/preflight-check.ts",
+    "preflight": "npx tsx scripts/preflight-check.ts && node scripts/verify-publish-deps.mjs",
     "pre-impl": "node scripts/pre-impl-check.mjs",
     "prepare": "husky",
     "benchmark": "npm run benchmark --workspace=@skillsmith/core",

@@ -150,7 +150,17 @@ fi
 # SMI-2604: --no-stash prevents lint-staged from running git stash push/pop,
 # which triggers git-crypt smudge filters that silently switch branches.
 echo "${YELLOW}[3/3] Running lint and format on staged files...${NC}"
+
+# SMI-retro: Snapshot staged files before lint-staged to prevent re-staging unrelated changes.
+# --no-stash (SMI-2604) prevents smudge filter branch switches but lets lint-staged operate
+# on the full working tree. After lint-staged, we re-add only originally-staged files.
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=d)
+
 if npx lint-staged --no-stash; then
+    # Re-stage only originally-staged files (formatters may have modified them)
+    if [ -n "$STAGED_FILES" ]; then
+      echo "$STAGED_FILES" | xargs git add --
+    fi
     echo "${GREEN}  ✓ Lint and format passed${NC}"
 else
     echo ""
