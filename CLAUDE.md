@@ -56,7 +56,7 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 
 **npm overrides** (transitive vulnerability fixes in root `package.json`):
 
-- **Before adding an override**, check if the target is exact-pinned: `docker exec skillsmith-dev-1 node -e "console.log(require('<pkg>/package.json').dependencies['<dep>'])"`. If no `^`/`~` prefix, the override **will not work** — npm cannot replace exact-pinned versions. Dismiss the alert with documented rationale instead.
+- **Before adding an override**, check if the target is exact-pinned: `docker exec skillsmith-dev-1 node -e "console.log(require('<pkg>/package.json').dependencies['<dep>'])"`. If no `^`/`~` prefix, a flat override alone **will not work** — npm cannot replace exact-pinned versions. However, `npm update <pkg>` may resolve it via dedup if another chain pulls in the patched version. Verify with `npm ls <dep>` after update. If the exact-pinned copy persists, dismiss the alert with documented rationale.
 - `ajv`: scoped overrides only (`"parent": { "ajv": "^8.18.0" }`). A global override breaks ESLint (`ajv@6.x` → `8.x` API incompatible).
 - `typescript-eslint` is a meta-package — always update `typescript-eslint`, `@typescript-eslint/parser`, and `@typescript-eslint/eslint-plugin` together (they share internal version locks). Dependabot groups them automatically (see `.github/dependabot.yml`).
 
