@@ -17,7 +17,7 @@ This is a Claude Code skill that provides [describe functionality].
 ### Via Skillsmith
 
 \`\`\`bash
-skillsmith install {{name}}
+skillsmith install {{author}}/{{name}}
 \`\`\`
 
 ### Manual Installation

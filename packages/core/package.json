@@ -40,6 +40,11 @@
       "types": "./dist/tests/testkit.d.ts",
       "import": "./dist/tests/testkit.js",
       "default": "./dist/tests/testkit.js"
+    },
+    "./services/skill-installation-helpers": {
+      "types": "./dist/src/services/skill-installation.helpers.d.ts",
+      "import": "./dist/src/services/skill-installation.helpers.js",
+      "default": "./dist/src/services/skill-installation.helpers.js"
     }
   },
   "scripts": {

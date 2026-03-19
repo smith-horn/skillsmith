@@ -35,7 +35,10 @@ export { createSyncCommand } from './sync.js'
 // SMI-1455: Database Merge Command
 export { createMergeCommand } from './merge.js'
 
-// SMI-824: Install Skillsmith Skill Command
+// SMI-3484: Install skill from registry/GitHub
+export { createInstallCommand } from './install.js'
+
+// SMI-824: Install Skillsmith Skill Command (renamed to 'setup')
 export { createInstallSkillCommand } from './install-skill.js'
 
 // SMI-2715: CLI Login Device Flow

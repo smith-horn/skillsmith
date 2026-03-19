@@ -285,10 +285,7 @@ export async function createSkill(
     date,
   })
 
-  const readmeContent = README_MD_TEMPLATE.replace(
-    /skillsmith install \{\{name\}\}/g,
-    `skillsmith install ${author}/{{name}}`
-  )
+  const readmeContent = README_MD_TEMPLATE.replace(/\{\{author\}\}/g, sanitizeYamlScalar(author))
     .replace(/\{\{name\}\}/g, skillName)
     .replace(/\{\{description\}\}/g, description)
 

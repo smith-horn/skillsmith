@@ -15,7 +15,8 @@
  * - author subagent: Generate companion subagent for a skill (SMI-1389)
  * - author transform: Upgrade existing skill with subagent (SMI-1390)
  * - author mcp-init: Scaffold a new MCP server project (SMI-1433)
- * - install-skill: Install skillsmith skill for /skillsmith slash command (SMI-824)
+ * - install: Install a skill from registry or GitHub URL (SMI-3484)
+ * - setup: Install skillsmith skill for /skillsmith slash command (SMI-824, renamed from install-skill)
  */
 
 import { Command } from 'commander'
@@ -34,6 +35,7 @@ import {
   createAnalyzeCommand,
   createRecommendCommand,
   createSyncCommand,
+  createInstallCommand,
   createInstallSkillCommand,
   createLoginCommand,
   createLogoutCommand,
@@ -114,6 +116,9 @@ program.addCommand(createListCommand())
 program.addCommand(createUpdateCommand())
 program.addCommand(createRemoveCommand())
 
+// SMI-3484: Install skill from registry or GitHub URL
+program.addCommand(createInstallCommand())
+
 // SMI-746: Skill authoring commands (under 'author' group)
 // SMI-1389, SMI-1390: Subagent generation
 // SMI-1433: MCP server scaffolding
@@ -143,7 +148,9 @@ program.addCommand(createRecommendCommand())
 program.addCommand(createSyncCommand())
 
 // SMI-824: Install skillsmith skill for /skillsmith slash command
-program.addCommand(createInstallSkillCommand())
+// SMI-3484: Renamed from 'install-skill' to 'setup' to avoid confusion with 'install'
+const setupCommand = createInstallSkillCommand()
+program.addCommand(setupCommand)
 
 // SMI-2715: CLI Login Device Flow
 program.addCommand(createLoginCommand())

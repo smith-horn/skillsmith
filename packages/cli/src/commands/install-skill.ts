@@ -125,7 +125,7 @@ async function installSkillsmithSkill(force: boolean): Promise<void> {
     console.log()
     console.log(chalk.bold('Available Commands:'))
     console.log(chalk.cyan('  /skillsmith search <query>') + ' - Search for skills')
-    console.log(chalk.cyan('  /skillsmith install <id>') + ' - Install a skill')
+    console.log(chalk.cyan('  /skillsmith install <author/name>') + ' - Install a skill')
     console.log(chalk.cyan('  /skillsmith recommend') + ' - Get recommendations')
     console.log(chalk.cyan('  /skillsmith compare <ids>') + ' - Compare skills')
     console.log(chalk.cyan('  /skillsmith list') + ' - List installed skills')
@@ -142,11 +142,24 @@ async function installSkillsmithSkill(force: boolean): Promise<void> {
  * Create the install-skill command
  */
 export function createInstallSkillCommand(): Command {
-  return new Command('install-skill')
-    .description('Install the skillsmith skill for /skillsmith slash command support')
+  return new Command('setup')
+    .alias('install-skill')
+    .description(
+      'Set up the skillsmith slash command skill (installs to ~/.claude/skills/skillsmith/)'
+    )
     .option('-f, --force', 'Reinstall even if already installed')
     .action(async (opts: { force?: boolean }) => {
       try {
+        // SMI-3484: Deprecation warning when invoked via old name
+        const invokedName = process.argv[2]
+        if (invokedName === 'install-skill') {
+          console.log(
+            chalk.yellow(
+              'Warning: "install-skill" is deprecated and will be removed in a future release. ' +
+                'Use "setup" instead.'
+            )
+          )
+        }
         await installSkillsmithSkill(opts.force ?? false)
       } catch (error) {
         console.error(chalk.red('Error:'), sanitizeError(error))

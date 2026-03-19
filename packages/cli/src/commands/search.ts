@@ -7,11 +7,18 @@
 import { Command } from 'commander'
 import { input, checkbox, number, select } from '@inquirer/prompts'
 import chalk from 'chalk'
+import ora from 'ora'
 import {
   createDatabaseAsync,
+  initializeSchema,
   SearchService,
+  SkillRepository,
+  SkillDependencyRepository,
+  SkillInstallationService,
   type SearchOptions,
   type TrustTier,
+  type RegistryLookup,
+  type RegistrySkillInfo,
 } from '@skillsmith/core'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
@@ -194,8 +201,50 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
             })
 
             if (nextAction === 'install') {
-              console.log(chalk.green(`\nTo install this skill, run:`))
-              console.log(chalk.cyan(`  skillsmith install ${selectedResult.skill.id}\n`))
+              const installSpinner = ora('Installing skill...').start()
+              try {
+                initializeSchema(db)
+                const skillRepo = new SkillRepository(db)
+                const skillDependencyRepo = new SkillDependencyRepository(db)
+                const registryLookup: RegistryLookup = {
+                  async lookup(sid: string): Promise<RegistrySkillInfo | null> {
+                    const s = skillRepo.findById(sid)
+                    if (!s || !s.repoUrl) return null
+                    return {
+                      repoUrl: s.repoUrl,
+                      name: s.name,
+                      trustTier: s.trustTier,
+                      quarantined: false,
+                    }
+                  },
+                }
+                const installService = new SkillInstallationService({
+                  db,
+                  skillRepo,
+                  skillDependencyRepo,
+                  registryLookup,
+                  onProgress: (_stage: string, detail: string) => {
+                    installSpinner.text = detail
+                  },
+                })
+                const installResult = await installService.install(selectedResult.skill.id, {})
+                if (installResult.success) {
+                  installSpinner.succeed(
+                    chalk.green(`Installed "${selectedResult.skill.name}" successfully`)
+                  )
+                  if (installResult.installPath) {
+                    console.log(chalk.dim(`  Path: ${installResult.installPath}`))
+                  }
+                } else {
+                  installSpinner.fail(chalk.red(`Installation failed: ${installResult.error}`))
+                }
+              } catch (installError) {
+                installSpinner.fail(
+                  chalk.red(
+                    `Installation error: ${installError instanceof Error ? installError.message : String(installError)}`
+                  )
+                )
+              }
             } else if (nextAction === 'exit') {
               phase = 'exit'
             }

@@ -9,9 +9,18 @@ import { confirm } from '@inquirer/prompts'
 import chalk from 'chalk'
 import Table from 'cli-table3'
 import ora from 'ora'
-import { rm } from 'fs/promises'
-import { createDatabaseAsync, SkillRepository, type Skill, type TrustTier } from '@skillsmith/core'
-import { DEFAULT_DB_PATH } from '../config.js'
+import { mkdir } from 'fs/promises'
+import { dirname } from 'path'
+import {
+  createDatabaseAsync,
+  initializeSchema,
+  SkillRepository,
+  SkillDependencyRepository,
+  SkillInstallationService,
+  type Skill,
+  type TrustTier,
+} from '@skillsmith/core'
+import { DEFAULT_DB_PATH, DEFAULT_SKILLS_DIR, DEFAULT_MANIFEST_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { getInstalledSkills, type InstalledSkill } from '../utils/skills-directory.js'
 
@@ -41,7 +50,7 @@ interface SkillWithVersion extends Skill {
 function displaySkillsTable(skills: InstalledSkill[]): void {
   if (skills.length === 0) {
     console.log(chalk.yellow('\nNo skills installed.\n'))
-    console.log(chalk.dim('Install skills with: skillsmith install <skill-name>\n'))
+    console.log(chalk.dim('Install skills with: skillsmith install <author/skill-name>\n'))
     return
   }
 
@@ -209,18 +218,20 @@ async function updateAllSkills(dbPath: string): Promise<void> {
 }
 
 /**
- * Remove a skill
+ * Remove a skill using SkillInstallationService for manifest-aware removal.
+ * Falls back to direct removal for orphan skills (on disk but not in manifest).
  */
-async function removeSkill(skillName: string, force: boolean): Promise<boolean> {
-  const installed = await getInstalledSkills()
-  const skill = installed.find((s) => s.name.toLowerCase() === skillName.toLowerCase())
-
-  if (!skill) {
-    console.log(chalk.red(`Skill "${skillName}" is not installed`))
-    return false
-  }
-
+async function removeSkill(skillName: string, force: boolean, dbPath: string): Promise<boolean> {
+  // Show skill info and confirm before proceeding (unless --force)
   if (!force) {
+    const installed = await getInstalledSkills()
+    const skill = installed.find((s) => s.name.toLowerCase() === skillName.toLowerCase())
+
+    if (!skill) {
+      console.log(chalk.red(`Skill "${skillName}" is not installed`))
+      return false
+    }
+
     console.log(chalk.bold(`\nSkill to remove:`))
     console.log(`  Name: ${skill.name}`)
     console.log(`  Version: ${skill.version || 'N/A'}`)
@@ -238,15 +249,48 @@ async function removeSkill(skillName: string, force: boolean): Promise<boolean> 
     }
   }
 
-  const spinner = ora(`Removing ${skill.name}...`).start()
+  const spinner = ora(`Removing ${skillName}...`).start()
+
+  // Ensure database directory exists before opening
+  await mkdir(dirname(dbPath), { recursive: true })
+  const db = await createDatabaseAsync(dbPath)
+  initializeSchema(db)
 
   try {
-    await rm(skill.path, { recursive: true, force: true })
-    spinner.succeed(`Successfully removed ${skill.name}`)
-    return true
+    const skillRepo = new SkillRepository(db)
+    const skillDependencyRepo = new SkillDependencyRepository(db)
+
+    const service = new SkillInstallationService({
+      db,
+      skillRepo,
+      skillDependencyRepo,
+      skillsDir: DEFAULT_SKILLS_DIR,
+      manifestPath: DEFAULT_MANIFEST_PATH,
+      onProgress: (_stage: string, detail: string) => {
+        spinner.text = detail
+      },
+    })
+
+    const result = await service.uninstall(skillName, { force })
+
+    if (result.success) {
+      spinner.succeed(`Successfully removed ${skillName}`)
+      if (result.warning) {
+        console.log(chalk.yellow(`  Warning: ${result.warning}`))
+      }
+      return true
+    } else {
+      spinner.fail(result.message)
+      if (result.warning) {
+        console.log(chalk.yellow(`  ${result.warning}`))
+      }
+      return false
+    }
   } catch (error) {
-    spinner.fail(`Failed to remove ${skill.name}: ${sanitizeError(error)}`)
+    spinner.fail(`Failed to remove ${skillName}: ${sanitizeError(error)}`)
     return false
+  } finally {
+    db.close()
   }
 }
 
@@ -317,12 +361,14 @@ export function createRemoveCommand(): Command {
     .alias('uninstall')
     .description('Remove an installed skill')
     .argument('<skill>', 'Skill name to remove')
-    .option('-f, --force', 'Skip confirmation prompt')
-    .action(async (skillName: string, opts: Record<string, boolean | undefined>) => {
-      const force = opts['force'] ?? false
+    .option('-f, --force', 'Skip confirmation prompt and force removal of modified/orphan skills')
+    .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
+    .action(async (skillName: string, opts: Record<string, string | boolean | undefined>) => {
+      const force = (opts['force'] as boolean) ?? false
+      const dbPath = (opts['db'] as string) ?? DEFAULT_DB_PATH
 
       try {
-        const success = await removeSkill(skillName, force)
+        const success = await removeSkill(skillName, force, dbPath)
         process.exit(success ? 0 : 1)
       } catch (error) {
         console.error(chalk.red('Error removing skill:'), sanitizeError(error))
