@@ -27,6 +27,16 @@ vi.mock('../../src/tools/install.helpers.js', async (importActual) => {
   }
 })
 
+// SMI-3483: Core service now owns fetchFromGitHub — mock it there too so
+// SkillInstallationService uses the test double instead of real GitHub fetch.
+vi.mock('@skillsmith/core/services/skill-installation-helpers', async (importActual) => {
+  const actual = await importActual<Record<string, unknown>>()
+  return {
+    ...actual,
+    fetchFromGitHub: vi.fn(),
+  }
+})
+
 // We need to mock the paths used by the install module
 // Since the install.ts uses os.homedir(), we'll test the core logic
 
@@ -756,6 +766,8 @@ Use this skill by mentioning it in Claude Code.
     let lookupSkillFromRegistry: ReturnType<typeof vi.fn>
     let fetchFromGitHub: ReturnType<typeof vi.fn>
 
+    let coreFetchFromGitHub: ReturnType<typeof vi.fn>
+
     beforeAll(async () => {
       // Dynamic import after vi.mock() has been hoisted — module is already mocked
       const installModule = await import('../../src/tools/install.js')
@@ -767,6 +779,12 @@ Use this skill by mentioning it in Claude Code.
       const helpersModule = await import('../../src/tools/install.helpers.js')
       lookupSkillFromRegistry = vi.mocked(helpersModule.lookupSkillFromRegistry)
       fetchFromGitHub = vi.mocked(helpersModule.fetchFromGitHub)
+
+      // SMI-3483: Core service owns fetchFromGitHub — get its mock handle too
+      const coreHelpersModule = await import('@skillsmith/core/services/skill-installation-helpers')
+      coreFetchFromGitHub = vi.mocked(
+        coreHelpersModule.fetchFromGitHub as (...args: unknown[]) => unknown
+      )
     })
 
     beforeEach(() => {
@@ -781,8 +799,9 @@ Use this skill by mentioning it in Claude Code.
         trustTier: 'community',
         quarantined: false,
       })
-      // SKILL.md fetch succeeds
+      // SKILL.md fetch succeeds (mock both mcp-server and core paths)
       fetchFromGitHub.mockResolvedValue(VALID_SKILL_MD)
+      coreFetchFromGitHub.mockResolvedValue(VALID_SKILL_MD)
 
       const result = await installSkill(
         installInputSchema.parse({ skillId: TEST_UUID, skipScan: true, force: true })
@@ -843,6 +862,7 @@ Use this skill by mentioning it in Claude Code.
         quarantined: false,
       })
       fetchFromGitHub.mockRejectedValue(new Error('Failed to fetch SKILL.md: 404'))
+      coreFetchFromGitHub.mockRejectedValue(new Error('Failed to fetch SKILL.md: 404'))
 
       const result = await installSkill(installInputSchema.parse({ skillId: TEST_UUID }))
 
