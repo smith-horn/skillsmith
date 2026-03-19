@@ -17,7 +17,27 @@ import { mergeDependencies } from '../analysis/DependencyMerger.js'
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
 import type { SkillDependencyRow } from '../types/dependencies.js'
 
-import type { DepIntelResult, OptimizationInfo } from './skill-installation.types.js'
+import { TransformationService } from '../services/TransformationService.js'
+import type { Database } from '../db/database-interface.js'
+import type {
+  DepIntelResult,
+  OptimizationInfo,
+  ProgressCallback,
+  UninstallResult,
+} from './skill-installation.types.js'
+
+import type { ManifestManager } from './skill-manifest.js'
+
+/**
+ * Result of applying optimization to a skill's content.
+ */
+export interface OptimizationResult {
+  finalSkillContent: string
+  subSkillFiles: Array<{ filename: string; content: string }>
+  subagentContent: string | undefined
+  claudeMdSnippet: string | undefined
+  optimizationInfo: OptimizationInfo
+}
 
 // ============================================================================
 // Skill ID Parsing
@@ -244,5 +264,161 @@ export function persistDependencies(
 
   for (const [source, sourceRows] of bySource) {
     repo.setDependencies(skillId, sourceRows, source as SkillDependencyRow['dep_source'])
+  }
+}
+
+/**
+ * Perform skill uninstall with manifest awareness and orphan fallback.
+ */
+export async function performUninstall(params: {
+  skillName: string
+  force: boolean
+  skillsDir: string
+  manifest: ManifestManager
+  skillDependencyRepo: SkillDependencyRepository
+  onProgress: ProgressCallback
+}): Promise<UninstallResult> {
+  const { skillName, force, skillsDir, manifest, skillDependencyRepo, onProgress } = params
+
+  try {
+    onProgress('manifest', 'Loading manifest')
+    const manifestData = await manifest.load()
+    const skillEntry = manifestData.installedSkills[skillName]
+
+    if (!skillEntry) {
+      const potentialPath = path.join(skillsDir, skillName)
+      try {
+        await fs.access(potentialPath)
+        if (!force) {
+          return {
+            success: false,
+            skillName,
+            message:
+              'Skill "' +
+              skillName +
+              '" not in manifest but exists on disk. Use force=true to remove.',
+            warning: 'This skill was not installed via Skillsmith.',
+          }
+        }
+        onProgress('remove', 'Removing orphan skill from disk')
+        await fs.rm(potentialPath, { recursive: true, force: true })
+        return {
+          success: true,
+          skillName,
+          message: 'Skill "' + skillName + '" removed from disk (was not in manifest).',
+          removedPath: potentialPath,
+          warning:
+            'Skill was not in the manifest. Use "skillsmith install" to register skills properly.',
+        }
+      } catch {
+        return { success: false, skillName, message: 'Skill "' + skillName + '" is not installed.' }
+      }
+    }
+
+    const installPath = skillEntry.installPath
+
+    if (!force) {
+      onProgress('check', 'Checking for modifications')
+      const modified = await checkForModifications(installPath, skillEntry.installedAt)
+      if (modified) {
+        return {
+          success: false,
+          skillName,
+          message:
+            'Skill "' +
+            skillName +
+            '" has been modified since installation. Use force=true to remove anyway.',
+          warning: 'Local modifications will be lost if you force uninstall.',
+        }
+      }
+    }
+
+    onProgress('remove', 'Removing skill directory')
+    try {
+      await fs.rm(installPath, { recursive: true, force: true })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+
+    try {
+      skillDependencyRepo.clearAll(skillEntry.id)
+    } catch {
+      // Table may not exist pre-migration
+    }
+
+    onProgress('manifest', 'Updating manifest')
+    delete manifestData.installedSkills[skillName]
+    await manifest.save(manifestData)
+
+    onProgress('done', 'Uninstall complete')
+    return {
+      success: true,
+      skillName,
+      message: 'Skill "' + skillName + '" has been uninstalled successfully.',
+      removedPath: installPath,
+    }
+  } catch (error) {
+    return {
+      success: false,
+      skillName,
+      message: error instanceof Error ? error.message : 'Unknown error during uninstall',
+    }
+  }
+}
+
+/**
+ * Apply skill optimization via TransformationService.
+ * Returns original content if transformation fails or produces no changes.
+ */
+export async function applyOptimization(
+  db: Database,
+  skillId: string,
+  skillName: string,
+  skillMdContent: string
+): Promise<OptimizationResult> {
+  try {
+    const transformService = new TransformationService(db, {
+      cacheTtl: 3600,
+      version: '1.0.0',
+    })
+
+    const nameMatch = skillMdContent.match(/^name:\s*(.+)$/m)
+    const descMatch = skillMdContent.match(/^description:\s*(.+)$/m)
+    const extractedName = nameMatch ? nameMatch[1].trim() : skillName
+    const extractedDesc = descMatch ? descMatch[1].trim() : ''
+
+    const transformResult = await transformService.transform(
+      skillId,
+      extractedName,
+      extractedDesc,
+      skillMdContent
+    )
+
+    if (transformResult.transformed) {
+      return {
+        finalSkillContent: transformResult.mainSkillContent,
+        subSkillFiles: transformResult.subSkills,
+        subagentContent: transformResult.subagent?.content,
+        claudeMdSnippet: transformResult.claudeMdSnippet,
+        optimizationInfo: {
+          optimized: true,
+          subSkills: transformResult.subSkills.map((s) => s.filename),
+          subagentGenerated: !!transformResult.subagent?.content,
+          tokenReductionPercent: transformResult.stats.tokenReductionPercent,
+          originalLines: transformResult.stats.originalLines,
+          optimizedLines: transformResult.stats.optimizedLines,
+        },
+      }
+    }
+  } catch {
+    // Transformation failed — continue with original content
+  }
+
+  return {
+    finalSkillContent: skillMdContent,
+    subSkillFiles: [],
+    subagentContent: undefined,
+    claudeMdSnippet: undefined,
+    optimizationInfo: { optimized: false },
   }
 }

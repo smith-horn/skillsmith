@@ -15,8 +15,6 @@ import * as os from 'os'
 import { SecurityScanner } from '../security/index.js'
 import { safeWriteFile } from '../utils/safe-fs.js'
 import { parseRepoUrl } from '../utils/github-url.js'
-import { TransformationService } from './TransformationService.js'
-
 import type { TrustTier } from '../types/skill.js'
 import type { SkillRepository } from '../repositories/SkillRepository.js'
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
@@ -29,11 +27,11 @@ import {
   type InstallResult,
   type UninstallOptions,
   type UninstallResult,
-  type SkillManifest,
   type RegistryLookup,
   type CoInstallRecorder,
-  type OptimizationInfo,
 } from './skill-installation.types.js'
+
+import { ManifestManager } from './skill-manifest.js'
 
 // SMI-3483: Helpers split to companion file to meet 500-line standard
 import {
@@ -41,10 +39,11 @@ import {
   hashContent,
   validateSkillMd,
   fetchFromGitHub,
-  checkForModifications,
   generateTips,
   extractDepIntel,
   persistDependencies,
+  applyOptimization,
+  performUninstall,
 } from './skill-installation.helpers.js'
 
 // ============================================================================
@@ -54,9 +53,6 @@ import {
 const DEFAULT_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
 const DEFAULT_SKILLSMITH_DIR = path.join(os.homedir(), '.skillsmith')
 const DEFAULT_MANIFEST_PATH = path.join(DEFAULT_SKILLSMITH_DIR, 'manifest.json')
-
-const MANIFEST_LOCK_TIMEOUT_MS = 30000
-const MANIFEST_LOCK_RETRY_MS = 100
 
 // ============================================================================
 // Service Parameters
@@ -89,7 +85,7 @@ export class SkillInstallationService {
   private readonly skillRepo: SkillRepository
   private readonly skillDependencyRepo: SkillDependencyRepository
   private readonly skillsDir: string
-  private readonly manifestPath: string
+  private readonly manifest: ManifestManager
   private readonly onProgress: ProgressCallback
   private readonly registryLookup?: RegistryLookup
   private readonly coInstallRecorder?: CoInstallRecorder
@@ -100,7 +96,7 @@ export class SkillInstallationService {
     this.skillRepo = params.skillRepo
     this.skillDependencyRepo = params.skillDependencyRepo
     this.skillsDir = params.skillsDir ?? DEFAULT_SKILLS_DIR
-    this.manifestPath = params.manifestPath ?? DEFAULT_MANIFEST_PATH
+    this.manifest = new ManifestManager(params.manifestPath ?? DEFAULT_MANIFEST_PATH)
     this.onProgress = params.onProgress ?? (() => {})
     this.registryLookup = params.registryLookup
     this.coInstallRecorder = params.coInstallRecorder
@@ -196,7 +192,7 @@ export class SkillInstallationService {
 
       // Check if already installed
       this.onProgress('manifest', 'Checking manifest')
-      const manifest = await this.loadManifest()
+      const manifest = await this.manifest.load()
       if (manifest.installedSkills[skillName] && !options.force) {
         return {
           success: false,
@@ -310,7 +306,7 @@ export class SkillInstallationService {
             claudeMdSnippet: undefined as string | undefined,
             optimizationInfo: { optimized: false as const },
           }
-        : await this.applyOptimization(skillId, skillName, skillMdContent)
+        : await applyOptimization(this.db, skillId, skillName, skillMdContent)
 
       const { finalSkillContent, subSkillFiles, subagentContent, optimizationInfo } = optimizeResult
 
@@ -387,7 +383,7 @@ export class SkillInstallationService {
 
       // Update manifest
       this.onProgress('manifest', 'Updating manifest')
-      await this.updateManifestSafely((currentManifest) => ({
+      await this.manifest.updateSafely((currentManifest) => ({
         ...currentManifest,
         installedSkills: {
           ...currentManifest.installedSkills,
@@ -470,242 +466,13 @@ export class SkillInstallationService {
   // ==========================================================================
 
   async uninstall(skillName: string, options: UninstallOptions = {}): Promise<UninstallResult> {
-    const { force } = options
-
-    try {
-      this.onProgress('manifest', 'Loading manifest')
-      const manifest = await this.loadManifest()
-      const skillEntry = manifest.installedSkills[skillName]
-
-      if (!skillEntry) {
-        // Check filesystem for orphan skill
-        const potentialPath = path.join(this.skillsDir, skillName)
-
-        try {
-          await fs.access(potentialPath)
-
-          if (!force) {
-            return {
-              success: false,
-              skillName,
-              message:
-                'Skill "' +
-                skillName +
-                '" not in manifest but exists on disk. Use force=true to remove.',
-              warning: 'This skill was not installed via Skillsmith.',
-            }
-          }
-
-          // Force remove orphan
-          this.onProgress('remove', 'Removing orphan skill from disk')
-          await fs.rm(potentialPath, { recursive: true, force: true })
-          return {
-            success: true,
-            skillName,
-            message: 'Skill "' + skillName + '" removed from disk (was not in manifest).',
-            removedPath: potentialPath,
-            warning:
-              'Skill was not in the manifest. Use "skillsmith install" to register skills properly.',
-          }
-        } catch {
-          return {
-            success: false,
-            skillName,
-            message: 'Skill "' + skillName + '" is not installed.',
-          }
-        }
-      }
-
-      const installPath = skillEntry.installPath
-
-      // Check for modifications
-      if (!force) {
-        this.onProgress('check', 'Checking for modifications')
-        const modified = await checkForModifications(installPath, skillEntry.installedAt)
-
-        if (modified) {
-          return {
-            success: false,
-            skillName,
-            message:
-              'Skill "' +
-              skillName +
-              '" has been modified since installation. Use force=true to remove anyway.',
-            warning: 'Local modifications will be lost if you force uninstall.',
-          }
-        }
-      }
-
-      // Remove skill directory
-      this.onProgress('remove', 'Removing skill directory')
-      try {
-        await fs.rm(installPath, { recursive: true, force: true })
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-          throw error
-        }
-      }
-
-      // Clean up dependency records (best-effort)
-      try {
-        this.skillDependencyRepo.clearAll(skillEntry.id)
-      } catch {
-        // Table may not exist pre-migration
-      }
-
-      // Update manifest
-      this.onProgress('manifest', 'Updating manifest')
-      delete manifest.installedSkills[skillName]
-      await this.saveManifest(manifest)
-
-      this.onProgress('done', 'Uninstall complete')
-
-      return {
-        success: true,
-        skillName,
-        message: 'Skill "' + skillName + '" has been uninstalled successfully.',
-        removedPath: installPath,
-      }
-    } catch (error) {
-      return {
-        success: false,
-        skillName,
-        message: error instanceof Error ? error.message : 'Unknown error during uninstall',
-      }
-    }
-  }
-
-  // ==========================================================================
-  // Manifest Operations (private)
-  // ==========================================================================
-
-  private async loadManifest(): Promise<SkillManifest> {
-    try {
-      const content = await fs.readFile(this.manifestPath, 'utf-8')
-      return JSON.parse(content)
-    } catch {
-      return { version: '1.0.0', installedSkills: {} }
-    }
-  }
-
-  private async saveManifest(manifest: SkillManifest): Promise<void> {
-    await fs.mkdir(path.dirname(this.manifestPath), { recursive: true })
-    const tempPath = this.manifestPath + '.tmp.' + process.pid
-    await fs.writeFile(tempPath, JSON.stringify(manifest, null, 2))
-    await fs.rename(tempPath, this.manifestPath)
-  }
-
-  private async acquireManifestLock(): Promise<void> {
-    const lockPath = this.manifestPath + '.lock'
-    const startTime = Date.now()
-
-    await fs.mkdir(path.dirname(this.manifestPath), { recursive: true })
-
-    while (Date.now() - startTime < MANIFEST_LOCK_TIMEOUT_MS) {
-      try {
-        await fs.writeFile(lockPath, String(process.pid), { flag: 'wx' })
-        return
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-          try {
-            const stats = await fs.stat(lockPath)
-            if (Date.now() - stats.mtimeMs > MANIFEST_LOCK_TIMEOUT_MS) {
-              await fs.unlink(lockPath).catch(() => {})
-              continue
-            }
-          } catch {
-            continue
-          }
-          await new Promise((resolve) => setTimeout(resolve, MANIFEST_LOCK_RETRY_MS))
-        } else {
-          throw error
-        }
-      }
-    }
-
-    throw new Error('Failed to acquire manifest lock after ' + MANIFEST_LOCK_TIMEOUT_MS + 'ms')
-  }
-
-  private async releaseManifestLock(): Promise<void> {
-    try {
-      await fs.unlink(this.manifestPath + '.lock')
-    } catch {
-      // Ignore
-    }
-  }
-
-  private async updateManifestSafely(
-    updateFn: (manifest: SkillManifest) => SkillManifest
-  ): Promise<void> {
-    await this.acquireManifestLock()
-    try {
-      const manifest = await this.loadManifest()
-      const updated = updateFn(manifest)
-      await this.saveManifest(updated)
-    } finally {
-      await this.releaseManifestLock()
-    }
-  }
-
-  // ==========================================================================
-  // Optimization (private)
-  // ==========================================================================
-
-  private async applyOptimization(
-    skillId: string,
-    skillName: string,
-    skillMdContent: string
-  ): Promise<{
-    finalSkillContent: string
-    subSkillFiles: Array<{ filename: string; content: string }>
-    subagentContent: string | undefined
-    claudeMdSnippet: string | undefined
-    optimizationInfo: OptimizationInfo
-  }> {
-    try {
-      const transformService = new TransformationService(this.db, {
-        cacheTtl: 3600,
-        version: '1.0.0',
-      })
-
-      const nameMatch = skillMdContent.match(/^name:\s*(.+)$/m)
-      const descMatch = skillMdContent.match(/^description:\s*(.+)$/m)
-      const extractedName = nameMatch ? nameMatch[1].trim() : skillName
-      const extractedDesc = descMatch ? descMatch[1].trim() : ''
-
-      const transformResult = await transformService.transform(
-        skillId,
-        extractedName,
-        extractedDesc,
-        skillMdContent
-      )
-
-      if (transformResult.transformed) {
-        return {
-          finalSkillContent: transformResult.mainSkillContent,
-          subSkillFiles: transformResult.subSkills,
-          subagentContent: transformResult.subagent?.content,
-          claudeMdSnippet: transformResult.claudeMdSnippet,
-          optimizationInfo: {
-            optimized: true,
-            subSkills: transformResult.subSkills.map((s) => s.filename),
-            subagentGenerated: !!transformResult.subagent?.content,
-            tokenReductionPercent: transformResult.stats.tokenReductionPercent,
-            originalLines: transformResult.stats.originalLines,
-            optimizedLines: transformResult.stats.optimizedLines,
-          },
-        }
-      }
-    } catch {
-      // Transformation failed -- continue with original content
-    }
-
-    return {
-      finalSkillContent: skillMdContent,
-      subSkillFiles: [],
-      subagentContent: undefined,
-      claudeMdSnippet: undefined,
-      optimizationInfo: { optimized: false },
-    }
+    return performUninstall({
+      skillName,
+      force: options.force ?? false,
+      skillsDir: this.skillsDir,
+      manifest: this.manifest,
+      skillDependencyRepo: this.skillDependencyRepo,
+      onProgress: this.onProgress,
+    })
   }
 }
