@@ -2,43 +2,35 @@
 import DocsLayout from '../../layouts/DocsLayout.astro';
 ---
 
-<DocsLayout title="Configuration Guide" description="Set up API keys, verify your installation, and configure advanced options for Skillsmith">
+<DocsLayout title="Configuration Guide" description="Set up API keys, verify your installation, configure advanced options, and troubleshoot Skillsmith">
   <script is:inline type="application/ld+json" slot="head">
   {
     "@context": "https://schema.org",
     "@type": "HowTo",
-    "name": "How to Set Up Skillsmith MCP Server",
-    "description": "Install and configure the Skillsmith MCP server to discover and install agent skills using natural language",
-    "totalTime": "PT3M",
+    "name": "How to Configure Skillsmith API Key",
+    "description": "Set up your personal API key for higher rate limits and usage tracking on your Skillsmith account dashboard",
+    "totalTime": "PT2M",
     "tool": [
-      { "@type": "HowToTool", "name": "Node.js 18+" },
-      { "@type": "HowToTool", "name": "npm" },
-      { "@type": "HowToTool", "name": "MCP-compatible AI assistant" }
+      { "@type": "HowToTool", "name": "Skillsmith CLI or MCP server (installed via 5-Minute Setup)" }
     ],
     "step": [
       {
         "@type": "HowToStep",
         "position": 1,
-        "name": "Add MCP Server Configuration",
-        "text": "Add the Skillsmith MCP server configuration to your ~/.claude/settings.json file: {\"mcpServers\": {\"skillsmith\": {\"command\": \"npx\", \"args\": [\"-y\", \"@skillsmith/mcp-server\"]}}}"
+        "name": "Generate an API Key",
+        "text": "Create a free account at www.skillsmith.app/signup and visit the CLI Token page to generate your personal API key."
       },
       {
         "@type": "HowToStep",
         "position": 2,
-        "name": "Restart Your MCP Client",
-        "text": "Restart your MCP client (e.g., Claude Code) to load the Skillsmith server."
+        "name": "Configure the Key",
+        "text": "Run 'skillsmith login' to store the key securely in your OS keyring, or add it to ~/.skillsmith/config.json or your MCP client settings."
       },
       {
         "@type": "HowToStep",
         "position": 3,
-        "name": "Verify Installation",
-        "text": "Ask your assistant 'List available MCP tools' to verify Skillsmith tools like search, install, and recommend are available."
-      },
-      {
-        "@type": "HowToStep",
-        "position": 4,
-        "name": "Search for Skills",
-        "text": "Ask your assistant to search for skills: 'Search for testing skills' or 'Find verified skills for git workflows'."
+        "name": "Verify Configuration",
+        "text": "Ask your assistant 'List available MCP tools' or run 'skillsmith --version' to verify everything is working."
       }
     ]
   }
@@ -54,56 +46,8 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   </div>
 
   <p class="lead">
-    Set up API keys, verify your installation, and configure advanced options for Skillsmith.
+    Configure API keys, verify your installation, and troubleshoot common issues.
   </p>
-
-  <h2>Prerequisites</h2>
-
-  <p>Before you begin, ensure you have:</p>
-
-  <ul>
-    <li>An <strong>MCP-compatible AI assistant</strong> installed and configured</li>
-    <li><strong>Node.js 18+</strong> (for npx commands)</li>
-    <li><strong>npm</strong> or a compatible package manager</li>
-  </ul>
-
-  <h2>Installation</h2>
-
-  <p>There are two ways to use Skillsmith: as an MCP server (recommended) or via the CLI.</p>
-
-  <h3>Option 1: MCP Server (Recommended)</h3>
-
-  <p>
-    The MCP server integrates with any MCP-compatible client, allowing you to search and
-    install skills through natural language.
-  </p>
-
-  <p>Add this to your MCP client configuration:</p>
-
-  <pre><code>{`Add this MCP server to my settings.json:
-
-{
-  "mcpServers": {
-    "skillsmith": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"]
-    }
-  }
-}`}</code></pre>
-
-  <p>
-    After adding the configuration to your <code>~/.claude/settings.json</code>,
-    restart your MCP client to load the Skillsmith server.
-  </p>
-
-  <h3>Option 2: CLI Installation</h3>
-
-  <p>For command-line access, install the CLI globally:</p>
-
-  <pre><code>{`npm install -g @skillsmith/cli
-
-# Or use npx for one-off commands
-npx @skillsmith/cli search testing`}</code></pre>
 
   <h2>Verify Installation</h2>
 
@@ -244,46 +188,6 @@ EOF`}</code></pre>
     Rate limits are per-minute and reset automatically. See <a href="/pricing">Pricing</a> for full details.
   </p>
 
-  <h2>Your First Skill Search</h2>
-
-  <h3>Using MCP</h3>
-
-  <p>Simply ask your assistant to search for skills:</p>
-
-  <pre><code>{`"Search for testing skills"
-"Find verified skills for git workflows"
-"Show me skills for React development"`}</code></pre>
-
-  <h3>Using the CLI</h3>
-
-  <p>Search for skills from the command line:</p>
-
-  <pre><code>{`# Search by keyword
-skillsmith search testing
-
-# Filter by trust tier
-skillsmith search git --tier verified
-
-# Filter by category
-skillsmith search --category devops`}</code></pre>
-
-  <h2>Installing Your First Skill</h2>
-
-  <h3>Using MCP</h3>
-
-  <pre><code>{`"Install the jest-helper skill"
-"Install community/git-commit"`}</code></pre>
-
-  <h3>Using the CLI</h3>
-
-  <pre><code>{`# Install by name
-skillsmith install jest-helper
-
-# Install by full ID
-skillsmith install community/git-commit`}</code></pre>
-
-  <p>Skills are installed to <code>~/.claude/skills/</code> by default.</p>
-
   <h2>Understanding Skill IDs</h2>
 
   <p>Skills are identified by their full ID in the format <code>author/name</code>:</p>
@@ -310,12 +214,52 @@ skillsmith install community/git-commit`}</code></pre>
     </tbody>
   </table>
 
+  <h2 id="troubleshooting">Troubleshooting</h2>
+
+  <details>
+    <summary><strong>"skillsmith: command not found"</strong></summary>
+    <p>The CLI isn't installed globally or isn't in your PATH.</p>
+    <pre><code>{`# Reinstall globally
+npm install -g @skillsmith/cli
+
+# Or use npx instead
+npx @skillsmith/cli search testing`}</code></pre>
+  </details>
+
+  <details>
+    <summary><strong>Claude Code doesn't show Skillsmith tools</strong></summary>
+    <p>The MCP server isn't configured or Claude Code needs to restart.</p>
+    <ol>
+      <li>Verify <code>~/.claude/settings.json</code> has the skillsmith configuration</li>
+      <li>Restart Claude Code completely (quit and reopen)</li>
+      <li>Ask Claude: "List available MCP tools"</li>
+    </ol>
+  </details>
+
+  <details>
+    <summary><strong>"Permission denied" when installing skills</strong></summary>
+    <p>The skills directory doesn't exist or has wrong permissions.</p>
+    <pre><code>{`# Create the directory with correct permissions
+mkdir -p ~/.claude/skills
+chmod 755 ~/.claude/skills`}</code></pre>
+  </details>
+
+  <details>
+    <summary><strong>Skills installed but not showing in Claude Code</strong></summary>
+    <p>Claude Code may need to refresh its skill cache.</p>
+    <ol>
+      <li>Verify skills are in <code>~/.claude/skills/</code></li>
+      <li>Start a new Claude Code session</li>
+      <li>Skills should appear automatically</li>
+    </ol>
+  </details>
+
   <h2>Next Steps</h2>
 
   <ul>
-    <li><a href="#api-key">Configure API Key</a> - Set up authentication for more requests</li>
     <li><a href="/docs/cli">CLI Reference</a> - Learn all CLI commands</li>
     <li><a href="/docs/mcp-server">MCP Server</a> - Configure advanced server options</li>
+    <li><a href="/docs/authoring">Skill Authoring</a> - Create your own skills</li>
     <li><a href="/docs/api">API Reference</a> - Build integrations with the Skillsmith API</li>
   </ul>
 
@@ -323,8 +267,7 @@ skillsmith install community/git-commit`}</code></pre>
     <p class="callout-heading">Need Help?</p>
     <p>
       If you encounter any issues during setup, check out our
-      <a href="https://github.com/smith-horn/skillsmith/issues">GitHub Issues</a>
-      or refer to the troubleshooting section in the CLI reference.
+      <a href="https://github.com/smith-horn/skillsmith/issues">GitHub Issues</a>.
     </p>
   </div>
 </DocsLayout>
