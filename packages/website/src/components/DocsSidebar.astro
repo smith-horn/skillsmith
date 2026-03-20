@@ -32,6 +32,7 @@ const navSections: NavSection[] = [
       { href: '/docs/cli', label: 'CLI Reference', icon: 'terminal' },
       { href: '/docs/mcp-server', label: 'MCP Server', icon: 'server' },
       { href: '/docs/api', label: 'API Reference', icon: 'code' },
+      { href: '/docs/dependencies', label: 'Dependencies', icon: 'git-branch' },
     ],
   },
   {
@@ -214,6 +215,10 @@ function isActive(href: string): boolean {
 
   .nav-icon[data-icon='badge']::before {
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76z'/%3E%3Cpath d='M9 12l2 2 4-4'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='git-branch']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cline x1='6' y1='3' x2='6' y2='15'/%3E%3Ccircle cx='18' cy='6' r='3'/%3E%3Ccircle cx='6' cy='18' r='3'/%3E%3Cpath d='M18 9a9 9 0 0 1-9 9'/%3E%3C/svg%3E");
   }
 
   .nav-icon[data-icon='help-circle']::before {

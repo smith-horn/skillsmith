@@ -1,0 +1,487 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout title="Dependencies" description="Track skill dependencies, detect changes, and manage compatibility with dependency intelligence.">
+  <h1>Dependencies</h1>
+
+  <p class="lead">
+    Skillsmith tracks what skills depend on, detects when they change, and reports what's
+    missing. This is powered by dependency intelligence — a system that combines declared
+    metadata with automated content analysis.
+  </p>
+
+  <h2>How It Works</h2>
+
+  <p>Dependency intelligence draws from three signal sources:</p>
+
+  <p>
+    <strong>Declared</strong> — The skill author writes a <code>dependencies</code> block in
+    SKILL.md frontmatter. Confidence: <code>1.0</code>. This is the authoritative source.
+  </p>
+
+  <p>
+    <strong>Inferred (static)</strong> — At install time, Skillsmith scans skill content for
+    <code>mcp__server__tool</code> patterns. References in prose get confidence <code>0.9</code>;
+    references inside code blocks get <code>0.5</code> (they may be illustrative examples).
+  </p>
+
+  <p>
+    <strong>Inferred (co-install)</strong> — <em>(coming soon)</em> The schema exists
+    (<code>inferred_coinstall</code> source) but is not yet populated with behavioral data.
+  </p>
+
+  <div class="callout">
+    <p>
+      <strong>No auto-resolution</strong> — Skillsmith surfaces intelligence for awareness.
+      Hard dependencies block installs; soft and inferred produce advisory warnings. Skillsmith
+      never installs dependencies on your behalf.
+    </p>
+  </div>
+
+  <p>
+    For the engineering story behind this design, read
+    <a href="/blog/dependency-intelligence">Dependency Intelligence: How Skillsmith Infers What Your Skills Need</a>.
+  </p>
+
+  <h2>Declaring Dependencies</h2>
+
+  <h3>Frontmatter Example</h3>
+
+  <p>
+    Add a <code>dependencies</code> block to your SKILL.md frontmatter. All sections are optional:
+  </p>
+
+  <pre><code>{`---
+name: my-skill
+description: Example skill with full dependency declaration
+dependencies:
+  skills:
+    - name: author/base-skill
+      version: "^1.0.0"
+      type: hard
+      reason: Required for data formatting
+    - name: author/helper-skill
+      type: soft
+      reason: Enhances output quality
+    - name: author/companion-skill
+      type: peer
+  platform:
+    cli: ">=1.5.0"
+    mcp_servers:
+      - name: linear
+        package: "@anthropic/linear-mcp"
+        required: true
+      - name: github
+        required: false
+  models:
+    minimum: claude-sonnet-4-20250514
+    capabilities:
+      - tool_use
+      - extended_thinking
+    context_window: 128000
+  environment:
+    tools:
+      - name: docker
+        required: true
+        check: "docker --version"
+      - name: git
+        required: true
+        check: "git --version"
+    os:
+      - darwin
+      - linux
+    node: ">=20.0.0"
+  conflicts:
+    - name: author/incompatible-skill
+      reason: Conflicting CLAUDE.md modifications
+---`}</code></pre>
+
+  <h3>Dependency Types</h3>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Type</th>
+        <th>Category</th>
+        <th>Behavior</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>skill_hard</code></td>
+        <td>Skill</td>
+        <td>Blocks install if missing</td>
+      </tr>
+      <tr>
+        <td><code>skill_soft</code></td>
+        <td>Skill</td>
+        <td>Warning at install, advisory</td>
+      </tr>
+      <tr>
+        <td><code>skill_peer</code></td>
+        <td>Skill</td>
+        <td>Expected co-install</td>
+      </tr>
+      <tr>
+        <td><code>mcp_server</code></td>
+        <td>Platform</td>
+        <td>Warning if not configured</td>
+      </tr>
+      <tr>
+        <td><code>cli_version</code></td>
+        <td>Platform</td>
+        <td>CLI version constraint</td>
+      </tr>
+      <tr>
+        <td><code>model_minimum</code></td>
+        <td>Model</td>
+        <td>Minimum model requirement</td>
+      </tr>
+      <tr>
+        <td><code>model_capability</code></td>
+        <td>Model</td>
+        <td>Required capability (e.g. tool_use)</td>
+      </tr>
+      <tr>
+        <td><code>env_tool</code></td>
+        <td>Environment</td>
+        <td>External tool (docker, git)</td>
+      </tr>
+      <tr>
+        <td><code>env_os</code></td>
+        <td>Environment</td>
+        <td>OS constraint</td>
+      </tr>
+      <tr>
+        <td><code>env_node</code></td>
+        <td>Environment</td>
+        <td>Node.js version constraint</td>
+      </tr>
+      <tr>
+        <td><code>conflict</code></td>
+        <td>Conflict</td>
+        <td>Must not coexist</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Migrating from composes</h3>
+
+  <p>
+    The legacy <code>composes</code> field is deprecated. Migrate to <code>dependencies.skills</code>:
+  </p>
+
+  <pre><code>{`# Before (deprecated)
+---
+composes:
+  - author/helper-skill
+---
+
+# After
+---
+dependencies:
+  skills:
+    - name: author/helper-skill
+      type: soft
+      reason: Enhances output formatting
+---`}</code></pre>
+
+  <p>
+    The <code>skill_validate</code> tool warns when it detects the deprecated <code>composes</code> field.
+  </p>
+
+  <h2>Tools</h2>
+
+  <p>Seven MCP tools surface dependency intelligence. Each section shows the relevant response fields and tier requirements.</p>
+
+  <h3>install_skill</h3>
+
+  <p>
+    Extracts and persists dependencies at install time. Hard dependencies block install with
+    an error; soft and inferred produce warnings.
+  </p>
+
+  <p>Response fields added by dependency intelligence:</p>
+
+  <pre><code>{`{
+  "dep_inferred_servers": ["linear", "github"],
+  "dep_declared": {
+    "skills": [
+      { "name": "author/base-skill", "type": "hard", "reason": "Required for data formatting" }
+    ],
+    "platform": {
+      "mcp_servers": [
+        { "name": "linear", "package": "@anthropic/linear-mcp", "required": true }
+      ]
+    }
+  },
+  "dep_warnings": [
+    "MCP server 'github' is referenced but may not be configured"
+  ]
+}`}</code></pre>
+
+  <p><span class="tier-badge tier-community">Community</span></p>
+
+  <h3>get_skill</h3>
+
+  <p>
+    Returns the full dependency table as an array. Each entry includes the type, target,
+    version constraint, source, and confidence score.
+  </p>
+
+  <pre><code>{`{
+  "dependencies": [
+    {
+      "dep_type": "skill_hard",
+      "dep_target": "author/base-skill",
+      "dep_version": "^1.0.0",
+      "dep_source": "declared",
+      "confidence": 1.0
+    },
+    {
+      "dep_type": "mcp_server",
+      "dep_target": "github",
+      "dep_version": null,
+      "dep_source": "inferred_static",
+      "confidence": 0.9
+    }
+  ]
+}`}</code></pre>
+
+  <p><span class="tier-badge tier-community">Community</span></p>
+
+  <h3>skill_validate</h3>
+
+  <p>Runs three dependency-related validations:</p>
+
+  <ol>
+    <li><strong>Deprecated <code>composes</code> field</strong> — suggests migrating to <code>dependencies.skills</code></li>
+    <li><strong>Undeclared MCP servers</strong> — detects <code>mcp__server__tool</code> patterns in skill prose and suggests declaring them in <code>dependencies.platform.mcp_servers</code></li>
+    <li>Both can fire simultaneously on the same skill</li>
+  </ol>
+
+  <pre><code>{`{
+  "errors": [
+    {
+      "field": "composes",
+      "message": "'composes' is deprecated. Migrate to 'dependencies.skills' with type: hard/soft/peer.",
+      "severity": "warning"
+    },
+    {
+      "field": "dependencies",
+      "message": "Inferred MCP dependency: 'linear' (referenced in skill body). Consider declaring in dependencies.platform.mcp_servers.",
+      "severity": "warning"
+    }
+  ]
+}`}</code></pre>
+
+  <p><span class="tier-badge tier-community">Community</span></p>
+
+  <h3>skill_outdated</h3>
+
+  <p>
+    Hash-based change detection compares installed content against the latest registry state.
+    When <code>include_deps</code> is true (default), each skill includes dependency satisfaction status.
+  </p>
+
+  <pre><code>{`{
+  "skills": [
+    {
+      "id": "author/my-skill",
+      "installed_hash": "a1b2c3d4",
+      "latest_hash": "e5f6g7h8",
+      "status": "outdated",
+      "semver": "1.2.0",
+      "dependencies": {
+        "total": 3,
+        "satisfied": ["skill_hard:author/base-skill", "mcp_server:linear"],
+        "missing": ["skill_soft:author/helper-skill"]
+      }
+    }
+  ],
+  "summary": {
+    "total_installed": 5,
+    "outdated": 1,
+    "up_to_date": 3,
+    "unknown": 1,
+    "missing_deps": 1
+  }
+}`}</code></pre>
+
+  <p>
+    Skill-type dependencies (<code>skill_hard</code>, <code>skill_soft</code>, <code>skill_peer</code>)
+    are checked against your installed skills. Other types (MCP servers, models, environment) are
+    marked satisfied as advisory — they cannot be reliably verified locally.
+  </p>
+
+  <p><span class="tier-badge tier-community">Community</span></p>
+
+  <h3>skill_diff</h3>
+
+  <p>
+    Surfaces dependency section changes between two versions of a skill, shown in a
+    side-by-side diff format.
+  </p>
+
+  <p><span class="tier-badge tier-individual">Individual</span> — requires <code>version_tracking</code> feature flag</p>
+
+  <h3>skill_compare</h3>
+
+  <p>
+    Includes dependency counts in side-by-side skill comparison. "Fewer dependencies" is
+    used as a recommendation reason when comparing similar skills.
+  </p>
+
+  <p><span class="tier-badge tier-community">Community</span></p>
+
+  <h3>skill_audit</h3>
+
+  <p>
+    Security advisories complement dependency intelligence by checking for known
+    vulnerabilities in skill dependencies. See <a href="/docs/security">Security</a> for
+    the full scanning model.
+  </p>
+
+  <p><span class="tier-badge tier-team">Team</span> — requires <code>skill_security_audit</code> feature flag</p>
+
+  <h2>Confidence Scoring</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Source</th>
+        <th>Confidence</th>
+        <th>Meaning</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Declared (frontmatter)</td>
+        <td><code>1.0</code></td>
+        <td>Author explicitly stated</td>
+      </tr>
+      <tr>
+        <td>Inferred prose</td>
+        <td><code>0.9</code></td>
+        <td>High-confidence MCP pattern in instruction text</td>
+      </tr>
+      <tr>
+        <td>Inferred code block</td>
+        <td><code>0.5</code></td>
+        <td>MCP pattern inside code fence (may be illustrative)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    When both declared and inferred sources identify the same dependency, the declared entry
+    wins and the inferred duplicate is dropped.
+  </p>
+
+  <h2>Tier Requirements</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Tool</th>
+        <th>Tier</th>
+        <th>Feature Flag</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>install_skill</code></td>
+        <td><span class="tier-badge tier-community">Community</span></td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><code>get_skill</code></td>
+        <td><span class="tier-badge tier-community">Community</span></td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><code>skill_validate</code></td>
+        <td><span class="tier-badge tier-community">Community</span></td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><code>skill_outdated</code></td>
+        <td><span class="tier-badge tier-community">Community</span></td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><code>skill_compare</code></td>
+        <td><span class="tier-badge tier-community">Community</span></td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td><code>skill_diff</code></td>
+        <td><span class="tier-badge tier-individual">Individual</span></td>
+        <td><code>version_tracking</code></td>
+      </tr>
+      <tr>
+        <td><code>skill_audit</code></td>
+        <td><span class="tier-badge tier-team">Team</span></td>
+        <td><code>skill_security_audit</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Limitations</h2>
+
+  <ul>
+    <li><strong>Co-install inference</strong>: The <code>inferred_coinstall</code> source exists in the schema but is not yet populated</li>
+    <li><strong>Semver range validation</strong>: Version constraints are stored but not enforced at install time</li>
+    <li><strong>No automatic resolution</strong>: Skillsmith never installs dependencies on your behalf</li>
+    <li><strong>No CycloneDX AI-BOM export</strong>: Dependency data is not yet exportable in standard SBOM formats</li>
+    <li><strong>No dependency_policy configuration</strong>: You cannot configure per-project dependency rules</li>
+  </ul>
+
+  <h2>Related Documentation</h2>
+
+  <ul>
+    <li><a href="/docs/authoring">Skill Authoring</a> — frontmatter reference for skill authors</li>
+    <li><a href="/docs/mcp-server">MCP Server</a> — full MCP tool reference</li>
+    <li><a href="/docs/security">Security</a> — security scanning and advisories</li>
+    <li><a href="/docs/trust-tiers">Trust Tiers</a> — trust tier definitions</li>
+    <li><a href="/blog/dependency-intelligence">Dependency Intelligence</a> — engineering deep-dive blog post</li>
+  </ul>
+</DocsLayout>
+
+<style>
+  .callout {
+    background: rgba(99, 102, 241, 0.1);
+    border-left: 4px solid rgb(99, 102, 241);
+    padding: 1rem 1.5rem;
+    border-radius: 0 0.5rem 0.5rem 0;
+    margin: 1.5rem 0;
+  }
+
+  .callout p {
+    margin: 0;
+  }
+
+  .tier-badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .tier-community {
+    background: rgba(34, 197, 94, 0.2);
+    color: rgb(34, 197, 94);
+  }
+
+  .tier-individual {
+    background: rgba(99, 102, 241, 0.2);
+    color: rgb(99, 102, 241);
+  }
+
+  .tier-team {
+    background: rgba(234, 179, 8, 0.2);
+    color: rgb(234, 179, 8);
+  }
+</style>
