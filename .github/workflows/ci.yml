@@ -50,7 +50,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0 # Full history for scanning all commits in PR
 
@@ -86,12 +86,12 @@ jobs:
       affected_count: ${{ steps.affected.outputs.affected_count || '0' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -128,7 +128,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # SMI-1317: Verify required dependencies are available
       - name: Verify dependencies
@@ -202,7 +202,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Validate Edge Functions
         run: ./scripts/validate-edge-functions.sh
@@ -243,7 +243,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -355,7 +355,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # SMI-2159: Decrypt git-crypt encrypted files before Docker build
       # Narrowed scope (SMI-2604): .claude/skills/**, .claude/plans/**, .claude/hive-mind/**,
@@ -380,7 +380,7 @@ jobs:
       # NOTE: No restore-keys - we only want exact matches to avoid loading stale images
       - name: Restore Docker image from cache
         id: docker-image-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/docker-cache
           key: docker-image-${{ hashFiles('Dockerfile', 'package-lock.json', '.dockerignore', '.nvmrc') }}-v${{ env.NODE_VERSION }}
@@ -407,11 +407,11 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: skillsmith-ci
           tags: |
@@ -420,7 +420,7 @@ jobs:
       # SMI-2194: Only build if cache miss or load failed
       - name: Build and cache Docker image
         if: steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
@@ -447,7 +447,7 @@ jobs:
           echo "✓ Saved image with tag: ${{ github.sha }}"
 
       - name: Upload Docker image artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: docker-image
           path: /tmp/skillsmith-ci.tar.gz
@@ -491,7 +491,7 @@ jobs:
           tar -tzf /tmp/node_modules.tar.gz | grep "^packages/" | head -20
 
       - name: Upload node_modules artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: node-modules
           path: /tmp/node_modules.tar.gz
@@ -503,7 +503,7 @@ jobs:
       # Key includes: package source files, tsconfig, and lockfile
       # This allows downstream jobs to skip rebuilding unchanged packages
       - name: Cache package builds and Turbo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             packages/core/dist
@@ -580,7 +580,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
@@ -594,7 +594,7 @@ jobs:
           rm -f /tmp/git-crypt-key
 
       - name: Download Docker image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         id: download-docker
         continue-on-error: true
         with:
@@ -602,7 +602,7 @@ jobs:
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         id: download-modules
         continue-on-error: true # audit:allow-continue-on-error — best-effort cache; falls back to npm install
         with:
@@ -630,7 +630,7 @@ jobs:
       # SMI-2240: Fallback to native npm ci when Docker unavailable
       - name: Setup Node.js (fallback)
         if: steps.load-image.outcome != 'success'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -679,7 +679,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
@@ -693,7 +693,7 @@ jobs:
           rm -f /tmp/git-crypt-key
 
       - name: Download Docker image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         id: download-docker
         continue-on-error: true
         with:
@@ -701,7 +701,7 @@ jobs:
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         id: download-modules
         continue-on-error: true # audit:allow-continue-on-error — best-effort cache; falls back to npm install
         with:
@@ -729,7 +729,7 @@ jobs:
       # SMI-2240: Fallback to native npm ci when Docker unavailable
       - name: Setup Node.js (fallback)
         if: steps.load-image.outcome != 'success'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -789,7 +789,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
@@ -803,7 +803,7 @@ jobs:
           rm -f /tmp/git-crypt-key
 
       - name: Download Docker image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         id: download-docker
         continue-on-error: true
         with:
@@ -811,7 +811,7 @@ jobs:
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         id: download-modules
         continue-on-error: true # audit:allow-continue-on-error — best-effort cache; falls back to npm install
         with:
@@ -839,7 +839,7 @@ jobs:
       # SMI-2240: Fallback to native npm ci when Docker unavailable
       - name: Setup Node.js (fallback)
         if: steps.load-image.outcome != 'success'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -910,7 +910,7 @@ jobs:
         run: npm run test:coverage --workspace=packages/${{ matrix.package }} || true
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           files: ./packages/${{ matrix.package }}/coverage/coverage-final.json
@@ -932,7 +932,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # SMI-2250: Decrypt git-crypt encrypted files (supabase/functions tests are encrypted)
       - name: Unlock git-crypt
@@ -948,13 +948,13 @@ jobs:
       # Note: No npm ci fallback for test-root - these tests require Docker environment
       # for consistent behavior with root-level scripts and supabase functions
       - name: Download Docker image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: node-modules
           path: /tmp
@@ -1004,7 +1004,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
@@ -1020,13 +1020,13 @@ jobs:
       # Note: No npm ci fallback for security - audit requires Docker for reproducible results
       # and consistent dependency resolution across environments
       - name: Download Docker image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: node-modules
           path: /tmp
@@ -1108,7 +1108,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
@@ -1124,13 +1124,13 @@ jobs:
       # Note: No npm ci fallback for benchmark - performance tests require consistent
       # Docker environment to produce comparable results
       - name: Download Docker image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: node-modules
           path: /tmp
@@ -1173,7 +1173,7 @@ jobs:
 
       - name: Add benchmark results to PR
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const fs = require('fs');
@@ -1204,7 +1204,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
@@ -1220,13 +1220,13 @@ jobs:
       # Note: No npm ci fallback for compliance - standards audit requires Docker
       # for consistent tooling versions
       - name: Download Docker image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: node-modules
           path: /tmp
@@ -1270,7 +1270,7 @@ jobs:
     steps:
       - name: Check for website changes
         id: changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             website:
@@ -1278,7 +1278,7 @@ jobs:
 
       - name: Checkout
         if: steps.changes.outputs.website == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
@@ -1295,14 +1295,14 @@ jobs:
       # Node environment provided by Docker
       - name: Download Docker image
         if: steps.changes.outputs.website == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
         if: steps.changes.outputs.website == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: node-modules
           path: /tmp
@@ -1400,18 +1400,18 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Note: No npm ci fallback for code-review - already has continue-on-error: true
       # so failures are non-blocking anyway
       - name: Download Docker image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: node-modules
           path: /tmp
@@ -1444,7 +1444,7 @@ jobs:
             bash scripts/ci-code-review.sh audit-report.json
 
       - name: Upload audit report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: code-review-report
@@ -1482,10 +1482,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download Docker image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         id: download-docker
         continue-on-error: true
         with:
@@ -1493,7 +1493,7 @@ jobs:
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         id: download-modules
         continue-on-error: true # audit:allow-continue-on-error — best-effort cache; falls back to npm install
         with:
@@ -1521,7 +1521,7 @@ jobs:
       # SMI-2240: Fallback to native npm ci when Docker unavailable
       - name: Setup Node.js (fallback)
         if: steps.load-image.outcome != 'success'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -1557,7 +1557,7 @@ jobs:
           cp -r packages/*/dist build-output/ 2>/dev/null || true
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-output
           path: build-output/
@@ -1582,23 +1582,23 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       # Note: No npm ci fallback for fresh-install-test - this job specifically tests
       # the packaged artifacts, not the development environment
       - name: Download Docker image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: node-modules
           path: /tmp
