@@ -14,7 +14,11 @@ const globalIgnores = {
     '**/*.cjs',
     '**/*.mjs',
     '!eslint.config.js',
-    '**/vitest.config.integration.ts',
+    // Vitest configs import from ../../vitest.preset (outside package rootDir)
+    // which tsc/eslint cannot resolve. Vitest uses vite resolution at runtime.
+    '**/vitest.config.ts',
+    '**/vitest.config.*.ts',
+    'vitest.preset.ts',
     // Website uses Astro with its own ESLint config - lint separately
     'packages/website/**',
     // TypeScript template files in .claude/templates/ should be linted

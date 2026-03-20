@@ -32,6 +32,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },

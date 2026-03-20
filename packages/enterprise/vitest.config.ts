@@ -1,15 +1,22 @@
 import { defineConfig } from 'vitest/config'
+import {
+  sharedTestConfig,
+  coverageDefaults,
+  coverageThresholds,
+  coverageExcludeDefaults,
+} from '../../vitest.preset'
 
 export default defineConfig({
   test: {
-    globals: true,
-    environment: 'node',
-    include: ['tests/**/*.test.ts'],
+    ...sharedTestConfig,
+    include: ['tests/**/*.test.ts', 'src/**/*.test.ts', 'src/**/*.spec.ts'],
     coverage: {
-      provider: 'v8',
-      reporter: ['text', 'json', 'html'],
+      ...coverageDefaults,
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.d.ts', 'src/**/index.ts'],
+      exclude: [...coverageExcludeDefaults, 'src/**/*.d.ts'],
+      thresholds: {
+        ...coverageThresholds,
+      },
     },
   },
 })

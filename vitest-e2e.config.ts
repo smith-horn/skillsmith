@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config'
+import { sharedTestConfig } from './vitest.preset'
 
 /**
  * E2E Test Configuration
@@ -10,8 +11,7 @@ import { defineConfig } from 'vitest/config'
  */
 export default defineConfig({
   test: {
-    globals: true,
-    environment: 'node',
+    ...sharedTestConfig,
     include: [
       // Root E2E tests (MCP tools tests)
       'tests/e2e/**/*.test.ts',
@@ -23,6 +23,6 @@ export default defineConfig({
       'packages/mcp-server/tests/e2e/**/*.e2e.test.ts',
     ],
     exclude: ['**/node_modules/**', '**/dist/**'],
-    testTimeout: 60000,
+    testTimeout: 60000, // 60s for E2E (overrides preset 15s)
   },
 })

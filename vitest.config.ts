@@ -1,15 +1,9 @@
 import { defineConfig } from 'vitest/config'
+import { sharedTestConfig, coverageDefaults, coverageThresholds } from './vitest.preset'
 
 export default defineConfig({
   test: {
-    // SMI-3500: Aggregate pre-push coverage runs (254 files, V8 instrumentation)
-    // create I/O contention that intermittently pushes tests past the 10s default.
-    // Individual tests peak at ~800ms; 15s provides contention margin.
-    // Per-package CI configs are unaffected (they use workspace-level configs).
-    testTimeout: 15_000,
-    hookTimeout: 15_000,
-    globals: true,
-    environment: 'node',
+    ...sharedTestConfig,
     include: [
       'packages/*/src/**/*.test.ts',
       'packages/*/src/**/*.spec.ts',
@@ -41,8 +35,7 @@ export default defineConfig({
       'supabase/functions/indexer/**',
     ],
     coverage: {
-      provider: 'v8',
-      reporter: ['text', 'json', 'html'],
+      ...coverageDefaults,
       exclude: [
         // Build artifacts and dependencies
         '**/node_modules/**',
@@ -125,16 +118,7 @@ export default defineConfig({
         '**/setup.ts',
       ],
       thresholds: {
-        // SMI-1785: Branch coverage restored to 67% after adding targeted tests
-        // Previous coverage (SMI-1779): branches 55%
-        // Current coverage after adding tests:
-        // - get-skill.ts: 58.33% (was 40.27%) - formatSkillDetails edge cases
-        // - search.ts: 63.63% (was 54.54%) - validation errors, filter-only search
-        // - license.ts: 57.37% - Enterprise package optional loading
-        lines: 75,
-        functions: 75,
-        branches: 67,
-        statements: 75,
+        ...coverageThresholds,
       },
     },
   },

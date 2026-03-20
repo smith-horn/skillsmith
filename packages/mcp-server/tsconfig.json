@@ -18,7 +18,7 @@
     "incremental": true,
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src/**/*", "tests/**/*", "vitest.config.ts"],
+  "include": ["src/**/*", "tests/**/*"],
   "exclude": ["node_modules", "dist"],
   "references": [{ "path": "../core" }]
 }

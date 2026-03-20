@@ -52,6 +52,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:security": "vitest run tests/security",
     "benchmark": "npx tsx src/benchmarks/cli.ts",
