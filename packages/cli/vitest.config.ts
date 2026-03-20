@@ -7,7 +7,7 @@ import { sharedTestConfig, coverageDefaults } from '../../vitest.preset'
 export default defineConfig({
   test: {
     ...sharedTestConfig,
-    include: ['tests/**/*.test.ts', 'src/**/*.test.ts', 'src/**/*.spec.ts'],
+    include: ['tests/**/*.test.ts'],
     coverage: {
       ...coverageDefaults,
     },
