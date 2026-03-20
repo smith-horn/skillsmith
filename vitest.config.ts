@@ -2,6 +2,12 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
+    // SMI-3500: Aggregate pre-push coverage runs (254 files, V8 instrumentation)
+    // create I/O contention that intermittently pushes tests past the 10s default.
+    // Individual tests peak at ~800ms; 15s provides contention margin.
+    // Per-package CI configs are unaffected (they use workspace-level configs).
+    testTimeout: 15_000,
+    hookTimeout: 15_000,
     globals: true,
     environment: 'node',
     include: [
