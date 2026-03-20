@@ -17,6 +17,10 @@ on:
           - cli
           - mcp
 
+concurrency:
+  group: e2e-tests-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   NODE_VERSION: '22'
   SKILLSMITH_E2E: 'true'

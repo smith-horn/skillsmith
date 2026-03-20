@@ -52,6 +52,8 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 | File size | < 500 lines per file |
 | Test coverage | > 80% |
 
+**New source files must be under 500 lines.** Split into companion files (e.g., `foo.helpers.ts`, `foo.types.ts`) if approaching the limit. The `audit:standards` script enforces this.
+
 **When CI fails**: Don't merge. Check logs. Run `docker exec skillsmith-dev-1 npm run preflight` locally. Create Linear issue if non-trivial.
 
 **npm overrides** (transitive vulnerability fixes in root `package.json`):
