@@ -456,101 +456,6 @@ skillsmith info jest-helper`}</code></pre>
     </p>
   </div>
 
-  <!-- CLI Quick Reference -->
-  <h2 id="quick-reference">CLI Quick Reference</h2>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Command</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><code>skillsmith search &lt;query&gt;</code></td>
-        <td>Search for skills</td>
-      </tr>
-      <tr>
-        <td><code>skillsmith install &lt;skill&gt;</code></td>
-        <td>Install a skill</td>
-      </tr>
-      <tr>
-        <td><code>skillsmith uninstall &lt;skill&gt;</code></td>
-        <td>Remove a skill</td>
-      </tr>
-      <tr>
-        <td><code>skillsmith list</code></td>
-        <td>List installed skills</td>
-      </tr>
-      <tr>
-        <td><code>skillsmith recommend</code></td>
-        <td>Get project-based recommendations</td>
-      </tr>
-      <tr>
-        <td><code>skillsmith info &lt;skill&gt;</code></td>
-        <td>Show skill details</td>
-      </tr>
-      <tr>
-        <td><code>skillsmith --help</code></td>
-        <td>Show all commands</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <!-- Troubleshooting -->
-  <h2 id="troubleshooting">Troubleshooting</h2>
-
-  <details class="quickstart-details">
-    <summary>"skillsmith: command not found"</summary>
-    <div class="quickstart-details-body">
-      <p>The CLI isn't installed globally or isn't in your PATH.</p>
-      <p><strong>Solution:</strong></p>
-      <pre><code>{`# Reinstall globally
-npm install -g @skillsmith/cli
-
-# Or use npx instead
-npx @skillsmith/cli search testing`}</code></pre>
-    </div>
-  </details>
-
-  <details class="quickstart-details">
-    <summary>Claude Code doesn't show Skillsmith tools</summary>
-    <div class="quickstart-details-body">
-      <p>The MCP server isn't configured or Claude Code needs to restart.</p>
-      <p><strong>Solution:</strong></p>
-      <ol>
-        <li>Verify <code>~/.claude/settings.json</code> has the skillsmith configuration</li>
-        <li>Restart Claude Code completely (quit and reopen)</li>
-        <li>Ask Claude: "List available MCP tools"</li>
-      </ol>
-    </div>
-  </details>
-
-  <details class="quickstart-details">
-    <summary>"Permission denied" when installing skills</summary>
-    <div class="quickstart-details-body">
-      <p>The skills directory doesn't exist or has wrong permissions.</p>
-      <p><strong>Solution:</strong></p>
-      <pre><code>{`# Create the directory with correct permissions
-mkdir -p ~/.claude/skills
-chmod 755 ~/.claude/skills`}</code></pre>
-    </div>
-  </details>
-
-  <details class="quickstart-details">
-    <summary>Skills installed but not showing in Claude Code</summary>
-    <div class="quickstart-details-body">
-      <p>Claude Code may need to refresh its skill cache.</p>
-      <p><strong>Solution:</strong></p>
-      <ol>
-        <li>Verify skills are in <code>~/.claude/skills/</code></li>
-        <li>Start a new Claude Code session</li>
-        <li>Skills should appear automatically</li>
-      </ol>
-    </div>
-  </details>
-
   <!-- Next Steps -->
   <h2 id="next-steps">Next Steps</h2>
 
@@ -561,7 +466,7 @@ chmod 755 ~/.claude/skills`}</code></pre>
     </a>
     <a href="/docs/getting-started" class="doc-card">
       <h3>Configuration Guide</h3>
-      <p>Set up API keys and configure advanced options.</p>
+      <p>Set up API keys, verify installation, and troubleshoot issues.</p>
     </a>
     <a href="/docs/cli" class="doc-card">
       <h3>CLI Reference</h3>
@@ -876,27 +781,5 @@ chmod 755 ~/.claude/skills`}</code></pre>
       height: 1.25rem;
     }
 
-    /* Details/Accordion */
-    .quickstart-details {
-      background-color: #0f172a;
-      border: 1px solid #1e293b;
-      border-radius: 0.5rem;
-      margin-bottom: 0.75rem;
-    }
-    .quickstart-details summary {
-      padding: 0.75rem 1rem;
-      cursor: pointer;
-      color: white;
-      font-weight: 500;
-      border-radius: 0.5rem;
-      transition: background-color 0.2s;
-    }
-    .quickstart-details summary:hover {
-      background-color: #1e293b;
-    }
-    .quickstart-details-body {
-      padding: 0 1rem 1rem;
-      font-size: 0.875rem;
-    }
   </style>
 </DocsLayout>
