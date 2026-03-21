@@ -169,6 +169,7 @@ Three workflows build Docker images with BuildKit GHA cache:
 | `publish.yml` | `scope=publish` | `mode=min` | npm publish |
 
 **Key decisions**:
+
 - `mode=min` caches only the final image layers (not intermediate). Dockerfile mid-layer changes trigger full rebuild (~6 min) instead of partial. Acceptable tradeoff: Dockerfile changes are rare (~2x/month).
 - `scope=` isolates each workflow's cache entries. Without scope, workflows evict each other's entries when the 10 GB GHA cache cap is reached.
 - Check cache usage: `gh api repos/smith-horn/skillsmith/actions/cache/usage`
