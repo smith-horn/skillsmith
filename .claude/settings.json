@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' ' | xargs -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then npx claude-flow@alpha hooks pre-command --command \"$CMD\" --validate-safety true --prepare-resources true 2>/dev/null || true; fi'"
+            "command": "cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' ' | xargs -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then npx claude-flow@3 hooks pre-command --command \"$CMD\" --validate-safety true --prepare-resources true 2>/dev/null || true; fi'"
           }
         ]
       },
@@ -48,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.file_path // .tool_input.path // empty' | tr '\\n' '\\0' | xargs -0 -I {} npx claude-flow@alpha hooks pre-edit --file '{}' --auto-assign-agents true --load-context true"
+            "command": "cat | jq -r '.tool_input.file_path // .tool_input.path // empty' | tr '\\n' '\\0' | xargs -0 -I {} npx claude-flow@3 hooks pre-edit --file '{}' --auto-assign-agents true --load-context true"
           }
         ]
       }
@@ -59,7 +59,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' ' | xargs -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then npx claude-flow@alpha hooks post-command --command \"$CMD\" --success true --track-metrics true --store-results true 2>/dev/null || true; fi'"
+            "command": "cat | jq -r '.tool_input.command // empty' | head -c 4096 | tr '\\n' ' ' | xargs -I {} sh -c 'CMD=\"{}\"; if [ -n \"$CMD\" ]; then npx claude-flow@3 hooks post-command --command \"$CMD\" --success true --track-metrics true --store-results true 2>/dev/null || true; fi'"
           }
         ]
       },
@@ -68,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat | jq -r '.tool_input.file_path // .tool_input.path // empty' | tr '\\n' '\\0' | xargs -0 -I {} sh -c 'FILE=\"{}\"; if [ -n \"$FILE\" ]; then npx claude-flow@alpha hooks post-edit --file \"$FILE\" --success true --format true --update-memory true 2>/dev/null || true; fi'"
+            "command": "cat | jq -r '.tool_input.file_path // .tool_input.path // empty' | tr '\\n' '\\0' | xargs -0 -I {} sh -c 'FILE=\"{}\"; if [ -n \"$FILE\" ]; then npx claude-flow@3 hooks post-edit --file \"$FILE\" --success true --format true --update-memory true 2>/dev/null || true; fi'"
           }
         ]
       },
@@ -107,7 +107,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx claude-flow@alpha hooks session-end --generate-summary true --persist-state true --export-metrics true"
+            "command": "npx claude-flow@3 hooks session-end --generate-summary true --persist-state true --export-metrics true"
           }
         ]
       }

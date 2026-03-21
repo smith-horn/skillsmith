@@ -285,7 +285,7 @@ Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_
 
 ## Claude-Flow MCP Server
 
-Required for hive mind and agent spawning. Auto-configured via `.mcp.json`. Manual: `claude mcp add claude-flow -- npx claude-flow@alpha mcp start`.
+Required for hive mind and agent spawning. Auto-configured via `.mcp.json`. Manual: `claude mcp add claude-flow -- npx claude-flow@3 mcp start`.
 
 **Tools**: `swarm_init`, `agent_spawn`, `task_orchestrate`, `memory_usage`, `swarm_destroy`.
 
