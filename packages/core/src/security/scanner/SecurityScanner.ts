@@ -25,7 +25,11 @@ import {
   analyzeMarkdownContext,
   isDocumentationContext,
   calculateRiskScore,
+  scanPatternsWithMultilineSupport,
 } from './SecurityScanner.helpers.js'
+
+// Import SSRF scanner
+import { scanSsrfPatterns } from './SecurityScanner.ssrf.js'
 
 // Import formatters (used for both re-export and static methods)
 import {
@@ -43,6 +47,7 @@ export {
   isDocumentationContext,
   calculateRiskScore,
 }
+export { scanSsrfPatterns }
 export { toMinimalRefs, toSARIF, toGitHubAnnotations, toSummary }
 
 export class SecurityScanner {
@@ -136,35 +141,16 @@ export class SecurityScanner {
   }
 
   private scanJailbreakPatterns(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
-    const findings: SecurityFinding[] = []
-    const lines = content.split('\n')
-    const contexts = lineContexts ?? analyzeMarkdownContext(content)
-
-    lines.forEach((line, index) => {
-      const ctx = contexts[index]
-      const inDocContext = ctx ? isDocumentationContext(ctx) : false
-
-      for (const pattern of JAILBREAK_PATTERNS) {
-        const match = safeRegexTest(pattern, line)
-        if (match) {
-          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
-          const severity = inDocContext ? 'high' : 'critical'
-
-          findings.push({
-            type: 'jailbreak',
-            severity,
-            message: `Potential jailbreak pattern detected: "${match[0]}"`,
-            location: line.trim().slice(0, 100),
-            lineNumber: index + 1,
-            inDocumentationContext: inDocContext,
-            confidence,
-          })
-          break
-        }
-      }
-    })
-
-    return findings
+    return scanPatternsWithMultilineSupport(
+      content,
+      {
+        type: 'jailbreak',
+        messagePrefix: 'Potential jailbreak pattern detected',
+        patterns: JAILBREAK_PATTERNS,
+        severities: ['high', 'critical'],
+      },
+      lineContexts
+    )
   }
 
   private scanSuspiciousPatterns(content: string): SecurityFinding[] {
@@ -343,71 +329,16 @@ export class SecurityScanner {
     content: string,
     lineContexts?: LineContext[]
   ): SecurityFinding[] {
-    const findings: SecurityFinding[] = []
-    const lines = content.split('\n')
-    const contexts = lineContexts ?? analyzeMarkdownContext(content)
-    const flaggedLines = new Set<number>()
-
-    // First pass: scan full content for multi-line patterns
-    for (const pattern of AI_DEFENCE_PATTERNS) {
-      if (isMultilinePattern(pattern)) {
-        const match = safeRegexTest(pattern, content)
-        if (match) {
-          const matchIndex = content.indexOf(match[0])
-          const lineNumber = content.slice(0, matchIndex).split('\n').length
-          const lineIndex = lineNumber - 1
-
-          const ctx = contexts[lineIndex]
-          const inDocContext = ctx ? isDocumentationContext(ctx) : false
-          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
-          const severity = inDocContext ? 'high' : 'critical'
-
-          findings.push({
-            type: 'ai_defence',
-            severity,
-            message: `AI injection pattern detected: "${match[0].slice(0, 50)}${match[0].length > 50 ? '...' : ''}"`,
-            location: match[0].trim().slice(0, 100),
-            lineNumber,
-            category: 'ai_defence',
-            inDocumentationContext: inDocContext,
-            confidence,
-          })
-          flaggedLines.add(lineNumber)
-        }
-      }
-    }
-
-    // Second pass: line-by-line scanning for single-line patterns
-    lines.forEach((line, index) => {
-      if (flaggedLines.has(index + 1)) return
-
-      const ctx = contexts[index]
-      const inDocContext = ctx ? isDocumentationContext(ctx) : false
-
-      for (const pattern of AI_DEFENCE_PATTERNS) {
-        if (isMultilinePattern(pattern)) continue
-
-        const match = safeRegexTest(pattern, line)
-        if (match) {
-          const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
-          const severity = inDocContext ? 'high' : 'critical'
-
-          findings.push({
-            type: 'ai_defence',
-            severity,
-            message: `AI injection pattern detected: "${match[0].slice(0, 50)}${match[0].length > 50 ? '...' : ''}"`,
-            location: line.trim().slice(0, 100),
-            lineNumber: index + 1,
-            category: 'ai_defence',
-            inDocumentationContext: inDocContext,
-            confidence,
-          })
-          break
-        }
-      }
-    })
-
-    return findings
+    return scanPatternsWithMultilineSupport(
+      content,
+      {
+        type: 'ai_defence',
+        messagePrefix: 'AI injection pattern detected',
+        patterns: AI_DEFENCE_PATTERNS,
+        severities: ['high', 'critical'],
+      },
+      lineContexts
+    )
   }
 
   /** @deprecated Use standalone calculateRiskScore function for new code */
@@ -435,6 +366,7 @@ export class SecurityScanner {
     findings.push(...this.scanDataExfiltration(content, lineContexts))
     findings.push(...this.scanPrivilegeEscalation(content, lineContexts))
     findings.push(...this.scanAIDefenceVulnerabilities(content, lineContexts))
+    findings.push(...scanSsrfPatterns(content, lineContexts))
 
     const endTime = performance.now()
     const { total: riskScore, breakdown: riskBreakdown } = calculateRiskScore(findings)
