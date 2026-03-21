@@ -301,6 +301,38 @@ Published as `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol
 
 ---
 
+## Publishing Packages
+
+**Preferred method**: `./scripts/publish-packages.sh` — publishes in dependency order with pre-publish tarball verification.
+
+**Publish order** (dependencies before consumers):
+
+1. `@skillsmith/core`
+2. `@skillsmith/mcp-server` and `@skillsmith/cli` (both depend on core)
+
+**Pre-publish checklist** (manual publishes):
+
+1. Build in Docker: `docker exec skillsmith-dev-1 npm run build`
+2. Run preflight: `docker exec skillsmith-dev-1 npm run preflight`
+3. Verify dependency versions are committed and pushed
+4. Check dependency is published:
+
+   ```bash
+   VERSION=$(node -e "console.log(require('./packages/core/package.json').version)")
+   npm view @skillsmith/core@$VERSION version   # must return the version
+   ```
+
+5. If dependency not published: publish it first with `./scripts/publish-packages.sh core`
+6. Run `npm pack --dry-run` in the package dir to inspect tarball contents
+7. Publish: `cd packages/<pkg> && npm publish --ignore-scripts`
+8. Post-publish: `npx tsx scripts/smoke-test-published.ts @skillsmith/<pkg> <version>`
+
+**Never** publish a consumer before its dependency. **Never** publish with an exact-pinned workspace dep (use `^` prefix). Workspace resolution masks version-pin errors locally — only fresh `npm install` from the registry reveals mismatches. See [retro: mcp-server@0.4.5](docs/internal/retros/2026-03-19-mcp-server-0.4.5-hotfix.md).
+
+**Note**: `packaging-test.yml` (weekly CI) installs from local tarballs, not the npm registry. It does NOT catch version-pin-against-unpublished-npm scenarios. The post-publish smoke test (`scripts/smoke-test-published.ts`) is the only check that exercises actual npm resolution.
+
+---
+
 ## Skills & Embedding
 
 **Project skills** (`.claude/skills/`): [governance](.claude/skills/governance/SKILL.md) (standards enforcement), [worktree-manager](.claude/skills/worktree-manager/SKILL.md) (parallel development).
