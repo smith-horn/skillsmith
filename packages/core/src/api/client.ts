@@ -92,6 +92,8 @@ export interface ApiSearchResult {
   stars?: number | null
   installable?: boolean | null
   quarantined?: boolean
+  /** SHA-256 hash of SKILL.md content at index time */
+  content_hash?: string | null
   created_at?: string
   updated_at?: string
 }

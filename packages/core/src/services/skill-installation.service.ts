@@ -49,7 +49,6 @@ import {
 const DEFAULT_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
 const DEFAULT_SKILLSMITH_DIR = path.join(os.homedir(), '.skillsmith')
 const DEFAULT_MANIFEST_PATH = path.join(DEFAULT_SKILLSMITH_DIR, 'manifest.json')
-
 export interface SkillInstallationServiceParams {
   db: Database
   skillRepo: SkillRepository
@@ -67,10 +66,6 @@ export interface SkillInstallationServiceParams {
   /** Skill IDs installed in this session (for co-install tracking) */
   sessionInstalledSkillIds?: string[]
 }
-
-// ============================================================================
-// Service
-// ============================================================================
 
 export class SkillInstallationService {
   private readonly db: Database
@@ -95,13 +90,8 @@ export class SkillInstallationService {
     this.sessionInstalledSkillIds = params.sessionInstalledSkillIds ?? []
   }
 
-  // ==========================================================================
-  // Install
-  // ==========================================================================
-
   async install(skillId: string, options: InstallOptions = {}): Promise<InstallResult> {
     let trustTier: TrustTier = 'unknown'
-
     try {
       this.onProgress('parse', 'Parsing skill ID')
       const parsed = parseSkillIdInternal(skillId)
@@ -112,6 +102,7 @@ export class SkillInstallationService {
       let skillName: string
       let branch: string = 'main'
       let fromRegistry = false
+      let indexedContentHash: string | undefined
 
       if (parsed.isRegistryId) {
         if (!this.registryLookup) {
@@ -173,6 +164,7 @@ export class SkillInstallationService {
         skillName = registrySkill.name
         trustTier = registrySkill.trustTier
         fromRegistry = true
+        indexedContentHash = registrySkill.contentHash
       } else {
         owner = parsed.owner
         repo = parsed.repo
@@ -249,8 +241,12 @@ export class SkillInstallationService {
         }
       }
 
-      // Security scan
-      // GAP-06: Restrict skipScan to trusted tiers only
+      // SMI-3510: Hash raw content before optimization for tamper detection
+      const rawContentHash = hashContent(skillMdContent)
+      const contentHashMismatch =
+        indexedContentHash != null && rawContentHash !== indexedContentHash
+
+      // Security scan — GAP-06: Restrict skipScan to trusted tiers only
       if (options.skipScan && (trustTier === 'experimental' || trustTier === 'unknown')) {
         return {
           success: false,
@@ -441,6 +437,14 @@ export class SkillInstallationService {
           'Security scan was skipped. This skill was not scanned for malicious content.'
         )
       }
+      // SMI-3510: Warn when content hash differs from indexed hash
+      if (contentHashMismatch) {
+        tips.unshift(
+          'Content has changed since Skillsmith last indexed this skill. ' +
+            'This may mean the author updated it, or the content was modified. ' +
+            "Review recent changes at the skill's repository before using."
+        )
+      }
 
       return {
         success: true,
@@ -450,6 +454,7 @@ export class SkillInstallationService {
         trustTier,
         optimization: optimizationInfo,
         depIntel,
+        contentHashMismatch,
         tips,
       }
     } catch (error) {
@@ -481,10 +486,6 @@ export class SkillInstallationService {
       }
     }
   }
-
-  // ==========================================================================
-  // Uninstall
-  // ==========================================================================
 
   async uninstall(skillName: string, options: UninstallOptions = {}): Promise<UninstallResult> {
     return performUninstall({

@@ -26,8 +26,8 @@ import { MIGRATION_V10_SQL } from './migrations/v10-dependencies.js'
 
 export type DatabaseType = Database
 
-// v10 reserved: skill-dependency-intelligence (SMI-3134)
-export const SCHEMA_VERSION = 10
+// v11: SMI-3510 content hash verification column
+export const SCHEMA_VERSION = 11
 
 /**
  * SQL statements for creating the database schema
@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS skills (
   security_scanned_at TEXT,
   security_passed INTEGER, -- boolean: 1 = passed, 0 = failed, NULL = not scanned
   compatibility TEXT DEFAULT '[]', -- SMI-2760: JSON array of IDE/LLM/platform slugs
+  content_hash TEXT, -- SMI-3510: SHA-256 hash of SKILL.md for tamper detection
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -222,6 +223,11 @@ export const MIGRATIONS: Migration[] = [
     version: 10,
     description: 'Skill dependency intelligence: skill_dependencies table',
     sql: MIGRATION_V10_SQL,
+  },
+  {
+    version: 11,
+    description: 'SMI-3510: content_hash column for tamper detection',
+    sql: 'ALTER TABLE skills ADD COLUMN content_hash TEXT',
   },
 ]
 

@@ -83,6 +83,8 @@ export interface InstallResult {
   backupPath?: string
   /** Dependency intelligence extracted during install */
   depIntel?: DepIntelResult
+  /** Whether fetched content hash differs from indexed content hash */
+  contentHashMismatch?: boolean
 }
 
 // ============================================================================
@@ -148,6 +150,8 @@ export interface RegistrySkillInfo {
   trustTier: TrustTier
   /** Whether the skill has been quarantined */
   quarantined?: boolean
+  /** SHA-256 hash of SKILL.md at index time for tamper detection */
+  contentHash?: string
 }
 
 /**

@@ -98,6 +98,10 @@ function displayResult(result: CoreInstallResult, quiet: boolean): void {
       }
     }
 
+    if (result.contentHashMismatch) {
+      console.log(chalk.yellow('\n  Warning: Content has changed since last indexed.'))
+    }
+
     if (result.tips && result.tips.length > 0 && !quiet) {
       console.log()
       for (const tip of result.tips) {

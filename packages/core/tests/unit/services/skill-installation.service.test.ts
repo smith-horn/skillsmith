@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { createHash } from 'crypto'
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
@@ -67,7 +68,13 @@ async function cleanupTmpDirs(): Promise<void> {
 function createMockRegistryLookup(
   skills: Record<
     string,
-    { repoUrl: string; name: string; quarantined?: boolean; trustTier?: TrustTier }
+    {
+      repoUrl: string
+      name: string
+      quarantined?: boolean
+      trustTier?: TrustTier
+      contentHash?: string
+    }
   >
 ): RegistryLookup {
   return {
@@ -79,6 +86,7 @@ function createMockRegistryLookup(
         name: entry.name,
         trustTier: entry.trustTier ?? ('community' as const),
         quarantined: entry.quarantined,
+        contentHash: entry.contentHash,
       }
     },
   }
@@ -730,6 +738,96 @@ describe('SMI-3483: SkillInstallationService', () => {
       expect(result.success).toBe(true)
       expect(result.tips).toBeDefined()
       expect(result.tips!.some((t) => t.includes('installed successfully'))).toBe(true)
+    })
+  })
+
+  // ==========================================================================
+  // SMI-3510: Content Hash Verification
+  // ==========================================================================
+
+  describe('SMI-3510: content hash verification', () => {
+    beforeEach(() => {
+      vi.stubGlobal('fetch', vi.fn())
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockImplementation(async (url) => {
+        const urlStr = typeof url === 'string' ? url : url.toString()
+        if (urlStr.includes('SKILL.md')) {
+          return new Response(VALID_SKILL_MD, { status: 200 })
+        }
+        return new Response('Not found', { status: 404 })
+      })
+    })
+
+    it('should not flag mismatch when indexed hash matches fetched content', async () => {
+      const expectedHash = createHash('sha256').update(VALID_SKILL_MD).digest('hex')
+
+      const service = createService(db, {
+        registryLookup: createMockRegistryLookup({
+          'author/hash-match': {
+            repoUrl: 'https://github.com/author/hash-match',
+            name: 'hash-match',
+            contentHash: expectedHash,
+          },
+        }),
+      })
+
+      const result = await service.install('author/hash-match', { skipOptimize: true })
+
+      expect(result.success).toBe(true)
+      expect(result.contentHashMismatch).toBeFalsy()
+      const allTips = (result.tips ?? []).join(' ')
+      expect(allTips).not.toContain('changed since')
+    })
+
+    it('should flag mismatch when indexed hash differs from fetched content', async () => {
+      const service = createService(db, {
+        registryLookup: createMockRegistryLookup({
+          'author/hash-mismatch': {
+            repoUrl: 'https://github.com/author/hash-mismatch',
+            name: 'hash-mismatch',
+            contentHash: 'abc123deadbeef',
+          },
+        }),
+      })
+
+      const result = await service.install('author/hash-mismatch', { skipOptimize: true })
+
+      expect(result.success).toBe(true)
+      expect(result.contentHashMismatch).toBe(true)
+      const allTips = (result.tips ?? []).join(' ')
+      expect(allTips).toContain('changed since')
+    })
+
+    it('should not flag mismatch when no indexed hash is available', async () => {
+      const service = createService(db, {
+        registryLookup: createMockRegistryLookup({
+          'author/no-hash': {
+            repoUrl: 'https://github.com/author/no-hash',
+            name: 'no-hash',
+            // contentHash omitted (undefined)
+          },
+        }),
+      })
+
+      const result = await service.install('author/no-hash', { skipOptimize: true })
+
+      expect(result.success).toBe(true)
+      expect(result.contentHashMismatch).toBeFalsy()
+      const allTips = (result.tips ?? []).join(' ')
+      expect(allTips).not.toContain('changed since')
+    })
+
+    it('should not flag mismatch for direct GitHub URL installs (no registry)', async () => {
+      const service = createService(db)
+
+      const result = await service.install('https://github.com/owner/direct-repo', {
+        skipOptimize: true,
+      })
+
+      expect(result.success).toBe(true)
+      expect(result.contentHashMismatch).toBeFalsy()
+      const allTips = (result.tips ?? []).join(' ')
+      expect(allTips).not.toContain('changed since')
     })
   })
 })

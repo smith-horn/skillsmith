@@ -272,4 +272,6 @@ export interface RegistrySkillInfo {
   trustTier: TrustTier
   // SMI-2383: Quarantine status from registry
   quarantined?: boolean
+  /** SHA-256 hash of SKILL.md at index time for tamper detection */
+  contentHash?: string
 }
