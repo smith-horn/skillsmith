@@ -100,12 +100,19 @@ function displayResult(result: CoreInstallResult, quiet: boolean): void {
 
     if (result.contentHashMismatch) {
       console.log(chalk.yellow('\n  Warning: Content has changed since last indexed.'))
+      console.log(chalk.yellow("  Review recent changes at the skill's repository before using."))
     }
 
     if (result.tips && result.tips.length > 0 && !quiet) {
-      console.log()
-      for (const tip of result.tips) {
-        console.log(chalk.dim(`  Tip: ${tip}`))
+      // Filter out the content hash mismatch tip (already shown as yellow warning above)
+      const displayTips = result.contentHashMismatch
+        ? result.tips.filter((t) => !t.includes('changed since Skillsmith last indexed'))
+        : result.tips
+      if (displayTips.length > 0) {
+        console.log()
+        for (const tip of displayTips) {
+          console.log(chalk.dim(`  Tip: ${tip}`))
+        }
       }
     }
   } else {

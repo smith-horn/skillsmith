@@ -241,10 +241,10 @@ export class SkillInstallationService {
         }
       }
 
-      // SMI-3510: Hash raw content before optimization for tamper detection
-      const rawContentHash = hashContent(skillMdContent)
-      const contentHashMismatch =
-        indexedContentHash != null && rawContentHash !== indexedContentHash
+      // SMI-3510: Compare raw content hash against indexed hash (only if indexed hash exists)
+      const contentHashMismatch = indexedContentHash != null
+        ? hashContent(skillMdContent) !== indexedContentHash
+        : false
 
       // Security scan — GAP-06: Restrict skipScan to trusted tiers only
       if (options.skipScan && (trustTier === 'experimental' || trustTier === 'unknown')) {
