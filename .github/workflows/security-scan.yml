@@ -246,7 +246,7 @@ jobs:
         with:
           name: security-scan-results
           path: security-reports/
-          retention-days: 30
+          retention-days: 14
 
       - name: Output annotations
         if: always()
