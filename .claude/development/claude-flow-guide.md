@@ -11,7 +11,7 @@ Configured via `.mcp.json` (auto-loaded by Claude Code):
   "mcpServers": {
     "claude-flow": {
       "command": "npx",
-      "args": ["claude-flow@alpha", "mcp", "start"],
+      "args": ["claude-flow@3", "mcp", "start"],
       "env": {
         "CLAUDE_FLOW_LOG_LEVEL": "info",
         "CLAUDE_FLOW_MEMORY_BACKEND": "sqlite"
@@ -21,7 +21,7 @@ Configured via `.mcp.json` (auto-loaded by Claude Code):
 }
 ```
 
-Manual setup: `claude mcp add claude-flow -- npx claude-flow@alpha mcp start`
+Manual setup: `claude mcp add claude-flow -- npx claude-flow@3 mcp start`
 
 Verify: `claude mcp list | grep claude-flow`
 
@@ -115,7 +115,7 @@ Available modes: orchestrator, coder, researcher, tdd, architect, reviewer, debu
 ### MCP Server Setup
 
 ```bash
-claude mcp add claude-flow npx claude-flow@alpha mcp start
+claude mcp add claude-flow npx claude-flow@3 mcp start
 ```
 
 See `.claude/agents/` for available agent definitions.
