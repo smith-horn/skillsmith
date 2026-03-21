@@ -92,10 +92,31 @@ export function analyzeMarkdownContext(content: string): LineContext[] {
 }
 
 /**
- * Check if a line is in a documentation context (code block, table, example)
+ * Check if a line is in a documentation context (code block, table, example).
+ * Note: isInlineCode is intentionally excluded — it marks the entire line,
+ * but only specific match positions within backtick spans should reduce severity.
+ * Use isWithinInlineCode() for per-span granularity (SMI-3521).
  */
 export function isDocumentationContext(ctx: LineContext): boolean {
-  return ctx.inCodeBlock || ctx.inTable || ctx.isIndentedCode || ctx.isInlineCode
+  return ctx.inCodeBlock || ctx.inTable || ctx.isIndentedCode
+}
+
+/**
+ * SMI-3521: Check if a match position falls within an inline code span (backtick-delimited).
+ * Unlike the line-level isInlineCode flag, this provides per-span granularity:
+ * only content actually between backticks is considered inline code.
+ */
+export function isWithinInlineCode(line: string, matchIndex: number): boolean {
+  const backtickRegex = /`([^`]+)`/g
+  let match
+  while ((match = backtickRegex.exec(line)) !== null) {
+    const spanStart = match.index
+    const spanEnd = match.index + match[0].length
+    if (matchIndex >= spanStart && matchIndex < spanEnd) {
+      return true
+    }
+  }
+  return false
 }
 
 // ============================================================================
@@ -132,7 +153,11 @@ export function scanPatternsWithMultilineSupport(
         const matchIndex = content.indexOf(match[0])
         const lineNumber = content.slice(0, matchIndex).split('\n').length
         const ctx = contexts[lineNumber - 1]
-        const inDocContext = ctx ? isDocumentationContext(ctx) : false
+        const matchLine = lines[lineNumber - 1] ?? ''
+        const lineOffset = content.lastIndexOf('\n', matchIndex - 1) + 1
+        const matchCol = matchIndex - lineOffset
+        const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(matchLine, matchCol)
+        const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
         const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
         const severity = inDocContext ? config.severities[0] : config.severities[1]
         const truncated = match[0].slice(0, 50)
@@ -156,12 +181,16 @@ export function scanPatternsWithMultilineSupport(
   lines.forEach((line, index) => {
     if (flaggedLines.has(index + 1)) return
     const ctx = contexts[index]
-    const inDocContext = ctx ? isDocumentationContext(ctx) : false
 
     for (const pattern of config.patterns) {
       if (isMultilinePattern(pattern)) continue
       const match = safeRegexTest(pattern, line)
       if (match) {
+        const inInlineCode =
+          ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
+        const inDocContext = ctx
+          ? isDocumentationContext(ctx) || inInlineCode
+          : false
         const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
         const severity = inDocContext ? config.severities[0] : config.severities[1]
 

@@ -181,6 +181,11 @@ export const SSRF_INSTRUCTION_PATTERNS = [
   // Bare dangerous protocol references in content (without action verb)
   /file:\/\/\/etc\/(?:passwd|shadow|hosts)/i,
   /gopher:\/\/localhost/i,
+
+  // SMI-3522: Multi-line SSRF patterns (split across lines)
+  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?(?:the\s+)?(?:url\s+)?\n\s*file:\/\//i,
+  /(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:the\s*)?\n\s*(?:https?:\/\/)?(?:localhost|127\.0\.0\.\d+|0\.0\.0\.0)/i,
+  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?(?:the\s+)?(?:url\s+)?\n\s*gopher:\/\//i,
 ]
 
 /**
