@@ -3,8 +3,15 @@
  * @module @skillsmith/core/security/scanner/SecurityScanner.helpers
  */
 
-import type { SecurityFinding, RiskScoreBreakdown, FindingConfidence } from './types.js'
+import type {
+  SecurityFinding,
+  SecurityFindingType,
+  RiskScoreBreakdown,
+  FindingConfidence,
+  SecuritySeverity,
+} from './types.js'
 import { SEVERITY_WEIGHTS, CATEGORY_WEIGHTS } from './weights.js'
+import { safeRegexTest } from './regex-utils.js'
 
 // ============================================================================
 // Types
@@ -85,10 +92,121 @@ export function analyzeMarkdownContext(content: string): LineContext[] {
 }
 
 /**
- * Check if a line is in a documentation context (code block, table, example)
+ * Check if a line is in a documentation context (code block, table, example).
+ * Note: isInlineCode is intentionally excluded — it marks the entire line,
+ * but only specific match positions within backtick spans should reduce severity.
+ * Use isWithinInlineCode() for per-span granularity (SMI-3521).
  */
 export function isDocumentationContext(ctx: LineContext): boolean {
   return ctx.inCodeBlock || ctx.inTable || ctx.isIndentedCode
+}
+
+/**
+ * SMI-3521: Check if a match position falls within an inline code span (backtick-delimited).
+ * Unlike the line-level isInlineCode flag, this provides per-span granularity:
+ * only content actually between backticks is considered inline code.
+ */
+export function isWithinInlineCode(line: string, matchIndex: number): boolean {
+  const backtickRegex = /`([^`]+)`/g
+  let match
+  while ((match = backtickRegex.exec(line)) !== null) {
+    const spanStart = match.index
+    const spanEnd = match.index + match[0].length
+    if (matchIndex >= spanStart && matchIndex < spanEnd) {
+      return true
+    }
+  }
+  return false
+}
+
+// ============================================================================
+// Shared Pattern Scanning
+// ============================================================================
+
+interface MultilineScanConfig {
+  type: SecurityFindingType
+  messagePrefix: string
+  patterns: RegExp[]
+  /** Severity pair: [inDocContext, normalContext] */
+  severities: [SecuritySeverity, SecuritySeverity]
+}
+
+/**
+ * Scan content for patterns that may span multiple lines.
+ * Multi-line patterns are tested against full content; single-line patterns per-line.
+ */
+export function scanPatternsWithMultilineSupport(
+  content: string,
+  config: MultilineScanConfig,
+  lineContexts?: LineContext[]
+): SecurityFinding[] {
+  const findings: SecurityFinding[] = []
+  const lines = content.split('\n')
+  const contexts = lineContexts ?? analyzeMarkdownContext(content)
+  const flaggedLines = new Set<number>()
+
+  // First pass: multi-line patterns against full content
+  for (const pattern of config.patterns) {
+    if (isMultilinePattern(pattern)) {
+      const match = safeRegexTest(pattern, content)
+      if (match) {
+        const matchIndex = content.indexOf(match[0])
+        const lineNumber = content.slice(0, matchIndex).split('\n').length
+        const ctx = contexts[lineNumber - 1]
+        const matchLine = lines[lineNumber - 1] ?? ''
+        const lineOffset = content.lastIndexOf('\n', matchIndex - 1) + 1
+        const matchCol = matchIndex - lineOffset
+        const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(matchLine, matchCol)
+        const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
+        const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
+        const severity = inDocContext ? config.severities[0] : config.severities[1]
+        const truncated = match[0].slice(0, 50)
+
+        findings.push({
+          type: config.type,
+          severity,
+          message: `${config.messagePrefix}: "${truncated}${match[0].length > 50 ? '...' : ''}"`,
+          location: match[0].trim().slice(0, 100),
+          lineNumber,
+          category: config.type,
+          inDocumentationContext: inDocContext,
+          confidence,
+        })
+        flaggedLines.add(lineNumber)
+      }
+    }
+  }
+
+  // Second pass: single-line patterns per-line
+  lines.forEach((line, index) => {
+    if (flaggedLines.has(index + 1)) return
+    const ctx = contexts[index]
+
+    for (const pattern of config.patterns) {
+      if (isMultilinePattern(pattern)) continue
+      const match = safeRegexTest(pattern, line)
+      if (match) {
+        const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
+        const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
+        const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
+        const severity = inDocContext ? config.severities[0] : config.severities[1]
+
+        findings.push({
+          type: config.type,
+          severity,
+          message: `${config.messagePrefix}: "${match[0].slice(0, 50)}${match[0].length > 50 ? '...' : ''}"`,
+          location: line.trim().slice(0, 100),
+          lineNumber: index + 1,
+          category: config.type,
+          inDocumentationContext: inDocContext,
+          confidence,
+        })
+        break
+      }
+    }
+  })
+
+  return findings
 }
 
 // ============================================================================
@@ -114,6 +232,7 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
     sensitivePaths: 0,
     externalUrls: 0,
     aiDefence: 0,
+    ssrf: 0,
   }
 
   const confidenceWeights: Record<FindingConfidence, number> = {
@@ -156,6 +275,9 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
       case 'ai_defence':
         breakdown.aiDefence += score
         break
+      case 'ssrf':
+        breakdown.ssrf += score
+        break
     }
   }
 
@@ -169,6 +291,7 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
   breakdown.sensitivePaths = Math.min(100, breakdown.sensitivePaths)
   breakdown.externalUrls = Math.min(100, breakdown.externalUrls)
   breakdown.aiDefence = Math.min(100, breakdown.aiDefence)
+  breakdown.ssrf = Math.min(100, breakdown.ssrf)
 
   const total = Math.min(
     100,
@@ -176,12 +299,13 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
       breakdown.jailbreak * 0.22 +
         breakdown.socialEngineering * 0.12 +
         breakdown.promptLeaking * 0.12 +
-        breakdown.dataExfiltration * 0.1 +
+        breakdown.dataExfiltration * 0.08 +
         breakdown.privilegeEscalation * 0.11 +
         breakdown.suspiciousCode * 0.08 +
         breakdown.sensitivePaths * 0.05 +
         breakdown.externalUrls * 0.05 +
-        breakdown.aiDefence * 0.15
+        breakdown.aiDefence * 0.13 +
+        breakdown.ssrf * 0.04
     )
   )
 

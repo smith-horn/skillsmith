@@ -50,6 +50,11 @@ export const JAILBREAK_PATTERNS = [
   /you\s+are\s+now\s+(free|unrestricted|unfiltered)/i,
   /ignore\s+your\s+(safety|ethical)\s+(guidelines?|rules?)/i,
   /hypothetical\s+scenario\s+where\s+you\s+can/i,
+
+  // Multi-line split-word obfuscation patterns (tested against full content)
+  /ig\s*\n\s*nore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions?|prompts?|rules?)/i,
+  /dis\s*\n\s*regard\s+(?:all\s+)?(?:previous|prior|your)\s+(?:instructions?|programming)/i,
+  /by\s*\n\s*pass\s+(?:all\s+)?(?:restrictions?|filters?|safety)/i,
 ]
 
 // Suspicious patterns that might indicate malicious intent
@@ -154,6 +159,36 @@ export const PRIVILEGE_ESCALATION_PATTERNS = [
 ]
 
 /**
+ * SMI-3509: SSRF instruction patterns
+ * Detects content instructing fetches to internal/dangerous endpoints.
+ * These are text-oriented patterns for skill content scanning (not URL validators).
+ */
+export const SSRF_INSTRUCTION_PATTERNS = [
+  // Dangerous protocol schemes in skill instructions
+  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?file:\/\//i,
+  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?gopher:\/\//i,
+  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?dict:\/\//i,
+  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?ldap:\/\//i,
+
+  // Instructions targeting localhost/internal IPs
+  /(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?localhost/i,
+  /(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?127\.0\.0\.\d+/i,
+  /(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:https?:\/\/)?0\.0\.0\.0/i,
+
+  // Cloud metadata service endpoints
+  /169\.254\.169\.254/,
+
+  // Bare dangerous protocol references in content (without action verb)
+  /file:\/\/\/etc\/(?:passwd|shadow|hosts)/i,
+  /gopher:\/\/localhost/i,
+
+  // SMI-3522: Multi-line SSRF patterns (split across lines)
+  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?(?:the\s+)?(?:url\s+)?\n\s*file:\/\//i,
+  /(?:fetch|request|curl|wget|get|connect|send)\s+(?:to\s+)?(?:the\s*)?\n\s*(?:https?:\/\/)?(?:localhost|127\.0\.0\.\d+|0\.0\.0\.0)/i,
+  /(?:fetch|request|curl|wget|get|open|load|read)\s+(?:from\s+)?(?:the\s+)?(?:url\s+)?\n\s*gopher:\/\//i,
+]
+
+/**
  * SMI-1532: AIDefence CVE-hardened injection patterns
  * Optimized for sub-10ms scan time with compiled regex and no backtracking
  *
@@ -180,6 +215,10 @@ export const AI_DEFENCE_PATTERNS = [
   // Unicode homograph attacks - visually similar characters
   // Detects Cyrillic, Greek, or other homoglyphs mixed with Latin
   /[\u0400-\u04FF\u0370-\u03FF]{2,}[\w\s]+(?:ignore|bypass|instruction)/i,
+
+  // Mixed-script detection: Latin + Cyrillic/Greek in same word (homoglyph attack)
+  // Note: \b word boundaries don't work with Unicode; use space/start/end anchors
+  /(?:^|[\s,."'(])(?:[a-zA-Z]+[\u0400-\u04FF\u0370-\u03FF]|[\u0400-\u04FF\u0370-\u03FF]+[a-zA-Z])[a-zA-Z\u0400-\u04FF\u0370-\u03FF]*/,
 
   // Prompt structure manipulation - XML/markdown injection
   /<\/?(?:system|prompt|instruction|context|message)(?:\s[^>]*)?>/i,

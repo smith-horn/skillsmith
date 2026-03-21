@@ -47,8 +47,10 @@ function createDbRegistryLookup(skillRepo: SkillRepository): RegistryLookup {
         repoUrl: skill.repoUrl,
         name: skill.name,
         trustTier: skill.trustTier,
-        // Quarantine status is managed at the quarantine layer, not on the Skill type.
-        // CLI installs from local DB do not have quarantine data — default to false.
+        // GAP-07: Quarantine status is managed at the quarantine layer, not on
+        // the Skill type. CLI installs from local DB do not have quarantine
+        // data — default to false. This is a known limitation; quarantine
+        // enforcement is authoritative only via the MCP registry API path.
         quarantined: false,
       }
     },
@@ -96,10 +98,20 @@ function displayResult(result: CoreInstallResult, quiet: boolean): void {
       }
     }
 
+    if (result.contentHashMismatch) {
+      console.log(chalk.yellow('\n  Warning: Content has changed since last indexed.'))
+      console.log(chalk.yellow("  Review recent changes at the skill's repository before using."))
+    }
+
     if (result.tips && result.tips.length > 0 && !quiet) {
-      console.log()
-      for (const tip of result.tips) {
-        console.log(chalk.dim(`  Tip: ${tip}`))
+      // Skip the first tip when contentHashMismatch is true — it's the mismatch
+      // warning already displayed as chalk.yellow above (added via tips.unshift)
+      const startIndex = result.contentHashMismatch ? 1 : 0
+      if (startIndex < result.tips.length) {
+        console.log()
+        for (let i = startIndex; i < result.tips.length; i++) {
+          console.log(chalk.dim(`  Tip: ${result.tips[i]}`))
+        }
       }
     }
   } else {

@@ -117,3 +117,12 @@ export type {
   OutdatedSummary,
   OutdatedResponse,
 } from './outdated.js'
+
+// Skill Rescan tool (SMI-3511: GAP-08 re-scan installed skills)
+export {
+  skillRescanToolSchema,
+  skillRescanInputSchema,
+  executeSkillRescan,
+  discoverInstalledSkills,
+} from './skill-rescan.js'
+export type { SkillRescanInput, SkillRescanEntry, SkillRescanResponse } from './skill-rescan.js'

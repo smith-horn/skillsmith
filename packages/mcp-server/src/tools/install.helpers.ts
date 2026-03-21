@@ -222,6 +222,8 @@ export async function lookupSkillFromRegistry(
           trustTier: validateTrustTier(response.data.trust_tier),
           // SMI-2383: Pass through quarantine status
           quarantined: response.data.quarantined === true,
+          // SMI-3510: Content hash for tamper detection
+          contentHash: response.data.content_hash ?? undefined,
         }
       }
       // API found skill but no repo_url - it's seed data

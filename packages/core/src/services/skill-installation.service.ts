@@ -44,20 +44,12 @@ import {
   persistDependencies,
   applyOptimization,
   performUninstall,
+  sanitizeInstallError,
 } from './skill-installation.helpers.js'
-
-// ============================================================================
-// Constants
-// ============================================================================
 
 const DEFAULT_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
 const DEFAULT_SKILLSMITH_DIR = path.join(os.homedir(), '.skillsmith')
 const DEFAULT_MANIFEST_PATH = path.join(DEFAULT_SKILLSMITH_DIR, 'manifest.json')
-
-// ============================================================================
-// Service Parameters
-// ============================================================================
-
 export interface SkillInstallationServiceParams {
   db: Database
   skillRepo: SkillRepository
@@ -75,10 +67,6 @@ export interface SkillInstallationServiceParams {
   /** Skill IDs installed in this session (for co-install tracking) */
   sessionInstalledSkillIds?: string[]
 }
-
-// ============================================================================
-// Service
-// ============================================================================
 
 export class SkillInstallationService {
   private readonly db: Database
@@ -103,13 +91,8 @@ export class SkillInstallationService {
     this.sessionInstalledSkillIds = params.sessionInstalledSkillIds ?? []
   }
 
-  // ==========================================================================
-  // Install
-  // ==========================================================================
-
   async install(skillId: string, options: InstallOptions = {}): Promise<InstallResult> {
     let trustTier: TrustTier = 'unknown'
-
     try {
       this.onProgress('parse', 'Parsing skill ID')
       const parsed = parseSkillIdInternal(skillId)
@@ -120,6 +103,7 @@ export class SkillInstallationService {
       let skillName: string
       let branch: string = 'main'
       let fromRegistry = false
+      let indexedContentHash: string | undefined
 
       if (parsed.isRegistryId) {
         if (!this.registryLookup) {
@@ -168,7 +152,7 @@ export class SkillInstallationService {
             tips: [
               'Visit https://skillsmith.app/docs/quarantine for details on quarantine policies',
               'If you believe this is a false positive, contact support via https://skillsmith.app/contact?topic=security',
-              'You can install from a direct GitHub URL to bypass registry quarantine (at your own risk)',
+              'Contact the skill author or visit the quarantine documentation for more information',
             ],
           }
         }
@@ -181,6 +165,7 @@ export class SkillInstallationService {
         skillName = registrySkill.name
         trustTier = registrySkill.trustTier
         fromRegistry = true
+        indexedContentHash = registrySkill.contentHash
       } else {
         owner = parsed.owner
         repo = parsed.repo
@@ -257,7 +242,28 @@ export class SkillInstallationService {
         }
       }
 
-      // Security scan
+      // SMI-3510: Compare raw content hash against indexed hash (only if indexed hash exists)
+      const contentHashMismatch =
+        indexedContentHash != null ? hashContent(skillMdContent) !== indexedContentHash : false
+
+      // Security scan — GAP-06: Restrict skipScan to trusted tiers only
+      if (options.skipScan && (trustTier === 'experimental' || trustTier === 'unknown')) {
+        return {
+          success: false,
+          skillId,
+          installPath: '',
+          error:
+            'Cannot skip security scan for ' +
+            trustTier +
+            ' tier skills. ' +
+            'Only verified, curated, community, and local tier skills may use skipScan.',
+          tips: [
+            'Trust tier "' + trustTier + '" requires a security scan before installation',
+            'If you believe this skill is safe, request a trust tier upgrade from the author',
+          ],
+        }
+      }
+
       let securityReport: InstallResult['securityReport']
       if (!options.skipScan) {
         this.onProgress('scan', 'Running security scan')
@@ -287,7 +293,9 @@ export class SkillInstallationService {
               criticalFindings.length +
               ' critical/high findings' +
               tierContext +
-              '. Use skipScan=true to override (not recommended).',
+              (trustTier === 'experimental' || trustTier === 'unknown'
+                ? '. skipScan is not available for ' + trustTier + ' tier skills.'
+                : '. Use skipScan=true to override (not recommended).'),
             tips: [
               'Trust tier: ' + trustTier + ' (threshold: ' + scannerOptions.riskThreshold + ')',
               'Risk score: ' + securityReport.riskScore,
@@ -395,7 +403,7 @@ export class SkillInstallationService {
             installPath,
             installedAt: new Date().toISOString(),
             lastUpdated: new Date().toISOString(),
-            originalContentHash: contentHash,
+            originalContentHash: contentHash, // hash of optimized content (post-applyOptimization)
           },
         },
       }))
@@ -421,6 +429,21 @@ export class SkillInstallationService {
 
       this.onProgress('done', 'Installation complete')
 
+      const tips = generateTips(skillName, optimizationInfo)
+
+      // GAP-06: Warn when skipScan was used (allowed tiers only reach here)
+      if (options.skipScan) {
+        tips.unshift('Security scan was skipped. This skill was not scanned for malicious content.')
+      }
+      // SMI-3510: Warn when content hash differs from indexed hash
+      if (contentHashMismatch) {
+        tips.unshift(
+          'Content has changed since Skillsmith last indexed this skill. ' +
+            'This may mean the author updated it, or the content was modified. ' +
+            "Review recent changes at the skill's repository before using."
+        )
+      }
+
       return {
         success: true,
         skillId,
@@ -429,41 +452,18 @@ export class SkillInstallationService {
         trustTier,
         optimization: optimizationInfo,
         depIntel,
-        tips: generateTips(skillName, optimizationInfo),
+        contentHashMismatch,
+        tips,
       }
     } catch (error) {
-      let safeErrorMessage = 'Installation failed'
-      if (error instanceof Error) {
-        const knownPrefixes = [
-          'already installed',
-          'Could not find SKILL.md',
-          'registry data quality issue',
-          'Invalid SKILL.md',
-          'Invalid skill ID format',
-          'Security scan failed',
-          'exceeds maximum length',
-          'Refusing to write to symlink',
-          'Refusing to write to hardlinked file',
-          'Install path escapes skills directory',
-        ]
-        if (knownPrefixes.some((p) => error.message.includes(p))) {
-          safeErrorMessage = error.message
-        } else {
-          safeErrorMessage = 'Installation failed due to an internal error'
-        }
-      }
       return {
         success: false,
         skillId,
         installPath: '',
-        error: safeErrorMessage,
+        error: sanitizeInstallError(error),
       }
     }
   }
-
-  // ==========================================================================
-  // Uninstall
-  // ==========================================================================
 
   async uninstall(skillName: string, options: UninstallOptions = {}): Promise<UninstallResult> {
     return performUninstall({

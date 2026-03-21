@@ -81,6 +81,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           sensitivePaths: 0,
           externalUrls: 0,
           aiDefence: 0, // SMI-1532
+          ssrf: 0, // SMI-3509
         },
       }
 
@@ -105,6 +106,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           sensitivePaths: 0,
           externalUrls: 0,
           aiDefence: 0, // SMI-1532
+          ssrf: 0, // SMI-3509
         },
       }
 
@@ -129,6 +131,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           sensitivePaths: 0,
           externalUrls: 0,
           aiDefence: 0, // SMI-1532
+          ssrf: 0, // SMI-3509
         },
       }
 
@@ -153,6 +156,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           sensitivePaths: 36,
           externalUrls: 0,
           aiDefence: 0, // SMI-1532
+          ssrf: 0, // SMI-3509
         },
       }
 
@@ -177,6 +181,7 @@ describe('SMI-864: Scan Imported Skills', () => {
           sensitivePaths: 0,
           externalUrls: 12,
           aiDefence: 0, // SMI-1532
+          ssrf: 0, // SMI-3509
         },
       }
 
