@@ -8,6 +8,13 @@ export default defineConfig({
   test: {
     ...sharedTestConfig,
     include: ['tests/**/*.test.ts'],
+    exclude: [
+      '**/node_modules/**',
+      '**/dist/**',
+      // SMI-1312: E2E tests require external services (test repos, seeded DB)
+      // They run in dedicated e2e-tests.yml workflow, not in pre-push or CI
+      '**/*.e2e.test.ts',
+    ],
     coverage: {
       ...coverageDefaults,
     },
