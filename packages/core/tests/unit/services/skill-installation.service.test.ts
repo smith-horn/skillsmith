@@ -14,6 +14,7 @@ import { SkillRepository } from '../../../src/repositories/SkillRepository.js'
 import { SkillDependencyRepository } from '../../../src/repositories/SkillDependencyRepository.js'
 import { createTestDatabase } from '../../helpers/database.js'
 import type { Database } from '../../../src/db/database-interface.js'
+import type { TrustTier } from '../../../src/types/skill.js'
 import type {
   RegistryLookup,
   ProgressCallback,
@@ -64,7 +65,10 @@ async function cleanupTmpDirs(): Promise<void> {
 }
 
 function createMockRegistryLookup(
-  skills: Record<string, { repoUrl: string; name: string; quarantined?: boolean }>
+  skills: Record<
+    string,
+    { repoUrl: string; name: string; quarantined?: boolean; trustTier?: TrustTier }
+  >
 ): RegistryLookup {
   return {
     async lookup(skillId: string) {
@@ -73,7 +77,7 @@ function createMockRegistryLookup(
       return {
         repoUrl: entry.repoUrl,
         name: entry.name,
-        trustTier: 'community' as const,
+        trustTier: entry.trustTier ?? ('community' as const),
         quarantined: entry.quarantined,
       }
     },
@@ -284,7 +288,8 @@ describe('SMI-3483: SkillInstallationService', () => {
       expect(second.success).toBe(true)
     })
 
-    it('should skip security scan when skipScan is true', async () => {
+    it('should skip security scan when skipScan is true (trusted tier)', async () => {
+      // GAP-06: skipScan is now tier-restricted — use a verified-tier registry skill
       const mockFetch = vi.mocked(fetch)
       mockFetch.mockImplementation(async (url) => {
         const urlStr = typeof url === 'string' ? url : url.toString()
@@ -294,8 +299,16 @@ describe('SMI-3483: SkillInstallationService', () => {
         return new Response('Not found', { status: 404 })
       })
 
-      const service = createService(db)
-      const result = await service.install('https://github.com/owner/repo', { skipScan: true })
+      const service = createService(db, {
+        registryLookup: createMockRegistryLookup({
+          'author/skip-scan-skill': {
+            repoUrl: 'https://github.com/author/skip-scan-skill',
+            name: 'skip-scan-skill',
+            trustTier: 'verified',
+          },
+        }),
+      })
+      const result = await service.install('author/skip-scan-skill', { skipScan: true })
 
       expect(result.success).toBe(true)
       expect(result.securityReport).toBeUndefined()
@@ -571,6 +584,122 @@ describe('SMI-3483: SkillInstallationService', () => {
       expect(result.depIntel).toBeDefined()
       expect(Array.isArray(result.depIntel!.dep_inferred_servers)).toBe(true)
       expect(Array.isArray(result.depIntel!.dep_warnings)).toBe(true)
+    })
+  })
+
+  // ==========================================================================
+  // GAP-06: skipScan tier restrictions
+  // ==========================================================================
+
+  describe('GAP-06: skipScan tier restrictions', () => {
+    beforeEach(() => {
+      vi.stubGlobal('fetch', vi.fn())
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockImplementation(async (url) => {
+        const urlStr = typeof url === 'string' ? url : url.toString()
+        if (urlStr.includes('SKILL.md')) {
+          return new Response(VALID_SKILL_MD, { status: 200 })
+        }
+        return new Response('Not found', { status: 404 })
+      })
+    })
+
+    it('should reject skipScan for experimental tier', async () => {
+      const service = createService(db, {
+        registryLookup: createMockRegistryLookup({
+          'author/exp-skill': {
+            repoUrl: 'https://github.com/author/exp-skill',
+            name: 'exp-skill',
+            trustTier: 'experimental',
+          },
+        }),
+      })
+
+      const result = await service.install('author/exp-skill', { skipScan: true })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('Cannot skip security scan')
+      expect(result.error).toContain('experimental')
+    })
+
+    it('should reject skipScan for unknown tier (direct GitHub URL)', async () => {
+      const service = createService(db)
+
+      const result = await service.install('https://github.com/owner/repo', { skipScan: true })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('Cannot skip security scan')
+      expect(result.error).toContain('unknown')
+    })
+
+    it('should accept skipScan for verified tier with warning', async () => {
+      const service = createService(db, {
+        registryLookup: createMockRegistryLookup({
+          'author/verified-skill': {
+            repoUrl: 'https://github.com/author/verified-skill',
+            name: 'verified-skill',
+            trustTier: 'verified',
+          },
+        }),
+      })
+
+      const result = await service.install('author/verified-skill', {
+        skipScan: true,
+        skipOptimize: true,
+      })
+
+      expect(result.success).toBe(true)
+      expect(result.securityReport).toBeUndefined()
+      expect(result.tips).toBeDefined()
+      expect(result.tips!.some((t) => t.includes('Security scan was skipped'))).toBe(true)
+    })
+
+    it('should accept skipScan for community tier with warning', async () => {
+      const service = createService(db, {
+        registryLookup: createMockRegistryLookup({
+          'author/comm-skill': {
+            repoUrl: 'https://github.com/author/comm-skill',
+            name: 'comm-skill',
+            trustTier: 'community',
+          },
+        }),
+      })
+
+      const result = await service.install('author/comm-skill', {
+        skipScan: true,
+        skipOptimize: true,
+      })
+
+      expect(result.success).toBe(true)
+      expect(result.tips).toBeDefined()
+      expect(result.tips!.some((t) => t.includes('Security scan was skipped'))).toBe(true)
+    })
+  })
+
+  // ==========================================================================
+  // GAP-07: Quarantine message safety
+  // ==========================================================================
+
+  describe('GAP-07: quarantine message does not teach bypass', () => {
+    it('should not contain bypass or direct GitHub URL in quarantine tips', async () => {
+      const service = createService(db, {
+        registryLookup: createMockRegistryLookup({
+          'author/quarantined-skill': {
+            repoUrl: 'https://github.com/author/quarantined-skill',
+            name: 'quarantined-skill',
+            quarantined: true,
+          },
+        }),
+      })
+
+      const result = await service.install('author/quarantined-skill')
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('quarantined')
+
+      const allTips = (result.tips ?? []).join(' ')
+      expect(allTips).not.toContain('bypass')
+      expect(allTips).not.toContain('direct GitHub URL')
     })
   })
 

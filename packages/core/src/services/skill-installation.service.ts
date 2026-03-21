@@ -46,17 +46,9 @@ import {
   performUninstall,
 } from './skill-installation.helpers.js'
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 const DEFAULT_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
 const DEFAULT_SKILLSMITH_DIR = path.join(os.homedir(), '.skillsmith')
 const DEFAULT_MANIFEST_PATH = path.join(DEFAULT_SKILLSMITH_DIR, 'manifest.json')
-
-// ============================================================================
-// Service Parameters
-// ============================================================================
 
 export interface SkillInstallationServiceParams {
   db: Database
@@ -168,7 +160,7 @@ export class SkillInstallationService {
             tips: [
               'Visit https://skillsmith.app/docs/quarantine for details on quarantine policies',
               'If you believe this is a false positive, contact support via https://skillsmith.app/contact?topic=security',
-              'You can install from a direct GitHub URL to bypass registry quarantine (at your own risk)',
+              'Contact the skill author or visit the quarantine documentation for more information',
             ],
           }
         }
@@ -258,6 +250,24 @@ export class SkillInstallationService {
       }
 
       // Security scan
+      // GAP-06: Restrict skipScan to trusted tiers only
+      if (options.skipScan && (trustTier === 'experimental' || trustTier === 'unknown')) {
+        return {
+          success: false,
+          skillId,
+          installPath: '',
+          error:
+            'Cannot skip security scan for ' +
+            trustTier +
+            ' tier skills. ' +
+            'Only verified, curated, community, and local tier skills may use skipScan.',
+          tips: [
+            'Trust tier "' + trustTier + '" requires a security scan before installation',
+            'If you believe this skill is safe, request a trust tier upgrade from the author',
+          ],
+        }
+      }
+
       let securityReport: InstallResult['securityReport']
       if (!options.skipScan) {
         this.onProgress('scan', 'Running security scan')
@@ -287,7 +297,9 @@ export class SkillInstallationService {
               criticalFindings.length +
               ' critical/high findings' +
               tierContext +
-              '. Use skipScan=true to override (not recommended).',
+              (trustTier === 'experimental' || trustTier === 'unknown'
+                ? '. skipScan is not available for ' + trustTier + ' tier skills.'
+                : '. Use skipScan=true to override (not recommended).'),
             tips: [
               'Trust tier: ' + trustTier + ' (threshold: ' + scannerOptions.riskThreshold + ')',
               'Risk score: ' + securityReport.riskScore,
@@ -421,6 +433,15 @@ export class SkillInstallationService {
 
       this.onProgress('done', 'Installation complete')
 
+      const tips = generateTips(skillName, optimizationInfo)
+
+      // GAP-06: Warn when skipScan was used (allowed tiers only reach here)
+      if (options.skipScan) {
+        tips.unshift(
+          'Security scan was skipped. This skill was not scanned for malicious content.'
+        )
+      }
+
       return {
         success: true,
         skillId,
@@ -429,7 +450,7 @@ export class SkillInstallationService {
         trustTier,
         optimization: optimizationInfo,
         depIntel,
-        tips: generateTips(skillName, optimizationInfo),
+        tips,
       }
     } catch (error) {
       let safeErrorMessage = 'Installation failed'

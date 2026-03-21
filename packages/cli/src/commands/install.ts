@@ -47,8 +47,10 @@ function createDbRegistryLookup(skillRepo: SkillRepository): RegistryLookup {
         repoUrl: skill.repoUrl,
         name: skill.name,
         trustTier: skill.trustTier,
-        // Quarantine status is managed at the quarantine layer, not on the Skill type.
-        // CLI installs from local DB do not have quarantine data — default to false.
+        // GAP-07: Quarantine status is managed at the quarantine layer, not on
+        // the Skill type. CLI installs from local DB do not have quarantine
+        // data — default to false. This is a known limitation; quarantine
+        // enforcement is authoritative only via the MCP registry API path.
         quarantined: false,
       }
     },
