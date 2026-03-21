@@ -78,7 +78,7 @@
     "@typescript-eslint/parser": "8.57.1",
     "@vitest/coverage-v8": "4.0.16",
     "chalk": "5.6.2",
-    "claude-flow": "3.0.0-alpha.83",
+    "claude-flow": "3.5.14",
     "cloudinary": "2.9.0",
     "commander": "12.1.0",
     "eslint": "9.39.2",
