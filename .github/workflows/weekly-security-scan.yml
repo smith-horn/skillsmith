@@ -136,21 +136,21 @@ jobs:
         with:
           name: security-report
           path: data/security-report.json
-          retention-days: 30
+          retention-days: 14
 
       - name: Upload quarantine list
         uses: actions/upload-artifact@v7
         with:
           name: quarantine-skills
           path: data/quarantine-skills.json
-          retention-days: 30
+          retention-days: 14
 
       - name: Upload safe skills list
         uses: actions/upload-artifact@v7
         with:
           name: safe-skills
           path: data/safe-skills.json
-          retention-days: 30
+          retention-days: 14
 
       - name: Ensure security label exists
         run: |

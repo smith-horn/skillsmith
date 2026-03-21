@@ -157,3 +157,32 @@ FAILED=$(gh pr view $PR --json statusCheckRollup \
 ```
 
 **Rule**: Always wait for Wave N CI to show green before starting Wave N+1 rebase. Starting early saves <30s but risks a reflog recovery if Wave N's checks later fail.
+
+## Docker BuildKit Cache Policy (SMI-3531)
+
+Three workflows build Docker images with BuildKit GHA cache:
+
+| Workflow | Scope | Mode | Purpose |
+|----------|-------|------|---------|
+| `ci.yml` | `scope=ci` | `mode=min` | PR and push CI |
+| `e2e-tests.yml` | `scope=e2e` | `mode=min` | End-to-end tests |
+| `publish.yml` | `scope=publish` | `mode=min` | npm publish |
+
+**Key decisions**:
+
+- `mode=min` caches only the final image layers (not intermediate). Dockerfile mid-layer changes trigger full rebuild (~6 min) instead of partial. Acceptable tradeoff: Dockerfile changes are rare (~2x/month).
+- `scope=` isolates each workflow's cache entries. Without scope, workflows evict each other's entries when the 10 GB GHA cache cap is reached.
+- Check cache usage: `gh api repos/smith-horn/skillsmith/actions/cache/usage`
+
+## Artifact Retention Policy (SMI-3531)
+
+| Artifact Type | Retention | Rationale |
+|---------------|-----------|-----------|
+| CI Docker image + node_modules | 1 day | Same-run only; rebuilt each CI run |
+| Test results (unit, E2E) | 7 days | Debugging window for flaky tests |
+| Security scan reports | 14 days | Forensic timeline; SARIF in GitHub Code Scanning is permanent |
+| Publish artifacts | 1 day | Same-run only |
+
+## CodeQL Scope (SMI-3531)
+
+CodeQL runs on push/PR to main with the same `paths-ignore` as `ci.yml` (docs, templates, markdown, LICENSE, issue templates). Weekly scheduled scan (Monday 2 AM UTC) runs unconditionally on all paths — no security coverage regression.
