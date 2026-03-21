@@ -382,8 +382,8 @@ export async function applyOptimization(
       version: '1.0.0',
     })
 
-    const nameMatch = skillMdContent.match(/^name:\s*(.+)$/m)
-    const descMatch = skillMdContent.match(/^description:\s*(.+)$/m)
+    const nameMatch = skillMdContent.match(/^name:\s*(\S.*)$/m)
+    const descMatch = skillMdContent.match(/^description:\s*(\S.*)$/m)
     const extractedName = nameMatch ? nameMatch[1].trim() : skillName
     const extractedDesc = descMatch ? descMatch[1].trim() : ''
 
