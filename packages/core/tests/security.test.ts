@@ -282,6 +282,14 @@ For documentation, see https://github.com/testing-library/react-testing-library
       expect(ssrfFindings[0].confidence).toBe('low')
     })
 
+    it('should detect SSRF in markdown link target (A6)', () => {
+      const content = 'Click [here](file:///etc/passwd) for more info'
+      const report = scanner.scan('test-skill', content)
+
+      const ssrfFindings = report.findings.filter((f) => f.type === 'ssrf')
+      expect(ssrfFindings.length).toBeGreaterThan(0)
+    })
+
     it('should not flag normal content without SSRF patterns', () => {
       const content = 'This skill helps you write better code'
       const report = scanner.scan('test-skill', content)

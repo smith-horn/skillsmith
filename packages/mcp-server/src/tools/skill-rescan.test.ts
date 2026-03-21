@@ -209,6 +209,9 @@ describe('executeSkillRescan', () => {
     expect(result.error).toBeDefined()
     expect(result.error).toContain('nonexistent')
     expect(result.error).toContain('not found')
+
+    // A3: Error message should list available skills so the user knows what exists
+    expect(result.error).toContain('existing-skill')
   })
 
   // --------------------------------------------------------------------------
@@ -242,6 +245,47 @@ describe('executeSkillRescan', () => {
     expect(entry.topFindings.length).toBeLessThanOrEqual(5)
     if (entry.findingCount > 5) {
       expect(entry.topFindings.length).toBe(5)
+    }
+  })
+
+  // --------------------------------------------------------------------------
+  // Unreadable SKILL.md (A4)
+  // --------------------------------------------------------------------------
+
+  it('returns error entry when SKILL.md is unreadable', async () => {
+    await writeSkill(skillsDir, 'unreadable-skill', CLEAN_SKILL)
+    const skillMdPath = join(skillsDir, 'unreadable-skill', 'SKILL.md')
+
+    // Make the file unreadable (root can still read 0o000, so skip if we can)
+    await fs.chmod(skillMdPath, 0o000)
+
+    // Check if we can still read despite permissions (e.g., running as root)
+    let canStillRead = false
+    try {
+      await fs.readFile(skillMdPath, 'utf-8')
+      canStillRead = true
+    } catch {
+      // Expected: permission denied
+    }
+
+    if (canStillRead) {
+      // Running as root — restore permissions and skip
+      await fs.chmod(skillMdPath, 0o644)
+      return
+    }
+
+    try {
+      const result = await executeSkillRescan({}, skillsDir)
+
+      expect(result.scannedCount).toBe(1)
+      const entry = result.results[0]
+      expect(entry.skill).toBe('unreadable-skill')
+      expect(entry.passed).toBe(false)
+      expect(entry.error).toBeDefined()
+      expect(entry.error).toContain('Could not read')
+    } finally {
+      // Restore permissions for cleanup
+      await fs.chmod(skillMdPath, 0o644)
     }
   })
 
