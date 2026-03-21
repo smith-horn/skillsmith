@@ -426,8 +426,8 @@ jobs:
           push: false
           load: true
           tags: skillsmith-ci:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=ci
+          cache-to: type=gha,mode=min,scope=ci
           target: dev
 
       # SMI-2194: Save image to cache directory for future runs

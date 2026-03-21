@@ -77,8 +77,8 @@ jobs:
           push: false
           load: true
           tags: skillsmith-e2e:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=e2e
+          cache-to: type=gha,mode=min,scope=e2e
           target: dev
 
       # SMI-2240: Save image with current SHA tag for downstream jobs
