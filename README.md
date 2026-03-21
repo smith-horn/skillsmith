@@ -102,7 +102,7 @@ Get your API key at [skillsmith.app/account/cli-token](https://skillsmith.app/ac
 
 | Tier | Rate Limit | Cost |
 |------|------------|------|
-| Trial | 10 total | Free |
+| Trial | 100 total | Free |
 | Community | 30/min | Free |
 | Individual | 60/min | $9.99/mo |
 | Team | 120/min | $25/user/mo |
