@@ -416,6 +416,10 @@ verify_jwt = false
 [functions.skills-outreach-preferences]
 verify_jwt = false
 
+# Admin grant — validates JWT internally via adminClient.auth.getUser(token)
+[functions.admin-grant-subscription]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
