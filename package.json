@@ -126,6 +126,9 @@
     "@vercel/routing-utils": {
       "ajv": "^8.18.0"
     },
-    "@tootallnate/once": "^3.0.1"
+    "@tootallnate/once": "^3.0.1",
+    "@vercel/python-analysis": {
+      "minimatch": "^10.2.3"
+    }
   }
 }
