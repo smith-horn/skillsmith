@@ -89,7 +89,7 @@
     "posthog-node": "5.28.5",
     "prettier": "3.8.1",
     "stripe": "20.2.0",
-    "supabase": "2.71.3",
+    "supabase": "2.83.0",
     "tsx": "4.21.0",
     "turbo": "2.5.4",
     "typescript": "5.9.3",
