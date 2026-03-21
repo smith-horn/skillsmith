@@ -33,6 +33,7 @@ import { skillDiffToolSchema } from './tools/skill-diff.js'
 import { skillAuditToolSchema } from './tools/skill-audit.js'
 import { skillPackAuditToolSchema } from './tools/skill-pack-audit.js'
 import { outdatedToolSchema } from './tools/outdated.js'
+import { skillRescanToolSchema } from './tools/skill-rescan.js'
 import { dispatchToolCall } from './tool-dispatch.js'
 import {
   isFirstRun,
@@ -79,6 +80,7 @@ const toolDefinitions = [
   skillAuditToolSchema,
   skillPackAuditToolSchema,
   outdatedToolSchema,
+  skillRescanToolSchema,
 ]
 
 // Create server

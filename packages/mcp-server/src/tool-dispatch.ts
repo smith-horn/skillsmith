@@ -26,6 +26,7 @@ import { skillDiffInputSchema, executeSkillDiff } from './tools/skill-diff.js'
 import { skillAuditInputSchema, executeSkillAudit } from './tools/skill-audit.js'
 import { skillPackAuditInputSchema, executeSkillPackAudit } from './tools/skill-pack-audit.js'
 import { outdatedInputSchema, executeOutdated } from './tools/outdated.js'
+import { skillRescanInputSchema, executeSkillRescan } from './tools/skill-rescan.js'
 import { createLicenseErrorResponse } from './middleware/license.js'
 import type { LicenseMiddleware } from './middleware/license.js'
 import type { QuotaMiddleware } from './middleware/quota.js'
@@ -162,6 +163,9 @@ export async function dispatchToolCall(
         return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
       return ok(await executeSkillPackAudit(input, toolContext))
     }
+
+    case 'skill_rescan':
+      return ok(await executeSkillRescan(skillRescanInputSchema.parse(args)))
 
     default:
       throw new Error('Unknown tool: ' + name)
