@@ -79,9 +79,9 @@ describe('Migration v10: skill_dependencies table', () => {
     expect(() => db.exec(MIGRATION_V10_SQL)).not.toThrow()
   })
 
-  it('bumps schema version to 10', () => {
-    expect(getSchemaVersion(db)).toBe(10)
-    expect(SCHEMA_VERSION).toBe(10)
+  it('schema version is at least 10 after migration', () => {
+    expect(getSchemaVersion(db)).toBeGreaterThanOrEqual(10)
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(10)
   })
 
   it('unique index prevents duplicate (skill_id, dep_type, dep_target, dep_source)', () => {

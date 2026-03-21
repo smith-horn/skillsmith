@@ -22,11 +22,7 @@ async function createTempSkillsDir(): Promise<string> {
 }
 
 /** Write a SKILL.md file into a nested skill directory */
-async function writeSkill(
-  skillsDir: string,
-  name: string,
-  content: string
-): Promise<void> {
+async function writeSkill(skillsDir: string, name: string, content: string): Promise<void> {
   const skillDir = join(skillsDir, name)
   await fs.mkdir(skillDir, { recursive: true })
   await fs.writeFile(join(skillDir, 'SKILL.md'), content, 'utf-8')
@@ -91,9 +87,7 @@ describe('discoverInstalledSkills', () => {
 
     expect(result).toHaveLength(1)
     expect(result[0].name).toBe('my-skill')
-    expect(result[0].skillMdPath).toBe(
-      join(skillsDir, 'my-skill', 'SKILL.md')
-    )
+    expect(result[0].skillMdPath).toBe(join(skillsDir, 'my-skill', 'SKILL.md'))
   })
 
   it('discovers author/skill-name nested directories', async () => {
@@ -200,10 +194,7 @@ describe('executeSkillRescan', () => {
   it('returns error when specified skill is not found', async () => {
     await writeSkill(skillsDir, 'existing-skill', CLEAN_SKILL)
 
-    const result = await executeSkillRescan(
-      { skillName: 'nonexistent' },
-      skillsDir
-    )
+    const result = await executeSkillRescan({ skillName: 'nonexistent' }, skillsDir)
 
     expect(result.scannedCount).toBe(0)
     expect(result.error).toBeDefined()

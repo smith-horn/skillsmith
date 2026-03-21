@@ -21,10 +21,7 @@ import { safeRegexTest } from './regex-utils.js'
  * Uses documentation context to reduce severity for patterns in code blocks/tables.
  * SMI-3522: Supports multi-line patterns via scanPatternsWithMultilineSupport approach.
  */
-export function scanSsrfPatterns(
-  content: string,
-  lineContexts?: LineContext[]
-): SecurityFinding[] {
+export function scanSsrfPatterns(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
   const findings: SecurityFinding[] = []
   const lines = content.split('\n')
   const contexts = lineContexts ?? analyzeMarkdownContext(content)
@@ -66,11 +63,8 @@ export function scanSsrfPatterns(
       if (isMultilinePattern(pattern)) continue
       const match = safeRegexTest(pattern, line)
       if (match) {
-        const inInlineCode =
-          ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
-        const inDocContext = ctx
-          ? isDocumentationContext(ctx) || inInlineCode
-          : false
+        const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
+        const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
         const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
         const severity = inDocContext ? 'medium' : 'high'
 

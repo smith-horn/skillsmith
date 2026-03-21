@@ -243,9 +243,8 @@ export class SkillInstallationService {
       }
 
       // SMI-3510: Compare raw content hash against indexed hash (only if indexed hash exists)
-      const contentHashMismatch = indexedContentHash != null
-        ? hashContent(skillMdContent) !== indexedContentHash
-        : false
+      const contentHashMismatch =
+        indexedContentHash != null ? hashContent(skillMdContent) !== indexedContentHash : false
 
       // Security scan — GAP-06: Restrict skipScan to trusted tiers only
       if (options.skipScan && (trustTier === 'experimental' || trustTier === 'unknown')) {
@@ -434,9 +433,7 @@ export class SkillInstallationService {
 
       // GAP-06: Warn when skipScan was used (allowed tiers only reach here)
       if (options.skipScan) {
-        tips.unshift(
-          'Security scan was skipped. This skill was not scanned for malicious content.'
-        )
+        tips.unshift('Security scan was skipped. This skill was not scanned for malicious content.')
       }
       // SMI-3510: Warn when content hash differs from indexed hash
       if (contentHashMismatch) {

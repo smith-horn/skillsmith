@@ -186,11 +186,8 @@ export function scanPatternsWithMultilineSupport(
       if (isMultilinePattern(pattern)) continue
       const match = safeRegexTest(pattern, line)
       if (match) {
-        const inInlineCode =
-          ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
-        const inDocContext = ctx
-          ? isDocumentationContext(ctx) || inInlineCode
-          : false
+        const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
+        const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
         const confidence: FindingConfidence = inDocContext ? 'low' : 'high'
         const severity = inDocContext ? config.severities[0] : config.severities[1]
 
