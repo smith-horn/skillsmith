@@ -422,3 +422,31 @@ export async function applyOptimization(
     optimizationInfo: { optimized: false },
   }
 }
+
+/**
+ * Sanitize install error messages to avoid leaking internal details.
+ * Returns a safe error message if the error matches known prefixes,
+ * otherwise returns a generic message.
+ */
+const KNOWN_ERROR_PREFIXES = [
+  'already installed',
+  'Could not find SKILL.md',
+  'registry data quality issue',
+  'Invalid SKILL.md',
+  'Invalid skill ID format',
+  'Security scan failed',
+  'exceeds maximum length',
+  'Refusing to write to symlink',
+  'Refusing to write to hardlinked file',
+  'Install path escapes skills directory',
+  'Cannot skip security scan',
+]
+
+export function sanitizeInstallError(error: unknown): string {
+  if (error instanceof Error) {
+    if (KNOWN_ERROR_PREFIXES.some((p) => error.message.includes(p))) {
+      return error.message
+    }
+  }
+  return 'Installation failed due to an internal error'
+}

@@ -44,6 +44,7 @@ import {
   persistDependencies,
   applyOptimization,
   performUninstall,
+  sanitizeInstallError,
 } from './skill-installation.helpers.js'
 
 const DEFAULT_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
@@ -458,31 +459,11 @@ export class SkillInstallationService {
         tips,
       }
     } catch (error) {
-      let safeErrorMessage = 'Installation failed'
-      if (error instanceof Error) {
-        const knownPrefixes = [
-          'already installed',
-          'Could not find SKILL.md',
-          'registry data quality issue',
-          'Invalid SKILL.md',
-          'Invalid skill ID format',
-          'Security scan failed',
-          'exceeds maximum length',
-          'Refusing to write to symlink',
-          'Refusing to write to hardlinked file',
-          'Install path escapes skills directory',
-        ]
-        if (knownPrefixes.some((p) => error.message.includes(p))) {
-          safeErrorMessage = error.message
-        } else {
-          safeErrorMessage = 'Installation failed due to an internal error'
-        }
-      }
       return {
         success: false,
         skillId,
         installPath: '',
-        error: safeErrorMessage,
+        error: sanitizeInstallError(error),
       }
     }
   }
