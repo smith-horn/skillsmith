@@ -300,18 +300,22 @@ Published as `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol
 **Preferred method**: `./scripts/publish-packages.sh` — publishes in dependency order with pre-publish tarball verification.
 
 **Publish order** (dependencies before consumers):
+
 1. `@skillsmith/core`
 2. `@skillsmith/mcp-server` and `@skillsmith/cli` (both depend on core)
 
 **Pre-publish checklist** (manual publishes):
+
 1. Build in Docker: `docker exec skillsmith-dev-1 npm run build`
 2. Run preflight: `docker exec skillsmith-dev-1 npm run preflight`
 3. Verify dependency versions are committed and pushed
 4. Check dependency is published:
+
    ```bash
    VERSION=$(node -e "console.log(require('./packages/core/package.json').version)")
    npm view @skillsmith/core@$VERSION version   # must return the version
    ```
+
 5. If dependency not published: publish it first with `./scripts/publish-packages.sh core`
 6. Run `npm pack --dry-run` in the package dir to inspect tarball contents
 7. Publish: `cd packages/<pkg> && npm publish --ignore-scripts`
