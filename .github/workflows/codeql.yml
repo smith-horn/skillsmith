@@ -6,8 +6,24 @@ name: 'CodeQL'
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '.claude/development/**'
+      - '.claude/templates/**'
+      - '**/*.md'
+      - '!.gitmodules'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/CODEOWNERS'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '.claude/development/**'
+      - '.claude/templates/**'
+      - '**/*.md'
+      - '!.gitmodules'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/CODEOWNERS'
   schedule:
     - cron: '0 2 * * 1' # Monday at 2 AM UTC
 
