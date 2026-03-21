@@ -95,7 +95,7 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.56.1",
     "varlock": "0.1.4",
-    "vercel": "50.11.0",
+    "vercel": "50.34.3",
     "vitest": "4.0.16"
   },
   "dependencies": {
