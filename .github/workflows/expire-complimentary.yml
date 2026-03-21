@@ -1,0 +1,39 @@
+# Expire complimentary subscriptions past their end date
+# Downgrades users to community tier (or existing paid tier) and revokes license keys
+
+name: Expire Complimentary Subscriptions
+
+on:
+  schedule:
+    # Daily at 3:00 AM UTC (after 2 AM indexer run)
+    - cron: '0 3 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  expire:
+    name: Expire Complimentary Subscriptions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call expire-complimentary edge function
+        run: |
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "${{ secrets.SUPABASE_URL }}/functions/v1/expire-complimentary" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "Content-Type: application/json")
+
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -n -1)
+
+          echo "HTTP Status: $http_code"
+          echo "Response: $body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "::error::expire-complimentary failed with HTTP $http_code"
+            exit 1
+          fi
+
+          expired_count=$(echo "$body" | jq -r '.expired_count // 0')
+          echo "Expired $expired_count complimentary subscription(s)"
