@@ -404,7 +404,7 @@ export class SkillInstallationService {
             installPath,
             installedAt: new Date().toISOString(),
             lastUpdated: new Date().toISOString(),
-            originalContentHash: contentHash,
+            originalContentHash: contentHash, // hash of optimized content (post-applyOptimization)
           },
         },
       }))

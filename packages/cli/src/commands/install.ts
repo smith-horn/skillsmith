@@ -104,14 +104,13 @@ function displayResult(result: CoreInstallResult, quiet: boolean): void {
     }
 
     if (result.tips && result.tips.length > 0 && !quiet) {
-      // Filter out the content hash mismatch tip (already shown as yellow warning above)
-      const displayTips = result.contentHashMismatch
-        ? result.tips.filter((t) => !t.includes('changed since Skillsmith last indexed'))
-        : result.tips
-      if (displayTips.length > 0) {
+      // Skip the first tip when contentHashMismatch is true — it's the mismatch
+      // warning already displayed as chalk.yellow above (added via tips.unshift)
+      const startIndex = result.contentHashMismatch ? 1 : 0
+      if (startIndex < result.tips.length) {
         console.log()
-        for (const tip of displayTips) {
-          console.log(chalk.dim(`  Tip: ${tip}`))
+        for (let i = startIndex; i < result.tips.length; i++) {
+          console.log(chalk.dim(`  Tip: ${result.tips[i]}`))
         }
       }
     }

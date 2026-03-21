@@ -59,6 +59,8 @@ export interface SkillRescanEntry {
     message: string
     lineNumber?: number
   }>
+  /** Error message if skill could not be read */
+  error?: string
 }
 
 /**
@@ -219,7 +221,21 @@ export async function executeSkillRescan(
   const results: SkillRescanEntry[] = []
 
   for (const skill of targetSkills) {
-    const content = await fs.readFile(skill.skillMdPath, 'utf-8')
+    let content: string
+    try {
+      content = await fs.readFile(skill.skillMdPath, 'utf-8')
+    } catch {
+      results.push({
+        skill: skill.name,
+        passed: false,
+        findingCount: 0,
+        riskScore: 0,
+        severityCounts: { critical: 0, high: 0, medium: 0, low: 0 },
+        topFindings: [],
+        error: `Could not read ${skill.skillMdPath}`,
+      })
+      continue
+    }
     const report = scanner.scan(skill.name, content)
 
     const severityCounts = { critical: 0, high: 0, medium: 0, low: 0 }
