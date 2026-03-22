@@ -1,0 +1,42 @@
+{
+  "name": "skillsmith-cli",
+  "version": "0.5.1",
+  "description": "Convenience wrapper for @skillsmith/cli — Claude Code skill discovery and management",
+  "type": "module",
+  "bin": {
+    "skillsmith-cli": "./bin.js"
+  },
+  "scripts": {
+    "test": "echo 'No tests — thin wrapper package'"
+  },
+  "dependencies": {
+    "@skillsmith/cli": "^0.5.1"
+  },
+  "files": [
+    "bin.js"
+  ],
+  "license": "Elastic-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smith-horn/skillsmith.git",
+    "directory": "packages/skillsmith-cli"
+  },
+  "homepage": "https://github.com/smith-horn/skillsmith#readme",
+  "bugs": {
+    "url": "https://github.com/smith-horn/skillsmith/issues"
+  },
+  "keywords": [
+    "skillsmith",
+    "ai",
+    "skills",
+    "mcp",
+    "llm",
+    "cli",
+    "claude-code",
+    "skill-discovery",
+    "skill-management"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

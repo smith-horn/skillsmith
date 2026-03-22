@@ -55,11 +55,15 @@
     "url": "https://github.com/smith-horn/skillsmith/issues"
   },
   "keywords": [
+    "skillsmith",
     "ai",
     "skills",
     "mcp",
     "llm",
-    "cli"
+    "cli",
+    "claude-code",
+    "skill-discovery",
+    "skill-management"
   ],
   "engines": {
     "node": ">=22.0.0"

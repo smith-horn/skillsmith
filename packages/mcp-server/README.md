@@ -1,5 +1,7 @@
 # @skillsmith/mcp-server
 
+> **Important:** The bare `skillsmith` package on npm is **not** this project. Install `@skillsmith/mcp-server` for the MCP server or [`@skillsmith/cli`](https://www.npmjs.com/package/@skillsmith/cli) for CLI usage.
+
 MCP (Model Context Protocol) server for agent skill discovery, installation, and management.
 
 ## What's New in v0.4.3
