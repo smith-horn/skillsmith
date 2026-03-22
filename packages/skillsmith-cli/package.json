@@ -6,6 +6,9 @@
   "bin": {
     "skillsmith-cli": "./bin.js"
   },
+  "scripts": {
+    "test": "echo 'No tests — thin wrapper package'"
+  },
   "dependencies": {
     "@skillsmith/cli": "^0.5.1"
   },
