@@ -158,21 +158,34 @@ FAILED=$(gh pr view $PR --json statusCheckRollup \
 
 **Rule**: Always wait for Wave N CI to show green before starting Wave N+1 rebase. Starting early saves <30s but risks a reflog recovery if Wave N's checks later fail.
 
-## Docker BuildKit Cache Policy (SMI-3531)
+## Docker BuildKit Cache Policy (SMI-3531, SMI-3539)
 
-Three workflows build Docker images with BuildKit GHA cache:
+Three workflows build Docker images with BuildKit GHA cache. All Docker build jobs have a **20-minute timeout** to accommodate cold builds (~15 min for native module compilation).
 
-| Workflow | Scope | Mode | Purpose |
-|----------|-------|------|---------|
-| `ci.yml` | `scope=ci` | `mode=min` | PR and push CI |
-| `e2e-tests.yml` | `scope=e2e` | `mode=min` | End-to-end tests |
-| `publish.yml` | `scope=publish` | `mode=min` | npm publish |
+| Workflow | Scope | Mode | Timeout | Purpose |
+|----------|-------|------|---------|---------|
+| `ci.yml` | `scope=ci` | `mode=max` | 20 min | PR and push CI |
+| `e2e-tests.yml` | `scope=e2e` | `mode=min` | 20 min | End-to-end tests |
+| `publish.yml` | `scope=publish` | `mode=min` | 20 min | npm publish |
+
+**Dual-layer cache architecture** (ci.yml only):
+
+ci.yml uses two cache mechanisms in sequence:
+
+1. **Mechanism 1** (`actions/cache@v5`): Keyed on `Dockerfile + package-lock.json + .dockerignore + .nvmrc`. On hit, loads a pre-built image tarball and skips Docker build entirely. On miss, falls through to mechanism 2.
+2. **Mechanism 2** (`build-push-action` with BuildKit GHA cache): Runs the full Docker build using BuildKit layer cache.
+
+E2E and publish workflows only use mechanism 2 (no `actions/cache` tarball layer).
 
 **Key decisions**:
 
-- `mode=min` caches only the final image layers (not intermediate). Dockerfile mid-layer changes trigger full rebuild (~6 min) instead of partial. Acceptable tradeoff: Dockerfile changes are rare (~2x/month).
 - `scope=` isolates each workflow's cache entries. Without scope, workflows evict each other's entries when the 10 GB GHA cache cap is reached.
+- CI uses `mode=max` to cache all intermediate layers (apt-get, base setup). When mechanism 1 misses on a lockfile change, mechanism 2 reuses cached base layers (~2 min savings vs. full rebuild). CI is the most frequent workflow, so it benefits most from intermediate caching.
+- E2E and publish use `mode=min` (final image only) since they run less frequently and the storage tradeoff isn't justified.
+- **Rollback condition**: If CI scope cache exceeds ~4 GB and evicts e2e/publish scope caches within 72h, revert CI to `mode=min`.
 - Check cache usage: `gh api repos/smith-horn/skillsmith/actions/cache/usage`
+- Prune stale caches: `gh api repos/smith-horn/skillsmith/actions/caches --paginate -q '.actions_caches[] | .id' | xargs -I{} gh api -X DELETE repos/smith-horn/skillsmith/actions/caches/{}`
+- **Cache-miss Step Summary** (SMI-3539): ci.yml docker-build writes cache hit/miss status to `$GITHUB_STEP_SUMMARY` so PR authors know when a cold build is expected.
 
 ## Artifact Retention Policy (SMI-3531)
 

@@ -357,7 +357,7 @@ jobs:
       (needs.package-validation.result == 'success' || needs.package-validation.result == 'skipped')
     name: Build Docker Image
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
@@ -437,7 +437,7 @@ jobs:
           load: true
           tags: skillsmith-ci:${{ github.sha }}
           cache-from: type=gha,scope=ci
-          cache-to: type=gha,mode=min,scope=ci
+          cache-to: type=gha,mode=max,scope=ci
           target: dev
 
       # SMI-2194: Save image to cache directory for future runs
@@ -462,6 +462,19 @@ jobs:
           name: docker-image
           path: /tmp/skillsmith-ci.tar.gz
           retention-days: 1
+
+      # SMI-3539: Surface cache status to PR authors via Step Summary
+      - name: Cache status summary
+        if: always()
+        run: |
+          if [ "${{ steps.docker-image-cache.outputs.cache-hit }}" = "true" ]; then
+            echo "### Docker Build: Cache Hit" >> $GITHUB_STEP_SUMMARY
+            echo "Loaded pre-built image from cache." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Docker Build: Cache Miss — Full Rebuild" >> $GITHUB_STEP_SUMMARY
+            echo "No cached image found. Full Docker build with native module compilation (~15 min)." >> $GITHUB_STEP_SUMMARY
+            echo "This is expected after lockfile, Dockerfile, or .nvmrc changes." >> $GITHUB_STEP_SUMMARY
+          fi
 
       # SMI-708: Extract pre-compiled node_modules from Docker image
       # This eliminates the need for npm ci in each job (saves ~30-60s per job)
