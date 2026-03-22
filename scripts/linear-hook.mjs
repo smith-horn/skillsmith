@@ -20,6 +20,23 @@ import { existsSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 
+// Source code patterns for implementation verification (SMI-3540)
+const SOURCE_PATTERNS = [
+  /^packages\/.*\.(ts|tsx|js|jsx)$/,
+  /^supabase\/functions\/.*\.(ts|js)$/,
+  /^scripts\/.*\.(ts|js|mjs)$/,
+]
+const EXCLUDED_PATTERNS = [
+  /\.test\.(ts|tsx|js)$/,
+  /\.spec\.(ts|tsx|js)$/,
+  /\.md$/,
+  /^\.claude\//,
+  /^docs\//,
+]
+
+// Conventional commit prefixes that do NOT require source code changes
+const NON_SOURCE_PREFIXES = new Set(['docs', 'chore', 'style', 'ci', 'test', 'refactor'])
+
 // Configuration
 const LINEAR_SKILL_PATH = join(
   homedir(),
@@ -57,6 +74,43 @@ function isLinearAvailable() {
 function extractIssues(text) {
   const matches = text.match(ISSUE_PATTERN) || []
   return [...new Set(matches.map((m) => m.toUpperCase()))]
+}
+
+/**
+ * Parse conventional commit prefix from message (SMI-3540)
+ * Returns the prefix (e.g., 'fix', 'feat', 'docs') or null if not conventional
+ */
+export function parseConventionalCommitPrefix(message) {
+  const match = message.match(/^(\w+)(?:\([^)]*\))?!?:/)
+  return match ? match[1].toLowerCase() : null
+}
+
+/**
+ * Check if the last commit has source code changes (SMI-3540)
+ * Uses git diff-tree (plumbing command, ~50ms) to inspect changed files
+ */
+export function hasSourceCodeChanges() {
+  try {
+    const output = execFileSync(
+      'git',
+      ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'],
+      { encoding: 'utf-8', timeout: 1000 }
+    ).trim()
+
+    if (!output) return false
+
+    const files = output.split('\n').filter((f) => f.trim())
+
+    return files.some((file) => {
+      const isSource = SOURCE_PATTERNS.some((p) => p.test(file))
+      const isExcluded = EXCLUDED_PATTERNS.some((p) => p.test(file))
+      return isSource && !isExcluded
+    })
+  } catch (err) {
+    log('Failed to check source changes:', err.message)
+    // On error, allow "done" to proceed (fail open — never block git)
+    return true
+  }
 }
 
 /**
@@ -230,7 +284,25 @@ async function handlePostCommit() {
     process.exit(0)
   }
 
-  const status = determineStatus(commitMessage)
+  let status = determineStatus(commitMessage)
+
+  // SMI-3540: Prevent premature "Done" marking
+  // If status is "done", verify the commit actually has source code changes
+  if (status === 'done') {
+    const prefix = parseConventionalCommitPrefix(commitMessage)
+    const requiresSource = prefix ? !NON_SOURCE_PREFIXES.has(prefix) : true // No conventional prefix — require source changes
+
+    if (requiresSource && !hasSourceCodeChanges()) {
+      status = 'in_progress'
+      // Always print to stderr (not gated behind DEBUG) — developer feedback
+      for (const issue of issues) {
+        console.error(
+          `[linear-hook] ${issue} kept as in_progress — commit has no source code changes`
+        )
+      }
+    }
+  }
+
   log(`Found issues: ${issues.join(', ')} -> ${status}`)
 
   // Update issues in parallel with overall timeout
@@ -295,7 +367,14 @@ It will fail silently if Linear is not configured.
   }
 }
 
-main().catch((err) => {
-  log('Unhandled error:', err.message)
-  process.exit(0) // Always exit cleanly to not block git
-})
+// Only run main() when executed directly (not when imported by tests)
+const isDirectExecution =
+  process.argv[1] &&
+  (process.argv[1].endsWith('linear-hook.mjs') || process.argv[1].endsWith('linear-hook'))
+
+if (isDirectExecution) {
+  main().catch((err) => {
+    log('Unhandled error:', err.message)
+    process.exit(0) // Always exit cleanly to not block git
+  })
+}

@@ -117,6 +117,27 @@ jobs:
           # Detect affected packages (outputs written to GITHUB_OUTPUT by script)
           echo "$CHANGED_FILES" | npx tsx scripts/ci/detect-affected.ts > /dev/null
 
+  # SMI-3541: Verify PRs referencing Linear issues contain source code changes
+  # Non-required initially — will be promoted to required after 2 weeks (SMI-3546)
+  verify-implementation:
+    name: Verify Implementation Completeness
+    needs: [classify]
+    if: github.event_name == 'pull_request' && needs.classify.outputs.tier != 'docs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: npx tsx scripts/ci/verify-implementation.ts --pr-number ${{ github.event.pull_request.number }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   # SMI-1300: Validate package configurations before expensive Docker build
   # Catches scope mismatches for GitHub Packages early
   # Only runs on upstream repo (smith-horn) - skipped on forks

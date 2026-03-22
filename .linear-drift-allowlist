@@ -1,0 +1,8 @@
+# Linear Drift Allowlist (SMI-3542)
+#
+# Issues listed here are considered legitimately completed without source code
+# changes (e.g., pure documentation tasks, manual operations, external actions).
+# One issue identifier per line. Lines starting with # are comments.
+#
+# Example:
+# SMI-1234  # Docs-only: updated CLAUDE.md patterns
