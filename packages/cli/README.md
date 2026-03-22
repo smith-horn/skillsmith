@@ -1,5 +1,7 @@
 # @skillsmith/cli
 
+> **Important:** The bare `skillsmith` package on npm is **not** this project. Install `@skillsmith/cli` for the CLI or configure [`@skillsmith/mcp-server`](https://www.npmjs.com/package/@skillsmith/mcp-server) for MCP integration.
+
 Command-line interface for Skillsmith - discover, manage, and author agent skills.
 
 ## What's New in v0.4.0
