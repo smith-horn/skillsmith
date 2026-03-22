@@ -240,8 +240,8 @@ describe('SMI-2190: Affected Package Detection', () => {
 
     it('should return all packages for root-level changes', () => {
       const result = detectAffectedPackages(['package.json'])
-      expect(result.all.length).toBe(6) // All packages
-      expect(result.dirNames.length).toBe(6) // All directory names
+      expect(result.all.length).toBe(7) // All packages
+      expect(result.dirNames.length).toBe(7) // All directory names
     })
 
     it('should handle mixed package and non-package files', () => {
