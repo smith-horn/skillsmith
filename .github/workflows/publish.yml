@@ -212,7 +212,7 @@ jobs:
     if: needs.pre-publish-check.outputs.any-to-publish == 'true'
     name: Build Docker Image
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: Checkout

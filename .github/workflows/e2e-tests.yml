@@ -38,7 +38,7 @@ jobs:
   docker-build:
     name: Build Docker Image
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
