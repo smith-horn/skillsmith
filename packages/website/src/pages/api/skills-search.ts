@@ -12,13 +12,13 @@ export const GET: APIRoute = async ({ url }) => {
   const q = url.searchParams.get('q') ?? ''
   const limit = url.searchParams.get('limit') ?? '12'
 
-  if (!q || q.length < 2) {
+  if (!q || q.length < 3) {
     return new Response(JSON.stringify({ skills: [] }), {
       headers: { 'Content-Type': 'application/json' },
     })
   }
 
-  const apiUrl = `https://api.skillsmith.app/v1/skills?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(limit)}`
+  const apiUrl = `https://api.skillsmith.app/functions/v1/skills-search?query=${encodeURIComponent(q)}&limit=${encodeURIComponent(limit)}`
 
   try {
     const res = await fetch(apiUrl, { headers: { Accept: 'application/json' } })
@@ -28,8 +28,8 @@ export const GET: APIRoute = async ({ url }) => {
         headers: { 'Content-Type': 'application/json' },
       })
     }
-    const data = (await res.json()) as { skills?: unknown[] }
-    return new Response(JSON.stringify({ skills: data.skills ?? [] }), {
+    const data = (await res.json()) as { data?: unknown[] }
+    return new Response(JSON.stringify({ skills: data.data ?? [] }), {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
     })
   } catch {
