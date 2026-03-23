@@ -626,6 +626,53 @@ const trustTiers = [
             return
           }
 
+          // SMI-XXXX: Rate limit exceeded — show friendly countdown instead of generic error
+          if (response.status === 429) {
+            const retryData = await response.json().catch(() => ({}))
+            const retryAfter = Math.max(
+              1,
+              parseInt(
+                String(
+                  retryData?.details?.retry_after ?? response.headers.get('Retry-After') ?? '30'
+                ),
+                10
+              ) || 30
+            )
+
+            // Clear any previous countdown interval
+            if (window._rateLimitInterval) clearInterval(window._rateLimitInterval)
+
+            const errorHeading = errorState.querySelector('h2')
+            const errorIcon = errorState.querySelector('svg')
+            if (errorHeading) errorHeading.textContent = 'Slow down a moment'
+            if (errorIcon) errorIcon.classList.add('hidden')
+            errorMessage.textContent =
+              'You\u2019re searching faster than we can keep up! Try again in ' +
+              retryAfter +
+              ' seconds.'
+
+            if (retryButton) {
+              retryButton.classList.remove('hidden')
+              retryButton.textContent = 'Retry in ' + retryAfter + 's'
+              retryButton.disabled = true
+              let remaining = retryAfter
+              window._rateLimitInterval = setInterval(() => {
+                remaining--
+                if (remaining <= 0) {
+                  clearInterval(window._rateLimitInterval)
+                  window._rateLimitInterval = null
+                  retryButton.textContent = 'Try Again'
+                  retryButton.disabled = false
+                } else {
+                  retryButton.textContent = 'Retry in ' + remaining + 's'
+                }
+              }, 1000)
+            }
+            showState('error')
+            resultsCount.textContent = ''
+            return
+          }
+
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`)
           }
@@ -708,7 +755,7 @@ const trustTiers = [
       // Debounced search
       function debouncedSearch() {
         clearTimeout(debounceTimer)
-        debounceTimer = setTimeout(searchSkills, 300)
+        debounceTimer = setTimeout(searchSkills, 400)
       }
 
       // Event listeners
