@@ -1,17 +1,18 @@
 {
   "$schema": "https://json.schemastore.org/mcp.json",
   "mcpServers": {
-    "claude-flow": {
+    "skillsmith": {
+      "command": "node",
+      "args": ["./packages/mcp-server/dist/src/index.js"]
+    },
+    "ruflo": {
+      "type": "stdio",
       "command": "npx",
-      "args": ["claude-flow@3", "mcp", "start"],
+      "args": ["ruflo@latest", "mcp", "start"],
       "env": {
         "CLAUDE_FLOW_LOG_LEVEL": "info",
         "CLAUDE_FLOW_MEMORY_BACKEND": "sqlite"
       }
-    },
-    "skillsmith": {
-      "command": "node",
-      "args": ["./packages/mcp-server/dist/src/index.js"]
     }
   }
 }

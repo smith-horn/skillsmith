@@ -1,6 +1,8 @@
-# Claude-Flow MCP Server Guide
+# Ruflo MCP Server Guide
 
 Agent spawning, swarm orchestration, and SPARC development reference.
+
+> **Note**: The package was renamed from `claude-flow` to `ruflo` in v3.5.x. MCP tool prefixes remain `mcp__claude-flow__` for backwards compatibility.
 
 ## Setup
 
@@ -9,9 +11,9 @@ Configured via `.mcp.json` (auto-loaded by Claude Code):
 ```json
 {
   "mcpServers": {
-    "claude-flow": {
+    "ruflo": {
       "command": "npx",
-      "args": ["claude-flow@3", "mcp", "start"],
+      "args": ["ruflo@latest", "mcp", "start"],
       "env": {
         "CLAUDE_FLOW_LOG_LEVEL": "info",
         "CLAUDE_FLOW_MEMORY_BACKEND": "sqlite"
@@ -21,9 +23,9 @@ Configured via `.mcp.json` (auto-loaded by Claude Code):
 }
 ```
 
-Manual setup: `claude mcp add claude-flow -- npx claude-flow@3 mcp start`
+Manual setup: `claude mcp add ruflo -s project -- npx ruflo@latest mcp start`
 
-Verify: `claude mcp list | grep claude-flow`
+Verify: `claude mcp list | grep ruflo`
 
 ## MCP Tools
 
@@ -75,7 +77,7 @@ Configs in `.claude/hive-mind/`:
 
 ```bash
 ./start-hive-mind.sh                                              # Run config
-npx claude-flow swarm --config .claude/hive-mind/your-config.yaml  # Direct
+npx ruflo swarm --config .claude/hive-mind/your-config.yaml        # Direct
 ```
 
 ### Resource Profiles
@@ -98,9 +100,9 @@ See [.claude/hive-mind/README.md](../../.claude/hive-mind/README.md) for full do
 ### Core Commands
 
 ```bash
-npx claude-flow sparc modes              # List available modes
-npx claude-flow sparc tdd "<feature>"    # Run TDD workflow
-npx claude-flow sparc run <mode> "<task>" # Execute specific mode
+npx ruflo sparc modes              # List available modes
+npx ruflo sparc tdd "<feature>"    # Run TDD workflow
+npx ruflo sparc run <mode> "<task>" # Execute specific mode
 ```
 
 Available modes: orchestrator, coder, researcher, tdd, architect, reviewer, debugger, tester, analyzer, optimizer, documenter, designer, innovator, swarm-coordinator, memory-manager, batch-executor, workflow-manager.
@@ -115,7 +117,7 @@ Available modes: orchestrator, coder, researcher, tdd, architect, reviewer, debu
 ### MCP Server Setup
 
 ```bash
-claude mcp add claude-flow npx claude-flow@3 mcp start
+claude mcp add ruflo -s project -- npx ruflo@latest mcp start
 ```
 
 See `.claude/agents/` for available agent definitions.

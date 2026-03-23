@@ -10,7 +10,7 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 | [git-crypt-guide.md](.claude/development/git-crypt-guide.md) | Unlock, worktree setup, rebase workaround, smudge filter fixes |
 | [ci-reference.md](.claude/development/ci-reference.md) | Branch protection, change classification, Turborepo, CI scripts |
 | [deployment-guide.md](.claude/development/deployment-guide.md) | Edge function deploy commands, CORS, website, monitoring & alerts |
-| [claude-flow-guide.md](.claude/development/claude-flow-guide.md) | Agent types, swarm examples, hive mind, SPARC modes |
+| [claude-flow-guide.md](.claude/development/claude-flow-guide.md) | Ruflo (formerly claude-flow) — agent types, swarm examples, hive mind, SPARC modes |
 | [cloudinary-guide.md](.claude/development/cloudinary-guide.md) | Blog image upload workflow, URL transforms, folder conventions |
 | [subagent-tool-permissions-guide.md](.claude/development/subagent-tool-permissions-guide.md) | Subagent tool access by type, foreground/background behavior, skill author checklist |
 
@@ -283,11 +283,11 @@ Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_
 
 ---
 
-## Claude-Flow MCP Server
+## Ruflo MCP Server (formerly Claude-Flow)
 
-Required for hive mind and agent spawning. Auto-configured via `.mcp.json`. Manual: `claude mcp add claude-flow -- npx claude-flow@3 mcp start`.
+Required for hive mind and agent spawning. Auto-configured via `.mcp.json`. Manual: `claude mcp add ruflo -s project -- npx ruflo@latest mcp start`.
 
-**Tools**: `swarm_init`, `agent_spawn`, `task_orchestrate`, `memory_usage`, `swarm_destroy`.
+**Tools**: `swarm_init`, `agent_spawn`, `task_orchestrate`, `memory_usage`, `swarm_destroy` (prefixed `mcp__claude-flow__` for backwards compatibility).
 
 **Agent types**: architect, coder, tester, reviewer, researcher.
 
@@ -366,7 +366,7 @@ Published as `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol
 | Architecture | [System Overview](docs/internal/architecture/system-design/system-overview.md), [Skill Dependencies](docs/internal/architecture/system-design/skill-dependencies.md), [Index](docs/internal/architecture/index.md) |
 | Standards | [Engineering](docs/internal/architecture/standards.md), [Database](docs/internal/architecture/standards-database.md), [Astro](docs/internal/architecture/standards-astro.md), [Security](docs/internal/architecture/standards-security.md) |
 | Process | [Context Compaction](docs/internal/process/context-compaction.md), [Linear Hygiene](docs/internal/process/linear-hygiene-guide.md), [Wave Checklist](docs/internal/process/wave-completion-checklist.md) |
-| Development | [Docker](.claude/development/docker-guide.md), [Git-Crypt](.claude/development/git-crypt-guide.md), [CI](.claude/development/ci-reference.md), [Deploy](.claude/development/deployment-guide.md), [Claude-Flow](.claude/development/claude-flow-guide.md) |
+| Development | [Docker](.claude/development/docker-guide.md), [Git-Crypt](.claude/development/git-crypt-guide.md), [CI](.claude/development/ci-reference.md), [Deploy](.claude/development/deployment-guide.md), [Ruflo](.claude/development/claude-flow-guide.md) |
 | Testing | [Stripe](.claude/development/stripe-testing.md), [Neural](.claude/development/neural-testing.md), [Benchmarks](.claude/development/benchmarks.md) |
 | Billing | [Admin Grants](docs/internal/runbooks/admin-complimentary-subscriptions.md), [Stripe Ops](docs/internal/runbooks/stripe-operations.md) |
 | Website | [skillsmith.app/docs](https://skillsmith.app/docs) — Deploy: `cd packages/website && vercel --prod` |
@@ -398,3 +398,4 @@ After context compaction or session continuation, ALWAYS verify claimed-complete
 After EVERY commit, run `/governance` to review the changed code. Resolve ALL issues it surfaces before pushing. No exceptions — do not skip, defer, or downgrade findings.
 After EVERY commit, update the relevant Linear issue(s) in the Skillsmith initiative (SMI-xxx) to reflect progress. Add a comment with the commit SHA and a brief summary of what changed. Move the issue status forward if the commit completes the work (e.g., "In Progress" → "Done"). If no Linear issue exists for the work, create one under the appropriate project before pushing.
 After EVERY PR is merged, run `/governance` as a retrospective on the full PR diff. Resolve ALL issues it surfaces immediately — create follow-up commits or Linear issues as needed. Do not close the session until the retro is clean.
+After the governance retro, update any `index.md` files in directories where files were added or removed during the PR. Check `docs/internal/`, `.claude/development/`, and `.claude/templates/`. If the root `docs/internal/index.md` folder counts have drifted, update those too.
