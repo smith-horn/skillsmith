@@ -141,15 +141,8 @@ export class PatternStore {
   }
 
   private async initializeV3Integration(): Promise<void> {
-    try {
-      await import(
-        // @ts-expect-error - V3 types not available at compile time
-        'claude-flow/v3/@claude-flow/cli/dist/src/intelligence/index.js'
-      )
-      console.log('[PatternStore] V3 ReasoningBank integration enabled')
-    } catch {
-      console.log('[PatternStore] V3 not available, using standalone mode')
-    }
+    // V3 ReasoningBank unavailable after claude-flow → ruflo rename (SMI-3600)
+    // @claude-flow/cli restricts subpath imports; always use standalone mode
   }
 
   async storePattern(pattern: Pattern, outcome: PatternOutcome): Promise<string> {
