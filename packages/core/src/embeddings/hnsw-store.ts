@@ -2,7 +2,7 @@
  * SMI-1519: HNSW Embedding Store
  *
  * High-performance vector storage using HNSW index for fast ANN search.
- * Uses claude-flow V3 VectorDB API with automatic fallback to brute-force.
+ * Uses brute-force search (V3 VectorDB unavailable after claude-flow rename).
  *
  * Enable via: SKILLSMITH_USE_HNSW=true
  * @see ADR-009: Embedding Service Fallback Strategy
@@ -398,44 +398,10 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
     `)
   }
 
-  // IMPORTANT: Keep dynamic import here for V3 lazy loading / graceful degradation
   private async initHNSWIndex(): Promise<void> {
-    try {
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-ignore TS2307 — dynamic import; fails at runtime (claude-flow renamed to ruflo), caught by try/catch
-      const vectorDbModule = await import('claude-flow/v3/@claude-flow/cli/dist/src/ruvector/vector-db.js') // prettier-ignore
-      const loaded = await vectorDbModule.loadRuVector()
-      if (!loaded) console.warn('[HNSWEmbeddingStore] ruvector not available')
-
-      this.vectorDB = await vectorDbModule.createVectorDB(this.config.dimensions)
-      const status = vectorDbModule.getStatus()
-      console.log(
-        `[HNSWEmbeddingStore] Initialized: ${status.backend}${status.wasmAccelerated ? ' (WASM)' : ''}`
-      )
-
-      // Rebuild from SQLite
-      if (this.db) {
-        const count = this.db.prepare('SELECT COUNT(*) as c FROM skill_embeddings').get() as {
-          c: number
-        }
-        if (count.c > 0) {
-          console.log(`[HNSWEmbeddingStore] Rebuilding from ${count.c} embeddings...`)
-          const allEmbeddings = this.getAllEmbeddings()
-          for (const [skillId, embedding] of allEmbeddings) {
-            try {
-              const result = this.vectorDB!.insert(embedding, skillId)
-              if (result instanceof Promise) await result
-            } catch (err) {
-              console.warn(`Failed to insert ${skillId}: ${err}`)
-            }
-          }
-          console.log(`[HNSWEmbeddingStore] Index rebuilt with ${allEmbeddings.size} vectors`)
-        }
-      }
-    } catch (err) {
-      console.warn(`[HNSWEmbeddingStore] V3 VectorDB unavailable, using brute-force: ${err}`)
-      this.vectorDB = null
-    }
+    // V3 VectorDB unavailable after claude-flow → ruflo rename (SMI-3600)
+    // @claude-flow/cli restricts subpath imports; always use brute-force search
+    this.vectorDB = null
   }
 
   private distanceToSimilarity(distance: number): number {

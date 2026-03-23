@@ -6,40 +6,6 @@
 import type { SessionData } from './SessionContext.js'
 
 // ============================================================================
-// Claude-Flow Module Types (Dynamic Import)
-// ============================================================================
-
-/**
- * SMI-1685: Type definitions for dynamically imported claude-flow memory module
- * These interfaces define the expected shape of the memory module API
- */
-export interface ClaudeFlowMemoryModule {
-  storeEntry?(params: {
-    key: string
-    value: string
-    namespace: string
-  }): Promise<{ success: boolean; error?: string }>
-  getEntry?(params: { key: string; namespace: string }): Promise<{
-    success: boolean
-    found: boolean
-    entry?: { content: string }
-    error?: string
-  }>
-}
-
-/**
- * SMI-1685: Type definitions for dynamically imported claude-flow MCP module
- * These interfaces define the expected shape of the MCP client API
- */
-export interface ClaudeFlowMcpModule {
-  callMCPTool?(
-    toolName: string,
-    params: Record<string, unknown>
-  ): Promise<{ success: boolean; deleted?: boolean; error?: string }>
-  MCPClientError?: new (message: string) => Error
-}
-
-// ============================================================================
 // Session Options and Results
 // ============================================================================
 

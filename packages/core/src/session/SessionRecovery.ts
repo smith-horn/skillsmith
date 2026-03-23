@@ -76,7 +76,7 @@ export class SessionRecovery {
   private async searchForRecentSession(): Promise<SessionData | null> {
     try {
       // Use claude-flow memory list to find session keys
-      const command = 'npx claude-flow@alpha memory list --pattern "session/*"'
+      const command = 'npx ruflo memory list --pattern "session/*"'
       const { stdout } = await this.executor.execute(command)
 
       // Parse output to find session keys
@@ -287,7 +287,7 @@ export class SessionRecovery {
    */
   private async retrieveCheckpointData(memoryKey: string): Promise<Checkpoint | null> {
     try {
-      const command = `npx claude-flow@alpha memory get --key "${memoryKey}"`
+      const command = `npx ruflo memory get --key "${memoryKey}"`
       const { stdout } = await this.executor.execute(command)
 
       if (!stdout.trim()) {
@@ -305,7 +305,7 @@ export class SessionRecovery {
    */
   private async runSessionRestoreHook(sessionId: string): Promise<void> {
     try {
-      const command = `npx claude-flow@alpha hooks session-restore --session-id "${sessionId}"`
+      const command = `npx ruflo hooks session-restore --session-id "${sessionId}"`
       await this.executor.execute(command)
     } catch {
       // Hooks are optional

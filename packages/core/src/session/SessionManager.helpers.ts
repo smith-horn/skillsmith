@@ -4,69 +4,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import type {
-  ClaudeFlowMemoryModule,
-  ClaudeFlowMcpModule,
-  CommandExecutor,
-} from './SessionManager.types.js'
-
-// ============================================================================
-// Module Loading State
-// ============================================================================
-
-// Use symbol to distinguish "not yet attempted" from "attempted but failed (undefined)"
-const NOT_LOADED = Symbol('not-loaded')
-let claudeFlowMemory: ClaudeFlowMemoryModule | undefined | typeof NOT_LOADED = NOT_LOADED
-let claudeFlowMcp: ClaudeFlowMcpModule | undefined | typeof NOT_LOADED = NOT_LOADED
-
-// Module paths are constructed dynamically to prevent ESM static analysis
-const CLAUDE_FLOW_BASE = 'claude-flow'
-const MEMORY_MODULE_PATH = '/v3/@claude-flow/cli/dist/src/memory/memory-initializer.js'
-const MCP_MODULE_PATH = '/v3/@claude-flow/cli/dist/src/mcp-client.js'
-
-// ============================================================================
-// Dynamic Module Loaders
-// ============================================================================
-
-/**
- * Lazily load claude-flow memory module
- * Returns undefined if claude-flow is not installed
- *
- * Uses string concatenation for the import path to prevent Node.js
- * ESM static analysis from resolving the module at parse time.
- */
-export async function getClaudeFlowMemory(): Promise<ClaudeFlowMemoryModule | undefined> {
-  if (claudeFlowMemory === NOT_LOADED) {
-    try {
-      // String concatenation prevents static analysis
-      const modulePath = CLAUDE_FLOW_BASE + MEMORY_MODULE_PATH
-      claudeFlowMemory = await import(/* webpackIgnore: true */ modulePath)
-    } catch {
-      claudeFlowMemory = undefined // Mark as attempted but failed
-    }
-  }
-  return claudeFlowMemory === NOT_LOADED ? undefined : claudeFlowMemory
-}
-
-/**
- * Lazily load claude-flow MCP module
- * Returns undefined if claude-flow is not installed
- *
- * Uses string concatenation for the import path to prevent Node.js
- * ESM static analysis from resolving the module at parse time.
- */
-export async function getClaudeFlowMcp(): Promise<ClaudeFlowMcpModule | undefined> {
-  if (claudeFlowMcp === NOT_LOADED) {
-    try {
-      // String concatenation prevents static analysis
-      const modulePath = CLAUDE_FLOW_BASE + MCP_MODULE_PATH
-      claudeFlowMcp = await import(/* webpackIgnore: true */ modulePath)
-    } catch {
-      claudeFlowMcp = undefined // Mark as attempted but failed
-    }
-  }
-  return claudeFlowMcp === NOT_LOADED ? undefined : claudeFlowMcp
-}
+import type { CommandExecutor } from './SessionManager.types.js'
 
 // ============================================================================
 // Constants
@@ -80,18 +18,6 @@ export const MEMORY_KEYS = {
   SESSION_PREFIX: 'session/',
   CHECKPOINT_PREFIX: 'checkpoint/',
 } as const
-
-/**
- * SMI-1518: Feature flag to enable V3 direct API
- * Set CLAUDE_FLOW_USE_V3_API=true to use direct API calls
- * Falls back to spawn-based CLI if not set or if V3 API fails
- */
-export const USE_V3_API = process.env.CLAUDE_FLOW_USE_V3_API === 'true'
-
-/**
- * Default namespace for session memory entries
- */
-export const MEMORY_NAMESPACE = 'skillsmith-sessions'
 
 // ============================================================================
 // Validation
