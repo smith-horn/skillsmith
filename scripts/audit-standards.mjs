@@ -1467,6 +1467,44 @@ console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RES
   }
 }
 
+// ── Check: Rate Limit Constant Consistency (SMI-3590) ──────────────────
+// Verifies that RATE_LIMITS_BY_TIER in license.ts is the single source of truth
+// and no other files define duplicate rate limit constants.
+{
+  const licenseFile = 'supabase/functions/_shared/license.ts'
+  const filesToCheck = [
+    'supabase/functions/_shared/auth-middleware.ts',
+    'supabase/functions/_shared/api-key-auth.ts',
+  ]
+  // Pattern: standalone const/let/var assignment with tier rate limit object literal
+  const duplicatePattern =
+    /(?:const|let|var)\s+\w*(?:RATE_LIMIT|TIER_RATE)\w*\s*(?::\s*Record[^=]*)?\s*=\s*\{/i
+
+  let duplicatesFound = 0
+  const details = []
+
+  for (const filePath of filesToCheck) {
+    if (!existsSync(filePath)) continue
+    const content = readFileSync(filePath, 'utf-8')
+    if (duplicatePattern.test(content)) {
+      duplicatesFound++
+      details.push(filePath)
+    }
+  }
+
+  if (duplicatesFound === 0) {
+    pass('Rate limit constants: no duplicate definitions (single source of truth in license.ts)')
+  } else {
+    warn(
+      `${duplicatesFound} file(s) may define duplicate rate limit constants — should import from ${licenseFile}`,
+      'Import RATE_LIMITS_BY_TIER from license.ts instead of defining locally'
+    )
+    for (const d of details) {
+      console.log(`    ${d}`)
+    }
+  }
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)
