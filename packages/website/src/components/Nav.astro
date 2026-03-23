@@ -418,7 +418,7 @@ const isActive = (href: string) => {
 </style>
 
 <script>
-  import { createClient } from '@supabase/supabase-js'
+  import { getSupabaseClient } from '../lib/supabase-client'
 
   // Mobile menu toggle
   const menuButton = document.getElementById('nav-mobile-button')
@@ -446,11 +446,9 @@ const isActive = (href: string) => {
     const mobileAuth = document.getElementById('nav-mobile-auth')
     if (!mobileAuth) return
 
-    const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } })
-      .__SUPABASE_CONFIG__
-    if (!config?.url || !config?.anonKey) return
+    const supabase = getSupabaseClient()
+    if (!supabase) return
 
-    const supabase = createClient(config.url, config.anonKey)
     const {
       data: { session },
     } = await supabase.auth.getSession()

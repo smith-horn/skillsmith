@@ -24,6 +24,7 @@ interface SupabaseWindowConfig {
 declare global {
   interface Window {
     __SUPABASE_CONFIG__?: SupabaseWindowConfig;
+    __SUPABASE_CLIENT__?: import('@supabase/supabase-js').SupabaseClient;
     __AUTH_REDIRECT_TO__?: string;
     /** Google Analytics gtag function (injected by GA script in BaseLayout) */
     gtag?: (...args: unknown[]) => void;

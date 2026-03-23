@@ -159,7 +159,7 @@ const buttonId = `github-login-${Math.random().toString(36).substring(2, 9)}`
 </style>
 
 <script>
-  import { createClient } from '@supabase/supabase-js'
+  import { getSupabaseClient } from '../../lib/supabase-client'
 
   // UA hint for known in-app browsers that swallow OAuth redirects (SMI-2757)
   function isInAppBrowser(): boolean {
@@ -244,11 +244,8 @@ const buttonId = `github-login-${Math.random().toString(36).substring(2, 9)}`
         const btn = e.currentTarget as HTMLButtonElement
         const redirectTo = btn.dataset.redirect || '/account'
 
-        // Get config from global
-        const config = (
-          window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } }
-        ).__SUPABASE_CONFIG__
-        if (!config?.url || !config?.anonKey) {
+        const supabase = getSupabaseClient()
+        if (!supabase) {
           console.error('Supabase config not found — check __SUPABASE_CONFIG__ injection')
           return
         }
@@ -261,8 +258,6 @@ const buttonId = `github-login-${Math.random().toString(36).substring(2, 9)}`
         btn.disabled = true
 
         try {
-          const supabase = createClient(config.url, config.anonKey)
-
           // Fetch OAuth URL without immediately redirecting so we can inspect it
           // and use it in the fallback banner if the redirect is swallowed (SMI-2757)
           const { data, error } = await supabase.auth.signInWithOAuth({
