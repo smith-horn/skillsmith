@@ -75,7 +75,7 @@ export class SessionRecovery {
    */
   private async searchForRecentSession(): Promise<SessionData | null> {
     try {
-      // Use claude-flow memory list to find session keys
+      // Use ruflo memory list to find session keys
       const command = 'npx ruflo memory list --pattern "session/*"'
       const { stdout } = await this.executor.execute(command)
 
