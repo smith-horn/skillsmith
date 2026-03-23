@@ -145,6 +145,30 @@ export interface IEmbeddingStore {
 }
 
 // ============================================================================
+// V3 VectorDB Interface (local definition — decoupled from claude-flow)
+// ============================================================================
+
+/**
+ * Minimal VectorDB interface matching the methods used by HNSWEmbeddingStore.
+ * Originally from claude-flow V3; vendored here to decouple the compile-time
+ * dependency after the claude-flow -> ruflo package rename (SMI-3598).
+ */
+export interface VectorDB {
+  insert(
+    embedding: Float32Array,
+    id: string,
+    metadata?: Record<string, unknown>
+  ): void | Promise<void>
+  search(
+    query: Float32Array,
+    topK: number
+  ): Array<{ id: string; score: number }> | Promise<Array<{ id: string; score: number }>>
+  remove(id: string): boolean | Promise<boolean>
+  clear(): void | Promise<void>
+  size(): number | Promise<number>
+}
+
+// ============================================================================
 // Default Configuration
 // ============================================================================
 
