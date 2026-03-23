@@ -553,8 +553,12 @@ const categoryJsonLd =
 
     async function initAuth() {
       try {
-        const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2')
-        const supabase = createClient(config.url, config.anonKey)
+        // Use shared singleton from window.__SUPABASE_CLIENT__ (SMI-3595)
+        const supabase = window.__SUPABASE_CLIENT__
+        if (!supabase) {
+          console.debug('[Skills] No Supabase client, using anon key')
+          return
+        }
         const {
           data: { session },
         } = await supabase.auth.getSession()

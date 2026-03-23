@@ -129,6 +129,14 @@ const supabaseConfig = getSupabaseConfig()
     <script is:inline define:vars={{ supabaseConfig }}>
       window.__SUPABASE_CONFIG__ = supabaseConfig
     </script>
+
+    <!-- Eagerly create Supabase client singleton (SMI-3595) so inline scripts can use window.__SUPABASE_CLIENT__ -->
+    <script>
+      import { getSupabaseClient } from '../lib/supabase-client'
+      document.addEventListener('astro:page-load', () => {
+        getSupabaseClient()
+      })
+    </script>
   </head>
   <body class="bg-dark-950 text-dark-100 min-h-screen antialiased">
     <!-- Skip to main content link for keyboard navigation -->
