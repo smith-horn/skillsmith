@@ -13,8 +13,8 @@ import { createDatabaseSync, createDatabaseAsync } from '../db/createDatabase.js
 // IMPORTANT: Keep this type-only import here (prevents circular runtime dependency)
 import type { SimilarityResult } from './index.js'
 
-// V3 VectorDB types from claude-flow
-import type { VectorDB } from 'claude-flow/v3/@claude-flow/cli/dist/src/ruvector/vector-db.js'
+// V3 VectorDB types — local interface (decoupled from claude-flow, SMI-3598)
+import type { VectorDB } from './hnsw-store.types.js'
 
 // Re-export types for public API
 export type {
@@ -401,8 +401,9 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
   // IMPORTANT: Keep dynamic import here for V3 lazy loading / graceful degradation
   private async initHNSWIndex(): Promise<void> {
     try {
-      const vectorDbModule =
-        await import('claude-flow/v3/@claude-flow/cli/dist/src/ruvector/vector-db.js')
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore TS2307 — dynamic import; fails at runtime (claude-flow renamed to ruflo), caught by try/catch
+      const vectorDbModule = await import('claude-flow/v3/@claude-flow/cli/dist/src/ruvector/vector-db.js') // prettier-ignore
       const loaded = await vectorDbModule.loadRuVector()
       if (!loaded) console.warn('[HNSWEmbeddingStore] ruvector not available')
 
@@ -422,7 +423,7 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
           const allEmbeddings = this.getAllEmbeddings()
           for (const [skillId, embedding] of allEmbeddings) {
             try {
-              const result = this.vectorDB.insert(embedding, skillId)
+              const result = this.vectorDB!.insert(embedding, skillId)
               if (result instanceof Promise) await result
             } catch (err) {
               console.warn(`Failed to insert ${skillId}: ${err}`)

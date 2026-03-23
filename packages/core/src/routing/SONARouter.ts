@@ -284,13 +284,15 @@ export class SONARouter {
 
   private async initializeV3MoE(): Promise<void> {
     try {
-      const moeModule =
-        await import('claude-flow/v3/@claude-flow/cli/dist/src/ruvector/moe-router.js')
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore TS2307 — dynamic import; fails at runtime (claude-flow renamed to ruflo), caught by try/catch
+      const moeModule = await import('claude-flow/v3/@claude-flow/cli/dist/src/ruvector/moe-router.js') // prettier-ignore
       this.v3MoE = moeModule.getMoERouter()
-      await this.v3MoE.initialize()
+      await this.v3MoE!.initialize()
 
-      const sonaModule =
-        await import('claude-flow/v3/@claude-flow/cli/dist/src/memory/sona-optimizer.js')
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore TS2307 — dynamic import; fails at runtime (claude-flow renamed to ruflo), caught by try/catch
+      const sonaModule = await import('claude-flow/v3/@claude-flow/cli/dist/src/memory/sona-optimizer.js') // prettier-ignore
       const sonaOptimizer = await sonaModule.getSONAOptimizer()
       await sonaOptimizer.initialize()
       this.v3SONA = sonaOptimizer
