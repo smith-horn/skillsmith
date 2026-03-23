@@ -1,7 +1,7 @@
 # SMI-1617: GitHub Actions workflow for scheduled skill metadata refresh
 # Refreshes metadata (stars, quality_score) for existing skills in the database
 #
-# Runs hourly to keep ~14k skills fresh (100/hour = full refresh every 6 days)
+# Runs hourly to keep ~14k skills fresh (200/run, ~15 effective runs/day due to GH cron gaps = full refresh every ~5 days)
 # The indexer adds new skills; this job keeps existing skills up-to-date
 
 name: Skill Metadata Refresh
