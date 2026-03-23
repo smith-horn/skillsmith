@@ -626,7 +626,7 @@ const trustTiers = [
             return
           }
 
-          // SMI-XXXX: Rate limit exceeded — show friendly countdown instead of generic error
+          // SMI-3589: Rate limit exceeded — show friendly countdown instead of generic error
           if (response.status === 429) {
             const retryData = await response.json().catch(() => ({}))
             const retryAfter = Math.max(
