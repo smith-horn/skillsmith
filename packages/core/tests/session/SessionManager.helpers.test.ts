@@ -6,11 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import {
-  validateMemoryKey,
-  MEMORY_KEYS,
-  MEMORY_NAMESPACE,
-} from '../../src/session/SessionManager.helpers.js'
+import { validateMemoryKey, MEMORY_KEYS } from '../../src/session/SessionManager.helpers.js'
 
 describe('SessionManager.helpers', () => {
   describe('validateMemoryKey', () => {
@@ -116,16 +112,6 @@ describe('SessionManager.helpers', () => {
       expect(validateMemoryKey(MEMORY_KEYS.CURRENT)).toBe(true)
       expect(validateMemoryKey(MEMORY_KEYS.SESSION_PREFIX + 'test')).toBe(true)
       expect(validateMemoryKey(MEMORY_KEYS.CHECKPOINT_PREFIX + '123')).toBe(true)
-    })
-  })
-
-  describe('MEMORY_NAMESPACE', () => {
-    it('exports namespace constant', () => {
-      expect(MEMORY_NAMESPACE).toBe('skillsmith-sessions')
-    })
-
-    it('namespace passes validation', () => {
-      expect(validateMemoryKey(MEMORY_NAMESPACE)).toBe(true)
     })
   })
 })

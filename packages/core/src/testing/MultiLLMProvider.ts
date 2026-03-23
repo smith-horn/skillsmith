@@ -119,7 +119,7 @@ export class MultiLLMProvider extends EventEmitter {
   private activeRequests: Map<LLMProviderType, number> = new Map()
   private roundRobinIndex = 0
 
-  // IMPORTANT: Keep V3 integration here for lazy loading / graceful degradation
+  // V3 integration disabled (SMI-3600); field retained for close() cleanup path
   private v3ProviderManager: unknown = null
 
   constructor(config: MultiLLMProviderConfig = {}) {
@@ -320,27 +320,11 @@ export class MultiLLMProvider extends EventEmitter {
     }
   }
 
-  // IMPORTANT: Keep dynamic import here for V3 lazy loading / graceful degradation
+  // V3 provider modules unavailable after claude-flow → ruflo rename (SMI-3600)
+  // @claude-flow/cli restricts subpath imports; always use local provider chain
   private async initializeV3Integration(): Promise<void> {
-    try {
-      const { ProviderManager } = await import(
-        // @ts-expect-error - V3 types not available at compile time
-        'claude-flow/providers'
-      )
-
-      this.v3ProviderManager = new ProviderManager(console, null, {
-        providers: this.config.providers,
-        defaultProvider: this.config.defaultProvider,
-        fallbackStrategy: this.config.fallbackStrategy,
-        loadBalancing: this.config.loadBalancing,
-        costOptimization: this.config.costOptimization,
-        monitoring: { enabled: this.config.enableMetrics, metricsInterval: 60000 },
-      })
-
-      this.emit('v3_integration', { enabled: true })
-    } catch {
-      this.emit('v3_integration', { enabled: false, reason: 'V3 not available' })
-    }
+    this.v3ProviderManager = null
+    this.emit('v3_integration', { enabled: false, reason: 'V3 not available' })
   }
 
   private doSelectProvider(request: LLMRequest): LLMProviderType {

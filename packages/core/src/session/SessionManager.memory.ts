@@ -2,29 +2,23 @@
  * @fileoverview Session Manager Memory and Hook Operations
  * @module @skillsmith/core/session/SessionManager.memory
  * @see SMI-641: Session ID Storage in Claude-Flow Memory
- * @see SMI-1518: V3 API Migration
  * @see SMI-2741: Split from SessionManager.ts to meet 500-line standard
+ * @see SMI-3600: Remove dead V3 dynamic imports (claude-flow → ruflo rename)
+ * @see SMI-3601: Migrate npx claude-flow CLI calls to npx ruflo
  *
- * Standalone functions for claude-flow memory storage, retrieval, deletion,
+ * Standalone functions for ruflo memory storage, retrieval, deletion,
  * and hook invocation. Extracted to keep SessionManager.ts within the
- * 500-line limit while preserving all V3/spawn fallback logic.
+ * 500-line limit.
  */
 
 import type { CommandExecutor, MemoryResult } from './SessionManager.types.js'
-import {
-  getClaudeFlowMemory,
-  getClaudeFlowMcp,
-  MEMORY_KEYS,
-  USE_V3_API,
-  MEMORY_NAMESPACE,
-  validateMemoryKey,
-} from './SessionManager.helpers.js'
+import { validateMemoryKey } from './SessionManager.helpers.js'
 
 /**
- * Store data in claude-flow memory
+ * Store data in ruflo memory
  *
  * SMI-674: Uses spawn() with argument array to prevent command injection
- * SMI-1518: V3 API Migration - Use direct storeEntry() when available
+ * SMI-3601: Migrated from claude-flow to ruflo
  *
  * @param key - Memory key
  * @param value - Value to store
@@ -40,34 +34,14 @@ export async function storeMemoryEntry(
     return { success: false, error: 'Invalid memory key' }
   }
 
-  // SMI-1518, SMI-1609: Try V3 direct API first if enabled
-  if (USE_V3_API) {
-    try {
-      const memoryModule = await getClaudeFlowMemory()
-      if (memoryModule?.storeEntry) {
-        const result = await memoryModule.storeEntry({
-          key,
-          value,
-          namespace: MEMORY_NAMESPACE,
-        })
-        if (result.success) {
-          return { success: true }
-        }
-        console.warn(`V3 storeEntry failed: ${result.error}, falling back to spawn`)
-      }
-    } catch (error) {
-      console.warn(`V3 storeEntry exception: ${error}, falling back to spawn`)
-    }
-  }
-
   try {
-    const args = ['claude-flow', 'memory', 'store', '--key', key, '--value', value]
+    const args = ['ruflo', 'memory', 'store', '--key', key, '--value', value]
 
     if (executor.spawn) {
       await executor.spawn('npx', args)
     } else {
       const escapedValue = value.replace(/'/g, "'\\''")
-      const command = `npx claude-flow memory store --key "${key}" --value '${escapedValue}'`
+      const command = `npx ruflo memory store --key "${key}" --value '${escapedValue}'`
       await executor.execute(command)
     }
     return { success: true }
@@ -80,10 +54,10 @@ export async function storeMemoryEntry(
 }
 
 /**
- * Retrieve data from claude-flow memory
+ * Retrieve data from ruflo memory
  *
  * SMI-674: Uses spawn() with argument array to prevent command injection
- * SMI-1518: V3 API Migration - Use direct getEntry() when available
+ * SMI-3601: Migrated from claude-flow to ruflo
  *
  * @param key - Memory key
  * @param executor - Command executor for spawn/execute fallback
@@ -97,37 +71,15 @@ export async function retrieveMemoryEntry(
     return { success: false, error: 'Invalid memory key' }
   }
 
-  // SMI-1518, SMI-1609: Try V3 direct API first if enabled
-  if (USE_V3_API) {
-    try {
-      const memoryModule = await getClaudeFlowMemory()
-      if (memoryModule?.getEntry) {
-        const result = await memoryModule.getEntry({
-          key,
-          namespace: MEMORY_NAMESPACE,
-        })
-        if (result.success && result.found && result.entry) {
-          return { success: true, data: result.entry.content }
-        }
-        if (result.success && !result.found) {
-          return { success: false, error: 'Key not found' }
-        }
-        console.warn(`V3 getEntry failed: ${result.error}, falling back to spawn`)
-      }
-    } catch (error) {
-      console.warn(`V3 getEntry exception: ${error}, falling back to spawn`)
-    }
-  }
-
   try {
-    const args = ['claude-flow', 'memory', 'get', '--key', key]
+    const args = ['ruflo', 'memory', 'get', '--key', key]
 
     let stdout: string
     if (executor.spawn) {
       const result = await executor.spawn('npx', args)
       stdout = result.stdout
     } else {
-      const command = `npx claude-flow memory get --key "${key}"`
+      const command = `npx ruflo memory get --key "${key}"`
       const result = await executor.execute(command)
       stdout = result.stdout
     }
@@ -141,10 +93,10 @@ export async function retrieveMemoryEntry(
 }
 
 /**
- * Delete data from claude-flow memory
+ * Delete data from ruflo memory
  *
  * SMI-674: Uses spawn() with argument array to prevent command injection
- * SMI-1518: V3 API Migration - Use callMCPTool('memory/delete') when available
+ * SMI-3601: Migrated from claude-flow to ruflo
  *
  * @param key - Memory key to delete
  * @param executor - Command executor for spawn/execute fallback
@@ -158,36 +110,13 @@ export async function deleteMemoryEntry(
     return { success: false, error: 'Invalid memory key' }
   }
 
-  // SMI-1518, SMI-1609: Try V3 MCP API first if enabled
-  if (USE_V3_API) {
-    try {
-      const mcpModule = await getClaudeFlowMcp()
-      if (mcpModule?.callMCPTool) {
-        const result = (await mcpModule.callMCPTool('memory/delete', { key })) as {
-          success: boolean
-          deleted: boolean
-        }
-        if (result.success) {
-          return { success: true }
-        }
-        console.warn(`V3 memory/delete failed, falling back to spawn`)
-      }
-    } catch (error) {
-      const mcpModule = await getClaudeFlowMcp()
-      const MCPClientError = mcpModule?.MCPClientError
-      if (!MCPClientError || !(error instanceof MCPClientError)) {
-        console.warn(`V3 memory/delete exception: ${error}, falling back to spawn`)
-      }
-    }
-  }
-
   try {
-    const args = ['claude-flow', 'memory', 'delete', '--key', key]
+    const args = ['ruflo', 'memory', 'delete', '--key', key]
 
     if (executor.spawn) {
       await executor.spawn('npx', args)
     } else {
-      const command = `npx claude-flow memory delete --key "${key}"`
+      const command = `npx ruflo memory delete --key "${key}"`
       await executor.execute(command)
     }
     return { success: true }
@@ -201,7 +130,7 @@ export async function deleteMemoryEntry(
  * Run pre-task hook
  *
  * SMI-674: Uses spawn() with argument array to prevent command injection
- * SMI-1518: V3 API Migration - Use callMCPTool('hooks/pre-task') when available
+ * SMI-3601: Migrated from claude-flow to ruflo
  *
  * @param description - Task description
  * @param executor - Command executor for spawn/execute fallback
@@ -210,25 +139,9 @@ export async function runPreTaskHook(
   description: string,
   executor: CommandExecutor
 ): Promise<void> {
-  // SMI-1518, SMI-1609: Try V3 MCP API first if enabled
-  if (USE_V3_API) {
-    try {
-      const mcpModule = await getClaudeFlowMcp()
-      if (mcpModule?.callMCPTool) {
-        await mcpModule.callMCPTool('hooks/pre-task', {
-          description,
-          memoryKey: MEMORY_KEYS.CURRENT,
-        })
-        return
-      }
-    } catch {
-      // V3 API not available or failed, fall back to spawn
-    }
-  }
-
   try {
     const args = [
-      'claude-flow',
+      'ruflo',
       'hooks',
       'pre-task',
       '--description',
@@ -241,7 +154,7 @@ export async function runPreTaskHook(
       await executor.spawn('npx', args)
     } else {
       const escapedDesc = description.replace(/'/g, "'\\''")
-      const command = `npx claude-flow hooks pre-task --description '${escapedDesc}' --memory-key "session/current"`
+      const command = `npx ruflo hooks pre-task --description '${escapedDesc}' --memory-key "session/current"`
       await executor.execute(command)
     }
   } catch {
@@ -253,34 +166,19 @@ export async function runPreTaskHook(
  * Run post-task hook
  *
  * SMI-674: Uses spawn() with argument array to prevent command injection
- * SMI-1518: V3 API Migration - Use callMCPTool('hooks/post-task') when available
+ * SMI-3601: Migrated from claude-flow to ruflo
  *
  * @param taskId - Task ID to pass to the hook
  * @param executor - Command executor for spawn/execute fallback
  */
 export async function runPostTaskHook(taskId: string, executor: CommandExecutor): Promise<void> {
-  // SMI-1518, SMI-1609: Try V3 MCP API first if enabled
-  if (USE_V3_API) {
-    try {
-      const mcpModule = await getClaudeFlowMcp()
-      if (mcpModule?.callMCPTool) {
-        await mcpModule.callMCPTool('hooks/post-task', {
-          taskId,
-        })
-        return
-      }
-    } catch {
-      // V3 API not available or failed, fall back to spawn
-    }
-  }
-
   try {
-    const args = ['claude-flow', 'hooks', 'post-task', '--task-id', taskId]
+    const args = ['ruflo', 'hooks', 'post-task', '--task-id', taskId]
 
     if (executor.spawn) {
       await executor.spawn('npx', args)
     } else {
-      const command = `npx claude-flow hooks post-task --task-id "${taskId}"`
+      const command = `npx ruflo hooks post-task --task-id "${taskId}"`
       await executor.execute(command)
     }
   } catch {

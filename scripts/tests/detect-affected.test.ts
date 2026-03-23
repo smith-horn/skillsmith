@@ -57,6 +57,13 @@ const mockPackages: PackageInfo[] = [
     dependencies: [],
     devDependencies: [],
   },
+  {
+    name: 'skillsmith-cli',
+    path: '/packages/skillsmith-cli',
+    dirName: 'skillsmith-cli',
+    dependencies: [],
+    devDependencies: [],
+  },
 ]
 
 describe('SMI-2190: Affected Package Detection', () => {
