@@ -1467,40 +1467,49 @@ console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RES
   }
 }
 
-// ── Check: Rate Limit Constant Consistency (SMI-3590) ──────────────────
-// Verifies that RATE_LIMITS_BY_TIER in license.ts is the single source of truth
-// and no other files define duplicate rate limit constants.
+// ── Check: Duplicate Shared Constants (SMI-3590) ───────────────────────
+// Detects exported SCREAMING_SNAKE_CASE record constants defined in multiple
+// _shared/ files. Each constant should have exactly one canonical definition;
+// other files should import it.
 {
-  const licenseFile = 'supabase/functions/_shared/license.ts'
-  const filesToCheck = [
-    'supabase/functions/_shared/auth-middleware.ts',
-    'supabase/functions/_shared/api-key-auth.ts',
-  ]
-  // Pattern: standalone const/let/var assignment with tier rate limit object literal
-  const duplicatePattern =
-    /(?:const|let|var)\s+\w*(?:RATE_LIMIT|TIER_RATE)\w*\s*(?::\s*Record[^=]*)?\s*=\s*\{/i
+  const sharedDir = 'supabase/functions/_shared'
+  // Match: export const SOME_THING: Record<...> = { or export const SOME_THING = {
+  const exportedConstPattern =
+    /export\s+const\s+([A-Z][A-Z0-9_]{3,})\s*(?::\s*Record[^=]*)?\s*=\s*\{/g
 
-  let duplicatesFound = 0
-  const details = []
+  // Collect: which constants are defined in which files
+  const constantSources = new Map() // constantName → [filePath, ...]
 
-  for (const filePath of filesToCheck) {
-    if (!existsSync(filePath)) continue
-    const content = readFileSync(filePath, 'utf-8')
-    if (duplicatePattern.test(content)) {
-      duplicatesFound++
-      details.push(filePath)
+  if (existsSync(sharedDir)) {
+    const sharedFiles = readdirSync(sharedDir).filter(
+      (f) => f.endsWith('.ts') && !f.endsWith('.test.ts')
+    )
+
+    for (const file of sharedFiles) {
+      const filePath = `${sharedDir}/${file}`
+      const content = readFileSync(filePath, 'utf-8')
+      let match
+      exportedConstPattern.lastIndex = 0
+      while ((match = exportedConstPattern.exec(content)) !== null) {
+        const name = match[1]
+        if (!constantSources.has(name)) constantSources.set(name, [])
+        constantSources.get(name).push(filePath)
+      }
     }
   }
 
-  if (duplicatesFound === 0) {
-    pass('Rate limit constants: no duplicate definitions (single source of truth in license.ts)')
+  // Flag any constant defined in more than one file
+  const duplicates = [...constantSources.entries()].filter(([, files]) => files.length > 1)
+
+  if (duplicates.length === 0) {
+    pass('Shared constants: no duplicate definitions across _shared/ modules')
   } else {
     warn(
-      `${duplicatesFound} file(s) may define duplicate rate limit constants — should import from ${licenseFile}`,
-      'Import RATE_LIMITS_BY_TIER from license.ts instead of defining locally'
+      `${duplicates.length} constant(s) defined in multiple _shared/ files — each should have one source of truth`,
+      'Consolidate to one file and import from there'
     )
-    for (const d of details) {
-      console.log(`    ${d}`)
+    for (const [name, files] of duplicates.slice(0, 3)) {
+      console.log(`    ${name}: ${files.join(', ')}`)
     }
   }
 }
