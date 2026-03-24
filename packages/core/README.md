@@ -2,9 +2,21 @@
 
 Core library for Skillsmith - provides database operations, search services, caching, security, analytics, and **multi-language codebase analysis** for agent skill discovery.
 
-**v0.4.15** adds co-install recommendations (`CoInstallRepository`, `AlsoInstalledSkill`), compatibility tags on skills, repository/homepage link fields, and SCHEMA_VERSION 9 with migrations for both.
+## Contents
 
-**v0.4.7** includes multi-language support for analyzing TypeScript, JavaScript, Python, Go, Rust, and Java codebases, with improved dependency management.
+- [What's New](#whats-new-in-v0416)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Features](#features)
+- [Exports](#exports)
+
+## What's New in v0.4.16
+
+- **Skill Dependency Intelligence**: New `SkillDependencyRepository` for querying skill dependency graphs, `extractMcpReferences()` for inferring MCP server dependencies from SKILL.md content, `mergeDependencies()` for combining declared + inferred dependencies.
+- **`DependencyDeclaration` type**: Replaces `string[]` in `SkillFrontmatter.dependencies` — structured dependency declarations with type, source, and confidence.
+- **Database migration v10**: `skill_dependencies` table (SCHEMA_VERSION 10).
+
+See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
 ## Installation
 
@@ -83,6 +95,7 @@ await runMigrations(db)
 - **SkillRepository** - CRUD operations for skills
 - **CacheRepository** - Persistent cache storage
 - **IndexerRepository** - Batch indexing operations
+- **SkillDependencyRepository** - Skill dependency graph queries
 
 ```typescript
 import { SkillRepository } from '@skillsmith/core'
@@ -182,6 +195,33 @@ const score = await scorer.score(skill)
 
 // Quick scoring without full analysis
 const quick = quickScore(skillMetadata)
+```
+
+### Dependency Intelligence
+
+Infer and manage skill dependencies from SKILL.md content.
+
+```typescript
+import {
+  extractMcpReferences,
+  mergeDependencies,
+  SkillDependencyRepository,
+} from '@skillsmith/core'
+
+// Extract MCP server references from SKILL.md content
+const refs = extractMcpReferences(skillMdContent)
+// [{ server: 'github', tool: 'create_issue', confidence: 0.9 }, ...]
+
+// Merge declared frontmatter deps with inferred MCP refs
+const merged = mergeDependencies(declaredDeps, refs)
+// [{ depType: 'mcp_server', target: 'github', source: 'inferred_static', confidence: 0.9 }]
+
+// Persist to database
+const depRepo = new SkillDependencyRepository(db)
+await depRepo.upsert('author/skill', merged)
+
+// Query dependency graph
+const deps = depRepo.findBySkillId('author/skill')
 ```
 
 ### Analytics
@@ -443,6 +483,21 @@ import {
   type ExportInfo,
   type FunctionInfo,
   type CodebaseContext,
+} from '@skillsmith/core'
+
+// Dependency intelligence (v0.4.16)
+import {
+  extractMcpReferences,
+  mergeDependencies,
+  SkillDependencyRepository,
+  // Types
+  type DependencyDeclaration,
+  type SkillDependencyRow,
+  type DepType,
+  type DepSource,
+  type McpReference,
+  type McpExtractionResult,
+  type MergedDependency,
 } from '@skillsmith/core'
 ```
 

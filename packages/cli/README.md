@@ -4,37 +4,23 @@
 
 Command-line interface for Skillsmith - discover, manage, and author agent skills.
 
-## What's New in v0.4.0
+## Contents
 
-- **CLI Authentication**: `skillsmith login` opens your browser, you copy the API key and paste it — done. Stored securely in your OS keyring.
-- **Session Commands**: `skillsmith logout` clears stored credentials; `skillsmith whoami` shows your current auth status and key source.
-- **Headless/CI Support**: `skillsmith login --no-browser` prints the URL for environments without a display. Use `SKILLSMITH_API_KEY` env var for fully non-interactive auth.
+- [What's New](#whats-new-in-v050)
+- [Installation](#installation)
+- [Commands](#commands)
+- [Configuration](#configuration)
+- [Examples](#examples)
+- [Privacy & Data Handling](#privacy--data-handling)
 
-## What's New in v0.3.1
+## What's New in v0.5.0
 
-- **Database Fix**: Fixed "no such table: skills" error on fresh installations
-- **API Resilience**: Improved handling of partial API responses
-- **Import Improvements**: Better rate limiting (150ms default, configurable via `SKILLSMITH_IMPORT_DELAY_MS`)
-- **Python Support**: Added Python file detection (`.py`, `.pyi`, `.pyw`) to `analyze` command
+- **`skillsmith create` command**: Scaffold a new Claude Code skill directly into `~/.claude/skills/<name>/` — interactive prompts or non-interactive flags (`--description`, `--author`, `--type`, `--dry-run`, `--yes`)
+- **Stricter name validation**: `author init` and `create` share registry-safe validation (lowercase + hyphens only)
 
-## What's New in v0.3.0
+> v0.5.1 is a version-bump-only release fixing an npm registry regression. No source changes.
 
-- **Registry Sync**: Keep your local skill database up-to-date with `sync` command
-- **Auto-Sync**: Configurable daily/weekly background sync during MCP sessions
-- **Sync History**: Track sync operations with `sync history`
-
-## What's New in v0.2.7
-
-- **MCP Server Scaffolding**: Generate TypeScript MCP servers with `author mcp-init`
-- **Custom Tool Generation**: Auto-generates stub implementations for specified tools
-- **Decision Helper Integration**: Seamless flow from evaluation to scaffolding
-- **Subagent Generation**: Generate companion specialist agents for parallel execution (37-97% token savings)
-- **Skill Transform**: Upgrade existing skills with subagent configuration
-- **Dynamic Version**: Version now reads from package.json automatically
-- **Tool Detection**: Automatic analysis of required tools from skill content
-- **Live Skills**: Search and install from 14,000+ real skills
-- **Faster Search**: Full-text search with quality ranking
-- **Privacy First**: Opt-out telemetry, no PII collected
+See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
 ## Installation
 
@@ -172,6 +158,45 @@ skillsmith init my-skill --path ./skills/my-skill
 **Options:**
 - `-p, --path <path>` - Directory to create skill in
 - `--template <template>` - Skill template (basic, advanced)
+
+### create
+
+Scaffold a new Claude Code skill at `~/.claude/skills/<name>/`.
+
+```bash
+# Interactive mode
+skillsmith create
+
+# With name
+skillsmith create my-skill
+
+# Non-interactive
+skillsmith create my-skill --description "Git workflow helper" --author myuser --type basic
+
+# Preview without writing
+skillsmith create my-skill --dry-run
+```
+
+**Options:**
+- `-o, --output <dir>` - Output directory (default: `~/.claude/skills`)
+- `--type <type>` - Skill type: `basic`, `intermediate`, `advanced`
+- `--behavior <behavior>` - Behavioral classification: `autonomous`, `guided`, `interactive`, `configurable`
+- `-d, --description <description>` - Skill description (skips prompt)
+- `-a, --author <author>` - Author GitHub username (skips prompt)
+- `-c, --category <category>` - Category: `development`, `productivity`, `communication`, `data`, `security`, `other`
+- `--scripts` - Include a `scripts/` directory
+- `-y, --yes` - Auto-confirm overwrite if skill directory exists
+- `--dry-run` - Preview scaffold output without writing files
+
+**Generated Structure:**
+```
+~/.claude/skills/my-skill/
+├── SKILL.md           # Skill definition
+├── README.md          # Documentation
+├── CHANGELOG.md       # Version history
+├── .gitignore
+└── resources/         # Supporting files
+```
 
 ### validate
 
@@ -531,6 +556,21 @@ skillsmith install community/jest-helper
 
 # List installed skills
 skillsmith list
+```
+
+### Create a New Skill
+
+```bash
+# Scaffold with interactive prompts
+skillsmith create my-awesome-skill
+
+# Or fully non-interactive
+skillsmith create my-awesome-skill \
+  --description "Automates deployment checks" \
+  --author myuser \
+  --type intermediate \
+  --behavior guided \
+  --yes
 ```
 
 ### Author a New Skill

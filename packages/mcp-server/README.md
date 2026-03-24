@@ -4,32 +4,21 @@
 
 MCP (Model Context Protocol) server for agent skill discovery, installation, and management.
 
-## What's New in v0.4.3
+## What's New in v0.4.5
 
-- **Co-install recommendations** (SMI-2761): `get_skill` responses now include an `also_installed` array — skills frequently installed alongside this one, surfaced once ≥5 co-installs are observed. Also shown on skill detail pages at [www.skillsmith.app/skills](https://www.skillsmith.app/skills).
-- **Repository and homepage links** (SMI-2759): `search` and `get_skill` responses now include `repository_url` and `homepage_url` when declared by the skill author.
-- **Compatibility tags** (SMI-2760): Skills can declare `compatibility` frontmatter (LLMs, IDEs, platforms). Tags surface in search results and skill detail pages.
-- **6,054 tests passing** across all packages.
+- **Dependency intelligence**: `skill_validate` warns on deprecated dependencies and undeclared MCP server references. `install_skill`, `get_skill`, and `uninstall_skill` now surface dependency data.
+- **`skill_outdated` tool**: Check installed skills for staleness and dependency satisfaction status.
+- **Encrypted skill detection**: `install_skill` detects git-crypt encrypted skills and returns a clear error instead of misleading validation messages.
+- **v0.4.5 fix**: Resolved missing dependency export that broke v0.4.4 installations.
 
-## What's New in v0.4.0
-
-- **Quota-based throttling** (SMI-2679): `skill_suggest` now counts against your monthly API quota instead of an undocumented per-session rate limit. Community (1,000/mo), Individual (10,000/mo), Team (100,000/mo), Enterprise (unlimited). See [www.skillsmith.app/pricing](https://www.skillsmith.app/pricing).
-- **Graceful license degradation**: If the enterprise license check is unavailable, `skill_suggest` falls back to community-tier defaults rather than returning a hard error.
-- **5,575 tests passing** across all packages.
-
-## What's New in v0.3.18
-
-- **Async Initialization** (SMI-2205): Server initializes asynchronously for faster startup
-- **WASM Fallback** (SMI-2206): Automatic fallback to sql.js when native SQLite unavailable
-- **Robust Context Loading** (SMI-2207): Graceful handling of initialization edge cases
-- **612 tests passing** with comprehensive coverage
+See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
 ## Auto-Update Notifications
 
 The MCP server checks for updates on startup and notifies you when a newer version is available:
 
 ```
-[skillsmith] Update available: 0.3.20 → 0.4.0
+[skillsmith] Update available: 0.4.4 → 0.4.5
 Restart your MCP client to use the latest version.
 ```
 
@@ -116,7 +105,7 @@ The Skillsmith API provides access to **14,000+ curated skills** from 20,000+ on
 
 Skills are served from `api.skillsmith.app` and cached locally for 24 hours.
 
-> **Note (v0.3.8):** Fixed critical bug where the MCP server defaulted to offline mode for all users. Search now correctly connects to the production API. See [SMI-1948](https://linear.app/smith-horn-group/issue/SMI-1948).
+> **Note (v0.3.8):** Fixed critical bug where the MCP server defaulted to offline mode for all users. Search now correctly connects to the production API.
 
 ### Why Configure an API Key?
 
@@ -128,7 +117,7 @@ Without an API key, you're limited to **10 total requests** (trial mode). With a
 - Usage tracking on your dashboard
 - Priority during high-traffic periods
 
-### API Key Configuration (SMI-1953)
+### API Key Configuration
 
 **Step 1:** Get your API key from https://skillsmith.app/account
 
@@ -158,7 +147,7 @@ Without an API key, you're limited to **10 total requests** (trial mode). With a
 > | Windows PowerShell | `!$env:SKILLSMITH_API_KEY='your-key-here'` |
 > | Windows CMD | `!set SKILLSMITH_API_KEY=your-key-here` |
 >
-> The `!` prefix in Claude Code runs the command without exposing the output. See [SMI-1956](https://linear.app/smith-horn-group/issue/SMI-1956).
+> The `!` prefix in Claude Code runs the command without exposing the output.
 
 ### Rate Limits by Tier
 
@@ -186,16 +175,24 @@ All tiers include:
 
 ## Available Tools
 
-| Tool | Description | Example |
-|------|-------------|---------|
-| `search` | Search for skills with filters | `"Find testing skills"` |
-| `get_skill` | Get detailed skill information | `"Get details for community/jest-helper"` |
-| `install_skill` | Install a skill to ~/.claude/skills | `"Install jest-helper"` |
-| `uninstall_skill` | Remove an installed skill | `"Uninstall jest-helper"` |
-| `skill_recommend` | Get contextual skill recommendations | `"Recommend skills for React"` |
-| `skill_validate` | Validate a skill's structure | `"Validate the commit skill"` |
-| `skill_compare` | Compare skills side-by-side | `"Compare jest-helper and vitest-helper"` |
-| `skill_suggest` | Suggest skills based on project context (counts against monthly quota) | `"Suggest skills for my project"` |
+| Tool | Description | Tier |
+|------|-------------|------|
+| `search` | Search for skills with filters | Community |
+| `get_skill` | Get detailed skill information | Community |
+| `install_skill` | Install a skill to ~/.claude/skills | Community |
+| `uninstall_skill` | Remove an installed skill | Community |
+| `skill_recommend` | Get contextual skill recommendations | Community |
+| `skill_validate` | Validate a skill's structure | Community |
+| `skill_compare` | Compare skills side-by-side | Community |
+| `skill_suggest` | Suggest skills based on project context (counts against monthly quota) | Community |
+| `skill_outdated` | Check installed skills for staleness and dependency status | Community |
+| `index_local` | Index skills from a local directory | Community |
+| `skill_publish` | Prepare a skill for publishing | Community |
+| `skill_rescan` | Re-scan an installed skill's content | Community |
+| `skill_updates` | Check registry for newer skill versions | Individual+ |
+| `skill_diff` | Section-level diff between skill versions | Individual+ |
+| `skill_pack_audit` | Audit all skills in a directory | Individual+ |
+| `skill_audit` | Check skills for security advisories | Team+ |
 
 ## Tool Parameters
 
@@ -277,6 +274,45 @@ Proactively suggest relevant skills based on current project context. Counts aga
 | `installed_skills` | string[] | No | Currently installed skill IDs (for filtering) |
 | `limit` | number | No | Max suggestions to return (default 3, max 10) |
 | `session_id` | string | No | Session identifier (optional, for informational purposes) |
+
+### skill_outdated
+
+Check installed skills for available updates and dependency satisfaction status.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `include_deps` | boolean | No | Include dependency satisfaction status (default: true) |
+
+### skill_diff
+
+Show a section-level diff between two versions of a skill. Returns added, removed, and modified headings along with a change type (major/minor/patch) and update recommendation. Requires Individual tier or higher.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `skillId` | string | Yes | Registry skill identifier (e.g. `author/skill-name`) |
+| `oldContent` | string | Yes | Previous SKILL.md content |
+| `newContent` | string | Yes | Updated SKILL.md content |
+| `oldRiskScore` | number | No | Risk score of the old version (0–100) |
+| `newRiskScore` | number | No | Risk score of the new version (0–100) |
+| `hasLocalModifications` | boolean | No | Whether the installed skill has local edits (default: false) |
+| `trustTier` | string | No | Registry trust tier: `verified`, `community`, `experimental` (default: community) |
+
+### skill_audit
+
+Check installed skills for known security advisories. Requires Team tier or higher. The advisory system is in early access.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `skillIds` | string[] | No | Specific skill IDs to audit (omit to return all skills with active advisories) |
+
+### index_local
+
+Index local skills from `~/.claude/skills/` directory.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `force` | boolean | No | Force re-indexing even if cache is valid (default: false) |
+| `skillsDir` | string | No | Custom skills directory path (defaults to `~/.claude/skills/`) |
 
 ## Trust Tiers
 
