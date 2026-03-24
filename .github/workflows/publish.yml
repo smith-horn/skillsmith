@@ -369,6 +369,8 @@ jobs:
     timeout-minutes: 15
     needs: [pre-publish-check, validate]
     if: |
+      always() &&
+      needs.pre-publish-check.result == 'success' &&
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.core-exists != 'true'
 
