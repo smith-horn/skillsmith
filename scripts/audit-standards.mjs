@@ -1514,6 +1514,30 @@ console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RES
   }
 }
 
+// npm override drift check: @modelcontextprotocol/sdk override "." must match mcp-server range
+console.log(`\n${BOLD}Override Drift: @modelcontextprotocol/sdk${RESET}`)
+try {
+  const rootPkg = JSON.parse(readFileSync('package.json', 'utf8'))
+  const mcpPkg = JSON.parse(readFileSync('packages/mcp-server/package.json', 'utf8'))
+  const overrideDot = rootPkg.overrides?.['@modelcontextprotocol/sdk']?.['.']
+  const mcpRange = mcpPkg.dependencies?.['@modelcontextprotocol/sdk']
+  if (!overrideDot) {
+    fail(
+      'Missing override "." for @modelcontextprotocol/sdk in root package.json',
+      'Add "." key to force version globally — see docs/internal/implementation/dependabot-mcp-sdk-lock-fix.md'
+    )
+  } else if (overrideDot !== mcpRange) {
+    fail(
+      `Override drift: root override "." is ${overrideDot} but mcp-server declares ${mcpRange}`,
+      'Update root package.json overrides "." to match packages/mcp-server/package.json'
+    )
+  } else {
+    pass(`@modelcontextprotocol/sdk override "." (${overrideDot}) matches mcp-server range`)
+  }
+} catch (e) {
+  warn('Could not check @modelcontextprotocol/sdk override drift: ' + e.message)
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)
