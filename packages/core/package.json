@@ -83,7 +83,8 @@
     "vitest": "4.0.16"
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "license": "Elastic-2.0",
   "repository": {

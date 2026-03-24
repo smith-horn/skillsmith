@@ -566,6 +566,14 @@ if (existsSync(PACKAGES_DIR)) {
 
   const violations = []
 
+  // Deps that require caret (^) ranges to survive Dependabot lock regeneration.
+  // Exact pins get dropped by npm dedup against transitive ranges.
+  // Review: remove entries when the package moves to an exact pin.
+  const CARET_RANGE_ALLOWLIST = new Set([
+    'jose', // enterprise: root has v6.x, needs nested v5.x (a8d7188d)
+    '@modelcontextprotocol/sdk', // mcp-server: ruflo ^1.20.1 dedupes exact 1.27.1 (d93bacc8)
+  ])
+
   for (const dir of packageDirs) {
     const pkgPath = join(PACKAGES_DIR, dir, 'package.json')
     try {
@@ -576,6 +584,7 @@ if (existsSync(PACKAGES_DIR)) {
         // Skip workspace siblings — caret ranges required for npm workspace resolution
         // (exact pins break symlink resolution). See MEMORY.md "Database Patterns".
         if (name.startsWith('@skillsmith/')) continue
+        if (CARET_RANGE_ALLOWLIST.has(name)) continue
         if (typeof version === 'string' && (version.startsWith('^') || version.startsWith('~'))) {
           violations.push({ package: dir, dep: name, version })
         }

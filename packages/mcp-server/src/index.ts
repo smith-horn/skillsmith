@@ -46,7 +46,7 @@ import { createLicenseMiddleware } from './middleware/license.js'
 import { createQuotaMiddleware } from './middleware/quota.js'
 
 // Package version - keep in sync with package.json
-const PACKAGE_VERSION = '0.4.0'
+const PACKAGE_VERSION = '0.4.5'
 const PACKAGE_NAME = '@skillsmith/mcp-server'
 import {
   installBundledSkills,
@@ -87,7 +87,7 @@ const toolDefinitions = [
 const server = new Server(
   {
     name: 'skillsmith',
-    version: '0.4.0',
+    version: '0.4.5',
   },
   {
     capabilities: {

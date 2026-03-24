@@ -42,7 +42,8 @@
   },
   "files": [
     "dist",
-    "assets"
+    "assets",
+    "CHANGELOG.md"
   ],
   "license": "Elastic-2.0",
   "repository": {

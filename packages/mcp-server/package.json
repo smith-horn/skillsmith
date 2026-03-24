@@ -41,7 +41,8 @@
   "files": [
     "dist",
     "src/assets",
-    "server.json"
+    "server.json",
+    "CHANGELOG.md"
   ],
   "license": "Elastic-2.0",
   "repository": {
