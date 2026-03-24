@@ -44,7 +44,7 @@
   },
   "devDependencies": {
     "@smithy/config-resolver": "4.4.6",
-    "@smithy/core": "3.5.3",
+    "@smithy/core": "3.23.12",
     "@smithy/middleware-endpoint": "4.4.27",
     "@smithy/middleware-retry": "4.1.11",
     "@smithy/protocol-http": "5.1.2",
