@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@skillsmith/core": "^0.4.16",
+    "@skillsmith/core": "^0.4.17",
     "esbuild": "0.27.2"
   },
   "devDependencies": {
