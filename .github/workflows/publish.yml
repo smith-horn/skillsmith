@@ -218,6 +218,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # SMI-3606: Decrypt enterprise source + supabase functions for Docker build context
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+          echo "✓ git-crypt unlocked successfully"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -271,6 +283,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      # SMI-3606: Decrypt enterprise source for build/test/typecheck/lint
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+          echo "✓ git-crypt unlocked successfully"
 
       - name: Download Docker image
         uses: actions/download-artifact@v8
@@ -369,14 +393,24 @@ jobs:
     timeout-minutes: 15
     needs: [pre-publish-check, validate]
     if: |
-      always() &&
-      needs.pre-publish-check.result == 'success' &&
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.core-exists != 'true'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      # SMI-3606: Decrypt for workspace build resolution
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+          echo "✓ git-crypt unlocked successfully"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -419,7 +453,6 @@ jobs:
     timeout-minutes: 15
     needs: [pre-publish-check, validate, publish-core]
     if: |
-      always() &&
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.mcp-exists != 'true' &&
       (needs.publish-core.result == 'success' || needs.publish-core.result == 'skipped')
@@ -427,6 +460,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      # SMI-3606: Decrypt for workspace build resolution
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+          echo "✓ git-crypt unlocked successfully"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -484,7 +529,6 @@ jobs:
     timeout-minutes: 15
     needs: [pre-publish-check, validate, publish-core]
     if: |
-      always() &&
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.cli-exists != 'true' &&
       (needs.publish-core.result == 'success' || needs.publish-core.result == 'skipped')
@@ -492,6 +536,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      # SMI-3606: Decrypt for workspace build resolution
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+          echo "✓ git-crypt unlocked successfully"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -535,7 +591,6 @@ jobs:
     timeout-minutes: 15
     needs: [pre-publish-check, validate, publish-core]
     if: |
-      always() &&
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.enterprise-exists != 'true' &&
       (needs.publish-core.result == 'success' || needs.publish-core.result == 'skipped')
@@ -543,6 +598,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      # SMI-3606: Decrypt enterprise source for build + publish
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+          echo "✓ git-crypt unlocked successfully"
 
       - name: Setup Node.js for GitHub Packages
         uses: actions/setup-node@v6
