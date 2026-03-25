@@ -303,14 +303,34 @@ Published as `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol
 
 ## Publishing Packages
 
-**Preferred method**: `./scripts/publish-packages.sh` — publishes in dependency order with pre-publish tarball verification.
+**Release preparation** (version bump + changelog + commit):
+
+```bash
+docker exec skillsmith-dev-1 npx tsx scripts/prepare-release.ts --all=patch   # bump all
+docker exec skillsmith-dev-1 npx tsx scripts/prepare-release.ts --core=minor --cli=patch  # selective
+docker exec skillsmith-dev-1 npx tsx scripts/prepare-release.ts --dry-run --all=patch  # preview
+```
+
+The script updates all 6 version locations (package.json, VERSION constants, server.json), generates changelog entries, and creates a commit. See `docs/internal/implementation/release-automation.md` for details.
+
+**Publishing — CI workflow** (preferred, avoids local npm auth/OTP issues):
+
+```bash
+git push
+gh workflow run publish.yml -f dry_run=false
+gh run watch <run-id> --exit-status              # Monitor progress
+```
+
+Uses `SKILLSMITH_NPM_TOKEN` secret. Publishes in dependency order (core → mcp-server, cli, enterprise) with validation, smoke tests, and MCP Registry publish. Always try this first.
+
+**Local fallback**: `./scripts/publish-packages.sh` — publishes in dependency order with pre-publish tarball verification. Requires npm auth with 2FA bypass, which is error-prone locally.
 
 **Publish order** (dependencies before consumers):
 
 1. `@skillsmith/core`
 2. `@skillsmith/mcp-server` and `@skillsmith/cli` (both depend on core)
 
-**Pre-publish checklist** (manual publishes):
+**Pre-publish checklist** (manual publishes — only if CI workflow fails):
 
 1. Build in Docker: `docker exec skillsmith-dev-1 npm run build`
 2. Run preflight: `docker exec skillsmith-dev-1 npm run preflight`
