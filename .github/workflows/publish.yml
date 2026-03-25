@@ -224,9 +224,13 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
+          # Install git-crypt
           sudo apt-get update && sudo apt-get install -y git-crypt
-          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+          # Decode and write key file
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          # Unlock repository
           git-crypt unlock /tmp/git-crypt-key
+          # Clean up key file
           rm -f /tmp/git-crypt-key
           echo "✓ git-crypt unlocked successfully"
 
@@ -290,9 +294,13 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
+          # Install git-crypt
           sudo apt-get update && sudo apt-get install -y git-crypt
-          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+          # Decode and write key file
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          # Unlock repository
           git-crypt unlock /tmp/git-crypt-key
+          # Clean up key file
           rm -f /tmp/git-crypt-key
           echo "✓ git-crypt unlocked successfully"
 
@@ -406,9 +414,13 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
+          # Install git-crypt
           sudo apt-get update && sudo apt-get install -y git-crypt
-          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+          # Decode and write key file
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          # Unlock repository
           git-crypt unlock /tmp/git-crypt-key
+          # Clean up key file
           rm -f /tmp/git-crypt-key
           echo "✓ git-crypt unlocked successfully"
 
@@ -467,9 +479,13 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
+          # Install git-crypt
           sudo apt-get update && sudo apt-get install -y git-crypt
-          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+          # Decode and write key file
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          # Unlock repository
           git-crypt unlock /tmp/git-crypt-key
+          # Clean up key file
           rm -f /tmp/git-crypt-key
           echo "✓ git-crypt unlocked successfully"
 
@@ -543,9 +559,13 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
+          # Install git-crypt
           sudo apt-get update && sudo apt-get install -y git-crypt
-          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+          # Decode and write key file
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          # Unlock repository
           git-crypt unlock /tmp/git-crypt-key
+          # Clean up key file
           rm -f /tmp/git-crypt-key
           echo "✓ git-crypt unlocked successfully"
 
@@ -605,9 +625,13 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
+          # Install git-crypt
           sudo apt-get update && sudo apt-get install -y git-crypt
-          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+          # Decode and write key file
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          # Unlock repository
           git-crypt unlock /tmp/git-crypt-key
+          # Clean up key file
           rm -f /tmp/git-crypt-key
           echo "✓ git-crypt unlocked successfully"
 
