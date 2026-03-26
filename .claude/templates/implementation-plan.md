@@ -25,6 +25,7 @@ Reviewed: YYYY-MM-DD | Reviewers: VP Product, VP Engineering, VP Design
 **Solution**: [How it's fixed]
 
 **Files**:
+
 - `path/to/file.ts` — [what changes]
 
 ### 2. [Second change area]
@@ -34,6 +35,7 @@ Reviewed: YYYY-MM-DD | Reviewers: VP Product, VP Engineering, VP Design
 **Solution**: [How it's fixed]
 
 **Files**:
+
 - `path/to/file.ts` — [what changes]
 
 ## Wave 1: [Title]
