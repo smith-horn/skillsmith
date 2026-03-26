@@ -1,6 +1,6 @@
 name: CI
 
-# Trigger configuration:
+# Trigger configuration (SMI-3547):
 # - paths-ignore: Skip CI entirely for pure docs-only commits (fast path)
 # - classify job: Further categorizes changes for conditional job execution
 # These work together: paths-ignore handles the simple case, classify handles mixed commits
