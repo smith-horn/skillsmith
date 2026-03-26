@@ -164,7 +164,7 @@ Three workflows build Docker images with BuildKit GHA cache. All Docker build jo
 
 | Workflow | Scope | Mode | Timeout | Purpose |
 |----------|-------|------|---------|---------|
-| `ci.yml` | `scope=ci` | `mode=max` | 20 min | PR and push CI |
+| `ci.yml` | `scope=ci` | `mode=min` | 20 min | PR and push CI |
 | `e2e-tests.yml` | `scope=e2e` | `mode=min` | 20 min | End-to-end tests |
 | `publish.yml` | `scope=publish` | `mode=min` | 20 min | npm publish |
 
@@ -180,9 +180,7 @@ E2E and publish workflows only use mechanism 2 (no `actions/cache` tarball layer
 **Key decisions**:
 
 - `scope=` isolates each workflow's cache entries. Without scope, workflows evict each other's entries when the 10 GB GHA cache cap is reached.
-- CI uses `mode=max` to cache all intermediate layers (apt-get, base setup). When mechanism 1 misses on a lockfile change, mechanism 2 reuses cached base layers (~2 min savings vs. full rebuild). CI is the most frequent workflow, so it benefits most from intermediate caching.
-- E2E and publish use `mode=min` (final image only) since they run less frequently and the storage tradeoff isn't justified.
-- **Rollback condition**: If CI scope cache exceeds ~4 GB and evicts e2e/publish scope caches within 72h, revert CI to `mode=min`.
+- All workflows use `mode=min` (final image layers only). `mode=max` was trialed for CI in PR #344 (SMI-3539) but rolled back in SMI-3547 after 72h verification showed cache pressure (10.45 GB, publish scope evicted). The marginal benefit (~3–5 min on ~1–2 lockfile-change builds/week) did not justify the cache eviction risk.
 - Check cache usage: `gh api repos/smith-horn/skillsmith/actions/cache/usage`
 - Prune stale caches: `gh api repos/smith-horn/skillsmith/actions/caches --paginate -q '.actions_caches[] | .id' | xargs -I{} gh api -X DELETE repos/smith-horn/skillsmith/actions/caches/{}`
 - **Cache-miss Step Summary** (SMI-3539): ci.yml docker-build writes cache hit/miss status to `$GITHUB_STEP_SUMMARY` so PR authors know when a cold build is expected.
