@@ -70,6 +70,15 @@ jobs:
           tags: |
             type=sha,prefix=
 
+      # Cache write: main only (SMI-3653)
+      # PR branches read from main's cache via cache-from but don't write blobs.
+      # See docs/internal/implementation/ci-cache-pressure-fix.md
+      - name: Set BuildKit cache-to
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "CACHE_TO=type=gha,mode=min,scope=e2e" >> $GITHUB_ENV
+          fi
+
       - name: Build and cache Docker image
         uses: docker/build-push-action@v7
         with:
@@ -78,7 +87,7 @@ jobs:
           load: true
           tags: skillsmith-e2e:${{ github.sha }}
           cache-from: type=gha,scope=e2e
-          cache-to: type=gha,mode=min,scope=e2e
+          cache-to: ${{ env.CACHE_TO }}
           target: dev
 
       # SMI-2240: Save image with current SHA tag for downstream jobs
