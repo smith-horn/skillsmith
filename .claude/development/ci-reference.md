@@ -209,9 +209,11 @@ gh api "repos/smith-horn/skillsmith/actions/caches?per_page=100" --paginate \
 gh api "repos/smith-horn/skillsmith/actions/caches?per_page=100" --paginate \
   --jq '.actions_caches[] | select(.key | test("index-")) | {key, last_accessed_at}'
 
-# Prune all BuildKit blobs (run when no CI is in progress)
+# Prune all BuildKit caches — blobs AND indexes (run when no CI is in progress)
+# IMPORTANT: Always purge indexes alongside blobs. Deleting blobs but leaving
+# indexes creates poisoned references → "blob sha256:... not found" build failures.
 gh api repos/smith-horn/skillsmith/actions/caches --paginate \
-  --jq '.actions_caches[] | select(.key | startswith("buildkit-blob")) | .id' \
+  --jq '.actions_caches[] | select(.key | startswith("buildkit-blob") or startswith("index-")) | .id' \
   | xargs -I{} gh api -X DELETE repos/smith-horn/skillsmith/actions/caches/{}
 ```
 
