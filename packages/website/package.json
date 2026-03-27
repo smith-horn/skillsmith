@@ -22,7 +22,7 @@
     "@astrojs/check": "0.9.6",
     "@astrojs/rss": "4.0.17",
     "@astrojs/sitemap": "3.7.0",
-    "@astrojs/vercel": "9.0.3",
+    "@astrojs/vercel": "10.0.2",
     "@supabase/supabase-js": "2.90.1",
     "@tailwindcss/vite": "4.1.18",
     "astro": "5.16.9",
