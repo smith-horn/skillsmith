@@ -632,14 +632,23 @@ const trustTiers = [
           // SMI-3589: Rate limit exceeded — show friendly countdown instead of generic error
           if (response.status === 429) {
             const retryData = await response.json().catch(() => ({}))
-            const retryAfter = Math.max(
-              1,
-              parseInt(
-                String(
-                  retryData?.details?.retry_after ?? response.headers.get('Retry-After') ?? '30'
-                ),
-                10
-              ) || 30
+            // SMI-3664: Suppress global toast — this page handles 429 inline
+            if (typeof window.hideRateLimitToast === 'function') {
+              window.hideRateLimitToast()
+            }
+            // SMI-3663: Cap at 300s to prevent absurd values from backend bugs
+            // SMI-3665: Unified default to 60s (matches rate limit window)
+            const retryAfter = Math.min(
+              300,
+              Math.max(
+                1,
+                parseInt(
+                  String(
+                    retryData?.details?.retry_after ?? response.headers.get('Retry-After') ?? '60'
+                  ),
+                  10
+                ) || 60
+              )
             )
 
             // Clear any previous countdown interval
