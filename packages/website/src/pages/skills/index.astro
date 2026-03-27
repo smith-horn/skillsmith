@@ -644,9 +644,7 @@ const trustTiers = [
                 1,
                 parseInt(
                   String(
-                    retryData?.details?.retry_after ??
-                      response.headers.get('Retry-After') ??
-                      '60'
+                    retryData?.details?.retry_after ?? response.headers.get('Retry-After') ?? '60'
                   ),
                   10
                 ) || 60
