@@ -100,7 +100,7 @@
       toast.classList.remove('translate-x-full', 'opacity-0', 'pointer-events-none')
 
       // Start countdown
-      let remaining = retryAfterSeconds || 60
+      let remaining = Math.min(300, retryAfterSeconds || 60)
       const total = remaining
 
       function updateCountdown() {
@@ -125,7 +125,7 @@
       countdownInterval = setInterval(updateCountdown, 1000)
 
       // Auto-hide after countdown + 2s buffer
-      hideTimeout = setTimeout(hideToast, (retryAfterSeconds + 2) * 1000)
+      hideTimeout = setTimeout(hideToast, (remaining + 2) * 1000)
     }
 
     // Hide toast
@@ -151,7 +151,7 @@
       const response = await originalFetch.apply(this, args)
 
       if (response.status === 429) {
-        const retryAfter = parseInt(response.headers.get('Retry-After') || '60', 10)
+        const retryAfter = Math.min(300, parseInt(response.headers.get('Retry-After') || '60', 10))
         const tierHeader = response.headers.get('X-Tier')
 
         let tierMessage = null
