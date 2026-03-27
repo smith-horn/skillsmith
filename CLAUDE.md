@@ -325,7 +325,7 @@ gh run watch <run-id> --exit-status              # Monitor progress
 
 Uses `SKILLSMITH_NPM_TOKEN` secret. Publishes in dependency order (core → mcp-server, cli, enterprise) with validation, smoke tests, and MCP Registry publish. Always try this first.
 
-**Local fallback**: `./scripts/publish-packages.sh` — publishes in dependency order with pre-publish tarball verification. Requires npm auth with 2FA bypass, which is error-prone locally.
+**Local fallback** (when CI fails due to unrelated build issues): Uses `SKILLSMITH_NPM_TOKEN` from `.env` (granular access token with bypass 2FA). See [publishing-guide.md](.claude/development/publishing-guide.md) for full checklist and the working publish command.
 
 **Publish order** (dependencies before consumers):
 
@@ -346,7 +346,14 @@ Uses `SKILLSMITH_NPM_TOKEN` secret. Publishes in dependency order (core → mcp-
 
 5. If dependency not published: publish it first with `./scripts/publish-packages.sh core`
 6. Run `npm pack --dry-run` in the package dir to inspect tarball contents
-7. Publish: `cd packages/<pkg> && npm publish --ignore-scripts`
+7. Publish (from repo root — workspace `.npmrc` is ignored by npm):
+
+   ```bash
+   source .env && printf '%s\n' "//registry.npmjs.org/:_authToken=$SKILLSMITH_NPM_TOKEN" >> ~/.npmrc
+   npm publish --ignore-scripts -w packages/<pkg>
+   sed -i '' '/registry.npmjs.org/d' ~/.npmrc
+   ```
+
 8. Post-publish: `npx tsx scripts/smoke-test-published.ts @skillsmith/<pkg> <version>`
 
 **Never** publish a consumer before its dependency. **Never** publish with an exact-pinned workspace dep (use `^` prefix). Workspace resolution masks version-pin errors locally — only fresh `npm install` from the registry reveals mismatches. See [retro: mcp-server@0.4.5](docs/internal/retros/2026-03-19-mcp-server-0.4.5-hotfix.md).
