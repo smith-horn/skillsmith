@@ -32,6 +32,9 @@ coverage/
 # IDE
 .idea/
 .vscode/
+!packages/vscode-extension/.vscode/
+packages/vscode-extension/.vscode/*
+!packages/vscode-extension/.vscode/launch.json
 *.swp
 *.swo
 .DS_Store
