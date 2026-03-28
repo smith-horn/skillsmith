@@ -4,6 +4,13 @@ All notable changes to the Skillsmith VS Code extension will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.3] - 2026-03-28
+
+### Changed
+
+- Promoted to first stable Marketplace release
+- Added Marketplace publishing infrastructure (README, CHANGELOG, icon, CI workflow)
+
 ## [0.1.2] - 2026-03-27
 
 ### Added
