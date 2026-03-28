@@ -12,6 +12,7 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 | [deployment-guide.md](.claude/development/deployment-guide.md) | Edge function deploy commands, CORS, website, monitoring & alerts |
 | [claude-flow-guide.md](.claude/development/claude-flow-guide.md) | Ruflo (formerly claude-flow) — agent types, swarm examples, hive mind, SPARC modes |
 | [cloudinary-guide.md](.claude/development/cloudinary-guide.md) | Blog image upload workflow, URL transforms, folder conventions |
+| [vscode-publishing-guide.md](.claude/development/vscode-publishing-guide.md) | VS Code Marketplace publishing, local/CI workflow, PAT rotation |
 | [subagent-tool-permissions-guide.md](.claude/development/subagent-tool-permissions-guide.md) | Subagent tool access by type, foreground/background behavior, skill author checklist |
 
 **Implementation plan template**: [.claude/templates/implementation-plan.md](.claude/templates/implementation-plan.md) — use this structure for all plans in `docs/internal/implementation/`.
@@ -359,6 +360,23 @@ Uses `SKILLSMITH_NPM_TOKEN` secret. Publishes in dependency order (core → mcp-
 **Never** publish a consumer before its dependency. **Never** publish with an exact-pinned workspace dep (use `^` prefix). Workspace resolution masks version-pin errors locally — only fresh `npm install` from the registry reveals mismatches. See [retro: mcp-server@0.4.5](docs/internal/retros/2026-03-19-mcp-server-0.4.5-hotfix.md).
 
 **Note**: `packaging-test.yml` (weekly CI) installs from local tarballs, not the npm registry. It does NOT catch version-pin-against-unpublished-npm scenarios. The post-publish smoke test (`scripts/smoke-test-published.ts`) is the only check that exercises actual npm resolution.
+
+---
+
+## VS Code Extension
+
+Published to [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=skillsmith.skillsmith-vscode) as `skillsmith-vscode` (unscoped — vsce rejects `@skillsmith/` prefix). No Docker required (ADR-113).
+
+```bash
+cd packages/vscode-extension
+npm run build                    # esbuild bundle
+npm run package:check            # Validate VSIX contents
+varlock run -- sh -c 'npx @vscode/vsce publish --no-dependencies --pat "$VSCE_SKILLSMITH"'  # Publish
+```
+
+**CI publish**: `gh workflow run publish-vscode.yml -f dry_run=false` — see [vscode-publishing-guide.md](.claude/development/vscode-publishing-guide.md).
+
+**PAT**: `VSCE_SKILLSMITH` in `.env` (Varlock), `VSCE_PAT` in GitHub Actions. 90-day rotation.
 
 ---
 
