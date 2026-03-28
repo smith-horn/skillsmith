@@ -113,6 +113,11 @@ export class SkillDetailPanel {
     this._panel.title = `Loading: ${this._skillId}`
     this._panel.webview.html = getLoadingHtml()
 
+    if (!SkillDetailPanel._skillService) {
+      console.warn('[Skillsmith] SkillService not initialized — cannot load skill details')
+      return
+    }
+
     const { skill } = await SkillDetailPanel._skillService.getRichSkill(this._skillId)
     this._skillData = skill
 
