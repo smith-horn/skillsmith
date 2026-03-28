@@ -21,6 +21,7 @@ export class SkillDetailPanel {
   private readonly _extensionUri: vscode.Uri
   private _skillId: string
   private _skillData: ExtendedSkillData | null = null
+  private _showFullContent = false
   private _disposables: vscode.Disposable[] = []
 
   /** Set the shared SkillService instance (called once at activation) */
@@ -105,6 +106,10 @@ export class SkillDetailPanel {
           vscode.env.openExternal(vscode.Uri.parse(message.url))
         }
         return
+      case 'expandContent':
+        this._showFullContent = true
+        this._update()
+        return
     }
   }
 
@@ -112,6 +117,7 @@ export class SkillDetailPanel {
   private async _loadAndUpdate(): Promise<void> {
     this._panel.title = `Loading: ${this._skillId}`
     this._panel.webview.html = getLoadingHtml()
+    this._showFullContent = false
 
     if (!SkillDetailPanel._skillService) {
       console.warn('[Skillsmith] SkillService not initialized — cannot load skill details')
@@ -165,6 +171,6 @@ export class SkillDetailPanel {
     // Ensure extensionUri is used (for future resource loading)
     void this._getResourceUri
 
-    return getSkillDetailHtml(skill, nonce, csp)
+    return getSkillDetailHtml(skill, nonce, csp, this._showFullContent)
   }
 }

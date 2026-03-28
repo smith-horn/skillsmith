@@ -55,3 +55,6 @@ export { createAuditCommand } from './audit.js'
 
 // SMI-3083: Embedded skill scaffolding
 export { createCreateCommand, createSkill, validateSkillName } from './create.js'
+
+// SMI-3672: Skill info with SKILL.md content
+export { createInfoCommand } from './info.js'

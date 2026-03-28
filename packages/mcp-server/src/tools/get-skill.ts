@@ -122,7 +122,8 @@ export async function executeGetSkill(
   // SMI-1183: Try API first, fall back to local DB
   if (!context.apiClient.isOffline()) {
     try {
-      const apiResponse = await context.apiClient.getSkill(skillId)
+      // SMI-3672: Request content alongside metadata
+      const apiResponse = await context.apiClient.getSkill(skillId, { includeContent: true })
       const apiSkill = apiResponse.data
 
       // Convert API skill to MCP skill format
@@ -162,6 +163,8 @@ export async function executeGetSkill(
       return {
         skill,
         installCommand: skill.installCommand || 'claude skill add ' + skill.id,
+        // SMI-3672: Include SKILL.md content from API response
+        content: apiSkill.content || undefined,
         also_installed: alsoInstalled.length > 0 ? alsoInstalled : undefined,
         dependencies: dependencies.length > 0 ? dependencies : undefined,
         timing: {
@@ -220,6 +223,18 @@ export async function executeGetSkill(
     trackSkillView(context.distinctId, skill.id, 'mcp')
   }
 
+  // SMI-3672: Fetch raw SKILL.md content from local DB (raw_content column)
+  let content: string | undefined
+  try {
+    const contentRow = context.db
+      .prepare('SELECT raw_content FROM skills WHERE id = ?')
+      .get(skillId) as { raw_content: string | null } | undefined
+    content = contentRow?.raw_content || undefined
+  } catch {
+    // raw_content column may not exist in pre-migration databases
+    content = undefined
+  }
+
   // SMI-2761: Populate also_installed from co-install repository
   const alsoInstalled: AlsoInstalledSkill[] = context.coInstallRepository.getTopCoInstalls(skill.id)
 
@@ -229,6 +244,8 @@ export async function executeGetSkill(
   return {
     skill,
     installCommand: skill.installCommand || 'claude skill add ' + skill.id,
+    // SMI-3672: Include SKILL.md content from local DB
+    content,
     also_installed: alsoInstalled.length > 0 ? alsoInstalled : undefined,
     dependencies: dbDependencies.length > 0 ? dbDependencies : undefined,
     timing: {
@@ -347,6 +364,13 @@ export function formatSkillDetails(response: GetSkillResponse): string {
     for (const co of response.also_installed) {
       lines.push('  ' + co.skillId + (co.description ? ' — ' + co.description : ''))
     }
+    lines.push('')
+  }
+
+  // SMI-3672: Skill content (SKILL.md)
+  if (response.content) {
+    lines.push('--- Skill Content ---')
+    lines.push(response.content)
     lines.push('')
   }
 
