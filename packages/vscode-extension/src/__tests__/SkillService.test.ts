@@ -306,4 +306,17 @@ describe('mapSkillDetailsToExtendedSkillData', () => {
     expect(result.installCommand).toBe('npx @skillsmith/cli install governance')
     expect(result.scoreBreakdown?.quality).toBe(95)
   })
+
+  // SMI-3672: Content mapping tests
+  it('maps content from response top-level', () => {
+    const response = makeMcpGetSkillResponse({ content: '# My Skill\n\nDoes things.' })
+    const result = mapSkillDetailsToExtendedSkillData(response)
+    expect(result.content).toBe('# My Skill\n\nDoes things.')
+  })
+
+  it('maps undefined content when not present', () => {
+    const response = makeMcpGetSkillResponse()
+    const result = mapSkillDetailsToExtendedSkillData(response)
+    expect(result.content).toBeUndefined()
+  })
 })

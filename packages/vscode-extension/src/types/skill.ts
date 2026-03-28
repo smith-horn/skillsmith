@@ -30,4 +30,6 @@ export interface ExtendedSkillData extends SkillData {
   tags: string[] | undefined
   installCommand: string | undefined
   scoreBreakdown: ScoreBreakdown | undefined
+  /** SMI-3672: Raw SKILL.md content (markdown), when available */
+  content?: string | undefined
 }

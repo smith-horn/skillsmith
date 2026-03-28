@@ -4,6 +4,10 @@
 
 import { escapeHtml } from '../utils/security.js'
 import type { ExtendedSkillData, ScoreBreakdown } from './skill-panel-types.js'
+import { getContentHtml, getContentStyles } from './skill-panel-content.js'
+
+// Re-export for testing
+export { getContentHtml } from './skill-panel-content.js'
 
 /**
  * Get the CSS class for trust tier badge color
@@ -218,6 +222,7 @@ function getStyles(): string {
             border-radius: 12px;
             font-size: 12px;
         }
+        ${getContentStyles()}
     `
 }
 
@@ -329,6 +334,8 @@ export function getSkillDetailHtml(skill: ExtendedSkillData, nonce: string, csp:
     </div>
 
     <p class="description">${safeDescription}</p>
+
+    ${getContentHtml(skill.content)}
 
     <div class="section">
         <h2>Details</h2>

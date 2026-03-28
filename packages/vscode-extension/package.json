@@ -162,8 +162,13 @@
     "test": "vitest run --passWithNoTests",
     "package": "vsce package"
   },
+  "dependencies": {
+    "marked": "^15.0.7",
+    "sanitize-html": "^2.14.0"
+  },
   "devDependencies": {
     "@types/node": "20.19.30",
+    "@types/sanitize-html": "^2.13.0",
     "@types/vscode": "1.108.1",
     "@vscode/vsce": "2.32.0",
     "esbuild": "0.27.2",

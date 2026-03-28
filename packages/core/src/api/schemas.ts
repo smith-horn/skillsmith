@@ -42,6 +42,8 @@ export const ApiSearchResultSchema = z.object({
   tags: z.array(z.string()).default([]),
   stars: z.number().nullable().optional(),
   installable: z.boolean().nullable().optional(),
+  /** SMI-3672: Raw SKILL.md content (only present when include_content=true) */
+  content: z.string().nullable().optional(),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 })

@@ -140,6 +140,8 @@ export function mapSkillDetailsToExtendedSkillData(
     tags: s.tags,
     installCommand: response.installCommand,
     scoreBreakdown: s.scoreBreakdown,
+    // SMI-3672: Map content from response top-level (not skill object)
+    content: response.content,
   }
   if (s.repository !== undefined) {
     result.repository = s.repository
