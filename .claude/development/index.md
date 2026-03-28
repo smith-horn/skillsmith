@@ -18,6 +18,10 @@ Developer guides for local development, testing, and debugging.
 | [stripe-testing.md](stripe-testing.md) | Stripe CLI testing setup and webhooks |
 | [stripe-billing-portal.md](stripe-billing-portal.md) | Stripe billing portal integration |
 | [stripe-troubleshooting.md](stripe-troubleshooting.md) | Stripe integration troubleshooting |
+| [publishing-guide.md](publishing-guide.md) | npm package publishing, CI workflow, local fallback |
+| [vscode-publishing-guide.md](vscode-publishing-guide.md) | VS Code Marketplace publishing, PAT rotation, troubleshooting |
+| [cloudinary-guide.md](cloudinary-guide.md) | Blog image upload workflow, URL transforms, folder conventions |
+| [subagent-tool-permissions-guide.md](subagent-tool-permissions-guide.md) | Subagent tool access by type, foreground/background behavior |
 
 ## Quick Links
 
