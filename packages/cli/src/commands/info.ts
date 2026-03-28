@@ -52,9 +52,9 @@ export function createInfoCommand(): Command {
         // Fetch content from local DB (raw_content column)
         let content: string | undefined
         try {
-          const row = db
-            .prepare('SELECT raw_content FROM skills WHERE id = ?')
-            .get(skillId) as { raw_content: string | null } | undefined
+          const row = db.prepare('SELECT raw_content FROM skills WHERE id = ?').get(skillId) as
+            | { raw_content: string | null }
+            | undefined
           content = row?.raw_content || undefined
         } catch {
           // raw_content column may not exist in pre-migration databases
