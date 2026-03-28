@@ -1,35 +1,10 @@
 /**
  * Type definitions for SkillDetailPanel
+ * ExtendedSkillData and ScoreBreakdown are canonical in types/skill.ts;
+ * re-exported here for backwards compatibility.
  */
 
-/**
- * Score breakdown type for skill quality metrics
- */
-export interface ScoreBreakdown {
-  quality: number
-  popularity: number
-  maintenance: number
-  security: number
-  documentation: number
-}
-
-/**
- * Extended skill data with optional fields from MCP
- */
-export interface ExtendedSkillData {
-  id: string
-  name: string
-  description: string
-  author: string
-  category: string
-  trustTier: string
-  score: number
-  repository: string | undefined
-  version: string | undefined
-  tags: string[] | undefined
-  installCommand: string | undefined
-  scoreBreakdown: ScoreBreakdown | undefined
-}
+export type { ScoreBreakdown, ExtendedSkillData } from '../types/skill.js'
 
 /**
  * Message types received from the webview

@@ -10,6 +10,7 @@ import { SkillSearchProvider } from './providers/SkillSearchProvider.js'
 import { registerSearchCommand } from './commands/searchSkills.js'
 import { registerQuickInstallCommand } from './commands/installCommand.js'
 import { SkillDetailPanel } from './views/SkillDetailPanel.js'
+import { SkillService } from './services/SkillService.js'
 import {
   getMcpClient,
   initializeMcpClient,
@@ -38,6 +39,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Initialize MCP client with configuration from settings
   initializeMcpClientFromSettings()
+
+  // Create centralized SkillService
+  const skillService = new SkillService(getMcpClient())
+  SkillDetailPanel.setSkillService(skillService)
 
   // Initialize providers
   skillTreeDataProvider = new SkillTreeDataProvider()
@@ -111,13 +116,14 @@ export function activate(context: vscode.ExtensionContext): void {
     skillDiagnosticsProvider.validateDocument(document)
   }
 
-  // Register commands
-  registerSearchCommand(context, skillSearchProvider)
-  registerQuickInstallCommand(context)
+  // Register commands — pass skillService to consumers
+  registerSearchCommand(context, skillSearchProvider, skillService)
+  registerQuickInstallCommand(context, skillService)
 
   // Register refresh command
   const refreshCommand = vscode.commands.registerCommand('skillsmith.refreshSkills', () => {
     skillTreeDataProvider.refresh()
+    skillService.clearCache()
     vscode.window.showInformationMessage('Skills refreshed')
   })
 

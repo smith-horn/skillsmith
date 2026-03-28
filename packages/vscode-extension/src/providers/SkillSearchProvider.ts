@@ -2,7 +2,7 @@
  * Tree data provider for displaying search results
  */
 import * as vscode from 'vscode'
-import { type SkillData } from '../data/mockSkills.js'
+import { type SkillData } from '../types/skill.js'
 
 export class SkillSearchProvider implements vscode.TreeDataProvider<SkillData> {
   private _onDidChangeTreeData = new vscode.EventEmitter<SkillData | undefined | null | void>()
