@@ -1,4 +1,5 @@
 # SMI-1251: Aligned with Docker-first CI strategy
+# See also: publish-vscode.yml (VS Code Marketplace)
 name: Publish Packages
 
 on:
