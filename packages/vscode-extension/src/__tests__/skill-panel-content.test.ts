@@ -65,6 +65,13 @@ describe('getContentHtml', () => {
     expect(html).not.toContain('Content truncated')
   })
 
+  it('does not truncate when showFullContent is true', () => {
+    const longContent = 'x'.repeat(20_000)
+    const html = getContentHtml(longContent, true)
+    expect(html).not.toContain('Content truncated')
+    expect(html).not.toContain('expandContentBtn')
+  })
+
   it('wraps content in section with h2', () => {
     const html = getContentHtml('Some content')
     expect(html).toContain('<h2>Skill Content</h2>')

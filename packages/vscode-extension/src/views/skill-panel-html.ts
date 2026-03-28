@@ -294,13 +294,25 @@ function getScript(nonce: string): string {
                 }
             });
         });
+
+        const expandBtn = document.getElementById('expandContentBtn');
+        if (expandBtn) {
+            expandBtn.addEventListener('click', function() {
+                vscode.postMessage({ command: 'expandContent' });
+            });
+        }
     </script>`
 }
 
 /**
  * Generate the complete HTML for the skill detail webview
  */
-export function getSkillDetailHtml(skill: ExtendedSkillData, nonce: string, csp: string): string {
+export function getSkillDetailHtml(
+  skill: ExtendedSkillData,
+  nonce: string,
+  csp: string,
+  showFullContent = false
+): string {
   // Escape all user-controlled content to prevent XSS
   const safeName = escapeHtml(skill.name)
   const safeDescription = escapeHtml(skill.description)
@@ -335,7 +347,7 @@ export function getSkillDetailHtml(skill: ExtendedSkillData, nonce: string, csp:
 
     <p class="description">${safeDescription}</p>
 
-    ${getContentHtml(skill.content)}
+    ${getContentHtml(skill.content, showFullContent)}
 
     <div class="section">
         <h2>Details</h2>

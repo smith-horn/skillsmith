@@ -15,12 +15,12 @@ const MAX_CONTENT_LENGTH = 10_240
  * Returns empty string if content is undefined/empty (no placeholder).
  * Sanitization order: marked(content) → sanitize-html(result).
  */
-export function getContentHtml(content: string | undefined): string {
+export function getContentHtml(content: string | undefined, showFullContent = false): string {
   if (!content) {
     return ''
   }
 
-  const truncated = content.length > MAX_CONTENT_LENGTH
+  const truncated = !showFullContent && content.length > MAX_CONTENT_LENGTH
   const displayContent = truncated ? content.slice(0, MAX_CONTENT_LENGTH) : content
 
   const rawHtml = marked.parse(displayContent, { async: false }) as string
