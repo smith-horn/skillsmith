@@ -322,6 +322,7 @@ export function getSkillDetailHtml(skill: ExtendedSkillData, nonce: string, csp:
     <style>${getStyles()}</style>
 </head>
 <body>
+    <div aria-live="polite">
     <div class="header">
         <h1>${safeName}</h1>
         <span class="badge badge-${trustBadgeColor}">${trustBadgeText}</span>
@@ -393,6 +394,8 @@ export function getSkillDetailHtml(skill: ExtendedSkillData, nonce: string, csp:
     <div class="actions">
         <button class="btn-primary" id="installBtn">Install Skill</button>
         ${skill.repository ? `<button class="btn-secondary" id="repoBtn" data-url="${safeRepository}">View Repository</button>` : ''}
+    </div>
+
     </div>
 
     ${getScript(nonce)}

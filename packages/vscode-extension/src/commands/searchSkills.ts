@@ -1,14 +1,15 @@
 /**
  * Search skills command implementation
+ * Uses SkillService for centralized MCP-first + mock fallback.
  */
 import * as vscode from 'vscode'
 import { SkillSearchProvider } from '../providers/SkillSearchProvider.js'
-import { searchSkills as searchMockSkills, type SkillData } from '../data/mockSkills.js'
-import { getMcpClient } from '../mcp/McpClient.js'
+import type { SkillService } from '../services/SkillService.js'
 
 export function registerSearchCommand(
   context: vscode.ExtensionContext,
-  searchProvider: SkillSearchProvider
+  searchProvider: SkillSearchProvider,
+  skillService: SkillService
 ): void {
   const searchCommand = vscode.commands.registerCommand('skillsmith.searchSkills', async () => {
     // Show search input (query is optional - empty searches return all skills)
@@ -16,7 +17,6 @@ export function registerSearchCommand(
       prompt: 'Search for agent skills',
       placeHolder: 'Search for skills (or press Enter to browse all)',
       title: 'Skillsmith Search',
-      // No validation required - empty query is allowed for browsing all skills
     })
 
     // User cancelled (pressed Escape)
@@ -24,22 +24,40 @@ export function registerSearchCommand(
       return
     }
 
-    // Empty query is allowed - will browse all skills
     const trimmedQuery = query.trim()
 
-    // Show progress
+    // Show cancellable progress with timed messages
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
         title: 'Searching skills...',
-        cancellable: false,
+        cancellable: true,
       },
-      async (progress: vscode.Progress<{ message?: string; increment?: number }>) => {
+      async (progress, token) => {
         progress.report({ increment: 0 })
 
+        const timer5s = setTimeout(() => {
+          if (!token.isCancellationRequested) {
+            progress.report({ message: 'Still searching...' })
+          }
+        }, 5000)
+
+        const timer15s = setTimeout(() => {
+          if (!token.isCancellationRequested) {
+            progress.report({ message: 'Server is slow -- try again later?' })
+          }
+        }, 15000)
+
         try {
-          // Search skills using MCP client with fallback to mock data
-          const results = await performSearch(trimmedQuery)
+          if (token.isCancellationRequested) {
+            return
+          }
+
+          const { results, isOffline } = await skillService.search(trimmedQuery)
+
+          if (token.isCancellationRequested) {
+            return
+          }
 
           progress.report({ increment: 100 })
 
@@ -52,8 +70,9 @@ export function registerSearchCommand(
             return
           }
 
-          // Update search results view
-          searchProvider.setResults(results, trimmedQuery || 'all skills')
+          const label = trimmedQuery || 'all skills'
+          const displayLabel = isOffline ? `${label} (Offline)` : label
+          searchProvider.setResults(results, displayLabel)
 
           // Focus on search results view
           await vscode.commands.executeCommand('skillsmith.searchView.focus')
@@ -65,47 +84,13 @@ export function registerSearchCommand(
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown error'
           vscode.window.showErrorMessage(`Search failed: ${message}`)
+        } finally {
+          clearTimeout(timer5s)
+          clearTimeout(timer15s)
         }
       }
     )
   })
 
   context.subscriptions.push(searchCommand)
-}
-
-/**
- * Perform skill search using MCP client with fallback to mock data
- */
-async function performSearch(query: string): Promise<SkillData[]> {
-  const client = getMcpClient()
-
-  // Try MCP client first if connected
-  if (client.isConnected()) {
-    try {
-      const response = await client.search(query)
-
-      // Convert MCP response to SkillData format
-      return response.results.map((result) => ({
-        id: result.id,
-        name: result.name,
-        description: result.description,
-        author: result.author,
-        category: result.category,
-        trustTier: result.trustTier,
-        score: result.score,
-        // Repository is not in search results, will be fetched with get_skill
-      }))
-    } catch (error) {
-      console.warn('[Skillsmith] MCP search failed, falling back to mock data:', error)
-      // Fall through to mock data
-    }
-  }
-
-  // Fallback to mock data when not connected or on error
-  console.log('[Skillsmith] Using mock data for search')
-
-  // Simulate API delay for consistency
-  await new Promise((resolve) => setTimeout(resolve, 100))
-
-  return searchMockSkills(query)
 }

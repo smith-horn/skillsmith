@@ -1,12 +1,11 @@
 /**
  * Webview panel for displaying skill details
+ * Uses SkillService for centralized MCP-first + mock fallback.
  */
 import * as vscode from 'vscode'
 import { generateCspNonce, getSkillDetailCsp } from '../utils/csp.js'
-import { getSkillById } from '../data/mockSkills.js'
-import { getMcpClient } from '../mcp/McpClient.js'
-import { type McpSkillDetails } from '../mcp/types.js'
-import type { ExtendedSkillData, ScoreBreakdown, SkillPanelMessage } from './skill-panel-types.js'
+import type { SkillService } from '../services/SkillService.js'
+import type { ExtendedSkillData, SkillPanelMessage } from './skill-panel-types.js'
 import { getLoadingHtml, getSkillDetailHtml } from './skill-panel-html.js'
 
 // Re-export types for backwards compatibility
@@ -16,11 +15,18 @@ export class SkillDetailPanel {
   public static currentPanel: SkillDetailPanel | undefined
   public static readonly viewType = 'skillsmith.skillDetail'
 
+  private static _skillService: SkillService
+
   private readonly _panel: vscode.WebviewPanel
   private readonly _extensionUri: vscode.Uri
   private _skillId: string
   private _skillData: ExtendedSkillData | null = null
   private _disposables: vscode.Disposable[] = []
+
+  /** Set the shared SkillService instance (called once at activation) */
+  public static setSkillService(service: SkillService): void {
+    SkillDetailPanel._skillService = service
+  }
 
   public static createOrShow(extensionUri: vscode.Uri, skillId: string) {
     const column = vscode.window.activeTextEditor
@@ -78,7 +84,6 @@ export class SkillDetailPanel {
   public dispose() {
     SkillDetailPanel.currentPanel = undefined
 
-    // Clean up resources
     this._panel.dispose()
 
     while (this._disposables.length) {
@@ -89,9 +94,7 @@ export class SkillDetailPanel {
     }
   }
 
-  /**
-   * Handle messages from the webview
-   */
+  /** Handle messages from the webview */
   private _handleMessage(message: SkillPanelMessage): void {
     switch (message.command) {
       case 'install':
@@ -105,71 +108,15 @@ export class SkillDetailPanel {
     }
   }
 
-  /**
-   * Load skill data from MCP and update the panel
-   */
+  /** Load skill data from SkillService and update the panel */
   private async _loadAndUpdate(): Promise<void> {
-    // Show loading state first
     this._panel.title = `Loading: ${this._skillId}`
     this._panel.webview.html = getLoadingHtml()
 
-    // Try to fetch from MCP
-    const client = getMcpClient()
-    if (client.isConnected()) {
-      try {
-        const response = await client.getSkill(this._skillId)
-        this._skillData = this._convertMcpSkill(response.skill, response.installCommand)
-      } catch (error) {
-        console.warn('[Skillsmith] MCP get_skill failed, falling back to mock data:', error)
-        this._skillData = this._getMockSkillData()
-      }
-    } else {
-      // Fall back to mock data
-      this._skillData = this._getMockSkillData()
-    }
+    const { skill } = await SkillDetailPanel._skillService.getRichSkill(this._skillId)
+    this._skillData = skill
 
     this._update()
-  }
-
-  /**
-   * Get skill data from mock source
-   */
-  private _getMockSkillData(): ExtendedSkillData {
-    const mockData = getSkillById(this._skillId)
-    return {
-      id: mockData.id,
-      name: mockData.name,
-      description: mockData.description,
-      author: mockData.author,
-      category: mockData.category,
-      trustTier: mockData.trustTier,
-      score: mockData.score,
-      repository: mockData.repository,
-      version: undefined,
-      tags: undefined,
-      installCommand: undefined,
-      scoreBreakdown: undefined,
-    }
-  }
-
-  /**
-   * Convert MCP skill details to ExtendedSkillData
-   */
-  private _convertMcpSkill(skill: McpSkillDetails, installCommand: string): ExtendedSkillData {
-    return {
-      id: skill.id,
-      name: skill.name,
-      description: skill.description,
-      author: skill.author,
-      category: skill.category,
-      trustTier: skill.trustTier,
-      score: skill.score,
-      repository: skill.repository,
-      version: skill.version,
-      tags: skill.tags,
-      installCommand: installCommand,
-      scoreBreakdown: skill.scoreBreakdown as ScoreBreakdown | undefined,
-    }
   }
 
   private _update() {
@@ -180,9 +127,7 @@ export class SkillDetailPanel {
     this._panel.webview.html = this._getHtmlForWebview()
   }
 
-  /**
-   * Validates that a URL is a safe HTTP/HTTPS URL
-   */
+  /** Validates that a URL is a safe HTTP/HTTPS URL */
   private _isValidUrl(url: string): boolean {
     try {
       const parsed = new URL(url)
@@ -192,16 +137,12 @@ export class SkillDetailPanel {
     }
   }
 
-  /**
-   * Gets a nonce for Content Security Policy
-   */
+  /** Gets a nonce for Content Security Policy */
   private _getNonce(): string {
     return generateCspNonce()
   }
 
-  /**
-   * Gets the resource URI for webview content
-   */
+  /** Gets the resource URI for webview content */
   private _getResourceUri(resourcePath: string): vscode.Uri {
     return this._panel.webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, 'resources', resourcePath)
@@ -209,7 +150,10 @@ export class SkillDetailPanel {
   }
 
   private _getHtmlForWebview(): string {
-    const skill = this._skillData || this._getMockSkillData()
+    const skill = this._skillData
+    if (!skill) {
+      return getLoadingHtml()
+    }
     const nonce = this._getNonce()
     const csp = getSkillDetailCsp(nonce)
 

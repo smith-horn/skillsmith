@@ -1,23 +1,16 @@
 /**
- * Mock skill data for MVP
- * TODO: Replace with actual API calls when backend is ready
+ * Fallback skill data for offline/disconnected mode
+ * Primary data comes from the Skillsmith API via SkillService + McpClient.
+ * This module provides fallback data when the MCP server is unavailable.
+ *
+ * The SkillData interface is defined in types/skill.ts and re-exported here
+ * for backwards compatibility.
  */
+export type { SkillData } from '../types/skill.js'
 
-export interface SkillData {
-  id: string
-  name: string
-  description: string
-  author: string
-  category: string
-  trustTier: string
-  score: number
-  repository?: string
-}
+import type { SkillData } from '../types/skill.js'
 
-/**
- * Mock skills for search and display
- * This data will be replaced with API calls in production
- */
+/** Fallback mock skills for offline browsing */
 export const MOCK_SKILLS: SkillData[] = [
   {
     id: 'governance',
