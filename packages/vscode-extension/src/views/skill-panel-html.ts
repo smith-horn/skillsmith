@@ -4,7 +4,7 @@
 
 import { escapeHtml } from '../utils/security.js'
 import type { ExtendedSkillData, ScoreBreakdown } from './skill-panel-types.js'
-import { getContentHtml, getContentStyles } from './skill-panel-content.js'
+import { getContentHtml, getContentStyles, renderMarkdown } from './skill-panel-content.js'
 
 // Re-export for testing
 export { getContentHtml } from './skill-panel-content.js'
@@ -222,6 +222,23 @@ function getStyles(): string {
             border-radius: 12px;
             font-size: 12px;
         }
+        .description h1, .description h2, .description h3 {
+            font-size: 14px;
+            margin-top: 8px;
+            margin-bottom: 4px;
+            color: var(--vscode-foreground);
+        }
+        .description a {
+            color: var(--vscode-textLink-foreground);
+        }
+        .description p {
+            margin: 4px 0;
+        }
+        .inferred-label {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            margin-left: 8px;
+        }
         ${getContentStyles()}
     `
 }
@@ -301,6 +318,18 @@ function getScript(nonce: string): string {
                 vscode.postMessage({ command: 'expandContent' });
             });
         }
+
+        // Intercept all link clicks in rendered markdown content
+        document.addEventListener('click', function(e) {
+            const link = e.target.closest('.skill-content a[href], .description a[href]');
+            if (link) {
+                e.preventDefault();
+                const url = link.getAttribute('href');
+                if (url && (url.startsWith('https://') || url.startsWith('http://'))) {
+                    vscode.postMessage({ command: 'openExternal', url: url });
+                }
+            }
+        });
     </script>`
 }
 
@@ -315,11 +344,27 @@ export function getSkillDetailHtml(
 ): string {
   // Escape all user-controlled content to prevent XSS
   const safeName = escapeHtml(skill.name)
-  const safeDescription = escapeHtml(skill.description)
+  const safeDescription = renderMarkdown(skill.description)
   const safeAuthor = escapeHtml(skill.author)
   const safeCategory = escapeHtml(skill.category)
   const safeTrustTier = escapeHtml(skill.trustTier)
   const safeRepository = skill.repository ? escapeHtml(skill.repository) : ''
+
+  // Fallback: infer GitHub URL from author/name skill ID with hostname validation.
+  // Skill IDs with '/' come from the MCP server (author/name pattern from GitHub-discovered skills),
+  // not from isValidSkillId in security.ts which validates local filesystem paths.
+  let inferredRepository: string | null = null
+  if (!safeRepository && skill.id.includes('/')) {
+    const candidate = `https://github.com/${skill.id}`
+    try {
+      const parsed = new URL(candidate)
+      if (parsed.hostname === 'github.com') {
+        inferredRepository = escapeHtml(candidate)
+      }
+    } catch {
+      // Malformed URL -- skip inference
+    }
+  }
 
   // Handle extended skill data properties
   const safeVersion = skill.version ? escapeHtml(skill.version) : null
@@ -345,7 +390,7 @@ export function getSkillDetailHtml(
         <span class="badge badge-${trustBadgeColor}">${trustBadgeText}</span>
     </div>
 
-    <p class="description">${safeDescription}</p>
+    <div class="description">${safeDescription}</div>
 
     ${getContentHtml(skill.content, showFullContent)}
 
@@ -400,19 +445,27 @@ export function getSkillDetailHtml(
     }
 
     ${
-      skill.repository
+      safeRepository
         ? `
     <div class="section">
         <h2>Repository</h2>
         <span class="repository-link" data-url="${safeRepository}">${safeRepository}</span>
     </div>
     `
-        : ''
+        : inferredRepository
+          ? `
+    <div class="section">
+        <h2>Repository</h2>
+        <span class="repository-link" data-url="${inferredRepository}">${inferredRepository}</span>
+        <span class="inferred-label">(inferred from skill ID)</span>
+    </div>
+    `
+          : ''
     }
 
     <div class="actions">
         <button class="btn-primary" id="installBtn">Install Skill</button>
-        ${skill.repository ? `<button class="btn-secondary" id="repoBtn" data-url="${safeRepository}">View Repository</button>` : ''}
+        ${safeRepository ? `<button class="btn-secondary" id="repoBtn" data-url="${safeRepository}">View Repository</button>` : inferredRepository ? `<button class="btn-secondary" id="repoBtn" data-url="${inferredRepository}">View Repository</button>` : ''}
     </div>
 
     </div>

@@ -10,6 +10,6 @@ export type { ScoreBreakdown, ExtendedSkillData } from '../types/skill.js'
  * Message types received from the webview
  */
 export interface SkillPanelMessage {
-  command: 'install' | 'openRepository' | 'expandContent'
+  command: 'install' | 'openRepository' | 'openExternal' | 'expandContent'
   url?: string
 }

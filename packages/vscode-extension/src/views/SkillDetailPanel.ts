@@ -15,6 +15,9 @@ export class SkillDetailPanel {
   public static currentPanel: SkillDetailPanel | undefined
   public static readonly viewType = 'skillsmith.skillDetail'
 
+  /** Trusted domains that open immediately without confirmation dialog */
+  private static readonly TRUSTED_DOMAINS = ['github.com', 'gitlab.com', 'skillsmith.app']
+
   private static _skillService: SkillService
 
   private readonly _panel: vscode.WebviewPanel
@@ -106,10 +109,39 @@ export class SkillDetailPanel {
           vscode.env.openExternal(vscode.Uri.parse(message.url))
         }
         return
+      case 'openExternal':
+        if (message.url && this._isValidUrl(message.url)) {
+          void this._openExternalWithTrustCheck(message.url)
+        }
+        return
       case 'expandContent':
         this._showFullContent = true
         this._update()
         return
+    }
+  }
+
+  /** Open an external URL, showing a confirmation dialog for untrusted domains */
+  private async _openExternalWithTrustCheck(url: string): Promise<void> {
+    try {
+      const parsed = new URL(url)
+      const isTrusted = SkillDetailPanel.TRUSTED_DOMAINS.some(
+        (d) => parsed.hostname === d || parsed.hostname.endsWith('.' + d)
+      )
+      if (isTrusted) {
+        await vscode.env.openExternal(vscode.Uri.parse(url))
+      } else {
+        const choice = await vscode.window.showWarningMessage(
+          `Open external link to ${parsed.hostname}?`,
+          { modal: true },
+          'Open'
+        )
+        if (choice === 'Open') {
+          await vscode.env.openExternal(vscode.Uri.parse(url))
+        }
+      }
+    } catch {
+      // Malformed URL -- ignore
     }
   }
 

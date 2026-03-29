@@ -112,7 +112,7 @@ export class SkillService {
 
 /** Map MCP search result to SkillData */
 export function mapSearchResultToSkillData(result: McpSkillSearchResult): SkillData {
-  return {
+  const data: SkillData = {
     id: result.id,
     name: result.name,
     description: result.description,
@@ -121,6 +121,11 @@ export function mapSearchResultToSkillData(result: McpSkillSearchResult): SkillD
     trustTier: result.trustTier,
     score: result.score,
   }
+  // Skill IDs with '/' come from MCP server (author/name pattern, e.g. GitHub-discovered skills)
+  if (result.repository !== undefined) {
+    data.repository = result.repository
+  }
+  return data
 }
 
 /** Map MCP get_skill response to ExtendedSkillData */

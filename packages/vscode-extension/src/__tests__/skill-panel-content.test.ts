@@ -2,7 +2,12 @@
  * SMI-3672: Tests for skill content rendering (skill-panel-content.ts)
  */
 import { describe, it, expect } from 'vitest'
-import { getContentHtml, getContentStyles } from '../views/skill-panel-content.js'
+import {
+  getContentHtml,
+  getContentStyles,
+  renderMarkdown,
+  SANITIZE_OPTIONS,
+} from '../views/skill-panel-content.js'
 
 describe('getContentHtml', () => {
   it('returns empty string for undefined content', () => {
@@ -85,5 +90,85 @@ describe('getContentStyles', () => {
     expect(css).toContain('.skill-content')
     expect(css).toContain('.skill-content pre')
     expect(css).toContain('.content-truncated')
+  })
+})
+
+describe('renderMarkdown', () => {
+  it('renders basic markdown to HTML', () => {
+    const html = renderMarkdown('**bold** and *italic*')
+    expect(html).toContain('<strong>bold</strong>')
+    expect(html).toContain('<em>italic</em>')
+  })
+
+  it('renders headings', () => {
+    const html = renderMarkdown('# Title')
+    expect(html).toContain('<h1')
+    expect(html).toContain('Title')
+  })
+
+  it('renders links with href', () => {
+    const html = renderMarkdown('[GitHub](https://github.com)')
+    expect(html).toContain('href="https://github.com"')
+    expect(html).toContain('GitHub')
+  })
+
+  it('renders unordered lists', () => {
+    const html = renderMarkdown('- item one\n- item two')
+    expect(html).toContain('<ul>')
+    expect(html).toContain('<li>item one</li>')
+  })
+
+  it('strips <script> tags (XSS prevention)', () => {
+    const html = renderMarkdown('<script>alert("xss")</script>')
+    expect(html).not.toContain('<script')
+    expect(html).not.toContain('alert')
+  })
+
+  it('strips javascript: URLs', () => {
+    const html = renderMarkdown('[click](javascript:alert(1))')
+    expect(html).not.toContain('javascript:')
+  })
+
+  it('strips event handler attributes', () => {
+    const html = renderMarkdown('<img src="x" onerror="alert(1)">')
+    expect(html).not.toContain('onerror')
+  })
+
+  it('allows https links', () => {
+    const html = renderMarkdown('[safe](https://example.com)')
+    expect(html).toContain('href="https://example.com"')
+  })
+
+  it('allows code blocks', () => {
+    const html = renderMarkdown('`inline code`')
+    expect(html).toContain('<code>')
+    expect(html).toContain('inline code')
+  })
+})
+
+describe('SANITIZE_OPTIONS', () => {
+  it('allows heading tags', () => {
+    expect(SANITIZE_OPTIONS.allowedTags).toContain('h1')
+    expect(SANITIZE_OPTIONS.allowedTags).toContain('h2')
+    expect(SANITIZE_OPTIONS.allowedTags).toContain('h3')
+  })
+
+  it('allows img tag', () => {
+    expect(SANITIZE_OPTIONS.allowedTags).toContain('img')
+  })
+
+  it('allows code and pre tags', () => {
+    expect(SANITIZE_OPTIONS.allowedTags).toContain('code')
+    expect(SANITIZE_OPTIONS.allowedTags).toContain('pre')
+  })
+
+  it('only allows https and http schemes', () => {
+    expect(SANITIZE_OPTIONS.allowedSchemes).toEqual(['https', 'http'])
+  })
+
+  it('allows href, title, target, rel on links', () => {
+    const attrs = SANITIZE_OPTIONS.allowedAttributes as Record<string, string[]>
+    expect(attrs['a']).toContain('href')
+    expect(attrs['a']).toContain('rel')
   })
 })

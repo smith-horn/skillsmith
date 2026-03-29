@@ -14,6 +14,7 @@ export interface McpSkillSearchResult {
   category: string
   trustTier: 'verified' | 'community' | 'standard' | 'unverified'
   score: number
+  repository?: string
 }
 
 /**

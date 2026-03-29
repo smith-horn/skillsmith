@@ -10,6 +10,40 @@ import sanitizeHtml from 'sanitize-html'
 /** Maximum content length before truncation (10KB) */
 const MAX_CONTENT_LENGTH = 10_240
 
+/** Shared sanitize-html options -- single source of truth for both renderMarkdown and getContentHtml */
+export const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
+  allowedTags: sanitizeHtml.defaults.allowedTags.concat([
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    'img',
+    'pre',
+    'code',
+    'details',
+    'summary',
+  ]),
+  allowedAttributes: {
+    ...sanitizeHtml.defaults.allowedAttributes,
+    img: ['src', 'alt', 'title', 'width', 'height'],
+    code: ['class'],
+    a: ['href', 'title', 'target', 'rel'],
+  },
+  allowedSchemes: ['https', 'http'],
+}
+
+/**
+ * Render a markdown string as sanitized HTML.
+ * Called per-skill in the detail panel (not for search result lists),
+ * so no batch performance concern.
+ */
+export function renderMarkdown(text: string): string {
+  const rawHtml = marked.parse(text, { async: false }) as string
+  return sanitizeHtml(rawHtml, SANITIZE_OPTIONS)
+}
+
 /**
  * Render SKILL.md content as sanitized HTML.
  * Returns empty string if content is undefined/empty (no placeholder).
@@ -23,29 +57,7 @@ export function getContentHtml(content: string | undefined, showFullContent = fa
   const truncated = !showFullContent && content.length > MAX_CONTENT_LENGTH
   const displayContent = truncated ? content.slice(0, MAX_CONTENT_LENGTH) : content
 
-  const rawHtml = marked.parse(displayContent, { async: false }) as string
-  const safeHtml = sanitizeHtml(rawHtml, {
-    allowedTags: sanitizeHtml.defaults.allowedTags.concat([
-      'h1',
-      'h2',
-      'h3',
-      'h4',
-      'h5',
-      'h6',
-      'img',
-      'pre',
-      'code',
-      'details',
-      'summary',
-    ]),
-    allowedAttributes: {
-      ...sanitizeHtml.defaults.allowedAttributes,
-      img: ['src', 'alt', 'title', 'width', 'height'],
-      code: ['class'],
-      a: ['href', 'title', 'target', 'rel'],
-    },
-    allowedSchemes: ['https', 'http'],
-  })
+  const safeHtml = renderMarkdown(displayContent)
 
   const truncatedNotice = truncated
     ? `<p class="content-truncated"><em>Content truncated (${content.length} chars). <button class="btn-expand" id="expandContentBtn">Show full content</button></em></p>`

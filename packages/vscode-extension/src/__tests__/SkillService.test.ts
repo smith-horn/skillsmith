@@ -294,6 +294,35 @@ describe('mapSearchResultToSkillData', () => {
       score: 90,
     })
   })
+
+  it('maps repository field when present', () => {
+    const result = mapSearchResultToSkillData({
+      id: 'smith-horn/governance',
+      name: 'Governance',
+      description: 'Enforces standards',
+      author: 'smith-horn',
+      category: 'development',
+      trustTier: 'verified',
+      score: 95,
+      repository: 'https://github.com/smith-horn/governance',
+    })
+
+    expect(result.repository).toBe('https://github.com/smith-horn/governance')
+  })
+
+  it('maps undefined repository when not present', () => {
+    const result = mapSearchResultToSkillData({
+      id: 'test',
+      name: 'Test',
+      description: 'desc',
+      author: 'auth',
+      category: 'cat',
+      trustTier: 'community',
+      score: 70,
+    })
+
+    expect(result.repository).toBeUndefined()
+  })
 })
 
 describe('mapSkillDetailsToExtendedSkillData', () => {
