@@ -5,6 +5,7 @@
 import { escapeHtml } from '../utils/security.js'
 import type { ExtendedSkillData, ScoreBreakdown } from './skill-panel-types.js'
 import { getContentHtml, getContentStyles, renderMarkdown } from './skill-panel-content.js'
+import { inferRepositoryUrl } from './skill-panel-helpers.js'
 
 // Re-export for testing
 export { getContentHtml } from './skill-panel-content.js'
@@ -350,21 +351,9 @@ export function getSkillDetailHtml(
   const safeTrustTier = escapeHtml(skill.trustTier)
   const safeRepository = skill.repository ? escapeHtml(skill.repository) : ''
 
-  // Fallback: infer GitHub URL from author/name skill ID with hostname validation.
-  // Skill IDs with '/' come from the MCP server (author/name pattern from GitHub-discovered skills),
-  // not from isValidSkillId in security.ts which validates local filesystem paths.
-  let inferredRepository: string | null = null
-  if (!safeRepository && skill.id.includes('/')) {
-    const candidate = `https://github.com/${skill.id}`
-    try {
-      const parsed = new URL(candidate)
-      if (parsed.hostname === 'github.com') {
-        inferredRepository = escapeHtml(candidate)
-      }
-    } catch {
-      // Malformed URL -- skip inference
-    }
-  }
+  // Fallback: infer GitHub URL from author/name skill ID (validated in helper)
+  const inferredUrl = !safeRepository ? inferRepositoryUrl(skill.id) : null
+  const inferredRepository = inferredUrl ? escapeHtml(inferredUrl) : null
 
   // Handle extended skill data properties
   const safeVersion = skill.version ? escapeHtml(skill.version) : null
@@ -465,7 +454,7 @@ export function getSkillDetailHtml(
 
     <div class="actions">
         <button class="btn-primary" id="installBtn">Install Skill</button>
-        ${safeRepository ? `<button class="btn-secondary" id="repoBtn" data-url="${safeRepository}">View Repository</button>` : inferredRepository ? `<button class="btn-secondary" id="repoBtn" data-url="${inferredRepository}">View Repository</button>` : ''}
+        ${safeRepository ? `<button class="btn-secondary" id="repoBtn" data-url="${safeRepository}">View Repository</button>` : ''}
     </div>
 
     </div>

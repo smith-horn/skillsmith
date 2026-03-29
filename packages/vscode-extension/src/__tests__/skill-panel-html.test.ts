@@ -60,13 +60,32 @@ describe('getSkillDetailHtml', () => {
       expect(html).not.toContain('<h2>Repository</h2>')
     })
 
-    it('validates inferred URL hostname is github.com', () => {
-      // A crafted ID that would produce a non-github.com URL should be rejected
-      // The URL constructor with template `https://github.com/${id}` always produces
-      // github.com hostname, but path traversal in the ID is neutralized by escapeHtml
+    it('rejects path traversal IDs (multiple segments)', () => {
       const html = getSkillDetailHtml(makeSkill({ id: 'evil/../../../other' }), NONCE, CSP)
-      // Still github.com host — path traversal doesn't change hostname
-      expect(html).toContain('github.com')
+      expect(html).not.toContain('inferred from skill ID')
+      expect(html).not.toContain('<h2>Repository</h2>')
+    })
+
+    it('does not infer URL for claude-plugins/UUID IDs', () => {
+      const html = getSkillDetailHtml(
+        makeSkill({ id: 'claude-plugins/a7584183-4df5-435e-bb24-ce219c3fab0a' }),
+        NONCE,
+        CSP
+      )
+      expect(html).not.toContain('inferred from skill ID')
+      expect(html).not.toContain('<h2>Repository</h2>')
+    })
+
+    it('does not infer URL for IDs with 3+ segments', () => {
+      const html = getSkillDetailHtml(makeSkill({ id: 'source/sub/path' }), NONCE, CSP)
+      expect(html).not.toContain('inferred from skill ID')
+      expect(html).not.toContain('<h2>Repository</h2>')
+    })
+
+    it('infers URL for repo names with dots', () => {
+      const html = getSkillDetailHtml(makeSkill({ id: 'octocat/hello.world' }), NONCE, CSP)
+      expect(html).toContain('https://github.com/octocat/hello.world')
+      expect(html).toContain('inferred from skill ID')
     })
 
     it('prefers explicit repository over inferred', () => {
@@ -80,6 +99,21 @@ describe('getSkillDetailHtml', () => {
       )
       expect(html).toContain('https://github.com/tester/real-repo')
       expect(html).not.toContain('inferred from skill ID')
+    })
+
+    it('shows View Repository button for explicit repository', () => {
+      const html = getSkillDetailHtml(
+        makeSkill({ repository: 'https://github.com/tester/test-skill' }),
+        NONCE,
+        CSP
+      )
+      expect(html).toContain('View Repository')
+    })
+
+    it('suppresses View Repository button for inferred repository', () => {
+      const html = getSkillDetailHtml(makeSkill({ id: 'tester/test-skill' }), NONCE, CSP)
+      expect(html).toContain('inferred from skill ID')
+      expect(html).not.toContain('View Repository')
     })
   })
 
