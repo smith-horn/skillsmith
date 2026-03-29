@@ -56,14 +56,13 @@ describe('getSkillDetailHtml', () => {
     it('does not infer URL for IDs without slash', () => {
       const html = getSkillDetailHtml(makeSkill({ id: 'no-slash-id' }), NONCE, CSP)
       expect(html).not.toContain('inferred from skill ID')
-      // Repository heading should not appear (no explicit repo, no inferred)
-      expect(html).not.toContain('<h2>Repository</h2>')
+      expect(html).toContain('No repository URL available')
     })
 
     it('rejects path traversal IDs (multiple segments)', () => {
       const html = getSkillDetailHtml(makeSkill({ id: 'evil/../../../other' }), NONCE, CSP)
       expect(html).not.toContain('inferred from skill ID')
-      expect(html).not.toContain('<h2>Repository</h2>')
+      expect(html).toContain('No repository URL available')
     })
 
     it('does not infer URL for claude-plugins/UUID IDs', () => {
@@ -73,13 +72,13 @@ describe('getSkillDetailHtml', () => {
         CSP
       )
       expect(html).not.toContain('inferred from skill ID')
-      expect(html).not.toContain('<h2>Repository</h2>')
+      expect(html).toContain('No repository URL available')
     })
 
     it('does not infer URL for IDs with 3+ segments', () => {
       const html = getSkillDetailHtml(makeSkill({ id: 'source/sub/path' }), NONCE, CSP)
       expect(html).not.toContain('inferred from skill ID')
-      expect(html).not.toContain('<h2>Repository</h2>')
+      expect(html).toContain('No repository URL available')
     })
 
     it('infers URL for repo names with dots', () => {
@@ -157,6 +156,56 @@ describe('getSkillDetailHtml', () => {
       const html = getSkillDetailHtml(makeSkill(), NONCE, CSP)
       expect(html).toContain("url.startsWith('https://')")
       expect(html).toContain("url.startsWith('http://')")
+    })
+  })
+
+  describe('a11y: repository links', () => {
+    it('includes tabindex and role on repository-link spans', () => {
+      const html = getSkillDetailHtml(
+        makeSkill({ repository: 'https://github.com/tester/test-skill' }),
+        NONCE,
+        CSP
+      )
+      expect(html).toContain('tabindex="0"')
+      expect(html).toContain('role="link"')
+    })
+
+    it('includes keyboard handler for Enter/Space on repository links', () => {
+      const html = getSkillDetailHtml(makeSkill(), NONCE, CSP)
+      expect(html).toContain("e.key === 'Enter'")
+      expect(html).toContain("e.key === ' '")
+    })
+
+    it('includes focus style for repository links', () => {
+      const html = getSkillDetailHtml(makeSkill(), NONCE, CSP)
+      expect(html).toContain('.repository-link:focus')
+      expect(html).toContain('var(--vscode-focusBorder)')
+    })
+  })
+
+  describe('no-repo placeholder', () => {
+    it('shows placeholder when no repository and no inference', () => {
+      const html = getSkillDetailHtml(makeSkill({ id: 'no-slash' }), NONCE, CSP)
+      expect(html).toContain('No repository URL available')
+      expect(html).toContain('<h2>Repository</h2>')
+    })
+
+    it('does not show placeholder when explicit repository exists', () => {
+      const html = getSkillDetailHtml(
+        makeSkill({ repository: 'https://github.com/tester/repo' }),
+        NONCE,
+        CSP
+      )
+      expect(html).not.toContain('No repository URL available')
+    })
+  })
+
+  describe('badge contrast', () => {
+    it('uses WCAG AA compliant color for community badge', () => {
+      const html = getSkillDetailHtml(makeSkill(), NONCE, CSP)
+      // #b8960a with white text meets WCAG AA 4.5:1 contrast ratio
+      expect(html).toContain('#b8960a')
+      expect(html).not.toContain('#ffc107')
     })
   })
 

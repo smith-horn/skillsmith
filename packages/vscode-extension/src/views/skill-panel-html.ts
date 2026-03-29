@@ -122,7 +122,7 @@ function getStyles(): string {
             text-transform: uppercase;
         }
         .badge-verified { background-color: #28a745; color: white; }
-        .badge-community { background-color: #ffc107; color: black; }
+        .badge-community { background-color: #b8960a; color: white; }
         .badge-standard { background-color: #007bff; color: white; }
         .badge-unverified { background-color: #6c757d; color: white; }
         .description {
@@ -189,7 +189,8 @@ function getStyles(): string {
             text-decoration: none;
             cursor: pointer;
         }
-        .repository-link:hover { text-decoration: underline; }
+        .repository-link:hover, .repository-link:focus { text-decoration: underline; }
+        .repository-link:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
         .score-breakdown {
             display: flex;
             flex-direction: column;
@@ -309,6 +310,12 @@ function getScript(nonce: string): string {
                 const url = this.getAttribute('data-url');
                 if (url) {
                     vscode.postMessage({ command: 'openRepository', url: url });
+                }
+            });
+            link.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    this.click();
                 }
             });
         });
@@ -438,18 +445,23 @@ export function getSkillDetailHtml(
         ? `
     <div class="section">
         <h2>Repository</h2>
-        <span class="repository-link" data-url="${safeRepository}">${safeRepository}</span>
+        <span class="repository-link" tabindex="0" role="link" data-url="${safeRepository}">${safeRepository}</span>
     </div>
     `
         : inferredRepository
           ? `
     <div class="section">
         <h2>Repository</h2>
-        <span class="repository-link" data-url="${inferredRepository}">${inferredRepository}</span>
+        <span class="repository-link" tabindex="0" role="link" data-url="${inferredRepository}">${inferredRepository}</span>
         <span class="inferred-label">(inferred from skill ID)</span>
     </div>
     `
-          : ''
+          : `
+    <div class="section">
+        <h2>Repository</h2>
+        <span class="meta-label">No repository URL available</span>
+    </div>
+    `
     }
 
     <div class="actions">
