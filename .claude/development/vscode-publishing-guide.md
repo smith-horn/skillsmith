@@ -64,7 +64,7 @@ TODO: Integrate into `prepare-release.ts` with `--vscode=<bump>` flag (SMI-3702)
 
 - **Expiry**: 90 days
 - **Generate at**: dev.azure.com > User Settings > Personal Access Tokens > Marketplace > Publish
-- **Rotation runbook**: `docs/internal/runbooks/vsce-pat-rotation.md` (TODO: SMI-3703)
+- **Rotation runbook**: `docs/internal/runbooks/vsce-pat-rotation.md`
 
 ## Key Differences from npm Publishing
 

@@ -61,6 +61,12 @@ export const PACKAGE_SPECS: PackageSpec[] = [
     dir: 'packages/cli',
     packageJsonPath: 'packages/cli/package.json',
   },
+  {
+    name: 'skillsmith-vscode',
+    shortName: 'vscode',
+    dir: 'packages/vscode-extension',
+    packageJsonPath: 'packages/vscode-extension/package.json',
+  },
 ]
 
 // Packages that depend on @skillsmith/core (dep gets updated when core bumps)

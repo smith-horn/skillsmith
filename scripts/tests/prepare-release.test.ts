@@ -19,12 +19,13 @@ import {
 } from '../lib/version-utils'
 
 describe('PACKAGE_SPECS configuration', () => {
-  it('should define all three packages', () => {
+  it('should define all four packages', () => {
     const names = PACKAGE_SPECS.map((s) => s.shortName)
     expect(names).toContain('core')
     expect(names).toContain('mcp-server')
     expect(names).toContain('cli')
-    expect(PACKAGE_SPECS).toHaveLength(3)
+    expect(names).toContain('vscode')
+    expect(PACKAGE_SPECS).toHaveLength(4)
   })
 
   it('should point to existing package.json files', () => {
