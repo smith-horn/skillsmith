@@ -4,6 +4,24 @@ All notable changes to the Skillsmith VS Code extension will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.5] - 2026-03-29
+
+### Fixed
+
+- Inferred GitHub URL fallback no longer produces 404s for `claude-plugins/UUID` skill IDs
+- Community trust badge color meets WCAG AA 4.5:1 contrast ratio (`#ffc107` → `#b8960a`) (SMI-3707)
+- Repository link spans now keyboard-focusable with `tabindex`, `role="link"`, and Enter/Space handler (SMI-3724)
+
+### Added
+
+- "No repository URL available" placeholder when no repo URL exists (SMI-3723)
+- Extracted `inferRepositoryUrl()` to `skill-panel-helpers.ts` with UUID rejection and GitHub name validation
+- 10 unit tests for `inferRepositoryUrl`, 6 integration tests for new UX behaviors
+
+### Changed
+
+- "View Repository" button only appears for explicit repository URLs (suppressed for inferred)
+
 ## [0.1.4] - 2026-03-29
 
 ### Added
