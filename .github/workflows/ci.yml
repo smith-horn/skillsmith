@@ -448,6 +448,17 @@ jobs:
           tags: |
             type=sha,prefix=
 
+      # Cache write: main only (SMI-3653)
+      # PR branches read from main's cache via cache-from but don't write blobs.
+      # This prevents per-PR blob accumulation that fills the 10 GB GHA cache limit.
+      # See docs/internal/implementation/ci-cache-pressure-fix.md
+      - name: Set BuildKit cache-to
+        if: steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true'
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "CACHE_TO=type=gha,mode=min,scope=ci" >> $GITHUB_ENV
+          fi
+
       # SMI-2194: Only build if cache miss or load failed
       - name: Build and cache Docker image
         if: steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true'
@@ -458,7 +469,7 @@ jobs:
           load: true
           tags: skillsmith-ci:${{ github.sha }}
           cache-from: type=gha,scope=ci
-          cache-to: type=gha,mode=min,scope=ci
+          cache-to: ${{ env.CACHE_TO }}
           target: dev
 
       # SMI-2194: Save image to cache directory for future runs

@@ -1,24 +1,41 @@
 {
-  "name": "@skillsmith/vscode-extension",
+  "name": "skillsmith-vscode",
   "displayName": "Skillsmith",
   "description": "Discover and install agent skills directly in VS Code",
-  "version": "0.1.2",
+  "version": "0.1.5",
   "publisher": "skillsmith",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.108.0"
   },
   "categories": [
+    "Programming Languages",
     "Other"
   ],
   "keywords": [
     "skills",
     "ai",
-    "mcp"
+    "mcp",
+    "claude",
+    "developer-tools",
+    "productivity"
   ],
   "activationEvents": [
     "onStartupFinished"
   ],
   "license": "Elastic-2.0",
+  "icon": "resources/skillsmith-icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smith-horn/skillsmith"
+  },
+  "homepage": "https://skillsmith.app",
+  "bugs": {
+    "url": "https://github.com/smith-horn/skillsmith/issues"
+  },
+  "galleryBanner": {
+    "color": "#0d0d0f",
+    "theme": "dark"
+  },
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
@@ -160,10 +177,16 @@
     "lint": "eslint src --ext ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "package": "vsce package"
+    "package": "vsce package --no-dependencies",
+    "package:check": "vsce package --no-dependencies --out skillsmith.vsix && node scripts/validate-vsix.mjs skillsmith.vsix && rm skillsmith.vsix"
+  },
+  "dependencies": {
+    "marked": "15.0.7",
+    "sanitize-html": "2.14.0"
   },
   "devDependencies": {
     "@types/node": "20.19.30",
+    "@types/sanitize-html": "2.13.0",
     "@types/vscode": "1.108.1",
     "@vscode/vsce": "2.32.0",
     "esbuild": "0.27.2",

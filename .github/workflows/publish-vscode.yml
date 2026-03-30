@@ -1,0 +1,136 @@
+# See also: publish.yml (npm packages)
+name: Publish VS Code Extension
+
+on:
+  release:
+    types: [published]
+    # Only trigger for vscode extension releases
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (validate only, no publish)'
+        required: false
+        default: true
+        type: boolean
+      pre_release:
+        description: 'Publish as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: publish-vscode-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+
+# CodeQL alerts #75, #76 — restrict GITHUB_TOKEN to read-only
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only run for vscode extension tags or manual dispatch
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.event.release.tag_name, 'vscode-extension-v')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci --workspace=packages/vscode-extension --include-workspace-root
+        env:
+          npm_config_engine_strict: false
+
+      - name: Build
+        run: npm run build -w packages/vscode-extension
+
+      - name: Typecheck
+        run: npm run typecheck -w packages/vscode-extension
+
+      - name: Test
+        run: npm run test -w packages/vscode-extension
+
+      - name: Package & Validate VSIX
+        run: |
+          cd packages/vscode-extension
+          npx @vscode/vsce package --no-dependencies --out skillsmith.vsix
+          node scripts/validate-vsix.mjs skillsmith.vsix
+          VSIX_SIZE=$(du -k skillsmith.vsix | cut -f1)
+          VERSION=$(node -e "console.log(require('./package.json').version)")
+          echo "## VSIX Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Size**: ${VSIX_SIZE}KB" >> $GITHUB_STEP_SUMMARY
+          rm skillsmith.vsix
+
+  publish:
+    name: Publish to Marketplace
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false') ||
+      (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'vscode-extension-v'))
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci --workspace=packages/vscode-extension --include-workspace-root
+        env:
+          npm_config_engine_strict: false
+
+      - name: Check if version already published
+        id: version-check
+        run: |
+          VERSION=$(node -e "console.log(require('./packages/vscode-extension/package.json').version)")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          PUBLISHED=$(npx @vscode/vsce show skillsmith.skillsmith-vscode --json 2>/dev/null | node -e "
+            let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{
+              try { console.log(JSON.parse(d).versions[0].version) } catch { console.log('none') }
+            })
+          " || echo "none")
+          echo "published=$PUBLISHED" >> $GITHUB_OUTPUT
+          if [ "$VERSION" = "$PUBLISHED" ]; then
+            echo "::error::Version $VERSION is already published to the Marketplace"
+            exit 1
+          fi
+          echo "Publishing version $VERSION (latest published: $PUBLISHED)"
+
+      - name: Build
+        run: npm run build -w packages/vscode-extension
+
+      - name: Publish
+        run: |
+          cd packages/vscode-extension
+          PRE_RELEASE_FLAG=""
+          if [ "${{ github.event.inputs.pre_release }}" = "true" ]; then
+            PRE_RELEASE_FLAG="--pre-release"
+          fi
+          npx @vscode/vsce publish --no-dependencies $PRE_RELEASE_FLAG
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Post-publish summary
+        run: |
+          echo "## Published to VS Code Marketplace" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ steps.version-check.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Pre-release**: ${{ github.event.inputs.pre_release || 'false' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Marketplace**: https://marketplace.visualstudio.com/items?itemName=skillsmith.skillsmith-vscode" >> $GITHUB_STEP_SUMMARY

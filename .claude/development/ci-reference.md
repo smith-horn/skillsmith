@@ -158,7 +158,7 @@ FAILED=$(gh pr view $PR --json statusCheckRollup \
 
 **Rule**: Always wait for Wave N CI to show green before starting Wave N+1 rebase. Starting early saves <30s but risks a reflog recovery if Wave N's checks later fail.
 
-## Docker BuildKit Cache Policy (SMI-3531, SMI-3539)
+## Docker BuildKit Cache Policy (SMI-3531, SMI-3539, SMI-3653)
 
 Three workflows build Docker images with BuildKit GHA cache. All Docker build jobs have a **20-minute timeout** to accommodate cold builds (~15 min for native module compilation).
 
@@ -168,6 +168,19 @@ Three workflows build Docker images with BuildKit GHA cache. All Docker build jo
 | `e2e-tests.yml` | `scope=e2e` | `mode=min` | 20 min | End-to-end tests |
 | `publish.yml` | `scope=publish` | `mode=min` | 20 min | npm publish |
 
+**Cache lifecycle** (SMI-3653):
+
+| Trigger | `cache-from` (read) | `cache-to` (write) |
+|---------|---------------------|---------------------|
+| Push to main | Yes | Yes |
+| Pull request | Yes (reads main's cache) | **No** |
+| `workflow_dispatch` from main | Yes | Yes |
+| `workflow_dispatch` from branch | Yes | No |
+
+Only main-branch pushes write BuildKit blobs. PR branches read from main's cache but do not write their own blob copies. This prevents per-PR blob accumulation that filled the 10 GB GHA cache limit (70 blobs, 7.44 GB in 24 hours — SMI-3653). Implementation uses an env-var (`CACHE_TO`) set conditionally in a prior step.
+
+**Latency note**: The first PR opened after a lockfile change merges to main — but before main's post-merge CI build completes (~6 min) — may see a longer Docker build because main's cache is stale.
+
 **Dual-layer cache architecture** (ci.yml only):
 
 ci.yml uses two cache mechanisms in sequence:
@@ -175,14 +188,35 @@ ci.yml uses two cache mechanisms in sequence:
 1. **Mechanism 1** (`actions/cache@v5`): Keyed on `Dockerfile + package-lock.json + .dockerignore + .nvmrc`. On hit, loads a pre-built image tarball and skips Docker build entirely. On miss, falls through to mechanism 2.
 2. **Mechanism 2** (`build-push-action` with BuildKit GHA cache): Runs the full Docker build using BuildKit layer cache.
 
-E2E and publish workflows only use mechanism 2 (no `actions/cache` tarball layer).
+E2E and publish workflows only use mechanism 2 (no `actions/cache` tarball layer). This means E2E PR builds rely entirely on main's BuildKit cache — if main's cache is stale, E2E gets a cold build (~6 min).
 
 **Key decisions**:
 
 - `scope=` isolates each workflow's cache entries. Without scope, workflows evict each other's entries when the 10 GB GHA cache cap is reached.
 - All workflows use `mode=min` (final image layers only). `mode=max` was trialed for CI in PR #344 (SMI-3539) but rolled back in SMI-3547 after 72h verification showed cache pressure (10.45 GB, publish scope evicted). The marginal benefit (~3–5 min on ~1–2 lockfile-change builds/week) did not justify the cache eviction risk.
-- Check cache usage: `gh api repos/smith-horn/skillsmith/actions/cache/usage`
-- Prune stale caches: `gh api repos/smith-horn/skillsmith/actions/caches --paginate -q '.actions_caches[] | .id' | xargs -I{} gh api -X DELETE repos/smith-horn/skillsmith/actions/caches/{}`
+
+**Monitoring commands**:
+
+```bash
+# Total cache usage (should be under 5 GB)
+gh api repos/smith-horn/skillsmith/actions/cache/usage
+
+# Cache breakdown by scope
+gh api "repos/smith-horn/skillsmith/actions/caches?per_page=100" --paginate \
+  --jq '[.actions_caches[] | {prefix: (.key | split("-")[0:2] | join("-")), size: .size_in_bytes}] | group_by(.prefix) | map({prefix: .[0].prefix, count: length, total_gb: ([.[].size] | add / 1073741824 * 100 | floor / 100)}) | sort_by(-.total_gb) | .[]'
+
+# Verify scope indexes (ci, e2e, publish should all be present)
+gh api "repos/smith-horn/skillsmith/actions/caches?per_page=100" --paginate \
+  --jq '.actions_caches[] | select(.key | test("index-")) | {key, last_accessed_at}'
+
+# Prune all BuildKit caches — blobs AND indexes (run when no CI is in progress)
+# IMPORTANT: Always purge indexes alongside blobs. Deleting blobs but leaving
+# indexes creates poisoned references → "blob sha256:... not found" build failures.
+gh api repos/smith-horn/skillsmith/actions/caches --paginate \
+  --jq '.actions_caches[] | select(.key | startswith("buildkit-blob") or startswith("index-")) | .id' \
+  | xargs -I{} gh api -X DELETE repos/smith-horn/skillsmith/actions/caches/{}
+```
+
 - **Cache-miss Step Summary** (SMI-3539): ci.yml docker-build writes cache hit/miss status to `$GITHUB_STEP_SUMMARY` so PR authors know when a cold build is expected.
 
 ## Artifact Retention Policy (SMI-3531)

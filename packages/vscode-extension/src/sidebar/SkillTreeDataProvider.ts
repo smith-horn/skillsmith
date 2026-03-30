@@ -9,7 +9,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { SkillTreeItem, type SkillItemData, type TrustTier } from './SkillTreeItem.js'
-import { type SkillData } from '../data/mockSkills.js'
+import { type SkillData } from '../types/skill.js'
 
 /** Maximum length for skill descriptions */
 const MAX_DESCRIPTION_LENGTH = 100

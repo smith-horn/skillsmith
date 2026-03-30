@@ -2,7 +2,7 @@
 
 This guide covers testing the Stripe Billing Portal integration for subscription management.
 
-> **Related**: [Stripe CLI Testing](stripe-testing.md) | [Troubleshooting](stripe-troubleshooting.md)
+> **Related**: [Stripe CLI Testing](stripe-testing.md) | [Troubleshooting](../../docs/internal/runbooks/stripe-troubleshooting.md)
 
 ---
 
@@ -115,6 +115,6 @@ Ensure these events are enabled for the billing portal:
 ## Related Documentation
 
 - [Stripe CLI Testing](stripe-testing.md) - Core testing guide
-- [Stripe Troubleshooting](stripe-troubleshooting.md) - Known issues
+- [Stripe Troubleshooting](../../docs/internal/runbooks/stripe-troubleshooting.md) - Known issues
 - [Portal Session E2E Tests](../../tests/e2e/portal-session.test.ts)
 - [create-portal-session Edge Function](../../supabase/functions/create-portal-session/index.ts)

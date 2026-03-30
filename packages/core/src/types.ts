@@ -161,6 +161,8 @@ export interface SearchResponse {
 export interface GetSkillResponse {
   skill: Skill
   installCommand: string
+  /** SMI-3672: Raw SKILL.md content (markdown), when available */
+  content?: string
   timing: {
     totalMs: number
   }

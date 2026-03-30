@@ -1,0 +1,10 @@
+**
+!dist/**
+!dist/extension.js
+!resources/skillsmith.svg
+!resources/skillsmith-icon.png
+!resources/skillsmith-icon@2x.png
+!package.json
+!README.md
+!CHANGELOG.md
+!LICENSE

@@ -14,6 +14,7 @@ export interface McpSkillSearchResult {
   category: string
   trustTier: 'verified' | 'community' | 'standard' | 'unverified'
   score: number
+  repository?: string
 }
 
 /**
@@ -76,6 +77,8 @@ export interface McpSkillDetails {
 export interface McpGetSkillResponse {
   skill: McpSkillDetails
   installCommand: string
+  /** SMI-3672: Raw SKILL.md content (markdown), when available */
+  content?: string
   timing: {
     totalMs: number
   }

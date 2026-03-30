@@ -1,15 +1,15 @@
 /**
  * Quick Install Command - Enhanced skill installation with inline search
  * Implements SMI-749: Quick Install Command
+ * Uses SkillService for centralized MCP-first + mock fallback.
  *
  * @module commands/installCommand
  */
 import * as vscode from 'vscode'
-import * as fs from 'fs/promises'
-import * as path from 'path'
-import * as os from 'os'
 import { isValidSkillId } from '../utils/security.js'
-import { searchSkills as searchMockSkills, type SkillData } from '../data/mockSkills.js'
+import type { SkillData } from '../types/skill.js'
+import type { SkillService } from '../services/SkillService.js'
+import { getSkillPath, installSkillLocally } from '../services/installUtils.js'
 import { getMcpClient } from '../mcp/McpClient.js'
 
 /** Debounce delay for search input */
@@ -25,9 +25,12 @@ interface SkillQuickPickItem extends vscode.QuickPickItem {
 /**
  * Registers the quick install command
  */
-export function registerQuickInstallCommand(context: vscode.ExtensionContext): void {
+export function registerQuickInstallCommand(
+  context: vscode.ExtensionContext,
+  skillService: SkillService
+): void {
   const command = vscode.commands.registerCommand('skillsmith.installSkill', async () => {
-    await showQuickInstallPicker()
+    await showQuickInstallPicker(skillService)
   })
 
   context.subscriptions.push(command)
@@ -36,7 +39,7 @@ export function registerQuickInstallCommand(context: vscode.ExtensionContext): v
 /**
  * Shows the quick install picker with integrated search
  */
-async function showQuickInstallPicker(): Promise<void> {
+async function showQuickInstallPicker(skillService: SkillService): Promise<void> {
   const quickPick = vscode.window.createQuickPick<SkillQuickPickItem>()
 
   quickPick.title = 'Install Skill'
@@ -49,33 +52,38 @@ async function showQuickInstallPicker(): Promise<void> {
 
   // Handle value changes with debouncing
   quickPick.onDidChangeValue((value: string) => {
-    // Clear previous timer
     if (debounceTimer) {
       clearTimeout(debounceTimer)
     }
 
     const query = value.trim()
 
-    // Empty query is valid - will browse all skills
-    // Only skip if user is still typing (handled by debounce)
-
-    // Show loading state
     quickPick.busy = true
 
-    // Debounce search
     debounceTimer = setTimeout(async () => {
       try {
-        const results = await performSearch(query)
+        const { results, isOffline } = await skillService.search(query)
 
         if (results.length === 0) {
-          quickPick.items = [
-            {
-              label: '$(info) No skills found',
-              description: query ? `No results for "${query}"` : 'No skills available',
-              alwaysShow: true,
-              skill: null,
-            },
-          ]
+          if (isOffline) {
+            quickPick.items = [
+              {
+                label: '$(cloud-offline) No offline results',
+                description: 'Connect to Skillsmith for full search',
+                alwaysShow: true,
+                skill: null,
+              },
+            ]
+          } else {
+            quickPick.items = [
+              {
+                label: '$(info) No skills found',
+                description: query ? `No results for "${query}"` : 'No skills available',
+                alwaysShow: true,
+                skill: null,
+              },
+            ]
+          }
         } else {
           quickPick.items = results.map((skill) => createQuickPickItem(skill))
         }
@@ -105,7 +113,6 @@ async function showQuickInstallPicker(): Promise<void> {
 
     quickPick.hide()
 
-    // Install the selected skill
     await installSkillWithProgress(selected.skill)
   })
 
@@ -151,41 +158,9 @@ function getTrustTierIcon(tier: string): string {
 }
 
 /**
- * Performs skill search using MCP with fallback to mock data
- */
-async function performSearch(query: string): Promise<SkillData[]> {
-  const client = getMcpClient()
-
-  // Try MCP client first if connected
-  if (client.isConnected()) {
-    try {
-      const response = await client.search(query)
-
-      return response.results.map((result) => ({
-        id: result.id,
-        name: result.name,
-        description: result.description,
-        author: result.author,
-        category: result.category,
-        trustTier: result.trustTier,
-        score: result.score,
-      }))
-    } catch (error) {
-      console.warn('[Skillsmith] MCP search failed, falling back to mock data:', error)
-    }
-  }
-
-  // Fallback to mock data
-  console.log('[Skillsmith] Using mock data for search')
-  await new Promise((resolve) => setTimeout(resolve, 50))
-  return searchMockSkills(query)
-}
-
-/**
  * Installs a skill with progress notification
  */
 async function installSkillWithProgress(skill: SkillData): Promise<void> {
-  // Validate skill ID
   if (!isValidSkillId(skill.id)) {
     vscode.window.showErrorMessage(
       `Invalid skill ID "${skill.id}". Skill IDs must contain only letters, numbers, hyphens, and underscores.`
@@ -193,7 +168,6 @@ async function installSkillWithProgress(skill: SkillData): Promise<void> {
     return
   }
 
-  // Confirm installation
   const confirm = await vscode.window.showInformationMessage(
     `Install "${skill.name}" skill?`,
     {
@@ -213,7 +187,7 @@ async function installSkillWithProgress(skill: SkillData): Promise<void> {
       title: `Installing ${skill.name}...`,
       cancellable: false,
     },
-    async (progress: vscode.Progress<{ message?: string; increment?: number }>) => {
+    async (progress) => {
       progress.report({ increment: 0, message: 'Preparing installation...' })
 
       try {
@@ -234,9 +208,7 @@ async function installSkillWithProgress(skill: SkillData): Promise<void> {
   )
 }
 
-/**
- * Install result interface
- */
+/** Install result interface */
 interface InstallResult {
   success: boolean
   installPath: string
@@ -245,7 +217,8 @@ interface InstallResult {
 }
 
 /**
- * Performs skill installation using MCP with fallback to local
+ * Performs skill installation using MCP with fallback to local.
+ * Shows warning when falling back to local placeholder install.
  */
 async function performInstall(skill: SkillData): Promise<InstallResult> {
   const client = getMcpClient()
@@ -273,6 +246,16 @@ async function performInstall(skill: SkillData): Promise<InstallResult> {
     } catch (error) {
       console.warn('[Skillsmith] MCP install failed, falling back to local:', error)
     }
+  }
+
+  // Warn user about placeholder install
+  const proceedLocally = await vscode.window.showWarningMessage(
+    'MCP server unavailable -- install a placeholder skill?',
+    { detail: 'Reinstall when connected for the full skill content.', modal: true },
+    'Install Placeholder'
+  )
+  if (proceedLocally !== 'Install Placeholder') {
+    return { success: false, installPath: '', tips: undefined, error: 'Installation cancelled' }
   }
 
   // Fallback to local installation
@@ -329,149 +312,5 @@ async function showInstallSuccess(skill: SkillData, result: InstallResult): Prom
       break
   }
 
-  // Refresh the installed skills view
   await vscode.commands.executeCommand('skillsmith.refreshSkills')
-}
-
-/**
- * Gets the skills directory path
- */
-function getSkillsDirectory(): string {
-  const config = vscode.workspace.getConfiguration('skillsmith')
-  let skillsDir = config.get<string>('skillsDirectory') || '~/.claude/skills'
-
-  if (skillsDir.startsWith('~')) {
-    skillsDir = path.join(os.homedir(), skillsDir.slice(1))
-  }
-
-  return skillsDir
-}
-
-/**
- * Gets the full path for a skill
- */
-function getSkillPath(skillId: string): string {
-  const safeId = path.basename(skillId)
-  const skillPath = path.join(getSkillsDirectory(), safeId)
-
-  // Verify path is within skills directory
-  const skillsDir = getSkillsDirectory()
-  const resolvedPath = path.resolve(skillPath)
-  const resolvedSkillsDir = path.resolve(skillsDir)
-
-  if (!resolvedPath.startsWith(resolvedSkillsDir + path.sep)) {
-    throw new Error('Invalid skill path: path traversal detected')
-  }
-
-  return skillPath
-}
-
-/**
- * Installs skill locally (fallback when MCP is not available)
- */
-async function installSkillLocally(skill: SkillData): Promise<void> {
-  const skillsDir = getSkillsDirectory()
-  const skillPath = getSkillPath(skill.id)
-
-  // Ensure skills directory exists
-  await fs.mkdir(skillsDir, { recursive: true })
-
-  // Check if skill already exists
-  try {
-    await fs.access(skillPath)
-    const overwrite = await vscode.window.showWarningMessage(
-      `Skill "${skill.name}" is already installed. Overwrite?`,
-      { modal: true },
-      'Overwrite'
-    )
-    if (overwrite !== 'Overwrite') {
-      throw new Error('Installation cancelled')
-    }
-    await fs.rm(skillPath, { recursive: true })
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException
-    if (err.code !== 'ENOENT' && err.message !== 'Installation cancelled') {
-      throw error
-    }
-    if (err.message === 'Installation cancelled') {
-      throw error
-    }
-  }
-
-  // Create skill directory
-  await fs.mkdir(skillPath, { recursive: true })
-
-  // Create SKILL.md
-  const skillMd = generateSkillMd(skill)
-  await fs.writeFile(path.join(skillPath, 'SKILL.md'), skillMd)
-
-  // Create nested structure
-  const skillsSubdir = path.join(skillPath, 'skills', skill.id)
-  await fs.mkdir(skillsSubdir, { recursive: true })
-  await fs.writeFile(path.join(skillsSubdir, 'SKILL.md'), skillMd)
-
-  // Simulate installation delay
-  await new Promise((resolve) => setTimeout(resolve, 300))
-}
-
-/**
- * Generates SKILL.md content for a skill
- */
-function generateSkillMd(skill: SkillData): string {
-  const trustBadge = getTrustBadge(skill.trustTier)
-
-  return `---
-name: "${skill.name}"
-description: "${skill.description}"
-author: "${skill.author}"
-category: "${skill.category}"
----
-
-# ${skill.name}
-
-${trustBadge}
-
-${skill.description}
-
-## What This Skill Does
-
-- **Author:** ${skill.author}
-- **Category:** ${skill.category}
-- **Trust Tier:** ${skill.trustTier}
-- **Score:** ${skill.score}/100
-
-## Quick Start
-
-This skill can be triggered when relevant context is detected.
-
-## Trigger Phrases
-
-Add your trigger phrases here based on the skill's functionality.
-
-## Installation
-
-This skill was installed via the Skillsmith VS Code extension.
-
-${skill.repository ? `## Repository\n\n[${skill.repository}](${skill.repository})` : ''}
-
-## License
-
-See repository for license information.
-`
-}
-
-/**
- * Gets the trust badge for a tier
- */
-function getTrustBadge(tier: string): string {
-  switch (tier.toLowerCase()) {
-    case 'verified':
-      return '![Verified](https://img.shields.io/badge/Trust-Verified-green)'
-    case 'community':
-      return '![Community](https://img.shields.io/badge/Trust-Community-yellow)'
-    case 'standard':
-      return '![Standard](https://img.shields.io/badge/Trust-Standard-blue)'
-    default:
-      return '![Unverified](https://img.shields.io/badge/Trust-Unverified-gray)'
-  }
 }

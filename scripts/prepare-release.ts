@@ -5,7 +5,7 @@
  *
  * Usage:
  *   npx tsx scripts/prepare-release.ts --all=patch
- *   npx tsx scripts/prepare-release.ts --core=minor --cli=patch
+ *   npx tsx scripts/prepare-release.ts --core=minor --cli=patch --vscode=patch
  *   npx tsx scripts/prepare-release.ts --core=0.4.18
  *   npx tsx scripts/prepare-release.ts --all=patch --dry-run
  *   npx tsx scripts/prepare-release.ts --all=patch --no-changelog
@@ -72,6 +72,8 @@ function parseArgs(): Options {
       bumps.set('mcp-server', arg.split('=')[1])
     } else if (arg.startsWith('--cli=')) {
       bumps.set('cli', arg.split('=')[1])
+    } else if (arg.startsWith('--vscode=')) {
+      bumps.set('vscode', arg.split('=')[1])
     } else if (arg === '--help' || arg === '-h') {
       printUsage()
       process.exit(0)
@@ -100,6 +102,7 @@ Package bumps:
   --core=<type|ver>     Bump core (patch|minor|major|X.Y.Z)
   --mcp-server=<type>   Bump mcp-server
   --cli=<type|ver>      Bump cli
+  --vscode=<type|ver>   Bump vscode-extension
 
 Options:
   --dry-run             Preview changes without writing

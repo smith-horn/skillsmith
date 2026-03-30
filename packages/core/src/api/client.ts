@@ -94,6 +94,8 @@ export interface ApiSearchResult {
   quarantined?: boolean
   /** SHA-256 hash of SKILL.md content at index time */
   content_hash?: string | null
+  /** SMI-3672: Raw SKILL.md content (only when include_content=true) */
+  content?: string | null
   created_at?: string
   updated_at?: string
 }
@@ -389,11 +391,16 @@ export class SkillsmithApiClient {
   /**
    * Get skill by ID
    * SMI-1258: Validates response against SingleSkillResponseSchema
+   * SMI-3672: Added includeContent option to fetch SKILL.md content
    */
-  async getSkill(id: string): Promise<ApiResponse<ApiSearchResult>> {
+  async getSkill(
+    id: string,
+    options?: { includeContent?: boolean }
+  ): Promise<ApiResponse<ApiSearchResult>> {
     const encodedId = encodeURIComponent(id)
+    const contentParam = options?.includeContent ? '&include_content=true' : ''
     return this.request<ApiSearchResult>(
-      `/skills-get?id=${encodedId}`,
+      `/skills-get?id=${encodedId}${contentParam}`,
       {},
       SingleSkillResponseSchema
     )

@@ -26,35 +26,14 @@ permissions:
   statuses: write
 
 jobs:
-  # Wait for CI to pass before deploying
-  wait-for-ci:
-    name: Wait for CI
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    # Only wait on push events; skip for manual dispatch
-    if: github.event_name == 'push'
-
-    steps:
-      - name: Wait for CI to queue
-        run: sleep 90
-
-      - name: Wait for CI workflow
-        uses: lewagon/wait-on-check-action@v1.5.0
-        with:
-          ref: ${{ github.sha }}
-          check-name: 'Build'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 30
-          allowed-conclusions: success,skipped
-          fail-on-no-checks: true
-
   deploy-staging:
     name: Deploy to Staging
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: wait-for-ci
-    # Run if wait-for-ci succeeded OR was skipped (manual dispatch)
-    if: ${{ !cancelled() && (needs.wait-for-ci.result == 'success' || needs.wait-for-ci.result == 'skipped') }}
+    # CI validation happens via branch protection before code reaches main.
+    # wait-for-ci job removed: the Build check is a late-stage rollup (~15min
+    # into CI) that never registered in time for polling — 29/29 failures.
+    # See docs/internal/implementation/website-deploy-docs-tier-fix.md
     environment:
       name: staging
       url: ${{ steps.deploy.outputs.deployment-url }}

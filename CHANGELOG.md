@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 12 alerts dismissed (packages updated via npm overrides to patched versions)
   - 6 alerts auto-fixed by Dependabot
   - Patched: eslint@9.39.2, fast-xml-parser@5.3.4, diff@8.0.3, tar@7.5.7, hono@4.11.7
+- **CVE-2026-33768 Patch** (2026-03-29): Patched `@astrojs/vercel` path override bypass
+  vulnerability (CVSS 6.5). Upgraded 9.0.3 → 9.0.5 (backported fix for Astro 5
+  compatibility). No evidence of exploitation. See [GHSA-mr6q-rp88-fx84](https://github.com/withastro/astro/security/advisories/GHSA-mr6q-rp88-fx84).
+- **CI Workflow Hardening** (2026-03-29): Added explicit `permissions: contents: read`
+  to `publish-vscode.yml`, restricting default GITHUB_TOKEN scope (CodeQL #75/#76).
 
 ## [0.4.12] - 2026-02-23
 
