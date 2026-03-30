@@ -54,6 +54,7 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 | Security | No high-severity vulnerabilities |
 | File size | < 500 lines per file |
 | Test coverage | > 80% |
+| Test co-update | Source file changes must include related test updates |
 
 **New source files must be under 500 lines.** Split into companion files (e.g., `foo.helpers.ts`, `foo.types.ts`) if approaching the limit. The `audit:standards` script enforces this.
 
