@@ -25,6 +25,10 @@ concurrency:
 env:
   NODE_VERSION: '22'
 
+# CodeQL alerts #75, #76 — restrict GITHUB_TOKEN to read-only
+permissions:
+  contents: read
+
 jobs:
   validate:
     name: Validate Extension
