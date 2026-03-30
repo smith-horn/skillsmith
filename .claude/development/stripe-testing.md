@@ -5,7 +5,7 @@ This guide covers testing Stripe webhook integration using the Stripe CLI.
 > **Related Guides**:
 >
 > - [Billing Portal Testing](stripe-billing-portal.md) - Portal session and cancellation flows
-> - [Troubleshooting](stripe-troubleshooting.md) - Known issues, Deno patterns, edge cases
+> - [Troubleshooting](../../docs/internal/runbooks/stripe-troubleshooting.md) - Known issues, Deno patterns, edge cases
 
 ---
 
@@ -310,7 +310,7 @@ Before deploying payment page changes, verify:
 - [Stripe Webhooks Guide](https://stripe.com/docs/webhooks)
 - [Testing Stripe Integrations](https://stripe.com/docs/testing)
 - [Billing Portal Testing](stripe-billing-portal.md)
-- [Troubleshooting & Edge Cases](stripe-troubleshooting.md)
+- [Troubleshooting & Edge Cases](../../docs/internal/runbooks/stripe-troubleshooting.md)
 - [Edge Function Patterns](edge-function-patterns.md)
 - [Checkout E2E Tests](../../tests/e2e/checkout-flow.spec.ts)
 - [Webhook E2E Tests](../../tests/e2e/webhook-handling.spec.ts)
