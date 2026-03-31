@@ -107,6 +107,13 @@ jobs:
     if: ${{ needs.deploy-staging.result == 'success' }}
 
     steps:
+      - name: Validate bypass secret
+        run: |
+          if [ -z "${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}" ]; then
+            echo "::error::VERCEL_AUTOMATION_BYPASS_SECRET is not set. Add it in GitHub repo settings."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v6
 
@@ -117,6 +124,8 @@ jobs:
           configPath: packages/website/lighthouserc.cjs
           uploadArtifacts: true
           temporaryPublicStorage: true
+        env:
+          LHCI_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Generate Lighthouse summary
         if: always()
@@ -143,6 +152,13 @@ jobs:
     if: ${{ needs.deploy-staging.result == 'success' }}
 
     steps:
+      - name: Validate bypass secret
+        run: |
+          if [ -z "${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}" ]; then
+            echo "::error::VERCEL_AUTOMATION_BYPASS_SECRET is not set. Add it in GitHub repo settings."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v6
 
@@ -154,6 +170,7 @@ jobs:
           args: >-
             --config packages/website/.lychee.toml
             --base ${{ needs.deploy-staging.outputs.deployment-url }}
+            --header "x-vercel-protection-bypass: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}"
             --verbose
             ${{ needs.deploy-staging.outputs.deployment-url }}
           # Don't fail the action on link errors - we handle it ourselves
@@ -164,24 +181,25 @@ jobs:
       - name: Parse link check results
         id: parse
         run: |
-          # Count errors from lychee output
+          set -euo pipefail
           DEPLOYMENT_URL="${{ needs.deploy-staging.outputs.deployment-url }}"
           DOMAIN=$(echo "$DEPLOYMENT_URL" | sed 's|https://||' | cut -d'/' -f1)
 
           if [ -f ./lychee/out.md ]; then
-            # Internal errors: links pointing to our deployment domain that failed
-            INTERNAL_ERRORS=$(grep -E "^\[ERROR\].*$DOMAIN" ./lychee/out.md 2>/dev/null | wc -l || echo "0")
-            # Total errors
-            TOTAL_ERRORS=$(grep -c "^\[ERROR\]" ./lychee/out.md 2>/dev/null || echo "0")
-            # External errors
-            EXTERNAL_ERRORS=$((TOTAL_ERRORS - INTERNAL_ERRORS))
+            # Anchored regex matches lychee output format; || true prevents set -e exit
+            INTERNAL_ERRORS=$(grep -cE "^\[ERROR\].*$DOMAIN" ./lychee/out.md 2>/dev/null || true)
+            INTERNAL_ERRORS=${INTERNAL_ERRORS:-0}
+            INTERNAL_ERRORS=$(echo "$INTERNAL_ERRORS" | tr -d '[:space:]')
 
-            # Ensure non-negative
+            TOTAL_ERRORS=$(grep -c "^\[ERROR\]" ./lychee/out.md 2>/dev/null || true)
+            TOTAL_ERRORS=${TOTAL_ERRORS:-0}
+            TOTAL_ERRORS=$(echo "$TOTAL_ERRORS" | tr -d '[:space:]')
+
+            EXTERNAL_ERRORS=$((TOTAL_ERRORS - INTERNAL_ERRORS))
             if [ "$EXTERNAL_ERRORS" -lt 0 ]; then EXTERNAL_ERRORS=0; fi
 
             echo "internal-errors=$INTERNAL_ERRORS" >> $GITHUB_OUTPUT
             echo "external-errors=$EXTERNAL_ERRORS" >> $GITHUB_OUTPUT
-
             echo "Internal link errors: $INTERNAL_ERRORS"
             echo "External link errors: $EXTERNAL_ERRORS"
           else
