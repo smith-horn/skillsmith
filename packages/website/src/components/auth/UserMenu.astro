@@ -257,15 +257,9 @@ const { loginRedirect = '/account' } = Astro.props
 <script>
   import { getSupabaseClient } from '../../lib/supabase-client'
 
-  let controller: AbortController | null = null
-
   // Initialize user menu
   // Uses astro:page-load to reinitialize after ClientRouter view transitions
   document.addEventListener('astro:page-load', async () => {
-    // Abort previous listeners to prevent stale closures after navigation
-    if (controller) controller.abort()
-    controller = new AbortController()
-    const { signal } = controller
     const loadingState = document.getElementById('user-menu-loading')
     const loggedOutState = document.getElementById('user-menu-logged-out')
     const loggedInState = document.getElementById('user-menu-logged-in')
@@ -323,53 +317,37 @@ const { loginRedirect = '/account' } = Astro.props
       }
 
       // Toggle dropdown
-      menuTrigger?.addEventListener(
-        'click',
-        () => {
-          const isOpen = dropdown?.classList.contains('open')
-          dropdown?.classList.toggle('open', !isOpen)
-          menuTrigger?.setAttribute('aria-expanded', (!isOpen).toString())
-          dropdown?.setAttribute('aria-hidden', isOpen ? 'true' : 'false')
-        },
-        { signal }
-      )
+      menuTrigger?.addEventListener('click', () => {
+        const isOpen = dropdown?.classList.contains('open')
+        dropdown?.classList.toggle('open', !isOpen)
+        menuTrigger?.setAttribute('aria-expanded', (!isOpen).toString())
+        dropdown?.setAttribute('aria-hidden', isOpen ? 'true' : 'false')
+      })
 
       // Close dropdown on outside click
-      document.addEventListener(
-        'click',
-        (e) => {
-          if (!loggedInState?.contains(e.target as Node)) {
-            dropdown?.classList.remove('open')
-            menuTrigger?.setAttribute('aria-expanded', 'false')
-            dropdown?.setAttribute('aria-hidden', 'true')
-          }
-        },
-        { signal }
-      )
+      document.addEventListener('click', (e) => {
+        if (!loggedInState?.contains(e.target as Node)) {
+          dropdown?.classList.remove('open')
+          menuTrigger?.setAttribute('aria-expanded', 'false')
+          dropdown?.setAttribute('aria-hidden', 'true')
+        }
+      })
 
       // Close dropdown on Escape
-      document.addEventListener(
-        'keydown',
-        (e) => {
-          if (e.key === 'Escape' && dropdown?.classList.contains('open')) {
-            dropdown.classList.remove('open')
-            menuTrigger?.setAttribute('aria-expanded', 'false')
-            dropdown?.setAttribute('aria-hidden', 'true')
-            menuTrigger?.focus()
-          }
-        },
-        { signal }
-      )
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && dropdown?.classList.contains('open')) {
+          dropdown.classList.remove('open')
+          menuTrigger?.setAttribute('aria-expanded', 'false')
+          dropdown?.setAttribute('aria-hidden', 'true')
+          menuTrigger?.focus()
+        }
+      })
 
       // Logout handler
-      logoutBtn?.addEventListener(
-        'click',
-        async () => {
-          await supabase.auth.signOut()
-          window.location.href = '/'
-        },
-        { signal }
-      )
+      logoutBtn?.addEventListener('click', async () => {
+        await supabase.auth.signOut()
+        window.location.href = '/'
+      })
     } else {
       // User is not logged in
       if (loggedOutState) loggedOutState.style.display = 'block'
