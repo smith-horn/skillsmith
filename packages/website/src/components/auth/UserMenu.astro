@@ -257,20 +257,15 @@ const { loginRedirect = '/account' } = Astro.props
 <script>
   import { getSupabaseClient } from '../../lib/supabase-client'
 
-  /**
-   * Nav uses transition:persist, so UserMenu DOM survives view transitions.
-   * astro:page-load runs on every navigation; without cleanup, listeners stack
-   * and duplicate toggle handlers cancel each other (GitHub #393).
-   */
-  let userMenuListenersAbort: AbortController | null = null
+  let controller: AbortController | null = null
 
   // Initialize user menu
   // Uses astro:page-load to reinitialize after ClientRouter view transitions
   document.addEventListener('astro:page-load', async () => {
-    userMenuListenersAbort?.abort()
-    userMenuListenersAbort = new AbortController()
-    const { signal } = userMenuListenersAbort
-
+    // Abort previous listeners to prevent stale closures after navigation
+    if (controller) controller.abort()
+    controller = new AbortController()
+    const { signal } = controller
     const loadingState = document.getElementById('user-menu-loading')
     const loggedOutState = document.getElementById('user-menu-logged-out')
     const loggedInState = document.getElementById('user-menu-logged-in')
@@ -292,8 +287,6 @@ const { loginRedirect = '/account' } = Astro.props
       data: { session },
     } = await supabase.auth.getSession()
 
-    if (signal.aborted) return
-
     if (loadingState) loadingState.style.display = 'none'
 
     if (session?.user) {
@@ -306,8 +299,6 @@ const { loginRedirect = '/account' } = Astro.props
         .select('full_name, avatar_url, github_username')
         .eq('id', session.user.id)
         .single()
-
-      if (signal.aborted) return
 
       // Update UI with user info
       const userName =
@@ -340,7 +331,7 @@ const { loginRedirect = '/account' } = Astro.props
           menuTrigger?.setAttribute('aria-expanded', (!isOpen).toString())
           dropdown?.setAttribute('aria-hidden', isOpen ? 'true' : 'false')
         },
-        { signal },
+        { signal }
       )
 
       // Close dropdown on outside click
@@ -353,7 +344,7 @@ const { loginRedirect = '/account' } = Astro.props
             dropdown?.setAttribute('aria-hidden', 'true')
           }
         },
-        { signal },
+        { signal }
       )
 
       // Close dropdown on Escape
@@ -367,7 +358,7 @@ const { loginRedirect = '/account' } = Astro.props
             menuTrigger?.focus()
           }
         },
-        { signal },
+        { signal }
       )
 
       // Logout handler
@@ -377,7 +368,7 @@ const { loginRedirect = '/account' } = Astro.props
           await supabase.auth.signOut()
           window.location.href = '/'
         },
-        { signal },
+        { signal }
       )
     } else {
       // User is not logged in
