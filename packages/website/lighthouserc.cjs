@@ -11,6 +11,10 @@ module.exports = {
       settings: {
         // Use mobile preset for realistic performance testing
         preset: 'desktop',
+        // Bypass Vercel Deployment Protection for staging URLs (SMI-3740)
+        extraHeaders: process.env.LHCI_BYPASS_SECRET
+          ? { 'x-vercel-protection-bypass': process.env.LHCI_BYPASS_SECRET }
+          : {},
       },
     },
     assert: {
