@@ -137,7 +137,7 @@ jobs:
           echo "| Performance | > 90 |" >> $GITHUB_STEP_SUMMARY
           echo "| Accessibility | > 95 |" >> $GITHUB_STEP_SUMMARY
           echo "| Best Practices | > 90 |" >> $GITHUB_STEP_SUMMARY
-          echo "| SEO | > 90 |" >> $GITHUB_STEP_SUMMARY
+          echo "| SEO | individual audits (warn) — staging skips is-crawlable + robots-txt |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "URL tested: ${{ needs.deploy-staging.outputs.deployment-url }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

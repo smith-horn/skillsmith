@@ -36,8 +36,8 @@ exclude_path = [
   "node_modules/**",
 ]
 
-# Skip mail links (mailto:)
-exclude_mail = true
+# Skip mail links (mailto:) — renamed from exclude_mail in lychee v0.23.0+ (SMI-3748)
+include_mail = false
 
 # Include fragment identifiers (#anchor)
 include_fragments = true
