@@ -417,7 +417,7 @@ jobs:
 
           # Output results for summary (SMI-2141: use printf instead of echo -e)
           echo "results<<EOF" >> $GITHUB_OUTPUT
-          printf "%s" "$RESULTS" >> $GITHUB_OUTPUT
+          printf "%b" "$RESULTS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
           # Output runtime metrics (SMI-2142)
