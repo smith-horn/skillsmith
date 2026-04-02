@@ -131,9 +131,6 @@
       "ajv": "^8.18.0"
     },
     "@tootallnate/once": "^3.0.1",
-    "@vercel/python-analysis": {
-      "minimatch": "^10.2.3"
-    },
     "picomatch": "^4.0.4",
     "anymatch": {
       "picomatch": "^2.3.2"
