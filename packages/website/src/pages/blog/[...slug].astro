@@ -4,13 +4,13 @@
  * SMI-1728: Blog system implementation
  */
 import BlogLayout from '../../layouts/BlogLayout.astro'
-import { getCollection, type CollectionEntry } from 'astro:content'
+import { getCollection, render, type CollectionEntry } from 'astro:content'
 import { calculateReadingTime } from '../../utils/blog'
 
 export async function getStaticPaths() {
   const posts = await getCollection('blog', ({ data }) => !data.draft)
   return posts.map((post) => ({
-    params: { slug: post.slug },
+    params: { slug: post.id },
     props: { post },
   }))
 }
@@ -20,7 +20,7 @@ interface Props {
 }
 
 const { post } = Astro.props
-const { Content } = await post.render()
+const { Content } = await render(post)
 
 const readingTime = calculateReadingTime(post.body ?? '')
 
@@ -55,7 +55,7 @@ const schemas: Record<string, unknown>[] = [
     },
     mainEntityOfPage: {
       '@type': 'WebPage',
-      '@id': `${siteUrl}/blog/${post.slug}`,
+      '@id': `${siteUrl}/blog/${post.id}`,
     },
     keywords: post.data.tags?.join(', ') ?? '',
     articleSection: post.data.category ?? 'Guides',
@@ -71,7 +71,7 @@ const schemas: Record<string, unknown>[] = [
         '@type': 'ListItem',
         position: 3,
         name: post.data.title,
-        item: `${siteUrl}/blog/${post.slug}`,
+        item: `${siteUrl}/blog/${post.id}`,
       },
     ],
   },
