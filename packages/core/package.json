@@ -64,7 +64,7 @@
   },
   "dependencies": {
     "@opentelemetry/api": "1.9.0",
-    "@opentelemetry/auto-instrumentations-node": "0.69.0",
+    "@opentelemetry/auto-instrumentations-node": "0.72.0",
     "@opentelemetry/exporter-trace-otlp-http": "0.211.0",
     "@opentelemetry/resources": "2.6.0",
     "@opentelemetry/sdk-node": "0.213.0",
