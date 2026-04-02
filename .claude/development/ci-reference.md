@@ -158,6 +158,66 @@ FAILED=$(gh pr view $PR --json statusCheckRollup \
 
 **Rule**: Always wait for Wave N CI to show green before starting Wave N+1 rebase. Starting early saves <30s but risks a reflog recovery if Wave N's checks later fail.
 
+## Dependabot Batch Merge Process (SMI-3772, SMI-3773, SMI-3775)
+
+When merging multiple Dependabot PRs in a single session, follow this process to avoid lockfile drift and wasted CI cycles.
+
+### Merge Pacing (SMI-3772)
+
+**Rule**: After every 3–4 PR merges, pause and let pending PRs rebase before continuing.
+
+Dependabot PRs are generated from different lockfile snapshots. Merging them sequentially without pauses accumulates transitive dependency conflicts — particularly in `@smithy/*` chains. The 2026-04-02 batch (14 PRs) required 3 manual lockfile refresh commits because merges outpaced rebases.
+
+**Merge order** (by risk, not PR number):
+
+1. **Wave 1 — GitHub Actions**: No lockfile impact, merge freely
+2. **Wave 2 — Safe npm devDeps**: Types-only, minor/patch bumps. Pause after 3–4 merges for rebase cycle
+3. **Wave 3 — Medium/high-risk majors**: One at a time, preflight between each
+
+**Lockfile refresh pattern** (when `npm ci` fails after a batch):
+
+```bash
+docker exec skillsmith-dev-1 npm ci 2>&1 | tail -5    # Fail-fast detection
+docker exec skillsmith-dev-1 npm install               # Regenerate lockfile
+git add package-lock.json && git commit -m "chore: refresh lockfile after Dependabot batch"
+git push
+```
+
+**Reference**: [2026-04-02 Dependabot batch merge retro](../../docs/internal/retros/2026-04-02-dependabot-batch-merge-retro.md)
+
+### @smithy/* Lockfile Drift (SMI-3773)
+
+`@smithy/types`, `@smithy/util-*`, and `aws-sdk-client-mock` descendants are transitive dependencies of `@aws-sdk/*` packages in the enterprise package. They cause lockfile conflicts when Dependabot PRs are merged sequentially because:
+
+1. PR A merges → lockfile updated with new `@smithy/*` resolutions
+2. PR B (generated before A merged) has a lockfile based on a prior `@smithy/*` snapshot
+3. `@dependabot rebase` uses merge-based update — it does NOT regenerate lockfiles for transitive drift
+4. Manual lockfile refresh is required
+
+**Pre-batch check** — assess version spread before starting:
+
+```bash
+docker exec skillsmith-dev-1 npm ls @smithy/types 2>&1 | head -20
+```
+
+If multiple versions appear across dependency chains, expect lockfile conflicts after every 2–3 merges.
+
+### Edge Function Isolation — Dependabot Triage (SMI-3775)
+
+`@supabase/supabase-js` npm bumps do **NOT** affect Supabase Edge Functions.
+
+Edge functions import from Deno ESM URLs pinned at specific versions (e.g., `esm.sh/@supabase/supabase-js@2.47.0`). They are completely independent of the npm lockfile.
+
+**Affected by npm bumps** (test these):
+- `packages/core` — caret dep (`^2.78.0`)
+- `packages/website` — exact pin (`2.90.1` — verify if Dependabot PR bumps it)
+- `tests/e2e/`, `scripts/`
+
+**NOT affected** (skip during triage):
+- `supabase/functions/` — Deno ESM, independent of npm
+
+See [edge-function-patterns.md](edge-function-patterns.md) §Third-Party Library Imports for the pinning convention.
+
 ## Docker BuildKit Cache Policy (SMI-3531, SMI-3539, SMI-3653)
 
 Three workflows build Docker images with BuildKit GHA cache. All Docker build jobs have a **20-minute timeout** to accommodate cold builds (~15 min for native module compilation).
