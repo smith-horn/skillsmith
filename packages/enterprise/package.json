@@ -49,7 +49,7 @@
     "@smithy/middleware-retry": "4.1.11",
     "@smithy/protocol-http": "5.1.2",
     "@smithy/smithy-client": "4.4.3",
-    "@smithy/types": "4.3.1",
+    "@smithy/types": "4.13.1",
     "@smithy/util-retry": "4.1.2",
     "vitest": "4.0.16"
   },
