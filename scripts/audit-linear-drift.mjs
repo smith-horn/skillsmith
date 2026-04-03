@@ -9,6 +9,12 @@
  *   node scripts/audit-linear-drift.mjs                     # Last 30 days
  *   node scripts/audit-linear-drift.mjs --since 2025-01-01  # Custom window
  *   node scripts/audit-linear-drift.mjs --json              # JSON output
+ *   node scripts/audit-linear-drift.mjs --verbose           # Per-issue trace
+ *
+ * Output tiers (JSON mode):
+ *   verified    - Commit touches source globs or merged PR found
+ *   mentionOnly - Commit exists but no source glob match (informational)
+ *   drift       - No commit or PR references the issue
  *
  * Environment:
  *   LINEAR_API_KEY  - Required for Linear GraphQL API
