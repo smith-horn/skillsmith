@@ -3,6 +3,54 @@
 # Issues listed here are considered legitimately completed without source code
 # changes (e.g., pure documentation tasks, manual operations, external actions).
 # One issue identifier per line. Lines starting with # are comments.
-#
-# Example:
-# SMI-1234  # Docs-only: updated CLAUDE.md patterns
+
+# External project: code review findings for external venue crawler (not Skillsmith source)
+SMI-3200
+SMI-3201
+SMI-3202
+SMI-3203
+SMI-3204
+SMI-3205
+SMI-3206
+SMI-3207
+SMI-3208
+SMI-3209
+SMI-3210
+SMI-3211
+
+# External project: EvoSkill harness work (smith-horn/evoskill-harness repo)
+SMI-3276
+SMI-3284
+SMI-3285
+SMI-3286
+SMI-3287
+SMI-3289
+SMI-3290
+SMI-3291
+SMI-3292
+SMI-3293
+SMI-3294
+SMI-3295
+SMI-3296
+SMI-3297
+SMI-3298
+SMI-3299
+
+# External project: gcloud skill update (user-level skill, not in this repo)
+SMI-3216
+
+# External project: search quality benchmarking (evoskill-harness)
+SMI-3255
+SMI-3258
+SMI-3259
+SMI-3263
+SMI-3265
+SMI-3266
+SMI-3268
+SMI-3269
+SMI-3270
+SMI-3271
+SMI-3272
+SMI-3273
+SMI-3274
+SMI-3275
