@@ -56,3 +56,21 @@ export function isValidSkillId(skillId: string): boolean {
 export function sanitizeSkillId(skillId: string): string {
   return skillId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 128)
 }
+
+/** Allowlist for spawn command/arg characters. Permits paths, flags, and common values. */
+const SAFE_SPAWN_CHARS = /^[a-zA-Z0-9._/@: -]+$/
+
+/**
+ * Validate command and args are safe for direct execution (no shell).
+ * Uses allowlist — only permits alphanumeric, dots, underscores, slashes, @, colons, spaces, hyphens.
+ */
+export function validateSpawnArgs(command: string, args: string[]): void {
+  if (!SAFE_SPAWN_CHARS.test(command)) {
+    throw new Error('Unsafe server command: contains disallowed characters')
+  }
+  for (const arg of args) {
+    if (!SAFE_SPAWN_CHARS.test(arg)) {
+      throw new Error('Unsafe server argument: contains disallowed characters')
+    }
+  }
+}

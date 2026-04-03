@@ -230,12 +230,12 @@ export class SkillHoverProvider implements vscode.HoverProvider {
   private getFrontmatterHover(lineText: string, position: vscode.Position): vscode.Hover | null {
     // Extract field name from line
     const match = lineText.match(/^(\s*)(\w+)(:)/)
-    if (!match || !match[1] || !match[2]) {
+    if (!match?.[2]) {
       return null
     }
 
-    const indent = match[1]
-    const fieldNamePart = match[2]
+    const indent = match[1] ?? ''
+    const fieldNamePart = match[2]!
     const fieldName = fieldNamePart.toLowerCase()
     const fieldDoc = FIELD_DOCUMENTATION[fieldName]
 

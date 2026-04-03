@@ -6,7 +6,12 @@ import * as vscode from 'vscode'
 import { generateCspNonce, getSkillDetailCsp } from '../utils/csp.js'
 import type { SkillService } from '../services/SkillService.js'
 import type { ExtendedSkillData, SkillPanelMessage } from './skill-panel-types.js'
-import { getLoadingHtml, getSkillDetailHtml } from './skill-panel-html.js'
+import {
+  getLoadingHtml,
+  getSkillDetailHtml,
+  getErrorHtml,
+  mapErrorToUserMessage,
+} from './skill-panel-html.js'
 
 // Re-export types for backwards compatibility
 export type { ExtendedSkillData, ScoreBreakdown } from './skill-panel-types.js'
@@ -118,6 +123,9 @@ export class SkillDetailPanel {
         this._showFullContent = true
         this._update()
         return
+      case 'retry':
+        void this._loadAndUpdate()
+        return
     }
   }
 
@@ -152,14 +160,26 @@ export class SkillDetailPanel {
     this._showFullContent = false
 
     if (!SkillDetailPanel._skillService) {
-      console.warn('[Skillsmith] SkillService not initialized — cannot load skill details')
+      const nonce = this._getNonce()
+      this._panel.webview.html = getErrorHtml(
+        'SkillService not initialized. Run "Developer: Reload Window" from the Command Palette (Ctrl+Shift+P / Cmd+Shift+P).',
+        this._skillId,
+        nonce
+      )
       return
     }
 
-    const { skill } = await SkillDetailPanel._skillService.getRichSkill(this._skillId)
-    this._skillData = skill
-
-    this._update()
+    try {
+      const { skill } = await SkillDetailPanel._skillService.getRichSkill(this._skillId)
+      this._skillData = skill
+      this._update()
+    } catch (error) {
+      const rawMessage = error instanceof Error ? error.message : String(error)
+      const userMessage = mapErrorToUserMessage(rawMessage)
+      const nonce = this._getNonce()
+      this._panel.title = `Error: ${this._skillId}`
+      this._panel.webview.html = getErrorHtml(userMessage, this._skillId, nonce, rawMessage)
+    }
   }
 
   private _update() {
