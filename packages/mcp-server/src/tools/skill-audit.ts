@@ -4,8 +4,8 @@
  * @see SMI-skill-version-tracking Wave 3
  *
  * Returns a summary of active security advisories for installed skills.
- * The advisory system is in early access — advisories are published by the
- * Skillsmith team as security issues are identified.
+ * Advisories are published by the Skillsmith team as security issues
+ * are identified.
  *
  * Tier gate: Team (skill_security_audit feature flag).
  * Community and Individual users receive a graceful license error response.
@@ -65,7 +65,7 @@ export interface AdvisorySummary {
 export interface SkillAuditResponse {
   /** Whether advisories data is available */
   advisoriesAvailable: boolean
-  /** Early-access message when no advisories are in the database */
+  /** Message when no advisories are in the database */
   message?: string
   /** Counts by severity (only present when advisoriesAvailable: true) */
   summary?: AdvisorySummary
@@ -131,13 +131,13 @@ export async function executeSkillAudit(
     advisories = advisoryRepo.getActiveAdvisories()
   }
 
-  // No advisories in DB — early-access message
+  // No advisories in DB
   if (advisories.length === 0) {
     return {
       advisoriesAvailable: false,
       message:
-        'Advisory system is in early access — the Skillsmith team publishes advisories as ' +
-        'security issues are identified. Run `skillsmith sync` to fetch the latest.',
+        'No advisories have been published yet. This does not indicate installed ' +
+        'skills have been reviewed. Run `skillsmith sync` to fetch the latest.',
     }
   }
 

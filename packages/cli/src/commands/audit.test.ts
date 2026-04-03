@@ -49,7 +49,7 @@ describe('audit command — AdvisoryRepository integration', () => {
     closeDatabase(db)
   })
 
-  it('returns empty array when DB has no advisories (early-access scenario)', () => {
+  it('returns empty array when DB has no advisories', () => {
     const advisories = repo.getActiveAdvisories()
     expect(advisories).toHaveLength(0)
   })

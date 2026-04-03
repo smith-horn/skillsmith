@@ -20,8 +20,10 @@
  * });
  */
 
+import { resolve } from 'path'
 import { z } from 'zod'
 import { CodebaseAnalyzer, type CodebaseContext, type FrameworkInfo } from '@skillsmith/core'
+import { hasPathTraversal } from './validate.helpers.js'
 
 /**
  * Zod schema for analyze tool input validation
@@ -147,9 +149,14 @@ export async function executeAnalyze(input: AnalyzeInput): Promise<AnalyzeRespon
   // Validate input
   const validated = analyzeInputSchema.parse(input)
 
+  if (hasPathTraversal(validated.path)) {
+    throw new Error('Path contains path traversal pattern')
+  }
+  const resolvedPath = resolve(validated.path)
+
   const analyzer = new CodebaseAnalyzer()
 
-  const context = await analyzer.analyze(validated.path, {
+  const context = await analyzer.analyze(resolvedPath, {
     maxFiles: validated.max_files,
     excludeDirs: validated.exclude_dirs,
     includeDevDeps: validated.include_dev_deps,

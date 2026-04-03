@@ -211,9 +211,8 @@ export async function executeSkillRescan(
         failedCount: 0,
         results: [],
         error:
-          `Skill "${input.skillName}" not found in ${skillsDir}. ` +
-          `Found ${installedSkills.length} installed skill(s): ` +
-          `${installedSkills.map((s) => s.name).join(', ') || '(none)'}`,
+          `Skill "${input.skillName}" not found. ` +
+          `${installedSkills.length} skill(s) currently installed.`,
       }
     }
   }

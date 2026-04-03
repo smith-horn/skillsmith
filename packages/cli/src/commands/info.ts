@@ -18,6 +18,12 @@ import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { displaySkillDetails } from './search-formatters.js'
 
+/** Strip ANSI escape sequences to prevent terminal injection from untrusted content */
+function stripAnsiEscapes(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
+}
+
 interface InfoOptions {
   db: string
   raw: boolean
@@ -85,7 +91,7 @@ export function createInfoCommand(): Command {
         // Raw content only
         if (options.raw) {
           if (content) {
-            console.log(content)
+            console.log(stripAnsiEscapes(content))
           } else {
             console.log(chalk.gray('No SKILL.md content available for this skill.'))
           }
@@ -98,7 +104,7 @@ export function createInfoCommand(): Command {
         if (content) {
           console.log(chalk.bold('\nSkill Content:'))
           console.log(chalk.dim('─'.repeat(60)))
-          console.log(content)
+          console.log(stripAnsiEscapes(content))
           console.log(chalk.dim('─'.repeat(60)))
         } else {
           console.log(chalk.gray('\nNo SKILL.md content available for this skill.'))

@@ -41,6 +41,22 @@ export async function initMcpServer(
       },
     }))
 
+  // Validate CLI-provided name (interactive path already validates via prompt)
+  if (name) {
+    if (!name.trim()) {
+      console.error(chalk.red('Invalid server name: Name is required'))
+      process.exit(1)
+    }
+    if (!/^[a-z][a-z0-9-]*$/.test(name)) {
+      console.error(
+        chalk.red(
+          'Invalid server name: must be lowercase, start with a letter, and contain only letters, numbers, and hyphens'
+        )
+      )
+      process.exit(1)
+    }
+  }
+
   const description = await input({
     message: 'Description:',
     default: `An MCP server for ${serverName}`,
