@@ -8,7 +8,7 @@
     "ruflo": {
       "type": "stdio",
       "command": "npx",
-      "args": ["ruflo@latest", "mcp", "start"],
+      "args": ["ruflo@3.5.51", "mcp", "start"],
       "env": {
         "CLAUDE_FLOW_LOG_LEVEL": "info",
         "CLAUDE_FLOW_MEMORY_BACKEND": "sqlite"
