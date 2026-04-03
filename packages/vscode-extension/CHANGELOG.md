@@ -4,6 +4,26 @@ All notable changes to the Skillsmith VS Code extension will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.6] - 2026-04-02
+
+### Security
+
+- **Shell injection fix**: Removed `shell: true` from MCP server spawn, replaced with `cross-spawn` for safe cross-platform execution (SMI-3805, GitHub #423)
+- Added `validateSpawnArgs()` allowlist in `utils/security.ts` for defense-in-depth input validation
+
+### Fixed
+
+- `callTool` no longer throws cryptic errors on malformed MCP responses — defensive JSON.parse with try/catch and response shape validation (SMI-3801, GitHub #433)
+- Detail panel no longer stuck on "Loading..." forever when MCP fails — shows accessible error HTML with retry button (SMI-3802, GitHub #432)
+- Category completion snippet now produces valid YAML with closing quote (SMI-3803, GitHub #425)
+- Hover provider now works on all top-level frontmatter fields (`name`, `description`, `version`, etc.) (SMI-3804, GitHub #424)
+
+### Added
+
+- `getErrorHtml()` with CSP nonce, `aria-live="polite"`, `role="alert"`, and retry button with "Retrying..." feedback
+- `mapErrorToUserMessage()` maps common errors (ECONNREFUSED, JSON parse, etc.) to user-friendly messages
+- 37 new tests across 5 test files
+
 ## [0.1.5] - 2026-03-29
 
 ### Fixed
