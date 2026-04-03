@@ -37,7 +37,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-cloudwatch-logs": "3.1015.0",
+    "@aws-sdk/client-cloudwatch-logs": "3.1024.0",
     "@skillsmith/core": "^0.4.16",
     "jose": "^5.10.0",
     "zod": "4.2.1"
