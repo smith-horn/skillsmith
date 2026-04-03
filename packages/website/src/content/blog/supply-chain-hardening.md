@@ -25,8 +25,8 @@ A supply chain attack compromises software by targeting its dependencies rather 
 This isn't theoretical. The Node.js ecosystem has seen it firsthand:
 
 - **event-stream (2018)** — A popular npm package was handed to a new maintainer who injected code targeting cryptocurrency wallets. 8 million weekly downloads carried the payload.
-- **LiteLLM (2026)** — The TeamPCP group compromised a maintainer's GitHub account, exfiltrated a PyPI publish token via a poisoned GitHub Action, and published two backdoored versions of LiteLLM (95 million monthly downloads) containing a three-stage credential harvester and Kubernetes lateral movement toolkit.
 - **xz-utils (2024)** — A multi-year social engineering campaign embedded a backdoor into a critical Linux compression library, nearly compromising SSH authentication worldwide.
+- **LiteLLM (2026)** — The TeamPCP group compromised a maintainer's GitHub account, exfiltrated a PyPI publish token via a poisoned GitHub Action, and published two backdoored versions of LiteLLM (95 million monthly downloads) containing a three-stage credential harvester and Kubernetes lateral movement toolkit.
 
 Why does this matter for Skillsmith? Our edge functions handle billing (Stripe webhooks, checkout), skill indexing, and API authentication. Every one of those functions imports code from external CDNs and registries. If any of those imports were compromised, it could affect your account, your payments, and your data.
 
