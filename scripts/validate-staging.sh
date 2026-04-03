@@ -13,7 +13,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 STAGING_REF="${STAGING_SUPABASE_PROJECT_REF:?STAGING_SUPABASE_PROJECT_REF not set}"
 PROD_REF="${SUPABASE_PROJECT_REF:?SUPABASE_PROJECT_REF not set}"
@@ -54,9 +53,10 @@ echo "[3/4] Deploying edge functions..."
 echo ""
 echo "[4/4] Running health check..."
 HEALTH_URL="https://${STAGING_REF}.supabase.co/functions/v1/health"
-HTTP_CODE=$(curl -s -o /tmp/staging-health-response.json -w "%{http_code}" "$HEALTH_URL")
-RESPONSE=$(cat /tmp/staging-health-response.json)
-rm -f /tmp/staging-health-response.json
+TMPFILE="$(mktemp)"
+HTTP_CODE=$(curl -s -o "$TMPFILE" -w "%{http_code}" "$HEALTH_URL")
+RESPONSE=$(cat "$TMPFILE")
+rm -f "$TMPFILE"
 
 if [[ "$HTTP_CODE" == "200" ]]; then
   echo "  Health check PASSED (HTTP $HTTP_CODE)"
