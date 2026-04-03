@@ -209,11 +209,13 @@ If multiple versions appear across dependency chains, expect lockfile conflicts 
 Edge functions import from Deno ESM URLs pinned at specific versions (e.g., `esm.sh/@supabase/supabase-js@2.47.0`). They are completely independent of the npm lockfile.
 
 **Affected by npm bumps** (test these):
+
 - `packages/core` — caret dep (`^2.78.0`)
 - `packages/website` — exact pin (`2.90.1` — verify if Dependabot PR bumps it)
 - `tests/e2e/`, `scripts/`
 
 **NOT affected** (skip during triage):
+
 - `supabase/functions/` — Deno ESM, independent of npm
 
 See [edge-function-patterns.md](edge-function-patterns.md) §Third-Party Library Imports for the pinning convention.
