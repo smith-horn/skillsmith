@@ -26,9 +26,15 @@ const LINEAR_API_URL = 'https://api.linear.app/graphql'
 const SOURCE_GLOBS = [
   'packages/**/*.ts',
   'packages/**/*.tsx',
+  'packages/**/*.astro',
+  'packages/**/*.json',
+  'packages/**/*.md',
+  'packages/**/*.mjs',
+  'packages/**/*.css',
   'scripts/**/*.ts',
   'scripts/**/*.mjs',
   'supabase/functions/**/*.ts',
+  '.github/workflows/**',
 ]
 const RETRY_DELAYS = [1000, 2000, 4000]
 const ALLOWLIST_PATH = '.linear-drift-allowlist'
@@ -39,6 +45,7 @@ function parseArgs() {
   const args = process.argv.slice(2)
   const sinceIdx = args.indexOf('--since')
   const jsonMode = args.includes('--json')
+  const verbose = args.includes('--verbose')
 
   const thirtyDaysAgo = new Date()
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
@@ -48,7 +55,7 @@ function parseArgs() {
     since = args[sinceIdx + 1]
   }
 
-  return { since, jsonMode }
+  return { since, jsonMode, verbose }
 }
 
 // --- Allowlist ---
@@ -93,12 +100,12 @@ async function fetchDoneIssues(since) {
   }
 
   const query = `
-    query DoneIssues($after: String) {
+    query DoneIssues($after: String, $since: DateTime!) {
       issues(
         filter: {
           team: { key: { eq: "SMI" } }
           state: { type: { eq: "completed" } }
-          completedAt: { gte: "${since}T00:00:00Z" }
+          completedAt: { gte: $since }
         }
         first: 100
         after: $after
@@ -114,6 +121,7 @@ async function fetchDoneIssues(since) {
     }
   `
 
+  const sinceDateTime = `${since}T00:00:00Z`
   const allIssues = []
   let cursor = null
 
@@ -124,7 +132,10 @@ async function fetchDoneIssues(since) {
         'Content-Type': 'application/json',
         Authorization: apiKey,
       },
-      body: JSON.stringify({ query, variables: { after: cursor } }),
+      body: JSON.stringify({
+        query,
+        variables: { after: cursor, since: sinceDateTime },
+      }),
     })
 
     const data = await res.json()
@@ -145,7 +156,6 @@ async function fetchDoneIssues(since) {
 
 function hasGitCommitWithSource(issueId) {
   try {
-    const diffFilter = SOURCE_GLOBS.map((g) => `-- '${g}'`).join(' ')
     const output = execFileSync(
       'git',
       [
@@ -166,17 +176,22 @@ function hasGitCommitWithSource(issueId) {
   }
 }
 
-function hasMergedPrWithSource(issueId) {
+function hasMergedPr(issueId) {
   try {
     const output = execFileSync(
       'gh',
       [
-        'api',
-        'search/issues',
-        '-f',
-        `q=${issueId} repo:smith-horn/skillsmith is:pr is:merged`,
+        'search',
+        'prs',
+        issueId,
+        '--repo',
+        'smith-horn/skillsmith',
+        '--state',
+        'merged',
+        '--json',
+        'number',
         '--jq',
-        '.items | length',
+        'length',
       ],
       { encoding: 'utf-8', timeout: 10000, stdio: ['pipe', 'pipe', 'ignore'] }
     ).trim()
@@ -187,14 +202,48 @@ function hasMergedPrWithSource(issueId) {
   }
 }
 
-function isVerified(issueId) {
-  return hasGitCommitWithSource(issueId) || hasMergedPrWithSource(issueId)
+function hasAnyGitCommit(issueId) {
+  try {
+    const output = execFileSync('git', ['log', '--all', `--grep=${issueId}`, '--format=%H'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      stdio: ['pipe', 'pipe', 'ignore'],
+    }).trim()
+
+    return output.length > 0
+  } catch {
+    return false
+  }
+}
+
+function verifyIssue(issueId, verbose) {
+  if (hasGitCommitWithSource(issueId)) {
+    if (verbose) console.error(`  ${issueId}: source-glob check HIT → verified`)
+    return { status: 'verified', reason: 'source-commit' }
+  }
+
+  if (hasMergedPr(issueId)) {
+    if (verbose) console.error(`  ${issueId}: source-glob MISS → pr-search HIT → verified`)
+    return { status: 'verified', reason: 'merged-pr' }
+  }
+
+  if (hasAnyGitCommit(issueId)) {
+    if (verbose)
+      console.error(
+        `  ${issueId}: source-glob MISS → pr-search MISS → any-commit HIT → mention-only`
+      )
+    return { status: 'mention-only', reason: 'commit-exists-no-source-glob' }
+  }
+
+  if (verbose)
+    console.error(`  ${issueId}: source-glob MISS → pr-search MISS → any-commit MISS → unverified`)
+  return { status: 'unverified', reason: 'no-commit-found' }
 }
 
 // --- Main ---
 
 async function main() {
-  const { since, jsonMode } = parseArgs()
+  const { since, jsonMode, verbose } = parseArgs()
 
   if (!jsonMode) {
     console.log(`Linear Drift Audit — checking issues completed since ${since}\n`)
@@ -209,6 +258,7 @@ async function main() {
 
   const driftIssues = []
   const verifiedIssues = []
+  const mentionOnlyIssues = []
   const allowlistedIssues = []
 
   for (const issue of issues) {
@@ -217,10 +267,14 @@ async function main() {
       continue
     }
 
-    if (isVerified(issue.identifier)) {
+    const result = verifyIssue(issue.identifier, verbose)
+
+    if (result.status === 'verified') {
       verifiedIssues.push(issue)
+    } else if (result.status === 'mention-only') {
+      mentionOnlyIssues.push({ ...issue, reason: result.reason })
     } else {
-      driftIssues.push(issue)
+      driftIssues.push({ ...issue, reason: result.reason })
     }
   }
 
@@ -231,10 +285,17 @@ async function main() {
           since,
           total: issues.length,
           verified: verifiedIssues.length,
+          mentionOnly: mentionOnlyIssues.map((i) => ({
+            id: i.identifier,
+            title: i.title,
+            completedAt: i.completedAt,
+            reason: i.reason,
+          })),
           drift: driftIssues.map((i) => ({
             id: i.identifier,
             title: i.title,
             completedAt: i.completedAt,
+            reason: i.reason,
           })),
           allowlisted: allowlistedIssues.length,
         },
@@ -244,11 +305,19 @@ async function main() {
     )
   } else {
     console.log(`Verified: ${verifiedIssues.length}`)
+    console.log(`Mention-only (commit exists, no source glob match): ${mentionOnlyIssues.length}`)
     console.log(`Allowlisted: ${allowlistedIssues.length}`)
     console.log(`Drift detected: ${driftIssues.length}`)
 
+    if (mentionOnlyIssues.length > 0) {
+      console.log('\n--- Issues with commits but no source glob match (informational) ---\n')
+      for (const issue of mentionOnlyIssues) {
+        console.log(`  ${issue.identifier}: ${issue.title} (reason: ${issue.reason})`)
+      }
+    }
+
     if (driftIssues.length > 0) {
-      console.log('\n--- Issues marked Done without source commits ---\n')
+      console.log('\n--- Issues marked Done without any commits ---\n')
       for (const issue of driftIssues) {
         console.log(
           `  ${issue.identifier}: ${issue.title} (completed: ${issue.completedAt?.split('T')[0]})`
@@ -273,4 +342,13 @@ if (isDirectExecution) {
     console.error('Drift audit failed:', err.message)
     process.exit(1)
   })
+}
+
+export {
+  loadAllowlist,
+  parseArgs,
+  hasGitCommitWithSource,
+  hasMergedPr,
+  hasAnyGitCommit,
+  verifyIssue,
 }

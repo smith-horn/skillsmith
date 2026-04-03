@@ -48,12 +48,15 @@ jobs:
         id: check
         if: steps.audit.outcome == 'success' || steps.audit.outcome == 'failure'
         run: |
-          if [ -f /tmp/drift-results.json ]; then
-            DRIFT_COUNT=$(jq -r '.drift | length' /tmp/drift-results.json 2>/dev/null || echo "0")
-            echo "drift_count=$DRIFT_COUNT" >> $GITHUB_OUTPUT
-          else
-            echo "drift_count=0" >> $GITHUB_OUTPUT
+          if [ ! -f /tmp/drift-results.json ] || ! jq empty /tmp/drift-results.json 2>/dev/null; then
+            echo "::error::Audit script crashed or produced invalid output"
+            echo "drift_count=error" >> $GITHUB_OUTPUT
+            exit 1
           fi
+          DRIFT_COUNT=$(jq -r '.drift | length' /tmp/drift-results.json)
+          MENTION_COUNT=$(jq -r '.mentionOnly | length' /tmp/drift-results.json 2>/dev/null || echo "0")
+          echo "drift_count=$DRIFT_COUNT" >> $GITHUB_OUTPUT
+          echo "mention_count=$MENTION_COUNT" >> $GITHUB_OUTPUT
 
       - name: Ensure governance label exists
         if: steps.check.outputs.drift_count != '0'
@@ -68,25 +71,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           DRIFT_COUNT=${{ steps.check.outputs.drift_count }}
+          MENTION_COUNT=${{ steps.check.outputs.mention_count }}
           DATE=$(date -u +%Y-%m-%d)
 
           # Build issue body
           BODY="## Linear Drift Audit — $DATE
 
-          **$DRIFT_COUNT issue(s)** marked Done without source code commits.
+          **$DRIFT_COUNT issue(s)** marked Done without any source code commits.
+          **$MENTION_COUNT issue(s)** have commits but no source glob match (informational).
 
           ### Drift Details
           "
 
-          # Append each drifted issue
-          BODY+=$(jq -r '.drift[] | "- **\(.id)**: \(.title) (completed: \(.completedAt))"' /tmp/drift-results.json)
+          # Append each drifted issue with reason
+          BODY+=$(jq -r '.drift[] | "- **\(.id)**: \(.title) (reason: \(.reason))"' /tmp/drift-results.json)
 
           BODY+="
 
           ### Resolution
           For each issue above, either:
           1. **Implement the code** and reference the issue in your commit
-          2. **Add to allowlist** (.linear-drift-allowlist) if legitimately docs-only
+          2. **Add to allowlist** (.linear-drift-allowlist) if legitimately docs-only or external
           3. **Reopen the issue** if it was closed prematurely
 
           ---
@@ -114,12 +119,14 @@ jobs:
           if [ -f /tmp/drift-results.json ]; then
             TOTAL=$(jq -r '.total' /tmp/drift-results.json 2>/dev/null || echo "?")
             VERIFIED=$(jq -r '.verified' /tmp/drift-results.json 2>/dev/null || echo "?")
+            MENTION=$(jq -r '.mentionOnly | length' /tmp/drift-results.json 2>/dev/null || echo "0")
             DRIFT=$(jq -r '.drift | length' /tmp/drift-results.json 2>/dev/null || echo "?")
             ALLOWLISTED=$(jq -r '.allowlisted' /tmp/drift-results.json 2>/dev/null || echo "?")
             echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
             echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
             echo "| Total completed | $TOTAL |" >> $GITHUB_STEP_SUMMARY
             echo "| Verified | $VERIFIED |" >> $GITHUB_STEP_SUMMARY
+            echo "| Mention-only | $MENTION |" >> $GITHUB_STEP_SUMMARY
             echo "| Allowlisted | $ALLOWLISTED |" >> $GITHUB_STEP_SUMMARY
             echo "| **Drift** | **$DRIFT** |" >> $GITHUB_STEP_SUMMARY
           else
