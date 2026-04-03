@@ -2,7 +2,12 @@
  * Unit tests for security utilities
  */
 import { describe, it, expect } from 'vitest'
-import { escapeHtml, isValidSkillId, sanitizeSkillId } from '../utils/security.js'
+import {
+  escapeHtml,
+  isValidSkillId,
+  sanitizeSkillId,
+  validateSpawnArgs,
+} from '../utils/security.js'
 
 describe('escapeHtml', () => {
   it('should escape HTML entities', () => {
@@ -99,5 +104,45 @@ describe('sanitizeSkillId', () => {
   it('should truncate long IDs', () => {
     const longId = 'a'.repeat(200)
     expect(sanitizeSkillId(longId).length).toBe(128)
+  })
+})
+
+describe('validateSpawnArgs', () => {
+  it('should accept clean commands', () => {
+    expect(() => validateSpawnArgs('npx', ['-y', '@skillsmith/mcp-server'])).not.toThrow()
+    expect(() => validateSpawnArgs('node', ['dist/index.js'])).not.toThrow()
+    expect(() => validateSpawnArgs('/usr/local/bin/node', ['--inspect', 'server.js'])).not.toThrow()
+  })
+
+  it('should accept commands with common path characters', () => {
+    expect(() => validateSpawnArgs('npx', ['-y', '@scope/package'])).not.toThrow()
+    expect(() => validateSpawnArgs('node', ['src/main.js'])).not.toThrow()
+    expect(() => validateSpawnArgs('/usr/bin/env', ['node'])).not.toThrow()
+  })
+
+  it('should reject shell metacharacters in command', () => {
+    expect(() => validateSpawnArgs('npx; rm -rf /', [])).toThrow('Unsafe server command')
+    expect(() => validateSpawnArgs('npx | cat', [])).toThrow('Unsafe server command')
+    expect(() => validateSpawnArgs('npx && echo pwned', [])).toThrow('Unsafe server command')
+    expect(() => validateSpawnArgs('$(whoami)', [])).toThrow('Unsafe server command')
+    expect(() => validateSpawnArgs('npx`whoami`', [])).toThrow('Unsafe server command')
+  })
+
+  it('should reject shell metacharacters in args', () => {
+    expect(() => validateSpawnArgs('npx', ['; rm -rf /'])).toThrow('Unsafe server argument')
+    expect(() => validateSpawnArgs('npx', ['$(whoami)'])).toThrow('Unsafe server argument')
+    expect(() => validateSpawnArgs('npx', ['foo | bar'])).toThrow('Unsafe server argument')
+  })
+
+  it('should reject glob and expansion characters', () => {
+    expect(() => validateSpawnArgs('npx', ['*.js'])).toThrow('Unsafe server argument')
+    expect(() => validateSpawnArgs('npx', ['~/.config'])).toThrow('Unsafe server argument')
+    expect(() => validateSpawnArgs('npx', ['foo!bar'])).toThrow('Unsafe server argument')
+  })
+
+  it('should reject backslash (not in allowlist)', () => {
+    expect(() => validateSpawnArgs('npx', ['C:\\Windows\\System32'])).toThrow(
+      'Unsafe server argument'
+    )
   })
 })

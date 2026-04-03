@@ -3,7 +3,9 @@
  * Manages communication with the Skillsmith MCP server
  */
 import * as vscode from 'vscode'
-import { spawn, type ChildProcess } from 'child_process'
+import type { ChildProcess } from 'child_process'
+import crossSpawn from 'cross-spawn'
+import { validateSpawnArgs } from '../utils/security.js'
 import {
   type McpConnectionStatus,
   type McpClientConfig,
@@ -124,9 +126,10 @@ export class McpClient {
         reject(new Error('MCP server connection timeout'))
       }, this.config.connectionTimeout)
 
-      this.process = spawn(this.config.serverCommand, this.config.serverArgs, {
+      validateSpawnArgs(this.config.serverCommand, this.config.serverArgs)
+
+      this.process = crossSpawn(this.config.serverCommand, this.config.serverArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
-        shell: true,
       })
 
       this.process.stdout?.on('data', (data: Buffer) => {
@@ -298,29 +301,45 @@ export class McpClient {
   }
 
   /**
-   * Call an MCP tool
+   * Call an MCP tool with defensive response parsing
    */
   private async callTool<T>(name: string, args: Record<string, unknown>): Promise<T> {
     if (this.status !== 'connected') {
       throw new Error('MCP client not connected')
     }
 
-    const result = (await this.sendRequest('tools/call', {
+    const raw = await this.sendRequest('tools/call', {
       name,
       arguments: args,
-    })) as { content: { type: string; text: string }[]; isError?: boolean }
+    })
 
-    if (result.isError) {
-      const errorText = result.content[0]?.text || 'Unknown error'
+    const result = raw as Record<string, unknown> | null | undefined
+    if (!result || typeof result !== 'object') {
+      throw new Error(`Invalid MCP response: expected object, got ${typeof raw}`)
+    }
+
+    const content = result['content']
+    if (!Array.isArray(content) || content.length === 0) {
+      throw new Error('Invalid MCP response: missing or empty content array')
+    }
+
+    if (result['isError']) {
+      const errorText = (content[0] as { text?: string })?.text || 'Unknown error'
       throw new Error(errorText)
     }
 
-    const text = result.content[0]?.text
+    const text = (content[0] as { text?: string })?.text
     if (!text) {
       throw new Error('Empty response from MCP server')
     }
 
-    return JSON.parse(text) as T
+    try {
+      return JSON.parse(text) as T
+    } catch (parseError) {
+      throw new Error(
+        `Failed to parse MCP response as JSON: ${parseError instanceof Error ? parseError.message : 'unknown error'}`
+      )
+    }
   }
 
   /**

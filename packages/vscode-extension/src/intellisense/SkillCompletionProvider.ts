@@ -37,7 +37,7 @@ const FRONTMATTER_FIELDS = [
   {
     name: 'category',
     description: 'Skill category (e.g., development, testing, documentation)',
-    insertText: 'category: "${1|development,testing,documentation,productivity,devops,security|}',
+    insertText: 'category: "${1|development,testing,documentation,productivity,devops,security|}"',
     required: false,
   },
   {

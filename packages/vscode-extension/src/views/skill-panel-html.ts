@@ -3,6 +3,7 @@
  */
 
 import { escapeHtml } from '../utils/security.js'
+import { getSkillDetailCsp } from '../utils/csp.js'
 import type { ExtendedSkillData, ScoreBreakdown } from './skill-panel-types.js'
 import { getContentHtml, renderMarkdown } from './skill-panel-content.js'
 import { inferRepositoryUrl } from './skill-panel-helpers.js'
@@ -262,4 +263,67 @@ export function getSkillDetailHtml(
     ${getScript(nonce)}
 </body>
 </html>`
+}
+
+/** Map common error strings to user-friendly messages */
+export function mapErrorToUserMessage(rawError: string): string {
+  if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT/.test(rawError)) {
+    return 'Could not connect to the skill server. Check that the MCP server is running.'
+  }
+  if (/JSON|parse|unexpected token/i.test(rawError)) {
+    return 'Received an unexpected response from the server.'
+  }
+  if (/not connected/i.test(rawError)) {
+    return 'MCP client is not connected. Try reconnecting.'
+  }
+  return rawError
+}
+
+/** Generate error HTML with a retry button (CSP-compatible, accessible) */
+export function getErrorHtml(
+  message: string,
+  _skillId: string,
+  nonce: string,
+  rawError?: string
+): string {
+  const csp = getSkillDetailCsp(nonce)
+  const detailsBlock =
+    rawError && rawError !== message
+      ? `<details style="margin-top: 12px; color: var(--vscode-descriptionForeground);">
+        <summary>Technical details</summary>
+        <pre style="white-space: pre-wrap; font-size: 12px; margin-top: 8px;">${escapeHtml(rawError)}</pre>
+       </details>`
+      : ''
+
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="${csp}">
+<style nonce="${nonce}">
+  button:hover { background-color: var(--vscode-button-hoverBackground) !important; }
+  button:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
+</style>
+</head>
+<body style="font-family: var(--vscode-font-family); padding: 20px; color: var(--vscode-foreground); background-color: var(--vscode-editor-background);">
+  <div aria-live="polite">
+    <h1 style="font-size: 1.4em; font-weight: 600;">Error Loading Skill</h1>
+    <p role="alert">${escapeHtml(message)}</p>
+    <p style="color: var(--vscode-descriptionForeground); font-size: 0.9em;">
+      You can close this panel and try again from the skill list.
+    </p>
+    ${detailsBlock}
+    <button id="retryBtn" style="background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; padding: 10px 20px; border-radius: 4px; font-size: 14px; font-weight: 500; cursor: pointer; margin-top: 16px;">
+      Retry
+    </button>
+  </div>
+  <script nonce="${nonce}">
+    const vscode = acquireVsCodeApi();
+    const btn = document.getElementById('retryBtn');
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      btn.textContent = 'Retrying...';
+      vscode.postMessage({ command: 'retry' });
+    });
+  </script>
+</body></html>`
 }

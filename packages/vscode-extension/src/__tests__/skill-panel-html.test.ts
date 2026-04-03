@@ -8,6 +8,8 @@ import {
   getTrustBadgeColor,
   getTrustBadgeText,
   getLoadingHtml,
+  getErrorHtml,
+  mapErrorToUserMessage,
 } from '../views/skill-panel-html.js'
 import type { ExtendedSkillData } from '../types/skill.js'
 
@@ -280,5 +282,116 @@ describe('getLoadingHtml', () => {
     const html = getLoadingHtml()
     expect(html).toContain('Loading skill details')
     expect(html).toContain('spinner')
+  })
+})
+
+describe('mapErrorToUserMessage', () => {
+  it('maps ECONNREFUSED to friendly message', () => {
+    expect(mapErrorToUserMessage('connect ECONNREFUSED 127.0.0.1:3000')).toBe(
+      'Could not connect to the skill server. Check that the MCP server is running.'
+    )
+  })
+
+  it('maps ENOTFOUND to friendly message', () => {
+    expect(mapErrorToUserMessage('getaddrinfo ENOTFOUND example.com')).toBe(
+      'Could not connect to the skill server. Check that the MCP server is running.'
+    )
+  })
+
+  it('maps ETIMEDOUT to friendly message', () => {
+    expect(mapErrorToUserMessage('connect ETIMEDOUT')).toBe(
+      'Could not connect to the skill server. Check that the MCP server is running.'
+    )
+  })
+
+  it('maps JSON parse errors to friendly message', () => {
+    expect(mapErrorToUserMessage('Unexpected token < in JSON at position 0')).toBe(
+      'Received an unexpected response from the server.'
+    )
+  })
+
+  it('maps "Failed to parse" errors to friendly message', () => {
+    expect(mapErrorToUserMessage('Failed to parse MCP response as JSON: bad input')).toBe(
+      'Received an unexpected response from the server.'
+    )
+  })
+
+  it('maps "not connected" to friendly message', () => {
+    expect(mapErrorToUserMessage('MCP client not connected')).toBe(
+      'MCP client is not connected. Try reconnecting.'
+    )
+  })
+
+  it('passes through unknown errors unchanged', () => {
+    expect(mapErrorToUserMessage('Something unexpected happened')).toBe(
+      'Something unexpected happened'
+    )
+  })
+})
+
+describe('getErrorHtml', () => {
+  const ERROR_NONCE = 'abcdefghijklmnop12345678'
+
+  it('escapes HTML in message', () => {
+    const html = getErrorHtml('<script>alert("xss")</script>', 'test/skill', ERROR_NONCE)
+    expect(html).toContain('&lt;script&gt;')
+    expect(html).not.toContain('<script>alert')
+  })
+
+  it('includes CSP nonce in script tag', () => {
+    const html = getErrorHtml('error', 'test/skill', ERROR_NONCE)
+    expect(html).toContain(`nonce="${ERROR_NONCE}"`)
+    expect(html).toContain('<script nonce=')
+  })
+
+  it('includes aria-live="polite" for screen readers', () => {
+    const html = getErrorHtml('error', 'test/skill', ERROR_NONCE)
+    expect(html).toContain('aria-live="polite"')
+  })
+
+  it('includes role="alert" on the error message', () => {
+    const html = getErrorHtml('error', 'test/skill', ERROR_NONCE)
+    expect(html).toContain('role="alert"')
+  })
+
+  it('includes retry button with correct styling', () => {
+    const html = getErrorHtml('error', 'test/skill', ERROR_NONCE)
+    expect(html).toContain('id="retryBtn"')
+    expect(html).toContain('var(--vscode-button-background)')
+    expect(html).toContain('var(--vscode-button-foreground)')
+  })
+
+  it('includes details block when rawError differs from message', () => {
+    const html = getErrorHtml('Friendly message', 'test/skill', ERROR_NONCE, 'ECONNREFUSED')
+    expect(html).toContain('<details')
+    expect(html).toContain('Technical details')
+    expect(html).toContain('ECONNREFUSED')
+  })
+
+  it('omits details block when rawError matches message', () => {
+    const html = getErrorHtml('same error', 'test/skill', ERROR_NONCE, 'same error')
+    expect(html).not.toContain('<details')
+  })
+
+  it('omits details block when rawError is undefined', () => {
+    const html = getErrorHtml('some error', 'test/skill', ERROR_NONCE)
+    expect(html).not.toContain('<details')
+  })
+
+  it('escapes HTML in rawError details', () => {
+    const html = getErrorHtml('error', 'test/skill', ERROR_NONCE, '<img src=x onerror=alert(1)>')
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+  })
+
+  it('sends retry command on button click', () => {
+    const html = getErrorHtml('error', 'test/skill', ERROR_NONCE)
+    expect(html).toContain("command: 'retry'")
+    expect(html).toContain('vscode.postMessage')
+  })
+
+  it('includes Content-Security-Policy meta tag', () => {
+    const html = getErrorHtml('error', 'test/skill', ERROR_NONCE)
+    expect(html).toContain('Content-Security-Policy')
+    expect(html).toContain("default-src 'none'")
   })
 })
