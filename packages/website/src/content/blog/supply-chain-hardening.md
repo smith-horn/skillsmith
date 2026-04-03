@@ -7,9 +7,12 @@ category: "Engineering"
 tags: ["security", "supply-chain", "infrastructure", "dependencies"]
 featured: true
 draft: false
+ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/supply-chain/supply-chain-hero"
 ---
 
-Every npm install, every CI run, every edge function deploy pulls code from external sources you don't control. A single compromised package or retargeted action tag can inject malicious code into your build pipeline — silently, without changing a single line of your own code.
+![A network of interconnected software dependency nodes secured with padlocks and shields](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/supply-chain/supply-chain-hero)
+
+Every npm install, every CI run, every edge function deploy can pull code from external sources you don't control. A single compromised package or retargeted action tag can inject malicious code into your build pipeline — silently, without changing a single line of your own code.
 
 This week, we locked down four attack surfaces across Skillsmith's infrastructure. Nothing was exploited. No users were affected. We did this because supply chain security is too important to wait for an incident.
 
@@ -22,7 +25,7 @@ A supply chain attack compromises software by targeting its dependencies rather 
 This isn't theoretical. The Node.js ecosystem has seen it firsthand:
 
 - **event-stream (2018)** — A popular npm package was handed to a new maintainer who injected code targeting cryptocurrency wallets. 8 million weekly downloads carried the payload.
-- **ua-parser-js (2021)** — An attacker gained access to the maintainer's npm account and published versions containing cryptominers and credential stealers.
+- **LiteLLM (2026)** — The TeamPCP group compromised a maintainer's GitHub account, exfiltrated a PyPI publish token via a poisoned GitHub Action, and published two backdoored versions of LiteLLM (95 million monthly downloads) containing a three-stage credential harvester and Kubernetes lateral movement toolkit.
 - **xz-utils (2024)** — A multi-year social engineering campaign embedded a backdoor into a critical Linux compression library, nearly compromising SSH authentication worldwide.
 
 Why does this matter for Skillsmith? Our edge functions handle billing (Stripe webhooks, checkout), skill indexing, and API authentication. Every one of those functions imports code from external CDNs and registries. If any of those imports were compromised, it could affect your account, your payments, and your data.
@@ -30,6 +33,8 @@ Why does this matter for Skillsmith? Our edge functions handle billing (Stripe w
 ---
 
 ## What We Found
+
+![Four vulnerability entry points in a software infrastructure fortress wall](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/supply-chain/attack-surfaces)
 
 We audited every external dependency across our infrastructure and identified four attack surfaces where we were relying on mutable references instead of pinned versions.
 
@@ -45,6 +50,8 @@ None of these were actively exploited. But each one represented a window where a
 ---
 
 ## What We Did
+
+![Secured software infrastructure with version-pinned locks and checkmarks](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/supply-chain/pinned-dependencies)
 
 ### Pinned esm.sh Imports
 
@@ -83,7 +90,7 @@ This isn't just about supply chain security — it's about catching any regressi
 
 This was Wave 1 of our supply chain hardening initiative. Here's what's coming:
 
-- **Wave 2 (July 2026):** Evaluating automated supply chain monitoring tools for behavioral analysis of dependency updates — catching not just known vulnerabilities, but suspicious code changes.
+- **Wave 2:** Evaluating automated supply chain monitoring tools like [supply-chain-monitor-localai](https://github.com/mitkox/supply-chain-monitor-localai) — an open-source tool that polls PyPI and npm for new releases, diffs each release against its predecessor, and uses a local LLM to classify changes as benign or malicious. Tools like this move beyond known-vulnerability scanning into behavioral analysis of dependency updates.
 - **Ongoing:** Monthly Dependabot SHA updates for GitHub Actions, quarterly risk reviews of all external dependencies.
 - **Transparency:** We'll continue publishing when we make infrastructure changes that affect how your data is protected.
 
@@ -104,3 +111,4 @@ If you have questions, reach out at [security@skillsmith.app](mailto:security@sk
 - [Skillsmith Security Policy](/security) — Vulnerability reporting and disclosure process
 - [Security, Quarantine, and Safe Skill Installation](/blog/security-quarantine-safe-installation) — How we protect skill installations
 - [PR #437](https://github.com/smith-horn/skillsmith/pull/437) — The supply chain hardening changeset
+- [supply-chain-monitor-localai](https://github.com/mitkox/supply-chain-monitor-localai) — Open-source LLM-powered supply chain monitoring by Mitko Vasilev
