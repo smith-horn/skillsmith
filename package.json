@@ -92,7 +92,7 @@
     "stripe": "20.2.0",
     "supabase": "2.83.0",
     "tsx": "4.21.0",
-    "turbo": "2.5.4",
+    "turbo": "2.9.3",
     "typescript": "5.9.3",
     "typescript-eslint": "8.58.0",
     "varlock": "0.1.4",
