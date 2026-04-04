@@ -46,12 +46,12 @@
     "@smithy/config-resolver": "4.4.13",
     "@smithy/core": "3.23.12",
     "@smithy/middleware-endpoint": "4.4.27",
-    "@smithy/middleware-retry": "4.1.11",
+    "@smithy/middleware-retry": "4.4.46",
     "@smithy/protocol-http": "5.1.2",
     "@smithy/smithy-client": "4.4.3",
     "@smithy/types": "4.13.1",
     "@smithy/util-retry": "4.1.2",
-    "vitest": "4.0.16"
+    "vitest": "4.1.2"
   },
   "files": [
     "dist"
