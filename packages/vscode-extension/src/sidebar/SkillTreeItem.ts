@@ -9,7 +9,7 @@ import * as vscode from 'vscode'
 /**
  * Trust tier values for skills
  */
-export type TrustTier = 'verified' | 'community' | 'standard' | 'unverified'
+export type TrustTier = 'verified' | 'community' | 'experimental' | 'unknown' | 'local'
 
 /**
  * Data for a skill tree item
@@ -104,7 +104,7 @@ export class SkillTreeItem extends vscode.TreeItem {
       parts.push(`by ${data.author}`)
     }
 
-    if (data.trustTier && data.trustTier !== 'unverified') {
+    if (data.trustTier) {
       parts.push(data.trustTier)
     }
 
@@ -116,21 +116,29 @@ export class SkillTreeItem extends vscode.TreeItem {
    */
   private createTooltip(data: SkillItemData): vscode.MarkdownString {
     const md = new vscode.MarkdownString()
+    md.isTrusted = false
 
-    md.appendMarkdown(`## ${data.name}\n\n`)
+    md.appendMarkdown('## ')
+    md.appendText(data.name)
+    md.appendMarkdown('\n\n')
 
     if (data.description) {
-      md.appendMarkdown(`${data.description}\n\n`)
+      md.appendText(data.description)
+      md.appendMarkdown('\n\n')
     }
 
     md.appendMarkdown(`---\n\n`)
 
     if (data.author) {
-      md.appendMarkdown(`- **Author:** ${data.author}\n`)
+      md.appendMarkdown('- **Author:** ')
+      md.appendText(data.author)
+      md.appendMarkdown('\n')
     }
 
     if (data.category) {
-      md.appendMarkdown(`- **Category:** ${data.category}\n`)
+      md.appendMarkdown('- **Category:** ')
+      md.appendText(data.category)
+      md.appendMarkdown('\n')
     }
 
     if (data.trustTier) {
@@ -160,11 +168,13 @@ export class SkillTreeItem extends vscode.TreeItem {
         return new vscode.ThemeIcon('verified-filled', new vscode.ThemeColor('charts.green'))
       case 'community':
         return new vscode.ThemeIcon('star-full', new vscode.ThemeColor('charts.yellow'))
-      case 'standard':
-        return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.blue'))
-      case 'unverified':
+      case 'experimental':
+        return new vscode.ThemeIcon('beaker', new vscode.ThemeColor('charts.orange'))
+      case 'local':
+        return new vscode.ThemeIcon('folder', new vscode.ThemeColor('charts.blue'))
+      case 'unknown':
       default:
-        return new vscode.ThemeIcon('symbol-misc', new vscode.ThemeColor('charts.gray'))
+        return new vscode.ThemeIcon('question', new vscode.ThemeColor('charts.gray'))
     }
   }
 
@@ -177,8 +187,11 @@ export class SkillTreeItem extends vscode.TreeItem {
         return '(verified)'
       case 'community':
         return '(star)'
-      case 'standard':
-        return '(circle)'
+      case 'experimental':
+        return '(beaker)'
+      case 'local':
+        return '(folder)'
+      case 'unknown':
       default:
         return '(question)'
     }

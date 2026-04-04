@@ -57,6 +57,11 @@ export async function initSkill(
       validate: validateSkillName,
     }))
 
+  if (name && validateSkillName(skillName) !== true) {
+    console.error(chalk.red(`Invalid skill name: ${validateSkillName(skillName)}`))
+    process.exit(1)
+  }
+
   // Use provided options or prompt interactively
   const description =
     options.description ||

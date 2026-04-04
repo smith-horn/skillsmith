@@ -201,8 +201,8 @@ describe('executeSkillRescan', () => {
     expect(result.error).toContain('nonexistent')
     expect(result.error).toContain('not found')
 
-    // A3: Error message should list available skills so the user knows what exists
-    expect(result.error).toContain('existing-skill')
+    // A3: Error message should show count (not names — info disclosure fix)
+    expect(result.error).toContain('1 skill(s)')
   })
 
   // --------------------------------------------------------------------------

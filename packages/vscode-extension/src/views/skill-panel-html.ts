@@ -116,9 +116,9 @@ function getScoreBreakdownHtml(scoreBreakdown: ScoreBreakdown): string {
                 <span class="score-value">${scoreBreakdown.maintenance}</span>
             </div>
             <div class="score-row">
-                <span class="score-label">Security</span>
+                <span class="score-label">Security (quality)</span>
                 <div class="score-bar"><div class="score-fill" style="width: ${scoreBreakdown.security}%"></div></div>
-                <span class="score-value">${scoreBreakdown.security}</span>
+                <span class="score-value">${scoreBreakdown.security}/100</span>
             </div>
             <div class="score-row">
                 <span class="score-label">Documentation</span>

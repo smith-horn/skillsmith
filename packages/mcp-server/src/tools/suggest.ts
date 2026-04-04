@@ -24,6 +24,7 @@
  * }, toolContext);
  */
 
+import { resolve } from 'path'
 import { z } from 'zod'
 import { TriggerDetector, ContextScorer } from '@skillsmith/core'
 import { CodebaseAnalyzer } from '@skillsmith/core'
@@ -31,6 +32,7 @@ import { SkillMatcher } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import type { MCPTrustTier as TrustTier } from '@skillsmith/core'
 import { mapTrustTierFromDb, getTrustBadge } from '../utils/validation.js'
+import { hasPathTraversal } from './validate.helpers.js'
 
 /**
  * Zod schema for suggest tool input validation
@@ -239,13 +241,18 @@ export async function executeSuggest(
   const { project_path, current_file, recent_commands, error_message, installed_skills, limit } =
     validated
 
+  if (hasPathTraversal(project_path)) {
+    throw new Error('Path contains path traversal pattern')
+  }
+  const resolvedProjectPath = resolve(project_path)
+
   const analysisStart = performance.now()
 
   // Analyze codebase (with timeout and caching)
   let codebaseContext = null
   try {
     const analyzer = new CodebaseAnalyzer()
-    codebaseContext = await analyzer.analyze(project_path, {
+    codebaseContext = await analyzer.analyze(resolvedProjectPath, {
       maxFiles: 500,
       includeDevDeps: true,
     })

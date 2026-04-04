@@ -49,14 +49,14 @@ describe('executeSkillAudit', () => {
   })
 
   // --------------------------------------------------------------------------
-  // Empty database — early-access message
+  // Empty database — no advisories message
   // --------------------------------------------------------------------------
 
-  it('returns advisoriesAvailable: false with early-access message when DB has no advisories', async () => {
+  it('returns advisoriesAvailable: false with no-advisories message when DB has no advisories', async () => {
     const result = await executeSkillAudit({}, makeContext(db))
 
     expect(result.advisoriesAvailable).toBe(false)
-    expect(result.message).toContain('early access')
+    expect(result.message).toContain('No advisories have been published yet')
     expect(result.message).toContain('skillsmith sync')
     expect(result.summary).toBeUndefined()
     expect(result.advisories).toBeUndefined()
@@ -116,13 +116,13 @@ describe('executeSkillAudit', () => {
     expect(result.advisories![0].skillName).toBe('community/skill-a')
   })
 
-  it('returns early-access message when skillIds filter matches no advisories', async () => {
+  it('returns no-advisories message when skillIds filter matches no advisories', async () => {
     advisoryRepo.upsertAdvisory(makeAdvisory({ skillId: 'community/skill-a' }))
 
     const result = await executeSkillAudit({ skillIds: ['community/nonexistent'] }, makeContext(db))
 
     expect(result.advisoriesAvailable).toBe(false)
-    expect(result.message).toContain('early access')
+    expect(result.message).toContain('No advisories have been published yet')
   })
 
   // --------------------------------------------------------------------------

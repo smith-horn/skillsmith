@@ -47,7 +47,20 @@ export function formatSearchResults(response: SearchResponse): string {
     response.results.forEach((skill, index) => {
       const trustBadge = getTrustBadge(skill.trustTier)
       lines.push(index + 1 + '. ' + skill.name + ' ' + trustBadge)
-      lines.push('   Author: ' + skill.author + ' | Score: ' + skill.score + '/100')
+      const securityStatus =
+        skill.security?.passed === true
+          ? 'PASS'
+          : skill.security?.passed === false
+            ? 'FAIL (' + (skill.security.riskScore ?? '?') + '/100)'
+            : 'N/A'
+      lines.push(
+        '   Author: ' +
+          skill.author +
+          ' | Score: ' +
+          skill.score +
+          '/100 | Security: ' +
+          securityStatus
+      )
       lines.push('   ' + skill.description)
       lines.push('   ID: ' + skill.id)
       // SMI-2734: Surface registry install ID so models can use owner/name directly

@@ -8,7 +8,7 @@ import { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
 import { readFile, writeFile, stat } from 'fs/promises'
-import { dirname, join, resolve } from 'path'
+import { basename, dirname, join, resolve } from 'path'
 import { SkillParser } from '@skillsmith/core'
 
 import { renderSubagentTemplate, renderClaudeMdSnippet } from '../../templates/index.js'
@@ -122,7 +122,7 @@ export async function generateSubagent(skillPath: string, options: SubagentOptio
 
     // Ensure agents directory exists
     const agentsDir = await ensureAgentsDirectory(options.output)
-    const subagentPath = join(agentsDir, `${metadata.name}-specialist.md`)
+    const subagentPath = join(agentsDir, `${basename(metadata.name)}-specialist.md`)
 
     // Check if subagent already exists
     if (await fileExists(subagentPath)) {

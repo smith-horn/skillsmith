@@ -4,8 +4,8 @@
  * @see SMI-skill-version-tracking Wave 3
  *
  * Lists active security advisories for installed skills in npm-audit style
- * output. The advisory system is in early access — the Skillsmith team
- * publishes advisories as security issues are identified.
+ * output. Advisories are published by the Skillsmith team as security
+ * issues are identified.
  *
  * Tier gate: Team (via requireTier).
  * Use --fix to attempt `skillsmith update <skill>` for each advisory with a patch.
@@ -29,9 +29,17 @@ const SEVERITY_COLORS: Record<string, (text: string) => string> = {
   low: chalk.cyan,
 }
 
+const SEVERITY_PREFIXES: Record<string, string> = {
+  critical: '[!]',
+  high: '[*]',
+  medium: '[+]',
+  low: '[-]',
+}
+
 function colorSeverity(severity: string): string {
   const colorFn = SEVERITY_COLORS[severity] ?? chalk.white
-  return colorFn(severity.padEnd(8))
+  const prefix = SEVERITY_PREFIXES[severity] ?? '   '
+  return colorFn(prefix + ' ' + severity.padEnd(8))
 }
 
 // ============================================================================
@@ -62,11 +70,11 @@ function printSummary(counts: Record<string, number>): void {
   const total = Object.values(counts).reduce((a, b) => a + b, 0)
   console.log(chalk.bold('Summary:'))
   if (counts['critical'])
-    console.log(`  ${chalk.bgRed.white.bold('critical')}  ${counts['critical']}`)
-  if (counts['high']) console.log(`  ${chalk.red.bold('high    ')}  ${counts['high']}`)
-  if (counts['medium']) console.log(`  ${chalk.yellow.bold('medium  ')}  ${counts['medium']}`)
-  if (counts['low']) console.log(`  ${chalk.cyan('low     ')}  ${counts['low']}`)
-  console.log(`  ${'total   '.padEnd(10)}  ${total}`)
+    console.log(`  ${chalk.bgRed.white.bold('[!] critical')}  ${counts['critical']}`)
+  if (counts['high']) console.log(`  ${chalk.red.bold('[*] high    ')}  ${counts['high']}`)
+  if (counts['medium']) console.log(`  ${chalk.yellow.bold('[+] medium  ')}  ${counts['medium']}`)
+  if (counts['low']) console.log(`  ${chalk.cyan('[-] low     ')}  ${counts['low']}`)
+  console.log(`  ${'    total   '.padEnd(14)}  ${total}`)
 }
 
 // ============================================================================
@@ -84,11 +92,11 @@ async function runAudit(options: { db: string; fix: boolean }): Promise<void> {
     const advisories = advisoryRepo.getActiveAdvisories()
 
     if (advisories.length === 0) {
-      console.log(chalk.dim('\nNo advisories in database.'))
+      console.log(chalk.dim('\nNo advisories found.'))
       console.log(
         chalk.dim(
-          'Advisory system is in early access — the Skillsmith team publishes advisories as\n' +
-            'security issues are identified. Run `skillsmith sync` to fetch the latest.'
+          'No advisories have been published yet. This does not indicate installed\n' +
+            'skills have been reviewed. Run `skillsmith sync` to fetch the latest.'
         )
       )
       console.log()

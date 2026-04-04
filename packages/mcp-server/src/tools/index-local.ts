@@ -18,6 +18,7 @@
 import { z } from 'zod'
 import { LocalIndexer, type LocalSkill } from '../indexer/LocalIndexer.js'
 import type { ToolContext } from '../context.js'
+import { hasPathTraversal } from './validate.helpers.js'
 
 /**
  * Tool schema for MCP
@@ -115,6 +116,10 @@ export async function executeIndexLocal(
 ): Promise<IndexLocalResponse> {
   const startTime = performance.now()
   const indexStart = performance.now()
+
+  if (input.skillsDir && hasPathTraversal(input.skillsDir)) {
+    throw new Error('Path contains path traversal pattern')
+  }
 
   // Create indexer with optional custom directory
   const indexer = new LocalIndexer(input.skillsDir)
