@@ -83,7 +83,7 @@
     "commander": "14.0.3",
     "eslint": "9.39.2",
     "eslint-config-prettier": "10.1.8",
-    "globals": "15.15.0",
+    "globals": "17.4.0",
     "husky": "9.1.7",
     "lint-staged": "16.4.0",
     "posthog-node": "5.28.5",
