@@ -164,6 +164,13 @@ export const installInputSchema = z.object({
     .enum(['overwrite', 'merge', 'cancel'])
     .optional()
     .describe('Action to take on conflict: overwrite local, merge changes, or cancel'),
+  /** SMI-3863: Confirm install of experimental/unknown tier skills */
+  confirmed: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Confirm install despite security warnings (required for experimental/unknown tiers)'
+    ),
 })
 
 export type InstallInput = z.infer<typeof installInputSchema>

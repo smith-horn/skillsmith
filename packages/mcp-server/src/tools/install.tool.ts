@@ -39,6 +39,11 @@ export const installTool = {
         description:
           'Action when local modifications detected: overwrite (backup + replace), merge (three-way), or cancel',
       },
+      confirmed: {
+        type: 'boolean',
+        description:
+          'Confirm install despite security warnings (required for experimental/unknown tier skills)',
+      },
     },
     required: ['skillId'],
   },

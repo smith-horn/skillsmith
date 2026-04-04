@@ -170,7 +170,7 @@ async function runFirstTimeSetup(): Promise<void> {
   for (const skill of TIER1_SKILLS) {
     try {
       await installSkill(
-        { skillId: skill.id, force: false, skipScan: false, skipOptimize: false },
+        { skillId: skill.id, force: false, skipScan: false, skipOptimize: false, confirmed: true },
         toolContext
       )
       registrySkills.push(skill.name)

@@ -147,6 +147,10 @@ export function mapSkillDetailsToExtendedSkillData(
     scoreBreakdown: s.scoreBreakdown,
     // SMI-3672: Map content from response top-level (not skill object)
     content: response.content,
+    // SMI-3857: Map security scan data
+    securityPassed: s.security?.passed ?? null,
+    securityRiskScore: s.security?.riskScore ?? null,
+    securityScannedAt: s.security?.scannedAt ?? null,
   }
   if (s.repository !== undefined) {
     result.repository = s.repository

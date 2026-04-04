@@ -22,10 +22,12 @@ export function getTrustBadgeColor(tier: string): string {
       return 'verified'
     case 'community':
       return 'community'
-    case 'standard':
-      return 'standard'
+    case 'experimental':
+      return 'experimental'
+    case 'local':
+      return 'local'
     default:
-      return 'unverified'
+      return 'unknown'
   }
 }
 
@@ -38,10 +40,12 @@ export function getTrustBadgeText(tier: string): string {
       return 'Verified'
     case 'community':
       return 'Community'
-    case 'standard':
-      return 'Standard'
+    case 'experimental':
+      return 'Experimental'
+    case 'local':
+      return 'Local'
     default:
-      return 'Unverified'
+      return 'Unknown'
   }
 }
 
@@ -90,6 +94,37 @@ export function getLoadingHtml(): string {
     </div>
 </body>
 </html>`
+}
+
+/**
+ * SMI-3857/3858: Generate the security scan status HTML for the details grid
+ */
+function getSecurityScanHtml(skill: ExtendedSkillData): string {
+  const passed = skill.securityPassed
+  const risk = skill.securityRiskScore
+  const scannedAt = skill.securityScannedAt
+
+  let statusText: string
+  let statusClass: string
+  if (passed === true) {
+    statusText = 'PASS'
+    statusClass = 'scan-pass'
+  } else if (passed === false) {
+    statusText = risk != null ? `FAIL (risk: ${risk}/100)` : 'FAIL'
+    statusClass = 'scan-fail'
+  } else {
+    statusText = 'Not scanned'
+    statusClass = 'scan-none'
+  }
+
+  const dateStr = scannedAt
+    ? ` <span class="scan-date">${escapeHtml(scannedAt.split('T')[0] ?? scannedAt)}</span>`
+    : ''
+
+  return `<div class="meta-item">
+                <div class="meta-label">Security Scan</div>
+                <div class="meta-value"><span class="${statusClass}">${statusText}</span>${dateStr}</div>
+            </div>`
 }
 
 /**
@@ -211,6 +246,7 @@ export function getSkillDetailHtml(
                 <div class="meta-label">Trust Tier</div>
                 <div class="meta-value">${safeTrustTier}</div>
             </div>
+            ${getSecurityScanHtml(skill)}
         </div>
     </div>
 

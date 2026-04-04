@@ -185,7 +185,7 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
           const skillMdPath = path.join(skillPath, 'SKILL.md')
 
           let description: string | undefined
-          let trustTier: TrustTier = 'unverified'
+          let trustTier: TrustTier = 'unknown'
 
           // Try to read description and trust tier from SKILL.md
           try {
@@ -248,10 +248,13 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
     if (lowerContent.includes('trust-community') || lowerContent.includes('community')) {
       return 'community'
     }
-    if (lowerContent.includes('trust-standard') || lowerContent.includes('standard')) {
-      return 'standard'
+    if (lowerContent.includes('trust-experimental') || lowerContent.includes('experimental')) {
+      return 'experimental'
+    }
+    if (lowerContent.includes('trust-local') || lowerContent.includes('local')) {
+      return 'local'
     }
 
-    return 'unverified'
+    return 'unknown'
   }
 }

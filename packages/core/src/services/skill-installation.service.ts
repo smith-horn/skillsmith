@@ -2,16 +2,11 @@
  * @fileoverview SkillInstallationService — shared install/uninstall business logic
  * @module @skillsmith/core/services/skill-installation.service
  * @see SMI-3483: Wave 0 — Extract SkillInstallationService into core
- *
- * Both mcp-server and CLI consume this service. The MCP ToolContext coupling is
- * eliminated: callers inject explicit dependencies (db, repositories, paths,
- * registry lookup, progress callback).
  */
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
-
 import { SecurityScanner } from '../security/index.js'
 import { safeWriteFile } from '../utils/safe-fs.js'
 import { parseRepoUrl } from '../utils/github-url.js'
@@ -263,7 +258,6 @@ export class SkillInstallationService {
           ],
         }
       }
-
       let securityReport: InstallResult['securityReport']
       if (!options.skipScan) {
         this.onProgress('scan', 'Running security scan')
@@ -301,6 +295,34 @@ export class SkillInstallationService {
               'Risk score: ' + securityReport.riskScore,
             ],
           }
+        }
+      }
+
+      // SMI-3863: Pre-install confirmation gate for experimental/unknown registry skills
+      const needsConfirmation =
+        fromRegistry &&
+        (trustTier === 'experimental' || trustTier === 'unknown') &&
+        !options.confirmed
+      if (needsConfirmation) {
+        const scanNote = securityReport
+          ? securityReport.passed
+            ? trustTier + ' tier skills have not been reviewed.'
+            : 'Security scan detected issues.'
+          : 'No security scan was performed.'
+        return {
+          success: false,
+          skillId,
+          installPath,
+          securityReport,
+          trustTier,
+          requiresConfirmation: true,
+          confirmationReason:
+            'This is an ' +
+            trustTier +
+            ' tier skill. ' +
+            scanNote +
+            ' Re-run with confirmed=true to proceed.',
+          tips: ['Trust tier: ' + trustTier, 'Use confirmed=true to proceed with installation'],
         }
       }
 
@@ -408,7 +430,6 @@ export class SkillInstallationService {
         },
       }))
 
-      // Record co-install session
       if (this.coInstallRecorder) {
         this.coInstallRecorder.recordSessionCoInstalls([...this.sessionInstalledSkillIds, skillId])
         this.sessionInstalledSkillIds.push(skillId)

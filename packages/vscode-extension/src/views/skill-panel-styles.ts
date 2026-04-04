@@ -39,8 +39,13 @@ export function getStyles(): string {
         }
         .badge-verified { background-color: #28a745; color: white; }
         .badge-community { background-color: #b8960a; color: white; }
-        .badge-standard { background-color: #007bff; color: white; }
-        .badge-unverified { background-color: #6c757d; color: white; }
+        .badge-experimental { background-color: #e36209; color: white; }
+        .badge-local { background-color: #007bff; color: white; }
+        .badge-unknown { background-color: #6c757d; color: white; }
+        .scan-pass { color: #28a745; font-weight: 600; }
+        .scan-fail { color: #d73a49; font-weight: 600; }
+        .scan-none { color: #6c757d; }
+        .scan-date { color: var(--vscode-descriptionForeground); font-size: 0.9em; margin-left: 6px; }
         .description {
             font-size: 16px;
             margin-bottom: 24px;

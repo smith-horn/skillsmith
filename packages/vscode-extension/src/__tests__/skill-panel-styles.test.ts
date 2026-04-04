@@ -25,8 +25,16 @@ describe('getStyles', () => {
   it('contains badge styles for all tiers', () => {
     expect(css).toContain('.badge-verified')
     expect(css).toContain('.badge-community')
-    expect(css).toContain('.badge-standard')
-    expect(css).toContain('.badge-unverified')
+    expect(css).toContain('.badge-experimental')
+    expect(css).toContain('.badge-local')
+    expect(css).toContain('.badge-unknown')
+  })
+
+  it('contains security scan status styles', () => {
+    expect(css).toContain('.scan-pass')
+    expect(css).toContain('.scan-fail')
+    expect(css).toContain('.scan-none')
+    expect(css).toContain('.scan-date')
   })
 
   it('contains WCAG AA compliant community badge color', () => {
