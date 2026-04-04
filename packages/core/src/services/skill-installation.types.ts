@@ -37,6 +37,8 @@ export interface InstallOptions {
   skipOptimize?: boolean
   /** Action to take when local modifications are detected */
   conflictAction?: ConflictAction
+  /** SMI-3863: User has confirmed they want to install despite security warnings */
+  confirmed?: boolean
 }
 
 /** Dependency intelligence result from an install */
@@ -85,6 +87,10 @@ export interface InstallResult {
   depIntel?: DepIntelResult
   /** Whether fetched content hash differs from indexed content hash */
   contentHashMismatch?: boolean
+  /** SMI-3863: True when the skill requires user confirmation before install */
+  requiresConfirmation?: boolean
+  /** SMI-3863: Human-readable reason why confirmation is needed */
+  confirmationReason?: string
 }
 
 // ============================================================================

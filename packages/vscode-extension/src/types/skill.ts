@@ -32,4 +32,10 @@ export interface ExtendedSkillData extends SkillData {
   scoreBreakdown: ScoreBreakdown | undefined
   /** SMI-3672: Raw SKILL.md content (markdown), when available */
   content?: string | undefined
+  /** SMI-3857: Security scan passed (null = not scanned) */
+  securityPassed?: boolean | null | undefined
+  /** SMI-3857: Scanner risk score 0-100 (lower is safer, inverse of quality metric) */
+  securityRiskScore?: number | null | undefined
+  /** SMI-3858: When the skill was last scanned */
+  securityScannedAt?: string | null | undefined
 }

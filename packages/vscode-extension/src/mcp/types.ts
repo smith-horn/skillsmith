@@ -12,7 +12,7 @@ export interface McpSkillSearchResult {
   description: string
   author: string
   category: string
-  trustTier: 'verified' | 'community' | 'standard' | 'unverified'
+  trustTier: 'verified' | 'community' | 'experimental' | 'unknown' | 'local'
   score: number
   repository?: string
 }
@@ -62,11 +62,18 @@ export interface McpSkillDetails {
   repository?: string
   version?: string
   category: string
-  trustTier: 'verified' | 'community' | 'standard' | 'unverified'
+  trustTier: 'verified' | 'community' | 'experimental' | 'unknown' | 'local'
   score: number
   scoreBreakdown?: McpScoreBreakdown
   tags?: string[]
   installCommand?: string
+  /** SMI-3857: Security scan summary from registry */
+  security?: {
+    passed: boolean | null
+    riskScore: number | null
+    findingsCount: number
+    scannedAt: string | null
+  }
   createdAt?: string
   updatedAt?: string
 }

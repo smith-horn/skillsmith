@@ -348,4 +348,27 @@ describe('mapSkillDetailsToExtendedSkillData', () => {
     const result = mapSkillDetailsToExtendedSkillData(response)
     expect(result.content).toBeUndefined()
   })
+
+  // SMI-3857: Security scan field mapping
+  it('maps security scan data when present', () => {
+    const response = makeMcpGetSkillResponse()
+    response.skill.security = {
+      passed: true,
+      riskScore: 15,
+      findingsCount: 0,
+      scannedAt: '2026-04-03T12:00:00Z',
+    }
+    const result = mapSkillDetailsToExtendedSkillData(response)
+    expect(result.securityPassed).toBe(true)
+    expect(result.securityRiskScore).toBe(15)
+    expect(result.securityScannedAt).toBe('2026-04-03T12:00:00Z')
+  })
+
+  it('maps null security scan data when not present', () => {
+    const response = makeMcpGetSkillResponse()
+    const result = mapSkillDetailsToExtendedSkillData(response)
+    expect(result.securityPassed).toBeNull()
+    expect(result.securityRiskScore).toBeNull()
+    expect(result.securityScannedAt).toBeNull()
+  })
 })

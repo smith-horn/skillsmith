@@ -105,6 +105,7 @@ export async function installSkill(
     skipScan: input.skipScan,
     skipOptimize: input.skipOptimize,
     conflictAction: input.conflictAction,
+    confirmed: input.confirmed,
   })
 
   return result

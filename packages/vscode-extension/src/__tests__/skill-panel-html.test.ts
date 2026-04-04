@@ -258,8 +258,16 @@ describe('getTrustBadgeColor', () => {
     expect(getTrustBadgeColor('community')).toBe('community')
   })
 
-  it('returns unverified for unknown tier', () => {
-    expect(getTrustBadgeColor('unknown')).toBe('unverified')
+  it('returns experimental for experimental tier', () => {
+    expect(getTrustBadgeColor('experimental')).toBe('experimental')
+  })
+
+  it('returns local for local tier', () => {
+    expect(getTrustBadgeColor('local')).toBe('local')
+  })
+
+  it('returns unknown for unrecognized tier', () => {
+    expect(getTrustBadgeColor('something')).toBe('unknown')
   })
 
   it('is case-insensitive', () => {
@@ -272,8 +280,70 @@ describe('getTrustBadgeText', () => {
     expect(getTrustBadgeText('verified')).toBe('Verified')
   })
 
-  it('returns Unverified for unknown tier', () => {
-    expect(getTrustBadgeText('something')).toBe('Unverified')
+  it('returns Experimental for experimental tier', () => {
+    expect(getTrustBadgeText('experimental')).toBe('Experimental')
+  })
+
+  it('returns Local for local tier', () => {
+    expect(getTrustBadgeText('local')).toBe('Local')
+  })
+
+  it('returns Unknown for unrecognized tier', () => {
+    expect(getTrustBadgeText('something')).toBe('Unknown')
+  })
+})
+
+describe('security scan rendering (SMI-3857/3858)', () => {
+  it('shows PASS for securityPassed: true', () => {
+    const html = getSkillDetailHtml(makeSkill({ securityPassed: true }), NONCE, CSP)
+    expect(html).toContain('scan-pass')
+    expect(html).toContain('PASS')
+  })
+
+  it('shows FAIL with risk score for securityPassed: false', () => {
+    const html = getSkillDetailHtml(
+      makeSkill({ securityPassed: false, securityRiskScore: 72 }),
+      NONCE,
+      CSP
+    )
+    expect(html).toContain('scan-fail')
+    expect(html).toContain('FAIL (risk: 72/100)')
+  })
+
+  it('shows FAIL without risk when riskScore is null', () => {
+    const html = getSkillDetailHtml(
+      makeSkill({ securityPassed: false, securityRiskScore: null }),
+      NONCE,
+      CSP
+    )
+    expect(html).toContain('scan-fail')
+    expect(html).toContain('>FAIL<')
+  })
+
+  it('shows Not scanned for securityPassed: null', () => {
+    const html = getSkillDetailHtml(makeSkill({ securityPassed: null }), NONCE, CSP)
+    expect(html).toContain('scan-none')
+    expect(html).toContain('Not scanned')
+  })
+
+  it('shows Not scanned when securityPassed is undefined', () => {
+    const html = getSkillDetailHtml(makeSkill(), NONCE, CSP)
+    expect(html).toContain('Not scanned')
+  })
+
+  it('includes scan date when provided', () => {
+    const html = getSkillDetailHtml(
+      makeSkill({ securityPassed: true, securityScannedAt: '2026-04-03T12:00:00Z' }),
+      NONCE,
+      CSP
+    )
+    expect(html).toContain('scan-date')
+    expect(html).toContain('2026-04-03')
+  })
+
+  it('omits scan date span when not provided', () => {
+    const html = getSkillDetailHtml(makeSkill({ securityPassed: true }), NONCE, CSP)
+    expect(html).not.toContain('<span class="scan-date">')
   })
 })
 
