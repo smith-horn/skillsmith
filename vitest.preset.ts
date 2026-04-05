@@ -7,7 +7,6 @@
 //   - E2E: 60s (external services)
 
 export const sharedTestConfig = {
-  globals: true,
   environment: 'node' as const,
   testTimeout: 15_000,
   hookTimeout: 15_000,
