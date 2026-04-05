@@ -87,10 +87,28 @@ export interface InstallResult {
   depIntel?: DepIntelResult
   /** Whether fetched content hash differs from indexed content hash */
   contentHashMismatch?: boolean
+  /** SMI-3864: Computed quality score (0-1) */
+  qualityScore?: number
   /** SMI-3863: True when the skill requires user confirmation before install */
   requiresConfirmation?: boolean
   /** SMI-3863: Human-readable reason why confirmation is needed */
   confirmationReason?: string
+  /** SMI-3871: Dependency identifiers that are quarantined */
+  quarantinedDeps?: string[]
+}
+
+/** SMI-3871: Quarantine status for dependency cross-check. */
+export type QuarantineStatus = 'pending' | 'rejected'
+
+export interface AiDefenceFeedback {
+  recordFeedback(params: {
+    input: string
+    wasAccurate: boolean
+    verdict: string
+    threatType?: string
+    mitigation?: 'block' | 'warn' | 'log'
+    mitigationSuccess?: boolean
+  }): Promise<void>
 }
 
 // ============================================================================

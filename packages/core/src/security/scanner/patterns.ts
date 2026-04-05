@@ -200,6 +200,37 @@ export const SSRF_INSTRUCTION_PATTERNS = [
  * - Anthropic Responsible Disclosure Program findings
  * - Academic research on prompt injection attacks
  */
+/**
+ * SMI-3864: PII detection patterns
+ * Detects personally identifiable information and credentials in skill content.
+ * Complements AIDefence's aidefence_has_pii() for offline/local scanning.
+ */
+export const PII_PATTERNS = [
+  // API keys and tokens (generic patterns)
+  /(?:api[_-]?key|apikey)\s*[:=]\s*['"]?[A-Za-z0-9_-]{20,}['"]?/i,
+  /(?:secret[_-]?key|secretkey)\s*[:=]\s*['"]?[A-Za-z0-9_-]{20,}['"]?/i,
+  /(?:access[_-]?token|accesstoken)\s*[:=]\s*['"]?[A-Za-z0-9_-]{20,}['"]?/i,
+
+  // Provider-specific key formats
+  /sk[_-](?:live|test)[_-][A-Za-z0-9]{20,}/, // Stripe
+  /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}/, // GitHub PAT
+  /xoxb-[0-9]+-[0-9]+-[A-Za-z0-9]+/, // Slack bot token
+  /AKIA[0-9A-Z]{16}/, // AWS Access Key
+
+  // Email addresses — severity `info` in YAML frontmatter context (Review #8)
+  // Downgraded because SKILL.md files legitimately contain author contact emails
+  /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/,
+
+  // US Social Security Numbers
+  /\b\d{3}-\d{2}-\d{4}\b/,
+
+  // Private keys
+  /-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----/,
+
+  // Generic password assignments
+  /(?:password|passwd|pwd)\s*[:=]\s*['"][^'"]{8,}['"]/i,
+]
+
 export const AI_DEFENCE_PATTERNS = [
   // Role injection patterns - attempts to inject system/assistant/user roles
   // Pattern detects role markers that could manipulate conversation boundaries

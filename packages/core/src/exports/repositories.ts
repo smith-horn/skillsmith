@@ -139,3 +139,12 @@ export { CoInstallRepository, type CoInstallSummary } from '../repositories/CoIn
 // ============================================================================
 
 export { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
+
+// ============================================================================
+// Risk Score History Repository (SMI-3864)
+// ============================================================================
+
+export {
+  RiskScoreHistoryRepository,
+  type RiskScoreSnapshot,
+} from '../repositories/RiskScoreHistoryRepository.js'

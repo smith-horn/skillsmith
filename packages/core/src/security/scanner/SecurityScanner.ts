@@ -15,6 +15,7 @@ import {
   DATA_EXFILTRATION_PATTERNS,
   PRIVILEGE_ESCALATION_PATTERNS,
   AI_DEFENCE_PATTERNS,
+  PII_PATTERNS,
 } from './patterns.js'
 import { safeRegexTest, safeRegexCheck } from './regex-utils.js'
 
@@ -333,6 +334,56 @@ export class SecurityScanner {
     return findings
   }
 
+  /** SMI-3864: Detect PII patterns. Email in YAML frontmatter gets low severity. */
+  private scanPiiPatterns(content: string, lineContexts?: LineContext[]): SecurityFinding[] {
+    const findings: SecurityFinding[] = []
+    const lines = content.split('\n')
+    const contexts = lineContexts ?? analyzeMarkdownContext(content)
+    let frontmatterEnd = -1
+    if (lines[0]?.trim() === '---') {
+      for (let i = 1; i < lines.length; i++) {
+        if (lines[i].trim() === '---') {
+          frontmatterEnd = i
+          break
+        }
+      }
+    }
+    const emailPatternIndex = 7
+    lines.forEach((line, index) => {
+      const ctx = contexts[index]
+      const inFrontmatter = index > 0 && index < frontmatterEnd
+      for (let pi = 0; pi < PII_PATTERNS.length; pi++) {
+        const pattern = PII_PATTERNS[pi]
+        const match = safeRegexTest(pattern, line)
+        if (match) {
+          const inInlineCode = ctx?.isInlineCode && isWithinInlineCode(line, match.index ?? 0)
+          const inDocContext = ctx ? isDocumentationContext(ctx) || inInlineCode : false
+          const isEmailPattern = pi === emailPatternIndex
+          const isAuthorLine = /^\s*(?:author|contact|support|email)\s*:/i.test(line)
+          const inEmailSafeContext = isEmailPattern && (inFrontmatter || isAuthorLine)
+          let severity: 'low' | 'medium' | 'high' | 'critical'
+          if (inEmailSafeContext) severity = 'low'
+          else if (inDocContext) severity = 'medium'
+          else if (pi <= 2 || pi === 9) severity = 'critical'
+          else severity = 'high'
+          const confidence: FindingConfidence = inDocContext || inEmailSafeContext ? 'low' : 'high'
+          findings.push({
+            type: 'pii',
+            severity,
+            message: `PII detected: ${match[0].slice(0, 40)}${match[0].length > 40 ? '...' : ''}`,
+            location: line.trim().slice(0, 100),
+            lineNumber: index + 1,
+            category: 'pii',
+            inDocumentationContext: inDocContext || inEmailSafeContext,
+            confidence,
+          })
+          break
+        }
+      }
+    })
+    return findings
+  }
+
   private scanAIDefenceVulnerabilities(
     content: string,
     lineContexts?: LineContext[]
@@ -375,6 +426,7 @@ export class SecurityScanner {
     findings.push(...this.scanPrivilegeEscalation(content, lineContexts))
     findings.push(...this.scanAIDefenceVulnerabilities(content, lineContexts))
     findings.push(...scanSsrfPatterns(content, lineContexts))
+    findings.push(...this.scanPiiPatterns(content, lineContexts))
 
     const endTime = performance.now()
     const { total: riskScore, breakdown: riskBreakdown } = calculateRiskScore(findings)

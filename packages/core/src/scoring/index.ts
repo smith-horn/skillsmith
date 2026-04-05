@@ -14,3 +14,5 @@ export {
   type QualityScoreBreakdown,
   type ScoringWeights,
 } from './QualityScorer.js'
+
+export { computeQualityScore, type QualityScoreInput } from './quality-score.js'

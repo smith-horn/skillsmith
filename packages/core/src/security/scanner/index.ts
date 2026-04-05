@@ -26,6 +26,7 @@ export {
   PRIVILEGE_ESCALATION_PATTERNS,
   AI_DEFENCE_PATTERNS,
   SSRF_INSTRUCTION_PATTERNS,
+  PII_PATTERNS,
 } from './patterns.js'
 
 // Weights (for testing/extending)

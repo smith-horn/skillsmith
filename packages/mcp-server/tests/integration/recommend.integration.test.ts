@@ -147,7 +147,9 @@ describe('Recommend Tool Integration', () => {
       for (const rec of result.recommendations) {
         expect(rec.quality_score).toBeGreaterThanOrEqual(0)
         expect(rec.quality_score).toBeLessThanOrEqual(100)
-        expect(['verified', 'community', 'experimental', 'unknown']).toContain(rec.trust_tier)
+        expect(['verified', 'community', 'experimental', 'unknown', 'local']).toContain(
+          rec.trust_tier
+        )
         expect(rec.reason).toBeDefined()
         expect(rec.similarity_score).toBeGreaterThanOrEqual(0)
         expect(rec.similarity_score).toBeLessThanOrEqual(1)

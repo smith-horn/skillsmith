@@ -233,6 +233,7 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
     externalUrls: 0,
     aiDefence: 0,
     ssrf: 0,
+    pii: 0,
   }
 
   const confidenceWeights: Record<FindingConfidence, number> = {
@@ -278,6 +279,9 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
       case 'ssrf':
         breakdown.ssrf += score
         break
+      case 'pii':
+        breakdown.pii += score
+        break
     }
   }
 
@@ -292,20 +296,22 @@ export function calculateRiskScore(findings: SecurityFinding[]): {
   breakdown.externalUrls = Math.min(100, breakdown.externalUrls)
   breakdown.aiDefence = Math.min(100, breakdown.aiDefence)
   breakdown.ssrf = Math.min(100, breakdown.ssrf)
+  breakdown.pii = Math.min(100, breakdown.pii)
 
   const total = Math.min(
     100,
     Math.round(
-      breakdown.jailbreak * 0.22 +
-        breakdown.socialEngineering * 0.12 +
-        breakdown.promptLeaking * 0.12 +
+      breakdown.jailbreak * 0.2 +
+        breakdown.socialEngineering * 0.11 +
+        breakdown.promptLeaking * 0.11 +
         breakdown.dataExfiltration * 0.08 +
         breakdown.privilegeEscalation * 0.11 +
-        breakdown.suspiciousCode * 0.08 +
-        breakdown.sensitivePaths * 0.05 +
-        breakdown.externalUrls * 0.05 +
-        breakdown.aiDefence * 0.13 +
-        breakdown.ssrf * 0.04
+        breakdown.suspiciousCode * 0.07 +
+        breakdown.sensitivePaths * 0.04 +
+        breakdown.externalUrls * 0.04 +
+        breakdown.aiDefence * 0.12 +
+        breakdown.ssrf * 0.04 +
+        breakdown.pii * 0.08
     )
   )
 

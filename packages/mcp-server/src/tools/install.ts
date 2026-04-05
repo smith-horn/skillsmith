@@ -63,6 +63,7 @@ export async function installSkill(
   const context = _context ?? getToolContext()
 
   // SMI-3483: Create core service instance with MCP context wiring
+  // SMI-3873: aiDefenceFeedback omitted -- MCP server cannot call Ruflo tools.
   const service = new SkillInstallationService({
     db: context.db,
     skillRepo: context.skillRepository,

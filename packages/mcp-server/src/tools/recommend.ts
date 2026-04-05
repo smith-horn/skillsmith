@@ -369,8 +369,8 @@ export async function executeRecommend(
     const skill = result.skill as SkillData
     const hasRoleMatch = role && skill.roles.includes(role)
     const boostedScore = hasRoleMatch
-      ? Math.min(100, (skill.qualityScore ?? 50) + 30)
-      : (skill.qualityScore ?? 50)
+      ? Math.min(1, (skill.qualityScore ?? 0.5) + 0.3)
+      : (skill.qualityScore ?? 0.5)
 
     return {
       skill_id: skill.id,
@@ -378,7 +378,7 @@ export async function executeRecommend(
       reason: hasRoleMatch ? `${result.matchReason} (role: ${role})` : result.matchReason,
       similarity_score: result.similarityScore,
       trust_tier: skill.trustTier,
-      quality_score: boostedScore,
+      quality_score: Math.round(boostedScore * 100),
       roles: skill.roles,
     }
   })

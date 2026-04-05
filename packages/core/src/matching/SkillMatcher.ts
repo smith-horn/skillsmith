@@ -27,7 +27,7 @@ export interface MatchableSkill {
   triggerPhrases?: string[]
   /** Optional keywords for keyword-based fallback */
   keywords?: string[]
-  /** Optional quality score (0-100) */
+  /** Optional quality score (0-1, from DB) */
   qualityScore?: number
 }
 
@@ -165,7 +165,8 @@ export class SkillMatcher {
       const semanticScore = this.embeddingService.cosineSimilarity(queryEmbedding, embedding)
 
       // Apply quality boost
-      const qualityBoost = skill.qualityScore ? (skill.qualityScore / 100) * this.qualityWeight : 0
+      // SMI-3864: qualityScore is 0-1 scale in DB, no /100 needed
+      const qualityBoost = skill.qualityScore ? skill.qualityScore * this.qualityWeight : 0
 
       const finalScore = semanticScore * (1 - this.qualityWeight) + qualityBoost
 
@@ -202,7 +203,8 @@ export class SkillMatcher {
       return candidateSkills
         .map((skill) => ({
           skill,
-          similarityScore: skill.qualityScore ? skill.qualityScore / 100 : 0.5,
+          // SMI-3864: qualityScore is 0-1 scale in DB
+          similarityScore: skill.qualityScore ?? 0.5,
           matchReason: 'High-quality skill for your toolkit',
         }))
         .sort((a, b) => b.similarityScore - a.similarityScore)
@@ -257,7 +259,7 @@ export class SkillMatcher {
     }
 
     // Default based on quality
-    if (skill.qualityScore && skill.qualityScore >= 90) {
+    if (skill.qualityScore && skill.qualityScore >= 0.9) {
       return 'Top-rated skill in this category'
     }
 

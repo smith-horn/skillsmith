@@ -392,4 +392,10 @@ export {
   type DepIntelResult,
   type OptimizationInfo as CoreOptimizationInfo,
   type ConflictAction as CoreConflictAction,
+  type AiDefenceFeedback,
 } from '../services/skill-installation.types.js'
+
+export {
+  recordAiDefenceFeedback,
+  collectTrendWarnings,
+} from '../services/skill-installation.feedback.js'

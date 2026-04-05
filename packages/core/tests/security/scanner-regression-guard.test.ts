@@ -21,6 +21,7 @@ import {
   PRIVILEGE_ESCALATION_PATTERNS,
   SSRF_INSTRUCTION_PATTERNS,
   AI_DEFENCE_PATTERNS,
+  PII_PATTERNS,
 } from '../../src/security/scanner/index.js'
 
 /**
@@ -38,6 +39,7 @@ const BASELINE_PATTERN_COUNTS = {
   PRIVILEGE_ESCALATION_PATTERNS: 23,
   SSRF_INSTRUCTION_PATTERNS: 13,
   AI_DEFENCE_PATTERNS: 16,
+  PII_PATTERNS: 11,
 } as const
 
 describe('Scanner Regression Guard (SMI-3864)', () => {
@@ -95,6 +97,10 @@ describe('Scanner Regression Guard (SMI-3864)', () => {
         BASELINE_PATTERN_COUNTS.AI_DEFENCE_PATTERNS
       )
     })
+
+    it('PII_PATTERNS should not regress below baseline', () => {
+      expect(PII_PATTERNS.length).toBeGreaterThanOrEqual(BASELINE_PATTERN_COUNTS.PII_PATTERNS)
+    })
   })
 
   describe('SecurityScanner operational checks', () => {
@@ -144,6 +150,14 @@ describe('Scanner Regression Guard (SMI-3864)', () => {
 
       const aiDefenceFindings = report.findings.filter((f) => f.type === 'ai_defence')
       expect(aiDefenceFindings.length).toBeGreaterThan(0)
+    })
+
+    it('should detect PII patterns (SMI-3864)', () => {
+      const scanner = new SecurityScanner()
+      const report = scanner.scan('pii-test', 'api_key = "secret_key_XXXXXXXXXXXXXXXXXXX"')
+
+      const piiFindings = report.findings.filter((f) => f.type === 'pii')
+      expect(piiFindings.length).toBeGreaterThan(0)
     })
 
     it('should detect prompt injection (overlapping coverage with AIDefence)', () => {
