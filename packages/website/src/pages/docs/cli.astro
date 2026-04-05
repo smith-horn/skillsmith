@@ -272,6 +272,57 @@ skillsmith recommend --analyze ./package.json`}</code></pre>
     </tbody>
   </table>
 
+  <h2>Management Commands</h2>
+
+  <h3>create</h3>
+
+  <p>Scaffold a new Claude Code skill with templates.</p>
+
+  <pre><code>{`skillsmith create <name> [options]
+
+# Examples
+skillsmith create my-skill
+skillsmith create my-skill --template subagent`}</code></pre>
+
+  <h3>diff</h3>
+
+  <p>Compare an installed skill version with the latest available version.</p>
+
+  <pre><code>{`skillsmith diff <skill-id>
+
+# Examples
+skillsmith diff community/jest-helper
+skillsmith diff community/git-commit --json`}</code></pre>
+
+  <h3>pin</h3>
+
+  <p>Pin a skill to its current installed version, preventing automatic updates.</p>
+
+  <pre><code>{`skillsmith pin <skill-id>
+
+# Examples
+skillsmith pin community/jest-helper`}</code></pre>
+
+  <h3>unpin</h3>
+
+  <p>Remove a version pin, allowing the skill to receive updates again.</p>
+
+  <pre><code>{`skillsmith unpin <skill-id>
+
+# Examples
+skillsmith unpin community/jest-helper`}</code></pre>
+
+  <h3>audit</h3>
+
+  <p>Check installed skills against known security advisories.</p>
+
+  <pre><code>{`skillsmith audit [options]
+
+# Examples
+skillsmith audit
+skillsmith audit --json
+skillsmith audit --fix`}</code></pre>
+
   <h2>Author Commands</h2>
 
   <p>Commands for skill authoring and development.</p>

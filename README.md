@@ -12,18 +12,24 @@ Skillsmith is an agent skill discovery, recommendation, and management system fo
 - **Validate** - Quality scores and structure validation
 - **Trust** - Four trust tiers from Official to Community ([Security Guide](docs/internal/security/skill-security-guide.md))
 - **Compare** - Side-by-side skill comparison
+- **Secure** - Dual-scanner security analysis, PII detection, and risk trend monitoring
 
 ### MCP Tools
 
+<!-- BEGIN:MCP_TOOLS -->
 | Tool | Description |
 |------|-------------|
 | `search` | Search skills with filters (query, category, trust tier, min score) |
 | `get_skill` | Get detailed skill information including install command |
 | `install_skill` | Install a skill to your local environment |
 | `uninstall_skill` | Remove an installed skill |
-| `recommend` | Get contextual skill recommendations |
-| `validate` | Validate a skill's structure and quality |
-| `compare` | Compare multiple skills side-by-side |
+| `skill_recommend` | Get contextual skill recommendations |
+| `skill_validate` | Validate a skill's structure and quality |
+| `skill_compare` | Compare multiple skills side-by-side |
+| `skill_audit` | Security advisory audit for installed skills (Team+) |
+<!-- END:MCP_TOOLS -->
+
+_Plus 8 additional tools for authoring, versioning, and security — [full tool reference](https://skillsmith.app/docs/mcp-server)._
 
 ## Architecture
 
@@ -35,9 +41,9 @@ Skillsmith uses the Model Context Protocol (MCP):
 │  ┌─────────────────────────────────────────────────┐│
 │  │  Skillsmith MCP Server                          ││
 │  │  └── @skillsmith/mcp-server                     ││
-│  │      ├── search, get_skill, compare             ││
-│  │      ├── install_skill, uninstall_skill         ││
-│  │      └── recommend, validate                    ││
+│  │      ├── Discovery, Management                  ││
+│  │      ├── Authoring, Security                    ││
+│  │      └── Comparison (16 tools total)            ││
 │  └─────────────────────────────────────────────────┘│
 │                          │                           │
 │                          ▼                           │
@@ -119,6 +125,10 @@ The CLI is available for local development:
 npm run build
 node packages/cli/dist/index.js search "testing"
 ```
+
+### VS Code Extension
+
+Install [Skillsmith for VS Code](https://marketplace.visualstudio.com/items?itemName=skillsmith.skillsmith-vscode) from the Marketplace for sidebar skill browsing, search, and detail panels with rendered SKILL.md.
 
 ## Usage
 

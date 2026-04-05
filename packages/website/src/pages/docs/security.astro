@@ -189,6 +189,64 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
     </tbody>
   </table>
 
+  <h2 id="pii-detection">PII Detection</h2>
+
+  <p>
+    Skillsmith automatically scans skill content for personally identifiable information (PII) patterns before installation.
+    Detected patterns include:
+  </p>
+
+  <ul>
+    <li><strong>Email addresses</strong> — hardcoded recipient addresses or credential patterns</li>
+    <li><strong>Phone numbers</strong> — embedded contact information</li>
+    <li><strong>API keys and tokens</strong> — leaked credentials in skill code</li>
+    <li><strong>Credential patterns</strong> — passwords, secret keys, and authentication tokens</li>
+  </ul>
+
+  <p>
+    PII findings are reported in scan results with severity levels. Critical PII findings (leaked credentials)
+    block installation; other PII findings surface as warnings for your review.
+  </p>
+
+  <h2 id="risk-trends">Risk Trend Analysis</h2>
+
+  <p>
+    Skillsmith tracks security posture changes for skills over time using risk trend analysis.
+    This helps detect supply chain attacks where a previously safe skill becomes compromised.
+  </p>
+
+  <ul>
+    <li><strong>20-point increase</strong> — Warning threshold. Unusual risk score change flagged for review.</li>
+    <li><strong>35-point increase</strong> — Critical threshold. Significant risk change triggers investigation.</li>
+    <li><strong>40-point boundary crossing</strong> — A skill crossing from "safe" to "risky" territory is automatically flagged.</li>
+  </ul>
+
+  <p>
+    Risk history is tracked per skill version, enabling comparison across releases.
+  </p>
+
+  <h2 id="dual-scanner">Dual-Scanner Architecture</h2>
+
+  <p>
+    Every skill assessment runs through two complementary security scanners:
+  </p>
+
+  <ul>
+    <li>
+      <strong>AIDefence</strong> — Detects prompt injection, social engineering, and behavioral threats.
+      Specializes in catching attempts to manipulate the AI agent through skill content.
+    </li>
+    <li>
+      <strong>SecurityScanner</strong> — Detects SSRF, jailbreak patterns, data exfiltration,
+      privilege escalation, and structural threats. Catches technical attack vectors in skill code.
+    </li>
+  </ul>
+
+  <p>
+    Running both scanners on every assessment provides defense in depth — each scanner catches
+    threat categories the other may miss.
+  </p>
+
   <h2>Best Practices for Users</h2>
 
   <div class="callout">

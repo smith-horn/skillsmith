@@ -2,6 +2,31 @@
 
 All notable changes to `@skillsmith/cli` are documented here.
 
+## v0.5.2 (2026-03-24)
+
+- **Unified Install Command**: `skillsmith install` now supports both registry names and GitHub URLs (SMI-3484).
+
+## v0.5.1 (2026-03-21)
+
+- **Fix**: npm registry regression — core dependency version gap resolved (SMI-3537).
+- **Security**: Remediated 14 identified security gaps across CLI commands (SMI-3506).
+
+## v0.5.0 (2026-03-06)
+
+- **Skill Scaffolding**: `skillsmith create <name>` scaffolds new Claude Code skills with SKILL.md template, README, CHANGELOG, and optional scripts directory (SMI-3083).
+- **Version Diff**: `skillsmith diff` compares installed skill versions with change classification.
+- **Version Pinning**: `skillsmith pin` / `skillsmith unpin` to lock skills to specific versions.
+- **Security Audit**: `skillsmith audit` checks installed skills against security advisories.
+- **Skill Name Validation**: Names must match `/^[a-z][a-z0-9-]*$/`.
+
+## v0.4.2 (2026-02-23)
+
+- **Fix**: Updated core dependency to v0.4.12 for @huggingface/transformers migration.
+
+## v0.4.1 (2026-02-23)
+
+- **Fix**: Credential storage exports — pins core@0.4.11 for `storeApiKey`, `clearApiKey`, `getAuthStatus`.
+
 ## v0.4.0
 
 - **CLI Authentication**: `skillsmith login` opens your browser, you copy the API key and paste it — done. Stored securely in your OS keyring.
