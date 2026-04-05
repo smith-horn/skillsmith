@@ -306,4 +306,4 @@ Smith Horn Group Ltd
 
 ---
 
-*Skillsmith is not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.*
+_Skillsmith is not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic._

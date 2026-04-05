@@ -20,11 +20,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of waiting for cache expiration.
 - **SubscriptionBadge Component**: New visual indicator for subscription tiers with
   WCAG AA accessible colors (purple for Individual, green for Team, gold for Enterprise).
+- **Supply Chain Hardening** (2026-04-03): Pinned all external dependency versions
+  across 14 CI workflows and Supabase edge functions for reproducible builds (#437).
+- **PII Detection** (2026-04-04): New PII detection module with configurable pattern
+  matching for emails, phone numbers, API keys, and credentials (#455).
+- **Quality Scoring with Risk Trends** (2026-04-04): Quality scoring service with
+  risk trend tracking and anomaly detection (20pt warning, 35pt critical thresholds) (#455).
+- **Skill Config Validation** (2026-04-04): Schema validation for skill configuration
+  files using Zod (#455).
+- **Pre-Install Security Gate** (2026-04-04): Skills with high-severity security
+  findings now require explicit user confirmation before installation (#450).
+- **Supabase Staging Environment** (2026-04-03): Deploy scripts and validation
+  tooling for staging environment (#448).
+- **Two-Scanner Security Model** (2026-04-04): AIDefence (prompt injection, behavioral
+  threats) and SecurityScanner (SSRF, jailbreak, structural) now both run on every
+  skill assessment (#451).
 
 ### Changed
 
 - Rate limits now apply based on your authenticated session tier, not just API key.
 - Improved circuit breaker resilience for authentication service.
+- Vitest globals removed for better test isolation (#453).
+- Dependabot lockfile regeneration automated via script (#453).
+- Shallow clone guard added to audit-standards CI check (#456).
 
 ### Security
 
@@ -39,6 +57,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compatibility). No evidence of exploitation. See [GHSA-mr6q-rp88-fx84](https://github.com/withastro/astro/security/advisories/GHSA-mr6q-rp88-fx84).
 - **CI Workflow Hardening** (2026-03-29): Added explicit `permissions: contents: read`
   to `publish-vscode.yml`, restricting default GITHUB_TOKEN scope (CodeQL #75/#76).
+- All external dependency versions pinned across CI workflows and edge functions (#437).
+- AIDefence threat re-assessment: hardened CLI commands (`audit`, `author/init`,
+  `author/mcp-init`, `info`) and MCP tools (`analyze`, `index-local`, `suggest`,
+  `skill-audit`, `skill-rescan`) against identified attack vectors (#449).
+
+### Dependencies
+
+- vitest 3.2.4 → 4.1.2, turbo 2.5.4 → 2.9.3, typescript-eslint 8.53.1 → 8.58.0,
+  jose 5.10.0 → 6.2.2, globals 15.15.0 → 17.4.0, @types/node 20.19.30 → 25.5.2,
+  ora 8.2.0 → 9.3.0 (#439–#447).
 
 ## [0.4.12] - 2026-02-23
 
