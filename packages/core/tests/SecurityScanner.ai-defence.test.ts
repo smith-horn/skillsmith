@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { SecurityScanner } from '../src/security/index.js'
 
-describe('SecurityScanner - SMI-685 Enhancements', () => {
+describe('SecurityScanner - AI Defence Patterns (SMI-1532)', () => {
   let scanner: SecurityScanner
 
   beforeEach(() => {
