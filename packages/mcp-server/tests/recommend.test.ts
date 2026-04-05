@@ -175,7 +175,9 @@ describe('Skill Recommend Tool', () => {
 
       for (const rec of result.recommendations) {
         expect(rec.trust_tier).toBeDefined()
-        expect(['verified', 'community', 'experimental', 'unknown']).toContain(rec.trust_tier)
+        expect(['verified', 'community', 'experimental', 'unknown', 'local']).toContain(
+          rec.trust_tier
+        )
         expect(rec.quality_score).toBeGreaterThanOrEqual(0)
         expect(rec.quality_score).toBeLessThanOrEqual(100)
       }

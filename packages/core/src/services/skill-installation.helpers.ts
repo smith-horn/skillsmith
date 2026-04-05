@@ -19,18 +19,21 @@ import type { SkillDependencyRow } from '../types/dependencies.js'
 
 import { TransformationService } from '../services/TransformationService.js'
 import type { Database } from '../db/database-interface.js'
+import { computeQualityScore } from '../scoring/quality-score.js'
+import type { RiskScoreHistoryRepository } from '../repositories/RiskScoreHistoryRepository.js'
+import type { ScanReport } from '../security/index.js'
 import type {
   DepIntelResult,
   OptimizationInfo,
   ProgressCallback,
+  QuarantineStatus,
   UninstallResult,
 } from './skill-installation.types.js'
+import { validateSkillConfig } from './skill-config-schema.js'
 
 import type { ManifestManager } from './skill-manifest.js'
 
-/**
- * Result of applying optimization to a skill's content.
- */
+/** Result of applying optimization to a skill's content. */
 export interface OptimizationResult {
   finalSkillContent: string
   subSkillFiles: Array<{ filename: string; content: string }>
@@ -38,10 +41,6 @@ export interface OptimizationResult {
   claudeMdSnippet: string | undefined
   optimizationInfo: OptimizationInfo
 }
-
-// ============================================================================
-// Skill ID Parsing
-// ============================================================================
 
 export interface ParsedSkillId {
   owner: string
@@ -83,18 +82,9 @@ export function parseSkillIdInternal(input: string): ParsedSkillId {
   throw new Error('Invalid skill ID format: ' + input + '. Use owner/repo or GitHub URL.')
 }
 
-// ============================================================================
-// Content Hashing
-// ============================================================================
-
 export function hashContent(content: string): string {
   return createHash('sha256').update(content).digest('hex')
 }
-
-// ============================================================================
-// SKILL.md Validation
-// ============================================================================
-
 export interface SkillMdValidation {
   valid: boolean
   errors: string[]
@@ -111,24 +101,15 @@ export function validateSkillMd(content: string): SkillMdValidation {
   return { valid: errors.length === 0, errors }
 }
 
-// ============================================================================
-// Git-Crypt Detection
-// ============================================================================
-
 export function assertNotEncrypted(content: string, filePath: string): void {
   if (content.startsWith('\x00GITCRYPT')) {
     throw new Error(
       'File "' +
         filePath +
-        '" is git-crypt encrypted. ' +
-        'The repository uses git-crypt and this file cannot be fetched from GitHub.'
+        '" is git-crypt encrypted. The repository uses git-crypt and this file cannot be fetched from GitHub.'
     )
   }
 }
-
-// ============================================================================
-// GitHub Content Fetching
-// ============================================================================
 
 export async function fetchFromGitHub(
   owner: string,
@@ -160,10 +141,6 @@ export async function fetchFromGitHub(
   return text
 }
 
-// ============================================================================
-// Modification Detection
-// ============================================================================
-
 export async function checkForModifications(
   skillPath: string,
   installedAt: string
@@ -187,10 +164,6 @@ export async function checkForModifications(
   }
 }
 
-// ============================================================================
-// Tips Generation
-// ============================================================================
-
 export function generateTips(skillName: string, optimizationInfo: OptimizationInfo): string[] {
   const tips = [
     'Skill "' + skillName + '" installed successfully!',
@@ -199,8 +172,7 @@ export function generateTips(skillName: string, optimizationInfo: OptimizationIn
   ]
 
   if (optimizationInfo.optimized) {
-    tips.push('')
-    tips.push('[Optimization] Skillsmith Optimization Applied:')
+    tips.push('', '[Optimization] Skillsmith Optimization Applied:')
     if (optimizationInfo.tokenReductionPercent && optimizationInfo.tokenReductionPercent > 0) {
       tips.push('  - Estimated ' + optimizationInfo.tokenReductionPercent + '% token reduction')
     }
@@ -212,15 +184,9 @@ export function generateTips(skillName: string, optimizationInfo: OptimizationIn
     }
   }
 
-  tips.push('')
-  tips.push('To uninstall: use the uninstall_skill tool')
-
+  tips.push('', 'To uninstall: use the uninstall_skill tool')
   return tips
 }
-
-// ============================================================================
-// Dependency Intelligence
-// ============================================================================
 
 export function extractDepIntel(skillMdContent: string): DepIntelResult {
   const mcpResult = extractMcpReferences(skillMdContent)
@@ -267,9 +233,7 @@ export function persistDependencies(
   }
 }
 
-/**
- * Perform skill uninstall with manifest awareness and orphan fallback.
- */
+/** Perform skill uninstall with manifest awareness and orphan fallback. */
 export async function performUninstall(params: {
   skillName: string
   force: boolean
@@ -423,11 +387,7 @@ export async function applyOptimization(
   }
 }
 
-/**
- * Sanitize install error messages to avoid leaking internal details.
- * Returns a safe error message if the error matches known prefixes,
- * otherwise returns a generic message.
- */
+/** Sanitize install error messages to avoid leaking internal details. */
 const KNOWN_ERROR_PREFIXES = [
   'already installed',
   'Could not find SKILL.md',
@@ -449,4 +409,90 @@ export function sanitizeInstallError(error: unknown): string {
     }
   }
   return 'Installation failed due to an internal error'
+}
+// SMI-3864: Quality score + risk history helpers
+
+/** Compute quality score (0-1) from scan report and skill metadata. */
+export function computeAndAttachQualityScore(params: {
+  scanReport: ScanReport | undefined
+  description: string | null
+  tagCount: number
+  hasRepoUrl: boolean
+  hasAuthor: boolean
+  trustTier: string
+  hasExamples: boolean
+}): number {
+  return computeQualityScore({
+    riskScore: params.scanReport?.riskScore ?? null,
+    securityFindingsCount: params.scanReport?.findings.length ?? 0,
+    securityPassed: params.scanReport?.passed ?? null,
+    description: params.description,
+    tagCount: params.tagCount,
+    hasRepoUrl: params.hasRepoUrl,
+    hasAuthor: params.hasAuthor,
+    trustTier: params.trustTier,
+    hasExamples: params.hasExamples,
+  })
+}
+
+/** Record a risk score snapshot. Best-effort: swallows errors. */
+export function recordRiskHistory(params: {
+  historyRepo: RiskScoreHistoryRepository | undefined
+  skillId: string
+  scanReport: ScanReport
+  contentHash: string | null
+  source: 'install' | 'indexer' | 'rescan'
+}): void {
+  if (!params.historyRepo) return
+  try {
+    params.historyRepo.record({
+      skillId: params.skillId,
+      riskScore: params.scanReport.riskScore,
+      findingsCount: params.scanReport.findings.length,
+      contentHash: params.contentHash,
+      scannedAt: params.scanReport.scannedAt.toISOString(),
+      source: params.source,
+    })
+  } catch {
+    // Best-effort — do not block install on history recording failure
+  }
+}
+
+/** SMI-3870: Validate config.json content; returns validity and warnings. */
+export function validateOptionalConfig(content: string): {
+  valid: boolean
+  warnings: string[]
+} {
+  const result = validateSkillConfig(content)
+  if (!result.valid) {
+    return { valid: false, warnings: ['config.json rejected: ' + result.errors.join('; ')] }
+  }
+  return { valid: true, warnings: result.warnings }
+}
+
+/** SMI-3871: Cross-reference dependency targets against quarantine status. */
+export function checkDepsAgainstQuarantine(
+  depIntel: DepIntelResult,
+  getStatus: (skillId: string) => QuarantineStatus | null
+): { warnings: string[]; quarantinedDeps: string[] } {
+  const warnings: string[] = []
+  const quarantinedDeps: string[] = []
+  const checked = new Set<string>()
+  const check = (target: string): void => {
+    if (checked.has(target)) return
+    checked.add(target)
+    const status = getStatus(target)
+    if (!status) return
+    quarantinedDeps.push(target)
+    const label =
+      status === 'pending'
+        ? 'under review for security concerns'
+        : 'quarantined (confirmed malicious)'
+    warnings.push('Dependency "' + target + '" is ' + label + '.')
+  }
+  for (const server of depIntel.dep_inferred_servers) check(server)
+  if (depIntel.dep_declared?.platform?.mcp_servers) {
+    for (const srv of depIntel.dep_declared.platform.mcp_servers) check(srv.name)
+  }
+  return { warnings, quarantinedDeps }
 }

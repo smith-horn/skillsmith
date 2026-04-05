@@ -134,7 +134,8 @@ export function transformSkillToMatchData(skill: {
     description: skill.description || '',
     triggerPhrases,
     keywords: skill.tags,
-    qualityScore: Math.round((skill.qualityScore ?? 0.5) * 100),
+    // SMI-3864: Pass 0-1 scale directly (SkillMatcher no longer divides by 100)
+    qualityScore: skill.qualityScore ?? 0.5,
     trustTier: mapTrustTierFromDb(skill.trustTier),
     roles,
     // SMI-1632: Default to true if not explicitly set

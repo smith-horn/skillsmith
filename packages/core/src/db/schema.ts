@@ -23,11 +23,13 @@ import { MIGRATION_V6_SQL } from './migrations/v6-advisories.js'
 import { MIGRATION_V7_SQL } from './migrations/v7-compatibility.js'
 import { MIGRATION_V8_SQL } from './migrations/v8-co-installs.js'
 import { MIGRATION_V10_SQL } from './migrations/v10-dependencies.js'
+import { MIGRATION_V12_SQL } from './migrations/v12-risk-score-history.js'
 
 export type DatabaseType = Database
 
 // v11: SMI-3510 content hash verification column
-export const SCHEMA_VERSION = 11
+// v12: SMI-3864 risk score history for trend detection
+export const SCHEMA_VERSION = 12
 
 /**
  * SQL statements for creating the database schema
@@ -228,6 +230,11 @@ export const MIGRATIONS: Migration[] = [
     version: 11,
     description: 'SMI-3510: content_hash column for tamper detection',
     sql: 'ALTER TABLE skills ADD COLUMN content_hash TEXT',
+  },
+  {
+    version: 12,
+    description: 'SMI-3864: risk_score_history table for trend detection',
+    sql: MIGRATION_V12_SQL,
   },
 ]
 

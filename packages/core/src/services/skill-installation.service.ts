@@ -1,9 +1,4 @@
-/**
- * @fileoverview SkillInstallationService — shared install/uninstall business logic
- * @module @skillsmith/core/services/skill-installation.service
- * @see SMI-3483: Wave 0 — Extract SkillInstallationService into core
- */
-
+/** @fileoverview SkillInstallationService — shared install/uninstall business logic (SMI-3483) */
 import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
@@ -13,8 +8,8 @@ import { parseRepoUrl } from '../utils/github-url.js'
 import type { TrustTier } from '../types/skill.js'
 import type { SkillRepository } from '../repositories/SkillRepository.js'
 import type { SkillDependencyRepository } from '../repositories/SkillDependencyRepository.js'
+import type { RiskScoreHistoryRepository } from '../repositories/RiskScoreHistoryRepository.js'
 import type { Database } from '../db/database-interface.js'
-
 import {
   TRUST_TIER_SCANNER_OPTIONS,
   type ProgressCallback,
@@ -24,11 +19,11 @@ import {
   type UninstallResult,
   type RegistryLookup,
   type CoInstallRecorder,
+  type QuarantineStatus,
+  type AiDefenceFeedback,
 } from './skill-installation.types.js'
-
+import { recordAiDefenceFeedback, collectTrendWarnings } from './skill-installation.feedback.js'
 import { ManifestManager } from './skill-manifest.js'
-
-// SMI-3483: Helpers split to companion file to meet 500-line standard
 import {
   parseSkillIdInternal,
   hashContent,
@@ -40,29 +35,25 @@ import {
   applyOptimization,
   performUninstall,
   sanitizeInstallError,
+  validateOptionalConfig,
+  checkDepsAgainstQuarantine,
 } from './skill-installation.helpers.js'
-
 const DEFAULT_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
-const DEFAULT_SKILLSMITH_DIR = path.join(os.homedir(), '.skillsmith')
-const DEFAULT_MANIFEST_PATH = path.join(DEFAULT_SKILLSMITH_DIR, 'manifest.json')
+const DEFAULT_MANIFEST_PATH = path.join(os.homedir(), '.skillsmith', 'manifest.json')
 export interface SkillInstallationServiceParams {
   db: Database
   skillRepo: SkillRepository
   skillDependencyRepo: SkillDependencyRepository
-  /** Directory where skills are installed. Default: ~/.claude/skills */
   skillsDir?: string
-  /** Path to the manifest file. Default: ~/.skillsmith/manifest.json */
   manifestPath?: string
-  /** Progress callback for reporting stages */
   onProgress?: ProgressCallback
-  /** Registry lookup abstraction (API-first for mcp-server, simpler for CLI) */
   registryLookup?: RegistryLookup
-  /** Co-install recorder for "also installed" recommendations */
   coInstallRecorder?: CoInstallRecorder
-  /** Skill IDs installed in this session (for co-install tracking) */
   sessionInstalledSkillIds?: string[]
+  quarantineLookup?: (skillId: string) => QuarantineStatus | null // SMI-3871
+  riskHistoryRepo?: RiskScoreHistoryRepository // SMI-3874
+  aiDefenceFeedback?: AiDefenceFeedback // SMI-3873
 }
-
 export class SkillInstallationService {
   private readonly db: Database
   private readonly skillRepo: SkillRepository
@@ -73,7 +64,9 @@ export class SkillInstallationService {
   private readonly registryLookup?: RegistryLookup
   private readonly coInstallRecorder?: CoInstallRecorder
   private readonly sessionInstalledSkillIds: string[]
-
+  private readonly quarantineLookup?: (skillId: string) => QuarantineStatus | null
+  private readonly riskHistoryRepo?: RiskScoreHistoryRepository
+  private readonly aiDefenceFeedback?: AiDefenceFeedback
   constructor(params: SkillInstallationServiceParams) {
     this.db = params.db
     this.skillRepo = params.skillRepo
@@ -83,15 +76,16 @@ export class SkillInstallationService {
     this.onProgress = params.onProgress ?? (() => {})
     this.registryLookup = params.registryLookup
     this.coInstallRecorder = params.coInstallRecorder
+    this.quarantineLookup = params.quarantineLookup
+    this.riskHistoryRepo = params.riskHistoryRepo
+    this.aiDefenceFeedback = params.aiDefenceFeedback
     this.sessionInstalledSkillIds = params.sessionInstalledSkillIds ?? []
   }
-
   async install(skillId: string, options: InstallOptions = {}): Promise<InstallResult> {
     let trustTier: TrustTier = 'unknown'
     try {
       this.onProgress('parse', 'Parsing skill ID')
       const parsed = parseSkillIdInternal(skillId)
-
       let owner: string
       let repo: string
       let basePath: string
@@ -99,7 +93,6 @@ export class SkillInstallationService {
       let branch: string = 'main'
       let fromRegistry = false
       let indexedContentHash: string | undefined
-
       if (parsed.isRegistryId) {
         if (!this.registryLookup) {
           return {
@@ -114,7 +107,6 @@ export class SkillInstallationService {
 
         this.onProgress('lookup', 'Looking up skill in registry')
         const registrySkill = await this.registryLookup.lookup(skillId)
-
         if (!registrySkill) {
           return {
             success: false,
@@ -133,7 +125,6 @@ export class SkillInstallationService {
             ],
           }
         }
-
         if (registrySkill.quarantined) {
           return {
             success: false,
@@ -169,8 +160,6 @@ export class SkillInstallationService {
       }
 
       const installPath = path.join(this.skillsDir, skillName)
-
-      // Check if already installed
       this.onProgress('manifest', 'Checking manifest')
       const manifest = await this.manifest.load()
       if (manifest.installedSkills[skillName] && !options.force) {
@@ -181,8 +170,6 @@ export class SkillInstallationService {
           error: 'Skill "' + skillName + '" is already installed. Use force=true to reinstall.',
         }
       }
-
-      // Fetch SKILL.md
       this.onProgress('fetch', 'Fetching SKILL.md from GitHub')
       const skillMdPath = basePath + 'SKILL.md'
       let skillMdContent: string
@@ -195,19 +182,13 @@ export class SkillInstallationService {
           skillId,
           installPath,
           error: fromRegistry
-            ? 'This skill is indexed in the Skillsmith registry but its installation source ' +
-              'appears broken (SKILL.md not found at ' +
+            ? 'This skill is indexed in the Skillsmith registry but its installation source appears broken (SKILL.md not found at ' +
               (basePath || 'repository root') +
-              '). ' +
-              'This is a registry data quality issue. ' +
-              'Please report it at https://skillsmith.app/contact?topic=registry-quality. ' +
-              'Repository: ' +
+              '). This is a registry data quality issue. Please report it at https://skillsmith.app/contact?topic=registry-quality. Repository: ' +
               repoUrl
             : 'Could not find SKILL.md at ' +
               (basePath || 'repository root') +
-              '. ' +
-              'Skills must have a SKILL.md file with YAML frontmatter to be installable. ' +
-              'Repository: ' +
+              '. Skills must have a SKILL.md file with YAML frontmatter to be installable. Repository: ' +
               repoUrl,
           tips: fromRegistry
             ? [
@@ -220,8 +201,6 @@ export class SkillInstallationService {
               ],
         }
       }
-
-      // Validate SKILL.md
       this.onProgress('validate', 'Validating SKILL.md')
       const validation = validateSkillMd(skillMdContent)
       if (!validation.valid) {
@@ -237,10 +216,8 @@ export class SkillInstallationService {
         }
       }
 
-      // SMI-3510: Compare raw content hash against indexed hash (only if indexed hash exists)
-      const contentHashMismatch =
+      const contentHashMismatch = // SMI-3510
         indexedContentHash != null ? hashContent(skillMdContent) !== indexedContentHash : false
-
       // Security scan — GAP-06: Restrict skipScan to trusted tiers only
       if (options.skipScan && (trustTier === 'experimental' || trustTier === 'unknown')) {
         return {
@@ -266,6 +243,12 @@ export class SkillInstallationService {
         securityReport = scanner.scan(skillId, skillMdContent)
 
         if (!securityReport.passed) {
+          recordAiDefenceFeedback({
+            feedback: this.aiDefenceFeedback,
+            skillMdContent,
+            scanReport: securityReport,
+            blocked: true,
+          })
           const criticalFindings = securityReport.findings.filter(
             (f) => f.severity === 'critical' || f.severity === 'high'
           )
@@ -325,8 +308,6 @@ export class SkillInstallationService {
           tips: ['Trust tier: ' + trustTier, 'Use confirmed=true to proceed with installation'],
         }
       }
-
-      // Optimization
       this.onProgress('optimize', 'Applying optimization')
       const optimizeResult = options.skipOptimize
         ? {
@@ -339,15 +320,12 @@ export class SkillInstallationService {
         : await applyOptimization(this.db, skillId, skillName, skillMdContent)
 
       const { finalSkillContent, subSkillFiles, subagentContent, optimizationInfo } = optimizeResult
-
       const contentHash = hashContent(finalSkillContent)
-
       // Write files
       this.onProgress('write', 'Writing skill files')
       const writtenFiles: string[] = []
       try {
         await fs.mkdir(installPath, { recursive: true })
-
         // Validate directory is not a symlink escape
         const realInstallPath = await fs.realpath(installPath)
         const expectedPrefix = path.resolve(this.skillsDir)
@@ -361,7 +339,6 @@ export class SkillInstallationService {
         const mainSkillPath = path.join(installPath, 'SKILL.md')
         await safeWriteFile(mainSkillPath, finalSkillContent)
         writtenFiles.push(mainSkillPath)
-
         // Write sub-skills in parallel
         if (subSkillFiles.length > 0) {
           await Promise.all(
@@ -372,7 +349,6 @@ export class SkillInstallationService {
             })
           )
         }
-
         // Write companion subagent if generated
         if (subagentContent) {
           const agentsDir = path.join(os.homedir(), '.claude', 'agents')
@@ -396,14 +372,18 @@ export class SkillInstallationService {
         ? null
         : new SecurityScanner(TRUST_TIER_SCANNER_OPTIONS[trustTier])
       const optionalFiles = ['README.md', 'examples.md', 'config.json']
+      const configWarnings: string[] = []
       for (const file of optionalFiles) {
         try {
           const content = await fetchFromGitHub(owner, repo, basePath + file, branch)
           if (optionalFileScanner) {
             const fileScan = optionalFileScanner.scan(skillId + '/' + file, content)
-            if (!fileScan.passed) {
-              continue
-            }
+            if (!fileScan.passed) continue
+          }
+          if (file === 'config.json') {
+            const configCheck = validateOptionalConfig(content)
+            if (!configCheck.valid) continue // SMI-3870: skip invalid config
+            configWarnings.push(...configCheck.warnings)
           }
           await safeWriteFile(path.join(installPath, file), content)
         } catch {
@@ -429,12 +409,10 @@ export class SkillInstallationService {
           },
         },
       }))
-
       if (this.coInstallRecorder) {
         this.coInstallRecorder.recordSessionCoInstalls([...this.sessionInstalledSkillIds, skillId])
         this.sessionInstalledSkillIds.push(skillId)
       }
-
       // Persist dependency intelligence (best-effort)
       const depIntel = extractDepIntel(skillMdContent)
       try {
@@ -445,23 +423,44 @@ export class SkillInstallationService {
           depIntel.dep_declared
         )
       } catch {
-        // Dependency persistence is best-effort
+        /* best-effort */
       }
-
+      let quarantinedDeps: string[] | undefined // SMI-3871
+      if (this.quarantineLookup) {
+        try {
+          const dqResult = checkDepsAgainstQuarantine(depIntel, this.quarantineLookup)
+          if (dqResult.quarantinedDeps.length > 0) {
+            quarantinedDeps = dqResult.quarantinedDeps
+            depIntel.dep_warnings.push(...dqResult.warnings)
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
+      const trendWarnings = securityReport
+        ? collectTrendWarnings({
+            historyRepo: this.riskHistoryRepo,
+            skillId,
+            scanReport: securityReport,
+            contentHash,
+          })
+        : []
+      recordAiDefenceFeedback({
+        feedback: this.aiDefenceFeedback,
+        skillMdContent,
+        scanReport: securityReport,
+        blocked: false,
+      })
       this.onProgress('done', 'Installation complete')
-
       const tips = generateTips(skillName, optimizationInfo)
-
-      // GAP-06: Warn when skipScan was used (allowed tiers only reach here)
+      tips.unshift(...trendWarnings)
+      tips.push(...configWarnings)
       if (options.skipScan) {
         tips.unshift('Security scan was skipped. This skill was not scanned for malicious content.')
       }
-      // SMI-3510: Warn when content hash differs from indexed hash
       if (contentHashMismatch) {
         tips.unshift(
-          'Content has changed since Skillsmith last indexed this skill. ' +
-            'This may mean the author updated it, or the content was modified. ' +
-            "Review recent changes at the skill's repository before using."
+          "Content has changed since Skillsmith last indexed this skill. This may mean the author updated it, or the content was modified. Review recent changes at the skill's repository before using."
         )
       }
 
@@ -474,6 +473,7 @@ export class SkillInstallationService {
         optimization: optimizationInfo,
         depIntel,
         contentHashMismatch,
+        quarantinedDeps,
         tips,
       }
     } catch (error) {

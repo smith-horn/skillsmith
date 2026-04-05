@@ -71,6 +71,10 @@ export type {
   RateLimitMetrics,
 } from './rate-limiter/index.js'
 
+// SMI-3874: Risk trend detection
+export { detectRiskTrend } from './risk-trend.js'
+export type { RiskTrendResult } from './risk-trend.js'
+
 // SMI-1534: E2B Sandbox for skill testing
 export { SkillSandbox, SandboxUnavailableError, withSandbox } from './SkillSandbox.js'
 export type { SandboxOptions, ExecutionResult, SandboxFile, SandboxStatus } from './SkillSandbox.js'

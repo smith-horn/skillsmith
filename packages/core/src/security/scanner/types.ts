@@ -18,6 +18,7 @@ export type SecurityFindingType =
   | 'privilege_escalation'
   | 'ai_defence' // SMI-1532: CVE-hardened AI injection detection
   | 'ssrf' // SMI-3509: SSRF instruction detection
+  | 'pii' // SMI-3864: PII detection
 
 /**
  * Severity levels for security findings
@@ -63,6 +64,7 @@ export interface RiskScoreBreakdown {
   externalUrls: number
   aiDefence: number // SMI-1532: AI injection detection score
   ssrf: number // SMI-3509: SSRF instruction detection score
+  pii: number // SMI-3864: PII detection score
 }
 
 /**
