@@ -1406,74 +1406,78 @@ console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RES
   // Non-source conventional commit prefixes (docs, chore, ci, test, refactor, style)
   const NON_SOURCE_PREFIXES = /^(docs|chore|ci|test|refactor|style)(\(.+\))?!?:/i
 
-  try {
-    const log = execSync('git log -10 --format=%H%n%B --no-merges', {
-      encoding: 'utf-8',
-      timeout: 5000,
-    })
+  // Shallow clone guard — skip when history is incomplete (CI Docker builds)
+  if (existsSync('.git/shallow')) {
+    pass('Skipped — shallow clone detected (limited git history)')
+  } else
+    try {
+      const log = execSync('git log -10 --format=%H%n%B --no-merges', {
+        encoding: 'utf-8',
+        timeout: 5000,
+      })
 
-    // Parse commit blocks: each block starts with a 40-char SHA
-    const blocks = log.split(/(?=^[0-9a-f]{40}$)/m).filter((b) => b.trim())
-    let suspicious = 0
-    const suspiciousDetails = []
+      // Parse commit blocks: each block starts with a 40-char SHA
+      const blocks = log.split(/(?=^[0-9a-f]{40}$)/m).filter((b) => b.trim())
+      let suspicious = 0
+      const suspiciousDetails = []
 
-    for (const block of blocks) {
-      const lines = block.trim().split('\n')
-      const sha = lines[0]
-      const message = lines.slice(1).join('\n')
+      for (const block of blocks) {
+        const lines = block.trim().split('\n')
+        const sha = lines[0]
+        const message = lines.slice(1).join('\n')
 
-      // Check if message references SMI issues with done-like keywords
-      const hasIssue = ISSUE_RE.test(message)
-      ISSUE_RE.lastIndex = 0 // Reset global regex
-      const hasDone = DONE_PATTERNS.some((p) => p.test(message))
-      const isNonSourcePrefix = NON_SOURCE_PREFIXES.test(message)
+        // Check if message references SMI issues with done-like keywords
+        const hasIssue = ISSUE_RE.test(message)
+        ISSUE_RE.lastIndex = 0 // Reset global regex
+        const hasDone = DONE_PATTERNS.some((p) => p.test(message))
+        const isNonSourcePrefix = NON_SOURCE_PREFIXES.test(message)
 
-      if (!hasIssue || !hasDone || isNonSourcePrefix) continue
+        if (!hasIssue || !hasDone || isNonSourcePrefix) continue
 
-      // Get changed files for this commit
-      try {
-        const files = execSync(`git diff-tree --no-commit-id --name-only -r ${sha}`, {
-          encoding: 'utf-8',
-          timeout: 2000,
-        })
-          .trim()
-          .split('\n')
-          .filter((f) => f)
-
-        const hasSource = files.some((f) => {
-          const isSource = SRC_PATTERNS.some((p) => p.test(f))
-          const isExcluded = SRC_EXCLUDED.some((p) => p.test(f))
-          return isSource && !isExcluded
-        })
-
-        if (!hasSource) {
-          suspicious++
-          const issues = message.match(ISSUE_RE) || []
-          ISSUE_RE.lastIndex = 0
-          suspiciousDetails.push({
-            sha: sha.substring(0, 8),
-            issues: [...new Set(issues.map((i) => i.toUpperCase()))],
+        // Get changed files for this commit
+        try {
+          const files = execSync(`git diff-tree --no-commit-id --name-only -r ${sha}`, {
+            encoding: 'utf-8',
+            timeout: 2000,
           })
-        }
-      } catch {
-        // Skip commits that can't be inspected
-      }
-    }
+            .trim()
+            .split('\n')
+            .filter((f) => f)
 
-    if (suspicious === 0) {
-      pass('Last 10 commits: all SMI-referencing "done" commits include source changes')
-    } else {
-      warn(
-        `${suspicious} commit(s) mark issues done without source changes`,
-        'Run npm run audit:drift for a comprehensive check'
-      )
-      for (const d of suspiciousDetails.slice(0, 3)) {
-        console.log(`    ${d.sha}: ${d.issues.join(', ')}`)
+          const hasSource = files.some((f) => {
+            const isSource = SRC_PATTERNS.some((p) => p.test(f))
+            const isExcluded = SRC_EXCLUDED.some((p) => p.test(f))
+            return isSource && !isExcluded
+          })
+
+          if (!hasSource) {
+            suspicious++
+            const issues = message.match(ISSUE_RE) || []
+            ISSUE_RE.lastIndex = 0
+            suspiciousDetails.push({
+              sha: sha.substring(0, 8),
+              issues: [...new Set(issues.map((i) => i.toUpperCase()))],
+            })
+          }
+        } catch {
+          // Skip commits that can't be inspected
+        }
       }
+
+      if (suspicious === 0) {
+        pass('Last 10 commits: all SMI-referencing "done" commits include source changes')
+      } else {
+        warn(
+          `${suspicious} commit(s) mark issues done without source changes`,
+          'Run npm run audit:drift for a comprehensive check'
+        )
+        for (const d of suspiciousDetails.slice(0, 3)) {
+          console.log(`    ${d.sha}: ${d.issues.join(', ')}`)
+        }
+      }
+    } catch (e) {
+      warn('Could not run implementation spot check', e.message)
     }
-  } catch (e) {
-    warn('Could not run implementation spot check', e.message)
-  }
 }
 
 // ── Check: Duplicate Shared Constants (SMI-3590) ───────────────────────
