@@ -19,6 +19,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 - **Security Audit**: `skillsmith audit` checks installed skills against security advisories.
 - **Skill Name Validation**: Names must match `/^[a-z][a-z0-9-]*$/`.
 
+## v0.4.3 (2026-03-06)
+
+- **Security**: Remediated 14 security gaps across CLI commands including path traversal, shell injection, and ANSI escape injection (SMI-3506).
+- **WASM migration**: Migrated to `createDatabaseAsync` and deprecated synchronous schema exports (SMI-2721 Wave 2).
+
 ## v0.4.2 (2026-02-23)
 
 - **Fix**: Updated core dependency to v0.4.12 for @huggingface/transformers migration.
