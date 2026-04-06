@@ -41,6 +41,12 @@ import {
 } from './tools/audit-tools.js'
 import { teamWorkspaceToolSchema, shareSkillToolSchema } from './tools/team-workspace.js'
 import { publishPrivateToolSchema } from './tools/publish-private.js'
+import {
+  teamAnalyticsDashboardToolSchema,
+  teamUsageReportToolSchema,
+  analyticsDashboardToolSchema,
+  usageReportToolSchema,
+} from './tools/analytics.js'
 import { dispatchToolCall } from './tool-dispatch.js'
 import {
   isFirstRun,
@@ -94,6 +100,10 @@ const toolDefinitions = [
   teamWorkspaceToolSchema,
   shareSkillToolSchema,
   publishPrivateToolSchema,
+  teamAnalyticsDashboardToolSchema,
+  teamUsageReportToolSchema,
+  analyticsDashboardToolSchema,
+  usageReportToolSchema,
 ]
 
 // Create server

@@ -196,9 +196,13 @@ All tiers include:
 | `team_workspace` | Manage team workspaces (create, list, get, delete) | Team+ |
 | `share_skill` | Add, remove, or list skills in a team workspace | Team+ |
 | `publish_private` | Mark a skill as private to your team | Team+ |
+| `team_analytics_dashboard` | Per-user tool usage counts, top tools, daily trend | Team+ |
+| `team_usage_report` | Weekly/monthly usage summary with period comparison | Team+ |
 | `audit_export` | Export audit log events for a time range | Enterprise |
 | `audit_query` | Query audit logs with filters | Enterprise |
 | `siem_export` | Export audit events for SIEM ingestion | Enterprise |
+| `analytics_dashboard` | Recommendation accuracy, adoption curves, team aggregation | Enterprise |
+| `usage_report` | Comprehensive usage report with all metrics | Enterprise |
 
 ## Tool Parameters
 

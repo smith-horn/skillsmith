@@ -1,0 +1,78 @@
+---
+/**
+ * TeamNav — Secondary tab navigation for team dashboard pages
+ *
+ * @see SMI-3897: Team Admin Dashboard (Wave 2b)
+ *
+ * Usage:
+ *   <TeamNav activePath="/account/team" />
+ *   <TeamNav activePath="/account/team/members" />
+ */
+
+interface Props {
+  activePath: string
+}
+
+const { activePath } = Astro.props
+
+const tabs = [
+  { href: '/account/team', label: 'Overview' },
+  { href: '/account/team/members', label: 'Members' },
+  { href: '/account/team/workspaces', label: 'Workspaces' },
+]
+---
+
+<nav class="team-nav" aria-label="Team dashboard navigation">
+  <ul class="team-nav-tabs">
+    {
+      tabs.map((tab) => (
+        <li>
+          <a
+            href={tab.href}
+            class:list={['team-nav-tab', { active: activePath === tab.href }]}
+            aria-current={activePath === tab.href ? 'page' : undefined}
+          >
+            {tab.label}
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+</nav>
+
+<style>
+  .team-nav {
+    margin-bottom: 2rem;
+    border-bottom: 1px solid #2a2a2f;
+  }
+
+  .team-nav-tabs {
+    display: flex;
+    gap: 0;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .team-nav-tab {
+    display: inline-block;
+    padding: 0.75rem 1.25rem;
+    color: #9ca3af;
+    text-decoration: none;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    transition:
+      color 0.15s,
+      border-color 0.15s;
+  }
+
+  .team-nav-tab:hover {
+    color: #fafafa;
+  }
+
+  .team-nav-tab.active {
+    color: #fafafa;
+    border-bottom-color: #b8523a;
+  }
+</style>

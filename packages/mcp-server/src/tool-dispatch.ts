@@ -43,6 +43,16 @@ import {
 } from './tools/team-workspace.js'
 import { publishPrivateInputSchema, executePublishPrivate } from './tools/publish-private.js'
 import {
+  teamAnalyticsDashboardInputSchema,
+  executeTeamAnalyticsDashboard,
+  teamUsageReportInputSchema,
+  executeTeamUsageReport,
+  analyticsDashboardInputSchema,
+  executeAnalyticsDashboard,
+  usageReportInputSchema,
+  executeUsageReport,
+} from './tools/analytics.js'
+import {
   ok,
   errResponse,
   withLicenseAndQuota,
@@ -227,6 +237,50 @@ export async function dispatchToolCall(
         args,
         publishPrivateInputSchema,
         executePublishPrivate,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'team_analytics_dashboard':
+      return withLicenseAndQuota(
+        'team_analytics_dashboard',
+        args,
+        teamAnalyticsDashboardInputSchema,
+        executeTeamAnalyticsDashboard,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'team_usage_report':
+      return withLicenseAndQuota(
+        'team_usage_report',
+        args,
+        teamUsageReportInputSchema,
+        executeTeamUsageReport,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'analytics_dashboard':
+      return withLicenseAndQuota(
+        'analytics_dashboard',
+        args,
+        analyticsDashboardInputSchema,
+        executeAnalyticsDashboard,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'usage_report':
+      return withLicenseAndQuota(
+        'usage_report',
+        args,
+        usageReportInputSchema,
+        executeUsageReport,
         toolContext,
         licenseMiddleware,
         quotaMiddleware

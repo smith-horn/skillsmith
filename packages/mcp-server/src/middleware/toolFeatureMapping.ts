@@ -82,7 +82,11 @@ export const TOOL_FEATURES: Record<string, FeatureFlag | null> = {
   private_registry_publish: 'private_registry',
   private_registry_manage: 'private_registry',
 
-  // Analytics tools
+  // Team analytics tools
+  team_analytics_dashboard: 'usage_analytics',
+  team_usage_report: 'usage_analytics',
+
+  // Enterprise analytics tools
   analytics_dashboard: 'advanced_analytics',
   usage_report: 'advanced_analytics',
 

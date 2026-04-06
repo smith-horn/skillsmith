@@ -39,6 +39,10 @@ const HANDLED_TOOLS = new Set([
   'team_workspace',
   'share_skill',
   'publish_private',
+  'team_analytics_dashboard',
+  'team_usage_report',
+  'analytics_dashboard',
+  'usage_report',
 ])
 
 function createMockLicenseMiddleware(): LicenseMiddleware {
