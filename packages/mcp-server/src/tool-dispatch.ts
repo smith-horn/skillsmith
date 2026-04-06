@@ -27,6 +27,14 @@ import { skillAuditInputSchema, executeSkillAudit } from './tools/skill-audit.js
 import { skillPackAuditInputSchema, executeSkillPackAudit } from './tools/skill-pack-audit.js'
 import { outdatedInputSchema, executeOutdated } from './tools/outdated.js'
 import { skillRescanInputSchema, executeSkillRescan } from './tools/skill-rescan.js'
+import {
+  auditExportInputSchema,
+  executeAuditExport,
+  auditQueryInputSchema,
+  executeAuditQuery,
+  siemExportInputSchema,
+  executeSiemExport,
+} from './tools/audit-tools.js'
 import { createLicenseErrorResponse } from './middleware/license.js'
 import type { LicenseMiddleware } from './middleware/license.js'
 import type { QuotaMiddleware } from './middleware/quota.js'
@@ -166,6 +174,39 @@ export async function dispatchToolCall(
 
     case 'skill_rescan':
       return ok(await executeSkillRescan(skillRescanInputSchema.parse(args)))
+
+    case 'audit_export': {
+      const input = auditExportInputSchema.parse(args)
+      const licenseResult = await licenseMiddleware.checkTool('audit_export')
+      if (!licenseResult.valid) return errResponse(createLicenseErrorResponse(licenseResult))
+      const licenseInfo = await licenseMiddleware.getLicenseInfo()
+      const quotaResult = await quotaMiddleware.checkAndTrack('audit_export', licenseInfo)
+      if (!quotaResult.allowed)
+        return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
+      return ok(await executeAuditExport(input, toolContext))
+    }
+
+    case 'audit_query': {
+      const input = auditQueryInputSchema.parse(args)
+      const licenseResult = await licenseMiddleware.checkTool('audit_query')
+      if (!licenseResult.valid) return errResponse(createLicenseErrorResponse(licenseResult))
+      const licenseInfo = await licenseMiddleware.getLicenseInfo()
+      const quotaResult = await quotaMiddleware.checkAndTrack('audit_query', licenseInfo)
+      if (!quotaResult.allowed)
+        return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
+      return ok(await executeAuditQuery(input, toolContext))
+    }
+
+    case 'siem_export': {
+      const input = siemExportInputSchema.parse(args)
+      const licenseResult = await licenseMiddleware.checkTool('siem_export')
+      if (!licenseResult.valid) return errResponse(createLicenseErrorResponse(licenseResult))
+      const licenseInfo = await licenseMiddleware.getLicenseInfo()
+      const quotaResult = await quotaMiddleware.checkAndTrack('siem_export', licenseInfo)
+      if (!quotaResult.allowed)
+        return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
+      return ok(await executeSiemExport(input, toolContext))
+    }
 
     default:
       throw new Error('Unknown tool: ' + name)

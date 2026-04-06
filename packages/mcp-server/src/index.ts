@@ -34,6 +34,11 @@ import { skillAuditToolSchema } from './tools/skill-audit.js'
 import { skillPackAuditToolSchema } from './tools/skill-pack-audit.js'
 import { outdatedToolSchema } from './tools/outdated.js'
 import { skillRescanToolSchema } from './tools/skill-rescan.js'
+import {
+  auditExportToolSchema,
+  auditQueryToolSchema,
+  siemExportToolSchema,
+} from './tools/audit-tools.js'
 import { dispatchToolCall } from './tool-dispatch.js'
 import {
   isFirstRun,
@@ -81,6 +86,9 @@ const toolDefinitions = [
   skillPackAuditToolSchema,
   outdatedToolSchema,
   skillRescanToolSchema,
+  auditExportToolSchema,
+  auditQueryToolSchema,
+  siemExportToolSchema,
 ]
 
 // Create server
