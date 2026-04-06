@@ -118,7 +118,7 @@ jobs:
           echo "$CHANGED_FILES" | npx tsx scripts/ci/detect-affected.ts > /dev/null
 
   # SMI-3541: Verify PRs referencing Linear issues contain source code changes
-  # Non-required initially — will be promoted to required after 2 weeks (SMI-3546)
+  # Required check since 2026-04-05 (SMI-3546)
   verify-implementation:
     name: Verify Implementation Completeness
     needs: [classify]
