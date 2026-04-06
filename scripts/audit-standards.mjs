@@ -1527,6 +1527,100 @@ console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RES
   }
 }
 
+// 24. CHANGELOG Currency (SMI-3885)
+console.log(`\n${BOLD}24. CHANGELOG Currency (SMI-3885)${RESET}`)
+{
+  const pkgDirs = existsSync('packages')
+    ? readdirSync('packages').filter((d) => existsSync(join('packages', d, 'package.json')))
+    : []
+
+  // Check root + each package
+  const targets = [
+    { pkgPath: 'package.json', changelogPath: 'CHANGELOG.md', label: 'root' },
+    ...pkgDirs.map((d) => ({
+      pkgPath: join('packages', d, 'package.json'),
+      changelogPath: join('packages', d, 'CHANGELOG.md'),
+      label: `packages/${d}`,
+    })),
+  ]
+
+  let changelogIssues = 0
+  for (const { pkgPath, changelogPath, label } of targets) {
+    if (!existsSync(changelogPath)) continue // Skip packages without CHANGELOG
+
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
+      const pkgVersion = pkg.version
+      if (!pkgVersion) continue
+
+      const changelog = readFileSync(changelogPath, 'utf8')
+
+      // Check for [Unreleased] section with content (exemption)
+      const unreleasedMatch = changelog.match(/## \[?Unreleased\]?\s*\n([\s\S]*?)(?=\n## |\n*$)/)
+      if (unreleasedMatch && unreleasedMatch[1].trim().length > 0) continue
+
+      // Extract first version heading: ## [X.Y.Z] or ## vX.Y.Z or ## X.Y.Z
+      const versionMatch = changelog.match(/## \[?v?(\d+\.\d+\.\d+)\]?/)
+      if (!versionMatch) continue
+
+      const changelogVersion = versionMatch[1]
+      if (changelogVersion !== pkgVersion) {
+        changelogIssues++
+        warn(
+          `${label}: CHANGELOG version ${changelogVersion} is behind package.json ${pkgVersion}`,
+          `Update ${changelogPath} with an entry for v${pkgVersion}`
+        )
+      }
+    } catch {
+      // Skip unreadable files
+    }
+  }
+
+  if (changelogIssues === 0) {
+    pass('All CHANGELOGs are current with their package.json versions')
+  }
+}
+
+// 25. MCP Tool Count (SMI-3886)
+console.log(`\n${BOLD}25. MCP Tool Count (SMI-3886)${RESET}`)
+{
+  const mcpIndexPath = 'packages/mcp-server/src/index.ts'
+  const mcpReadmePath = 'packages/mcp-server/README.md'
+
+  if (!existsSync(mcpIndexPath) || !existsSync(mcpReadmePath)) {
+    warn('MCP tool count check skipped — required files not found')
+  } else {
+    try {
+      const indexContent = readFileSync(mcpIndexPath, 'utf8')
+      // Extract toolDefinitions array and count entries (lines with Schema or Tool suffix)
+      const defMatch = indexContent.match(/const toolDefinitions\s*=\s*\[([\s\S]*?)\]/)
+      const toolCount = defMatch
+        ? defMatch[1].split('\n').filter((l) => l.trim() && !l.trim().startsWith('//')).length
+        : 0
+
+      const readme = readFileSync(mcpReadmePath, 'utf8')
+      // Extract "Available Tools" section up to next heading, then count tool rows
+      const toolsSection = readme.match(
+        /## Available Tools\s*\n[\s\S]*?\n\|[- |]+\n([\s\S]*?)(?=\n## |\n*$)/
+      )
+      const readmeCount = toolsSection
+        ? toolsSection[1].split('\n').filter((l) => /^\|\s*`[a-z_]+`\s*\|/.test(l)).length
+        : 0
+
+      if (toolCount === readmeCount) {
+        pass(`MCP tool count matches: ${toolCount} tools in code and README`)
+      } else {
+        warn(
+          `MCP tool count mismatch: ${toolCount} in toolDefinitions vs ${readmeCount} in README`,
+          `Update ${mcpReadmePath} tools table to match registered tools`
+        )
+      }
+    } catch (e) {
+      warn('Could not check MCP tool count: ' + e.message)
+    }
+  }
+}
+
 // npm override drift check: @modelcontextprotocol/sdk override "." must match mcp-server range
 console.log(`\n${BOLD}Override Drift: @modelcontextprotocol/sdk${RESET}`)
 try {
