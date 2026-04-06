@@ -14,7 +14,8 @@
       "Security Audit",
       "Standards Compliance",
       "Build",
-      "Markdown Lint"
+      "Markdown Lint",
+      "Verify Implementation Completeness"
     ]
   },
   "enforce_admins": false,

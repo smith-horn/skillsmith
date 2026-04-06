@@ -6,6 +6,24 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 - **Fix: startup crash for new installs** — Bumped `@skillsmith/core` dependency floor from `^0.4.16` to `^0.4.17` to ensure `SkillInstallationService` export is available. Users with cached `core@0.4.16` saw a fatal `SyntaxError` on startup.
 
+## v0.4.6 (2026-03-24)
+
+- **README updates**: Updated npm README to reflect current features and usage.
+- **SDK compatibility**: Bumped `@modelcontextprotocol/sdk` to `^1.27.1` for compatibility improvements.
+- **Security**: Remediated security gaps across MCP tools as part of SMI-3506 security sweep.
+
+## v0.4.5 (2026-03-19)
+
+- **Fix: broken SkillDependencyRepository export** — Hotfix for missing barrel export that caused `SyntaxError` on startup when dependency intelligence tools were invoked (SMI-3468).
+
+## v0.4.4 (2026-03-06)
+
+- **Dependency intelligence tools**: `skill_outdated` tool checks installed skills against latest registry versions with dependency status reporting (SMI-3138).
+- **Skill pack audit**: `skill_pack_audit` tool detects version drift between installed and registry skills (SMI-2905).
+- **Semver validation**: `skill_validate` now requires a `version` field and validates semver format (SMI-2902).
+- **Encrypted skill detection**: `install_skill` detects git-crypt encrypted skills and provides unlock guidance (SMI-3221).
+- **Core dependency fix**: Fixed exact-pinned `@skillsmith/core` dependency to use caret range.
+
 ## v0.4.3
 
 - **Co-install recommendations**: `get_skill` responses now include an `also_installed` array — skills frequently installed alongside this one, surfaced once ≥5 co-installs are observed. Also shown on skill detail pages at [www.skillsmith.app/skills](https://www.skillsmith.app/skills).

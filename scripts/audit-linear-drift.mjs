@@ -106,7 +106,7 @@ async function fetchDoneIssues(since) {
   }
 
   const query = `
-    query DoneIssues($after: String, $since: DateTime!) {
+    query DoneIssues($after: String, $since: DateTimeOrDuration!) {
       issues(
         filter: {
           team: { key: { eq: "SMI" } }

@@ -66,10 +66,11 @@ The `main` branch is protected. Config: `.github/branch-protection.json`.
 | Standards Compliance | ci.yml | Governance standards audit |
 | Build | ci.yml | Build all packages via Turborepo |
 | Markdown Lint | docs-only.yml | Documentation quality |
+| Verify Implementation Completeness | ci.yml | Verify PRs with SMI refs contain source changes |
 
 ### How It Works
 
-- **Code PRs**: All 11 checks must pass
+- **Code PRs**: All 12 checks must pass
 - **Docs-only PRs**: Only Secret Scan + Markdown Lint (from `docs-only.yml`)
 - **Mixed PRs**: Full CI runs
 
