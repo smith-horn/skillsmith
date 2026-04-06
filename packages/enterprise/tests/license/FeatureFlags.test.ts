@@ -10,9 +10,9 @@ import {
 
 describe('FeatureFlags', () => {
   describe('ALL_FEATURE_FLAGS', () => {
-    it('should contain all 14 feature flags', () => {
-      // 2 individual + 4 team + 8 enterprise = 14 features
-      expect(ALL_FEATURE_FLAGS).toHaveLength(14)
+    it('should contain all 16 feature flags', () => {
+      // 3 individual + 5 team + 8 enterprise = 16 features
+      expect(ALL_FEATURE_FLAGS).toHaveLength(16)
     })
 
     it('should include all individual tier features', () => {

@@ -100,16 +100,18 @@ describe('runMigrationsSafe', () => {
   it.skipIf(skipIfNoSqlite)('runs pending migrations and records version increments', async () => {
     const db = await freshDb()
 
-    // Pin version to 1 (initial migration) to force re-running pending ones
-    // We need to delete all recorded versions above 1 to simulate pending state.
+    // Delete all version records to simulate a completely unversioned database.
+    // initializeSchema() stamped SCHEMA_VERSION but never recorded individual
+    // migration versions. Clearing the table forces all migrations to re-run.
     // Since the schema already has all columns, duplicate column errors are swallowed.
-    db.exec('DELETE FROM schema_version WHERE version > 1')
+    db.exec('DELETE FROM schema_version')
 
     const migrationsRun = runMigrationsSafe(db)
 
-    // Should have run migrations 2 through SCHEMA_VERSION
-    const expectedRun = SCHEMA_VERSION - 1
-    expect(migrationsRun).toBe(expectedRun)
+    // All MIGRATIONS entries should have been applied (versions 1 through SCHEMA_VERSION).
+    // SMI-3910: migration-runner now uses db.exec() directly instead of splitting
+    // by semicolon, so migration 1 (SCHEMA_SQL with trigger bodies) succeeds.
+    expect(migrationsRun).toBe(MIGRATIONS.length)
 
     // Version should now be up to date
     const finalVersion = getSchemaVersion(db)

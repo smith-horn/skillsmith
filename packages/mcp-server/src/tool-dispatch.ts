@@ -35,31 +35,15 @@ import {
   siemExportInputSchema,
   executeSiemExport,
 } from './tools/audit-tools.js'
-import { createLicenseErrorResponse } from './middleware/license.js'
+import {
+  ok,
+  errResponse,
+  withLicenseAndQuota,
+  TOOL_FEATURES,
+  FEATURE_TIERS,
+} from './middleware/license.js'
 import type { LicenseMiddleware } from './middleware/license.js'
 import type { QuotaMiddleware } from './middleware/quota.js'
-
-/**
- * Build a standard tool success response wrapping a JSON-serialisable result.
- */
-function ok(result: unknown): CallToolResult {
-  return {
-    content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-  }
-}
-
-/**
- * Cast a middleware error response (MCPErrorResponse) to CallToolResult.
- * MCPErrorResponse is structurally compatible but lacks the index signature
- * that Zod's $loose schema infers on CallToolResult.
- */
-function errResponse(response: {
-  content: Array<{ type: 'text'; text: string }>
-  isError?: boolean
-  _meta?: Record<string, unknown>
-}): CallToolResult {
-  return response as unknown as CallToolResult
-}
 
 /**
  * Dispatch a tool call to its handler, applying license and quota checks
@@ -128,87 +112,99 @@ export async function dispatchToolCall(
     case 'skill_publish':
       return ok(await executePublish(publishInputSchema.parse(args), toolContext))
 
-    case 'skill_updates': {
-      const input = skillUpdatesInputSchema.parse(args)
-      const license = await licenseMiddleware.checkTool('skill_updates')
-      if (!license.valid) return errResponse(createLicenseErrorResponse(license))
-      const licenseInfo = await licenseMiddleware.getLicenseInfo()
-      const quotaResult = await quotaMiddleware.checkAndTrack('skill_updates', licenseInfo)
-      if (!quotaResult.allowed)
-        return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
-      return ok(await executeSkillUpdates(input, toolContext))
-    }
+    case 'skill_updates':
+      return withLicenseAndQuota(
+        'skill_updates',
+        args,
+        skillUpdatesInputSchema,
+        executeSkillUpdates,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
 
-    case 'skill_diff': {
-      const input = skillDiffInputSchema.parse(args)
-      const licenseResult = await licenseMiddleware.checkTool('skill_diff')
-      if (!licenseResult.valid) return errResponse(createLicenseErrorResponse(licenseResult))
-      const licenseInfo = await licenseMiddleware.getLicenseInfo()
-      const quotaResult = await quotaMiddleware.checkAndTrack('skill_diff', licenseInfo)
-      if (!quotaResult.allowed)
-        return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
-      return ok(await executeSkillDiff(input, toolContext))
-    }
+    case 'skill_diff':
+      return withLicenseAndQuota(
+        'skill_diff',
+        args,
+        skillDiffInputSchema,
+        executeSkillDiff,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
 
-    case 'skill_audit': {
-      const input = skillAuditInputSchema.parse(args)
-      const licenseResult = await licenseMiddleware.checkTool('skill_audit')
-      if (!licenseResult.valid) return errResponse(createLicenseErrorResponse(licenseResult))
-      const licenseInfo = await licenseMiddleware.getLicenseInfo()
-      const quotaResult = await quotaMiddleware.checkAndTrack('skill_audit', licenseInfo)
-      if (!quotaResult.allowed)
-        return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
-      return ok(await executeSkillAudit(input, toolContext))
-    }
+    case 'skill_audit':
+      return withLicenseAndQuota(
+        'skill_audit',
+        args,
+        skillAuditInputSchema,
+        executeSkillAudit,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
 
-    case 'skill_pack_audit': {
-      const input = skillPackAuditInputSchema.parse(args)
-      const licenseResult = await licenseMiddleware.checkTool('skill_pack_audit')
-      if (!licenseResult.valid) return errResponse(createLicenseErrorResponse(licenseResult))
-      const licenseInfo = await licenseMiddleware.getLicenseInfo()
-      const quotaResult = await quotaMiddleware.checkAndTrack('skill_pack_audit', licenseInfo)
-      if (!quotaResult.allowed)
-        return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
-      return ok(await executeSkillPackAudit(input, toolContext))
-    }
+    case 'skill_pack_audit':
+      return withLicenseAndQuota(
+        'skill_pack_audit',
+        args,
+        skillPackAuditInputSchema,
+        executeSkillPackAudit,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
 
     case 'skill_rescan':
       return ok(await executeSkillRescan(skillRescanInputSchema.parse(args)))
 
-    case 'audit_export': {
-      const input = auditExportInputSchema.parse(args)
-      const licenseResult = await licenseMiddleware.checkTool('audit_export')
-      if (!licenseResult.valid) return errResponse(createLicenseErrorResponse(licenseResult))
-      const licenseInfo = await licenseMiddleware.getLicenseInfo()
-      const quotaResult = await quotaMiddleware.checkAndTrack('audit_export', licenseInfo)
-      if (!quotaResult.allowed)
-        return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
-      return ok(await executeAuditExport(input, toolContext))
-    }
+    case 'audit_export':
+      return withLicenseAndQuota(
+        'audit_export',
+        args,
+        auditExportInputSchema,
+        executeAuditExport,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
 
-    case 'audit_query': {
-      const input = auditQueryInputSchema.parse(args)
-      const licenseResult = await licenseMiddleware.checkTool('audit_query')
-      if (!licenseResult.valid) return errResponse(createLicenseErrorResponse(licenseResult))
-      const licenseInfo = await licenseMiddleware.getLicenseInfo()
-      const quotaResult = await quotaMiddleware.checkAndTrack('audit_query', licenseInfo)
-      if (!quotaResult.allowed)
-        return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
-      return ok(await executeAuditQuery(input, toolContext))
-    }
+    case 'audit_query':
+      return withLicenseAndQuota(
+        'audit_query',
+        args,
+        auditQueryInputSchema,
+        executeAuditQuery,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
 
-    case 'siem_export': {
-      const input = siemExportInputSchema.parse(args)
-      const licenseResult = await licenseMiddleware.checkTool('siem_export')
-      if (!licenseResult.valid) return errResponse(createLicenseErrorResponse(licenseResult))
-      const licenseInfo = await licenseMiddleware.getLicenseInfo()
-      const quotaResult = await quotaMiddleware.checkAndTrack('siem_export', licenseInfo)
-      if (!quotaResult.allowed)
-        return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
-      return ok(await executeSiemExport(input, toolContext))
-    }
+    case 'siem_export':
+      return withLicenseAndQuota(
+        'siem_export',
+        args,
+        siemExportInputSchema,
+        executeSiemExport,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
 
-    default:
+    default: {
+      // SMI-3913: Return comingSoon response for tools in TOOL_FEATURES that
+      // don't have a dispatch handler yet, instead of throwing Unknown tool.
+      // null = community tool (handled above), non-null = gated tool on roadmap.
+      if (name in TOOL_FEATURES && TOOL_FEATURES[name] !== null) {
+        return ok({
+          status: 'coming_soon',
+          message: `The ${name} tool is on our roadmap. Visit https://skillsmith.app/pricing#roadmap for details.`,
+          requiredTier: FEATURE_TIERS[TOOL_FEATURES[name]!] ?? 'enterprise',
+          feature: TOOL_FEATURES[name],
+        })
+      }
       throw new Error('Unknown tool: ' + name)
+    }
   }
 }

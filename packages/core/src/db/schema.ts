@@ -7,6 +7,9 @@
  * - Sources, Categories, and Cache tables
  * - WAL mode for performance
  * - Indexes for common query patterns
+ *
+ * SQL constants live in schema-sql.ts (SMI-3910) to avoid circular imports
+ * with migration-runner.ts. This file re-exports them for backward compat.
  */
 
 import type { Database } from './database-interface.js'
@@ -14,250 +17,28 @@ import {
   createDatabaseSync,
   createDatabaseAsync as createDatabaseAsyncFactory,
 } from './createDatabase.js'
-import { MIGRATION_V2_SQL } from './migrations/v2-phase5-columns.js'
-import { MIGRATION_V3_SQL } from './migrations/v3-sync-tables.js'
-import { MIGRATION_V4_SQL } from './migrations/v4-security-columns.js'
-import { MIGRATION_V5_SQL } from './migrations/v5-skill-versions.js'
-import { MIGRATION_V5B_SQL } from './migrations/v5b-change-type.js'
-import { MIGRATION_V6_SQL } from './migrations/v6-advisories.js'
-import { MIGRATION_V7_SQL } from './migrations/v7-compatibility.js'
-import { MIGRATION_V8_SQL } from './migrations/v8-co-installs.js'
-import { MIGRATION_V10_SQL } from './migrations/v10-dependencies.js'
-import { MIGRATION_V12_SQL } from './migrations/v12-risk-score-history.js'
+
+// Re-export SQL constants (SMI-3910: extracted to avoid circular imports)
+export { SCHEMA_SQL, FTS5_MIGRATION_SQL } from './schema-sql.js'
+import { SCHEMA_SQL } from './schema-sql.js'
+
+// Re-export migration runner functions and types (extracted in SMI-3910)
+export {
+  MIGRATIONS,
+  getSchemaVersion,
+  runMigrations,
+  runMigrationsSafe,
+} from './migration-runner.js'
+export type { Migration } from './migration-runner.js'
+
+// Re-import for use within this file (openDatabase, openDatabaseAsync)
+import { runMigrationsSafe } from './migration-runner.js'
 
 export type DatabaseType = Database
 
 // v11: SMI-3510 content hash verification column
 // v12: SMI-3864 risk score history for trend detection
 export const SCHEMA_VERSION = 12
-
-/**
- * SQL statements for creating the database schema
- */
-export const SCHEMA_SQL = `
--- Enable WAL mode for better concurrent performance
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-PRAGMA cache_size = -64000; -- 64MB cache
-PRAGMA temp_store = MEMORY;
-
--- Schema version tracking
-CREATE TABLE IF NOT EXISTS schema_version (
-  version INTEGER PRIMARY KEY,
-  applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- Skills table - main storage for discovered skills
-CREATE TABLE IF NOT EXISTS skills (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  description TEXT,
-  author TEXT,
-  repo_url TEXT UNIQUE,
-  quality_score REAL CHECK(quality_score IS NULL OR (quality_score >= 0 AND quality_score <= 1)),
-  trust_tier TEXT CHECK(trust_tier IN ('verified', 'community', 'experimental', 'unknown')) DEFAULT 'unknown',
-  tags TEXT DEFAULT '[]', -- JSON array of tags
-  risk_score INTEGER CHECK(risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 100)), -- SMI-825
-  security_findings_count INTEGER DEFAULT 0,
-  security_scanned_at TEXT,
-  security_passed INTEGER, -- boolean: 1 = passed, 0 = failed, NULL = not scanned
-  compatibility TEXT DEFAULT '[]', -- SMI-2760: JSON array of IDE/LLM/platform slugs
-  content_hash TEXT, -- SMI-3510: SHA-256 hash of SKILL.md for tamper detection
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- FTS5 virtual table for full-text search with BM25 ranking
-CREATE VIRTUAL TABLE IF NOT EXISTS skills_fts USING fts5(
-  name,
-  description,
-  tags,
-  author,
-  content='skills',
-  content_rowid='rowid',
-  tokenize='porter unicode61'
-);
-
--- Triggers to keep FTS index in sync with skills table
-CREATE TRIGGER IF NOT EXISTS skills_ai AFTER INSERT ON skills BEGIN
-  INSERT INTO skills_fts(rowid, name, description, tags, author)
-  VALUES (NEW.rowid, NEW.name, NEW.description, NEW.tags, NEW.author);
-END;
-
-CREATE TRIGGER IF NOT EXISTS skills_ad AFTER DELETE ON skills BEGIN
-  INSERT INTO skills_fts(skills_fts, rowid, name, description, tags, author)
-  VALUES ('delete', OLD.rowid, OLD.name, OLD.description, OLD.tags, OLD.author);
-END;
-
-CREATE TRIGGER IF NOT EXISTS skills_au AFTER UPDATE ON skills BEGIN
-  INSERT INTO skills_fts(skills_fts, rowid, name, description, tags, author)
-  VALUES ('delete', OLD.rowid, OLD.name, OLD.description, OLD.tags, OLD.author);
-  INSERT INTO skills_fts(rowid, name, description, tags, author)
-  VALUES (NEW.rowid, NEW.name, NEW.description, NEW.tags, NEW.author);
-END;
-
--- Sources table - tracks where skills are discovered from
-CREATE TABLE IF NOT EXISTS sources (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  type TEXT NOT NULL CHECK(type IN ('github', 'gitlab', 'local', 'registry')),
-  url TEXT NOT NULL UNIQUE,
-  last_sync_at TEXT,
-  is_active INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- Categories table - hierarchical organization of skills
-CREATE TABLE IF NOT EXISTS categories (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  description TEXT,
-  parent_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
-  skill_count INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- Skill-Category junction table
-CREATE TABLE IF NOT EXISTS skill_categories (
-  skill_id TEXT NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
-  category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
-  PRIMARY KEY (skill_id, category_id)
-);
-
--- Cache table for search results and API responses
-CREATE TABLE IF NOT EXISTS cache (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL,
-  expires_at INTEGER, -- Unix timestamp, NULL for no expiry
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- Indexes for common query patterns
-CREATE INDEX IF NOT EXISTS idx_skills_author ON skills(author);
-CREATE INDEX IF NOT EXISTS idx_skills_trust_tier ON skills(trust_tier);
-CREATE INDEX IF NOT EXISTS idx_skills_quality_score ON skills(quality_score);
-CREATE INDEX IF NOT EXISTS idx_skills_updated_at ON skills(updated_at);
-CREATE INDEX IF NOT EXISTS idx_skills_created_at ON skills(created_at);
-CREATE INDEX IF NOT EXISTS idx_skills_risk_score ON skills(risk_score);
-CREATE INDEX IF NOT EXISTS idx_skills_security_passed ON skills(security_passed);
-CREATE INDEX IF NOT EXISTS idx_sources_type ON sources(type);
-CREATE INDEX IF NOT EXISTS idx_sources_is_active ON sources(is_active);
-CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);
-CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires_at);
-
--- SMI-733: Audit logs table for security monitoring
--- See: docs/security/index.md §3 Audit Logging
-CREATE TABLE IF NOT EXISTS audit_logs (
-  id TEXT PRIMARY KEY,
-  event_type TEXT NOT NULL,
-  timestamp TEXT NOT NULL DEFAULT (datetime('now')),
-  actor TEXT,
-  resource TEXT,
-  action TEXT,
-  result TEXT,
-  metadata TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_audit_event_type ON audit_logs(event_type);
-CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_logs(timestamp);
-CREATE INDEX IF NOT EXISTS idx_audit_resource ON audit_logs(resource);
-CREATE INDEX IF NOT EXISTS idx_audit_result ON audit_logs(result);
-CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_logs(actor);
-`
-
-/**
- * Migration definitions for schema upgrades
- */
-export interface Migration {
-  version: number
-  description: string
-  sql: string
-}
-
-export const MIGRATIONS: Migration[] = [
-  {
-    version: 1,
-    description: 'Initial schema creation',
-    sql: SCHEMA_SQL,
-  },
-  {
-    version: 2,
-    description: 'SMI-974: Add missing columns for Phase 5 imported databases',
-    sql: MIGRATION_V2_SQL,
-  },
-  {
-    version: 3,
-    description: 'Registry sync tables for local-to-live synchronization',
-    sql: MIGRATION_V3_SQL,
-  },
-  {
-    version: 4,
-    description: 'SMI-825: Add security scan columns to skills table',
-    sql: MIGRATION_V4_SQL,
-  },
-  {
-    version: 5,
-    description: 'SMI-skill-version-tracking Wave 1: skill_versions table',
-    sql: MIGRATION_V5_SQL,
-  },
-  {
-    version: 6,
-    description: 'SMI-skill-version-tracking Wave 2: add change_type to skill_versions',
-    sql: MIGRATION_V5B_SQL,
-  },
-  {
-    version: 7,
-    description: 'SMI-skill-version-tracking Wave 3: skill_advisories table',
-    sql: MIGRATION_V6_SQL,
-  },
-  {
-    version: 8,
-    description: 'SMI-2760: compatibility column on skills table',
-    sql: MIGRATION_V7_SQL,
-  },
-  {
-    version: 9,
-    description: 'SMI-2761: skill_co_installs table for co-install recommendations',
-    sql: MIGRATION_V8_SQL,
-  },
-  {
-    version: 10,
-    description: 'Skill dependency intelligence: skill_dependencies table',
-    sql: MIGRATION_V10_SQL,
-  },
-  {
-    version: 11,
-    description: 'SMI-3510: content_hash column for tamper detection',
-    sql: 'ALTER TABLE skills ADD COLUMN content_hash TEXT',
-  },
-  {
-    version: 12,
-    description: 'SMI-3864: risk_score_history table for trend detection',
-    sql: MIGRATION_V12_SQL,
-  },
-]
-
-/**
- * SMI-974: Migration SQL for adding FTS5 to existing database
- * Run separately as FTS5 creation can fail if table exists
- */
-export const FTS5_MIGRATION_SQL = `
--- Create FTS5 virtual table if not exists
-CREATE VIRTUAL TABLE IF NOT EXISTS skills_fts USING fts5(
-  name,
-  description,
-  tags,
-  author,
-  content='skills',
-  content_rowid='rowid',
-  tokenize='porter unicode61'
-);
-
--- Populate FTS from existing skills (safe to run multiple times)
-INSERT OR IGNORE INTO skills_fts(rowid, name, description, tags, author)
-SELECT rowid, name, description, tags, author FROM skills;
-`
 
 /**
  * Initialize the database with the complete schema
@@ -268,53 +49,6 @@ export function initializeSchema(db: DatabaseType): void {
   // Record the schema version
   const stmt = db.prepare('INSERT OR REPLACE INTO schema_version (version) VALUES (?)')
   stmt.run(SCHEMA_VERSION)
-}
-
-/**
- * Get the current schema version from the database
- */
-export function getSchemaVersion(db: DatabaseType): number {
-  try {
-    const result = db.prepare('SELECT MAX(version) as version FROM schema_version').get() as
-      | { version: number }
-      | undefined
-    return result?.version ?? 0
-  } catch {
-    return 0
-  }
-}
-
-/**
- * Run pending migrations to upgrade the schema
- * Handles duplicate column errors gracefully since the initial schema
- * already includes all columns, but migrations need to support databases
- * created by other means (e.g., Phase 5 import scripts)
- */
-export function runMigrations(db: DatabaseType): number {
-  const currentVersion = getSchemaVersion(db)
-  let migrationsRun = 0
-
-  for (const migration of MIGRATIONS) {
-    if (migration.version > currentVersion) {
-      // Execute each statement separately to handle duplicate column errors
-      const statements = migration.sql.split(';').filter((s) => s.trim())
-      for (const stmt of statements) {
-        try {
-          db.exec(stmt)
-        } catch (error) {
-          // Ignore "duplicate column" errors - column already exists from initial schema
-          const msg = error instanceof Error ? error.message : String(error)
-          if (!msg.includes('duplicate column')) {
-            throw error
-          }
-        }
-      }
-      db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(migration.version)
-      migrationsRun++
-    }
-  }
-
-  return migrationsRun
 }
 
 /** @deprecated Use createDatabaseAsync() — requires better-sqlite3 native module. */
@@ -361,46 +95,6 @@ export function openDatabase(path: string): DatabaseType {
   runMigrationsSafe(db)
 
   return db
-}
-
-/** SMI-974: Run migrations with error handling for existing columns */
-export function runMigrationsSafe(db: DatabaseType): number {
-  const currentVersion = getSchemaVersion(db)
-  let migrationsRun = 0
-
-  for (const migration of MIGRATIONS) {
-    if (migration.version > currentVersion) {
-      try {
-        // Try to run migration, but handle "duplicate column" errors gracefully
-        const statements = migration.sql.split(';').filter((s) => s.trim())
-        for (const stmt of statements) {
-          try {
-            db.exec(stmt)
-          } catch (error) {
-            // Ignore "duplicate column" errors - column already exists
-            const msg = error instanceof Error ? error.message : String(error)
-            if (!msg.includes('duplicate column')) {
-              throw error
-            }
-          }
-        }
-        db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(migration.version)
-        migrationsRun++
-      } catch (error) {
-        // Log but don't fail on migration errors
-        console.warn(`Migration ${migration.version} failed:`, error)
-      }
-    }
-  }
-
-  // Try to create FTS5 table (may already exist)
-  try {
-    db.exec(FTS5_MIGRATION_SQL)
-  } catch {
-    // FTS5 may already exist or have issues - that's ok
-  }
-
-  return migrationsRun
 }
 
 /**

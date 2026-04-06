@@ -42,12 +42,14 @@ export const FEATURE_TIERS: Readonly<Record<FeatureFlag, readonly LicenseTier[]>
   // Individual tier features (available in individual, team, and enterprise)
   basic_analytics: ['individual', 'team', 'enterprise'],
   email_support: ['individual', 'team', 'enterprise'],
+  version_tracking: ['individual', 'team', 'enterprise'],
 
   // Team tier features (available in team and enterprise)
   team_workspaces: ['team', 'enterprise'],
   private_skills: ['team', 'enterprise'],
   usage_analytics: ['team', 'enterprise'],
   priority_support: ['team', 'enterprise'],
+  skill_security_audit: ['team', 'enterprise'],
 
   // Enterprise-only features
   sso_saml: ['enterprise'],

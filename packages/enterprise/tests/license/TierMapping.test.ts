@@ -11,8 +11,8 @@ describe('TierMapping', () => {
   describe('FEATURE_TIERS', () => {
     it('should map all feature flags', () => {
       const mappedFeatures = Object.keys(FEATURE_TIERS)
-      // 2 individual + 4 team + 8 enterprise = 14 features
-      expect(mappedFeatures).toHaveLength(14)
+      // 3 individual + 5 team + 8 enterprise = 16 features
+      expect(mappedFeatures).toHaveLength(16)
 
       for (const flag of ALL_FEATURE_FLAGS) {
         expect(FEATURE_TIERS[flag]).toBeDefined()
@@ -118,10 +118,10 @@ describe('TierMapping', () => {
       expect(features).toHaveLength(0)
     })
 
-    it('should return 6 features for team tier (individual + team features)', () => {
+    it('should return 8 features for team tier (individual + team features)', () => {
       const features = getFeaturesForTier('team')
-      // 2 individual + 4 team = 6 features
-      expect(features).toHaveLength(6)
+      // 3 individual + 5 team = 8 features
+      expect(features).toHaveLength(8)
       // Individual features (inherited)
       expect(features).toContain('basic_analytics')
       expect(features).toContain('email_support')
@@ -144,10 +144,10 @@ describe('TierMapping', () => {
       expect(features).not.toContain('advanced_analytics')
     })
 
-    it('should return all 14 features for enterprise tier', () => {
+    it('should return all 16 features for enterprise tier', () => {
       const features = getFeaturesForTier('enterprise')
-      // 2 individual + 4 team + 8 enterprise = 14 features
-      expect(features).toHaveLength(14)
+      // 3 individual + 5 team + 8 enterprise = 16 features
+      expect(features).toHaveLength(16)
 
       // Should include all individual features
       expect(features).toContain('basic_analytics')
@@ -262,17 +262,17 @@ describe('TierMapping', () => {
       const communityFeatures = getFeaturesForTier('community')
       expect(communityFeatures).toHaveLength(0)
 
-      // Individual has 2 features
+      // Individual has 3 features
       const individualFeatures = getFeaturesForTier('individual')
-      expect(individualFeatures).toHaveLength(2)
+      expect(individualFeatures).toHaveLength(3)
 
-      // Team has individual + 4 team features = 6
+      // Team has individual + 5 team features = 8
       const teamFeatures = getFeaturesForTier('team')
-      expect(teamFeatures).toHaveLength(6)
+      expect(teamFeatures).toHaveLength(8)
 
-      // Enterprise has all features = 14
+      // Enterprise has all features = 16
       const enterpriseFeatures = getFeaturesForTier('enterprise')
-      expect(enterpriseFeatures).toHaveLength(14)
+      expect(enterpriseFeatures).toHaveLength(16)
 
       // All individual features should be included in team
       for (const feature of individualFeatures) {
