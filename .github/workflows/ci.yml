@@ -138,6 +138,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+  # SMI-3882: Detect code changes that lack corresponding documentation updates
+  # Non-blocking during 2-week stabilization (continue-on-error: true)
+  doc-drift:
+    name: Documentation Drift Check
+    needs: [classify]
+    if: github.event_name == 'pull_request' && needs.classify.outputs.tier == 'code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    continue-on-error: true # audit:allow-continue-on-error — stabilization period, not a required check
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: npx tsx scripts/ci/check-doc-drift.ts --pr-number ${{ github.event.pull_request.number }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   # SMI-1300: Validate package configurations before expensive Docker build
   # Catches scope mismatches for GitHub Packages early
   # Only runs on upstream repo (smith-horn) - skipped on forks
