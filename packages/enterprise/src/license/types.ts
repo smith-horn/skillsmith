@@ -14,7 +14,7 @@
 /**
  * Individual tier feature flags
  */
-export type IndividualFeatureFlag = 'basic_analytics' | 'email_support'
+export type IndividualFeatureFlag = 'basic_analytics' | 'email_support' | 'version_tracking'
 
 /**
  * Team tier feature flags
@@ -24,6 +24,7 @@ export type TeamFeatureFlag =
   | 'private_skills'
   | 'usage_analytics'
   | 'priority_support'
+  | 'skill_security_audit'
 
 /**
  * Enterprise tier feature flags (includes all Team features)
@@ -49,6 +50,7 @@ export type FeatureFlag = IndividualFeatureFlag | TeamFeatureFlag | EnterpriseFe
 export const INDIVIDUAL_FEATURES: readonly IndividualFeatureFlag[] = [
   'basic_analytics',
   'email_support',
+  'version_tracking',
 ] as const
 
 export const TEAM_FEATURES: readonly TeamFeatureFlag[] = [
@@ -56,6 +58,7 @@ export const TEAM_FEATURES: readonly TeamFeatureFlag[] = [
   'private_skills',
   'usage_analytics',
   'priority_support',
+  'skill_security_audit',
 ] as const
 
 export const ENTERPRISE_FEATURES: readonly EnterpriseFeatureFlag[] = [

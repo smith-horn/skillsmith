@@ -33,11 +33,13 @@ export const FEATURE_DISPLAY_NAMES: Readonly<Record<FeatureFlag, string>> = {
   // Individual tier features
   basic_analytics: 'Basic Analytics',
   email_support: 'Email Support',
+  version_tracking: 'Version Tracking',
   // Team tier features
   team_workspaces: 'Team Workspaces',
   private_skills: 'Private Skills',
   usage_analytics: 'Usage Analytics',
   priority_support: 'Priority Support',
+  skill_security_audit: 'Security Audit',
   // Enterprise tier features
   sso_saml: 'SSO/SAML Integration',
   rbac: 'Role-Based Access Control',
@@ -56,11 +58,13 @@ export const FEATURE_DESCRIPTIONS: Readonly<Record<FeatureFlag, string>> = {
   // Individual tier features
   basic_analytics: 'Access to basic usage analytics and reporting dashboard',
   email_support: 'Email-based technical support with 48-hour response time',
+  version_tracking: 'Track skill version history and receive update notifications',
   // Team tier features
   team_workspaces: 'Collaborate with your team on shared skill collections',
   private_skills: 'Create and manage private skills for your organization',
   usage_analytics: 'Track skill usage and team productivity metrics',
   priority_support: 'Get faster response times from our support team',
+  skill_security_audit: 'Audit skills for security vulnerabilities and advisories',
   // Enterprise tier features
   sso_saml: 'Integrate with your identity provider for secure single sign-on',
   rbac: 'Fine-grained access control with custom roles and permissions',

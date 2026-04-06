@@ -9,7 +9,8 @@
  */
 
 import type { Database as DatabaseType } from './database-interface.js'
-import { SCHEMA_VERSION, getSchemaVersion, runMigrationsSafe, MIGRATIONS } from './schema.js'
+import { SCHEMA_VERSION } from './schema.js'
+import { getSchemaVersion, runMigrationsSafe, MIGRATIONS } from './migration-runner.js'
 
 // Re-export types
 export type {
