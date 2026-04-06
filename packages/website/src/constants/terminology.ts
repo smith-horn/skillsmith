@@ -127,6 +127,9 @@ export type CategoryId = (typeof SKILL_CATEGORIES)[keyof typeof SKILL_CATEGORIES
 
 /**
  * Pricing Tiers
+ *
+ * @deprecated Use `pricingTiers` from `'../lib/pricing-data.ts'` instead (SMI-3909).
+ * This copy is retained for backward compatibility but is no longer the canonical source.
  */
 export const PRICING_TIERS = {
   COMMUNITY: {

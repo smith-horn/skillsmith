@@ -1,13 +1,14 @@
 ---
 import Button from './Button.astro'
 import Card from './Card.astro'
+import type { PricingFeature } from '../types/index.js'
 
 interface Props {
   tier: 'community' | 'individual' | 'team' | 'enterprise'
   price: string
   period?: string
   description: string
-  features: string[]
+  features: PricingFeature[]
   apiCalls: string
   highlighted?: boolean
   ctaText?: string
@@ -81,7 +82,7 @@ const tierLabels = {
                 d="M5 13l4 4L19 7"
               />
             </svg>
-            <span class="text-gray-300 text-sm">{feature}</span>
+            <span class="text-gray-300 text-sm">{feature.name}</span>
           </li>
         ))
       }

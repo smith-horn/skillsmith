@@ -114,12 +114,13 @@ function renderValue(value: string | boolean): string {
 
 <div class="comparison-table-wrapper">
   <table class:list={['comparison-table', { compact }]}>
+    <caption class="sr-only">Feature comparison across pricing tiers</caption>
     <thead>
       <tr>
-        <th>Feature</th>
+        <th scope="col">Feature</th>
         {
           tiers.map((tier) => (
-            <th class:list={{ highlighted: tier === highlightedTier }}>
+            <th scope="col" class:list={{ highlighted: tier === highlightedTier }}>
               {tier.charAt(0).toUpperCase() + tier.slice(1)}
             </th>
           ))
@@ -145,6 +146,18 @@ function renderValue(value: string | boolean): string {
 </div>
 
 <style>
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
   .comparison-table-wrapper {
     overflow-x: auto;
     border-radius: 1rem;

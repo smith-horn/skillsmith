@@ -64,14 +64,24 @@
 }
 
 .roadmap-column li::before {
-  content: '\1F556';
+  content: '\1F550';
   margin-right: 0.5rem;
 }
 
 .roadmap-legend {
-  color: #6b7280;
+  color: #9ca3af;
   font-size: 0.8125rem;
   margin-top: 1.5rem;
+}
+
+.roadmap-column:empty {
+  display: none;
+}
+
+.roadmap-grid:has(> .roadmap-column:empty) {
+  grid-template-columns: 1fr;
+  max-width: 400px;
+  margin: 0 auto;
 }
 
 @media (max-width: 640px) {
