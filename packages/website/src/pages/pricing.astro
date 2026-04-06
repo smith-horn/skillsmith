@@ -14,6 +14,7 @@ export const prerender = false
 import BaseLayout from '../layouts/BaseLayout.astro'
 import { pricingTiers, pricingFaqs, formatPrice, getAnnualPrice } from '../lib/pricing-data'
 import type { PricingTier } from '../lib/pricing-data'
+import '../styles/pricing-roadmap.css'
 
 // Generate JSON-LD structured data
 function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; answer: string }>) {
@@ -230,43 +231,47 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs)
             <td>Analytics Dashboard</td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td>Basic</td>
-            <td class="highlighted">Advanced</td>
+            <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
             <td>Advanced</td>
           </tr>
           <tr>
             <td>Team Workspaces</td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
-            <td class="highlighted"><span class="check" aria-label="Yes">&#10003;</span></td>
-            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td class="highlighted"
+              ><span class="roadmap" aria-label="On roadmap">&#128336;</span></td
+            >
+            <td><span class="roadmap" aria-label="On roadmap">&#128336;</span></td>
           </tr>
           <tr>
             <td>Private Skills</td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
-            <td class="highlighted"><span class="check" aria-label="Yes">&#10003;</span></td>
-            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td class="highlighted"
+              ><span class="roadmap" aria-label="On roadmap">&#128336;</span></td
+            >
+            <td><span class="roadmap" aria-label="On roadmap">&#128336;</span></td>
           </tr>
           <tr>
             <td>SSO / SAML</td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
-            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td><span class="roadmap" aria-label="On roadmap">&#128336;</span></td>
           </tr>
           <tr>
             <td>Role-Based Access Control</td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
-            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td><span class="roadmap" aria-label="On roadmap">&#128336;</span></td>
           </tr>
           <tr>
             <td>Audit Logging</td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td><span class="dash" aria-label="No">&mdash;</span></td>
             <td class="highlighted"><span class="dash" aria-label="No">&mdash;</span></td>
-            <td><span class="check" aria-label="Yes">&#10003;</span></td>
+            <td><span class="roadmap" aria-label="On roadmap">&#128336;</span></td>
           </tr>
           <tr>
             <td>SLA Guarantee</td>
@@ -285,6 +290,39 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs)
         </tbody>
       </table>
     </div>
+  </section>
+
+  <section class="pricing-roadmap">
+    <h2>On the roadmap</h2>
+    <p class="roadmap-subtitle">
+      We're actively building these features. Availability will be announced as each ships.
+    </p>
+    <div class="roadmap-grid">
+      <div class="roadmap-column">
+        <h3>Team tier</h3>
+        <ul>
+          <li>Team workspaces</li>
+          <li>Private skills</li>
+          <li>Skill sharing controls</li>
+          <li>Usage analytics</li>
+        </ul>
+      </div>
+      <div class="roadmap-column">
+        <h3>Enterprise tier</h3>
+        <ul>
+          <li>SSO / SAML integration</li>
+          <li>Role-based access control</li>
+          <li>Audit logging (MCP tools)</li>
+          <li>SIEM export</li>
+          <li>Compliance reports</li>
+          <li>Custom integrations</li>
+          <li>Private skill registry</li>
+        </ul>
+      </div>
+    </div>
+    <p class="roadmap-legend">
+      <span class="roadmap" aria-hidden="true">&#128336;</span> = on roadmap in the comparison table above
+    </p>
   </section>
 
   <section class="pricing-faq">

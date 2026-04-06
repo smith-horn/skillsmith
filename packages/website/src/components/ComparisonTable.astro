@@ -41,20 +41,44 @@ const {
       name: 'Analytics Dashboard',
       community: false,
       individual: 'Basic',
-      team: 'Advanced',
+      team: false,
       enterprise: 'Advanced',
     },
-    { name: 'Team Workspaces', community: false, individual: false, team: true, enterprise: true },
-    { name: 'Private Skills', community: false, individual: false, team: true, enterprise: true },
-    { name: 'SSO / SAML', community: false, individual: false, team: false, enterprise: true },
+    {
+      name: 'Team Workspaces',
+      community: false,
+      individual: false,
+      team: 'roadmap',
+      enterprise: 'roadmap',
+    },
+    {
+      name: 'Private Skills',
+      community: false,
+      individual: false,
+      team: 'roadmap',
+      enterprise: 'roadmap',
+    },
+    {
+      name: 'SSO / SAML',
+      community: false,
+      individual: false,
+      team: false,
+      enterprise: 'roadmap',
+    },
     {
       name: 'Role-Based Access Control',
       community: false,
       individual: false,
       team: false,
-      enterprise: true,
+      enterprise: 'roadmap',
     },
-    { name: 'Audit Logging', community: false, individual: false, team: false, enterprise: true },
+    {
+      name: 'Audit Logging',
+      community: false,
+      individual: false,
+      team: false,
+      enterprise: 'roadmap',
+    },
     {
       name: 'SLA Guarantee',
       community: false,
@@ -80,6 +104,9 @@ function renderValue(value: string | boolean): string {
   }
   if (value === false) {
     return '<span class="dash" aria-label="No">&mdash;</span>'
+  }
+  if (value === 'roadmap') {
+    return '<span class="roadmap" aria-label="On roadmap">&#128336;</span>'
   }
   return value
 }
@@ -185,6 +212,11 @@ function renderValue(value: string | boolean): string {
 
   .comparison-table :global(.dash) {
     color: #4a4a4f;
+  }
+
+  .comparison-table :global(.roadmap) {
+    color: #f59e0b;
+    font-size: 1rem;
   }
 
   @media (max-width: 768px) {
