@@ -4,36 +4,13 @@
  * @module lib/pricing-data
  *
  * SMI-2081: Extracted from pricing.astro to comply with 500-line limit
+ * SMI-3909: Consolidated as single canonical source for all pricing data
  * Source of truth for pricing tiers from ADR-013 (Open Core Licensing)
  * and ADR-017 (Quota Enforcement).
  */
 
-/**
- * Pricing tier structure
- *
- * Represents a single pricing tier in the Skillsmith subscription model.
- * @see ADR-013 for tier definitions
- */
-export interface PricingTier {
-  /** Display name of the tier (e.g., "Community", "Team") */
-  name: string
-  /** Price in dollars per month (0 for free tier) */
-  monthlyPrice: number
-  /** Billing period label (e.g., "/month", "/user/month") */
-  period?: string
-  /** Short description of the tier */
-  description: string
-  /** API call quota description (e.g., "1,000 API calls/month") */
-  apiCalls: string
-  /** List of features included in this tier */
-  features: string[]
-  /** Call-to-action button text */
-  cta: string
-  /** CTA button destination URL */
-  ctaHref: string
-  /** Whether this tier should be visually highlighted as recommended */
-  highlighted?: boolean
-}
+import type { PricingTier, PricingFeature } from '../types/index.js'
+export type { PricingTier, PricingFeature }
 
 /**
  * FAQ item structure
@@ -74,62 +51,95 @@ export function getAnnualPrice(monthlyPrice: number): number {
 }
 
 /**
+ * Format API call limit for display
+ *
+ * @param calls - Numeric API call limit or 'unlimited'
+ * @returns Formatted string (e.g., "1,000 API calls/month" or "Unlimited API calls")
+ */
+export function formatApiCalls(calls: number | 'unlimited'): string {
+  if (calls === 'unlimited') return 'Unlimited API calls'
+  return `${calls.toLocaleString()} API calls/month`
+}
+
+/**
+ * Get a pricing tier by its ID
+ *
+ * @param id - Tier identifier
+ * @returns The matching tier, or undefined
+ */
+export function getTierById(id: PricingTier['id']): PricingTier | undefined {
+  return pricingTiers.find((tier) => tier.id === id)
+}
+
+/**
  * Pricing tiers as defined in ADR-013 and ADR-017
  */
 export const pricingTiers: PricingTier[] = [
   {
+    id: 'community',
     name: 'Community',
     monthlyPrice: 0,
     description: 'Perfect for exploring Skillsmith and personal projects.',
-    apiCalls: '1,000 API calls/month',
+    apiCalls: 1000,
+    apiCallsFormatted: '1,000 API calls/month',
     features: [
-      'Skill search and discovery',
-      'Skill installation',
-      'Basic recommendations',
-      'Community support',
-      'Public skill access',
+      { name: 'Skill search and discovery' },
+      { name: 'Skill installation' },
+      { name: 'Basic recommendations' },
+      { name: 'Community support' },
+      { name: 'Public skill access' },
     ],
     cta: 'Get Started',
     ctaHref: '/signup?tier=community',
   },
   {
+    id: 'individual',
     name: 'Individual',
     monthlyPrice: 9.99,
     period: '/month',
     description: 'For developers who want deeper insights into their skill usage.',
-    apiCalls: '10,000 API calls/month',
+    apiCalls: 10000,
+    apiCallsFormatted: '10,000 API calls/month',
     features: [
-      'Everything in Community',
-      'Basic analytics dashboard',
-      'Usage statistics',
-      'Email support',
-      'Priority skill indexing',
+      { name: 'Everything in Community' },
+      { name: 'Basic analytics dashboard' },
+      { name: 'Usage statistics' },
+      { name: 'Email support' },
+      { name: 'Priority skill indexing' },
     ],
     cta: 'Start Trial',
     ctaHref: '/signup?tier=individual',
   },
   {
+    id: 'team',
     name: 'Team',
     monthlyPrice: 25,
     period: '/user/month',
     description: 'Collaborate on skills with your entire team.',
-    apiCalls: '100,000 API calls/month',
-    features: ['Everything in Individual', '100,000 API calls/month', 'Priority support'],
+    apiCalls: 100000,
+    apiCallsFormatted: '100,000 API calls/month',
+    features: [
+      { name: 'Everything in Individual' },
+      { name: '100,000 API calls/month' },
+      { name: 'Priority support' },
+    ],
     cta: 'Start Trial',
     ctaHref: '/signup?tier=team',
     highlighted: true,
   },
   {
+    id: 'enterprise',
     name: 'Enterprise',
     monthlyPrice: 55,
     period: '/user/month',
     description: 'Advanced security, compliance, and dedicated support for organizations.',
-    apiCalls: 'Unlimited API calls',
+    apiCalls: 'unlimited',
+    apiCallsFormatted: 'Unlimited API calls',
     features: [
-      'Everything in Team',
-      'Unlimited API calls',
-      '99.9% SLA guarantee',
-      'Dedicated support',
+      { name: 'Everything in Team' },
+      { name: 'Unlimited API calls' },
+      { name: '99.9% SLA guarantee' },
+      { name: 'Dedicated support' },
     ],
     cta: 'Contact Sales',
     ctaHref: '/contact?tier=enterprise',

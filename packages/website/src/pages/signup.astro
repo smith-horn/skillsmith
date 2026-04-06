@@ -38,7 +38,7 @@ const isValidTier = tierData !== undefined
 const isPaidTier = tier !== 'community'
 
 // Calculate annual discount (20% off, pay for 10 months)
-const monthlyPrice = tierData?.price ?? 0
+const monthlyPrice = tierData?.monthlyPrice ?? 0
 const annualPrice = monthlyPrice * 10 // 10 months for the price of 12
 const displayPrice = period === 'annual' ? annualPrice : monthlyPrice
 const savingsPercent = period === 'annual' ? 17 : 0 // ~17% savings
@@ -84,7 +84,7 @@ const savingsPercent = period === 'annual' ? 17 : 0 // ~17% savings
 
     <meta
       name="description"
-      content={`Sign up for Skillsmith ${tierData?.name || ''} plan. ${tierData?.features[0] || 'AI-powered skill discovery for Claude Code.'}`}
+      content={`Sign up for Skillsmith ${tierData?.name || ''} plan. ${tierData?.features[0]?.name || 'AI-powered skill discovery for Claude Code.'}`}
     />
     <title>Sign Up{tierData ? ` - ${tierData.name}` : ''} | Skillsmith</title>
     <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
@@ -147,7 +147,7 @@ const savingsPercent = period === 'annual' ? 17 : 0 // ~17% savings
                 <div class="plan-price">
                   <span class="price">${displayPrice}</span>
                   <span class="price-period">/{period === 'annual' ? 'year' : 'month'}</span>
-                  {tierData?.priceUnit === 'user/month' && <span class="per-user"> per user</span>}
+                  {tierData?.period?.includes('/user') && <span class="per-user"> per user</span>}
                 </div>
 
                 {period === 'annual' && savingsPercent > 0 && (
@@ -192,7 +192,7 @@ const savingsPercent = period === 'annual' ? 17 : 0 // ~17% savings
                       >
                         <polyline points="20 6 9 17 4 12" />
                       </svg>
-                      <span>{feature}</span>
+                      <span>{feature.name}</span>
                     </li>
                   ))}
                 </ul>
@@ -394,7 +394,7 @@ const savingsPercent = period === 'annual' ? 17 : 0 // ~17% savings
                       >
                         <polyline points="20 6 9 17 4 12" />
                       </svg>
-                      <span>{feature}</span>
+                      <span>{feature.name}</span>
                     </li>
                   ))}
                 </ul>

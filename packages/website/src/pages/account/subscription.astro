@@ -17,11 +17,24 @@ export const prerender = false
 
 import { ClientRouter } from 'astro:transitions'
 import { getSupabaseConfig } from '../../lib/supabase-config'
+import { pricingTiers } from '../../lib/pricing-data'
 import Footer from '../../components/Footer.astro'
 import Nav from '../../components/Nav.astro'
 
 // Read env vars at SSR time to inject into client script
 const supabaseConfig = getSupabaseConfig()
+
+// Derive tier lookup data from canonical pricing source (SMI-3909)
+const tierLookup = Object.fromEntries(
+  pricingTiers.map((t) => [
+    t.id,
+    {
+      name: `${t.name} Plan`,
+      price: t.monthlyPrice === 0 ? 'Free' : `$${t.monthlyPrice}${t.period || '/month'}`,
+      apiCalls: t.apiCallsFormatted.replace('/month', ' per month'),
+    },
+  ])
+)
 ---
 
 <!doctype html>
@@ -39,8 +52,9 @@ const supabaseConfig = getSupabaseConfig()
       href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
       rel="stylesheet"
     />
-    <script is:inline define:vars={{ supabaseConfig }}>
+    <script is:inline define:vars={{ supabaseConfig, tierLookup }}>
       window.__SUPABASE_CONFIG__ = supabaseConfig
+      window.__TIER_LOOKUP__ = tierLookup
     </script>
     <!-- Enable smooth page transitions without full reload (SMI-2066) -->
     <ClientRouter />
@@ -725,32 +739,19 @@ const supabaseConfig = getSupabaseConfig()
         'seat-management-section'
       ) as HTMLElement
 
-      const tierNames: Record<string, string> = {
-        community: 'Community Plan',
-        individual: 'Individual Plan',
-        team: 'Team Plan',
-        enterprise: 'Enterprise Plan',
-      }
-
-      const tierPrices: Record<string, string> = {
-        community: 'Free',
-        individual: '$9.99/month',
-        team: '$25/user/month',
-        enterprise: '$55/user/month',
-      }
-
-      const apiLimits: Record<string, string> = {
-        community: '1,000 API calls per month',
-        individual: '10,000 API calls per month',
-        team: '100,000 API calls per month',
-        enterprise: 'Unlimited API calls',
+      // Tier data injected from canonical pricing source (SMI-3909)
+      const tl = (window as any).__TIER_LOOKUP__ || {}
+      const tierInfo = tl[tier] || {
+        name: 'Community Plan',
+        price: 'Free',
+        apiCalls: '1,000 API calls per month',
       }
 
       tierBadge.textContent = tier.charAt(0).toUpperCase() + tier.slice(1)
       tierBadge.className = `tier-badge ${tier}`
-      planName.textContent = tierNames[tier] || 'Community Plan'
-      planPrice.textContent = tierPrices[tier] || 'Free'
-      planMeta.innerHTML = `<p>${apiLimits[tier] || '1,000 API calls per month'}</p>`
+      planName.textContent = tierInfo.name
+      planPrice.textContent = tierInfo.price
+      planMeta.innerHTML = `<p>${tierInfo.apiCalls}</p>`
 
       // Mark current plan
       document.querySelectorAll('.plan-option').forEach((el) => {

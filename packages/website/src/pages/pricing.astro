@@ -13,7 +13,7 @@ export const prerender = false
 
 import BaseLayout from '../layouts/BaseLayout.astro'
 import { pricingTiers, pricingFaqs, formatPrice, getAnnualPrice } from '../lib/pricing-data'
-import type { PricingTier } from '../lib/pricing-data'
+import type { PricingTier } from '../types/index.js'
 import '../styles/pricing-roadmap.css'
 
 // Generate JSON-LD structured data
@@ -48,7 +48,7 @@ function generateJsonLd(tiers: PricingTier[], faqs: Array<{ question: string; an
           priceCurrency: 'USD',
           priceValidUntil,
           ...(tier.monthlyPrice > 0 && { billingDuration: 'P1M' }),
-          description: `${tier.apiCalls}. ${tier.features.join(', ')}.`,
+          description: `${tier.apiCallsFormatted}. ${tier.features.map((f) => f.name).join(', ')}.`,
           availability: 'https://schema.org/InStock',
           url: `https://www.skillsmith.app${tier.ctaHref}`,
           ...(tier.period?.includes('/user') && {
@@ -150,7 +150,7 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs)
             >
               <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
             </svg>
-            <span>{tier.apiCalls}</span>
+            <span>{tier.apiCallsFormatted}</span>
           </div>
           <ul class="features-list">
             {tier.features.map((feature) => (
@@ -165,7 +165,7 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs)
                 >
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
-                <span>{feature}</span>
+                <span>{feature.name}</span>
               </li>
             ))}
           </ul>
@@ -189,13 +189,14 @@ const jsonLdData = generateJsonLd(pricingTiers, pricingFaqs)
     <h2>Compare all features</h2>
     <div class="comparison-table-wrapper">
       <table class="comparison-table">
+        <caption class="sr-only">Feature comparison across pricing tiers</caption>
         <thead>
           <tr>
-            <th>Feature</th>
-            <th>Community</th>
-            <th>Individual</th>
-            <th class="highlighted">Team</th>
-            <th>Enterprise</th>
+            <th scope="col">Feature</th>
+            <th scope="col">Community</th>
+            <th scope="col">Individual</th>
+            <th scope="col" class="highlighted">Team</th>
+            <th scope="col">Enterprise</th>
           </tr>
         </thead>
         <tbody>

@@ -3,18 +3,30 @@
  */
 
 /**
- * Pricing tier information
+ * Feature in a pricing tier
+ */
+export interface PricingFeature {
+  /** Feature display name */
+  name: string
+  /** Whether this feature is on the roadmap (not yet implemented) */
+  roadmap?: boolean
+}
+
+/**
+ * Pricing tier information (unified — canonical source: pricing-data.ts)
  */
 export interface PricingTier {
   id: 'community' | 'individual' | 'team' | 'enterprise'
   name: string
-  price: number | null // null for "Contact Us" pricing
-  priceUnit: 'month' | 'user/month'
+  monthlyPrice: number
+  period?: string
+  description: string
   apiCalls: number | 'unlimited'
-  features: string[]
+  apiCallsFormatted: string
+  features: PricingFeature[]
+  cta: string
+  ctaHref: string
   highlighted?: boolean
-  ctaText: string
-  ctaLink: string
 }
 
 /**
