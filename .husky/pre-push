@@ -31,6 +31,20 @@
 #   0 - All checks passed (or user confirmed)
 #   1 - Check failed or user aborted
 
+# Phase 0: Skip all checks for delete-only pushes (SMI-3709)
+# git push --delete sends lines where local_sha is all zeros.
+# No code is being pushed, so quality gates are irrelevant.
+DELETE_ONLY=true
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  if [ "$local_sha" != "0000000000000000000000000000000000000000" ]; then
+    DELETE_ONLY=false
+    break
+  fi
+done
+if [ "$DELETE_ONLY" = true ]; then
+  exit 0
+fi
+
 # Phase 1: Check for uncommitted changes (SMI-1342)
 # This runs first to warn developers before they push
 bash "$(dirname "$0")/../scripts/pre-push-uncommitted-check.sh"

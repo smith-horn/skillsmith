@@ -391,6 +391,17 @@ const categoryJsonLd =
             <p id="skill-description" class="text-dark-300 leading-relaxed" />
           </div>
 
+          <div
+            id="skill-content-section"
+            class="hidden bg-dark-900 rounded-xl border border-dark-800 p-8 mb-8"
+          >
+            <h2 class="text-xl font-semibold text-white mb-4">README</h2>
+            <div
+              id="skill-readme"
+              class="text-dark-300 leading-relaxed whitespace-pre-wrap font-mono text-sm overflow-x-auto"
+            />
+          </div>
+
           <div class="bg-dark-900 rounded-xl border border-dark-800 p-8 mb-8">
             <h2 class="text-xl font-semibold text-white mb-4">Installation</h2>
             <p class="text-dark-400 mb-4">
@@ -707,6 +718,14 @@ const categoryJsonLd =
         noTagsEl.classList.remove('hidden')
       }
 
+      // SMI-3687: Render SKILL.md content if present
+      if (skill.content) {
+        const readmeEl = document.getElementById('skill-readme')
+        const contentSection = document.getElementById('skill-content-section')
+        readmeEl.textContent = skill.content
+        contentSection.classList.remove('hidden')
+      }
+
       // Show content
       loadingState.classList.add('hidden')
       errorState.classList.add('hidden')
@@ -780,7 +799,7 @@ const categoryJsonLd =
         // Decode first to normalize (Astro params may already be URL-encoded), then re-encode
         const decodedSkillId = decodeURIComponent(skillId)
         const response = await fetch(
-          `${API_BASE}/skills-get/${encodeURIComponent(decodedSkillId)}`,
+          `${API_BASE}/skills-get/${encodeURIComponent(decodedSkillId)}?include_content=true`,
           {
             headers: {
               Authorization: `Bearer ${authToken}`,

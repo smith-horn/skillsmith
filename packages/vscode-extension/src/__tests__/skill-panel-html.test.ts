@@ -348,10 +348,12 @@ describe('security scan rendering (SMI-3857/3858)', () => {
 })
 
 describe('getLoadingHtml', () => {
-  it('returns loading spinner HTML', () => {
-    const html = getLoadingHtml()
+  it('returns loading spinner HTML with CSP', () => {
+    const html = getLoadingHtml(NONCE, CSP)
     expect(html).toContain('Loading skill details')
     expect(html).toContain('spinner')
+    expect(html).toContain('Content-Security-Policy')
+    expect(html).toContain(`nonce="${NONCE}"`)
   })
 })
 

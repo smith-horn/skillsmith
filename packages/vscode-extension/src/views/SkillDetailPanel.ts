@@ -156,7 +156,8 @@ export class SkillDetailPanel {
   /** Load skill data from SkillService and update the panel */
   private async _loadAndUpdate(): Promise<void> {
     this._panel.title = `Loading: ${this._skillId}`
-    this._panel.webview.html = getLoadingHtml()
+    const loadingNonce = this._getNonce()
+    this._panel.webview.html = getLoadingHtml(loadingNonce, getSkillDetailCsp(loadingNonce))
     this._showFullContent = false
 
     if (!SkillDetailPanel._skillService) {
@@ -215,7 +216,8 @@ export class SkillDetailPanel {
   private _getHtmlForWebview(): string {
     const skill = this._skillData
     if (!skill) {
-      return getLoadingHtml()
+      const nonce = this._getNonce()
+      return getLoadingHtml(nonce, getSkillDetailCsp(nonce))
     }
     const nonce = this._getNonce()
     const csp = getSkillDetailCsp(nonce)
