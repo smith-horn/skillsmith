@@ -24,6 +24,7 @@ import { MIGRATION_V7_SQL } from './migrations/v7-compatibility.js'
 import { MIGRATION_V8_SQL } from './migrations/v8-co-installs.js'
 import { MIGRATION_V10_SQL } from './migrations/v10-dependencies.js'
 import { MIGRATION_V12_SQL } from './migrations/v12-risk-score-history.js'
+import { MIGRATION_V13_SQL } from './migrations/v13-team-tables.js'
 import { SCHEMA_SQL, FTS5_MIGRATION_SQL } from './schema-sql.js'
 
 /**
@@ -35,7 +36,7 @@ export interface Migration {
   sql: string
 }
 
-// Reserved: v13 (team tables), v14 (RBAC), v15 (integrations)
+// Reserved: v14 (RBAC), v15 (integrations)
 
 export const MIGRATIONS: Migration[] = [
   {
@@ -97,6 +98,11 @@ export const MIGRATIONS: Migration[] = [
     version: 12,
     description: 'SMI-3864: risk_score_history table for trend detection',
     sql: MIGRATION_V12_SQL,
+  },
+  {
+    version: 13,
+    description: 'SMI-3896: visibility and team_id columns for private skills',
+    sql: MIGRATION_V13_SQL,
   },
 ]
 

@@ -193,6 +193,9 @@ All tiers include:
 | `skill_diff` | Section-level diff between skill versions | Individual+ |
 | `skill_pack_audit` | Audit all skills in a directory | Individual+ |
 | `skill_audit` | Check skills for security advisories | Team+ |
+| `team_workspace` | Manage team workspaces (create, list, get, delete) | Team+ |
+| `share_skill` | Add, remove, or list skills in a team workspace | Team+ |
+| `publish_private` | Mark a skill as private to your team | Team+ |
 | `audit_export` | Export audit log events for a time range | Enterprise |
 | `audit_query` | Query audit logs with filters | Enterprise |
 | `siem_export` | Export audit events for SIEM ingestion | Enterprise |
