@@ -39,6 +39,8 @@ import {
   auditQueryToolSchema,
   siemExportToolSchema,
 } from './tools/audit-tools.js'
+import { teamWorkspaceToolSchema, shareSkillToolSchema } from './tools/team-workspace.js'
+import { publishPrivateToolSchema } from './tools/publish-private.js'
 import { dispatchToolCall } from './tool-dispatch.js'
 import {
   isFirstRun,
@@ -89,6 +91,9 @@ const toolDefinitions = [
   auditExportToolSchema,
   auditQueryToolSchema,
   siemExportToolSchema,
+  teamWorkspaceToolSchema,
+  shareSkillToolSchema,
+  publishPrivateToolSchema,
 ]
 
 // Create server

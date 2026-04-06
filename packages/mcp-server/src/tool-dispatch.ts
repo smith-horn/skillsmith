@@ -36,6 +36,13 @@ import {
   executeSiemExport,
 } from './tools/audit-tools.js'
 import {
+  teamWorkspaceInputSchema,
+  executeTeamWorkspace,
+  shareSkillInputSchema,
+  executeShareSkill,
+} from './tools/team-workspace.js'
+import { publishPrivateInputSchema, executePublishPrivate } from './tools/publish-private.js'
+import {
   ok,
   errResponse,
   withLicenseAndQuota,
@@ -187,6 +194,39 @@ export async function dispatchToolCall(
         args,
         siemExportInputSchema,
         executeSiemExport,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'team_workspace':
+      return withLicenseAndQuota(
+        'team_workspace',
+        args,
+        teamWorkspaceInputSchema,
+        executeTeamWorkspace,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'share_skill':
+      return withLicenseAndQuota(
+        'share_skill',
+        args,
+        shareSkillInputSchema,
+        executeShareSkill,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'publish_private':
+      return withLicenseAndQuota(
+        'publish_private',
+        args,
+        publishPrivateInputSchema,
+        executePublishPrivate,
         toolContext,
         licenseMiddleware,
         quotaMiddleware

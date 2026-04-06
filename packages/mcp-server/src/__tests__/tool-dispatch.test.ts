@@ -36,6 +36,9 @@ const HANDLED_TOOLS = new Set([
   'audit_export',
   'audit_query',
   'siem_export',
+  'team_workspace',
+  'share_skill',
+  'publish_private',
 ])
 
 function createMockLicenseMiddleware(): LicenseMiddleware {

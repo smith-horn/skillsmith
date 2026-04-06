@@ -38,7 +38,8 @@ export type DatabaseType = Database
 
 // v11: SMI-3510 content hash verification column
 // v12: SMI-3864 risk score history for trend detection
-export const SCHEMA_VERSION = 12
+// v13: SMI-3896 visibility and team_id for private skills
+export const SCHEMA_VERSION = 13
 
 /**
  * Initialize the database with the complete schema
