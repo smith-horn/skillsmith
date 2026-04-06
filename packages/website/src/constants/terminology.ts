@@ -169,7 +169,7 @@ export const PRICING_TIERS = {
 /**
  * Pricing tier type
  */
-export type PricingTierId = (typeof PRICING_TIERS)[keyof typeof PRICING_TIERS]['id']
+export type PricingTierId = 'community' | 'individual' | 'team' | 'enterprise'
 
 /**
  * Contact Topics (for /contact form)
