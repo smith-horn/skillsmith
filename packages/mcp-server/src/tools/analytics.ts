@@ -7,16 +7,38 @@
  * - Team tier: team_analytics_dashboard, team_usage_report (usage_analytics flag)
  * - Enterprise tier: analytics_dashboard, usage_report (advanced_analytics flag)
  *
- * MVP returns structured mock data with realistic shapes.
- * TODO: Replace mock data with real audit_logs queries.
+ * Uses real SQLite queries against audit_logs when db is available,
+ * falls back to stub mock data when no database is present.
  */
 
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
-import { periodDays, generateDailyTrend } from './analytics.stub.js'
+import {
+  periodDays,
+  stubTeamAnalyticsDashboard,
+  stubTeamUsageReport,
+  stubAnalyticsDashboard,
+  stubUsageReport,
+} from './analytics.stub.js'
+import { createRealAnalyticsService, type AnalyticsService } from './analytics.service.js'
 
 // Re-export stub helpers for external consumers
 export { periodDays, generateDailyTrend } from './analytics.stub.js'
+
+/**
+ * Resolve analytics service: real (SQLite-backed) when db is available,
+ * otherwise null (handlers fall back to inline stub data).
+ */
+function resolveAnalyticsService(context: ToolContext): AnalyticsService | null {
+  try {
+    if (context.db && context.db.open) {
+      return createRealAnalyticsService(context.db)
+    }
+  } catch {
+    // Fall through to stub
+  }
+  return null
+}
 
 // ============================================================================
 // Shared types
@@ -157,237 +179,228 @@ export const usageReportToolSchema = {
  * Team analytics dashboard handler.
  * Returns per-user tool usage, top tools, and daily trend as markdown.
  *
- * TODO: Replace mock data with real audit_logs query
+ * Uses real service when db is available, falls back to stub
  */
 export async function executeTeamAnalyticsDashboard(
   input: TeamAnalyticsDashboardInput,
-  _context: ToolContext
+  context: ToolContext
 ): Promise<string> {
   const days = periodDays(input.period)
-  const trend = generateDailyTrend(days)
-  const totalCalls = trend.reduce((sum, d) => sum + d.calls, 0)
+  const svc = resolveAnalyticsService(context)
 
-  const lines = [
-    `# Team Analytics Dashboard (${input.period})`,
-    '',
-    '## Summary',
-    `- **Period**: Last ${days} days`,
-    `- **Total tool calls**: ${totalCalls}`,
-    `- **Active users**: 4`,
-    `- **Avg calls/user/day**: ${(totalCalls / (days * 4)).toFixed(1)}`,
-    '',
-    '## Top Tools',
-    '| Tool | Calls | % of Total |',
-    '|------|-------|------------|',
-    `| search | ${Math.round(totalCalls * 0.35)} | 35% |`,
-    `| install_skill | ${Math.round(totalCalls * 0.22)} | 22% |`,
-    `| skill_recommend | ${Math.round(totalCalls * 0.18)} | 18% |`,
-    `| skill_validate | ${Math.round(totalCalls * 0.12)} | 12% |`,
-    `| skill_compare | ${Math.round(totalCalls * 0.08)} | 8% |`,
-    `| other | ${Math.round(totalCalls * 0.05)} | 5% |`,
-    '',
-    '## Per-User Usage',
-    '| User | Calls | Top Tool |',
-    '|------|-------|----------|',
-    `| alice@example.com | ${Math.round(totalCalls * 0.32)} | search |`,
-    `| bob@example.com | ${Math.round(totalCalls * 0.28)} | install_skill |`,
-    `| carol@example.com | ${Math.round(totalCalls * 0.24)} | skill_recommend |`,
-    `| dave@example.com | ${Math.round(totalCalls * 0.16)} | skill_validate |`,
-    '',
-    '## Daily Trend (last 7 days)',
-    '| Date | Calls |',
-    '|------|-------|',
-    ...trend.slice(-7).map((d) => `| ${d.date} | ${d.calls} |`),
-  ]
+  if (svc) {
+    const data = svc.getDashboardData(days)
+    const total = data.totalToolCalls
+    const avgPerDay = days > 0 ? (total / days).toFixed(1) : '0.0'
+    const lines = [
+      `# Team Analytics Dashboard (${input.period})`,
+      '',
+      '## Summary',
+      `- **Period**: Last ${days} days`,
+      `- **Total tool calls**: ${total}`,
+      `- **Unique tools**: ${data.uniqueTools}`,
+      `- **Avg calls/day**: ${avgPerDay}`,
+      `- **Data source**: live`,
+      '',
+      '## Top Tools',
+      '| Tool | Calls | % of Total |',
+      '|------|-------|------------|',
+      ...data.topTools.map((t) => {
+        const pct = total > 0 ? Math.round((t.count / total) * 100) : 0
+        return `| ${t.tool} | ${t.count} | ${pct}% |`
+      }),
+      '',
+      '## Period Comparison',
+      `- **Current**: ${data.periodComparison.current}`,
+      `- **Previous**: ${data.periodComparison.previous}`,
+      `- **Change**: ${data.periodComparison.changePercent >= 0 ? '+' : ''}${data.periodComparison.changePercent}%`,
+      '',
+      '## Daily Trend (last 7 days)',
+      '| Date | Calls |',
+      '|------|-------|',
+      ...data.dailyTrend.slice(-7).map((d) => `| ${d.date} | ${d.count} |`),
+    ]
+    return lines.join('\n')
+  }
 
-  return lines.join('\n')
+  return stubTeamAnalyticsDashboard(input.period)
 }
 
 /**
  * Team usage report handler.
  * Returns weekly/monthly summary with period comparison as markdown.
  *
- * TODO: Replace mock data with real audit_logs query
+ * Uses real service when db is available, falls back to stub
  */
 export async function executeTeamUsageReport(
   input: TeamUsageReportInput,
-  _context: ToolContext
+  context: ToolContext
 ): Promise<string> {
   const days = periodDays(input.period)
-  const totalCalls = days * 25 // ~25 calls/day mock baseline
-  const previousCalls = Math.round(totalCalls * 0.85) // 15% growth mock
-  const changePercent = (((totalCalls - previousCalls) / previousCalls) * 100).toFixed(1)
+  const svc = resolveAnalyticsService(context)
 
-  const lines = [
-    `# Team Usage Report (${input.period})`,
-    '',
-    '## Period Summary',
-    `- **Current period**: ${totalCalls} total calls`,
-    `- **Previous period**: ${previousCalls} total calls`,
-    `- **Change**: +${changePercent}%`,
-    `- **Active users**: 4`,
-    `- **New skills installed**: 12`,
-    '',
-    '## Usage by Category',
-    '| Category | Current | Previous | Change |',
-    '|----------|---------|----------|--------|',
-    `| Discovery (search, recommend) | ${Math.round(totalCalls * 0.45)} | ${Math.round(previousCalls * 0.42)} | +22% |`,
-    `| Management (install, uninstall) | ${Math.round(totalCalls * 0.3)} | ${Math.round(previousCalls * 0.32)} | +8% |`,
-    `| Quality (validate, audit) | ${Math.round(totalCalls * 0.15)} | ${Math.round(previousCalls * 0.16)} | +8% |`,
-    `| Collaboration (workspace, share) | ${Math.round(totalCalls * 0.1)} | ${Math.round(previousCalls * 0.1)} | +15% |`,
-  ]
+  if (svc) {
+    const data = svc.getUsageReport(days, input.format === 'detailed')
+    const { current, previous, changePercent } = data.periodComparison
+    const sign = changePercent >= 0 ? '+' : ''
 
-  if (input.format === 'detailed') {
-    lines.push(
+    const lines = [
+      `# Team Usage Report (${input.period})`,
       '',
-      '## Detailed Breakdown by User',
-      '| User | Discovery | Management | Quality | Collaboration | Total |',
-      '|------|-----------|------------|---------|---------------|-------|',
-      `| alice@example.com | 95 | 60 | 30 | 15 | ${Math.round(totalCalls * 0.32)} |`,
-      `| bob@example.com | 80 | 70 | 20 | 5 | ${Math.round(totalCalls * 0.28)} |`,
-      `| carol@example.com | 65 | 45 | 35 | 40 | ${Math.round(totalCalls * 0.24)} |`,
-      `| dave@example.com | 40 | 30 | 25 | 5 | ${Math.round(totalCalls * 0.16)} |`
-    )
+      '## Period Summary',
+      `- **Current period**: ${current} total calls`,
+      `- **Previous period**: ${previous} total calls`,
+      `- **Change**: ${sign}${changePercent}%`,
+      `- **Unique tools**: ${data.uniqueTools}`,
+      `- **Data source**: live`,
+      '',
+      '## Top Tools',
+      '| Tool | Calls |',
+      '|------|-------|',
+      ...data.topTools.map((t) => `| ${t.tool} | ${t.count} |`),
+    ]
+
+    if (input.format === 'detailed' && data.byActor) {
+      lines.push(
+        '',
+        '## Detailed Breakdown by User',
+        '| User | Calls |',
+        '|------|-------|',
+        ...data.byActor.map((a) => `| ${a.actor} | ${a.count} |`)
+      )
+    }
+
+    return lines.join('\n')
   }
 
-  return lines.join('\n')
+  return stubTeamUsageReport(input.period, input.format)
 }
 
 /**
  * Enterprise analytics dashboard handler.
  * Returns recommendation accuracy, adoption curves, and team aggregation as markdown.
  *
- * TODO: Replace mock data with real audit_logs query
+ * Uses real service when db is available, falls back to stub
  */
 export async function executeAnalyticsDashboard(
   input: AnalyticsDashboardInput,
-  _context: ToolContext
+  context: ToolContext
 ): Promise<string> {
   const days = periodDays(input.period)
-  const totalCalls = days * 85 // higher baseline for enterprise
+  const svc = resolveAnalyticsService(context)
 
-  const lines = [
-    `# Enterprise Analytics Dashboard (${input.period})`,
-    '',
-    '## Organization Summary',
-    `- **Period**: Last ${days} days`,
-    `- **Total tool calls**: ${totalCalls}`,
-    `- **Active teams**: 3`,
-    `- **Active users**: 18`,
-    `- **Skills installed org-wide**: 47`,
-    '',
-    '## Team Breakdown',
-    '| Team | Users | Calls | Top Tool |',
-    '|------|-------|-------|----------|',
-    `| Engineering | 10 | ${Math.round(totalCalls * 0.55)} | search |`,
-    `| Data Science | 5 | ${Math.round(totalCalls * 0.3)} | skill_recommend |`,
-    `| DevOps | 3 | ${Math.round(totalCalls * 0.15)} | skill_audit |`,
-    '',
-    '## Skill Adoption',
-    '| Skill | Installed By | First Used | Adoption Rate |',
-    '|-------|-------------|------------|---------------|',
-    '| governance | 15 users | 2026-01-15 | 83% |',
-    '| security-auditor | 12 users | 2026-02-01 | 67% |',
-    '| docker-optimizer | 8 users | 2026-02-20 | 44% |',
-    '| ci-doctor | 6 users | 2026-03-05 | 33% |',
-  ]
+  if (svc) {
+    const data = svc.getDashboardData(days)
+    const total = data.totalToolCalls
 
-  if (input.includeRecommendations) {
-    lines.push(
+    const lines = [
+      `# Enterprise Analytics Dashboard (${input.period})`,
       '',
-      '## Recommendation Accuracy',
-      `- **Recommendations made**: ${Math.round(totalCalls * 0.18)}`,
-      `- **Accepted**: ${Math.round(totalCalls * 0.18 * 0.72)} (72%)`,
-      `- **Installed after recommendation**: ${Math.round(totalCalls * 0.18 * 0.45)} (45%)`,
-      `- **Still active after 7 days**: ${Math.round(totalCalls * 0.18 * 0.38)} (38%)`,
+      '## Organization Summary',
+      `- **Period**: Last ${days} days`,
+      `- **Total tool calls**: ${total}`,
+      `- **Unique tools**: ${data.uniqueTools}`,
+      `- **Data source**: live`,
       '',
-      '## Top Recommended Skills',
-      '| Skill | Times Recommended | Accept Rate |',
-      '|-------|-------------------|-------------|',
-      '| governance | 42 | 85% |',
-      '| security-auditor | 35 | 74% |',
-      '| flaky-test-detector | 28 | 68% |'
-    )
+      '## Top Tools',
+      '| Tool | Calls | % of Total |',
+      '|------|-------|------------|',
+      ...data.topTools.map((t) => {
+        const pct = total > 0 ? Math.round((t.count / total) * 100) : 0
+        return `| ${t.tool} | ${t.count} | ${pct}% |`
+      }),
+      '',
+      '## Period Comparison',
+      `- **Current**: ${data.periodComparison.current}`,
+      `- **Previous**: ${data.periodComparison.previous}`,
+      `- **Change**: ${data.periodComparison.changePercent >= 0 ? '+' : ''}${data.periodComparison.changePercent}%`,
+      '',
+      '## Daily Trend (last 7 days)',
+      '| Date | Calls |',
+      '|------|-------|',
+      ...data.dailyTrend.slice(-7).map((d) => `| ${d.date} | ${d.count} |`),
+    ]
+
+    if (input.includeRecommendations) {
+      lines.push(
+        '',
+        '## Recommendation Accuracy',
+        '_Recommendation tracking requires server-side data. ' +
+          'Use audit_export for full recommendation metrics._'
+      )
+    }
+
+    return lines.join('\n')
   }
 
-  return lines.join('\n')
+  return stubAnalyticsDashboard(input.period, input.includeRecommendations)
 }
 
 /**
  * Enterprise usage report handler.
  * Returns comprehensive report with all metrics as markdown (or CSV).
  *
- * TODO: Replace mock data with real audit_logs query
+ * Uses real service when db is available, falls back to stub
  */
 export async function executeUsageReport(
   input: UsageReportInput,
-  _context: ToolContext
+  context: ToolContext
 ): Promise<string> {
   const days = periodDays(input.period)
-  const totalCalls = days * 85
-  const previousCalls = Math.round(totalCalls * 0.78)
-  const changePercent = (((totalCalls - previousCalls) / previousCalls) * 100).toFixed(1)
+  const svc = resolveAnalyticsService(context)
 
-  if (input.format === 'csv') {
-    const csvLines = [
-      'metric,current_period,previous_period,change_percent',
-      `total_calls,${totalCalls},${previousCalls},${changePercent}`,
-      `active_users,18,15,20.0`,
-      `active_teams,3,3,0.0`,
-      `skills_installed,47,38,23.7`,
-      `recommendations_made,${Math.round(totalCalls * 0.18)},${Math.round(previousCalls * 0.18)},${changePercent}`,
-      `recommendation_accept_rate,72,68,5.9`,
-      `security_audits,${Math.round(totalCalls * 0.05)},${Math.round(previousCalls * 0.04)},42.3`,
+  if (svc) {
+    const data = svc.getUsageReport(days, input.format === 'detailed')
+    const { current, previous, changePercent } = data.periodComparison
+    const sign = changePercent >= 0 ? '+' : ''
+
+    if (input.format === 'csv') {
+      const csvLines = [
+        'metric,current_period,previous_period,change_percent',
+        `total_calls,${current},${previous},${changePercent}`,
+        `unique_tools,${data.uniqueTools},,,`,
+      ]
+      for (const t of data.topTools) {
+        csvLines.push(`tool_${t.tool},${t.count},,,`)
+      }
+      return csvLines.join('\n')
+    }
+
+    const lines = [
+      `# Enterprise Usage Report (${input.period})`,
+      '',
+      '## Executive Summary',
+      `- **Period**: Last ${days} days`,
+      `- **Total tool calls**: ${current} (${sign}${changePercent}% vs previous)`,
+      `- **Unique tools**: ${data.uniqueTools}`,
+      `- **Data source**: live`,
+      '',
+      '## Top Tools',
+      '| Tool | Calls | % of Total |',
+      '|------|-------|------------|',
+      ...data.topTools.map((t) => {
+        const pct = current > 0 ? Math.round((t.count / current) * 100) : 0
+        return `| ${t.tool} | ${t.count} | ${pct}% |`
+      }),
+      '',
+      '## Daily Trend',
+      '| Date | Calls |',
+      '|------|-------|',
+      ...data.dailyTrend.slice(-7).map((d) => `| ${d.date} | ${d.count} |`),
     ]
-    return csvLines.join('\n')
+
+    if (input.format === 'detailed' && data.byActor) {
+      lines.push(
+        '',
+        '## Per-User Breakdown',
+        '| User | Calls |',
+        '|------|-------|',
+        ...data.byActor.map((a) => `| ${a.actor} | ${a.count} |`)
+      )
+    }
+
+    return lines.join('\n')
   }
 
-  const lines = [
-    `# Enterprise Usage Report (${input.period})`,
-    '',
-    '## Executive Summary',
-    `- **Period**: Last ${days} days`,
-    `- **Total tool calls**: ${totalCalls} (+${changePercent}% vs previous)`,
-    `- **Active users**: 18 (up from 15)`,
-    `- **Active teams**: 3`,
-    `- **Skills installed**: 47 (up from 38)`,
-    '',
-    '## Usage by Tier Feature',
-    '| Feature | Calls | % of Total | Trend |',
-    '|---------|-------|------------|-------|',
-    `| Core tools | ${Math.round(totalCalls * 0.5)} | 50% | stable |`,
-    `| Version tracking | ${Math.round(totalCalls * 0.15)} | 15% | +12% |`,
-    `| Team workspaces | ${Math.round(totalCalls * 0.12)} | 12% | +25% |`,
-    `| Security audit | ${Math.round(totalCalls * 0.08)} | 8% | +18% |`,
-    `| Audit logging | ${Math.round(totalCalls * 0.1)} | 10% | +30% |`,
-    `| SIEM export | ${Math.round(totalCalls * 0.05)} | 5% | +15% |`,
-    '',
-    '## License Utilization',
-    '- **Seats provisioned**: 25',
-    '- **Seats active**: 18 (72%)',
-    '- **API quota used**: 42%',
-    '- **License expires**: 2027-01-15',
-  ]
-
-  if (input.format === 'detailed') {
-    lines.push(
-      '',
-      '## Per-Team Detailed Breakdown',
-      '',
-      '### Engineering (10 users)',
-      '| User | Total | search | install | validate | audit |',
-      '|------|-------|--------|---------|----------|-------|',
-      '| eng-lead | 320 | 120 | 80 | 60 | 60 |',
-      '| dev-1 | 280 | 100 | 90 | 50 | 40 |',
-      '| dev-2 | 240 | 90 | 70 | 40 | 40 |',
-      '',
-      '### Data Science (5 users)',
-      '| User | Total | search | recommend | compare | suggest |',
-      '|------|-------|--------|-----------|---------|---------|',
-      '| ds-lead | 210 | 70 | 80 | 30 | 30 |',
-      '| analyst-1 | 180 | 60 | 60 | 30 | 30 |'
-    )
-  }
-
-  return lines.join('\n')
+  return stubUsageReport(input.period, input.format)
 }
