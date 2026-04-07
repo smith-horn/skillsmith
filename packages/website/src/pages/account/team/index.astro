@@ -1,0 +1,299 @@
+---
+/**
+ * Team Dashboard Overview
+ *
+ * @see SMI-3897: Team Admin Dashboard (Wave 2b)
+ *
+ * Shows: team name, member count, workspace count, usage summary.
+ * Placeholder content with TODO comments for Supabase integration.
+ */
+
+export const prerender = false
+
+import { ClientRouter } from 'astro:transitions'
+import Footer from '../../../components/Footer.astro'
+import Nav from '../../../components/Nav.astro'
+import TeamNav from '../../../components/TeamNav.astro'
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+    <meta name="description" content="Team dashboard overview" />
+    <title>Team Dashboard | Skillsmith</title>
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
+    <ClientRouter />
+  </head>
+  <body>
+    <Nav activePath="/account/team" />
+
+    <main class="dashboard-container">
+      <h1>Team Dashboard</h1>
+
+      <TeamNav activePath="/account/team" />
+
+      <!-- TODO: Replace placeholder data with Supabase team query -->
+      <section class="section">
+        <h2>Team Overview</h2>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value" id="team-name">Acme Engineering</div>
+            <div class="stat-label">Team Name</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="member-count">4</div>
+            <div class="stat-label">Members</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="workspace-count">2</div>
+            <div class="stat-label">Workspaces</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="skill-count">12</div>
+            <div class="stat-label">Shared Skills</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TODO: Replace with real usage data from audit_logs -->
+      <section class="section">
+        <h2>Usage Summary (Last 30 Days)</h2>
+        <div class="usage-grid">
+          <div class="usage-row">
+            <span class="usage-label">Total API Calls</span>
+            <span class="usage-value">2,847</span>
+          </div>
+          <div class="usage-row">
+            <span class="usage-label">Skills Installed</span>
+            <span class="usage-value">18</span>
+          </div>
+          <div class="usage-row">
+            <span class="usage-label">Security Audits Run</span>
+            <span class="usage-value">6</span>
+          </div>
+          <div class="usage-row">
+            <span class="usage-label">Quota Used</span>
+            <div class="progress-bar">
+              <div class="progress-fill" style="width: 28%"></div>
+            </div>
+            <span class="usage-value">28%</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- TODO: Replace with real recent activity from audit_logs -->
+      <section class="section">
+        <h2>Recent Activity</h2>
+        <div class="activity-list">
+          <div class="activity-item">
+            <span class="activity-user">alice@example.com</span>
+            <span class="activity-action">installed skill</span>
+            <span class="activity-target">governance</span>
+            <span class="activity-time">2 hours ago</span>
+          </div>
+          <div class="activity-item">
+            <span class="activity-user">bob@example.com</span>
+            <span class="activity-action">created workspace</span>
+            <span class="activity-target">Backend Tools</span>
+            <span class="activity-time">5 hours ago</span>
+          </div>
+          <div class="activity-item">
+            <span class="activity-user">carol@example.com</span>
+            <span class="activity-action">shared skill</span>
+            <span class="activity-target">security-auditor</span>
+            <span class="activity-time">1 day ago</span>
+          </div>
+          <div class="activity-item">
+            <span class="activity-user">dave@example.com</span>
+            <span class="activity-action">ran audit</span>
+            <span class="activity-target">3 skills</span>
+            <span class="activity-time">2 days ago</span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <Footer compact />
+  </body>
+</html>
+
+<style>
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family:
+      'Satoshi',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
+    line-height: 1.6;
+    color: #fafafa;
+    background: #0d0d0f;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .dashboard-container {
+    flex: 1;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem;
+    width: 100%;
+  }
+
+  .dashboard-container h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin-bottom: 1.5rem;
+  }
+
+  .section {
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .section h2 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+  }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+  }
+
+  .stat-card {
+    background: #1a1a1f;
+    border-radius: 0.5rem;
+    padding: 1.25rem;
+    text-align: center;
+  }
+
+  .stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #fafafa;
+    margin-bottom: 0.25rem;
+  }
+
+  .stat-label {
+    font-size: 0.8125rem;
+    color: #9ca3af;
+  }
+
+  .usage-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .usage-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #2a2a2f;
+  }
+
+  .usage-row:last-child {
+    border-bottom: none;
+  }
+
+  .usage-label {
+    color: #9ca3af;
+    font-size: 0.875rem;
+  }
+
+  .usage-value {
+    font-weight: 600;
+    font-size: 0.875rem;
+  }
+
+  .progress-bar {
+    flex: 1;
+    max-width: 200px;
+    height: 6px;
+    background: #2a2a2f;
+    border-radius: 3px;
+    margin: 0 1rem;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: #b8523a;
+    border-radius: 3px;
+  }
+
+  .activity-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .activity-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #2a2a2f;
+    font-size: 0.875rem;
+    flex-wrap: wrap;
+  }
+
+  .activity-item:last-child {
+    border-bottom: none;
+  }
+
+  .activity-user {
+    color: #fafafa;
+    font-weight: 500;
+  }
+
+  .activity-action {
+    color: #9ca3af;
+  }
+
+  .activity-target {
+    color: #b8523a;
+    font-weight: 500;
+  }
+
+  .activity-time {
+    color: #6b7280;
+    margin-left: auto;
+    font-size: 0.8125rem;
+  }
+
+  @media (max-width: 640px) {
+    .stats-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    .activity-time {
+      width: 100%;
+      margin-left: 0;
+    }
+  }
+</style>
