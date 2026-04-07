@@ -61,6 +61,7 @@ export interface RBACService {
 
 export interface RbacManageResult {
   success: boolean
+  dataSource: 'stub' | 'live'
   role?: RBACRole
   roles?: RBACRole[]
   message?: string
@@ -69,6 +70,7 @@ export interface RbacManageResult {
 
 export interface RbacAssignRoleResult {
   success: boolean
+  dataSource: 'stub' | 'live'
   assignment?: RBACAssignment
   assignments?: RBACAssignment[]
   message?: string
@@ -77,6 +79,7 @@ export interface RbacAssignRoleResult {
 
 export interface RbacCreatePolicyResult {
   success: boolean
+  dataSource: 'stub' | 'live'
   policy?: RBACPolicy
   policies?: RBACPolicy[]
   message?: string

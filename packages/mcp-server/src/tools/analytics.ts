@@ -13,6 +13,10 @@
 
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
+import { periodDays, generateDailyTrend } from './analytics.stub.js'
+
+// Re-export stub helpers for external consumers
+export { periodDays, generateDailyTrend } from './analytics.stub.js'
 
 // ============================================================================
 // Shared types
@@ -143,38 +147,6 @@ export const usageReportToolSchema = {
       },
     },
   },
-}
-
-// ============================================================================
-// Mock data helpers
-// ============================================================================
-
-/** Map period string to number of days */
-function periodDays(period: string): number {
-  switch (period) {
-    case '7d':
-      return 7
-    case '90d':
-      return 90
-    default:
-      return 30
-  }
-}
-
-/** Generate mock daily trend data for the given number of days */
-function generateDailyTrend(days: number): Array<{ date: string; calls: number }> {
-  const trend: Array<{ date: string; calls: number }> = []
-  const now = new Date()
-  for (let i = days - 1; i >= 0; i--) {
-    const date = new Date(now)
-    date.setDate(date.getDate() - i)
-    trend.push({
-      date: date.toISOString().split('T')[0],
-      // Deterministic "random" based on day offset to keep output stable
-      calls: 20 + ((i * 7 + 3) % 30),
-    })
-  }
-  return trend
 }
 
 // ============================================================================

@@ -13,6 +13,11 @@
 
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
+import { isSupabaseConfigured } from '../supabase-client.js'
+import { createStubService } from './team-workspace.stub.js'
+
+// Re-export stub factory for external consumers and tests
+export { createStubService } from './team-workspace.stub.js'
 
 // ============================================================================
 // Input schemas
@@ -74,6 +79,7 @@ export interface SharedSkill {
 
 export interface TeamWorkspaceResult {
   success: boolean
+  dataSource: 'stub' | 'live'
   workspace?: Workspace
   workspaces?: Workspace[]
   message?: string
@@ -82,6 +88,7 @@ export interface TeamWorkspaceResult {
 
 export interface ShareSkillResult {
   success: boolean
+  dataSource: 'stub' | 'live'
   skills?: SharedSkill[]
   message?: string
   error?: string
@@ -205,83 +212,6 @@ export function checkSharingPolicy(
   return null
 }
 
-// ============================================================================
-// Stub service (returns realistic mock data)
-// ============================================================================
-
-/** @internal Exported for testing */
-export function createStubService(): TeamWorkspaceService {
-  // In-memory store for stub data
-  const workspaces = new Map<string, Workspace>()
-  const skills = new Map<string, SharedSkill[]>()
-
-  return {
-    async resolveTeamId(_licenseKey: string): Promise<string> {
-      // TODO: Replace with Supabase RPC: license_key -> subscription -> team_id
-      return 'team_stub_00000000-0000-0000-0000-000000000000'
-    },
-
-    async createWorkspace(teamId: string, name: string, description?: string): Promise<Workspace> {
-      const id = crypto.randomUUID()
-      const now = new Date().toISOString()
-      const ws: Workspace = {
-        id,
-        name,
-        description: description ?? null,
-        teamId,
-        settings: {},
-        createdAt: now,
-        updatedAt: now,
-      }
-      workspaces.set(id, ws)
-      return ws
-    },
-
-    async listWorkspaces(teamId: string): Promise<Workspace[]> {
-      return [...workspaces.values()].filter((ws) => ws.teamId === teamId)
-    },
-
-    async getWorkspace(_teamId: string, workspaceId: string): Promise<Workspace | null> {
-      return workspaces.get(workspaceId) ?? null
-    },
-
-    async deleteWorkspace(_teamId: string, workspaceId: string): Promise<boolean> {
-      const existed = workspaces.has(workspaceId)
-      workspaces.delete(workspaceId)
-      skills.delete(workspaceId)
-      return existed
-    },
-
-    async addSkill(_teamId: string, workspaceId: string, skillId: string): Promise<SharedSkill> {
-      const entry: SharedSkill = {
-        skillId,
-        addedBy: 'current-user',
-        addedAt: new Date().toISOString(),
-      }
-      const list = skills.get(workspaceId) ?? []
-      list.push(entry)
-      skills.set(workspaceId, list)
-      return entry
-    },
-
-    async removeSkill(_teamId: string, workspaceId: string, skillId: string): Promise<boolean> {
-      const list = skills.get(workspaceId) ?? []
-      const filtered = list.filter((s) => s.skillId !== skillId)
-      skills.set(workspaceId, filtered)
-      return filtered.length < list.length
-    },
-
-    async listSkills(_teamId: string, workspaceId: string): Promise<SharedSkill[]> {
-      return skills.get(workspaceId) ?? []
-    },
-
-    async getWorkspaceSettings(_teamId: string, workspaceId: string): Promise<WorkspaceSettings> {
-      const ws = workspaces.get(workspaceId)
-      return ws?.settings ?? {}
-    },
-  }
-}
-
 // Module-level singleton (swapped when Supabase RPCs are ready)
 let service: TeamWorkspaceService = createStubService()
 
@@ -309,6 +239,7 @@ export async function executeTeamWorkspace(
   input: TeamWorkspaceInput,
   _context: ToolContext
 ): Promise<TeamWorkspaceResult> {
+  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
   // TODO: Extract license key from context/env and resolve team_id via Supabase
   const licenseKey = process.env.SKILLSMITH_LICENSE_KEY ?? ''
   const teamId = await service.resolveTeamId(licenseKey)
@@ -316,33 +247,43 @@ export async function executeTeamWorkspace(
   switch (input.action) {
     case 'create': {
       if (!input.name) {
-        return { success: false, error: 'Name is required for workspace creation.' }
+        return { success: false, dataSource, error: 'Name is required for workspace creation.' }
       }
       const ws = await service.createWorkspace(teamId, input.name, input.description)
-      return { success: true, workspace: ws, message: `Workspace "${ws.name}" created.` }
+      return {
+        success: true,
+        dataSource,
+        workspace: ws,
+        message: `Workspace "${ws.name}" created.`,
+      }
     }
 
     case 'list': {
       const list = await service.listWorkspaces(teamId)
-      return { success: true, workspaces: list, message: `Found ${list.length} workspace(s).` }
+      return {
+        success: true,
+        dataSource,
+        workspaces: list,
+        message: `Found ${list.length} workspace(s).`,
+      }
     }
 
     case 'get': {
       if (!input.workspaceId) {
-        return { success: false, error: 'workspaceId is required for get.' }
+        return { success: false, dataSource, error: 'workspaceId is required for get.' }
       }
       const ws = await service.getWorkspace(teamId, input.workspaceId)
-      if (!ws) return { success: false, error: 'Workspace not found.' }
-      return { success: true, workspace: ws }
+      if (!ws) return { success: false, dataSource, error: 'Workspace not found.' }
+      return { success: true, dataSource, workspace: ws }
     }
 
     case 'delete': {
       if (!input.workspaceId) {
-        return { success: false, error: 'workspaceId is required for delete.' }
+        return { success: false, dataSource, error: 'workspaceId is required for delete.' }
       }
       const deleted = await service.deleteWorkspace(teamId, input.workspaceId)
-      if (!deleted) return { success: false, error: 'Workspace not found.' }
-      return { success: true, message: 'Workspace deleted.' }
+      if (!deleted) return { success: false, dataSource, error: 'Workspace not found.' }
+      return { success: true, dataSource, message: 'Workspace deleted.' }
     }
   }
 }
@@ -359,25 +300,27 @@ export async function executeShareSkill(
   input: ShareSkillInput,
   _context: ToolContext
 ): Promise<ShareSkillResult> {
+  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
   const licenseKey = process.env.SKILLSMITH_LICENSE_KEY ?? ''
   const teamId = await service.resolveTeamId(licenseKey)
 
   switch (input.action) {
     case 'add': {
       if (!input.skillId) {
-        return { success: false, error: 'skillId is required for add.' }
+        return { success: false, dataSource, error: 'skillId is required for add.' }
       }
 
       // SMI-3898: Check sharing policy before adding
       const settings = await service.getWorkspaceSettings(teamId, input.workspaceId)
       const policyError = checkSharingPolicy(input.skillId, settings.sharing)
       if (policyError) {
-        return { success: false, error: policyError }
+        return { success: false, dataSource, error: policyError }
       }
 
       const skill = await service.addSkill(teamId, input.workspaceId, input.skillId)
       return {
         success: true,
+        dataSource,
         skills: [skill],
         message: `Skill "${input.skillId}" shared to workspace.`,
       }
@@ -385,16 +328,20 @@ export async function executeShareSkill(
 
     case 'remove': {
       if (!input.skillId) {
-        return { success: false, error: 'skillId is required for remove.' }
+        return { success: false, dataSource, error: 'skillId is required for remove.' }
       }
       const removed = await service.removeSkill(teamId, input.workspaceId, input.skillId)
-      if (!removed) return { success: false, error: 'Skill not found in workspace.' }
-      return { success: true, message: `Skill "${input.skillId}" removed from workspace.` }
+      if (!removed) return { success: false, dataSource, error: 'Skill not found in workspace.' }
+      return {
+        success: true,
+        dataSource,
+        message: `Skill "${input.skillId}" removed from workspace.`,
+      }
     }
 
     case 'list': {
       const list = await service.listSkills(teamId, input.workspaceId)
-      return { success: true, skills: list, message: `${list.length} shared skill(s).` }
+      return { success: true, dataSource, skills: list, message: `${list.length} shared skill(s).` }
     }
   }
 }

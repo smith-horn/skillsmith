@@ -13,6 +13,7 @@
 
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
+import { isSupabaseConfigured } from '../supabase-client.js'
 
 // ============================================================================
 // Input schemas
@@ -116,6 +117,7 @@ export interface RegistrySkill {
 
 export interface PrivateRegistryPublishResult {
   success: boolean
+  dataSource: 'stub' | 'live'
   skill?: RegistrySkill
   message?: string
   error?: string
@@ -123,6 +125,7 @@ export interface PrivateRegistryPublishResult {
 
 export interface PrivateRegistryManageResult {
   success: boolean
+  dataSource: 'stub' | 'live'
   skills?: RegistrySkill[]
   skill?: RegistrySkill
   message?: string
@@ -230,11 +233,13 @@ export async function executePrivateRegistryPublish(
   input: PrivateRegistryPublishInput,
   _context: ToolContext
 ): Promise<PrivateRegistryPublishResult> {
+  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
   const teamId = await resolveTeamId()
 
   const skill = await service.publish(teamId, input.skillId, input.version, input.description)
   return {
     success: true,
+    dataSource,
     skill,
     message:
       `Published ${input.skillId}@${input.version} to private registry.\n` +
@@ -249,6 +254,7 @@ export async function executePrivateRegistryManage(
   input: PrivateRegistryManageInput,
   _context: ToolContext
 ): Promise<PrivateRegistryManageResult> {
+  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
   const teamId = await resolveTeamId()
 
   switch (input.action) {
@@ -256,6 +262,7 @@ export async function executePrivateRegistryManage(
       const skills = await service.list(teamId, input.version)
       return {
         success: true,
+        dataSource,
         skills,
         message: `Found ${skills.length} skill(s) in private registry.`,
       }
@@ -263,39 +270,57 @@ export async function executePrivateRegistryManage(
 
     case 'get': {
       if (!input.skillId) {
-        return { success: false, error: 'skillId is required for action "get".' }
+        return { success: false, dataSource, error: 'skillId is required for action "get".' }
       }
       const skill = await service.get(teamId, input.skillId, input.version)
       if (!skill) {
-        return { success: false, error: `Skill "${input.skillId}" not found in private registry.` }
+        return {
+          success: false,
+          dataSource,
+          error: `Skill "${input.skillId}" not found in private registry.`,
+        }
       }
-      return { success: true, skill }
+      return { success: true, dataSource, skill }
     }
 
     case 'deprecate': {
       if (!input.skillId) {
-        return { success: false, error: 'skillId is required for action "deprecate".' }
+        return { success: false, dataSource, error: 'skillId is required for action "deprecate".' }
       }
       const deprecated = await service.deprecate(teamId, input.skillId)
       if (!deprecated) {
-        return { success: false, error: `Skill "${input.skillId}" not found in private registry.` }
+        return {
+          success: false,
+          dataSource,
+          error: `Skill "${input.skillId}" not found in private registry.`,
+        }
       }
       return {
         success: true,
+        dataSource,
         message: `Skill "${input.skillId}" has been deprecated. It will no longer appear in search results.`,
       }
     }
 
     case 'undeprecate': {
       if (!input.skillId) {
-        return { success: false, error: 'skillId is required for action "undeprecate".' }
+        return {
+          success: false,
+          dataSource,
+          error: 'skillId is required for action "undeprecate".',
+        }
       }
       const undeprecated = await service.undeprecate(teamId, input.skillId)
       if (!undeprecated) {
-        return { success: false, error: `Skill "${input.skillId}" not found in private registry.` }
+        return {
+          success: false,
+          dataSource,
+          error: `Skill "${input.skillId}" not found in private registry.`,
+        }
       }
       return {
         success: true,
+        dataSource,
         message: `Skill "${input.skillId}" has been undeprecated and is now visible in search results.`,
       }
     }

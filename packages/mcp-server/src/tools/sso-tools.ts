@@ -15,6 +15,7 @@
 
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
+import { isSupabaseConfigured } from '../supabase-client.js'
 
 // ============================================================================
 // Input schemas
@@ -196,6 +197,7 @@ export function getSSOConfigService(): SSOConfigService {
 
 export interface ConfigureSsoResult {
   success: boolean
+  dataSource: 'stub' | 'live'
   config?: SSOConfig
   test?: { success: boolean; latencyMs: number; message: string }
   message?: string
@@ -204,6 +206,7 @@ export interface ConfigureSsoResult {
 
 export interface SsoSettingsResult {
   configured: boolean
+  dataSource: 'stub' | 'live'
   config?: SSOConfig
   message: string
 }
@@ -215,10 +218,12 @@ export async function executeConfigureSso(
   input: ConfigureSsoInput,
   _context: ToolContext
 ): Promise<ConfigureSsoResult> {
+  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+
   switch (input.action) {
     case 'set': {
       if (!input.idpMetadataUrl) {
-        return { success: false, error: 'idpMetadataUrl is required for action "set".' }
+        return { success: false, dataSource, error: 'idpMetadataUrl is required for action "set".' }
       }
       const config = await service.set({
         idpMetadataUrl: input.idpMetadataUrl,
@@ -227,6 +232,7 @@ export async function executeConfigureSso(
       })
       return {
         success: true,
+        dataSource,
         config,
         message:
           `SSO configured with ${config.protocol.toUpperCase()} protocol.\n` +
@@ -239,6 +245,7 @@ export async function executeConfigureSso(
       const result = await service.test()
       return {
         success: result.success,
+        dataSource,
         test: result,
         message: result.message,
       }
@@ -247,9 +254,9 @@ export async function executeConfigureSso(
     case 'remove': {
       const removed = await service.remove()
       if (!removed) {
-        return { success: false, error: 'No SSO configuration to remove.' }
+        return { success: false, dataSource, error: 'No SSO configuration to remove.' }
       }
-      return { success: true, message: 'SSO configuration removed.' }
+      return { success: true, dataSource, message: 'SSO configuration removed.' }
     }
   }
 }
@@ -261,10 +268,12 @@ export async function executeSsoSettings(
   input: SsoSettingsInput,
   _context: ToolContext
 ): Promise<SsoSettingsResult> {
+  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
   const config = await service.get(input.includeMetadata ?? false)
   if (!config) {
     return {
       configured: false,
+      dataSource,
       message:
         'No SSO configuration found.\n' +
         'Use configure_sso with action "set" to configure SSO for your organization.',
@@ -272,6 +281,7 @@ export async function executeSsoSettings(
   }
   return {
     configured: true,
+    dataSource,
     config,
     message:
       `SSO is configured (${config.protocol.toUpperCase()}).\n` +

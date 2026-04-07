@@ -99,6 +99,7 @@ describe('integration-tools', () => {
       }
       const result = await executeWebhookConfigure(input, mockContext)
       expect(result.success).toBe(true)
+      expect(result.dataSource).toBe('stub')
       expect(result.webhook).toBeDefined()
       expect(result.webhook!.url).toBe('https://example.com/webhook')
       // Full signing secret is returned on create
