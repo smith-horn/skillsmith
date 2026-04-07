@@ -65,6 +65,21 @@ import {
   executePrivateRegistryManage,
 } from './tools/registry-tools.js'
 import {
+  rbacManageInputSchema,
+  executeRbacManage,
+  rbacAssignRoleInputSchema,
+  executeRbacAssignRole,
+  rbacCreatePolicyInputSchema,
+  executeRbacCreatePolicy,
+} from './tools/rbac-tools.js'
+import {
+  webhookConfigureInputSchema,
+  executeWebhookConfigure,
+  apiKeyManageInputSchema,
+  executeApiKeyManage,
+} from './tools/integration-tools.js'
+import { complianceReportInputSchema, executeComplianceReport } from './tools/compliance-tools.js'
+import {
   ok,
   errResponse,
   withLicenseAndQuota,
@@ -337,6 +352,72 @@ export async function dispatchToolCall(
         args,
         privateRegistryManageInputSchema,
         executePrivateRegistryManage,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'rbac_manage':
+      return withLicenseAndQuota(
+        'rbac_manage',
+        args,
+        rbacManageInputSchema,
+        executeRbacManage,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'rbac_assign_role':
+      return withLicenseAndQuota(
+        'rbac_assign_role',
+        args,
+        rbacAssignRoleInputSchema,
+        executeRbacAssignRole,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'rbac_create_policy':
+      return withLicenseAndQuota(
+        'rbac_create_policy',
+        args,
+        rbacCreatePolicyInputSchema,
+        executeRbacCreatePolicy,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'webhook_configure':
+      return withLicenseAndQuota(
+        'webhook_configure',
+        args,
+        webhookConfigureInputSchema,
+        executeWebhookConfigure,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'api_key_manage':
+      return withLicenseAndQuota(
+        'api_key_manage',
+        args,
+        apiKeyManageInputSchema,
+        executeApiKeyManage,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'compliance_report':
+      return withLicenseAndQuota(
+        'compliance_report',
+        args,
+        complianceReportInputSchema,
+        executeComplianceReport,
         toolContext,
         licenseMiddleware,
         quotaMiddleware

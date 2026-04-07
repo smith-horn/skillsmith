@@ -207,6 +207,12 @@ All tiers include:
 | `sso_settings` | View current SSO/SAML configuration | Enterprise |
 | `private_registry_publish` | Publish a skill to your private registry | Enterprise |
 | `private_registry_manage` | Manage private registry skills (list, get, deprecate) | Enterprise |
+| `rbac_manage` | Manage RBAC roles (create, list, get, delete) | Enterprise |
+| `rbac_assign_role` | Assign or revoke roles for users | Enterprise |
+| `rbac_create_policy` | Create and manage RBAC access policies | Enterprise |
+| `webhook_configure` | Configure HMAC-SHA256 signed webhooks for skill events | Enterprise |
+| `api_key_manage` | Manage API keys for programmatic access | Enterprise |
+| `compliance_report` | Generate SOC2, CycloneDX SBOM, or JSON compliance reports | Enterprise |
 
 ## Tool Parameters
 

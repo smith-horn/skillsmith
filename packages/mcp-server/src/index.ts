@@ -52,6 +52,13 @@ import {
   privateRegistryPublishToolSchema,
   privateRegistryManageToolSchema,
 } from './tools/registry-tools.js'
+import {
+  rbacManageToolSchema,
+  rbacAssignRoleToolSchema,
+  rbacCreatePolicyToolSchema,
+} from './tools/rbac-tools.js'
+import { webhookConfigureToolSchema, apiKeyManageToolSchema } from './tools/integration-tools.js'
+import { complianceReportToolSchema } from './tools/compliance-tools.js'
 import { dispatchToolCall } from './tool-dispatch.js'
 import {
   isFirstRun,
@@ -113,6 +120,12 @@ const toolDefinitions = [
   ssoSettingsToolSchema,
   privateRegistryPublishToolSchema,
   privateRegistryManageToolSchema,
+  rbacManageToolSchema,
+  rbacAssignRoleToolSchema,
+  rbacCreatePolicyToolSchema,
+  webhookConfigureToolSchema,
+  apiKeyManageToolSchema,
+  complianceReportToolSchema,
 ]
 
 // Create server
