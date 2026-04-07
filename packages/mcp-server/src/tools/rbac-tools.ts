@@ -14,6 +14,7 @@
 
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
+import { isSupabaseConfigured } from '../supabase-client.js'
 import type {
   RBACService,
   RbacManageResult,
@@ -175,13 +176,16 @@ export async function executeRbacManage(
   input: RbacManageInput,
   _context: ToolContext
 ): Promise<RbacManageResult> {
+  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+
   switch (input.action) {
     case 'create_role': {
       if (!input.name)
-        return { success: false, error: 'name is required for action "create_role".' }
+        return { success: false, dataSource, error: 'name is required for action "create_role".' }
       const role = await service.createRole(input.name, input.permissions, input.description)
       return {
         success: true,
+        dataSource,
         role,
         message:
           `## Role Created\n\n` +
@@ -198,6 +202,7 @@ export async function executeRbacManage(
       )
       return {
         success: true,
+        dataSource,
         roles,
         message:
           `## RBAC Roles (${roles.length})\n\n` +
@@ -208,21 +213,22 @@ export async function executeRbacManage(
     }
     case 'get_role': {
       if (!input.roleId)
-        return { success: false, error: 'roleId is required for action "get_role".' }
+        return { success: false, dataSource, error: 'roleId is required for action "get_role".' }
       const role = await service.getRole(input.roleId)
-      if (!role) return { success: false, error: `Role "${input.roleId}" not found.` }
-      return { success: true, role }
+      if (!role) return { success: false, dataSource, error: `Role "${input.roleId}" not found.` }
+      return { success: true, dataSource, role }
     }
     case 'delete_role': {
       if (!input.roleId)
-        return { success: false, error: 'roleId is required for action "delete_role".' }
+        return { success: false, dataSource, error: 'roleId is required for action "delete_role".' }
       const deleted = await service.deleteRole(input.roleId)
       if (!deleted)
         return {
           success: false,
+          dataSource,
           error: `Role "${input.roleId}" not found or is a built-in role.`,
         }
-      return { success: true, message: `Role "${input.roleId}" deleted.` }
+      return { success: true, dataSource, message: `Role "${input.roleId}" deleted.` }
     }
   }
 }
@@ -231,13 +237,20 @@ export async function executeRbacAssignRole(
   input: RbacAssignRoleInput,
   _context: ToolContext
 ): Promise<RbacAssignRoleResult> {
+  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+
   switch (input.action) {
     case 'assign': {
       if (!input.userId || !input.roleId)
-        return { success: false, error: 'userId and roleId are required for action "assign".' }
+        return {
+          success: false,
+          dataSource,
+          error: 'userId and roleId are required for action "assign".',
+        }
       const assignment = await service.assignRole(input.userId, input.roleId)
       return {
         success: true,
+        dataSource,
         assignment,
         message:
           `## Role Assigned\n\n` +
@@ -248,15 +261,21 @@ export async function executeRbacAssignRole(
     }
     case 'revoke': {
       if (!input.userId || !input.roleId)
-        return { success: false, error: 'userId and roleId are required for action "revoke".' }
+        return {
+          success: false,
+          dataSource,
+          error: 'userId and roleId are required for action "revoke".',
+        }
       const revoked = await service.revokeRole(input.userId, input.roleId)
       if (!revoked)
         return {
           success: false,
+          dataSource,
           error: `No assignment found for user "${input.userId}" with role "${input.roleId}".`,
         }
       return {
         success: true,
+        dataSource,
         message: `Role "${input.roleId}" revoked from user "${input.userId}".`,
       }
     }
@@ -264,6 +283,7 @@ export async function executeRbacAssignRole(
       const assignments = await service.listAssignments()
       return {
         success: true,
+        dataSource,
         assignments,
         message:
           `## Role Assignments (${assignments.length})\n\n` +
@@ -279,14 +299,18 @@ export async function executeRbacCreatePolicy(
   input: RbacCreatePolicyInput,
   _context: ToolContext
 ): Promise<RbacCreatePolicyResult> {
+  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+
   switch (input.action) {
     case 'create': {
-      if (!input.name) return { success: false, error: 'name is required for action "create".' }
-      if (!input.effect) return { success: false, error: 'effect is required for action "create".' }
+      if (!input.name)
+        return { success: false, dataSource, error: 'name is required for action "create".' }
+      if (!input.effect)
+        return { success: false, dataSource, error: 'effect is required for action "create".' }
       if (!input.resources?.length)
-        return { success: false, error: 'resources is required for action "create".' }
+        return { success: false, dataSource, error: 'resources is required for action "create".' }
       if (!input.actions?.length)
-        return { success: false, error: 'actions is required for action "create".' }
+        return { success: false, dataSource, error: 'actions is required for action "create".' }
       const policy = await service.createPolicy(
         input.name,
         input.effect,
@@ -295,6 +319,7 @@ export async function executeRbacCreatePolicy(
       )
       return {
         success: true,
+        dataSource,
         policy,
         message:
           `## Policy Created\n\n` +
@@ -309,6 +334,7 @@ export async function executeRbacCreatePolicy(
       const policies = await service.listPolicies()
       return {
         success: true,
+        dataSource,
         policies,
         message:
           `## RBAC Policies (${policies.length})\n\n` +
@@ -321,17 +347,19 @@ export async function executeRbacCreatePolicy(
     }
     case 'get': {
       if (!input.policyId)
-        return { success: false, error: 'policyId is required for action "get".' }
+        return { success: false, dataSource, error: 'policyId is required for action "get".' }
       const policy = await service.getPolicy(input.policyId)
-      if (!policy) return { success: false, error: `Policy "${input.policyId}" not found.` }
-      return { success: true, policy }
+      if (!policy)
+        return { success: false, dataSource, error: `Policy "${input.policyId}" not found.` }
+      return { success: true, dataSource, policy }
     }
     case 'delete': {
       if (!input.policyId)
-        return { success: false, error: 'policyId is required for action "delete".' }
+        return { success: false, dataSource, error: 'policyId is required for action "delete".' }
       const deleted = await service.deletePolicy(input.policyId)
-      if (!deleted) return { success: false, error: `Policy "${input.policyId}" not found.` }
-      return { success: true, message: `Policy "${input.policyId}" deleted.` }
+      if (!deleted)
+        return { success: false, dataSource, error: `Policy "${input.policyId}" not found.` }
+      return { success: true, dataSource, message: `Policy "${input.policyId}" deleted.` }
     }
   }
 }

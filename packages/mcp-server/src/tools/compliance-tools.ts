@@ -13,6 +13,7 @@
 
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
+import { isSupabaseConfigured } from '../supabase-client.js'
 
 // ============================================================================
 // Input schemas
@@ -180,6 +181,7 @@ export function setComplianceService(svc: ComplianceService): void {
 
 export interface ComplianceReportResult {
   format: 'soc2' | 'cyclonedx' | 'json'
+  dataSource: 'stub' | 'live'
   generatedAt: string
   scope: 'local'
   period: string
@@ -294,11 +296,13 @@ export async function executeComplianceReport(
   const days = periodToDays(period)
   const data = await service.gatherData(days, input.includeUserActivity ?? true)
   const generatedAt = new Date().toISOString()
+  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
 
   switch (input.format) {
     case 'soc2':
       return {
         format: 'soc2',
+        dataSource,
         generatedAt,
         scope: 'local',
         period,
@@ -307,6 +311,7 @@ export async function executeComplianceReport(
     case 'cyclonedx':
       return {
         format: 'cyclonedx',
+        dataSource,
         generatedAt,
         scope: 'local',
         period,
@@ -315,6 +320,7 @@ export async function executeComplianceReport(
     case 'json':
       return {
         format: 'json',
+        dataSource,
         generatedAt,
         scope: 'local',
         period,
