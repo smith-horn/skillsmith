@@ -47,6 +47,11 @@ import {
   analyticsDashboardToolSchema,
   usageReportToolSchema,
 } from './tools/analytics.js'
+import { configureSsoToolSchema, ssoSettingsToolSchema } from './tools/sso-tools.js'
+import {
+  privateRegistryPublishToolSchema,
+  privateRegistryManageToolSchema,
+} from './tools/registry-tools.js'
 import { dispatchToolCall } from './tool-dispatch.js'
 import {
   isFirstRun,
@@ -104,6 +109,10 @@ const toolDefinitions = [
   teamUsageReportToolSchema,
   analyticsDashboardToolSchema,
   usageReportToolSchema,
+  configureSsoToolSchema,
+  ssoSettingsToolSchema,
+  privateRegistryPublishToolSchema,
+  privateRegistryManageToolSchema,
 ]
 
 // Create server

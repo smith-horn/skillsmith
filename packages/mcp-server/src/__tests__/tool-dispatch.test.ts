@@ -43,6 +43,10 @@ const HANDLED_TOOLS = new Set([
   'team_usage_report',
   'analytics_dashboard',
   'usage_report',
+  'configure_sso',
+  'sso_settings',
+  'private_registry_publish',
+  'private_registry_manage',
 ])
 
 function createMockLicenseMiddleware(): LicenseMiddleware {

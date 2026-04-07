@@ -53,6 +53,18 @@ import {
   executeUsageReport,
 } from './tools/analytics.js'
 import {
+  configureSsoInputSchema,
+  executeConfigureSso,
+  ssoSettingsInputSchema,
+  executeSsoSettings,
+} from './tools/sso-tools.js'
+import {
+  privateRegistryPublishInputSchema,
+  executePrivateRegistryPublish,
+  privateRegistryManageInputSchema,
+  executePrivateRegistryManage,
+} from './tools/registry-tools.js'
+import {
   ok,
   errResponse,
   withLicenseAndQuota,
@@ -281,6 +293,50 @@ export async function dispatchToolCall(
         args,
         usageReportInputSchema,
         executeUsageReport,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'configure_sso':
+      return withLicenseAndQuota(
+        'configure_sso',
+        args,
+        configureSsoInputSchema,
+        executeConfigureSso,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'sso_settings':
+      return withLicenseAndQuota(
+        'sso_settings',
+        args,
+        ssoSettingsInputSchema,
+        executeSsoSettings,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'private_registry_publish':
+      return withLicenseAndQuota(
+        'private_registry_publish',
+        args,
+        privateRegistryPublishInputSchema,
+        executePrivateRegistryPublish,
+        toolContext,
+        licenseMiddleware,
+        quotaMiddleware
+      )
+
+    case 'private_registry_manage':
+      return withLicenseAndQuota(
+        'private_registry_manage',
+        args,
+        privateRegistryManageInputSchema,
+        executePrivateRegistryManage,
         toolContext,
         licenseMiddleware,
         quotaMiddleware
