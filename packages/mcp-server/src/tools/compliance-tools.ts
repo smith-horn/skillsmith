@@ -14,6 +14,7 @@
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
 import { isSupabaseConfigured } from '../supabase-client.js'
+import { createRealComplianceService } from './compliance-tools.service.js'
 
 // ============================================================================
 // Input schemas
@@ -290,13 +291,25 @@ function formatJson(data: ComplianceData, period: string): Record<string, unknow
 
 export async function executeComplianceReport(
   input: ComplianceReportInput,
-  _context: ToolContext
+  context: ToolContext
 ): Promise<ComplianceReportResult> {
   const period = input.period ?? '90d'
   const days = periodToDays(period)
-  const data = await service.gatherData(days, input.includeUserActivity ?? true)
+
+  // Use real service when db is available, otherwise fall back to stub
+  let activeService: ComplianceService = service
+  let dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
+  try {
+    if (context.db && context.db.open) {
+      activeService = createRealComplianceService(context.db)
+      dataSource = 'live'
+    }
+  } catch {
+    // Fall through to stub service
+  }
+
+  const data = await activeService.gatherData(days, input.includeUserActivity ?? true)
   const generatedAt = new Date().toISOString()
-  const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
 
   switch (input.format) {
     case 'soc2':
