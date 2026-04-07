@@ -12,6 +12,25 @@ interface CacheEntry {
   expiresAt: number
 }
 
+/** Shape of the Supabase join result for license_keys -> subscriptions -> teams */
+interface TeamResolutionResult {
+  subscriptions: { teams: { id: string } } | null
+}
+
+/** Minimal Supabase client interface for team resolution */
+interface SupabaseQueryClient {
+  from(table: string): {
+    select(columns: string): {
+      eq(
+        column: string,
+        value: string
+      ): {
+        single(): Promise<{ data: TeamResolutionResult | null; error: { message: string } | null }>
+      }
+    }
+  }
+}
+
 const cache = new Map<string, CacheEntry>()
 const MAX_CACHE_SIZE = 100
 const CACHE_TTL_MS = 60_000
@@ -34,8 +53,8 @@ export async function resolveTeamId(licenseKey: string): Promise<string> {
   const supabase = await getSupabaseAdminClient()
 
   // Join chain: license_keys -> subscriptions -> teams
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (supabase as any)
+  const client = supabase as SupabaseQueryClient
+  const { data, error } = await client
     .from('license_keys')
     .select('subscriptions(teams(id))')
     .eq('key_hash', licenseKey)
