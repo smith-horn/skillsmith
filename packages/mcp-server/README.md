@@ -203,6 +203,10 @@ All tiers include:
 | `siem_export` | Export audit events for SIEM ingestion | Enterprise |
 | `analytics_dashboard` | Recommendation accuracy, adoption curves, team aggregation | Enterprise |
 | `usage_report` | Comprehensive usage report with all metrics | Enterprise |
+| `configure_sso` | Configure SSO/SAML integration (set, test, remove) | Enterprise |
+| `sso_settings` | View current SSO/SAML configuration | Enterprise |
+| `private_registry_publish` | Publish a skill to your private registry | Enterprise |
+| `private_registry_manage` | Manage private registry skills (list, get, deprecate) | Enterprise |
 
 ## Tool Parameters
 
