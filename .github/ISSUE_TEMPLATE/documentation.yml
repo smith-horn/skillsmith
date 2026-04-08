@@ -1,0 +1,56 @@
+name: Documentation Issue
+description: Report a problem in the Skillsmith docs, guides, or README.
+title: '[Docs]: '
+labels: ['documentation', 'needs-triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping us improve the documentation. Please fill in the fields below.
+
+        For general questions or discussion, use
+        [GitHub Discussions](https://github.com/smith-horn/skillsmith/discussions) instead.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences describing the documentation problem.
+      placeholder: The install guide references `skillsmith init` but the CLI command is `sklx init`.
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Page, file, or URL
+      description: Where is the problem? Provide a URL (skillsmith.app/docs/...) or a repo path (README.md, docs/...).
+      placeholder: https://skillsmith.app/docs/install or README.md
+    validations:
+      required: true
+
+  - type: textarea
+    id: whats-wrong
+    attributes:
+      label: What's wrong
+      description: Describe what is inaccurate, missing, confusing, or outdated.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggested-fix
+    attributes:
+      label: Suggested fix
+      description: If you have a suggestion for how to fix it, share it here. Optional.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: pre-submission
+    attributes:
+      label: Pre-submission checklist
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I have read [SECURITY.md](../../blob/main/SECURITY.md) and understand that security vulnerabilities must be reported privately to security@skillsmith.app, not in a public issue.
+          required: true

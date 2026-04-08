@@ -1,0 +1,125 @@
+name: Bug Report
+description: Report broken or incorrect behavior in Skillsmith.
+title: '[Bug]: '
+labels: ['bug', 'needs-triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill out every required field
+        so maintainers can reproduce and triage the issue quickly.
+
+        **Do not use this form to report security vulnerabilities.** See
+        [SECURITY.md](../../blob/main/SECURITY.md) for private disclosure instructions.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences describing what is broken.
+      placeholder: '`sklx install foo/bar` exits with code 1 and leaves a partial install on disk.'
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps someone else can follow to see the bug.
+      placeholder: |
+        1. Run `sklx install foo/bar`
+        2. Interrupt with Ctrl+C during the download phase
+        3. Re-run `sklx install foo/bar`
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened? Include error messages if any.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Skillsmith version
+      description: Run `sklx --version` or `npx @skillsmith/cli --version`.
+      placeholder: '0.4.15'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      description: Which runtime are you using?
+      options:
+        - Claude Code (MCP server via npx)
+        - CLI (@skillsmith/cli)
+        - VS Code extension
+        - Website (skillsmith.app)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: |
+        Which parts of Skillsmith does this touch? Informational only — maintainers will
+        apply domain labels during triage into Linear.
+      multiple: true
+      options:
+        - core
+        - mcp-server
+        - cli
+        - website
+        - docs
+        - vscode-extension
+        - enterprise
+        - infrastructure
+        - other
+    validations:
+      required: false
+
+  - type: textarea
+    id: suspected-files
+    attributes:
+      label: Suspected files
+      description: |
+        Optional. If you know which files cause the problem, list them.
+        Example: `packages/core/src/foo.ts line 42`
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste any error output or logs here. Redact any secrets before submitting.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: pre-submission
+    attributes:
+      label: Pre-submission checklist
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I am running a supported version of Skillsmith (latest minor release or newer).
+          required: true
+        - label: I have read [SECURITY.md](../../blob/main/SECURITY.md) and understand that security vulnerabilities must be reported privately to security@skillsmith.app, not in a public issue.
+          required: true
