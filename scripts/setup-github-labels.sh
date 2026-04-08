@@ -84,11 +84,23 @@ if ! gh auth status >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "ERROR: jq not found. Install via 'brew install jq' (macOS) or 'apt-get install jq' (Debian/Ubuntu)." >&2
+  echo "       jq is required for the color-drift verification pass." >&2
+  exit 1
+fi
+
 echo "==> Provisioning ${#TAXONOMY[@]} labels on ${REPO}"
 echo
 
 # ---------------------------------------------------------------------------
 # Provision labels (idempotent)
+#
+# `gh label create` exits non-zero for both "already exists" AND real failures
+# (auth, rate limit, repo not found). We distinguish these by capturing stderr
+# and matching on the "already exists" substring — any other error aborts
+# the script so operators see the real problem instead of a misleading
+# "= exists" line.
 # ---------------------------------------------------------------------------
 created=0
 skipped=0
@@ -98,12 +110,18 @@ for entry in "${TAXONOMY[@]}"; do
   color="${rest%%|*}"
   description="${rest#*|}"
 
-  if gh label create "$name" --repo "$REPO" --color "$color" --description "$description" 2>/dev/null; then
+  if create_err=$(gh label create "$name" --repo "$REPO" --color "$color" --description "$description" 2>&1 >/dev/null); then
     echo "  + created: $name (#$color)"
     created=$((created + 1))
   else
-    echo "  = exists:  $name"
-    skipped=$((skipped + 1))
+    if printf '%s' "$create_err" | grep -qi "already exists"; then
+      echo "  = exists:  $name"
+      skipped=$((skipped + 1))
+    else
+      echo "  ! FAILED:  $name — $create_err" >&2
+      echo "ERROR: gh label create failed with a non-'already exists' error. Aborting." >&2
+      exit 1
+    fi
   fi
 done
 

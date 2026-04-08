@@ -10,5 +10,5 @@ contact_links:
     url: https://github.com/smith-horn/skillsmith/discussions
     about: Ask questions, share ideas, or discuss usage with the community in GitHub Discussions.
   - name: Linear (Maintainers Only)
-    url: https://linear.app/smith-horn-group/team/SMI
+    url: https://linear.app/smith-horn-group
     about: Maintainers track work in Linear. External contributors — please use the issue forms above; maintainers will copy triaged issues into Linear.
