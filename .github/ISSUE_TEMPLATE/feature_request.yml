@@ -1,0 +1,92 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for Skillsmith.
+title: '[Feature]: '
+labels: ['feature', 'needs-triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature. Please fill out the fields below so maintainers can
+        evaluate and triage your proposal.
+
+        If you just want to discuss an idea before committing to a formal request, consider
+        starting a thread in [GitHub Discussions](https://github.com/smith-horn/skillsmith/discussions).
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences describing the feature.
+      placeholder: Add a `--dry-run` flag to `sklx install` that previews what would be installed without writing to disk.
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem does this feature solve? Who is affected and how?
+      placeholder: When testing new skills, I want to see what files would change before actually modifying ~/.claude/skills.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: Describe how you think this should work. Include interfaces, commands, or API shapes if applicable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: |
+        Optional — a bulleted checklist of what "done" looks like. Maintainers will add this
+        during triage if you leave it blank.
+      placeholder: |
+        - [ ] `sklx install --dry-run <skill>` prints planned file operations
+        - [ ] Exit code is 0 on success even when no files are written
+        - [ ] Documented in CLI README
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other approaches did you consider, and why did you rule them out? Optional.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: |
+        Which parts of Skillsmith does this touch? Informational only — maintainers will
+        apply domain labels during triage into Linear.
+      multiple: true
+      options:
+        - core
+        - mcp-server
+        - cli
+        - website
+        - docs
+        - vscode-extension
+        - enterprise
+        - infrastructure
+        - other
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: pre-submission
+    attributes:
+      label: Pre-submission checklist
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I have read [SECURITY.md](../../blob/main/SECURITY.md) and understand that security vulnerabilities must be reported privately to security@skillsmith.app, not in a public issue.
+          required: true

@@ -105,12 +105,17 @@ Use this template when creating Linear issues for Skillsmith. Copy the template 
 
 ## Labels
 
-<!-- Suggested labels for this issue -->
+<!--
+  Skillsmith uses the flat canonical label taxonomy defined in
+  `~/.claude/skills/linear/docs/labels.md`. Every issue needs exactly one
+  Type label and 1-2 Domain labels. Scope labels (0-2) are optional.
+  Do NOT use prefixed labels like `type:bug` or `component:core` — they do
+  not exist in the taxonomy.
+-->
 
-- `component:core` | `component:mcp-server` | `component:cli`
-- `type:feature` | `type:bug` | `type:refactor` | `type:docs`
-- `complexity:simple` | `complexity:medium` | `complexity:complex`
-- `wave:X` - Assigned wave number
+- **Type (exactly one required):** `feature` | `bug` | `refactor` | `chore` | `spike`
+- **Domain (1-2 recommended):** `security` | `performance` | `infrastructure` | `testing` | `reliability` | `core` | `frontend` | `backend` | `integration` | `documentation` | `mcp` | `cli` | `neural`
+- **Scope (0-2 optional):** `breaking-change` | `tech-debt` | `blocked` | `needs-split` | `good-first-issue` | `enterprise` | `soc2`
 
 ## Wave Assignment
 
@@ -213,10 +218,8 @@ Medium complexity: follows established TypeScript adapter pattern but requires P
 
 ## Labels
 
-- `component:core`
-- `type:feature`
-- `complexity:medium`
-- `wave:A`
+- `feature`
+- `core`
 
 ## Wave Assignment
 

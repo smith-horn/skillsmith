@@ -85,6 +85,31 @@ Backlog → Todo → In Progress → Done
 | Complete work | `npm run linear:done SMI-XXX` |
 | After merge | (auto via `linear:sync`) |
 
+## Filing Issues
+
+External contributors file issues via GitHub — **you do not need a Linear account**.
+When you click "New Issue" you will see three structured forms:
+
+| Form | Use For |
+|------|---------|
+| **Bug Report** | Broken or incorrect behavior. Includes reproduction steps, version, environment, logs. |
+| **Feature Request** | New functionality or enhancements. Acceptance criteria optional — maintainers add during triage. |
+| **Documentation Issue** | Problems in the docs, guides, or README. |
+
+**Security vulnerabilities** must NOT be filed as public issues. Follow
+[SECURITY.md](SECURITY.md) and email `security@skillsmith.app` instead. The "New Issue"
+page has a contact link that routes you there directly.
+
+**Questions and discussion** should go to
+[GitHub Discussions](https://github.com/smith-horn/skillsmith/discussions), not the
+issue tracker.
+
+**What happens after you file:** Every form applies a `needs-triage` label automatically.
+Maintainers triage new issues into Linear (`SMI-XXX`), add domain labels (`core`, `mcp`,
+`cli`, etc.), remove `needs-triage`, and comment the SMI link back on your GitHub issue
+so you can track progress. External contributors do not need Linear access — the SMI
+link is read-only reference.
+
 ## Pull Request Process
 
 1. **Create feature branch**

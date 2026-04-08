@@ -63,14 +63,21 @@ export function createRealAnalyticsService(db: Database): AnalyticsService {
         .prepare<{
           tool: string
           count: number
-        }>('SELECT resource as tool, COUNT(*) as count FROM audit_logs ' + 'WHERE timestamp >= ? AND resource IS NOT NULL ' + 'GROUP BY resource ORDER BY count DESC LIMIT 10')
+        }>(
+          'SELECT resource as tool, COUNT(*) as count FROM audit_logs ' +
+            'WHERE timestamp >= ? AND resource IS NOT NULL ' +
+            'GROUP BY resource ORDER BY count DESC LIMIT 10'
+        )
         .all(since)
 
       const dailyTrend = db
         .prepare<{
           date: string
           count: number
-        }>('SELECT DATE(timestamp) as date, COUNT(*) as count FROM audit_logs ' + 'WHERE timestamp >= ? GROUP BY DATE(timestamp) ORDER BY date')
+        }>(
+          'SELECT DATE(timestamp) as date, COUNT(*) as count FROM audit_logs ' +
+            'WHERE timestamp >= ? GROUP BY DATE(timestamp) ORDER BY date'
+        )
         .all(since)
 
       // Period comparison: current vs previous period of same length
@@ -106,7 +113,11 @@ export function createRealAnalyticsService(db: Database): AnalyticsService {
         .prepare<{
           actor: string
           count: number
-        }>('SELECT actor, COUNT(*) as count FROM audit_logs ' + 'WHERE timestamp >= ? AND actor IS NOT NULL ' + 'GROUP BY actor ORDER BY count DESC LIMIT 20')
+        }>(
+          'SELECT actor, COUNT(*) as count FROM audit_logs ' +
+            'WHERE timestamp >= ? AND actor IS NOT NULL ' +
+            'GROUP BY actor ORDER BY count DESC LIMIT 20'
+        )
         .all(since)
 
       return { ...data, byActor }

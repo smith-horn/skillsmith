@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability
+    url: https://github.com/smith-horn/skillsmith/blob/main/SECURITY.md
+    about: Report security vulnerabilities privately per SECURITY.md. Do NOT open a public issue.
+  - name: Documentation
+    url: https://skillsmith.app/docs
+    about: Read the Skillsmith user and developer documentation.
+  - name: Questions & Discussion
+    url: https://github.com/smith-horn/skillsmith/discussions
+    about: Ask questions, share ideas, or discuss usage with the community in GitHub Discussions.
+  - name: Linear (Maintainers Only)
+    url: https://linear.app/smith-horn-group
+    about: Maintainers track work in Linear. External contributors — please use the issue forms above; maintainers will copy triaged issues into Linear.
