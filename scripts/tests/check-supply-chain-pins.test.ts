@@ -398,5 +398,26 @@ describe('SMI-3985: check-supply-chain-pins', () => {
       expect(md).toContain('esm.sh drift coverage skipped for 3 encrypted file')
       expect(md).toContain('GIT_CRYPT_KEY')
     })
+
+    it('escapes backslashes before pipes to avoid ambiguous markdown (CodeQL js/incomplete-sanitization)', () => {
+      // If input already contains a literal `\|`, a naive escape of only `|`
+      // would produce `\\|` which is ambiguous. Escaping `\` first yields
+      // `\\\|` (backslash-backslash then escaped-pipe) — unambiguous.
+      const md = formatFindingsMarkdown(
+        [
+          {
+            file: 'path\\with\\backslash.ts',
+            rule: 'esm-sh-pin',
+            message: 'bad\\|input',
+            remediation: 'fix|it',
+          },
+        ],
+        { encryptedCount: 0, scannedCount: 0 }
+      )
+      // Backslash doubled, then pipe escaped
+      expect(md).toContain('path\\\\with\\\\backslash.ts')
+      expect(md).toContain('bad\\\\\\|input')
+      expect(md).toContain('fix\\|it')
+    })
   })
 })

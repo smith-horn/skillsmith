@@ -307,7 +307,11 @@ export function formatFindingsMarkdown(all, esmStats) {
     lines.push('| File | Rule | Issue | Fix |')
     lines.push('|---|---|---|---|')
     for (const f of all) {
-      const esc = (s) => String(s).replace(/\|/g, '\\|').replace(/\n/g, ' ')
+      // Escape backslashes first, then pipes, then newlines. Order matters:
+      // if we escape `|` before `\`, a literal `\` in input would be re-escaped
+      // into `\\` which could then be interpreted as an escape for the pipe we
+      // just added. CodeQL js/incomplete-sanitization enforces this ordering.
+      const esc = (s) => String(s).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, ' ')
       lines.push(
         `| \`${esc(f.file)}\` | ${esc(f.rule)} | ${esc(f.message)} | ${esc(f.remediation)} |`
       )
