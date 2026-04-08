@@ -126,7 +126,10 @@ export function createRealComplianceService(db: Database): ComplianceService {
         const activeDaysRow = db
           .prepare<{
             days: number
-          }>('SELECT COUNT(DISTINCT DATE(timestamp)) as days FROM audit_logs ' + 'WHERE timestamp >= ?')
+          }>(
+            'SELECT COUNT(DISTINCT DATE(timestamp)) as days FROM audit_logs ' +
+              'WHERE timestamp >= ?'
+          )
           .get(since)
 
         userActivity = {
