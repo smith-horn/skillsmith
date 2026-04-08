@@ -127,7 +127,8 @@
       "ajv": "^8.18.0"
     },
     "yaml-language-server": {
-      "ajv": "^8.18.0"
+      "ajv": "^8.18.0",
+      "yaml": "^2.8.3"
     },
     "@vercel/routing-utils": {
       "ajv": "^8.18.0"
