@@ -132,6 +132,16 @@
     "@vercel/routing-utils": {
       "ajv": "^8.18.0"
     },
+    "@vercel/python-analysis": {
+      "minimatch": "^10.2.3",
+      "smol-toml": "^1.6.1"
+    },
+    "@vercel/backends": {
+      "srvx": "^0.11.13"
+    },
+    "@vercel/rust": {
+      "smol-toml": "^1.6.1"
+    },
     "@tootallnate/once": "^3.0.1",
     "picomatch": "^4.0.4",
     "anymatch": {
