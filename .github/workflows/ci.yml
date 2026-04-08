@@ -246,6 +246,71 @@ jobs:
       - name: Audit workspace dependency versions
         run: node scripts/verify-publish-deps.mjs --ci
 
+  # SMI-3985: Supply-chain pin drift guard for the three Wave 1 hardening
+  # surfaces that are NOT covered by `Standards Compliance` (audit-standards
+  # Check 12, packages/*/package.json only) or `Security Audit` (npm audit):
+  #   A. GitHub-native license + OpenSSF scorecard review (pull_request only)
+  #   B. Deterministic drift guard: .mcp.json @latest, esm.sh semver pins,
+  #      third-party GH Actions SHA pins
+  # Lands as non-required; promote to required after calibration (see
+  # docs/internal/implementation/supply-chain-hardening.md §Wave 1.5).
+  dependency-guard:
+    name: Dependency Guard
+    needs: [classify]
+    if: |
+      needs.classify.outputs.tier == 'deps' ||
+      needs.classify.outputs.tier == 'code' ||
+      needs.classify.outputs.tier == 'config'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    permissions:
+      pull-requests: read
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # SMI-2159: supabase/functions/** is git-crypt encrypted. Fork PRs do
+      # not receive secrets.GIT_CRYPT_KEY; the drift script below detects the
+      # GITCRYPT magic header and emits a coverage-skipped warning (not a
+      # failure) when unlock did not run. Pattern copied from ci.yml:662-672.
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+
+      # A. GitHub-native dependency review — license + OpenSSF scorecard.
+      #    Complements (does NOT duplicate) the existing `Security Audit` job
+      #    which already runs `npm audit --audit-level=high --omit=dev`.
+      #    The action only runs on pull_request events; the drift guard below
+      #    still runs on push-to-main.
+      - name: Dependency Review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+      # B. Drift guard for the three Wave 1 hardened surfaces NOT covered by
+      #    `Standards Compliance` / `Security Audit`: esm.sh CDN imports,
+      #    .mcp.json @latest tags, third-party GH Actions SHA pins.
+      #    audit-standards.mjs Check 12 already runs in the `Standards
+      #    Compliance` job (ci.yml:1276) — do NOT call it again here.
+      - name: Supply-chain drift guard
+        run: node scripts/ci/check-supply-chain-pins.mjs
+
   # SMI-1903: Validate Edge Function structure and configuration
   # Ensures all functions have proper structure and are categorized
   edge-function-validation:
