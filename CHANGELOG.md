@@ -61,6 +61,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AIDefence threat re-assessment: hardened CLI commands (`audit`, `author/init`,
   `author/mcp-init`, `info`) and MCP tools (`analyze`, `index-local`, `suggest`,
   `skill-audit`, `skill-rescan`) against identified attack vectors (#449).
+- **npm vulnerability remediation** (2026-04-08, SMI-3984): Cleared 33 `npm audit`
+  findings (1 high + 7 moderate in production deps; 10 high + 23 moderate total
+  including dev deps). Pre-push hook now passes without `--no-verify`. Changes
+  applied via 4 waves: (W1) direct bumps of `vite ^7.3.2`, `hono ^4.12.12`,
+  `@hono/node-server ^1.19.13`; (W2) scoped `srvx ^0.11.13` override for
+  `@vercel/backends`; (W3) scoped `yaml ^2.8.3` override for
+  `yaml-language-server`; (W4) scoped `ajv ^8.18.0` overrides for
+  `@modelcontextprotocol/sdk`, `agentdb`, `yaml-language-server`,
+  `@vercel/routing-utils`, and `@vercel/static-config`. See PR #490.
 
 ### Dependencies
 
