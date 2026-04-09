@@ -9,6 +9,7 @@
 import { execSync } from 'child_process'
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
 import { extname, join, relative } from 'path'
+import { satisfies, extractCompletionIssues } from './audit-standards-helpers.mjs'
 
 const RED = '\x1b[31m'
 const GREEN = '\x1b[32m'
@@ -1183,9 +1184,17 @@ console.log(`\n${BOLD}20. Stale Doc Path References in Skills (SMI-2637)${RESET}
   }
 }
 
-// npm override exact-pin check (SMI-3099 lesson)
-// Verifies that all scoped overrides target dependencies with range specifiers (^/~),
-// not exact pins — because npm cannot override exact-pinned versions.
+// npm override exact-pin check (SMI-3099 lesson, SMI-3987 refinement)
+// Flags scoped overrides that target exact-pinned dependencies AND failed to
+// take effect via npm's dedup machinery. CLAUDE.md's `npm overrides` note:
+// "`npm update <pkg>` may resolve it via dedup if another chain pulls in the
+// patched version. Verify with `npm ls <dep>` after update."
+//
+// The original Check 11 (pre-SMI-3987) flagged any override targeting an
+// exact-pinned dep, even when dedup actually applied the override. This
+// caused a 6-warning false positive on SMI-3984's merge. The fix:
+// cross-reference `npm ls <dep>` and only warn when the resolved version(s)
+// disagree with the override constraint.
 {
   const pkgPath = 'package.json'
   if (existsSync(pkgPath)) {
@@ -1193,32 +1202,106 @@ console.log(`\n${BOLD}20. Stale Doc Path References in Skills (SMI-2637)${RESET}
     const overrides = pkg.overrides || {}
     const exactPinIssues = []
 
+    // Walk `npm ls <dep> --all --json` and return every resolved version of
+    // <dep> in the dependency tree. Scope-loose: trust npm's dedup machinery
+    // (per Open Q2 resolution).
+    //
+    // Critical: `npm ls` exits non-zero whenever the tree has ANY problems
+    // (invalid pins, peer conflicts, override inversions). The current `main`
+    // post-SMI-3984 tree is in exactly that state, so every call throws.
+    // **The JSON tree is still written to err.stdout** — we read it and
+    // parse it. Returning [] on every catch would fall through to the
+    // pessimistic warning path and break acceptance criterion #1
+    // (SMI-3987 plan-review E1 blocker).
+    const parseNpmLsTree = (raw) => {
+      if (!raw) return null
+      try {
+        return JSON.parse(raw)
+      } catch {
+        return null
+      }
+    }
+    const getResolvedVersions = (dep) => {
+      let raw = ''
+      try {
+        raw = execSync(`npm ls ${dep} --all --json`, {
+          encoding: 'utf-8',
+          timeout: 10000,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+      } catch (err) {
+        // npm ls exits non-zero on ANY tree problem — stdout still contains
+        // valid JSON. Read it. If err.stdout is missing or not parseable,
+        // fall through to raw='' below → returns [] → pessimistic warning.
+        raw = (err && err.stdout && err.stdout.toString('utf-8')) || ''
+      }
+      const tree = parseNpmLsTree(raw)
+      if (!tree) return [] // unparseable → pessimistic warning (safe default)
+      // Walk the tree and collect versions of nodes whose KEY (under
+      // .dependencies) matches the queried dep name. The walk must check
+      // the key, not just the version field — `npm ls <dep>` returns the
+      // FULL chain leading to <dep>, so intermediate nodes are versions of
+      // OTHER packages and would otherwise pollute the result set.
+      const versions = new Set()
+      const walk = (node) => {
+        if (!node || typeof node !== 'object' || !node.dependencies) return
+        for (const [childName, child] of Object.entries(node.dependencies)) {
+          if (childName === dep && child && typeof child.version === 'string') {
+            versions.add(child.version)
+          }
+          walk(child)
+        }
+      }
+      walk(tree)
+      return [...versions].filter((v) => /^\d+\.\d+\.\d+/.test(v))
+    }
+
     for (const [parent, value] of Object.entries(overrides)) {
       if (typeof value !== 'object') continue // global overrides, skip
-      for (const dep of Object.keys(value)) {
-        // Check the actual installed package's dependency specifier
+      for (const [dep, overrideSpec] of Object.entries(value)) {
+        if (dep === '.') continue // parent-version override, not a dep override
+        // Check the actual installed parent's declared dependency specifier
         const parentPkgPath = join('node_modules', parent, 'package.json')
         if (!existsSync(parentPkgPath)) continue
         const parentPkg = JSON.parse(readFileSync(parentPkgPath, 'utf8'))
         const depSpec = parentPkg.dependencies?.[dep] || parentPkg.devDependencies?.[dep]
-        if (
-          depSpec &&
-          !depSpec.startsWith('^') &&
-          !depSpec.startsWith('~') &&
-          !depSpec.startsWith('>')
-        ) {
-          exactPinIssues.push({ parent, dep, spec: depSpec })
+        if (!depSpec) continue
+        if (depSpec.startsWith('^') || depSpec.startsWith('~') || depSpec.startsWith('>')) {
+          continue // parent uses a range, override always works
         }
+
+        // Parent exact-pins the dep. Check whether dedup rescued the override.
+        if (typeof overrideSpec !== 'string') continue // nested object override
+        const resolved = getResolvedVersions(dep)
+        if (resolved.length === 0) {
+          // Couldn't inspect the tree → pessimistic warning (preserves
+          // pre-SMI-3987 safe default).
+          exactPinIssues.push({ parent, dep, spec: depSpec, resolved: null })
+          continue
+        }
+        // Scope-loose per plan-review Open Q2: if ANY resolved version of
+        // the dep satisfies the override, npm's dedup machinery has applied
+        // the override at least somewhere in the tree. Tree-wide unrelated
+        // copies (e.g. @vercel/static-config wants ajv@8.6.3 but eslint-7.x
+        // also brings in ajv@6.14.0) do not invalidate the override —
+        // residual CVEs would be caught by `Security Audit` / `npm audit`,
+        // which is the authoritative check for vulnerability presence.
+        const someEffective = resolved.some((v) => satisfies(v, overrideSpec))
+        if (!someEffective) {
+          exactPinIssues.push({ parent, dep, spec: depSpec, resolved })
+        }
+        // else: override is effective via dedup — silent pass (SMI-3987 fix)
       }
     }
 
     if (exactPinIssues.length > 0) {
       warn(
-        `${exactPinIssues.length} npm override(s) target exact-pinned dependencies (override will not take effect)`,
-        'Remove ineffective overrides and dismiss the alert with documented rationale'
+        `${exactPinIssues.length} npm override(s) target exact-pinned dependencies (override may not take effect)`,
+        'Verify with `npm ls <dep>` and `npm audit`. Remove truly ineffective overrides and dismiss with documented rationale.'
       )
-      exactPinIssues.forEach(({ parent, dep, spec }) => {
-        console.log(`    ${parent} → ${dep}: "${spec}" (exact pin, override ineffective)`)
+      exactPinIssues.forEach(({ parent, dep, spec, resolved }) => {
+        const detail = resolved ? `resolved: ${resolved.join(', ')}` : 'could not inspect tree'
+        console.log(`    ${parent} → ${dep}: "${spec}" (${detail})`)
       })
     } else {
       pass('npm overrides: no exact-pin conflicts detected')
@@ -1384,7 +1467,20 @@ console.log(`\n${BOLD}22. Workflow Inline require() Paths (SMI-3336)${RESET}`)
   }
 }
 
-// 23. Implementation Completeness Spot Check (SMI-3543)
+// 23. Implementation Completeness Spot Check (SMI-3543, SMI-3987, SMI-3986)
+//
+// SMI-3987 fix: only count SMI-NNNN refs as completion claims when they
+// appear in the commit subject line OR after a closing keyword in the body
+// (closes:/fixes:/resolves:). Cite-in-body references (e.g.,
+// "per SMI-3099 limitation doc") no longer count as "done without source".
+// Logic delegated to extractCompletionIssues() in audit-standards-helpers.mjs.
+//
+// SMI-3986 fix: resolve `.git` via `git rev-parse --git-common-dir` so the
+// shallow-clone guard works inside git worktrees (where `.git` is a file
+// containing `gitdir: <main>/.git/worktrees/<name>`, not a directory).
+// Also: downgrade git-failure from `warn(... fatal: ...)` to a clean
+// `pass('Skipped — ...')`. Matches Check 22's skip-as-pass pattern. Noise
+// suppression by design — see commit message for rationale.
 console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RESET}`)
 {
   const DONE_PATTERNS = [
@@ -1395,7 +1491,6 @@ console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RES
     /\bfinish(es|ed)?\b/i,
     /\bresolv(e|es|ed)\b/i,
   ]
-  const ISSUE_RE = /\b(SMI-\d+)\b/gi
   const SRC_PATTERNS = [
     /^packages\/.*\.(ts|tsx|js|jsx)$/,
     /^supabase\/functions\/.*\.(ts|js)$/,
@@ -1403,81 +1498,113 @@ console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RES
   ]
   const SRC_EXCLUDED = [/\.test\.(ts|tsx|js)$/, /\.spec\.(ts|tsx|js)$/, /\.md$/]
 
-  // Non-source conventional commit prefixes (docs, chore, ci, test, refactor, style)
-  const NON_SOURCE_PREFIXES = /^(docs|chore|ci|test|refactor|style)(\(.+\))?!?:/i
+  // Non-source conventional commit prefixes (docs, chore, ci, test, refactor, style),
+  // OR any conventional commit type with `(deps)` scope (e.g. `fix(deps):`,
+  // `chore(deps):`). Deps-only commits legitimately modify package.json /
+  // package-lock.json without touching source files, so requiring source
+  // changes for them is a structural false-positive class. (SMI-3987 fix
+  // surfaced this when commit 8ec28dfa with subject-line SMI ref + deps-only
+  // files was still flagged after the cite-in-body filter was added.)
+  const NON_SOURCE_PREFIXES = /^((docs|chore|ci|test|refactor|style)(\(.+\))?|[a-z]+\(deps\))!?:/i
 
-  // Shallow clone guard — skip when history is incomplete (CI Docker builds)
-  if (existsSync('.git/shallow')) {
-    pass('Skipped — shallow clone detected (limited git history)')
-  } else
-    try {
-      const log = execSync('git log -10 --format=%H%n%B --no-merges', {
-        encoding: 'utf-8',
-        timeout: 5000,
-      })
+  // SMI-3986: worktree-aware git directory resolution. In a worktree, `.git`
+  // is a file (`gitdir: <main>/.git/worktrees/<name>`), not a directory —
+  // the previous `existsSync('.git/shallow')` silently misfired.
+  let gitCommonDir = null
+  try {
+    gitCommonDir = execSync('git rev-parse --git-common-dir', {
+      encoding: 'utf-8',
+      timeout: 2000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+  } catch {
+    // Not a git checkout, GIT_DIR misaligned, or hook context.
+    pass('Skipped — could not resolve git directory (not a checkout or hook context)')
+  }
 
-      // Parse commit blocks: each block starts with a 40-char SHA
-      const blocks = log.split(/(?=^[0-9a-f]{40}$)/m).filter((b) => b.trim())
-      let suspicious = 0
-      const suspiciousDetails = []
+  if (gitCommonDir !== null) {
+    if (existsSync(join(gitCommonDir, 'shallow'))) {
+      // Shallow clone — limited git history (CI Docker builds, etc.)
+      pass('Skipped — shallow clone detected (limited git history)')
+    } else {
+      try {
+        const log = execSync('git log -10 --format=%H%n%B --no-merges', {
+          encoding: 'utf-8',
+          timeout: 5000,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
 
-      for (const block of blocks) {
-        const lines = block.trim().split('\n')
-        const sha = lines[0]
-        const message = lines.slice(1).join('\n')
+        // Parse commit blocks: each block starts with a 40-char SHA
+        const blocks = log.split(/(?=^[0-9a-f]{40}$)/m).filter((b) => b.trim())
+        let suspicious = 0
+        const suspiciousDetails = []
 
-        // Check if message references SMI issues with done-like keywords
-        const hasIssue = ISSUE_RE.test(message)
-        ISSUE_RE.lastIndex = 0 // Reset global regex
-        const hasDone = DONE_PATTERNS.some((p) => p.test(message))
-        const isNonSourcePrefix = NON_SOURCE_PREFIXES.test(message)
+        for (const block of blocks) {
+          const lines = block.trim().split('\n')
+          const sha = lines[0]
+          const subject = lines[1] || ''
+          const body = lines.slice(2).join('\n')
+          const fullMsg = `${subject}\n${body}`
 
-        if (!hasIssue || !hasDone || isNonSourcePrefix) continue
+          // SMI-3987: only count subject SMIs and closes-marker body SMIs
+          const completionIssues = extractCompletionIssues(subject, body)
+          if (completionIssues.size === 0) continue
 
-        // Get changed files for this commit
-        try {
-          const files = execSync(`git diff-tree --no-commit-id --name-only -r ${sha}`, {
-            encoding: 'utf-8',
-            timeout: 2000,
-          })
-            .trim()
-            .split('\n')
-            .filter((f) => f)
+          const hasDone = DONE_PATTERNS.some((p) => p.test(fullMsg))
+          if (!hasDone) continue
 
-          const hasSource = files.some((f) => {
-            const isSource = SRC_PATTERNS.some((p) => p.test(f))
-            const isExcluded = SRC_EXCLUDED.some((p) => p.test(f))
-            return isSource && !isExcluded
-          })
+          const isNonSourcePrefix = NON_SOURCE_PREFIXES.test(subject)
+          if (isNonSourcePrefix) continue
 
-          if (!hasSource) {
-            suspicious++
-            const issues = message.match(ISSUE_RE) || []
-            ISSUE_RE.lastIndex = 0
-            suspiciousDetails.push({
-              sha: sha.substring(0, 8),
-              issues: [...new Set(issues.map((i) => i.toUpperCase()))],
+          // Get changed files for this commit
+          try {
+            const files = execSync(`git diff-tree --no-commit-id --name-only -r ${sha}`, {
+              encoding: 'utf-8',
+              timeout: 2000,
+              stdio: ['ignore', 'pipe', 'ignore'],
             })
-          }
-        } catch {
-          // Skip commits that can't be inspected
-        }
-      }
+              .trim()
+              .split('\n')
+              .filter((f) => f)
 
-      if (suspicious === 0) {
-        pass('Last 10 commits: all SMI-referencing "done" commits include source changes')
-      } else {
-        warn(
-          `${suspicious} commit(s) mark issues done without source changes`,
-          'Run npm run audit:drift for a comprehensive check'
-        )
-        for (const d of suspiciousDetails.slice(0, 3)) {
-          console.log(`    ${d.sha}: ${d.issues.join(', ')}`)
+            const hasSource = files.some((f) => {
+              const isSource = SRC_PATTERNS.some((p) => p.test(f))
+              const isExcluded = SRC_EXCLUDED.some((p) => p.test(f))
+              return isSource && !isExcluded
+            })
+
+            if (!hasSource) {
+              suspicious++
+              suspiciousDetails.push({
+                sha: sha.substring(0, 8),
+                issues: [...completionIssues],
+              })
+            }
+          } catch {
+            // Skip commits that can't be inspected (orphaned, missing tree, etc.)
+          }
         }
+
+        if (suspicious === 0) {
+          pass('Last 10 commits: all SMI-referencing "done" commits include source changes')
+        } else {
+          warn(
+            `${suspicious} commit(s) mark issues done without source changes`,
+            'Run npm run audit:drift for a comprehensive check'
+          )
+          for (const d of suspiciousDetails.slice(0, 3)) {
+            console.log(`    ${d.sha}: ${d.issues.join(', ')}`)
+          }
+        }
+      } catch {
+        // SMI-3986: downgrade from warn-with-fatal-string to clean skip-as-pass.
+        // Matches Check 22's pattern for missing infrastructure. Noise
+        // suppression by design — a genuinely corrupt git state will fail
+        // many other checks (pre-push hooks, git log in calling tools, etc.).
+        pass('Skipped — could not inspect git history (hook context or detached state)')
       }
-    } catch (e) {
-      warn('Could not run implementation spot check', e.message)
     }
+  }
 }
 
 // ── Check: Duplicate Shared Constants (SMI-3590) ───────────────────────

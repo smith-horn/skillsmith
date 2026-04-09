@@ -36,6 +36,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   threats) and SecurityScanner (SSRF, jailbreak, structural) now both run on every
   skill assessment (#451).
 
+### Fixed
+
+- **audit-standards Check 11 false positives** (2026-04-08, SMI-3987): npm overrides
+  targeting exact-pinned transitive deps are no longer flagged as "ineffective" when
+  npm's dedup machinery actually applied the override. Cross-references `npm ls <dep>`
+  to verify. Eliminated 6 false-positive warnings on current `main`. See PR #492.
+- **audit-standards Check 23 cite-in-body false positives** (2026-04-08, SMI-3987):
+  contextual `SMI-NNNN` citations in commit bodies (e.g., "per SMI-3099 doc") are no
+  longer counted as completion claims. Only subject-line refs and body refs after
+  `closes:`/`fixes:`/`resolves:` markers count. Also extended `NON_SOURCE_PREFIXES`
+  to recognize `fix(deps):`/`chore(deps):` commits as legitimately deps-only (no
+  source-file requirement). See PR #492.
+- **audit-standards Check 23 worktree bug** (2026-04-08, SMI-3986): Check 23 no longer
+  emits `fatal: not a git repository` inside git worktrees. Resolved via
+  `git rev-parse --git-common-dir` for worktree-aware `.git` resolution. See PR #492.
+
 ### Changed
 
 - Rate limits now apply based on your authenticated session tier, not just API key.
