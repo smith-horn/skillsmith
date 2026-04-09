@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@astrojs/check": "0.9.8",
-    "@astrojs/rss": "4.0.17",
+    "@astrojs/rss": "4.0.18",
     "@astrojs/sitemap": "3.7.0",
     "@astrojs/vercel": "10.0.4",
     "@supabase/supabase-js": "2.101.1",
