@@ -1,42 +1,81 @@
 # SMI-2189: Lightweight CI for documentation-only changes
-# Runs secret scanning and markdown linting without the full build pipeline
-# This workflow triggers for paths that ci.yml ignores via paths-ignore
+# SMI-3997: Conditional-required pattern — workflow always triggers; jobs are
+#           skipped with success when no doc paths changed, so the Markdown Lint
+#           required status check is always reported (never silently absent).
+# Runs secret scanning and markdown linting without the full build pipeline.
+# This workflow triggers for EVERY PR/push; job-level if: gates do the filtering.
 name: Docs CI
 
-# SMI-2267: Explicit permissions for CodeQL compliance
+# SMI-2267: Explicit minimal permissions for CodeQL compliance.
+# Workflow-level is contents:read only; pull-requests:read is scoped to the
+# detect-changes job below (SMI-3997 Finding #5, matching ci.yml:128-129
+# verify-implementation pattern).
 permissions:
   contents: read
 
 on:
   push:
     branches: [main]
-    paths:
-      - 'docs/internal/**'
-      - '.claude/development/**'
-      - '.claude/templates/**'
-      - '**/*.md'
-      - 'LICENSE'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/CODEOWNERS'
   pull_request:
     branches: [main]
-    paths:
-      - 'docs/internal/**'
-      - '.claude/development/**'
-      - '.claude/templates/**'
-      - '**/*.md'
-      - 'LICENSE'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/CODEOWNERS'
 
 concurrency:
   group: docs-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # SMI-3997: Detect whether any doc-related paths changed in this PR.
+  # This job always runs; downstream jobs gate on its output.
+  detect-changes:
+    name: Detect Doc Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    # SMI-3997 Finding #5: Scope pull-requests:read to ONLY the job that needs it,
+    # matching ci.yml verify-implementation (SMI-3546, lines 128-129). Workflow-level
+    # permissions stay contents:read per SMI-2267 hardening.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      docs: ${{ steps.filter.outputs.docs }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      # SMI-3997: Pinned to SHA for reproducibility (v4 release)
+      # To update: check https://github.com/dorny/paths-filter/releases
+      - name: Filter doc paths
+        id: filter
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
+        with:
+          # SMI-3997 Finding #2: Explicit base so push-event behavior does not rely on
+          # action defaults. On pull_request, compares HEAD against PR base ref.
+          # On push, falls back to the repository default branch (main).
+          base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+          filters: |
+            docs:
+              - 'docs/internal/**'
+              - '.claude/development/**'
+              - '.claude/templates/**'
+              - '**/*.md'
+              - 'LICENSE'
+              - '.github/ISSUE_TEMPLATE/**'
+              - '.github/CODEOWNERS'
+
+      # SMI-3997 Finding #2: Observability — log the resolved output so the first
+      # few carrier runs can be inspected in job logs without cross-referencing
+      # the GitHub Checks API.
+      - name: Log detection result
+        run: echo "Detected docs=${{ steps.filter.outputs.docs }}"
+
   # Secret scanning - catches accidentally committed credentials
+  # SMI-3997: Gated by detect-changes. On non-doc PRs, ci.yml's secret-scan
+  # covers us; this job skips with success. On doc-only PRs, ci.yml is skipped
+  # by paths-ignore, so THIS secret-scan is the one that posts the check.
   secret-scan:
     name: Secret Scan
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 2
 
@@ -60,8 +99,13 @@ jobs:
           fi
 
   # Markdown linting - ensures documentation quality
+  # SMI-3997: Gated by detect-changes. On non-doc PRs, this job skips with
+  # success, satisfying the required status check without requiring a .md
+  # touch workaround.
   markdown-lint:
     name: Markdown Lint
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 2
 
