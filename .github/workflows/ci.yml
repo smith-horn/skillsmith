@@ -1,30 +1,20 @@
 name: CI
 
-# Trigger configuration:
-# - paths-ignore: Skip CI entirely for pure docs-only commits (fast path)
-# - classify job: Further categorizes changes for conditional job execution
-# These work together: paths-ignore handles the simple case, classify handles mixed commits
+# SMI-3999: Triggers unconditionally on every PR/push. The detect-changes job
+# (below) classifies doc-only vs non-doc commits and gates every required-check
+# job with `needs: [detect-changes]` + `if: needs.detect-changes.outputs.code == 'true'`
+# so that pure doc-only commits emit `skipped -> success` for all 9 ci.yml-defined
+# required contexts. This mirrors SMI-3997's fix for docs-only.yml (PR #493) and
+# the SMI-3546 `verify-implementation` precedent at ci.yml:122-139.
+#
+# Previously, workflow-level `paths-ignore` suppressed ci.yml entirely on pure
+# doc-only PRs, leaving the 9 contexts *missing* (not skipped) on the commit,
+# which yielded mergeStateStatus=BLOCKED. See SMI-3999 root cause analysis.
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '.claude/development/**'
-      - '.claude/templates/**'
-      - '**/*.md'
-      - '!.gitmodules'
-      - 'LICENSE'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/CODEOWNERS'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - '.claude/development/**'
-      - '.claude/templates/**'
-      - '**/*.md'
-      - '!.gitmodules'
-      - 'LICENSE'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/CODEOWNERS'
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -41,10 +31,78 @@ env:
   COMPOSE_DOCKER_CLI_BUILD: 1
 
 jobs:
+  # SMI-3999: Detect whether this commit touches any non-doc file. Every required-check
+  # job below gates on `needs.detect-changes.outputs.code == 'true'` so that pure
+  # doc-only PRs emit `skipped -> success` for all required contexts (branch-protection
+  # accepts skipped-with-success but NOT absent contexts).
+  #
+  # CRITICAL: uses an INVERTED filter (code-output, not docs-output) so mixed
+  # commits (e.g., .md + .ts) correctly classify as code=true. A naive docs-output
+  # filter would any-match on the .md and skip CI on mixed PRs. See E5 in plan.
+  #
+  # Does NOT mirror docs-only.yml's filter — the two are *dual*. docs-only.yml uses
+  # any-match (run if any doc touched); ci.yml uses inverted any-match (run if any
+  # non-doc touched). Keep the two filters semantically dual, not identical.
+  detect-changes:
+    name: Detect Doc Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    # SMI-2267 + SMI-3997 Finding #5: Scope pull-requests:read to ONLY the job that
+    # needs it (matches ci.yml:128-129 verify-implementation pattern). Workflow-level
+    # stays contents:read per SMI-2267 hardening.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      # SMI-3999: Pinned to SHA for reproducibility (v4 release). Keep in sync with
+      # docs-only.yml and website-build job (ci.yml:1415) — any drift is a bug.
+      # To update: check https://github.com/dorny/paths-filter/releases
+      - name: Filter non-doc paths
+        id: filter
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
+        with:
+          # SMI-3997 Finding #2: Explicit base so push-event behavior does not rely
+          # on action defaults. On pull_request, compares HEAD against PR base ref.
+          # On push-to-main, falls back to the repository default branch (main).
+          base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+          # SMI-3999 Revision 2 (Stage 2 Finding M2): Intentionally DOES NOT
+          # exclude `docs/internal/**` even though docs-only.yml's symmetric
+          # filter does include it. Rationale: docs/internal is a git submodule,
+          # so parent-repo PRs touching it actually bump `.gitmodules` (which
+          # is NOT excluded -> code='true' -> full CI runs, which is correct —
+          # submodule bumps must validate the parent's state). If docs/internal
+          # is ever de-submoduled, this filter MUST be updated to add
+          # `'!docs/internal/**'` or pure doc PRs touching internal docs will
+          # incorrectly trigger full CI. Keep this comment load-bearing.
+          filters: |
+            code:
+              - '**'
+              - '!.claude/development/**'
+              - '!.claude/templates/**'
+              - '!**/*.md'
+              - '!LICENSE'
+              - '!.github/ISSUE_TEMPLATE/**'
+              - '!.github/CODEOWNERS'
+
+      # SMI-3997 Finding #2: Observability — log the resolved output so the first
+      # few carrier runs can be inspected in job logs without cross-referencing
+      # the GitHub Checks API.
+      - name: Log detection result
+        run: echo "Detected code=${{ steps.filter.outputs.code }}"
+
   # Secret scanning with gitleaks - runs first, fast, no dependencies
   # Uses CLI directly (free) instead of gitleaks-action (requires paid license for orgs)
   secret-scan:
     name: Secret Scan
+    # SMI-3999: Gate on detect-changes. On pure-doc PRs, docs-only.yml's secret-scan
+    # already runs and emits a Secret Scan check — this one skips with success.
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -74,6 +132,10 @@ jobs:
   # Outputs tier (docs/config/deps/code), skip flags, and affected packages
   classify:
     name: Classify Changes
+    # SMI-3999: Gate on detect-changes. Pure-doc PRs skip — downstream jobs that
+    # read classify.outputs will also skip via needs:-chain, which is correct.
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
@@ -121,8 +183,15 @@ jobs:
   # Required check since 2026-04-05 (SMI-3546)
   verify-implementation:
     name: Verify Implementation Completeness
-    needs: [classify]
-    if: github.event_name == 'pull_request' && needs.classify.outputs.tier != 'docs'
+    # SMI-3999: Explicitly gate on detect-changes. On pure-doc PRs, classify skips,
+    # its outputs.tier is empty, and `tier != 'docs'` would still evaluate true,
+    # which would mean this job runs its Node-based verifier on a commit with no
+    # code — currently harmless but wasteful. Add explicit detect-changes guard.
+    needs: [classify, detect-changes]
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.detect-changes.outputs.code == 'true' &&
+      needs.classify.outputs.tier != 'docs'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
@@ -165,9 +234,13 @@ jobs:
   # Only runs on upstream repo (smith-horn) - skipped on forks
   package-validation:
     name: Package Validation
+    # SMI-3999: Gate on detect-changes.
+    needs: [detect-changes]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.repository_owner == 'smith-horn'
+    if: |
+      github.repository_owner == 'smith-horn' &&
+      needs.detect-changes.outputs.code == 'true'
 
     steps:
       - name: Checkout
@@ -315,6 +388,9 @@ jobs:
   # Ensures all functions have proper structure and are categorized
   edge-function-validation:
     name: Edge Function Validation
+    # SMI-3999: Gate on detect-changes.
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -456,12 +532,17 @@ jobs:
   #    - Extracts dist/ directories for potential reuse
   #    - Benefits future runs when only non-code files change
   docker-build:
-    needs: [secret-scan, package-validation, classify]
-    # Run if: classifier says don't skip AND both jobs succeeded OR were skipped
+    needs: [secret-scan, package-validation, classify, detect-changes]
+    # SMI-3999: Added detect-changes gate. On pure-doc PRs this skips with success;
+    # e2e-tests.yml separately emits its own `Build Docker Image` check, so branch
+    # protection is satisfied by the e2e run. On non-doc PRs, behavior unchanged.
+    # The previous `needs.secret-scan.result == 'success'` guard is preserved but
+    # now also tolerates `skipped` (both upstream jobs skip together on pure-doc PRs).
     if: |
       !cancelled() &&
+      needs.detect-changes.outputs.code == 'true' &&
       needs.classify.outputs.skip_docker != 'true' &&
-      needs.secret-scan.result == 'success' &&
+      (needs.secret-scan.result == 'success' || needs.secret-scan.result == 'skipped') &&
       (needs.package-validation.result == 'success' || needs.package-validation.result == 'skipped')
     name: Build Docker Image
     runs-on: ubuntu-latest
@@ -716,9 +797,13 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [docker-build, classify]
+    needs: [docker-build, classify, detect-changes]
+    # SMI-3999: Explicit detect-changes gate for clarity. Chain-skip would also work
+    # (docker-build skips -> lint skips) but explicit gate makes intent reviewable.
     # Skip lint if classifier determines no code changes
-    if: needs.classify.outputs.skip_tests != 'true'
+    if: |
+      needs.detect-changes.outputs.code == 'true' &&
+      needs.classify.outputs.skip_tests != 'true'
 
     steps:
       - name: Checkout
@@ -815,9 +900,12 @@ jobs:
     name: Type Check
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [docker-build, classify]
+    needs: [docker-build, classify, detect-changes]
+    # SMI-3999: Explicit detect-changes gate for clarity.
     # Skip typecheck if classifier determines no code changes
-    if: needs.classify.outputs.skip_tests != 'true'
+    if: |
+      needs.detect-changes.outputs.code == 'true' &&
+      needs.classify.outputs.skip_tests != 'true'
 
     steps:
       - name: Checkout
@@ -1142,7 +1230,10 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: docker-build
+    needs: [docker-build, detect-changes]
+    # SMI-3999: Explicit detect-changes gate. The docker-build chain-skip already
+    # covers this, but explicit is better than implicit for a required check.
+    if: needs.detect-changes.outputs.code == 'true'
 
     steps:
       - name: Checkout
@@ -1342,7 +1433,9 @@ jobs:
     name: Standards Compliance
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: docker-build
+    needs: [docker-build, detect-changes]
+    # SMI-3999: Explicit detect-changes gate.
+    if: needs.detect-changes.outputs.code == 'true'
 
     steps:
       - name: Checkout
@@ -1620,7 +1713,25 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lint, typecheck, test, security, compliance]
+    needs: [lint, typecheck, test, security, compliance, detect-changes]
+    # SMI-3999: Explicit detect-changes gate. The lint/typecheck/security/compliance
+    # chain-skip already covers this, but explicit gate makes the required-check
+    # contract unambiguous to future readers. The `(test.result == 'skipped')` clause
+    # is a DELIBERATE correctness improvement (not neutral replication) that allows
+    # build to run when the test matrix is empty (e.g., config-only PRs with no
+    # affected packages). Pre-SMI-3999, implicit `success()` gating would cause
+    # build to skip whenever test skipped — masked by admin bypass historically.
+    # Monitoring requirement (plan Step 3.11): on the first post-merge config-only
+    # PR that historically would have skipped build implicitly, verify build runs
+    # to completion successfully.
+    if: |
+      !cancelled() &&
+      needs.detect-changes.outputs.code == 'true' &&
+      needs.lint.result == 'success' &&
+      needs.typecheck.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      needs.security.result == 'success' &&
+      needs.compliance.result == 'success'
 
     steps:
       - name: Checkout
