@@ -69,9 +69,12 @@ jobs:
         run: echo "Detected docs=${{ steps.filter.outputs.docs }}"
 
   # Secret scanning - catches accidentally committed credentials
-  # SMI-3997: Gated by detect-changes. On non-doc PRs, ci.yml's secret-scan
-  # covers us; this job skips with success. On doc-only PRs, ci.yml is skipped
-  # by paths-ignore, so THIS secret-scan is the one that posts the check.
+  # SMI-3997 + SMI-3999: Gated by detect-changes. On non-doc PRs, ci.yml's
+  # secret-scan runs and emits the check; this job skips with success. On
+  # pure-doc PRs post-SMI-3999, ci.yml's secret-scan ALSO emits a check
+  # (skipped-with-success); this job runs and emits its own success. Branch
+  # protection accepts multiple check-runs with the same context name as long
+  # as at least one resolves to success.
   secret-scan:
     name: Secret Scan
     needs: [detect-changes]
@@ -100,8 +103,9 @@ jobs:
 
   # Markdown linting - ensures documentation quality
   # SMI-3997: Gated by detect-changes. On non-doc PRs, this job skips with
-  # success, satisfying the required status check without requiring a .md
-  # touch workaround.
+  # success, satisfying the required status check. (ci.yml does not define
+  # a markdown-lint job — docs-only.yml is the exclusive emitter of this
+  # required context.)
   markdown-lint:
     name: Markdown Lint
     needs: [detect-changes]
