@@ -16,7 +16,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@inquirer/prompts": "7.10.1",
+    "@inquirer/prompts": "8.4.1",
     "@skillsmith/core": "^0.4.17",
     "chalk": "5.6.2",
     "cli-table3": "0.6.5",
