@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/cli` are documented here.
 
+## v0.5.3
+
+- Version bump
+
 ## v0.5.2 (2026-03-24)
 
 - **Unified Install Command**: `skillsmith install` now supports both registry names and GitHub URLs (SMI-3484).

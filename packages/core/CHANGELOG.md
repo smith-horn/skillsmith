@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/core` are documented here.
 
+## v0.5.0
+
+- **Feature**: SMI-4119 client-side event batching + dual-shape /events (#500)
+
 ## v0.4.17
 
 - **PII Detection**: New PII detection module with configurable pattern matching for emails, phone numbers, API keys, and credentials.
