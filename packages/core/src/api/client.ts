@@ -419,12 +419,17 @@ export class SkillsmithApiClient {
     return { ok: true }
   }
 
-  /**
-   * Flush any queued telemetry events (drain the batcher).
-   * SMI-4119: Public so tests and shutdown paths can force a POST.
-   */
+  /** SMI-4119: Flush queued telemetry events (drain the batcher). */
   async flushEvents(): Promise<void> {
     if (this.eventBatcher) await this.eventBatcher.flush()
+  }
+
+  /** SMI-4119: Dispose batcher (detach exit listeners, clear timers). */
+  disposeEventBatcher(): void {
+    if (this.eventBatcher) {
+      this.eventBatcher.dispose()
+      this.eventBatcher = null
+    }
   }
 
   private getOrCreateBatcher(): EventBatcher {

@@ -40,6 +40,11 @@ export function createBatchFlushFn(
     if (events.length === 0) return
     const { baseUrl, anonKey, apiKey, timeout } = ctx()
 
+    // SMI-4119: Correlation ID per batch POST so operators can join all
+    // `audit_logs` rows inserted from one client flush. Format matches the
+    // edge function's validation regex `[a-zA-Z0-9_-]{1,64}`.
+    const batchId = generateBatchId()
+
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeout)
     try {
@@ -49,6 +54,7 @@ export function createBatchFlushFn(
           ...buildRequestHeaders(anonKey),
           ...(apiKey ? { 'X-API-Key': apiKey } : {}),
           'X-Skillsmith-Batched': 'true',
+          'X-Skillsmith-Batch-Id': batchId,
         },
         body: JSON.stringify({ events }),
         signal: controller.signal,
@@ -73,4 +79,17 @@ export function createBatchFlushFn(
  */
 export function buildClientEventBatcher(ctx: () => BatchPostContext): EventBatcher {
   return createEventBatcher(createBatchFlushFn(ctx))
+}
+
+/**
+ * Generate a short, URL-safe correlation ID for a batch POST.
+ * Uses `crypto.randomUUID` when available; falls back to Math.random so the
+ * code runs in environments without the Web Crypto API.
+ */
+function generateBatchId(): string {
+  const g = globalThis as { crypto?: { randomUUID?: () => string } }
+  if (g.crypto && typeof g.crypto.randomUUID === 'function') {
+    return g.crypto.randomUUID()
+  }
+  return `b-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }

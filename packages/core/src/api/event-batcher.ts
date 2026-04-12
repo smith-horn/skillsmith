@@ -141,6 +141,23 @@ export class EventBatcher {
       this.activeFlush = null
     })
     await this.activeFlush.catch(() => undefined)
+
+    // SMI-4119: If a burst enqueued more than `maxBatchSize` events while we
+    // were splicing, the leftover tail has no timer scheduled (size-triggered
+    // flush cleared it) and would otherwise stall until the next enqueue or
+    // process exit. Re-arm the timer or flush immediately if we're still at
+    // capacity.
+    if (this.queue.length >= this.maxBatchSize) {
+      void this.flushNow()
+    } else if (this.queue.length > 0 && this.timer === null && !this.disposed) {
+      this.timer = setTimeout(() => {
+        this.timer = null
+        void this.flushNow()
+      }, this.maxWaitMs)
+      if (typeof (this.timer as { unref?: () => void }).unref === 'function') {
+        ;(this.timer as { unref: () => void }).unref()
+      }
+    }
   }
 
   private async doFlushWithRetry(batch: TelemetryEvent[]): Promise<void> {

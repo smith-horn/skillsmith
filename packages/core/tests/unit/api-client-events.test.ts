@@ -14,6 +14,11 @@ import type { TelemetryEvent } from '../../src/api/client.js'
 describe('SMI-4119: SkillsmithApiClient event batching', () => {
   const originalFetch = globalThis.fetch
   let fetchMock: ReturnType<typeof vi.fn>
+  // SMI-4119: Track clients so we can dispose the batcher after each test.
+  // Without dispose() the batcher keeps `beforeExit` / `SIGINT` / `SIGTERM`
+  // listeners on `process`, leaking across tests and triggering
+  // MaxListenersExceededWarning in long Vitest runs.
+  const clients: SkillsmithApiClient[] = []
 
   beforeEach(() => {
     fetchMock = vi
@@ -24,7 +29,15 @@ describe('SMI-4119: SkillsmithApiClient event batching', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const c of clients.splice(0)) {
+      try {
+        await c.flushEvents()
+      } catch {
+        /* noop */
+      }
+      c.disposeEventBatcher()
+    }
     globalThis.fetch = originalFetch
     vi.restoreAllMocks()
   })
@@ -36,6 +49,7 @@ describe('SMI-4119: SkillsmithApiClient event batching', () => {
 
   it('recordEvent does not POST immediately', async () => {
     const client = new SkillsmithApiClient({ baseUrl: 'https://test.invalid' })
+    clients.push(client)
     const res = await client.recordEvent(mkEvent('aaaaaaaaaaaaaaaa'))
     expect(res).toEqual({ ok: true })
     expect(fetchMock).not.toHaveBeenCalled()
@@ -43,6 +57,7 @@ describe('SMI-4119: SkillsmithApiClient event batching', () => {
 
   it('flushEvents drains queued events via a single POST with X-Skillsmith-Batched', async () => {
     const client = new SkillsmithApiClient({ baseUrl: 'https://test.invalid' })
+    clients.push(client)
     await client.recordEvent(mkEvent('aaaaaaaaaaaaaaaa'))
     await client.recordEvent(mkEvent('bbbbbbbbbbbbbbbb'))
 
