@@ -2,14 +2,8 @@
  * Skillsmith API Client
  * @module api/client
  *
- * SMI-1244: API client for fetching skills from live Supabase endpoints
- * SMI-1258: Runtime validation for API responses using zod
- *
- * Provides methods to interact with the Skillsmith API:
- * - search: Search skills with filters
- * - getSkill: Get skill by ID
- * - getRecommendations: Get skill recommendations based on tech stack
- * - recordEvent: Record telemetry event
+ * SMI-1244: API client for Supabase endpoints. SMI-1258: Zod response validation.
+ * SMI-4119: `recordEvent` batches via EventBatcher (see client.events.ts).
  */
 
 import { z } from 'zod'
@@ -17,11 +11,7 @@ import type { Skill, TrustTier, SearchOptions } from '../types/skill.js'
 import { SkillsmithError, ErrorCodes } from '../errors.js'
 
 // Import from extracted modules
-import {
-  SearchResponseSchema,
-  SingleSkillResponseSchema,
-  TelemetryResponseSchema,
-} from './schemas.js'
+import { SearchResponseSchema, SingleSkillResponseSchema } from './schemas.js'
 import {
   calculateBackoff,
   buildRequestHeaders,
@@ -29,6 +19,8 @@ import {
   PRODUCTION_ANON_KEY,
 } from './utils.js'
 import { checkApiHealth } from './client.health.js'
+import type { EventBatcher } from './event-batcher.js'
+import { buildClientEventBatcher } from './client.events.js'
 
 // Re-export for backwards compatibility
 export { generateAnonymousId } from './utils.js'
@@ -152,17 +144,7 @@ export interface ApiClientConfig {
 // ============================================================================
 
 /**
- * Skillsmith API Client
- *
- * @example
- * ```typescript
- * const client = new SkillsmithApiClient({
- *   anonKey: process.env.SUPABASE_ANON_KEY,
- * });
- *
- * const results = await client.search({ query: 'testing' });
- * console.log(results.data);
- * ```
+ * Skillsmith API Client. See module docstring for SMI refs.
  */
 export class SkillsmithApiClient {
   private baseUrl: string
@@ -172,6 +154,8 @@ export class SkillsmithApiClient {
   private maxRetries: number
   private debug: boolean
   private offlineMode: boolean
+  /** SMI-4119: Lazily-initialized batcher for telemetry events. */
+  private eventBatcher: EventBatcher | null = null
 
   constructor(config: ApiClientConfig = {}) {
     // SMI-1948: DEFAULT_BASE_URL now always has a value (production URL fallback)
@@ -425,24 +409,39 @@ export class SkillsmithApiClient {
 
   /**
    * Record telemetry event
-   * SMI-1258: Validates response against TelemetryResponseSchema
+   * SMI-4119: Enqueue to in-memory batcher instead of POSTing immediately.
+   * Returns `{ ok: true }` synchronously — batcher handles failures silently,
+   * matching the prior "fail silently" contract for telemetry.
    */
   async recordEvent(event: TelemetryEvent): Promise<{ ok: boolean }> {
-    try {
-      const response = await this.request<{ ok: boolean }>(
-        '/events',
-        {
-          method: 'POST',
-          body: JSON.stringify(event),
-        },
-        TelemetryResponseSchema
-      )
-      return response.data
-    } catch {
-      // Telemetry should not throw - fail silently
-      this.log('Telemetry event failed (non-blocking)')
-      return { ok: false }
+    if (this.offlineMode) return { ok: true }
+    this.getOrCreateBatcher().enqueue(event)
+    return { ok: true }
+  }
+
+  /** SMI-4119: Flush queued telemetry events (drain the batcher). */
+  async flushEvents(): Promise<void> {
+    if (this.eventBatcher) await this.eventBatcher.flush()
+  }
+
+  /** SMI-4119: Dispose batcher (detach exit listeners, clear timers). */
+  disposeEventBatcher(): void {
+    if (this.eventBatcher) {
+      this.eventBatcher.dispose()
+      this.eventBatcher = null
     }
+  }
+
+  private getOrCreateBatcher(): EventBatcher {
+    if (!this.eventBatcher) {
+      this.eventBatcher = buildClientEventBatcher(() => ({
+        baseUrl: this.baseUrl,
+        anonKey: this.anonKey,
+        apiKey: this.apiKey,
+        timeout: this.timeout,
+      }))
+    }
+    return this.eventBatcher
   }
 
   /**

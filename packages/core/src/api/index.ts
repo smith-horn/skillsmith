@@ -23,6 +23,14 @@ export {
   type TelemetryEvent,
 } from './client.js'
 
+// SMI-4119: Event batching
+export {
+  EventBatcher,
+  createEventBatcher,
+  type EventBatcherOptions,
+  type BatchFlushFn,
+} from './event-batcher.js'
+
 // ============================================================================
 // API Cache
 // ============================================================================

@@ -77,6 +77,59 @@ export const TelemetryResponseSchema = z.object({
 })
 
 // ============================================================================
+// Telemetry Batch Schemas (SMI-4119)
+// ============================================================================
+
+/**
+ * Schema for a single telemetry event payload.
+ * Used to validate batch entries client-side before POST.
+ */
+export const TelemetryEventSchema = z.object({
+  event: z.enum([
+    'skill_view',
+    'skill_install',
+    'skill_uninstall',
+    'skill_rate',
+    'search',
+    'recommend',
+    'compare',
+    'validate',
+  ]),
+  skill_id: z.string().optional(),
+  anonymous_id: z.string(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+})
+
+/**
+ * Request schema for batched telemetry: `{ events: [...] }` (1..=20).
+ */
+export const TelemetryEventBatchSchema = z.object({
+  events: z.array(TelemetryEventSchema).min(1).max(20),
+})
+
+/**
+ * Response schema for batched telemetry POST.
+ * Returned ONLY for the array-body path; single-event POST still returns `{ ok: true }`.
+ */
+export const TelemetryBatchResponseSchema = z.object({
+  ok: z.boolean(),
+  accepted: z.number().int().min(0),
+  rejected: z.number().int().min(0),
+  errors: z
+    .array(
+      z.object({
+        index: z.number().int(),
+        reason: z.string(),
+      })
+    )
+    .optional(),
+})
+
+export type TelemetryEventPayload = z.infer<typeof TelemetryEventSchema>
+export type TelemetryEventBatch = z.infer<typeof TelemetryEventBatchSchema>
+export type TelemetryBatchResponse = z.infer<typeof TelemetryBatchResponseSchema>
+
+// ============================================================================
 // Pre-built Response Schemas
 // ============================================================================
 
