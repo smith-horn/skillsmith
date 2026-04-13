@@ -8,13 +8,9 @@
     "url": "https://github.com/smith-horn/skillsmith",
     "source": "github"
   },
-  "version": "0.4.8",
+  "version": "0.4.9",
   "_meta": {
-    "io.skillsmith/categories": [
-      "developer-tools",
-      "ai-agents",
-      "skill-management"
-    ],
+    "io.skillsmith/categories": ["developer-tools", "ai-agents", "skill-management"],
     "io.skillsmith/keywords": [
       "claude-code",
       "agent-skills",
@@ -27,7 +23,7 @@
     {
       "registryType": "npm",
       "identifier": "@skillsmith/mcp-server",
-      "version": "0.4.8",
+      "version": "0.4.9",
       "transport": {
         "type": "stdio"
       },

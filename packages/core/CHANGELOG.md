@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/core` are documented here.
 
+## v0.5.1
+
+- Version bump
+
 ## v0.4.18
 
 - **Fix**: SMI-4182 suppress CodeQL false positive on telemetry hash

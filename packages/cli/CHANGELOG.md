@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/cli` are documented here.
 
+## v0.5.4
+
+- Version bump
+
 ## v0.5.3
 
 - **Docs**: bump internal submodule for SMI-4181/4184 GSC audit plan (#539)
