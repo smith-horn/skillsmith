@@ -16,6 +16,7 @@
 
 import {
   SkillInstallationService,
+  emitInstallEvent,
   type RegistryLookup,
   type RegistrySkillInfo,
 } from '@skillsmith/core'
@@ -101,12 +102,21 @@ export async function installSkill(
   }
 
   // Delegate to core service
+  const installStart = Date.now()
   const result = await service.install(input.skillId, {
     force: input.force,
     skipScan: input.skipScan,
     skipOptimize: input.skipOptimize,
     conflictAction: input.conflictAction,
     confirmed: input.confirmed,
+  })
+
+  // SMI-4182: fire-and-forget install telemetry for usage report funnel
+  void emitInstallEvent({
+    skillId: input.skillId,
+    source: 'mcp',
+    success: result.success,
+    durationMs: Date.now() - installStart,
   })
 
   return result
