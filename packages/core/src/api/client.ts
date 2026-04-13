@@ -7,8 +7,27 @@
  */
 
 import { z } from 'zod'
-import type { Skill, TrustTier, SearchOptions } from '../types/skill.js'
+import type { Skill, SearchOptions } from '../types/skill.js'
 import { SkillsmithError, ErrorCodes } from '../errors.js'
+import {
+  ApiClientError,
+  type ApiResponse,
+  type ApiErrorResponse,
+  type ApiSearchResult,
+  type ApiClientConfig,
+  type RecommendationRequest,
+  type TelemetryEvent,
+} from './client.types.js'
+
+export {
+  ApiClientError,
+  type ApiResponse,
+  type ApiErrorResponse,
+  type ApiSearchResult,
+  type ApiClientConfig,
+  type RecommendationRequest,
+  type TelemetryEvent,
+} from './client.types.js'
 
 // Import from extracted modules
 import { SearchResponseSchema, SingleSkillResponseSchema } from './schemas.js'
@@ -21,6 +40,10 @@ import {
 import { checkApiHealth } from './client.health.js'
 import type { EventBatcher } from './event-batcher.js'
 import { buildClientEventBatcher } from './client.events.js'
+import { ApiCache } from './cache.js'
+import { buildResponseCache, withResponseCache, type CallCacheOptions } from './client.cache.js'
+
+export type { CallCacheOptions } from './client.cache.js'
 
 // Re-export for backwards compatibility
 export { generateAnonymousId } from './utils.js'
@@ -32,112 +55,6 @@ export {
   TelemetryResponseSchema,
   TrustTierSchema,
 } from './schemas.js'
-
-// ============================================================================
-// Types
-// ============================================================================
-
-/**
- * API response wrapper
- */
-export interface ApiResponse<T> {
-  data: T
-  meta?: Record<string, unknown>
-}
-
-/**
- * API error response
- */
-export interface ApiErrorResponse {
-  error: string
-  details?: Record<string, unknown>
-}
-
-/**
- * Custom error class for API client errors with retry control
- * SMI-1257: Replace string-based retry skip with custom error class
- */
-export class ApiClientError extends Error {
-  constructor(
-    message: string,
-    public readonly retryable: boolean = false,
-    public readonly statusCode?: number
-  ) {
-    super(message)
-    this.name = 'ApiClientError'
-  }
-}
-
-/**
- * Search result from API
- * SMI-1577: Made repo_url, created_at, updated_at optional to match schema
- */
-export interface ApiSearchResult {
-  id: string
-  name: string
-  description: string | null
-  author: string | null
-  repo_url?: string | null
-  quality_score: number | null
-  trust_tier: TrustTier
-  tags: string[]
-  stars?: number | null
-  installable?: boolean | null
-  quarantined?: boolean
-  /** SHA-256 hash of SKILL.md content at index time */
-  content_hash?: string | null
-  /** SMI-3672: Raw SKILL.md content (only when include_content=true) */
-  content?: string | null
-  created_at?: string
-  updated_at?: string
-}
-
-/**
- * Recommendation request
- */
-export interface RecommendationRequest {
-  stack: string[]
-  project_type?: string
-  limit?: number
-}
-
-/**
- * Telemetry event
- */
-export interface TelemetryEvent {
-  event:
-    | 'skill_view'
-    | 'skill_install'
-    | 'skill_uninstall'
-    | 'skill_rate'
-    | 'search'
-    | 'recommend'
-    | 'compare'
-    | 'validate'
-  skill_id?: string
-  anonymous_id: string
-  metadata?: Record<string, unknown>
-}
-
-/**
- * API client configuration
- */
-export interface ApiClientConfig {
-  /** Base URL for the API (defaults to production Supabase) */
-  baseUrl?: string
-  /** Supabase anon key for authentication */
-  anonKey?: string
-  /** API key for authenticated requests (X-API-Key header) */
-  apiKey?: string
-  /** Request timeout in ms (default 30000) */
-  timeout?: number
-  /** Max retry attempts (default 3) */
-  maxRetries?: number
-  /** Enable debug logging */
-  debug?: boolean
-  /** Enable offline mode (disables API calls) */
-  offlineMode?: boolean
-}
 
 // ============================================================================
 // API Client Class
@@ -156,6 +73,8 @@ export class SkillsmithApiClient {
   private offlineMode: boolean
   /** SMI-4119: Lazily-initialized batcher for telemetry events. */
   private eventBatcher: EventBatcher | null = null
+  /** SMI-4120: Response cache (null when disabled). */
+  private responseCache: ApiCache | null = null
 
   constructor(config: ApiClientConfig = {}) {
     // SMI-1948: DEFAULT_BASE_URL now always has a value (production URL fallback)
@@ -174,6 +93,12 @@ export class SkillsmithApiClient {
     this.timeout = config.timeout ?? 30000
     this.maxRetries = config.maxRetries ?? 3
     this.debug = config.debug ?? false
+    this.responseCache = buildResponseCache(config.cache)
+  }
+
+  /** SMI-4120: Expose the response cache (null when disabled). */
+  getResponseCache(): ApiCache | null {
+    return this.responseCache
   }
 
   /**
@@ -353,8 +278,12 @@ export class SkillsmithApiClient {
   /**
    * Search for skills
    * SMI-1258: Validates response against SearchResponseSchema
+   * SMI-4120: Client LRU cache; opt-out via `{ cache: 'no-store' }`.
    */
-  async search(options: SearchOptions): Promise<ApiResponse<ApiSearchResult[]>> {
+  async search(
+    options: SearchOptions,
+    callOptions?: CallCacheOptions
+  ): Promise<ApiResponse<ApiSearchResult[]>> {
     const params = new URLSearchParams()
     params.set('query', options.query)
 
@@ -365,10 +294,13 @@ export class SkillsmithApiClient {
       params.set('min_score', String(options.minQualityScore))
     if (options.category) params.set('category', options.category)
 
-    return this.request<ApiSearchResult[]>(
-      `/skills-search?${params.toString()}`,
-      {},
-      SearchResponseSchema
+    const endpoint = `/skills-search?${params.toString()}`
+    return withResponseCache(
+      this.responseCache,
+      'search',
+      endpoint,
+      callOptions?.cache === 'no-store',
+      () => this.request<ApiSearchResult[]>(endpoint, {}, SearchResponseSchema)
     )
   }
 
@@ -376,34 +308,52 @@ export class SkillsmithApiClient {
    * Get skill by ID
    * SMI-1258: Validates response against SingleSkillResponseSchema
    * SMI-3672: Added includeContent option to fetch SKILL.md content
+   * SMI-4120: Client LRU cache; opt-out via `{ cache: 'no-store' }`.
    */
   async getSkill(
     id: string,
-    options?: { includeContent?: boolean }
+    options?: { includeContent?: boolean } & CallCacheOptions
   ): Promise<ApiResponse<ApiSearchResult>> {
     const encodedId = encodeURIComponent(id)
     const contentParam = options?.includeContent ? '&include_content=true' : ''
-    return this.request<ApiSearchResult>(
-      `/skills-get?id=${encodedId}${contentParam}`,
-      {},
-      SingleSkillResponseSchema
+    const endpoint = `/skills-get?id=${encodedId}${contentParam}`
+    return withResponseCache(
+      this.responseCache,
+      'getSkill',
+      endpoint,
+      options?.cache === 'no-store',
+      () => this.request<ApiSearchResult>(endpoint, {}, SingleSkillResponseSchema)
     )
   }
 
   /**
    * Get skill recommendations based on tech stack
    * SMI-1258: Validates response against SearchResponseSchema
+   * SMI-4120: Client LRU cache; opt-out via `{ cache: 'no-store' }`.
    */
   async getRecommendations(
-    request: RecommendationRequest
+    request: RecommendationRequest,
+    callOptions?: CallCacheOptions
   ): Promise<ApiResponse<ApiSearchResult[]>> {
-    return this.request<ApiSearchResult[]>(
-      '/skills-recommend',
-      {
-        method: 'POST',
-        body: JSON.stringify(request),
-      },
-      SearchResponseSchema
+    const cacheKey = ApiCache.createKey('/skills-recommend', {
+      stack: [...request.stack].sort(),
+      project_type: request.project_type ?? null,
+      limit: request.limit ?? null,
+    })
+    return withResponseCache(
+      this.responseCache,
+      'recommend',
+      cacheKey,
+      callOptions?.cache === 'no-store',
+      () =>
+        this.request<ApiSearchResult[]>(
+          '/skills-recommend',
+          {
+            method: 'POST',
+            body: JSON.stringify(request),
+          },
+          SearchResponseSchema
+        )
     )
   }
 
