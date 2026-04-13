@@ -135,6 +135,7 @@ wrangler.toml.local
 # Claude Code runtime files
 .claude/memory.db
 .claude/hive-mind/
+.claude/scheduled_tasks.lock
 
 # Logarithmic quality score recalculation (internal tooling)
 supabase/migrations/015_recalculate_quality_scores.sql
