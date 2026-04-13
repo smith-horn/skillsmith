@@ -4,7 +4,10 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
-- **Indexer registers addyosmani/agent-skills as high-trust source** (SMI-4122, PR #499).
+## v0.5.0
+
+- **EventBatcher**: client-side batching of telemetry events (SMI-4119). Reduces `/events` edge invocations.
+- **Indexer registers addyosmani/agent-skills as high-trust source** (SMI-4122).
 
 ## v0.4.17
 
