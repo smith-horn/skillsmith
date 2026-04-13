@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHmac } from 'node:crypto'
 import { getApiKey } from '../config/index.js'
 
 export interface InstallEventPayload {
@@ -15,17 +15,24 @@ const EVENT_ENDPOINT = '/functions/v1/events'
 const REQUEST_TIMEOUT_MS = 2000
 
 /**
- * Namespace prefix for the telemetry-actor hash. The hash input is NOT a
- * credential — it is a namespaced correlation ID derived from the API key
- * that already identifies the caller server-side. SHA-256 is the correct
- * primitive for producing a stable, non-reversible identifier on a hot
- * install path; a slow KDF (bcrypt/scrypt/Argon2) adds latency without
- * changing the security properties we need (this is not password storage).
+ * HMAC key used to derive the telemetry actor ID from the caller's API key.
+ *
+ * This is NOT password storage — it is a keyed, deterministic, non-reversible
+ * correlation ID used to distinguish one caller from another in aggregate
+ * telemetry. HMAC-SHA-256 is the correct primitive for that use case:
+ *  - Keyed construction cleanly signals "opaque identifier derivation", not
+ *    password hashing.
+ *  - Fast (no KDF latency on the hot install path).
+ *  - Deterministic so the same API key always maps to the same actor ID,
+ *    enabling per-caller aggregation server-side.
+ *
+ * A slow KDF (bcrypt/scrypt/Argon2) would be inappropriate here — it adds
+ * latency without changing any security property we need.
  */
-const TELEMETRY_ACTOR_NAMESPACE = 'skillsmith-telemetry-actor:v1:'
+const TELEMETRY_ACTOR_KEY = 'skillsmith-telemetry-actor:v1'
 
 function hashForActor(apiKey: string): string {
-  return createHash('sha256').update(TELEMETRY_ACTOR_NAMESPACE + apiKey).digest('hex')
+  return createHmac('sha256', TELEMETRY_ACTOR_KEY).update(apiKey).digest('hex')
 }
 
 function getApiBase(): string {
@@ -46,13 +53,13 @@ function isDisabled(): boolean {
  * - Network / endpoint failure
  *
  * The API key is mapped to a namespaced, non-reversible telemetry actor ID
- * (SHA-256 of `skillsmith-telemetry-actor:v1:<apiKey>`) before transmission.
- * The server stores that hash as `actor` — never the raw key, never an email,
- * never a user ID.
+ * (HMAC-SHA-256 keyed by `skillsmith-telemetry-actor:v1`) before transmission.
+ * The server stores that digest as `actor` — never the raw key, never an
+ * email, never a user ID.
  *
  * Event shape when emitted:
  *   event_type: "telemetry:skill_install"
- *   actor:      sha256("skillsmith-telemetry-actor:v1:" + apiKey) hex
+ *   actor:      hmac_sha256("skillsmith-telemetry-actor:v1", apiKey) hex
  *   metadata:   { skill_id, source, success, duration_ms?, trust_tier?, error_code? }
  */
 export async function emitInstallEvent(payload: InstallEventPayload): Promise<void> {
