@@ -1,0 +1,137 @@
+# SMI-4157 Wave 2: Weekly usage report (user behaviour, funnel, top skills)
+# POSTs to ops-report edge function with reportType=usage
+# Target inbox: support@smithhorn.ca
+
+name: Weekly Usage Report
+
+on:
+  schedule:
+    # Every Monday at 10:00 AM UTC (1 hour after ops-report to stagger load)
+    - cron: '0 10 * * 1'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Number of days to include in report'
+        required: false
+        default: '7'
+        type: string
+      dry_run:
+        description: 'Dry run (generate report but do not send email)'
+        required: false
+        default: 'true'
+        type: boolean
+      recipients:
+        description: 'Email recipients (comma-separated, default: support@smithhorn.ca)'
+        required: false
+        default: 'support@smithhorn.ca'
+        type: string
+
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+jobs:
+  send-report:
+    name: Generate and Send Weekly Usage Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+
+    steps:
+      - name: Validate Secrets
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::Required secrets not configured."
+            exit 1
+          fi
+          echo "Secrets validated"
+
+      - name: Trigger Usage Report
+        id: report
+        run: |
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+          DAYS="${{ github.event.inputs.days || '7' }}"
+          RECIPIENTS="${{ github.event.inputs.recipients || 'support@smithhorn.ca' }}"
+
+          RECIPIENTS_JSON=$(echo "$RECIPIENTS" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')
+
+          BODY=$(cat <<EOF
+          {
+            "reportType": "usage",
+            "period": "weekly",
+            "days": $DAYS,
+            "dryRun": $DRY_RUN,
+            "recipients": $RECIPIENTS_JSON
+          }
+          EOF
+          )
+
+          echo "Triggering usage report with: $BODY"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
+            "$SUPABASE_URL/functions/v1/ops-report")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "Response code: $HTTP_CODE"
+          echo "Response: $BODY"
+
+          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+          echo "response<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "::error::Weekly usage report failed with status $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: Generate Summary
+        if: success()
+        run: |
+          RESPONSE='${{ steps.report.outputs.response }}'
+          SEARCHES=$(echo "$RESPONSE" | jq -r '.data.report.stats.funnel.searches // 0')
+          INSTALLS=$(echo "$RESPONSE" | jq -r '.data.report.stats.funnel.installsSucceeded // 0')
+          CONVERSION=$(echo "$RESPONSE" | jq -r '.data.report.stats.funnel.conversionRate // 0')
+          ACTIVE=$(echo "$RESPONSE" | jq -r '.data.report.stats.tierMix.activeApiKeysInPeriod // 0')
+          EMAIL_SENT=$(echo "$RESPONSE" | jq -r '.data.emailSent // "N/A"')
+
+          echo "### Weekly Usage Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Searches | $SEARCHES |" >> $GITHUB_STEP_SUMMARY
+          echo "| Installs (succeeded) | $INSTALLS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Conversion rate | $CONVERSION |" >> $GITHUB_STEP_SUMMARY
+          echo "| Active API keys | $ACTIVE |" >> $GITHUB_STEP_SUMMARY
+          echo "| Email sent | $EMAIL_SENT |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Report Failure
+        if: failure()
+        run: |
+          echo "### Weekly Usage Report Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "HTTP Code: ${{ steps.report.outputs.http_code }}" >> $GITHUB_STEP_SUMMARY
+
+      # Distinct ci-alert label per workflow so weekly/monthly failures don't collapse (SMI-4157 E6)
+      - name: Alert on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --label "usage-report-weekly" --search "scheduled run failed" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Still failing: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "[usage-report-weekly] scheduled run failed ($(date -u +%Y-%m-%d))" --label "usage-report-weekly" --body "**Workflow**: Weekly Usage Report
+          **Run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          **Branch**: ${{ github.ref_name }}
+
+          Auto-created by SMI-4157. Close when resolved."
+          fi
