@@ -2,6 +2,11 @@
 
 All notable changes to `@skillsmith/core` are documented here.
 
+## v0.4.18
+
+- **Fix**: SMI-4182 suppress CodeQL false positive on telemetry hash
+- **Feature**: SMI-4120 response caching + Cache-Control (#516)
+
 ## [Unreleased]
 
 - **Indexer registers addyosmani/agent-skills as high-trust source** (SMI-4122, PR #499).
