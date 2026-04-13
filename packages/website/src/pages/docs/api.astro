@@ -260,6 +260,111 @@ if (result.success) {
 
   <pre><code>{`async list(): Promise<InstalledSkill[]>`}</code></pre>
 
+  <h2>Enterprise Tools</h2>
+
+  <p>
+    The following tools are available on the Enterprise tier via the MCP server.
+    They are currently <em>in preview — availability pending production migration</em>
+    (tracked in SMI-4135). Backing tables are restored in staging (SMI-4123).
+  </p>
+
+  <h3>webhook_configure</h3>
+
+  <p>
+    Configure HMAC-SHA256 signed webhooks for skill events (install, uninstall,
+    update, audit). Enables integration with external systems such as SIEM,
+    incident response, or internal notification pipelines.
+  </p>
+
+  <pre><code>{`async webhookConfigure(options: WebhookConfigureOptions): Promise<WebhookEndpoint>`}</code></pre>
+
+  <h4>WebhookConfigureOptions</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>Type</th>
+        <th>Required</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>url</code></td>
+        <td><code>string</code></td>
+        <td>Yes</td>
+        <td>HTTPS endpoint to receive events</td>
+      </tr>
+      <tr>
+        <td><code>events</code></td>
+        <td><code>string[]</code></td>
+        <td>Yes</td>
+        <td>Event types to subscribe to (e.g. <code>skill.installed</code>)</td>
+      </tr>
+      <tr>
+        <td><code>secret</code></td>
+        <td><code>string</code></td>
+        <td>No</td>
+        <td>HMAC-SHA256 signing secret (auto-generated if omitted)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    Requires the Enterprise tier. Availability is gated on the production
+    migration tracked in SMI-4135; calls will return a feature-unavailable
+    response until then.
+  </p>
+
+  <h3>api_key_manage</h3>
+
+  <p>
+    Manage API keys for programmatic access — list, create, rotate, and revoke
+    keys scoped to your workspace.
+  </p>
+
+  <pre><code>{`async apiKeyManage(options: ApiKeyManageOptions): Promise<ApiKeyResult>`}</code></pre>
+
+  <h4>ApiKeyManageOptions</h4>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>Type</th>
+        <th>Required</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>action</code></td>
+        <td><code>'list' | 'create' | 'rotate' | 'revoke'</code></td>
+        <td>Yes</td>
+        <td>Operation to perform</td>
+      </tr>
+      <tr>
+        <td><code>keyId</code></td>
+        <td><code>string</code></td>
+        <td>Conditional</td>
+        <td>Required for <code>rotate</code> and <code>revoke</code></td>
+      </tr>
+      <tr>
+        <td><code>label</code></td>
+        <td><code>string</code></td>
+        <td>No</td>
+        <td>Human-readable label for <code>create</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    Requires the Enterprise tier. Availability is gated on the production
+    migration tracked in SMI-4135; calls will return a feature-unavailable
+    response until then.
+  </p>
+
   <h2>Types</h2>
 
   <h3>Skill</h3>
