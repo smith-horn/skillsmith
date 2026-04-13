@@ -1,6 +1,6 @@
 # SMI-4157 Wave 2: Weekly usage report (user behaviour, funnel, top skills)
 # POSTs to ops-report edge function with reportType=usage
-# Target inbox: support@skillsmith.app
+# Target inbox: support@smithhorn.ca
 
 name: Weekly Usage Report
 
@@ -21,9 +21,9 @@ on:
         default: 'true'
         type: boolean
       recipients:
-        description: 'Email recipients (comma-separated, default: support@skillsmith.app)'
+        description: 'Email recipients (comma-separated, default: support@smithhorn.ca)'
         required: false
-        default: 'support@skillsmith.app'
+        default: 'support@smithhorn.ca'
         type: string
 
 env:
@@ -52,7 +52,7 @@ jobs:
         run: |
           DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
           DAYS="${{ github.event.inputs.days || '7' }}"
-          RECIPIENTS="${{ github.event.inputs.recipients || 'support@skillsmith.app' }}"
+          RECIPIENTS="${{ github.event.inputs.recipients || 'support@smithhorn.ca' }}"
 
           RECIPIENTS_JSON=$(echo "$RECIPIENTS" | jq -R 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')
 
