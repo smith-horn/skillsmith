@@ -50,6 +50,7 @@ vi.mock('@skillsmith/core', () => ({
     }
   }),
   isGitHubUrl: vi.fn((url: string) => url.startsWith('https://github.com/')),
+  emitInstallEvent: vi.fn(async () => undefined),
 }))
 
 // Mock console and process.exit
