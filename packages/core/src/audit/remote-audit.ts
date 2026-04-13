@@ -14,8 +14,18 @@ const DEFAULT_API_BASE = 'https://api.skillsmith.app'
 const EVENT_ENDPOINT = '/functions/v1/events'
 const REQUEST_TIMEOUT_MS = 2000
 
+/**
+ * Namespace prefix for the telemetry-actor hash. The hash input is NOT a
+ * credential — it is a namespaced correlation ID derived from the API key
+ * that already identifies the caller server-side. SHA-256 is the correct
+ * primitive for producing a stable, non-reversible identifier on a hot
+ * install path; a slow KDF (bcrypt/scrypt/Argon2) adds latency without
+ * changing the security properties we need (this is not password storage).
+ */
+const TELEMETRY_ACTOR_NAMESPACE = 'skillsmith-telemetry-actor:v1:'
+
 function hashForActor(apiKey: string): string {
-  return createHash('sha256').update(apiKey).digest('hex')
+  return createHash('sha256').update(TELEMETRY_ACTOR_NAMESPACE + apiKey).digest('hex')
 }
 
 function getApiBase(): string {
@@ -35,12 +45,14 @@ function isDisabled(): boolean {
  * - SKILLSMITH_TELEMETRY=0 (opt-out)
  * - Network / endpoint failure
  *
- * The API key is hashed (SHA256, full hex) before transmission. The server
- * stores the hash as `actor` — never the raw key, never an email, never a user ID.
+ * The API key is mapped to a namespaced, non-reversible telemetry actor ID
+ * (SHA-256 of `skillsmith-telemetry-actor:v1:<apiKey>`) before transmission.
+ * The server stores that hash as `actor` — never the raw key, never an email,
+ * never a user ID.
  *
  * Event shape when emitted:
  *   event_type: "telemetry:skill_install"
- *   actor:      sha256(apiKey) hex
+ *   actor:      sha256("skillsmith-telemetry-actor:v1:" + apiKey) hex
  *   metadata:   { skill_id, source, success, duration_ms?, trust_tier?, error_code? }
  */
 export async function emitInstallEvent(payload: InstallEventPayload): Promise<void> {
