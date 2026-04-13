@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/mcp-server` are documented here.
 
+## [Unreleased]
+
+- **Fixed**: `webhook_configure` and `api_key_manage` backing tables restored (SMI-4123). In preview until production migration (SMI-4135).
+
 ## v0.4.7
 
 - **Fix: startup crash for new installs** — Bumped `@skillsmith/core` dependency floor from `^0.4.16` to `^0.4.17` to ensure `SkillInstallationService` export is available. Users with cached `core@0.4.16` saw a fatal `SyntaxError` on startup.
