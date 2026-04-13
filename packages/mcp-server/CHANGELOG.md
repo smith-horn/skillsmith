@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/mcp-server` are documented here.
 
+## v0.4.9
+
+- Version bump
+
 ## v0.4.8
 
 - **Docs**: bump internal submodule for SMI-4181/4184 GSC audit plan (#539)
