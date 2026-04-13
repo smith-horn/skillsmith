@@ -162,6 +162,10 @@ export {
 // Audit Logging (SMI-733)
 export { AuditLogger, MIN_RETENTION_DAYS, MAX_RETENTION_DAYS } from './security/AuditLogger.js'
 
+// Remote telemetry for install events (SMI-4182)
+export { emitInstallEvent } from './audit/remote-audit.js'
+export type { InstallEventPayload } from './audit/remote-audit.js'
+
 // Source Adapters (SMI-589)
 export {
   BaseSourceAdapter,
