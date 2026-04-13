@@ -14,6 +14,7 @@ import {
   SkillRepository,
   SkillDependencyRepository,
   SkillInstallationService,
+  emitInstallEvent,
   isGitHubUrl,
   type CoreInstallResult,
   type RegistryLookup,
@@ -217,7 +218,17 @@ export function createInstallCommand(): Command {
               installOptions.skipOptimize = opts.skipOptimize
             }
 
+            const installStart = Date.now()
             const result = await service.install(skillId, installOptions)
+
+            // SMI-4182: fire-and-forget install telemetry — skipped when CLI
+            // is unauthenticated (no SKILLSMITH_API_KEY), per product decision.
+            void emitInstallEvent({
+              skillId,
+              source: 'cli',
+              success: result.success,
+              durationMs: Date.now() - installStart,
+            })
 
             if (spinner) {
               if (result.success) {
