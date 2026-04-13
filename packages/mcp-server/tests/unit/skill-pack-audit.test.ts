@@ -461,4 +461,289 @@ describe('skill_pack_audit', () => {
       expect(result.skills[0].status).toBe('outdated')
     })
   })
+
+  // ============================================================================
+  // SMI-4124: Trigger-quality + namespace detection
+  // ============================================================================
+
+  describe('SMI-4124 trigger-quality + namespace checks', () => {
+    async function writeFullSkillMd(
+      dir: string,
+      opts: {
+        name: string
+        description?: string
+        version?: string
+        tags?: string[]
+      }
+    ): Promise<void> {
+      const lines = ['---', `name: ${opts.name}`]
+      if (opts.description !== undefined) lines.push(`description: ${opts.description}`)
+      if (opts.version !== undefined) lines.push(`version: ${opts.version}`)
+      if (opts.tags !== undefined) {
+        lines.push('tags:')
+        for (const tag of opts.tags) lines.push(`  - ${tag}`)
+      }
+      lines.push('---', '')
+      await fs.writeFile(join(dir, 'SKILL.md'), lines.join('\n'))
+    }
+
+    /**
+     * Rename the pack testDir to a specific basename since namespace detection
+     * uses basename(packPath). We create a sibling dir with the desired name.
+     */
+    async function makePackWithName(packName: string): Promise<string> {
+      const parent = await fs.mkdtemp(join(tmpdir(), 'pack-name-test-' + Date.now() + '-'))
+      const packDir = join(parent, packName)
+      await fs.mkdir(packDir)
+      await fs.mkdir(join(packDir, 'skills'))
+      return packDir
+    }
+
+    it('flags a generic trigger word in skill name as error (case 1)', async () => {
+      // Pack name "planning-skills" -> derives domain "planning"
+      const packDir = await makePackWithName('planning-skills')
+      const sDir = join(packDir, 'skills', 'spec')
+      await fs.mkdir(sDir)
+      await writeFullSkillMd(sDir, { name: 'spec', description: 'Unrelated description.' })
+
+      const result = await executeSkillPackAudit({ pack_path: packDir }, toolContext)
+
+      expect(result.triggerQuality).toBeDefined()
+      const entry = result.triggerQuality!.skills.find((s) => s.id === 'spec')
+      expect(entry).toBeDefined()
+      const nameFlag = entry!.flags.find((f) => f.location === 'name' && f.token === 'spec')
+      expect(nameFlag).toBeDefined()
+      expect(nameFlag!.severity).toBe('error')
+      expect(nameFlag!.suggested).toBe('planning-spec')
+      expect(result.triggerQuality!.summary.errorCount).toBeGreaterThanOrEqual(1)
+
+      await fs.rm(packDir, { recursive: true, force: true })
+    })
+
+    it('flags a generic trigger word in description only as warning (case 2)', async () => {
+      const packDir = await makePackWithName('planning-skills')
+      const sDir = join(packDir, 'skills', 'roadmap-planner')
+      await fs.mkdir(sDir)
+      // "build" in description, not in name
+      await writeFullSkillMd(sDir, {
+        name: 'roadmap-planner',
+        description: 'Helps you build out a product roadmap.',
+      })
+
+      const result = await executeSkillPackAudit({ pack_path: packDir }, toolContext)
+
+      const entry = result.triggerQuality!.skills.find((s) => s.id === 'roadmap-planner')
+      expect(entry).toBeDefined()
+      const descFlag = entry!.flags.find((f) => f.token === 'build')
+      expect(descFlag).toBeDefined()
+      expect(descFlag!.location).toBe('description')
+      expect(descFlag!.severity).toBe('warning')
+      expect(descFlag!.suggested).toBe('planning-build')
+
+      await fs.rm(packDir, { recursive: true, force: true })
+    })
+
+    it('tokenizes block-scalar description correctly (case 3)', async () => {
+      const packDir = await makePackWithName('planning-skills')
+      const sDir = join(packDir, 'skills', 'roadmap')
+      await fs.mkdir(sDir)
+      // Block-scalar description (description: |) — parser returns string[]
+      const md =
+        '---\n' +
+        'name: roadmap\n' +
+        'description: |\n' +
+        '  First line mentioning build.\n' +
+        '  Second line mentioning test.\n' +
+        '---\n'
+      await fs.writeFile(join(sDir, 'SKILL.md'), md)
+
+      const result = await executeSkillPackAudit({ pack_path: packDir }, toolContext)
+
+      const entry = result.triggerQuality!.skills.find((s) => s.id === 'roadmap')
+      expect(entry).toBeDefined()
+      const tokens = entry!.flags.map((f) => f.token)
+      expect(tokens).toEqual(expect.arrayContaining(['build', 'test']))
+      // Both are description-level warnings
+      for (const flag of entry!.flags) {
+        expect(flag.location).toBe('description')
+        expect(flag.severity).toBe('warning')
+      }
+
+      await fs.rm(packDir, { recursive: true, force: true })
+    })
+
+    it('clamps oversized description (case 4 — no ReDoS)', async () => {
+      const packDir = await makePackWithName('planning-skills')
+      const sDir = join(packDir, 'skills', 'roadmap')
+      await fs.mkdir(sDir)
+      // Craft >> FIELD_LIMITS.description (1024), embed a trigger word LATE.
+      // If clamp works, "spec" (past byte 1024) should NOT be detected.
+      const padding = 'x '.repeat(700) // ~1400 chars
+      const md =
+        '---\n' + 'name: roadmap\n' + `description: ${padding}spec at the tail.\n` + '---\n'
+      await fs.writeFile(join(sDir, 'SKILL.md'), md)
+
+      const start = Date.now()
+      const result = await executeSkillPackAudit({ pack_path: packDir }, toolContext)
+      const elapsed = Date.now() - start
+      expect(elapsed).toBeLessThan(2000) // nowhere near pathological
+
+      const entry = result.triggerQuality!.skills.find((s) => s.id === 'roadmap')
+      // Either no flags, or flags from the early padding (which has no triggers).
+      if (entry) {
+        const hasSpec = entry.flags.some((f) => f.token === 'spec')
+        expect(hasSpec).toBe(false)
+      }
+
+      await fs.rm(packDir, { recursive: true, force: true })
+    })
+
+    it('derives pack domain from per-skill tags consensus (case 5)', async () => {
+      // Generic namespace "agent-skills" — cannot strip suffix reliably since
+      // it's itself generic. Use tags consensus instead.
+      const packDir = await makePackWithName('agent-skills')
+      const s1 = join(packDir, 'skills', 'research-helper')
+      const s2 = join(packDir, 'skills', 'search-helper')
+      await fs.mkdir(s1)
+      await fs.mkdir(s2)
+      await writeFullSkillMd(s1, {
+        name: 'research-helper',
+        description: 'Assists with research.',
+        tags: ['research', 'retrieval'],
+      })
+      await writeFullSkillMd(s2, {
+        name: 'search-helper',
+        description: 'Helps with search.',
+        tags: ['research', 'retrieval'],
+      })
+
+      const result = await executeSkillPackAudit({ pack_path: packDir }, toolContext)
+
+      expect(result.namespaceQuality).not.toBeNull()
+      expect(result.namespaceQuality!.suggested).toMatch(/^(research|retrieval)-skills$/)
+
+      await fs.rm(packDir, { recursive: true, force: true })
+    })
+
+    it('returns null suggestion when no tag consensus (case 6)', async () => {
+      const packDir = await makePackWithName('tools')
+      const s1 = join(packDir, 'skills', 'alpha')
+      const s2 = join(packDir, 'skills', 'beta')
+      await fs.mkdir(s1)
+      await fs.mkdir(s2)
+      // No tags -> no consensus
+      await writeFullSkillMd(s1, { name: 'alpha', description: 'Alpha skill.' })
+      await writeFullSkillMd(s2, { name: 'beta', description: 'Beta skill.' })
+
+      const result = await executeSkillPackAudit({ pack_path: packDir }, toolContext)
+
+      expect(result.namespaceQuality).not.toBeNull()
+      expect(result.namespaceQuality!.suggested).toBeNull()
+      expect(result.namespaceQuality!.reason).toMatch(/do not converge/i)
+
+      await fs.rm(packDir, { recursive: true, force: true })
+    })
+
+    it('returns present-but-empty triggerQuality and null namespace for clean pack (case 7)', async () => {
+      const packDir = await makePackWithName('planning-skills')
+      const sDir = join(packDir, 'skills', 'roadmap-planner')
+      await fs.mkdir(sDir)
+      await writeFullSkillMd(sDir, {
+        name: 'roadmap-planner',
+        description: 'Assists with roadmaps.',
+      })
+
+      const result = await executeSkillPackAudit({ pack_path: packDir }, toolContext)
+
+      expect(result.triggerQuality).toBeDefined()
+      expect(result.triggerQuality!.skills).toEqual([])
+      expect(result.triggerQuality!.summary).toEqual({
+        totalFlags: 0,
+        errorCount: 0,
+        warningCount: 0,
+      })
+      expect(result.namespaceQuality).toBeNull()
+
+      await fs.rm(packDir, { recursive: true, force: true })
+    })
+
+    it('dedups namespace + same skill-name token into one merged flag (case 8)', async () => {
+      // Pack "tools" is generic; skill named "tools" triggers both flags.
+      const packDir = await makePackWithName('tools')
+      const sDir = join(packDir, 'skills', 'tools')
+      await fs.mkdir(sDir)
+      await writeFullSkillMd(sDir, {
+        name: 'tools',
+        description: 'A meta skill.',
+        tags: ['research', 'retrieval'],
+      })
+      const sDir2 = join(packDir, 'skills', 'research-helper')
+      await fs.mkdir(sDir2)
+      await writeFullSkillMd(sDir2, {
+        name: 'research-helper',
+        description: 'Helps with research.',
+        tags: ['research', 'retrieval'],
+      })
+
+      const result = await executeSkillPackAudit({ pack_path: packDir }, toolContext)
+
+      expect(result.namespaceQuality).not.toBeNull()
+      // The "tools" skill-name flag should have been merged into the namespace.
+      const toolsEntry = result.triggerQuality!.skills.find((s) => s.id === 'tools')
+      if (toolsEntry) {
+        const hasToolsNameFlag = toolsEntry.flags.some(
+          (f) => f.location === 'name' && f.token === 'tools'
+        )
+        expect(hasToolsNameFlag).toBe(false)
+      }
+      // Merged reason references the overlap
+      expect(result.namespaceQuality!.reason).toMatch(/tools/)
+
+      await fs.rm(packDir, { recursive: true, force: true })
+    })
+
+    it('omits trigger-quality fields when check_trigger_quality=false (case 9)', async () => {
+      const packDir = await makePackWithName('tools')
+      const sDir = join(packDir, 'skills', 'spec')
+      await fs.mkdir(sDir)
+      await writeFullSkillMd(sDir, { name: 'spec', description: 'Test.', version: '1.0.0' })
+
+      const result = await executeSkillPackAudit(
+        { pack_path: packDir, check_trigger_quality: false },
+        toolContext
+      )
+
+      expect('triggerQuality' in result).toBe(false)
+      expect('namespaceQuality' in result).toBe(false)
+      // Legacy fields unchanged
+      expect(result.skillCount).toBe(1)
+      expect(Array.isArray(result.skills)).toBe(true)
+
+      await fs.rm(packDir, { recursive: true, force: true })
+    })
+
+    it('preserves legacy response shape for version-drift-only callers (case 10)', async () => {
+      // Simulate a "clean" version-drift audit with the opt-out flag.
+      const packDir = await makePackWithName('planning-skills')
+      const sDir = join(packDir, 'skills', 'roadmap-planner')
+      await fs.mkdir(sDir)
+      await writeFullSkillMd(sDir, {
+        name: 'roadmap-planner',
+        description: 'Clean.',
+        version: '1.0.0',
+      })
+
+      const result = await executeSkillPackAudit(
+        { pack_path: packDir, check_trigger_quality: false },
+        toolContext
+      )
+
+      // Exact legacy keys only
+      expect(Object.keys(result).sort()).toEqual(
+        ['driftCount', 'noRegistryDataCount', 'packPath', 'skillCount', 'skills'].sort()
+      )
+
+      await fs.rm(packDir, { recursive: true, force: true })
+    })
+  })
 })

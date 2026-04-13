@@ -20,9 +20,20 @@
 
 import { z } from 'zod'
 import { promises as fs } from 'fs'
-import { join, resolve, sep } from 'path'
-import { SkillsmithError, ErrorCodes } from '@skillsmith/core'
+import { basename, join, resolve, sep } from 'path'
+import { SkillsmithError, ErrorCodes, GENERIC_TRIGGERS } from '@skillsmith/core'
 import { parseYamlFrontmatter, hasPathTraversal } from './validate.helpers.js'
+import {
+  detectGenericTriggerWords,
+  detectGenericNamespace,
+  derivePackDomain,
+} from './skill-pack-audit.helpers.js'
+import type {
+  GenericWordFlag,
+  NamespaceFlag,
+  TriggerQuality,
+  TriggerQualityEntry,
+} from './skill-pack-audit.types.js'
 import type { ToolContext } from '../context.js'
 
 // ============================================================================
@@ -40,9 +51,18 @@ export const skillPackAuditInputSchema = z.object({
       'Absolute path to the skill pack root directory. ' +
         'Must contain a skills/ subdirectory with skill folders each containing SKILL.md.'
     ),
+  check_trigger_quality: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe(
+      'When true (default), also flag generic trigger words in skill name/description ' +
+        'and generic pack namespaces with rename suggestions. Set false for ' +
+        'version-drift-only audits (legacy response shape). SMI-4124.'
+    ),
 })
 
-export type SkillPackAuditInput = z.infer<typeof skillPackAuditInputSchema>
+export type SkillPackAuditInput = z.input<typeof skillPackAuditInputSchema>
 
 /**
  * Drift status for a single skill in the pack
@@ -84,6 +104,18 @@ export interface SkillPackAuditResponse {
   noRegistryDataCount: number
   /** Per-skill audit results, sorted alphabetically by name */
   skills: PackSkillEntry[]
+  /**
+   * SMI-4124: Trigger-quality analysis across the pack (generic trigger words
+   * in skill names/descriptions). Present when `check_trigger_quality` is `true`
+   * (default). Omitted when the caller explicitly opts out.
+   */
+  triggerQuality?: TriggerQuality
+  /**
+   * SMI-4124: Namespace-quality flag on the pack itself. Present (possibly
+   * `null`) when `check_trigger_quality` is `true`. `null` = clean pack name.
+   * Omitted when the caller opts out.
+   */
+  namespaceQuality?: NamespaceFlag | null
 }
 
 // ============================================================================
@@ -96,9 +128,12 @@ export interface SkillPackAuditResponse {
 export const skillPackAuditToolSchema = {
   name: 'skill_pack_audit' as const,
   description:
-    'Audit a skill pack directory for version drift by comparing each bundled SKILL.md ' +
-    'version against the Skillsmith registry cache. Reports which skills are current, ' +
-    'outdated, ahead, or missing from the registry. ' +
+    'Audit a skill pack directory for (a) version drift — bundled SKILL.md versions vs. ' +
+    'the Skillsmith registry cache — and (b) trigger-quality issues — generic trigger ' +
+    'words in skill names/descriptions and generic pack namespaces that misfire ' +
+    "Claude's skill-trigger heuristic (SMI-4124). Response is additive: new " +
+    'triggerQuality and namespaceQuality fields appear when check_trigger_quality is ' +
+    'true (default); existing fields (skills, driftCount, etc.) are unchanged. ' +
     'Requires Individual tier or higher.',
   inputSchema: {
     type: 'object' as const,
@@ -107,6 +142,14 @@ export const skillPackAuditToolSchema = {
         type: 'string',
         description:
           'Absolute path to the skill pack root directory (must contain a skills/ subdirectory).',
+      },
+      check_trigger_quality: {
+        type: 'boolean',
+        default: true,
+        description:
+          'When true (default), also flag generic trigger words and generic pack ' +
+          'namespaces with rename suggestions. Set false for version-drift-only audits ' +
+          '(legacy response shape — triggerQuality and namespaceQuality fields omitted).',
       },
     },
     required: ['pack_path'],
@@ -164,6 +207,8 @@ export async function executeSkillPackAudit(
 
   const packPath = resolve(input.pack_path)
   const skillsDir = join(packPath, 'skills')
+  const packName = basename(packPath)
+  const checkTriggerQuality = input.check_trigger_quality !== false
 
   // Discover subdirectories in skills/
   let skillDirNames: string[]
@@ -185,6 +230,10 @@ export async function executeSkillPackAudit(
   }
 
   const skills: PackSkillEntry[] = []
+  // SMI-4124: parallel accumulators for trigger-quality analysis.
+  // We keep these outside PackSkillEntry to preserve the legacy response shape
+  // for callers who opt out of trigger-quality via check_trigger_quality: false.
+  const skillMeta: Array<{ name: string; description: unknown; tags?: unknown }> = []
 
   for (const dirName of skillDirNames) {
     const skillMdPath = join(skillsDir, dirName, 'SKILL.md')
@@ -242,6 +291,14 @@ export async function executeSkillPackAudit(
     }
 
     skills.push({ name, bundledVersion, registryVersion, skillId, status })
+    // Capture description/tags for SMI-4124 trigger-quality analysis. We read
+    // these out of metadata (already parsed) regardless of the flag, since the
+    // cost is trivial; the analysis itself is gated below.
+    skillMeta.push({
+      name,
+      description: metadata?.description,
+      tags: metadata?.tags,
+    })
   }
 
   skills.sort((a, b) => a.name.localeCompare(b.name))
@@ -249,11 +306,104 @@ export async function executeSkillPackAudit(
   const driftCount = skills.filter((s) => s.status === 'outdated' || s.status === 'ahead').length
   const noRegistryDataCount = skills.filter((s) => s.status === 'no_registry_data').length
 
+  // SMI-4124: Trigger-quality + namespace analysis (additive response growth).
+  // When the caller opts out, we omit both fields so the response shape matches
+  // the pre-extension contract byte-for-byte.
+  if (!checkTriggerQuality) {
+    return {
+      packPath,
+      skillCount: skills.length,
+      driftCount,
+      noRegistryDataCount,
+      skills,
+    }
+  }
+
+  const stoplist = GENERIC_TRIGGERS
+  const packDomain = derivePackDomain(packName, skillMeta, stoplist)
+
+  // Per-skill flags (sorted alphabetically by skill name to match `skills`).
+  const sortedMeta = [...skillMeta].sort((a, b) => a.name.localeCompare(b.name))
+  const triggerEntries: TriggerQualityEntry[] = []
+  const nameFlagsByToken = new Map<string, GenericWordFlag[]>()
+
+  for (const meta of sortedMeta) {
+    const flags = detectGenericTriggerWords(meta.description, meta.name, packDomain, stoplist)
+    if (flags.length > 0) {
+      triggerEntries.push({ id: meta.name, flags })
+      // Track name-level flags so we can dedup against a namespace hit below.
+      for (const flag of flags) {
+        if (flag.location === 'name') {
+          const list = nameFlagsByToken.get(flag.token) ?? []
+          list.push(flag)
+          nameFlagsByToken.set(flag.token, list)
+        }
+      }
+    }
+  }
+
+  // Namespace flag + dedup: if the pack name is generic AND a skill-name flag
+  // exists for the same root token, drop the duplicate skill-name error and
+  // fold its reason into the namespace warning's reason.
+  let namespaceFlag = detectGenericNamespace(packName, skillMeta, stoplist)
+  if (namespaceFlag) {
+    const packToken = packName.toLowerCase()
+    // Check if any skill-name flag shares a token with the pack name. Typical
+    // case: pack "skills" and a skill named "skills" — not common — but also
+    // covers partial-token overlap like pack "tools" and skill "build-tools"
+    // (namespace covers the generic concern; skill-name flag is redundant).
+    const overlappingTokens: string[] = []
+    for (const [token] of nameFlagsByToken) {
+      if (packToken === token || packToken.includes(token) || token.includes(packToken)) {
+        overlappingTokens.push(token)
+      }
+    }
+    if (overlappingTokens.length > 0) {
+      // Remove the overlapping name flags from triggerEntries.
+      for (let i = triggerEntries.length - 1; i >= 0; i--) {
+        const entry = triggerEntries[i]!
+        entry.flags = entry.flags.filter(
+          (f) => !(f.location === 'name' && overlappingTokens.includes(f.token))
+        )
+        if (entry.flags.length === 0) {
+          triggerEntries.splice(i, 1)
+        }
+      }
+      // Merge the removed-flag reasoning into the namespace reason.
+      namespaceFlag = {
+        ...namespaceFlag,
+        reason:
+          namespaceFlag.reason +
+          ` Also applies to skill(s) whose name contains the same generic token(s): ` +
+          overlappingTokens.map((t) => `"${t}"`).join(', ') +
+          ` — resolved by renaming the pack namespace.`,
+      }
+    }
+  }
+
+  let totalFlags = 0
+  let errorCount = 0
+  let warningCount = 0
+  for (const entry of triggerEntries) {
+    for (const flag of entry.flags) {
+      totalFlags++
+      if (flag.severity === 'error') errorCount++
+      else warningCount++
+    }
+  }
+
+  const triggerQuality: TriggerQuality = {
+    skills: triggerEntries,
+    summary: { totalFlags, errorCount, warningCount },
+  }
+
   return {
     packPath,
     skillCount: skills.length,
     driftCount,
     noRegistryDataCount,
     skills,
+    triggerQuality,
+    namespaceQuality: namespaceFlag,
   }
 }
