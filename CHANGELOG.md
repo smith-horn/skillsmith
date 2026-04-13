@@ -35,9 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Two-Scanner Security Model** (2026-04-04): AIDefence (prompt injection, behavioral
   threats) and SecurityScanner (SSRF, jailbreak, structural) now both run on every
   skill assessment (#451).
+- Indexer now indexes addyosmani/agent-skills as high-trust source (SMI-4122, PR #499).
 
 ### Fixed
 
+- Restored webhook_endpoints and api_keys tables via migrations 065+066 (SMI-4123, PRs #501/#503/#504). Production deployment tracked in SMI-4135.
 - **audit-standards Check 11 false positives** (2026-04-08, SMI-3987): npm overrides
   targeting exact-pinned transitive deps are no longer flagged as "ineffective" when
   npm's dedup machinery actually applied the override. Cross-references `npm ls <dep>`

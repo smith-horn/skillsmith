@@ -210,8 +210,9 @@ All tiers include:
 | `rbac_manage` | Manage RBAC roles (create, list, get, delete) | Enterprise |
 | `rbac_assign_role` | Assign or revoke roles for users | Enterprise |
 | `rbac_create_policy` | Create and manage RBAC access policies | Enterprise |
-| `webhook_configure` | Configure HMAC-SHA256 signed webhooks for skill events | Enterprise |
-| `api_key_manage` | Manage API keys for programmatic access | Enterprise |
+| `webhook_configure` | Configure HMAC-SHA256 signed webhooks for skill events (in preview — availability pending production migration) | Enterprise |
+| `api_key_manage` | Manage API keys for programmatic access (in preview — availability pending production migration) | Enterprise |
+<!-- preview-status tracked by SMI-4135 -->
 | `compliance_report` | Generate SOC2, CycloneDX SBOM, or JSON compliance reports | Enterprise |
 
 ## Tool Parameters

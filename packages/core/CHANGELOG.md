@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/core` are documented here.
 
+## [Unreleased]
+
+- **Indexer registers addyosmani/agent-skills as high-trust source** (SMI-4122, PR #499).
+
 ## v0.4.17
 
 - **PII Detection**: New PII detection module with configurable pattern matching for emails, phone numbers, API keys, and credentials.
