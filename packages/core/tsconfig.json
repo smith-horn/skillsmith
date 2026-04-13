@@ -18,6 +18,6 @@
     "incremental": true,
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src/**/*", "tests/**/*"],
+  "include": ["src/**/*", "src/**/*.json", "tests/**/*"],
   "exclude": ["node_modules", "dist"]
 }

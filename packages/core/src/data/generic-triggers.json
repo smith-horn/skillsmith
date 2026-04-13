@@ -1,0 +1,35 @@
+{
+  "triggerWords": [
+    "spec",
+    "build",
+    "ship",
+    "test",
+    "deploy",
+    "plan",
+    "review",
+    "run",
+    "check",
+    "fix",
+    "update",
+    "create",
+    "add",
+    "remove",
+    "start",
+    "stop",
+    "send",
+    "get",
+    "list"
+  ],
+  "namespaces": [
+    "agent-skills",
+    "skills",
+    "tools",
+    "utils",
+    "helpers",
+    "misc",
+    "common",
+    "general"
+  ],
+  "locale": "en",
+  "notes": "English only in v1. Follow-up for i18n tracked in SMI-4125."
+}

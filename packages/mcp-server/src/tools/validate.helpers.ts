@@ -29,6 +29,10 @@ export function parseYamlFrontmatter(content: string): Record<string, unknown> |
   let currentKey: string | null = null
   let arrayBuffer: string[] = []
   let inArray = false
+  // SMI-4124: block-scalar (description: | or >) continuation collection.
+  // YAML block scalars indent their content relative to the key; we collect
+  // any non-key, non-list line as a text line while inArray is true.
+  let inBlockScalar = false
 
   for (const line of lines) {
     const trimmedLine = line.trim()
@@ -44,11 +48,20 @@ export function parseYamlFrontmatter(content: string): Record<string, unknown> |
           .trim()
           .replace(/^["']|["']$/g, '')
         arrayBuffer.push(value)
+        inBlockScalar = false
       }
       continue
     }
 
     const colonIndex = trimmedLine.indexOf(':')
+    if (colonIndex <= 0) {
+      // SMI-4124: block-scalar continuation line (description: | style).
+      // Append as an array entry so coerceDescription can join it.
+      if (currentKey && inArray && inBlockScalar) {
+        arrayBuffer.push(trimmedLine)
+      }
+      continue
+    }
     if (colonIndex > 0) {
       if (currentKey && inArray && arrayBuffer.length > 0) {
         result[currentKey] = arrayBuffer
@@ -62,7 +75,9 @@ export function parseYamlFrontmatter(content: string): Record<string, unknown> |
         currentKey = key
         inArray = true
         arrayBuffer = []
+        inBlockScalar = value === '|' || value === '>'
       } else {
+        inBlockScalar = false
         currentKey = null
         inArray = false
 
