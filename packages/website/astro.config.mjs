@@ -1,29 +1,18 @@
-import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { defineConfig } from 'astro/config'
 import sitemap from '@astrojs/sitemap'
 import vercel from '@astrojs/vercel'
 import tailwindcss from '@tailwindcss/vite'
+import { computeFallback, getLastmodFor, loadBlogDates } from './src/lib/sitemap-lastmod.mjs'
 
 // SMI-4184: sitemap lastmod for GSC Discovered-not-indexed.
-// Build a slug → ISO date map from blog frontmatter (sync, at config eval).
-// Non-blog pages get a fixed fallback so lastmod stays stable between builds
-// (Google penalizes per-build churn).
+// Blog dates sourced from frontmatter at config eval; non-blog pages get a
+// stable fallback (Google penalizes per-build lastmod churn). Empty dir →
+// static fallback, so the config never emits Invalid Date.
 const BLOG_DIR = join(dirname(fileURLToPath(import.meta.url)), 'src/content/blog')
-const BLOG_DATES = new Map()
-for (const file of readdirSync(BLOG_DIR).filter((f) => f.endsWith('.md'))) {
-  const src = readFileSync(join(BLOG_DIR, file), 'utf8')
-  const match = src.match(/^---\n([\s\S]*?)\n---/)
-  if (!match) continue
-  const updated = match[1].match(/^updated:\s*(\S+)/m)?.[1]
-  const date = match[1].match(/^date:\s*(\S+)/m)?.[1]
-  const iso = updated || date
-  if (iso) BLOG_DATES.set(file.replace(/\.md$/, ''), new Date(iso).toISOString())
-}
-const FALLBACK_LASTMOD = new Date(
-  Math.max(...Array.from(BLOG_DATES.values()).map((d) => new Date(d).getTime()))
-).toISOString()
+const BLOG_DATES = loadBlogDates(BLOG_DIR)
+const FALLBACK_LASTMOD = computeFallback(BLOG_DATES)
 
 // https://astro.build/config
 export default defineConfig({
@@ -70,11 +59,7 @@ export default defineConfig({
           item.changefreq = 'monthly'
         }
 
-        // SMI-4184: emit <lastmod> so GSC prioritizes crawl.
-        // Blog posts → frontmatter `updated` or `date`; others → most-recent-post date.
-        const blogMatch = pathname.match(/^\/blog\/([^/]+)\/?$/)
-        const blogDate = blogMatch && BLOG_DATES.get(blogMatch[1])
-        item.lastmod = blogDate || FALLBACK_LASTMOD
+        item.lastmod = getLastmodFor(pathname, BLOG_DATES, FALLBACK_LASTMOD)
 
         return item
       },
