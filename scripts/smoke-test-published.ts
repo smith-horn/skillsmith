@@ -29,6 +29,22 @@ interface SmokeTestResult {
   totalDuration: number
 }
 
+interface ExecError extends Error {
+  stderr?: Buffer | string
+  stdout?: Buffer | string
+}
+
+function formatError(e: unknown): string {
+  if (!(e instanceof Error)) return String(e)
+  const execErr = e as ExecError
+  const parts: string[] = [e.message]
+  const stderr = execErr.stderr?.toString().trim()
+  const stdout = execErr.stdout?.toString().trim()
+  if (stderr) parts.push(`stderr: ${stderr}`)
+  if (stdout) parts.push(`stdout: ${stdout}`)
+  return parts.join('\n')
+}
+
 async function runTest(name: string, fn: () => void | Promise<void>): Promise<TestResult> {
   const start = Date.now()
   try {
@@ -39,7 +55,7 @@ async function runTest(name: string, fn: () => void | Promise<void>): Promise<Te
       name,
       passed: false,
       duration: Date.now() - start,
-      error: e instanceof Error ? e.message : String(e),
+      error: formatError(e),
     }
   }
 }
@@ -130,14 +146,16 @@ export async function smokeTestPackage(
             console.log('Resolved @skillsmith/core@' + corePkg.version);
 
             // Verify key core exports resolve (these are used by mcp-server)
-            // Source of truth: packages/core/src/index.ts (SMI-4189)
             const core = await import('@skillsmith/core');
+            // Keep in sync with packages/core/src/index.ts (SMI-4189).
+            // Matches the 'typeof === function' semantics used in the core self-test
+            // below so a broken-but-present export fails here too.
             const required = [
               'SkillDependencyRepository', 'SkillsmithApiClient',
               'HybridSearch', 'createDatabaseSync',
               'SkillRepository'
             ];
-            const missing = required.filter(fn => !(fn in core));
+            const missing = required.filter(fn => typeof core[fn] !== 'function');
             if (missing.length > 0) {
               throw new Error('Missing core exports (resolved via mcp-server deps): ' + missing.join(', '));
             }
@@ -245,7 +263,7 @@ function printResult(result: SmokeTestResult, jsonOutput: boolean): void {
     const duration = `${t.duration}ms`
     console.log(`║  ${icon} ${t.name.padEnd(20)} ${duration.padStart(8)}                       ║`)
     if (t.error) {
-      const shortError = t.error.slice(0, 45)
+      const shortError = t.error.split('\n')[0].slice(0, 45)
       console.log(`║    └─ ${shortError.padEnd(52)} ║`)
     }
   })
@@ -253,6 +271,14 @@ function printResult(result: SmokeTestResult, jsonOutput: boolean): void {
   console.log('╠══════════════════════════════════════════════════════════════╣')
   console.log(`║  Total Duration: ${(result.totalDuration + 'ms').padEnd(41)} ║`)
   console.log('╚══════════════════════════════════════════════════════════════╝')
+
+  // Emit full error output to stderr so CI operators see stderr/stdout
+  // from failed subprocesses (the 45-char box line alone hid SMI-4189).
+  result.tests
+    .filter((t) => !t.passed && t.error)
+    .forEach((t) => {
+      console.error(`\n--- ${t.name} failure ---\n${t.error}`)
+    })
 }
 
 // CLI entry point
@@ -270,8 +296,14 @@ if (process.argv[1]?.includes('smoke-test-published')) {
     process.exit(1)
   }
 
-  smokeTestPackage(pkg, version).then((result) => {
-    printResult(result, jsonOutput)
-    process.exit(result.passed ? 0 : 1)
-  })
+  smokeTestPackage(pkg, version)
+    .then((result) => {
+      printResult(result, jsonOutput)
+      process.exit(result.passed ? 0 : 1)
+    })
+    .catch((err: unknown) => {
+      console.error('smoke-test-published: unexpected failure')
+      console.error(err instanceof Error ? (err.stack ?? err.message) : String(err))
+      process.exit(1)
+    })
 }
