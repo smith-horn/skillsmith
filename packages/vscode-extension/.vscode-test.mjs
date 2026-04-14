@@ -5,7 +5,7 @@ export default defineConfig({
   version: 'stable',
   workspaceFolder: './',
   mocha: {
-    ui: 'bdd',
+    ui: 'tdd',
     timeout: 20000,
   },
 })
