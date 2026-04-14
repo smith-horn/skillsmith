@@ -24,7 +24,7 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
 
   private installedSkills: SkillItemData[] = []
   private availableSkills: SkillItemData[] = []
-  private isLoading = false
+  private loadingPromise: Promise<void> | undefined
   private lastSearchQuery = ''
 
   constructor() {
@@ -110,6 +110,25 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   }
 
   /**
+   * Returns installed skills in a form suitable for quickPick consumers
+   * (e.g., uninstall/create commands) without requiring a tree selection.
+   * Data is refreshed via `refresh()`; callers awaiting fresh state should
+   * call `await provider.refreshAndWait()` first.
+   */
+  getInstalledSkills(): readonly SkillItemData[] {
+    return this.installedSkills
+  }
+
+  /**
+   * Triggers a reload and resolves when the installed-skills list is current.
+   * Preferred over `refresh()` when callers need to observe the post-refresh
+   * state (e.g., a command that enumerates after uninstalling).
+   */
+  async refreshAndWait(): Promise<void> {
+    await this.loadInstalledSkills()
+  }
+
+  /**
    * Gets the root level groups
    */
   private getRootGroups(): SkillTreeItem[] {
@@ -147,15 +166,23 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
   }
 
   /**
-   * Loads installed skills from the filesystem
+   * Loads installed skills from the filesystem. Concurrent callers (including
+   * the constructor + a subsequent `refreshAndWait`) share the in-flight
+   * promise rather than returning immediately, so callers can reliably await
+   * the current state.
    */
   private async loadInstalledSkills(): Promise<void> {
-    if (this.isLoading) {
-      return
+    if (this.loadingPromise) {
+      return this.loadingPromise
     }
 
-    this.isLoading = true
+    this.loadingPromise = this.doLoadInstalledSkills().finally(() => {
+      this.loadingPromise = undefined
+    })
+    return this.loadingPromise
+  }
 
+  private async doLoadInstalledSkills(): Promise<void> {
     try {
       const config = vscode.workspace.getConfiguration('skillsmith')
       let skillsDir = config.get<string>('skillsDirectory') || '~/.claude/skills'
@@ -211,7 +238,6 @@ export class SkillTreeDataProvider implements vscode.TreeDataProvider<SkillTreeI
       console.error('[Skillsmith] Failed to load installed skills:', error)
       this.installedSkills = []
     } finally {
-      this.isLoading = false
       this._onDidChangeTreeData.fire()
     }
   }

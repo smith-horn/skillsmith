@@ -96,7 +96,7 @@
     "viewsWelcome": [
       {
         "view": "skillsmith.skillsView",
-        "contents": "No skills found.\n[Search Skills](command:skillsmith.searchSkills)"
+        "contents": "No skills installed yet.\n[Search Skills](command:skillsmith.searchSkills)\n[Create a Skill](command:skillsmith.createSkill)"
       }
     ],
     "menus": {
