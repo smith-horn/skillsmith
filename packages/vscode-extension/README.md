@@ -44,6 +44,20 @@ All settings are under the `skillsmith.*` namespace in VS Code Settings.
 
 Node.js 18+ is required for the MCP server connection. The extension itself runs without Node.js.
 
+## Testing
+
+Unit tests run inside the Skillsmith Docker dev container:
+
+```bash
+docker exec skillsmith-dev-1 npm test -w packages/vscode-extension
+```
+
+Integration tests use `@vscode/test-electron`, which launches a real VS Code Extension Host. Electron has no display server inside the container, so integration tests run on the host (per ADR-113, the VS Code extension is host-only):
+
+```bash
+npm --prefix packages/vscode-extension run test:integration
+```
+
 ## Links
 
 - Website: [skillsmith.app](https://skillsmith.app)

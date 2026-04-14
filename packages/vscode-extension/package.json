@@ -177,6 +177,7 @@
     "lint": "eslint src --ext ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
+    "test:integration": "vscode-test",
     "package": "vsce package --no-dependencies",
     "package:check": "vsce package --no-dependencies --out skillsmith.vsix && node scripts/validate-vsix.mjs skillsmith.vsix && rm skillsmith.vsix"
   },
@@ -188,8 +189,10 @@
   "devDependencies": {
     "@types/cross-spawn": "6.0.6",
     "@types/node": "^22.15.0",
+    "@types/mocha": "10.0.10",
     "@types/sanitize-html": "2.13.0",
     "@types/vscode": "1.110.0",
+    "@vscode/test-electron": "2.5.2",
     "@vscode/vsce": "2.32.0",
     "esbuild": "0.27.2",
     "typescript": "5.9.3",

@@ -4,6 +4,12 @@ All notable changes to the Skillsmith VS Code extension will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `@vscode/test-electron` integration test harness. Integration tests run on host (not Docker) per ADR-113. New script: `npm run test:integration`. (SMI-4194)
+
 ## [0.1.6] - 2026-04-02
 
 ### Security
