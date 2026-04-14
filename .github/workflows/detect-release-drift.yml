@@ -1,0 +1,67 @@
+# SMI-4191: hourly drift detection between npm versions and GitHub Releases.
+# Heals the local `npm publish --ignore-scripts -w` fallback path (CLAUDE.md)
+# that bypasses publish.yml and therefore never creates a GH Release.
+# See ADR-114 and docs/internal/implementation/smi-4144-release-cadence.md.
+
+name: Detect Release Drift
+
+on:
+  schedule:
+    # Every hour at :15, avoiding the top of the hour when scheduled workflows
+    # can contend for runners (indexer at :00, metadata at :30).
+    - cron: '15 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Report drift without creating releases'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  # Serialize self-runs so a slow run never overlaps the next tick.
+  group: release-drift
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: Detect and heal drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: '22'
+
+      - name: Run drift detector
+        id: detect
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          DRY_RUN_FLAG=""
+          if [ "${{ github.event.inputs.dry_run || 'false' }}" = "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+          echo "## Drift Detector Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '| Package | Local | Action | Reason |' >> "$GITHUB_STEP_SUMMARY"
+          echo '|---------|-------|--------|--------|' >> "$GITHUB_STEP_SUMMARY"
+          node scripts/detect-release-drift.mjs $DRY_RUN_FLAG | tee /tmp/drift.ndjson
+          while IFS= read -r line; do
+            pkg=$(echo "$line" | jq -r .package)
+            local=$(echo "$line" | jq -r .localVersion)
+            action=$(echo "$line" | jq -r .action)
+            reason=$(echo "$line" | jq -r .reason)
+            echo "| $pkg | $local | $action | $reason |" >> "$GITHUB_STEP_SUMMARY"
+          done < /tmp/drift.ndjson
