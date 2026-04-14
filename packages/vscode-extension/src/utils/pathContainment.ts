@@ -22,7 +22,21 @@ export class PathOutsideRoot extends Error {
  * selected skill directory must call this before `fs.rm` / `fs.writeFile`.
  */
 export async function assertInsideRoot(target: string, root: string): Promise<void> {
-  const [resolvedTarget, resolvedRoot] = await Promise.all([fs.realpath(target), fs.realpath(root)])
+  // Resolve root first — a bad root is always a caller error and should surface as-is.
+  const resolvedRoot = await fs.realpath(root)
+
+  // Resolve target. If it does not exist yet (e.g. an install destination that will be
+  // created shortly after this check), realpath throws ENOENT. We treat that as a failed
+  // containment check: we cannot verify the path is safe, so we refuse. Callers that need
+  // to install into a new directory must resolve the parent and append the leaf segment
+  // themselves rather than calling assertInsideRoot on a not-yet-created path.
+  let resolvedTarget: string
+  try {
+    resolvedTarget = await fs.realpath(target)
+  } catch {
+    throw new PathOutsideRoot(target, resolvedRoot)
+  }
+
   const rel = path.relative(resolvedRoot, resolvedTarget)
   if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
     throw new PathOutsideRoot(resolvedTarget, resolvedRoot)

@@ -60,7 +60,7 @@ Minimum coverage:
 - Happy path returns the typed shape.
 - Tier-denied response maps to `McpToolError` with `code: 'TierDenied'`.
 - Unknown-tool response maps to `McpToolError` with `code: 'UnknownTool'`.
-- MCP disconnect throws the existing `'MCP client not connected'` error.
+- MCP disconnect throws an error with message `'MCP client not connected'` (to be thrown by `McpClient` when `callTool` is invoked before a successful `connect()`).
 
 ## 5. When NOT to add a wrapper
 

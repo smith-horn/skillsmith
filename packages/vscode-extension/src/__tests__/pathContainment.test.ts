@@ -49,8 +49,13 @@ describe('assertInsideRoot', () => {
     await expect(assertInsideRoot(link, root)).rejects.toBeInstanceOf(PathOutsideRoot)
   })
 
+  it('rejects a non-existent target (cannot verify containment)', async () => {
+    const nonExistent = path.join(root, 'does-not-exist')
+    await expect(assertInsideRoot(nonExistent, root)).rejects.toBeInstanceOf(PathOutsideRoot)
+  })
+
   it('accepts when root itself is a symlink resolved to a real dir', async () => {
-    const symlinkRoot = path.join(os.tmpdir(), `skillsmith-sym-${Date.now()}`)
+    const symlinkRoot = path.join(os.tmpdir(), `skillsmith-sym-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     await fs.symlink(root, symlinkRoot)
     try {
       const child = path.join(root, 'child')
