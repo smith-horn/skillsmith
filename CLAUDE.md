@@ -320,6 +320,8 @@ docker exec skillsmith-dev-1 npx tsx scripts/prepare-release.ts --dry-run --all=
 
 The script updates all 6 version locations (package.json, VERSION constants, server.json), generates changelog entries, and creates a commit. See `docs/internal/implementation/release-automation.md` for details.
 
+**Release cadence**: weekly (Sunday 03:00 UTC) OR when root `CHANGELOG.md [Unreleased]` ≥ 15 entries. Automation per [ADR-114](docs/internal/adr/114-release-cadence-and-gh-release-alignment.md); contributor-facing docs in [CONTRIBUTING.md § Releases](CONTRIBUTING.md#releases).
+
 **Publishing — CI workflow** (preferred, avoids local npm auth/OTP issues):
 
 ```bash

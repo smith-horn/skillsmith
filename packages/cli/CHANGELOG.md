@@ -2,13 +2,17 @@
 
 All notable changes to `@skillsmith/cli` are documented here.
 
+## [Unreleased]
+
+_No unreleased changes._
+
 ## v0.5.4
 
-- Version bump
+- **Fix**: Version bump to align with core 0.5.1 and mcp-server 0.4.9 floors (#548).
 
 ## v0.5.3
 
-- **Docs**: bump internal submodule for SMI-4181/4184 GSC audit plan (#539)
+- **Docs**: bump internal submodule for SMI-4181/4184 GSC audit plan (#539).
 
 ## v0.5.2 (2026-03-24)
 

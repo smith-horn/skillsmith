@@ -2,19 +2,20 @@
 
 All notable changes to `@skillsmith/mcp-server` are documented here.
 
+## [Unreleased]
+
+- **Feature**: SMI-4124 `skill_pack_audit` trigger-quality + namespace collision checks (PR #505).
+
 ## v0.4.9
 
-- Version bump
+- **Feature**: SMI-4183 emit `webhook:subscription_tier_changed` audit events from subscription edge function (#538).
 
 ## v0.4.8
 
-- **Docs**: bump internal submodule for SMI-4181/4184 GSC audit plan (#539)
-- **Docs**: sync website api.astro + mcp-server CHANGELOG (SMI-4140, SMI-4142) (#518)
-- **Docs**: SMI-4122/4123 sync — mcp-server README + CHANGELOGs (#514)
-
-## [Unreleased]
-
-- **Fixed**: `webhook_configure` and `api_key_manage` backing tables restored (SMI-4123). In preview until production migration (SMI-4135).
+- **Docs**: bump internal submodule for SMI-4181/4184 GSC audit plan (#539).
+- **Docs**: sync website api.astro + mcp-server CHANGELOG (SMI-4140, SMI-4142) (#518).
+- **Docs**: SMI-4122/4123 sync — mcp-server README + CHANGELOGs (#514).
+- **Fixed**: `webhook_configure` and `api_key_manage` backing tables restored (SMI-4123, PRs #501/#503/#504). In preview until production migration (SMI-4135).
 
 ## v0.4.7
 

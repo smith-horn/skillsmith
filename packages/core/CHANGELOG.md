@@ -2,18 +2,19 @@
 
 All notable changes to `@skillsmith/core` are documented here.
 
+## [Unreleased]
+
+- **SMI-4124**: `skill_pack_audit` trigger-quality + namespace collision checks (PR #505).
+
 ## v0.5.1
 
-- Version bump
+- **Fix**: SMI-4182 suppress CodeQL false positive on telemetry hash (#550 retro).
 
 ## v0.4.18
 
-- **Fix**: SMI-4182 suppress CodeQL false positive on telemetry hash
-- **Feature**: SMI-4120 response caching + Cache-Control (#516)
-
-## [Unreleased]
-
-- **Indexer registers addyosmani/agent-skills as high-trust source** (SMI-4122, PR #499).
+- **Fix**: SMI-4182 suppress CodeQL false positive on telemetry hash.
+- **Feature**: SMI-4120 response caching + Cache-Control (#516).
+- **Feature**: Indexer registers addyosmani/agent-skills as high-trust source (SMI-4122, PR #499).
 
 ## v0.4.17
 
