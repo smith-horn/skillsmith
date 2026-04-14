@@ -187,6 +187,16 @@
           "type": "number",
           "default": 30000,
           "description": "Connection timeout in milliseconds"
+        },
+        "skillsmith.telemetry.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Send anonymous usage telemetry. Also respects VS Code's global `telemetry.telemetryLevel` setting — either being off disables telemetry."
+        },
+        "skillsmith.telemetryEndpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Telemetry endpoint URL (leave empty to disable network calls). Events POST here as {event, anonymous_id, metadata}."
         }
       }
     }

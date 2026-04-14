@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - `viewsWelcome` entry for the skills view now offers both Search and Create actions. (SMI-4194)
 - `skillsmith.uninstallSkill` command — uninstalls an installed skill via the command palette quickPick or the tree view context menu. Destructive action requires modal confirmation showing the skill id and resolved path. Uses shared `assertInsideRoot` to refuse traversal and symlink-escape. Falls back to `fs.rm` when the MCP server is disconnected. (SMI-4195, closes #485)
 - `skillsmith.createSkill` command — 4-step wizard (author → name → description → type) that delegates to the `@skillsmith/cli` via `cross-spawn`. If the CLI is not on `$PATH`, surfaces an actionable error with a one-click copy of the install command and a docs link. Opens the new `SKILL.md` on success and refreshes the installed-skills tree. (SMI-4196, closes #484)
+- Anonymous usage telemetry for parity commands. Respects VS Code's `telemetry.telemetryLevel` and a new `skillsmith.telemetry.enabled` setting (default `true`). Anonymous cohort UUID stored in extension `globalState` — never tied to user accounts. Fire-and-forget POST to `skillsmith.telemetryEndpoint` with a 2s timeout; no endpoint configured by default, so telemetry is a no-op until an operator sets one. Events emitted: `vscode_create_{start,complete,failed,cancelled}` and `vscode_uninstall_{start,complete,failed,cancelled}`. (SMI-4194)
 
 ## [0.1.6] - 2026-04-02
 

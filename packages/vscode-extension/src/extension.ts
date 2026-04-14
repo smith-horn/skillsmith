@@ -11,6 +11,7 @@ import { registerSearchCommand } from './commands/searchSkills.js'
 import { registerQuickInstallCommand } from './commands/installCommand.js'
 import { registerUninstallCommand } from './commands/uninstallCommand.js'
 import { registerCreateSkillCommand } from './commands/createSkillCommand.js'
+import { initializeTelemetry } from './services/Telemetry.js'
 import { SkillDetailPanel } from './views/SkillDetailPanel.js'
 import { SkillService } from './services/SkillService.js'
 import {
@@ -38,6 +39,11 @@ let skillDiagnosticsProvider: SkillDiagnosticsProvider
  */
 export function activate(context: vscode.ExtensionContext): void {
   console.log('[Skillsmith] Extension is now active')
+
+  // Initialize anonymous telemetry (SMI-4194). No-op if the user opted out
+  // or the default telemetry endpoint is not configured.
+  const ext = vscode.extensions.getExtension('skillsmith.skillsmith-vscode')
+  initializeTelemetry(context, (ext?.packageJSON as { version?: string })?.version ?? 'unknown')
 
   // Initialize MCP client with configuration from settings
   initializeMcpClientFromSettings()

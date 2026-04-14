@@ -48,6 +48,10 @@ vi.mock('../services/installUtils.js', () => ({
   getSkillsDirectory: vi.fn(() => globalThis.__TEMP_ROOT__ as string),
 }))
 
+vi.mock('../services/Telemetry.js', () => ({
+  track: vi.fn(),
+}))
+
 declare global {
   var __TEMP_ROOT__: string
 }

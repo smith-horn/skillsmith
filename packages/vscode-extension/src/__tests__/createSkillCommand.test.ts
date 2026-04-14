@@ -68,6 +68,10 @@ vi.mock('../sidebar/SkillTreeDataProvider.js', () => ({
   },
 }))
 
+vi.mock('../services/Telemetry.js', () => ({
+  track: vi.fn(),
+}))
+
 describe('createSkillCommand (SMI-4196)', () => {
   let handler: () => Promise<void>
 

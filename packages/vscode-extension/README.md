@@ -44,6 +44,18 @@ All settings are under the `skillsmith.*` namespace in VS Code Settings.
 
 Node.js 18+ is required for the MCP server connection. The extension itself runs without Node.js.
 
+## Privacy
+
+The extension emits anonymous usage events for the Create Skill and Uninstall Skill commands (SMI-4194) when — and only when — all of these are true:
+
+- VS Code's global `telemetry.telemetryLevel` is not `off`.
+- The `skillsmith.telemetry.enabled` setting is `true` (default).
+- The `skillsmith.telemetryEndpoint` setting is a non-empty URL (no default — telemetry is off out of the box).
+
+Events carry an anonymous cohort UUID generated on first activation and persisted in the extension's `globalState`. The UUID is never tied to a user account, email, or any PII. Event payloads include only the event name, extension version, and VS Code version. Network calls are fire-and-forget with a 2-second timeout.
+
+Disable at any time by setting `skillsmith.telemetry.enabled: false` or by clearing `skillsmith.telemetryEndpoint`.
+
 ## Testing
 
 Unit tests run inside the Skillsmith Docker dev container:
