@@ -55,6 +55,11 @@ export async function promptIfOutdated(
     'Copy update command'
   )
   if (selection === 'Copy update command') {
-    await deps.clipboardWrite(UPDATE_COMMAND)
+    try {
+      await deps.clipboardWrite(UPDATE_COMMAND)
+    } catch {
+      // Clipboard write can fail (e.g. permission denied on Linux). The user
+      // already saw the command text in the toast — swallow silently.
+    }
   }
 }

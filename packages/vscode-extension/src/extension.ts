@@ -70,24 +70,35 @@ export function activate(context: vscode.ExtensionContext): void {
   // SMI-4194: non-blocking min-server-version check on each connect.
   // `alreadyPromptedServerVersion` prevents repeat toasts while the same
   // outdated server stays connected; a disconnect/reconnect clears the flag.
+  //
+  // NOTE: `registerVersionCheck` must be called again whenever `initializeMcpClient`
+  // replaces the singleton (e.g. on settings change), otherwise the listener is
+  // bound to the discarded instance and version checks silently stop working.
   let alreadyPromptedServerVersion: string | null = null
-  const versionCheckSub = getMcpClient().onStatusChange((status) => {
-    if (status !== 'connected') {
-      alreadyPromptedServerVersion = null
-      return
-    }
-    const version = getMcpClient().getServerVersion()
-    if (version === null || version === alreadyPromptedServerVersion) return
-    alreadyPromptedServerVersion = version
-    const minVersion = vscode.workspace
-      .getConfiguration('skillsmith')
-      .get<string>('mcp.minServerVersion', '0.4.9')
-    void promptIfOutdated(version, minVersion, {
-      showInformationMessage: vscode.window.showInformationMessage.bind(vscode.window),
-      clipboardWrite: (text) => vscode.env.clipboard.writeText(text),
+  let versionCheckSub: vscode.Disposable | undefined
+
+  function registerVersionCheck(): void {
+    versionCheckSub?.dispose()
+    versionCheckSub = getMcpClient().onStatusChange((status) => {
+      if (status !== 'connected') {
+        alreadyPromptedServerVersion = null
+        return
+      }
+      const version = getMcpClient().getServerVersion()
+      if (version === null || version === alreadyPromptedServerVersion) return
+      alreadyPromptedServerVersion = version
+      const minVersion = vscode.workspace
+        .getConfiguration('skillsmith')
+        .get<string>('mcp.minServerVersion', '0.4.9')
+      void promptIfOutdated(version, minVersion, {
+        showInformationMessage: vscode.window.showInformationMessage.bind(vscode.window),
+        clipboardWrite: (text) => vscode.env.clipboard.writeText(text),
+      })
     })
-  })
-  context.subscriptions.push(versionCheckSub)
+    context.subscriptions.push(versionCheckSub)
+  }
+
+  registerVersionCheck()
 
   // Register MCP commands
   registerMcpCommands(context)
@@ -175,6 +186,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeConfiguration((e: vscode.ConfigurationChangeEvent) => {
       if (e.affectsConfiguration('skillsmith.mcp')) {
         initializeMcpClientFromSettings()
+        registerVersionCheck()
         void connectWithProgress()
       }
     })

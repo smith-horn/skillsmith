@@ -80,4 +80,15 @@ describe('promptIfOutdated', () => {
     })
     expect(show).not.toHaveBeenCalled()
   })
+
+  it('does not throw when clipboard write is rejected', async () => {
+    const show = vi.fn().mockResolvedValue('Copy update command')
+    const clip = vi.fn().mockRejectedValue(new Error('clipboard permission denied'))
+    await expect(
+      promptIfOutdated('0.4.8', '0.4.9', {
+        showInformationMessage: show as never,
+        clipboardWrite: clip,
+      })
+    ).resolves.toBeUndefined()
+  })
 })
