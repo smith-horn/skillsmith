@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skill assessment (#451).
 - Indexer now indexes addyosmani/agent-skills as high-trust source (SMI-4122, PR #499).
 - **Skill pack audit trigger-quality + namespace checks** (SMI-4124, PR #505): `skill_pack_audit` MCP tool now detects low-quality trigger phrases and namespace collisions in installed skill packs. Surfaces actionable findings before publish.
+- **VS Code extension MCP feature parity Wave 1** (SMI-4194, PR #562): `skillsmith.uninstallSkill` command (palette + tree-view context menu, modal confirmation, symlink-escape protection via `assertInsideRoot`, MCP-first with `fs.rm` fallback); `skillsmith.createSkill` 4-step wizard (delegates to `@skillsmith/cli`, actionable error if CLI absent); anonymous usage telemetry with 3-gate opt-out (`vscode.env.isTelemetryEnabled`, `skillsmith.telemetry.enabled`, no hardcoded endpoint); non-blocking MCP server min-version check with copy-to-clipboard action; Get Started walkthrough (Discover / Install / Author steps); `audit:standards` Checks 27 (skillNameValidation codegen drift) and 28 (command–test pairing) added to CI. `events` edge function `ALLOWED_EVENTS` allowlist and `sanitizeMetadata` extended for VS Code telemetry keys.
 
 ### Fixed
 
