@@ -24,6 +24,8 @@ export default defineConfig({
       'supabase/functions/indexer/**',
       // Website tests require Astro tsconfig
       'packages/website/**',
+      // VS Code integration tests require the `vscode` module — run via @vscode/test-electron
+      'packages/vscode-extension/src/__tests__/integration/**',
     ],
   },
 })

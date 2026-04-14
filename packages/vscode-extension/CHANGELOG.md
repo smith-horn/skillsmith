@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-14
+
 ### Added
 
 - `@vscode/test-electron` integration test harness. Integration tests run on host (not Docker) per ADR-113. New script: `npm run test:integration`. (SMI-4194)
