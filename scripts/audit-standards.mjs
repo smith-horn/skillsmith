@@ -1799,6 +1799,25 @@ try {
   fail(`PUBLISHABLE_PACKAGES_JSON parity check error: ${e.message}`)
 }
 
+// 27. VS Code skillNameValidation codegen drift (SMI-4194)
+console.log(`\n${BOLD}27. VS Code skillNameValidation Codegen Drift (SMI-4194)${RESET}`)
+{
+  const codegenScript = 'scripts/sync-skill-name-validation.mjs'
+  if (!existsSync(codegenScript)) {
+    warn('Codegen script not found — skipping drift check')
+  } else {
+    try {
+      execSync(`node ${codegenScript} --check`, { stdio: 'pipe' })
+      pass('skillNameValidation.ts is in sync with CLI source')
+    } catch (e) {
+      fail(
+        'skillNameValidation.ts is out of sync with packages/cli/src/utils/skill-name.ts',
+        'Run: node scripts/sync-skill-name-validation.mjs'
+      )
+    }
+  }
+}
+
 // npm override drift check: @modelcontextprotocol/sdk override "." must match mcp-server range
 console.log(`\n${BOLD}Override Drift: @modelcontextprotocol/sdk${RESET}`)
 try {

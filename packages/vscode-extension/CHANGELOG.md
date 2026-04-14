@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - `@vscode/test-electron` integration test harness. Integration tests run on host (not Docker) per ADR-113. New script: `npm run test:integration`. (SMI-4194)
+- Shared `assertInsideRoot` path-containment helper with realpath + `path.relative` and symlink-escape protection. Used by forthcoming uninstall and create commands. (SMI-4194)
+- `skillNameValidation` utility — codegen'd from `@skillsmith/cli` via `scripts/sync-skill-name-validation.mjs`; `audit:standards` enforces drift. (SMI-4194)
+- `src/mcp/McpClient.patterns.md` — wrapper conventions doc for Wave 2–4 tool additions. (SMI-4194)
 
 ## [0.1.6] - 2026-04-02
 
