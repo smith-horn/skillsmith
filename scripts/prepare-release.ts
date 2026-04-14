@@ -132,7 +132,7 @@ Options:
   --no-changelog        Skip changelog generation
   --no-commit           Write files but don't create git commit
   --check               Audit-only: run npm collision check, no writes, exit non-zero on conflict
-  --allow-downgrade     Permit bumping to a semver <= npm latest (rare; never overrides equals-published)
+  --allow-downgrade     Permit bumping to a semver <= highest published (rare; never overrides equals-published)
   --help                Show this help
 `)
 }
@@ -282,7 +282,7 @@ export function checkVersionCollision(
     // Rule 3: equals-published (or equals-latest) — unconditional refuse.
     if (isPublished || equalsLatest) {
       errors.push(
-        `${spec.name}: proposed ${newVersion} is already published on npm (npm latest: ${latest}). ` +
+        `${spec.name}: proposed ${newVersion} is already published on npm (highest published: ${latest}). ` +
           `Different content under the same version is the failure mode this guard exists to prevent. ` +
           `See scripts/prepare-release.ts and the release runbook: revert to release, do not override.`
       )
@@ -291,7 +291,9 @@ export function checkVersionCollision(
 
     const cmp = semver.compare(newVersion, latest)
     if (cmp > 0) {
-      report.push(`  ${spec.name}: proposed ${newVersion} > npm latest ${latest} → proceed`)
+      report.push(
+        `  ${spec.name}: proposed ${newVersion} > highest published ${latest} → proceed`
+      )
       continue
     }
 
@@ -299,8 +301,9 @@ export function checkVersionCollision(
     const suggested = semver.inc(latest, 'patch') ?? latest
     if (!opts.allowDowngrade) {
       errors.push(
-        `${spec.name}: proposed ${newVersion} <= npm latest ${latest} (package: ${spec.name}, ` +
-          `proposed: ${newVersion}, npm latest: ${latest}). ` +
+        `${spec.name}: proposed ${newVersion} <= highest published ${latest} (package: ${spec.name}, ` +
+          `proposed: ${newVersion}, highest published: ${latest}). ` +
+          `Note: "highest published" spans all dist-tags — not just "latest" — because npm refuses to republish any existing semver. ` +
           `Suggested next-available target: ${suggested}. ` +
           `To override: pass --allow-downgrade (rare; only when intentionally reusing a ` +
           `reserved-but-unpublished semver).`
@@ -308,7 +311,7 @@ export function checkVersionCollision(
       continue
     }
     report.push(
-      `  ${spec.name}: proposed ${newVersion} <= npm latest ${latest} (--allow-downgrade set) → proceed`
+      `  ${spec.name}: proposed ${newVersion} <= highest published ${latest} (--allow-downgrade set) → proceed`
     )
   }
 
