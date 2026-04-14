@@ -111,6 +111,39 @@
         "contents": "No skills installed yet.\n[Search Skills](command:skillsmith.searchSkills)\n[Create a Skill](command:skillsmith.createSkill)"
       }
     ],
+    "walkthroughs": [
+      {
+        "id": "skillsmith.getStarted",
+        "title": "Get Started with Skillsmith",
+        "description": "Discover, install, and author Claude Code skills without leaving VS Code.",
+        "steps": [
+          {
+            "id": "skillsmith.walkthrough.discover",
+            "title": "Discover skills",
+            "description": "Search the Skillsmith registry by keyword, category, or trust tier.\n[Search Skills](command:skillsmith.searchSkills)",
+            "media": {
+              "markdown": "resources/walkthrough/discover.md"
+            }
+          },
+          {
+            "id": "skillsmith.walkthrough.install",
+            "title": "Install a skill",
+            "description": "Install any skill to `~/.claude/skills` with one click from the Search Results view.\n[Open Skillsmith Sidebar](command:workbench.view.extension.skillsmith)",
+            "media": {
+              "markdown": "resources/walkthrough/install.md"
+            }
+          },
+          {
+            "id": "skillsmith.walkthrough.author",
+            "title": "Create your own skill",
+            "description": "Scaffold a new skill via the Skillsmith CLI — author, name, description, type.\n[Create Skill](command:skillsmith.createSkill)",
+            "media": {
+              "markdown": "resources/walkthrough/create.md"
+            }
+          }
+        ]
+      }
+    ],
     "menus": {
       "view/title": [
         {

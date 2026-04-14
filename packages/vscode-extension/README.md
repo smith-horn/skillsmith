@@ -39,6 +39,9 @@ All settings are under the `skillsmith.*` namespace in VS Code Settings.
 | `skillsmith.mcp.autoConnect` | `boolean` | `true` | Automatically connect to MCP server on extension activation |
 | `skillsmith.mcp.autoReconnect` | `boolean` | `true` | Automatically reconnect when connection is lost |
 | `skillsmith.mcp.connectionTimeout` | `number` | `30000` | Connection timeout in milliseconds |
+| `skillsmith.mcp.minServerVersion` | `string` | `"0.4.9"` | Minimum required MCP server version. Older servers trigger a non-blocking update prompt. |
+| `skillsmith.telemetry.enabled` | `boolean` | `true` | Opt-out for anonymous usage telemetry. Also respects VS Code's global `telemetry.telemetryLevel`. |
+| `skillsmith.telemetryEndpoint` | `string` | `""` | Telemetry POST target. Empty (default) disables all network calls. |
 
 ## Requirements
 
