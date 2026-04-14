@@ -120,6 +120,13 @@ export function activate(context: vscode.ExtensionContext): void {
   registerSearchCommand(context, skillSearchProvider, skillService)
   registerQuickInstallCommand(context, skillService)
 
+  // Register create skill command (stub — full implementation in Wave 1 Commit 5)
+  const createSkillCommand = vscode.commands.registerCommand('skillsmith.createSkill', () => {
+    void vscode.window.showInformationMessage('Create Skill is coming soon in the next update.')
+  })
+
+  context.subscriptions.push(createSkillCommand)
+
   // Register refresh command
   const refreshCommand = vscode.commands.registerCommand('skillsmith.refreshSkills', () => {
     skillTreeDataProvider.refresh()

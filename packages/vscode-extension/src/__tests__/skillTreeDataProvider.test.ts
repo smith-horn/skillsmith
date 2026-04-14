@@ -32,11 +32,21 @@ vi.mock('vscode', () => {
         this.value += s
         return this
       }
+      appendText(s: string) {
+        this.value += s
+        return this
+      }
       appendCodeblock() {
         return this
       }
     },
     ThemeIcon: class {
+      constructor(
+        public id: string,
+        public color?: unknown
+      ) {}
+    },
+    ThemeColor: class {
       constructor(public id: string) {}
     },
     Uri: { parse: (s: string) => ({ toString: () => s }) },

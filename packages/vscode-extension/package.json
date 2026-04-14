@@ -67,6 +67,12 @@
         "title": "Connect/Reconnect to MCP Server",
         "category": "Skillsmith",
         "icon": "$(plug)"
+      },
+      {
+        "command": "skillsmith.createSkill",
+        "title": "Create Skill",
+        "category": "Skillsmith",
+        "icon": "$(add)"
       }
     ],
     "viewsContainers": {
