@@ -10,6 +10,7 @@ import { SkillSearchProvider } from './providers/SkillSearchProvider.js'
 import { registerSearchCommand } from './commands/searchSkills.js'
 import { registerQuickInstallCommand } from './commands/installCommand.js'
 import { registerUninstallCommand } from './commands/uninstallCommand.js'
+import { registerCreateSkillCommand } from './commands/createSkillCommand.js'
 import { SkillDetailPanel } from './views/SkillDetailPanel.js'
 import { SkillService } from './services/SkillService.js'
 import {
@@ -121,13 +122,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerSearchCommand(context, skillSearchProvider, skillService)
   registerQuickInstallCommand(context, skillService)
   registerUninstallCommand(context, skillTreeDataProvider)
-
-  // Register create skill command (stub — full implementation in Wave 1 Commit 5)
-  const createSkillCommand = vscode.commands.registerCommand('skillsmith.createSkill', () => {
-    void vscode.window.showInformationMessage('Create Skill is coming soon in the next update.')
-  })
-
-  context.subscriptions.push(createSkillCommand)
+  registerCreateSkillCommand(context, skillTreeDataProvider)
 
   // Register refresh command
   const refreshCommand = vscode.commands.registerCommand('skillsmith.refreshSkills', () => {
