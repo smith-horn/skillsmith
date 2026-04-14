@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - `src/mcp/McpClient.patterns.md` — wrapper conventions doc for Wave 2–4 tool additions. (SMI-4194)
 - `SkillTreeDataProvider.getInstalledSkills()` and `refreshAndWait()` public API, consumed by forthcoming uninstall command quickPick. (SMI-4194)
 - `viewsWelcome` entry for the skills view now offers both Search and Create actions. (SMI-4194)
+- `skillsmith.uninstallSkill` command — uninstalls an installed skill via the command palette quickPick or the tree view context menu. Destructive action requires modal confirmation showing the skill id and resolved path. Uses shared `assertInsideRoot` to refuse traversal and symlink-escape. Falls back to `fs.rm` when the MCP server is disconnected. (SMI-4195, closes #485)
 
 ## [0.1.6] - 2026-04-02
 

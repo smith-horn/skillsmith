@@ -9,6 +9,7 @@ import { SkillTreeDataProvider } from './sidebar/SkillTreeDataProvider.js'
 import { SkillSearchProvider } from './providers/SkillSearchProvider.js'
 import { registerSearchCommand } from './commands/searchSkills.js'
 import { registerQuickInstallCommand } from './commands/installCommand.js'
+import { registerUninstallCommand } from './commands/uninstallCommand.js'
 import { SkillDetailPanel } from './views/SkillDetailPanel.js'
 import { SkillService } from './services/SkillService.js'
 import {
@@ -119,6 +120,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // Register commands — pass skillService to consumers
   registerSearchCommand(context, skillSearchProvider, skillService)
   registerQuickInstallCommand(context, skillService)
+  registerUninstallCommand(context, skillTreeDataProvider)
 
   // Register create skill command (stub — full implementation in Wave 1 Commit 5)
   const createSkillCommand = vscode.commands.registerCommand('skillsmith.createSkill', () => {

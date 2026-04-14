@@ -73,6 +73,12 @@
         "title": "Create Skill",
         "category": "Skillsmith",
         "icon": "$(add)"
+      },
+      {
+        "command": "skillsmith.uninstallSkill",
+        "title": "Uninstall Skill",
+        "category": "Skillsmith",
+        "icon": "$(trash)"
       }
     ],
     "viewsContainers": {
@@ -127,6 +133,15 @@
         {
           "command": "skillsmith.viewSkillDetails",
           "when": "viewItem == skill"
+        },
+        {
+          "command": "skillsmith.uninstallSkill",
+          "when": "view == skillsmith.skillsView && viewItem == installedSkill",
+          "group": "inline"
+        },
+        {
+          "command": "skillsmith.uninstallSkill",
+          "when": "view == skillsmith.skillsView && viewItem == installedSkill"
         }
       ]
     },
