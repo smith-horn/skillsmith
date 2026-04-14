@@ -188,6 +188,11 @@
           "default": 30000,
           "description": "Connection timeout in milliseconds"
         },
+        "skillsmith.mcp.minServerVersion": {
+          "type": "string",
+          "default": "0.4.9",
+          "description": "Minimum required @skillsmith/mcp-server version. When the connected server is older, an informational toast prompts to run `npm install -g @skillsmith/mcp-server@latest`. Non-blocking."
+        },
         "skillsmith.telemetry.enabled": {
           "type": "boolean",
           "default": true,

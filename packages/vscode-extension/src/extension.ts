@@ -20,6 +20,7 @@ import {
   disposeMcpClient,
   type McpClientConfig,
 } from './mcp/McpClient.js'
+import { promptIfOutdated } from './mcp/versionCheck.js'
 import { McpStatusBar, registerMcpCommands, connectWithProgress } from './mcp/McpStatusBar.js'
 import {
   SkillCompletionProvider,
@@ -65,6 +66,28 @@ export function activate(context: vscode.ExtensionContext): void {
   mcpStatusBar = new McpStatusBar()
   mcpStatusBar.initialize()
   context.subscriptions.push(mcpStatusBar)
+
+  // SMI-4194: non-blocking min-server-version check on each connect.
+  // `alreadyPromptedServerVersion` prevents repeat toasts while the same
+  // outdated server stays connected; a disconnect/reconnect clears the flag.
+  let alreadyPromptedServerVersion: string | null = null
+  const versionCheckSub = getMcpClient().onStatusChange((status) => {
+    if (status !== 'connected') {
+      alreadyPromptedServerVersion = null
+      return
+    }
+    const version = getMcpClient().getServerVersion()
+    if (version === null || version === alreadyPromptedServerVersion) return
+    alreadyPromptedServerVersion = version
+    const minVersion = vscode.workspace
+      .getConfiguration('skillsmith')
+      .get<string>('mcp.minServerVersion', '0.4.9')
+    void promptIfOutdated(version, minVersion, {
+      showInformationMessage: vscode.window.showInformationMessage.bind(vscode.window),
+      clipboardWrite: (text) => vscode.env.clipboard.writeText(text),
+    })
+  })
+  context.subscriptions.push(versionCheckSub)
 
   // Register MCP commands
   registerMcpCommands(context)

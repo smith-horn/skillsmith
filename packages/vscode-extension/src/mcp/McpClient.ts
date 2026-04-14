@@ -63,6 +63,9 @@ export class McpClient {
   private buffer = ''
   private reconnectAttempts = 0
   private statusChangeListeners: ((status: McpConnectionStatus) => void)[] = []
+  // SMI-4194: captured from `initialize` response so callers can compare against
+  // `skillsmith.mcp.minServerVersion` and surface an update prompt.
+  private serverVersion: string | null = null
 
   constructor(config: Partial<McpClientConfig> = {}) {
     this.config = { ...DEFAULT_MCP_CONFIG, ...config }
@@ -180,8 +183,21 @@ export class McpClient {
       throw new Error('MCP server initialization failed')
     }
 
+    // SMI-4194: capture server version for min-version gating. MCP spec says
+    // `serverInfo.version` is present on successful initialize; tolerate absence.
+    const info = (result as { serverInfo?: { version?: unknown } }).serverInfo
+    this.serverVersion = typeof info?.version === 'string' ? info.version : null
+
     // Send initialized notification
     this.sendNotification('notifications/initialized', {})
+  }
+
+  /**
+   * SMI-4194: Server version captured from the `initialize` response.
+   * Returns `null` if not yet connected or the server omitted `serverInfo.version`.
+   */
+  getServerVersion(): string | null {
+    return this.serverVersion
   }
 
   /**
@@ -231,6 +247,7 @@ export class McpClient {
    */
   private handleDisconnect(): void {
     this.process = null
+    this.serverVersion = null
     this.pendingRequests.forEach(({ reject }) => {
       reject(new Error('MCP server disconnected'))
     })
@@ -399,6 +416,7 @@ export class McpClient {
     }
     this.setStatus('disconnected')
     this.pendingRequests.clear()
+    this.serverVersion = null
   }
 
   /**
