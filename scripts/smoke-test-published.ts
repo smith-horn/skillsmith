@@ -130,11 +130,12 @@ export async function smokeTestPackage(
             console.log('Resolved @skillsmith/core@' + corePkg.version);
 
             // Verify key core exports resolve (these are used by mcp-server)
+            // Source of truth: packages/core/src/index.ts (SMI-4189)
             const core = await import('@skillsmith/core');
             const required = [
               'SkillDependencyRepository', 'SkillsmithApiClient',
               'HybridSearch', 'createDatabaseSync',
-              'SkillRepository', 'CategoryRepository'
+              'SkillRepository'
             ];
             const missing = required.filter(fn => !(fn in core));
             if (missing.length > 0) {
