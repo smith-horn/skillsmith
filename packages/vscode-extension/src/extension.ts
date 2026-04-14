@@ -9,6 +9,9 @@ import { SkillTreeDataProvider } from './sidebar/SkillTreeDataProvider.js'
 import { SkillSearchProvider } from './providers/SkillSearchProvider.js'
 import { registerSearchCommand } from './commands/searchSkills.js'
 import { registerQuickInstallCommand } from './commands/installCommand.js'
+import { registerUninstallCommand } from './commands/uninstallCommand.js'
+import { registerCreateSkillCommand } from './commands/createSkillCommand.js'
+import { initializeTelemetry } from './services/Telemetry.js'
 import { SkillDetailPanel } from './views/SkillDetailPanel.js'
 import { SkillService } from './services/SkillService.js'
 import {
@@ -17,6 +20,7 @@ import {
   disposeMcpClient,
   type McpClientConfig,
 } from './mcp/McpClient.js'
+import { promptIfOutdated } from './mcp/versionCheck.js'
 import { McpStatusBar, registerMcpCommands, connectWithProgress } from './mcp/McpStatusBar.js'
 import {
   SkillCompletionProvider,
@@ -36,6 +40,11 @@ let skillDiagnosticsProvider: SkillDiagnosticsProvider
  */
 export function activate(context: vscode.ExtensionContext): void {
   console.log('[Skillsmith] Extension is now active')
+
+  // Initialize anonymous telemetry (SMI-4194). No-op if the user opted out
+  // or the default telemetry endpoint is not configured.
+  const ext = vscode.extensions.getExtension('skillsmith.skillsmith-vscode')
+  initializeTelemetry(context, (ext?.packageJSON as { version?: string })?.version ?? 'unknown')
 
   // Initialize MCP client with configuration from settings
   initializeMcpClientFromSettings()
@@ -57,6 +66,39 @@ export function activate(context: vscode.ExtensionContext): void {
   mcpStatusBar = new McpStatusBar()
   mcpStatusBar.initialize()
   context.subscriptions.push(mcpStatusBar)
+
+  // SMI-4194: non-blocking min-server-version check on each connect.
+  // `alreadyPromptedServerVersion` prevents repeat toasts while the same
+  // outdated server stays connected; a disconnect/reconnect clears the flag.
+  //
+  // NOTE: `registerVersionCheck` must be called again whenever `initializeMcpClient`
+  // replaces the singleton (e.g. on settings change), otherwise the listener is
+  // bound to the discarded instance and version checks silently stop working.
+  let alreadyPromptedServerVersion: string | null = null
+  let versionCheckSub: vscode.Disposable | undefined
+
+  function registerVersionCheck(): void {
+    versionCheckSub?.dispose()
+    versionCheckSub = getMcpClient().onStatusChange((status) => {
+      if (status !== 'connected') {
+        alreadyPromptedServerVersion = null
+        return
+      }
+      const version = getMcpClient().getServerVersion()
+      if (version === null || version === alreadyPromptedServerVersion) return
+      alreadyPromptedServerVersion = version
+      const minVersion = vscode.workspace
+        .getConfiguration('skillsmith')
+        .get<string>('mcp.minServerVersion', '0.4.9')
+      void promptIfOutdated(version, minVersion, {
+        showInformationMessage: vscode.window.showInformationMessage.bind(vscode.window),
+        clipboardWrite: (text) => vscode.env.clipboard.writeText(text),
+      })
+    })
+    context.subscriptions.push(versionCheckSub)
+  }
+
+  registerVersionCheck()
 
   // Register MCP commands
   registerMcpCommands(context)
@@ -119,6 +161,8 @@ export function activate(context: vscode.ExtensionContext): void {
   // Register commands — pass skillService to consumers
   registerSearchCommand(context, skillSearchProvider, skillService)
   registerQuickInstallCommand(context, skillService)
+  registerUninstallCommand(context, skillTreeDataProvider)
+  registerCreateSkillCommand(context, skillTreeDataProvider)
 
   // Register refresh command
   const refreshCommand = vscode.commands.registerCommand('skillsmith.refreshSkills', () => {
@@ -142,6 +186,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeConfiguration((e: vscode.ConfigurationChangeEvent) => {
       if (e.affectsConfiguration('skillsmith.mcp')) {
         initializeMcpClientFromSettings()
+        registerVersionCheck()
         void connectWithProgress()
       }
     })

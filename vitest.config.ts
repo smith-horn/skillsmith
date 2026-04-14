@@ -25,6 +25,11 @@ export default defineConfig({
       'tests/e2e/**',
       'tests/api/**',
       '**/*.e2e.test.ts',
+      // Integration tests (*.int.test.ts) run via @vscode/test-electron on host
+      // (SMI-4194). ADR-109: vitest.config.ts is an infra trigger path; this change
+      // was covered by the implementation plan at docs/internal/implementation/vscode-mcp-parity.md.
+      // See packages/vscode-extension/README.md Testing section.
+      '**/*.int.test.ts',
       // Website tests require Astro tsconfig which isn't resolvable from root
       // These should run via `npm test -w packages/website` if needed
       'packages/website/**',

@@ -67,6 +67,18 @@
         "title": "Connect/Reconnect to MCP Server",
         "category": "Skillsmith",
         "icon": "$(plug)"
+      },
+      {
+        "command": "skillsmith.createSkill",
+        "title": "Create Skill",
+        "category": "Skillsmith",
+        "icon": "$(add)"
+      },
+      {
+        "command": "skillsmith.uninstallSkill",
+        "title": "Uninstall Skill",
+        "category": "Skillsmith",
+        "icon": "$(trash)"
       }
     ],
     "viewsContainers": {
@@ -96,7 +108,40 @@
     "viewsWelcome": [
       {
         "view": "skillsmith.skillsView",
-        "contents": "No skills found.\n[Search Skills](command:skillsmith.searchSkills)"
+        "contents": "No skills installed yet.\n[Search Skills](command:skillsmith.searchSkills)\n[Create a Skill](command:skillsmith.createSkill)"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "skillsmith.getStarted",
+        "title": "Get Started with Skillsmith",
+        "description": "Discover, install, and author Claude Code skills without leaving VS Code.",
+        "steps": [
+          {
+            "id": "skillsmith.walkthrough.discover",
+            "title": "Discover skills",
+            "description": "Search the Skillsmith registry by keyword, category, or trust tier.\n[Search Skills](command:skillsmith.searchSkills)",
+            "media": {
+              "markdown": "resources/walkthrough/discover.md"
+            }
+          },
+          {
+            "id": "skillsmith.walkthrough.install",
+            "title": "Install a skill",
+            "description": "Install any skill to `~/.claude/skills` with one click from the Search Results view.\n[Open Skillsmith Sidebar](command:workbench.view.extension.skillsmith)",
+            "media": {
+              "markdown": "resources/walkthrough/install.md"
+            }
+          },
+          {
+            "id": "skillsmith.walkthrough.author",
+            "title": "Create your own skill",
+            "description": "Scaffold a new skill via the Skillsmith CLI — author, name, description, type.\n[Create Skill](command:skillsmith.createSkill)",
+            "media": {
+              "markdown": "resources/walkthrough/create.md"
+            }
+          }
+        ]
       }
     ],
     "menus": {
@@ -121,6 +166,15 @@
         {
           "command": "skillsmith.viewSkillDetails",
           "when": "viewItem == skill"
+        },
+        {
+          "command": "skillsmith.uninstallSkill",
+          "when": "view == skillsmith.skillsView && viewItem == installedSkill",
+          "group": "inline"
+        },
+        {
+          "command": "skillsmith.uninstallSkill",
+          "when": "view == skillsmith.skillsView && viewItem == installedSkill"
         }
       ]
     },
@@ -166,6 +220,21 @@
           "type": "number",
           "default": 30000,
           "description": "Connection timeout in milliseconds"
+        },
+        "skillsmith.mcp.minServerVersion": {
+          "type": "string",
+          "default": "0.4.9",
+          "description": "Minimum required @skillsmith/mcp-server version. When the connected server is older, an informational toast prompts to run `npm install -g @skillsmith/mcp-server@latest`. Non-blocking."
+        },
+        "skillsmith.telemetry.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Send anonymous usage telemetry. Also respects VS Code's global `telemetry.telemetryLevel` setting — either being off disables telemetry."
+        },
+        "skillsmith.telemetryEndpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Telemetry endpoint URL (leave empty to disable network calls). Events POST here as {event, anonymous_id, metadata}."
         }
       }
     }
@@ -177,6 +246,7 @@
     "lint": "eslint src --ext ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
+    "test:integration": "vscode-test",
     "package": "vsce package --no-dependencies",
     "package:check": "vsce package --no-dependencies --out skillsmith.vsix && node scripts/validate-vsix.mjs skillsmith.vsix && rm skillsmith.vsix"
   },
@@ -188,8 +258,10 @@
   "devDependencies": {
     "@types/cross-spawn": "6.0.6",
     "@types/node": "^22.15.0",
+    "@types/mocha": "10.0.10",
     "@types/sanitize-html": "2.13.0",
     "@types/vscode": "1.110.0",
+    "@vscode/test-electron": "2.5.2",
     "@vscode/vsce": "2.32.0",
     "esbuild": "0.27.2",
     "typescript": "5.9.3",

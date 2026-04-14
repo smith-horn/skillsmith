@@ -4,6 +4,7 @@
 !resources/skillsmith.svg
 !resources/skillsmith-icon.png
 !resources/skillsmith-icon@2x.png
+!resources/walkthrough/**
 !package.json
 !README.md
 !CHANGELOG.md

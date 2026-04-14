@@ -39,10 +39,39 @@ All settings are under the `skillsmith.*` namespace in VS Code Settings.
 | `skillsmith.mcp.autoConnect` | `boolean` | `true` | Automatically connect to MCP server on extension activation |
 | `skillsmith.mcp.autoReconnect` | `boolean` | `true` | Automatically reconnect when connection is lost |
 | `skillsmith.mcp.connectionTimeout` | `number` | `30000` | Connection timeout in milliseconds |
+| `skillsmith.mcp.minServerVersion` | `string` | `"0.4.9"` | Minimum required MCP server version. Older servers trigger a non-blocking update prompt. |
+| `skillsmith.telemetry.enabled` | `boolean` | `true` | Opt-out for anonymous usage telemetry. Also respects VS Code's global `telemetry.telemetryLevel`. |
+| `skillsmith.telemetryEndpoint` | `string` | `""` | Telemetry POST target. Empty (default) disables all network calls. |
 
 ## Requirements
 
 Node.js 18+ is required for the MCP server connection. The extension itself runs without Node.js.
+
+## Privacy
+
+The extension emits anonymous usage events for the Create Skill and Uninstall Skill commands (SMI-4194) when — and only when — all of these are true:
+
+- VS Code's global `telemetry.telemetryLevel` is not `off`.
+- The `skillsmith.telemetry.enabled` setting is `true` (default).
+- The `skillsmith.telemetryEndpoint` setting is a non-empty URL (no default — telemetry is off out of the box).
+
+Events carry an anonymous cohort UUID generated on first activation and persisted in the extension's `globalState`. The UUID is never tied to a user account, email, or any PII. Event payloads include only the event name, extension version, and VS Code version. Network calls are fire-and-forget with a 2-second timeout.
+
+Disable at any time by setting `skillsmith.telemetry.enabled: false` or by clearing `skillsmith.telemetryEndpoint`.
+
+## Testing
+
+Unit tests run inside the Skillsmith Docker dev container:
+
+```bash
+docker exec skillsmith-dev-1 npm test -w packages/vscode-extension
+```
+
+Integration tests use `@vscode/test-electron`, which launches a real VS Code Extension Host. Electron has no display server inside the container, so integration tests run on the host (per ADR-113, the VS Code extension is host-only):
+
+```bash
+npm --prefix packages/vscode-extension run test:integration
+```
 
 ## Links
 

@@ -1799,6 +1799,89 @@ try {
   fail(`PUBLISHABLE_PACKAGES_JSON parity check error: ${e.message}`)
 }
 
+// 27. VS Code skillNameValidation codegen drift (SMI-4194)
+console.log(`\n${BOLD}27. VS Code skillNameValidation Codegen Drift (SMI-4194)${RESET}`)
+{
+  const codegenScript = 'scripts/sync-skill-name-validation.mjs'
+  if (!existsSync(codegenScript)) {
+    warn('Codegen script not found — skipping drift check')
+  } else {
+    try {
+      execSync(`node ${codegenScript} --check`, { stdio: 'pipe' })
+      pass('skillNameValidation.ts is in sync with CLI source')
+    } catch (e) {
+      fail(
+        'skillNameValidation.ts is out of sync with packages/cli/src/utils/skill-name.ts',
+        'Run: node scripts/sync-skill-name-validation.mjs'
+      )
+    }
+  }
+}
+
+// 28. VS Code command↔test pairing (SMI-4194)
+// Every `skillsmith.*` command declared in packages/vscode-extension/package.json
+// must have a matching test file under packages/vscode-extension/src/__tests__/.
+// This prevents shipping a palette entry with no test coverage.
+console.log(`\n${BOLD}28. VS Code Command ↔ Test Pairing (SMI-4194)${RESET}`)
+{
+  const extPkgPath = 'packages/vscode-extension/package.json'
+  const testDir = 'packages/vscode-extension/src/__tests__'
+  if (!existsSync(extPkgPath)) {
+    warn('vscode-extension package.json not found — skipping pairing check')
+  } else if (!existsSync(testDir)) {
+    warn('vscode-extension __tests__ dir not found — skipping pairing check')
+  } else {
+    try {
+      const pkg = JSON.parse(readFileSync(extPkgPath, 'utf8'))
+      const commands = (pkg.contributes?.commands ?? [])
+        .map((c) => c.command)
+        .filter((c) => typeof c === 'string' && c.startsWith('skillsmith.'))
+      // Known commands that intentionally have no dedicated test file.
+      // Keep this list tight — each entry is a coverage exception.
+      const exempt = new Set([
+        'skillsmith.refreshSkills', // trivial delegation to provider.refresh()
+        'skillsmith.viewSkillDetails', // panel creation tested in SkillDetailPanel.test.ts
+        'skillsmith.mcpReconnect', // integration-tested via McpStatusBar
+        'skillsmith.searchSkills', // exercised through SkillService tests
+        'skillsmith.installSkill', // exercised through SkillService tests
+      ])
+      const testFiles = readdirSync(testDir).filter((f) => f.endsWith('.test.ts'))
+      const missing = []
+      for (const cmd of commands) {
+        if (exempt.has(cmd)) continue
+        const suffix = cmd.replace(/^skillsmith\./, '').toLowerCase()
+        // Accept several filename conventions: verb (uninstallSkill → uninstallCommand.test.ts),
+        // verb+Skill (createSkill → createSkillCommand.test.ts), or prefix match.
+        const verbOnly = suffix.replace(/skill$/, '')
+        const match = testFiles.some((f) => {
+          const base = f.replace(/\.test\.ts$/, '').toLowerCase()
+          // prefix match only at a word boundary (next char must be - or . or end of string)
+          // e.g. "createskill" must not match "createskillservicemock"
+          const nextChar = base.slice(suffix.length)[0]
+          return (
+            base === suffix ||
+            base === `${suffix}command` ||
+            base === `${verbOnly}command` ||
+            (base.startsWith(suffix) &&
+              (nextChar === undefined || nextChar === '-' || nextChar === '.'))
+          )
+        })
+        if (!match) missing.push(cmd)
+      }
+      if (missing.length === 0) {
+        pass(`All ${commands.length} vscode commands have matching test files`)
+      } else {
+        fail(
+          `Missing test files for vscode commands: ${missing.join(', ')}`,
+          'Add a <command>.test.ts under packages/vscode-extension/src/__tests__/, or add the command to the exempt list in scripts/audit-standards.mjs if coverage lives elsewhere.'
+        )
+      }
+    } catch (e) {
+      warn('Could not check vscode command↔test pairing: ' + e.message)
+    }
+  }
+}
+
 // npm override drift check: @modelcontextprotocol/sdk override "." must match mcp-server range
 console.log(`\n${BOLD}Override Drift: @modelcontextprotocol/sdk${RESET}`)
 try {
