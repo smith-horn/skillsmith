@@ -57,16 +57,24 @@ export function registerUninstallCommand(
 
       const client = getMcpClient()
       let uninstalled = false
-      let mcpError: unknown
 
       if (client.isConnected()) {
         try {
           const result = await client.uninstallSkill(pick.skillId)
-          uninstalled = result.success
-          if (!uninstalled) mcpError = new Error(result.error ?? 'MCP uninstall returned failure')
+          if (!result.success) {
+            // MCP is reachable and deliberately refused — surface this, do NOT fall back to
+            // fs.rm. Falling back would bypass server-side enforcement (e.g. tier-gated ops).
+            const reason = result.error ?? 'MCP server refused the uninstall request'
+            void vscode.window.showErrorMessage(
+              `Failed to uninstall "${pick.skillId}": ${reason}`
+            )
+            return
+          }
+          uninstalled = true
         } catch (err) {
-          mcpError = err
-          console.warn('[Skillsmith] MCP uninstall failed, falling back to fs.rm:', err)
+          // Transport-level failure (disconnected mid-call, timeout, etc.).
+          // Fall through to the fs.rm branch below.
+          console.warn('[Skillsmith] MCP uninstall transport error, falling back to fs.rm:', err)
         }
       }
 
@@ -77,7 +85,6 @@ export function registerUninstallCommand(
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
           void vscode.window.showErrorMessage(`Failed to uninstall "${pick.skillId}": ${msg}`)
-          if (mcpError) console.warn('[Skillsmith] Prior MCP error:', mcpError)
           return
         }
       }

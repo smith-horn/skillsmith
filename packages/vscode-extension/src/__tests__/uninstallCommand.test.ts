@@ -174,4 +174,34 @@ describe('uninstallCommand (SMI-4195)', () => {
     expect(showQuickPick).not.toHaveBeenCalled()
     expect(mcpUninstall).toHaveBeenCalledWith('example-skill')
   })
+
+  it('surfaces MCP refusal and does NOT fall back to fs.rm', async () => {
+    // MCP is connected but deliberately refuses (e.g. TierDenied, server-side validation).
+    // The extension must NOT bypass this by deleting via fs.rm.
+    showQuickPick.mockResolvedValue({ skillId: 'example-skill', skillPath })
+    showWarningMessage.mockResolvedValue('Uninstall')
+    mcpUninstall.mockResolvedValue({ success: false, error: 'TierDenied: requires Team plan' })
+
+    await handler()
+
+    expect(showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('TierDenied: requires Team plan')
+    )
+    // Skill directory must still exist — fs.rm was NOT called.
+    await expect(fs.access(skillPath)).resolves.toBeUndefined()
+    expect(showInformationMessage).not.toHaveBeenCalledWith(expect.stringContaining('Uninstalled'))
+  })
+
+  it('falls back to fs.rm on MCP transport error (throw)', async () => {
+    // Transport-level failure is different from a deliberate server refusal.
+    // A disconnected-mid-call scenario should fall back to direct deletion.
+    showQuickPick.mockResolvedValue({ skillId: 'example-skill', skillPath })
+    showWarningMessage.mockResolvedValue('Uninstall')
+    mcpUninstall.mockRejectedValue(new Error('ECONNRESET'))
+
+    await handler()
+
+    await expect(fs.access(skillPath)).rejects.toThrow()
+    expect(showInformationMessage).toHaveBeenCalledWith('Uninstalled "example-skill".')
+  })
 })
