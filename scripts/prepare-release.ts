@@ -16,6 +16,8 @@ import { execFileSync } from 'child_process'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
 
+import semver from 'semver'
+
 import {
   PACKAGE_SPECS,
   CORE_DEPENDENTS,
@@ -32,7 +34,7 @@ import {
 
 // --- Types ---
 
-interface BumpPlan {
+export interface BumpPlan {
   spec: PackageSpec
   currentVersion: string
   newVersion: string
@@ -43,6 +45,14 @@ interface Options {
   dryRun: boolean
   noChangelog: boolean
   noCommit: boolean
+  allowDowngrade: boolean
+  check: boolean
+}
+
+export interface CollisionCheckResult {
+  ok: boolean
+  errors: string[]
+  report: string[]
 }
 
 // --- Arg Parsing ---
@@ -53,6 +63,8 @@ function parseArgs(): Options {
   let dryRun = false
   let noChangelog = false
   let noCommit = false
+  let allowDowngrade = false
+  let check = false
 
   for (const arg of args) {
     if (arg === '--dry-run') {
@@ -61,6 +73,10 @@ function parseArgs(): Options {
       noChangelog = true
     } else if (arg === '--no-commit') {
       noCommit = true
+    } else if (arg === '--allow-downgrade') {
+      allowDowngrade = true
+    } else if (arg === '--check') {
+      check = true
     } else if (arg.startsWith('--all=')) {
       const type = arg.split('=')[1]
       for (const spec of PACKAGE_SPECS) {
@@ -84,13 +100,20 @@ function parseArgs(): Options {
     }
   }
 
-  if (bumps.size === 0) {
+  if (bumps.size === 0 && !check) {
     console.error('Error: No packages specified. Use --all=patch or --core=patch etc.')
     printUsage()
     process.exit(1)
   }
 
-  return { bumps, dryRun, noChangelog, noCommit }
+  // --check with no explicit bumps audits a patch bump for all packages
+  if (check && bumps.size === 0) {
+    for (const spec of PACKAGE_SPECS) {
+      bumps.set(spec.shortName, 'patch')
+    }
+  }
+
+  return { bumps, dryRun, noChangelog, noCommit, allowDowngrade, check }
 }
 
 function printUsage(): void {
@@ -108,8 +131,206 @@ Options:
   --dry-run             Preview changes without writing
   --no-changelog        Skip changelog generation
   --no-commit           Write files but don't create git commit
+  --check               Audit-only: run npm collision check, no writes, exit non-zero on conflict
+  --allow-downgrade     Permit bumping to a semver <= npm latest (rare; never overrides equals-published)
   --help                Show this help
 `)
+}
+
+// --- NPM Registry Lookup ---
+
+/**
+ * Fetch all published versions from npm for a package and return the highest valid semver.
+ * Returns null ONLY when npm reports E404 (package does not exist).
+ * Throws for any other error (network, timeout, malformed JSON, non-404 npm error) — fail closed.
+ */
+export async function fetchNpmLatest(pkg: string): Promise<string | null> {
+  let stdout: string
+  try {
+    stdout = execFileSync('npm', ['view', pkg, 'versions', '--json'], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 30_000,
+    })
+  } catch (err: unknown) {
+    const e = err as { code?: string; stderr?: string | Buffer; message?: string }
+    const stderrText =
+      typeof e.stderr === 'string'
+        ? e.stderr
+        : Buffer.isBuffer(e.stderr)
+          ? e.stderr.toString('utf-8')
+          : ''
+    const is404 = e.code === 'E404' || /E404/.test(stderrText) || /E404/.test(e.message ?? '')
+    if (is404) {
+      return null
+    }
+    throw new Error(
+      `npm view ${pkg} failed (fail-closed): ${e.message ?? 'unknown error'}${stderrText ? '\n' + stderrText : ''}`
+    )
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(stdout)
+  } catch (err) {
+    throw new Error(
+      `npm view ${pkg} returned malformed JSON (fail-closed): ${(err as Error).message}`
+    )
+  }
+
+  // npm view returns either a string (single version) or an array.
+  let versions: string[]
+  if (typeof parsed === 'string') {
+    versions = [parsed]
+  } else if (Array.isArray(parsed)) {
+    versions = parsed.filter((v): v is string => typeof v === 'string')
+  } else {
+    throw new Error(`npm view ${pkg} returned unexpected shape (fail-closed): ${typeof parsed}`)
+  }
+
+  const valid = versions.filter((v) => semver.valid(v))
+  if (valid.length === 0) {
+    return null
+  }
+  const sorted = semver.rsort([...valid])
+  return sorted[0] ?? null
+}
+
+export async function fetchAllPublishedVersions(pkg: string): Promise<string[] | null> {
+  // Same as fetchNpmLatest but returns the full list (for equals-published check).
+  // Returns null on E404; throws on other errors.
+  let stdout: string
+  try {
+    stdout = execFileSync('npm', ['view', pkg, 'versions', '--json'], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 30_000,
+    })
+  } catch (err: unknown) {
+    const e = err as { code?: string; stderr?: string | Buffer; message?: string }
+    const stderrText =
+      typeof e.stderr === 'string'
+        ? e.stderr
+        : Buffer.isBuffer(e.stderr)
+          ? e.stderr.toString('utf-8')
+          : ''
+    const is404 = e.code === 'E404' || /E404/.test(stderrText) || /E404/.test(e.message ?? '')
+    if (is404) return null
+    throw new Error(
+      `npm view ${pkg} failed (fail-closed): ${e.message ?? 'unknown error'}${stderrText ? '\n' + stderrText : ''}`
+    )
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(stdout)
+  } catch (err) {
+    throw new Error(
+      `npm view ${pkg} returned malformed JSON (fail-closed): ${(err as Error).message}`
+    )
+  }
+  if (typeof parsed === 'string') return [parsed]
+  if (Array.isArray(parsed)) return parsed.filter((v): v is string => typeof v === 'string')
+  throw new Error(`npm view ${pkg} returned unexpected shape (fail-closed): ${typeof parsed}`)
+}
+
+// --- Collision Guard ---
+
+export interface NpmLookup {
+  latest: string | null
+  allVersions: string[] | null
+}
+
+/**
+ * Evaluate the collision rules for a planned bump against the npm registry state.
+ * Pure function — does NOT perform network I/O. Callers must supply lookups.
+ *
+ * Rule 1 — proposed > npm latest        → proceed.
+ * Rule 2 — proposed <= npm latest,
+ *          proposed NOT in published list → refuse unless --allow-downgrade.
+ * Rule 3 — proposed === npm latest OR
+ *          proposed in published list   → refuse UNCONDITIONALLY.
+ *                                         --allow-downgrade does NOT override.
+ *                                         Error must not mention any flag.
+ */
+export function checkVersionCollision(
+  plans: BumpPlan[],
+  lookups: Map<string, NpmLookup>,
+  opts: { allowDowngrade: boolean }
+): CollisionCheckResult {
+  const errors: string[] = []
+  const report: string[] = []
+
+  for (const plan of plans) {
+    const { spec, newVersion } = plan
+    const lookup = lookups.get(spec.name)
+    if (!lookup) {
+      errors.push(`${spec.name}: internal error — no npm lookup recorded (fail-closed).`)
+      continue
+    }
+    const { latest, allVersions } = lookup
+
+    // New package on npm (E404) — proceed silently.
+    if (latest === null) {
+      report.push(`  ${spec.name}: new on npm (proposed ${newVersion}) → proceed`)
+      continue
+    }
+
+    const isPublished = (allVersions ?? []).includes(newVersion)
+    const equalsLatest = newVersion === latest
+
+    // Rule 3: equals-published (or equals-latest) — unconditional refuse.
+    if (isPublished || equalsLatest) {
+      errors.push(
+        `${spec.name}: proposed ${newVersion} is already published on npm (npm latest: ${latest}). ` +
+          `Different content under the same version is the failure mode this guard exists to prevent. ` +
+          `See scripts/prepare-release.ts and the release runbook: revert to release, do not override.`
+      )
+      continue
+    }
+
+    const cmp = semver.compare(newVersion, latest)
+    if (cmp > 0) {
+      report.push(`  ${spec.name}: proposed ${newVersion} > npm latest ${latest} → proceed`)
+      continue
+    }
+
+    // Rule 2: proposed < npm latest, not published — refuse unless --allow-downgrade.
+    const suggested = semver.inc(latest, 'patch') ?? latest
+    if (!opts.allowDowngrade) {
+      errors.push(
+        `${spec.name}: proposed ${newVersion} <= npm latest ${latest} (package: ${spec.name}, ` +
+          `proposed: ${newVersion}, npm latest: ${latest}). ` +
+          `Suggested next-available target: ${suggested}. ` +
+          `To override: pass --allow-downgrade (rare; only when intentionally reusing a ` +
+          `reserved-but-unpublished semver).`
+      )
+      continue
+    }
+    report.push(
+      `  ${spec.name}: proposed ${newVersion} <= npm latest ${latest} (--allow-downgrade set) → proceed`
+    )
+  }
+
+  return { ok: errors.length === 0, errors, report }
+}
+
+/**
+ * Resolve npm lookups for every plan. Separated from checkVersionCollision so tests can
+ * inject lookups without patching network. Throws (fail-closed) on any non-404 npm error.
+ */
+export async function resolveNpmLookups(plans: BumpPlan[]): Promise<Map<string, NpmLookup>> {
+  const lookups = new Map<string, NpmLookup>()
+  for (const plan of plans) {
+    const allVersions = await fetchAllPublishedVersions(plan.spec.name)
+    let latest: string | null = null
+    if (allVersions !== null) {
+      const valid = allVersions.filter((v) => semver.valid(v))
+      latest = valid.length === 0 ? null : (semver.rsort([...valid])[0] ?? null)
+    }
+    lookups.set(plan.spec.name, { latest, allVersions })
+  }
+  return lookups
 }
 
 // --- Version Resolution ---
@@ -327,17 +548,19 @@ function createCommit(plans: BumpPlan[]): void {
 
 // --- Main ---
 
-function main(): void {
+async function main(): Promise<void> {
   const options = parseArgs()
-  const { bumps, dryRun, noChangelog, noCommit } = options
+  const { bumps, dryRun, noChangelog, noCommit, allowDowngrade, check } = options
 
-  // Step 0: Branch guard
-  const branch = getCurrentBranch()
-  if (branch === 'main') {
-    console.error('Error: Cannot prepare release on main. Create a branch first.')
-    process.exit(1)
+  // Step 0: Branch guard (skip in --check mode — audit is safe on any branch)
+  if (!check) {
+    const branch = getCurrentBranch()
+    if (branch === 'main') {
+      console.error('Error: Cannot prepare release on main. Create a branch first.')
+      process.exit(1)
+    }
+    console.log(`Branch: ${branch}`)
   }
-  console.log(`Branch: ${branch}`)
 
   // Step 1-3: Build and display plan
   const plans = buildBumpPlan(bumps)
@@ -355,6 +578,26 @@ function main(): void {
     console.log(`  ${name}  ${plan.currentVersion.padEnd(9)} →  ${plan.newVersion}`)
   }
   console.log()
+
+  // Step 3.5: NPM collision guard — ALWAYS runs before any write (including --dry-run preview).
+  console.log('  Checking npm registry for version collisions...')
+  const lookups = await resolveNpmLookups(plans)
+  const collision = checkVersionCollision(plans, lookups, { allowDowngrade })
+  for (const line of collision.report) console.log(line)
+  if (!collision.ok) {
+    console.error('\n  ✗ Version collision guard failed:')
+    for (const err of collision.errors) {
+      console.error(`    - ${err}`)
+    }
+    process.exit(1)
+  }
+  console.log('  ✓ npm collision guard passed')
+
+  // --check exits here with no writes.
+  if (check) {
+    console.log('\n[CHECK] Audit-only mode — no files modified.')
+    process.exit(0)
+  }
 
   // Step 4: Dry run exit
   if (dryRun) {
@@ -441,4 +684,16 @@ function main(): void {
   console.log('    gh workflow run publish.yml -f dry_run=false')
 }
 
-main()
+// Only invoke main() when run directly, not when imported by tests.
+const invokedDirectly =
+  typeof process !== 'undefined' &&
+  Array.isArray(process.argv) &&
+  typeof process.argv[1] === 'string' &&
+  /prepare-release\.(ts|js|mjs|cjs)$/.test(process.argv[1])
+
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.message : String(err))
+    process.exit(1)
+  })
+}
