@@ -54,8 +54,22 @@ describe('assertInsideRoot', () => {
     await expect(assertInsideRoot(nonExistent, root)).rejects.toBeInstanceOf(PathOutsideRoot)
   })
 
+  it('re-throws non-ENOENT realpath errors rather than masking them as PathOutsideRoot', async () => {
+    // Simulate an ENOTDIR error by using a file as a path component.
+    // realpath will throw ENOTDIR — this must NOT be swallowed as PathOutsideRoot.
+    const file = path.join(root, 'a-file')
+    await fs.writeFile(file, 'x')
+    const throughFile = path.join(file, 'impossible-child')
+    const err = await assertInsideRoot(throughFile, root).catch((e: unknown) => e)
+    expect(err).not.toBeInstanceOf(PathOutsideRoot)
+    expect((err as NodeJS.ErrnoException).code).toBe('ENOTDIR')
+  })
+
   it('accepts when root itself is a symlink resolved to a real dir', async () => {
-    const symlinkRoot = path.join(os.tmpdir(), `skillsmith-sym-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const symlinkRoot = path.join(
+      os.tmpdir(),
+      `skillsmith-sym-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    )
     await fs.symlink(root, symlinkRoot)
     try {
       const child = path.join(root, 'child')

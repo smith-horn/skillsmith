@@ -30,11 +30,17 @@ export async function assertInsideRoot(target: string, root: string): Promise<vo
   // containment check: we cannot verify the path is safe, so we refuse. Callers that need
   // to install into a new directory must resolve the parent and append the leaf segment
   // themselves rather than calling assertInsideRoot on a not-yet-created path.
+  //
+  // Other errors (e.g. EACCES, ELOOP) are re-thrown as-is so callers can distinguish a
+  // permission failure on a valid path from an actual containment violation.
   let resolvedTarget: string
   try {
     resolvedTarget = await fs.realpath(target)
-  } catch {
-    throw new PathOutsideRoot(target, resolvedRoot)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new PathOutsideRoot(target, resolvedRoot)
+    }
+    throw err
   }
 
   const rel = path.relative(resolvedRoot, resolvedTarget)
