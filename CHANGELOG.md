@@ -36,10 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   threats) and SecurityScanner (SSRF, jailbreak, structural) now both run on every
   skill assessment (#451).
 - Indexer now indexes addyosmani/agent-skills as high-trust source (SMI-4122, PR #499).
+- **Skill pack audit trigger-quality + namespace checks** (SMI-4124, PR #505): `skill_pack_audit` MCP tool now detects low-quality trigger phrases and namespace collisions in installed skill packs. Surfaces actionable findings before publish.
 
 ### Fixed
 
 - Restored webhook_endpoints and api_keys tables via migrations 065+066 (SMI-4123, PRs #501/#503/#504). Production deployment tracked in SMI-4135.
+- **Audit log telemetry via pooler** (SMI-4118, PR #508): added `SUPABASE_POOLER_URL` to env schema for audit-logs queries that bypass PostgREST's 8s statement timeout. Contributors can now run pooled validation SQL against production without timing out on `audit_logs` LIKE filters.
 - **audit-standards Check 11 false positives** (2026-04-08, SMI-3987): npm overrides
   targeting exact-pinned transitive deps are no longer flagged as "ineffective" when
   npm's dedup machinery actually applied the override. Cross-references `npm ls <dep>`
