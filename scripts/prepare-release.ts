@@ -291,9 +291,7 @@ export function checkVersionCollision(
 
     const cmp = semver.compare(newVersion, latest)
     if (cmp > 0) {
-      report.push(
-        `  ${spec.name}: proposed ${newVersion} > highest published ${latest} → proceed`
-      )
+      report.push(`  ${spec.name}: proposed ${newVersion} > highest published ${latest} → proceed`)
       continue
     }
 
