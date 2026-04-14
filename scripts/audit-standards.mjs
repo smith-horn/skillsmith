@@ -1949,6 +1949,47 @@ console.log(`\n${BOLD}29. Smoke-test Export Drift (SMI-4193)${RESET}`)
   }
 }
 
+// 30. VS Code integration tests must be excluded from host typecheck + root vitest.
+// These files import `vscode` / use mocha `suite`/`test` globals and only run under
+// @vscode/test-electron. If they leak into the host tsc/vitest runs they break pre-commit
+// and pre-push hooks on main. Root cause of the SMI-4194 post-merge friction.
+console.log(`\n${BOLD}30. VS Code Integration Tests Excluded from Host Runners${RESET}`)
+{
+  const intDir = 'packages/vscode-extension/src/__tests__/integration'
+  if (!existsSync(intDir)) {
+    pass('No vscode integration tests directory — nothing to check')
+  } else {
+    const tsconfigPath = 'packages/vscode-extension/tsconfig.json'
+    const vitestConfigPath = 'vitest.config.root-tests.ts'
+    const needle = 'src/__tests__/integration/**'
+    const errors = []
+    try {
+      const tsconfig = readFileSync(tsconfigPath, 'utf8')
+      if (!tsconfig.includes(needle)) {
+        errors.push(`${tsconfigPath} exclude list missing '${needle}'`)
+      }
+    } catch {
+      errors.push(`Could not read ${tsconfigPath}`)
+    }
+    try {
+      const vitestConfig = readFileSync(vitestConfigPath, 'utf8')
+      if (!vitestConfig.includes(needle)) {
+        errors.push(`${vitestConfigPath} exclude list missing '${needle}'`)
+      }
+    } catch {
+      errors.push(`Could not read ${vitestConfigPath}`)
+    }
+    if (errors.length === 0) {
+      pass('vscode integration tests excluded from tsconfig + root vitest')
+    } else {
+      fail(
+        errors.join('; '),
+        "Add 'packages/vscode-extension/src/__tests__/integration/**' to both exclude lists — these tests require the vscode module (electron host) and mocha globals."
+      )
+    }
+  }
+}
+
 // npm override drift check: @modelcontextprotocol/sdk override "." must match mcp-server range
 console.log(`\n${BOLD}Override Drift: @modelcontextprotocol/sdk${RESET}`)
 try {
