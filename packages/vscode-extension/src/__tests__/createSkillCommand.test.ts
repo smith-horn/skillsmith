@@ -144,6 +144,7 @@ describe('createSkillCommand (SMI-4196)', () => {
       .mockImplementationOnce(() => makeChild('found')) // --version
       .mockImplementationOnce(() => makeChild('found', 0)) // create
 
+    openTextDocument.mockResolvedValueOnce({ uri: {} }) // SKILL.md opens successfully
     showInputBox
       .mockResolvedValueOnce('my-author')
       .mockResolvedValueOnce('my-skill')
@@ -160,6 +161,43 @@ describe('createSkillCommand (SMI-4196)', () => {
     )
     expect(refreshAndWait).toHaveBeenCalled()
     expect(showInformationMessage).toHaveBeenCalledWith('Created skill "my-skill".')
+    expect(showWarningMessage).not.toHaveBeenCalled()
+  })
+
+  it('shows warning toast when SKILL.md cannot be opened after successful create', async () => {
+    spawnMock
+      .mockImplementationOnce(() => makeChild('found')) // --version
+      .mockImplementationOnce(() => makeChild('found', 0)) // create
+
+    // openTextDocument already mocked to reject in beforeEach
+    showInputBox
+      .mockResolvedValueOnce('my-author')
+      .mockResolvedValueOnce('my-skill')
+      .mockResolvedValueOnce('An example skill')
+    showQuickPick.mockResolvedValueOnce({ label: 'basic', description: '...' })
+
+    await handler()
+
+    expect(refreshAndWait).toHaveBeenCalled()
+    expect(showInformationMessage).toHaveBeenCalledWith('Created skill "my-skill".')
+    expect(showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining("couldn't open SKILL.md")
+    )
+  })
+
+  it('cancels cleanly when wizard dismissed at QuickPick (step 4)', async () => {
+    spawnMock.mockImplementationOnce(() => makeChild('found'))
+    showInputBox
+      .mockResolvedValueOnce('my-author')
+      .mockResolvedValueOnce('my-skill')
+      .mockResolvedValueOnce('An example skill')
+    showQuickPick.mockResolvedValueOnce(undefined) // user pressed Esc
+
+    await handler()
+
+    expect(spawnMock).toHaveBeenCalledTimes(1) // only --version check, no CLI spawn
+    expect(showErrorMessage).not.toHaveBeenCalled()
+    expect(refreshAndWait).not.toHaveBeenCalled()
   })
 
   it('reports CLI failure exit code to the user', async () => {

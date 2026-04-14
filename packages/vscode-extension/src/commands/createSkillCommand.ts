@@ -85,7 +85,9 @@ export function registerCreateSkillCommand(
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(skillMd))
       await vscode.window.showTextDocument(doc)
     } catch {
-      // SKILL.md open is best-effort; creation succeeded regardless
+      void vscode.window.showWarningMessage(
+        `Skill "${state.name}" created, but couldn't open SKILL.md automatically. Open it from the Skills panel.`
+      )
     }
     void vscode.window.showInformationMessage(`Created skill "${state.name}".`)
   })
