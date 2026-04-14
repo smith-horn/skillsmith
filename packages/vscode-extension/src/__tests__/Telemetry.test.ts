@@ -137,6 +137,40 @@ describe('Telemetry service (SMI-4194)', () => {
     expect(() => track('vscode_create_failed', { reason: 'x' })).not.toThrow()
     await new Promise((r) => setTimeout(r, 10))
   })
+
+  it('aborts fetch via AbortController and clears the timer on completion', async () => {
+    // Verify: (a) AbortSignal is forwarded to fetch, (b) clearTimeout fires on the
+    // happy path so no timer leak occurs.
+    getConfigMock.mockImplementation((k: string, d: unknown) => {
+      if (k === 'telemetry.enabled') return true
+      if (k === 'telemetryEndpoint') return 'https://example.com/events'
+      return d
+    })
+
+    let capturedSignal: AbortSignal | undefined
+    fetchMock.mockImplementation((_url: string, init: RequestInit) => {
+      capturedSignal = init.signal as AbortSignal
+      return Promise.resolve({ ok: true })
+    })
+
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
+
+    const { initializeTelemetry, track, __resetForTests } = await import('../services/Telemetry.js')
+    __resetForTests()
+    initializeTelemetry(makeContext('cohort-xyz'), '1.0.0')
+    track('vscode_create_start')
+
+    // Allow the micro-task queue to flush so postEvent resolves
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    // AbortSignal must be passed — this is what would abort a slow fetch
+    expect(capturedSignal).toBeInstanceOf(AbortSignal)
+    // clearTimeout must have been called (happy-path timer cleanup)
+    expect(clearTimeoutSpy).toHaveBeenCalled()
+
+    clearTimeoutSpy.mockRestore()
+  })
 })
 
 // Restore real fetch after suite
