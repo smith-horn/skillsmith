@@ -1748,6 +1748,57 @@ console.log(`\n${BOLD}25. MCP Tool Count (SMI-3886)${RESET}`)
   }
 }
 
+// 26. SMI-4188: publish.yml PUBLISHABLE_PACKAGES_JSON parity with pre-publish-check
+// The env-level JSON list must match the packages enumerated inline in the
+// pre-publish-check job's bash script. Drift = silent breakage (a newly added
+// 5th publishable would be built in Validate but never gated by pre-publish-check).
+console.log(`\n${BOLD}26. publish.yml PUBLISHABLE_PACKAGES_JSON parity (SMI-4188)${RESET}`)
+try {
+  const yml = readFileSync('.github/workflows/publish.yml', 'utf8')
+  const jsonMatch = yml.match(/PUBLISHABLE_PACKAGES_JSON:\s*'(\[[^']+\])'/)
+  if (!jsonMatch) {
+    fail(
+      'PUBLISHABLE_PACKAGES_JSON env var not found in .github/workflows/publish.yml',
+      'Add workflow-level env var per docs/internal/implementation/publish-yml-scope.md'
+    )
+  } else {
+    const declared = new Set(JSON.parse(jsonMatch[1]))
+
+    // Extract pre-publish-check job block: from its name line to the next top-level job
+    // (two-space-indented key ending in a colon).
+    const preStart = yml.indexOf('pre-publish-check:')
+    if (preStart === -1) {
+      fail('pre-publish-check job not found in publish.yml')
+    } else {
+      const tail = yml.slice(preStart)
+      const nextJob = tail.slice(1).search(/\n {2}[a-z][a-z0-9-]+:\n/)
+      const block = nextJob === -1 ? tail : tail.slice(0, nextJob + 1)
+
+      // The inline block enumerates each publishable by name in `npm view <pkg>` calls.
+      const pkgMatches = block.match(/@(?:skillsmith|smith-horn)\/[a-z0-9-]+/g) || []
+      const inlineUsed = new Set(pkgMatches)
+
+      const missingFromInline = [...declared].filter((p) => !inlineUsed.has(p))
+      const extraInInline = [...inlineUsed].filter((p) => !declared.has(p))
+
+      if (missingFromInline.length || extraInInline.length) {
+        fail(
+          `PUBLISHABLE_PACKAGES_JSON vs pre-publish-check drift: ` +
+            `missing_from_inline=[${missingFromInline.join(',')}] ` +
+            `extra_in_inline=[${extraInInline.join(',')}]`,
+          'Update one list to match the other. Both must enumerate the same set of publishable packages.'
+        )
+      } else {
+        pass(
+          `PUBLISHABLE_PACKAGES_JSON matches pre-publish-check enumeration (${declared.size} packages)`
+        )
+      }
+    }
+  }
+} catch (e) {
+  fail(`PUBLISHABLE_PACKAGES_JSON parity check error: ${e.message}`)
+}
+
 // npm override drift check: @modelcontextprotocol/sdk override "." must match mcp-server range
 console.log(`\n${BOLD}Override Drift: @modelcontextprotocol/sdk${RESET}`)
 try {

@@ -27,6 +27,12 @@ env:
   NODE_VERSION: '22'
   DOCKER_BUILDKIT: 1
   COMPOSE_DOCKER_CLI_BUILD: 1
+  # SMI-4188: single source of truth for packages this workflow publishes.
+  # Validate and publish both derive filters from this list. Website and
+  # vscode-extension are published by other workflows or are private.
+  # Parity with the inline pre-publish-check enumeration is enforced by
+  # scripts/audit-standards.mjs (fails CI on drift).
+  PUBLISHABLE_PACKAGES_JSON: '["@skillsmith/core","@skillsmith/mcp-server","@skillsmith/cli","@smith-horn/enterprise"]'
 
 jobs:
   # SMI-1301: Pre-publish validation before expensive Docker build
@@ -341,18 +347,41 @@ jobs:
         if: steps.download-modules.outcome == 'success'
         run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
 
-      - name: Build all packages (Docker)
+      # SMI-4188: scope Validate build to publishable packages only.
+      # Turbo resolves `dependsOn: ["^build"]` upstreams, so filtering on the
+      # four publishables still builds @skillsmith/core as a dependency of
+      # cli/mcp-server/enterprise. Excludes @skillsmith/website (private)
+      # and skillsmith-vscode (published by publish-vscode.yml).
+      - name: Build publishable packages (Docker)
         if: steps.download-docker.outcome == 'success'
+        env:
+          FILTERS: --filter=${{ join(fromJSON(env.PUBLISHABLE_PACKAGES_JSON), ' --filter=') }}
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-publish:${{ github.sha }} \
-            npm run build
+            sh -c "npx turbo build $FILTERS"
 
-      - name: Build all packages (fallback)
+      - name: Build publishable packages (fallback)
         if: steps.download-docker.outcome == 'failure'
-        run: npm run build
+        env:
+          FILTERS: --filter=${{ join(fromJSON(env.PUBLISHABLE_PACKAGES_JSON), ' --filter=') }}
+        run: npx turbo build $FILTERS
+
+      # SMI-4188: non-gating website build canary.
+      # Keeps the @astrojs/vercel root-cause follow-up visible as a yellow
+      # warning on every publish run. If this persists week over week, the
+      # linked Linear issue is visibly overdue.
+      - name: Website build canary (non-gating)
+        if: steps.download-docker.outcome == 'success'
+        continue-on-error: true # audit:allow-continue-on-error — visibility canary, not a gate
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-publish:${{ github.sha }} \
+            sh -c "npx turbo build --filter=@skillsmith/website || true"
 
       - name: Run tests (Docker)
         if: steps.download-docker.outcome == 'success'
@@ -454,6 +483,16 @@ jobs:
             echo "::notice::Publishing @skillsmith/core@$PACKAGE_VERSION (current npm: $NPM_VERSION)"
           fi
 
+      # SMI-4188: mirror guard — refuses when proposed <= highest published,
+      # or exact-equal. Catches the TOCTOU window between prepare-release
+      # validation and actual npm publish, plus the <-latest-but-unpublished
+      # case that the inline version-check step misses (exact-equal only).
+      - name: Pre-publish collision mirror guard
+        if: steps.version-check.outputs.exists != 'true'
+        run: |
+          VERSION=$(jq -r .version packages/core/package.json)
+          node scripts/check-publish-collision.mjs @skillsmith/core "$VERSION"
+
       - name: Publish core
         if: steps.version-check.outputs.exists != 'true'
         run: npm publish -w @skillsmith/core --access public
@@ -518,6 +557,13 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
             echo "::notice::Publishing @skillsmith/mcp-server@$PACKAGE_VERSION (current npm: $NPM_VERSION)"
           fi
+
+      # SMI-4188: mirror guard — see publish-core job for rationale.
+      - name: Pre-publish collision mirror guard
+        if: steps.version-check.outputs.exists != 'true'
+        run: |
+          VERSION=$(jq -r .version packages/mcp-server/package.json)
+          node scripts/check-publish-collision.mjs @skillsmith/mcp-server "$VERSION"
 
       - name: Publish mcp-server
         if: steps.version-check.outputs.exists != 'true'
@@ -599,6 +645,13 @@ jobs:
             echo "::notice::Publishing @skillsmith/cli@$PACKAGE_VERSION (current npm: $NPM_VERSION)"
           fi
 
+      # SMI-4188: mirror guard — see publish-core job for rationale.
+      - name: Pre-publish collision mirror guard
+        if: steps.version-check.outputs.exists != 'true'
+        run: |
+          VERSION=$(jq -r .version packages/cli/package.json)
+          node scripts/check-publish-collision.mjs @skillsmith/cli "$VERSION"
+
       - name: Publish cli
         if: steps.version-check.outputs.exists != 'true'
         run: npm publish -w @skillsmith/cli --access public
@@ -669,6 +722,17 @@ jobs:
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # SMI-4188: mirror guard — see publish-core job for rationale.
+      # GitHub Packages requires NPM_CONFIG_REGISTRY pointing at npm.pkg.github.com.
+      - name: Pre-publish collision mirror guard
+        if: steps.version-check.outputs.exists != 'true'
+        env:
+          NPM_CONFIG_REGISTRY: https://npm.pkg.github.com
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(jq -r .version packages/enterprise/package.json)
+          node scripts/check-publish-collision.mjs @smith-horn/enterprise "$VERSION"
 
       - name: Publish enterprise to GitHub Packages
         if: steps.version-check.outputs.exists != 'true'

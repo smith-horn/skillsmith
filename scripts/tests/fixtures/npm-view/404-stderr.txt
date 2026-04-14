@@ -1,0 +1,4 @@
+npm error code E404
+npm error 404 Not Found - GET https://registry.npmjs.org/@skillsmith/new-package - Not found
+npm error 404
+npm error 404  '@skillsmith/new-package@*' is not in this registry.

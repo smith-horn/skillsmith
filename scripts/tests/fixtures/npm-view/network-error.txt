@@ -1,0 +1,2 @@
+npm error code ENOTFOUND
+npm error network request to https://registry.npmjs.org/@skillsmith/core failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org

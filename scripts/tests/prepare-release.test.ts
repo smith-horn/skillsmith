@@ -314,3 +314,37 @@ describe('fetchNpmLatest + fail-closed integration', () => {
     // There is deliberately no flag to bypass this — the guard refuses closed.
   })
 })
+
+// -------------------------------------------------------------
+// SMI-4188: shared-fixture parity smoke test (plan §Decision 4 / issue #2)
+// Ensures the fixtures used by check-publish-collision.test.ts are also
+// consumed here, so any drift in the fixture contract surfaces in both
+// suites simultaneously.
+// -------------------------------------------------------------
+
+describe('SMI-4188: shared npm-view fixtures parity', () => {
+  beforeEach(() => {
+    mockedExecFileSync.mockReset()
+  })
+
+  it('core-clean fixture: fetchNpmLatest agrees with check-publish-collision on highest version', async () => {
+    const fixture = readFileSync(
+      join(ROOT_DIR, 'scripts/tests/fixtures/npm-view/core-clean.json'),
+      'utf8'
+    )
+    mockedExecFileSync.mockReturnValue(fixture as never)
+    const latest = await fetchNpmLatest('@skillsmith/core')
+    // Same max as evaluateCollision derives in check-publish-collision.test.ts.
+    expect(latest).toBe('0.5.3')
+  })
+
+  it('core-2x-overhang fixture: fetchNpmLatest surfaces the 2.x overhang (production reality)', async () => {
+    const fixture = readFileSync(
+      join(ROOT_DIR, 'scripts/tests/fixtures/npm-view/core-2x-overhang.json'),
+      'utf8'
+    )
+    mockedExecFileSync.mockReturnValue(fixture as never)
+    const latest = await fetchNpmLatest('@skillsmith/core')
+    expect(latest).toBe('2.1.2')
+  })
+})
