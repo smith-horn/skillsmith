@@ -8,7 +8,7 @@
 # - Uses GitHub App auth for 5000 req/hour rate limit
 #
 # Phase 1b: 4x daily runs with advisory lock
-# - 00:00 UTC = maintenance (stale cleanup, stale_days=3)
+# - 00:00 UTC = maintenance (stale cleanup, stale_days=7 per SMI-4203)
 # - 06:00, 12:00, 18:00 UTC = discovery (new skills, stale_days=30)
 
 name: Skill Indexer
@@ -18,7 +18,7 @@ on:
     # Phase 1b: Run 4x daily — split into separate entries so
     # github.event.schedule can distinguish which cron triggered the run.
     # (SMI-3351: combined cron + date check broke due to GitHub Actions delay)
-    - cron: '0 0 * * *' # maintenance (stale cleanup, stale_days=3)
+    - cron: '0 0 * * *' # maintenance (stale cleanup, stale_days=7 per SMI-4203)
     - cron: '0 6 * * *' # discovery
     - cron: '0 12 * * *' # discovery
     - cron: '0 18 * * *' # discovery
@@ -81,7 +81,7 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then
             if [ "${{ github.event.schedule }}" = "0 0 * * *" ]; then
               RUN_TYPE="maintenance"
-              STALE_DAYS="3"
+              STALE_DAYS="7"
             else
               RUN_TYPE="discovery"
               STALE_DAYS="30"
@@ -92,7 +92,7 @@ jobs:
             STALE_DAYS="${{ github.event.inputs.stale_days }}"
             if [ -z "$STALE_DAYS" ]; then
               if [ "$RUN_TYPE" = "maintenance" ]; then
-                STALE_DAYS="3"
+                STALE_DAYS="7"
               else
                 STALE_DAYS="30"
               fi
