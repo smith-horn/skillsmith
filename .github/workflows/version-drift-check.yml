@@ -1,0 +1,67 @@
+# SMI-4205: Weekly version drift backstop.
+# Compares local packages/*/package.json on main to npm latest.
+# Opens/updates a Linear issue labeled version-drift-auto when drift exists.
+name: Version Drift Check
+
+on:
+  schedule:
+    # Monday 08:00 UTC (one hour before ops-report cron at 09:00 UTC).
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # plan-review issue #5: tier-2 GitHub-issue fallback when Linear upsert fails after retries.
+  issues: write
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  drift-check:
+    name: Check Version Drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Run drift check
+        id: drift
+        continue-on-error: true
+        run: |
+          set +e
+          node scripts/check-version-drift.mjs > /tmp/drift.json
+          CODE=$?
+          echo "exit_code=$CODE" >> $GITHUB_OUTPUT
+          cat /tmp/drift.json
+          exit 0
+
+      - name: Parse drift report
+        id: parse
+        run: |
+          DRIFT_COUNT=$(jq -r '.drifted | length' /tmp/drift.json)
+          ERROR_COUNT=$(jq -r '.errors | length' /tmp/drift.json)
+          echo "drift_count=$DRIFT_COUNT" >> $GITHUB_OUTPUT
+          echo "error_count=$ERROR_COUNT" >> $GITHUB_OUTPUT
+
+      - name: Upsert Linear issue on drift
+        if: steps.parse.outputs.drift_count != '0' || steps.parse.outputs.error_count != '0'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          node scripts/linear-upsert-drift-issue.mjs /tmp/drift.json
+
+      - name: Fail job if drift or error
+        if: steps.drift.outputs.exit_code != '0'
+        run: |
+          echo "::error::Drift or npm failure detected. See Linear issue."
+          exit 1
