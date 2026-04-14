@@ -1855,11 +1855,14 @@ console.log(`\n${BOLD}27. VS Code Command ↔ Test Pairing (SMI-4194)${RESET}`)
         const verbOnly = suffix.replace(/skill$/, '')
         const match = testFiles.some((f) => {
           const base = f.replace(/\.test\.ts$/, '').toLowerCase()
+          // prefix match only at a word boundary (next char must be - or . or end of string)
+          // e.g. "createskill" must not match "createskillservicemock"
+          const nextChar = base.slice(suffix.length)[0]
           return (
             base === suffix ||
             base === `${suffix}command` ||
             base === `${verbOnly}command` ||
-            base.startsWith(suffix)
+            (base.startsWith(suffix) && (nextChar === undefined || nextChar === '-' || nextChar === '.'))
           )
         })
         if (!match) missing.push(cmd)

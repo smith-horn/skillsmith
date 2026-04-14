@@ -72,6 +72,16 @@ try {
     fail('Missing extension/resources/ directory')
   }
 
+  // --- 3a. Walkthrough markdown files present ----------------------------
+  // These are required for the Getting Started walkthrough declared in package.json.
+  // If .vscodeignore drops them, VS Code renders blank walkthrough steps silently.
+  const requiredWalkthrough = ['discover.md', 'install.md', 'create.md']
+  for (const wf of requiredWalkthrough) {
+    if (!allFiles.includes(`extension/resources/walkthrough/${wf}`)) {
+      fail(`Missing walkthrough file: resources/walkthrough/${wf} — check .vscodeignore allowlist`)
+    }
+  }
+
   // --- 4. LICENSE file present -------------------------------------------
   const hasLicense = allFiles.some(
     (f) =>
