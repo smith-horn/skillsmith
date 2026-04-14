@@ -13,9 +13,10 @@ on:
         default: 'true'
         type: boolean
 
-# Required for GitHub Packages publishing
+# contents:write required for `gh release create` in create-gh-release job (SMI-4191).
+# packages:write required for GitHub Packages publishing (@smith-horn/enterprise).
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 concurrency:
@@ -723,11 +724,84 @@ jobs:
           npx tsx scripts/smoke-test-published.ts @skillsmith/cli $VERSION
           echo "✅ @skillsmith/cli@$VERSION smoke test passed" >> $GITHUB_STEP_SUMMARY
 
+  # SMI-4191: create matching GitHub Release for each package that was published.
+  # Tag convention: @skillsmith/<name>-v<X.Y.Z> (matches 2026-03-07 precedent).
+  # 422 already_exists treated as success — drift detector may have created it first.
+  create-gh-release:
+    name: Create GitHub Releases
+    runs-on: ubuntu-latest
+    needs: [publish-core, publish-mcp-server, publish-cli, smoke-test]
+    if: always() && (needs.publish-core.result == 'success' || needs.publish-mcp-server.result == 'success' || needs.publish-cli.result == 'success')
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Create releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CORE_RESULT: ${{ needs.publish-core.result }}
+          MCP_RESULT: ${{ needs.publish-mcp-server.result }}
+          CLI_RESULT: ${{ needs.publish-cli.result }}
+        run: |
+          set -euo pipefail
+          echo "## GitHub Release Creation" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '| Package | Version | Tag | Status |' >> "$GITHUB_STEP_SUMMARY"
+          echo '|---------|---------|-----|--------|' >> "$GITHUB_STEP_SUMMARY"
+
+          create_release () {
+            local short="$1" dir="$2" npm_name="$3" result="$4"
+            if [ "$result" != "success" ]; then
+              echo "| $npm_name | (not published) | — | ⏭️ skip |" >> "$GITHUB_STEP_SUMMARY"
+              return 0
+            fi
+            local version tag title
+            version=$(jq -r .version "$dir/package.json")
+            tag="${npm_name}-v${version}"
+            title="${npm_name} v${version}"
+
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "| $npm_name | $version | $tag | ℹ️ exists |" >> "$GITHUB_STEP_SUMMARY"
+              return 0
+            fi
+
+            local notes_file
+            notes_file=$(mktemp)
+            if ! node scripts/extract-changelog-section.mjs --package "$dir" --version "$version" > "$notes_file" 2>/dev/null; then
+              echo "Release $version." > "$notes_file"
+            fi
+
+            if gh release create "$tag" --title "$title" --notes-file "$notes_file" --target main; then
+              echo "| $npm_name | $version | $tag | ✅ created |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              # Race with detect-release-drift.yml — tolerate already_exists.
+              if gh release view "$tag" >/dev/null 2>&1; then
+                echo "| $npm_name | $version | $tag | ℹ️ race (exists) |" >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "| $npm_name | $version | $tag | ❌ error |" >> "$GITHUB_STEP_SUMMARY"
+                return 1
+              fi
+            fi
+          }
+
+          create_release core packages/core @skillsmith/core "$CORE_RESULT"
+          create_release mcp-server packages/mcp-server @skillsmith/mcp-server "$MCP_RESULT"
+          create_release cli packages/cli @skillsmith/cli "$CLI_RESULT"
+
   # Summary job
   publish-summary:
     name: Publish Summary
     runs-on: ubuntu-latest
-    needs: [publish-core, publish-mcp-server, publish-cli, publish-enterprise, smoke-test]
+    needs: [publish-core, publish-mcp-server, publish-cli, publish-enterprise, smoke-test, create-gh-release]
     if: always()
 
     steps:

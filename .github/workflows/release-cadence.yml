@@ -1,0 +1,123 @@
+# SMI-4191: weekly release-cadence workflow.
+# Hybrid trigger: Sunday 03:00 UTC OR manual dispatch. Runs prepare-release.ts
+# on a new branch if root CHANGELOG.md [Unreleased] is non-empty; opens a PR
+# for human review. Does NOT auto-merge. See ADR-114.
+#
+# Threshold-based trigger (mid-week fast-path) is a separate concern: the
+# detect-changes / on:push path would call check-unreleased-threshold.mjs
+# with exit code 1 signalling "over threshold". That wiring is in CI infra
+# work separate from this file; this workflow covers the time-based path.
+
+name: Release Cadence
+
+on:
+  schedule:
+    - cron: '0 3 * * 0' # Sunday 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Skip PR creation; report only'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-cadence
+  cancel-in-progress: false
+
+jobs:
+  cadence:
+    name: Weekly cadence check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: '22'
+
+      - name: Check [Unreleased] entry count
+        id: check
+        run: |
+          set +e
+          node scripts/check-unreleased-threshold.mjs --file CHANGELOG.md
+          EXIT=$?
+          set -e
+          COUNT=$(node scripts/check-unreleased-threshold.mjs --file CHANGELOG.md 2>/dev/null || echo 0)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "exit=$EXIT" >> "$GITHUB_OUTPUT"
+          echo "## Cadence Check" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- [Unreleased] entries: $COUNT" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Threshold exit: $EXIT (0 under, 1 over, 2 no [Unreleased])" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Exit early when [Unreleased] is empty
+        if: steps.check.outputs.count == '0'
+        run: |
+          echo "[Unreleased] is empty — nothing to release. Exiting." >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Install dependencies (prepare-release needs them)
+        if: steps.check.outputs.count != '0'
+        run: npm ci --ignore-scripts
+
+      - name: Create cadence branch
+        if: steps.check.outputs.count != '0'
+        id: branch
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          BRANCH="release-cadence/${DATE}"
+          git config user.name "skillsmith-cadence[bot]"
+          git config user.email "skillsmith-cadence@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+
+      - name: Run prepare-release.ts
+        if: steps.check.outputs.count != '0'
+        run: npx tsx scripts/prepare-release.ts --all=patch
+
+      - name: Push branch
+        if: steps.check.outputs.count != '0' && github.event.inputs.dry_run != 'true'
+        run: git push origin "${{ steps.branch.outputs.branch }}"
+
+      - name: Open PR
+        if: steps.check.outputs.count != '0' && github.event.inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --title "chore(release): weekly cadence bump — ${{ steps.branch.outputs.date }}" \
+            --body "$(cat <<EOF
+          Automated weekly release cadence PR opened by \`release-cadence.yml\` (SMI-4191).
+
+          ## What this PR does
+
+          Runs \`scripts/prepare-release.ts --all=patch\` to bump all packages by one patch version and drain per-package CHANGELOG \`[Unreleased]\` sections into the new versions.
+
+          ## What to check before merging
+
+          1. The bumped versions match what you want to ship (patch/minor/major). If minor or major is needed, close this PR, run \`prepare-release.ts\` with the right flags locally, and open a manual PR.
+          2. The CHANGELOG entries read cleanly and reference the right Linear issues.
+          3. CI is green.
+
+          ## After merging
+
+          Trigger publish: \`gh workflow run publish.yml -f dry_run=false\`. The \`create-gh-release\` job will create matching GitHub Releases automatically.
+
+          Parent: SMI-4144. See [ADR-114](docs/internal/adr/114-release-cadence-and-gh-release-alignment.md).
+          EOF
+          )" \
+            --base main \
+            --head "${{ steps.branch.outputs.branch }}"
