@@ -1818,11 +1818,11 @@ console.log(`\n${BOLD}27. VS Code skillNameValidation Codegen Drift (SMI-4194)${
   }
 }
 
-// 27. VS Code command↔test pairing (SMI-4194)
+// 28. VS Code command↔test pairing (SMI-4194)
 // Every `skillsmith.*` command declared in packages/vscode-extension/package.json
 // must have a matching test file under packages/vscode-extension/src/__tests__/.
 // This prevents shipping a palette entry with no test coverage.
-console.log(`\n${BOLD}27. VS Code Command ↔ Test Pairing (SMI-4194)${RESET}`)
+console.log(`\n${BOLD}28. VS Code Command ↔ Test Pairing (SMI-4194)${RESET}`)
 {
   const extPkgPath = 'packages/vscode-extension/package.json'
   const testDir = 'packages/vscode-extension/src/__tests__'
@@ -1862,7 +1862,8 @@ console.log(`\n${BOLD}27. VS Code Command ↔ Test Pairing (SMI-4194)${RESET}`)
             base === suffix ||
             base === `${suffix}command` ||
             base === `${verbOnly}command` ||
-            (base.startsWith(suffix) && (nextChar === undefined || nextChar === '-' || nextChar === '.'))
+            (base.startsWith(suffix) &&
+              (nextChar === undefined || nextChar === '-' || nextChar === '.'))
           )
         })
         if (!match) missing.push(cmd)
