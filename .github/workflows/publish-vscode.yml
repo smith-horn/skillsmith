@@ -48,6 +48,27 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Marketplace pre-flight (version collision check)
+        id: preflight
+        run: |
+          VERSION=$(node -e "console.log(require('./packages/vscode-extension/package.json').version)")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          PUBLISHED=$(npx @vscode/vsce show skillsmith.skillsmith-vscode --json 2>/dev/null | node -e "
+            let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{
+              try { console.log(JSON.parse(d).versions[0].version) } catch { console.log('none') }
+            })
+          " || echo "none")
+          echo "published=$PUBLISHED" >> $GITHUB_OUTPUT
+          echo "## Marketplace Pre-Flight" >> $GITHUB_STEP_SUMMARY
+          if [ "$VERSION" = "$PUBLISHED" ]; then
+            echo "- **Status**: COLLISION" >> $GITHUB_STEP_SUMMARY
+            echo "- **Current published**: $PUBLISHED" >> $GITHUB_STEP_SUMMARY
+            echo "- **Local version**: $VERSION" >> $GITHUB_STEP_SUMMARY
+            echo "::error::Version $VERSION is already published. Bump packages/vscode-extension/package.json 'version' field and add a CHANGELOG entry before re-running."
+            exit 1
+          fi
+          echo "- **Next version target**: $VERSION (current published: $PUBLISHED)" >> $GITHUB_STEP_SUMMARY
+
       - name: Install dependencies
         run: npm ci --workspace=packages/vscode-extension --include-workspace-root
         env:
@@ -97,22 +118,12 @@ jobs:
         env:
           npm_config_engine_strict: false
 
-      - name: Check if version already published
+      - name: Resolve version
         id: version-check
         run: |
           VERSION=$(node -e "console.log(require('./packages/vscode-extension/package.json').version)")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          PUBLISHED=$(npx @vscode/vsce show skillsmith.skillsmith-vscode --json 2>/dev/null | node -e "
-            let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{
-              try { console.log(JSON.parse(d).versions[0].version) } catch { console.log('none') }
-            })
-          " || echo "none")
-          echo "published=$PUBLISHED" >> $GITHUB_OUTPUT
-          if [ "$VERSION" = "$PUBLISHED" ]; then
-            echo "::error::Version $VERSION is already published to the Marketplace"
-            exit 1
-          fi
-          echo "Publishing version $VERSION (latest published: $PUBLISHED)"
+          echo "Publishing version $VERSION (pre-flight validated in validate job)"
 
       - name: Build
         run: npm run build -w packages/vscode-extension
