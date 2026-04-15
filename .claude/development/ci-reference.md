@@ -42,7 +42,7 @@ to the exclude list.
 | Workflow            | Unlocks git-crypt | Vitest config                     | Encrypted tests run? |
 |---------------------|-------------------|-----------------------------------|----------------------|
 | Pre-push (`.husky`) | Yes (dev env)     | root + per-package                | Yes                  |
-| `ci.yml` PR matrix  | Yes (action step) | scoped (`scripts/tests supabase`) | Yes                  |
+| `ci.yml` PR matrix  | Yes (action step) | scoped (`scripts/tests supabase/functions`) | Yes                  |
 | `post-merge-verify` | No                | root                              | No (skipped)         |
 
 Coverage trade-off: drift in `supabase/functions/**/*.test.ts` is caught only
