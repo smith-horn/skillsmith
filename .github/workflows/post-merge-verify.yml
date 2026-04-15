@@ -4,6 +4,15 @@ name: Post-Merge Verify
 # catching config drift (e.g. integration-test types, root vitest exclusions)
 # that the PR matrix does not exercise.
 #
+# SMI-4220: This workflow runs natively on ubuntu-latest, not inside Docker.
+# Scope is deliberately narrow — typecheck + root vitest config are pure
+# compile-time TS/JS checks. Neither exercises better-sqlite3 or
+# onnxruntime-node native bindings (WASM fallback covers any runtime path).
+# ADR-002 (Docker-first) still applies to package builds, tests that load
+# native modules, and developer workflows; this observer is a scoped
+# exception. If a future root-test starts loading SQLite natively, this
+# workflow will silently pass — add it to a package-level vitest config.
+#
 # See docs/internal/implementation/smi-4210-4212-ci-safety-net.md (SMI-4211).
 #
 # Rollback: rename this file to `post-merge-verify.yml.disabled` or set
@@ -25,22 +34,32 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Start Docker dev container
-        run: docker compose --profile dev up -d --wait
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Ensure auto-issue labels exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create ci-failure --color B60205 --description "Automated CI failure report" 2>/dev/null || true
+          gh label create post-merge-verify --color FBCA04 --description "Post-merge verification observer" 2>/dev/null || true
 
       - name: Install dependencies
-        run: docker exec skillsmith-dev-1 npm ci
+        run: npm ci --ignore-scripts
 
       - name: Typecheck (full workspace)
-        run: docker exec skillsmith-dev-1 npm run typecheck
+        run: npm run typecheck
 
       - name: Root vitest config (SMI-3502 runner)
-        run: docker exec skillsmith-dev-1 npx vitest run --config vitest.config.root-tests.ts
+        run: npx vitest run --config vitest.config.root-tests.ts
 
       - name: File or update auto-issue on failure
         if: failure()
