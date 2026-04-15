@@ -1,0 +1,80 @@
+name: Post-Merge Verify
+
+# Runs host-equivalent typecheck + root-vitest config after every push to main,
+# catching config drift (e.g. integration-test types, root vitest exclusions)
+# that the PR matrix does not exercise.
+#
+# See docs/internal/implementation/smi-4210-4212-ci-safety-net.md (SMI-4211).
+#
+# Rollback: rename this file to `post-merge-verify.yml.disabled` or set
+# `if: false` on the `verify` job. Close any open auto-issues manually.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'scripts/**'
+      - '.claude/**'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Start Docker dev container
+        run: docker compose --profile dev up -d --wait
+
+      - name: Install dependencies
+        run: docker exec skillsmith-dev-1 npm ci
+
+      - name: Typecheck (full workspace)
+        run: docker exec skillsmith-dev-1 npm run typecheck
+
+      - name: Root vitest config (SMI-3502 runner)
+        run: docker exec skillsmith-dev-1 npx vitest run --config vitest.config.root-tests.ts
+
+      - name: File or update auto-issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TITLE="Post-merge verify failed on main"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY=$(cat <<EOF
+          Post-merge verification failed on \`main\`.
+
+          - Commit: ${{ github.sha }}
+          - Run: $RUN_URL
+          - Triggered by: @${{ github.actor }}
+
+          This workflow runs host-equivalent typecheck and the root vitest config
+          (\`vitest.config.root-tests.ts\`) which are not covered by the PR matrix.
+          See \`docs/internal/implementation/smi-4210-4212-ci-safety-net.md\` (SMI-4211).
+          EOF
+          )
+          EXISTING=$(gh issue list \
+            --label post-merge-verify \
+            --state open \
+            --search "$TITLE in:title" \
+            --json number \
+            --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "Commenting on existing issue #$EXISTING"
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            echo "Filing new auto-issue"
+            gh issue create \
+              --title "$TITLE ($RUN_URL)" \
+              --body "$BODY" \
+              --label ci-failure,post-merge-verify
+          fi
