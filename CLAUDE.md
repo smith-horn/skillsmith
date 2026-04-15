@@ -384,6 +384,8 @@ varlock run -- sh -c 'npx @vscode/vsce publish --no-dependencies --pat "$VSCE_SK
 
 **PAT**: `VSCE_SKILLSMITH` in `.env` (Varlock), `VSCE_PAT` in GitHub Actions. 90-day rotation.
 
+**Changelog**: user-facing only — no `SMI-xxxx`, PR #, ADR, or GitHub issue refs. Ships on the Marketplace "Changelog" tab. See [vscode-publishing-guide.md § Changelog Authoring](.claude/development/vscode-publishing-guide.md#changelog-authoring).
+
 ---
 
 ## Skills & Embedding

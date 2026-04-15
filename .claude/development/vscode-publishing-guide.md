@@ -47,6 +47,27 @@ varlock run -- sh -c 'npx @vscode/vsce publish --no-dependencies --pat "$VSCE_SK
 
 TODO: Integrate into `prepare-release.ts` with `--vscode=<bump>` flag (SMI-3702).
 
+## Changelog Authoring
+
+The CHANGELOG ships inside the `.vsix` and renders on the Marketplace "Changelog" tab. Write for a user who has never seen the repo. If a bullet only makes sense with an internal reference, it doesn't belong in the CHANGELOG — put it in the PR description instead.
+
+**Strip** from every entry:
+
+- Linear IDs (`SMI-xxxx`)
+- PR numbers (`#xxx`, `closes #xxx`, `GitHub #xxx`)
+- ADR references (`ADR-xxx`, `per ADR-113`)
+- Internal file paths, helper names, and test-harness wiring (users don't care which helper you extracted)
+- Wave / phase / retro references
+
+| Keep | Strip |
+|------|-------|
+| "Uninstall command — removes an installed skill with a confirmation dialog." | "`skillsmith.uninstallSkill` uses shared `assertInsideRoot` helper. (SMI-4195, closes #485)" |
+| "New setting `skillsmith.mcp.minServerVersion` warns when the MCP server is too old." | "MCP server minimum-version check. (SMI-4194)" |
+| "MCP server is now spawned without a shell, eliminating a command-injection surface." | "Removed `shell: true` from MCP server spawn, replaced with `cross-spawn`. (SMI-3805, GitHub #423)" |
+| "Skill descriptions now render Markdown." | "Extracted shared `SANITIZE_OPTIONS` constant and `renderMarkdown` helper." |
+
+The same rule applies to all public-facing CHANGELOGs in this repo (`packages/*/CHANGELOG.md`, root `CHANGELOG.md`). Internal refs belong in PR descriptions, commit trailers, and retros — not release notes.
+
 ## Pre-Publish Checklist
 
 - [ ] Version bumped in `package.json`
