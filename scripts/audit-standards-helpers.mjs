@@ -118,3 +118,135 @@ export const extractCompletionIssues = (subject, body) => {
   }
   return out
 }
+
+// ============================================================================
+// SMI-4193: Smoke-test export drift helpers
+// ============================================================================
+//
+// These helpers power Check 29. They prevent a recurrence of SMI-4189: a name
+// removed from @skillsmith/core's public exports but still listed in the
+// smoke-test `required` arrays passes local tests (workspace resolution) but
+// fails the post-publish smoke run. Cost: a republish cycle.
+//
+// Design: pure parsing only. Caller does I/O and drives `export *` recursion
+// by re-invoking `parseTsExports` on each resolved barrel path.
+
+const COMMENT_BLOCK_RE = /\/\*[\s\S]*?\*\//g
+const COMMENT_LINE_RE = /\/\/.*$/gm
+
+const stripComments = (src) => src.replace(COMMENT_BLOCK_RE, '').replace(COMMENT_LINE_RE, '')
+
+/**
+ * Parse a single TypeScript file's export surface. Returns the directly-named
+ * exports plus the relative specifiers of any `export * from './x.js'` chains
+ * that the caller must recurse into.
+ *
+ * Handles:
+ *   - export { A, B, type C, D as E } [from '...']
+ *   - export (async) function|const|class|enum|let|var|interface|type Name
+ *   - export * from './path.js'
+ *
+ * Ignores:
+ *   - export default — has no named identity
+ *   - re-exports from external packages (absolute specifiers) — not
+ *     barrels we can resolve
+ */
+export const parseTsExports = (content) => {
+  const src = stripComments(content)
+  const names = new Set()
+  const starFrom = []
+
+  // export { ... } [from '...']
+  const namedRe = /export\s+(?:type\s+)?\{([^}]+)\}(?:\s+from\s+['"]([^'"]+)['"])?/g
+  let m
+  while ((m = namedRe.exec(src))) {
+    for (const raw of m[1].split(',')) {
+      const entry = raw.trim()
+      if (!entry) continue
+      // `A as B` → B is the export name; `type A` → A
+      const asMatch = entry.match(/\s+as\s+([A-Za-z_$][\w$]*)$/)
+      const rawName = asMatch ? asMatch[1] : entry.replace(/^type\s+/, '').trim()
+      const name = rawName.match(/^[A-Za-z_$][\w$]*$/)?.[0]
+      if (name) names.add(name)
+    }
+  }
+
+  // export (async)? function|const|class|enum|let|var|interface|type Name
+  const declRe =
+    /export\s+(?:async\s+)?(?:function\*?|const|class|enum|let|var|interface|type)\s+([A-Za-z_$][\w$]*)/g
+  while ((m = declRe.exec(src))) names.add(m[1])
+
+  // export * from './path'  — record for caller to recurse
+  const starRe = /export\s+\*\s+from\s+['"]([^'"]+)['"]/g
+  while ((m = starRe.exec(src))) starFrom.push(m[1])
+
+  return { names, starFrom }
+}
+
+/**
+ * Walk an entry-point TS file (e.g. packages/core/src/index.ts) and return
+ * the full set of names it exports, following `export * from` chains.
+ *
+ * `readFile(absPath)` returns the file contents (string). Return null/''
+ * for non-existent files — they're silently skipped so missing barrels
+ * don't crash the audit.
+ *
+ * `resolveModule(fromFile, relSpec)` returns the absolute path of the
+ * module referenced by `relSpec` (e.g. `./exports/services.js`), accounting
+ * for the project's .js-in-source convention. Return null if unresolvable.
+ */
+export const collectTsEntryExports = (entryPath, readFile, resolveModule) => {
+  const names = new Set()
+  const visited = new Set()
+  const stack = [entryPath]
+
+  while (stack.length > 0) {
+    const current = stack.pop()
+    if (visited.has(current)) continue
+    visited.add(current)
+
+    const content = readFile(current)
+    if (!content) continue
+
+    const { names: localNames, starFrom } = parseTsExports(content)
+    for (const n of localNames) names.add(n)
+
+    for (const spec of starFrom) {
+      const resolved = resolveModule(current, spec)
+      if (resolved && !visited.has(resolved)) stack.push(resolved)
+    }
+  }
+
+  return names
+}
+
+/**
+ * Extract every string literal from every `required = [...]` or
+ * `const required = [...]` assignment in the given smoke-test source.
+ *
+ * Returns an array of `{ name, arrayIndex }` records so callers can report
+ * which block a missing name came from. Array indices are 0-based in the
+ * order the arrays appear in the file (first required = block 0, etc.).
+ *
+ * Current smoke-test layout (scripts/smoke-test-published.ts) has three
+ * `required` arrays, all validating @skillsmith/core exports. If future
+ * packages add their own arrays, extend the caller's target-package map
+ * (not this parser — it is package-agnostic).
+ */
+export const extractSmokeTestRequiredArrays = (content) => {
+  const src = stripComments(content)
+  const results = []
+  const arrayRe = /\brequired\s*=\s*\[([\s\S]*?)\]/g
+  let m
+  let arrayIndex = 0
+  while ((m = arrayRe.exec(src))) {
+    const body = m[1]
+    const strLit = /['"]([A-Za-z_$][\w$]*)['"]/g
+    let s
+    while ((s = strLit.exec(body))) {
+      results.push({ name: s[1], arrayIndex })
+    }
+    arrayIndex++
+  }
+  return results
+}
