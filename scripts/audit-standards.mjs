@@ -8,8 +8,13 @@
 
 import { execSync } from 'child_process'
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
-import { extname, join, relative } from 'path'
-import { satisfies, extractCompletionIssues } from './audit-standards-helpers.mjs'
+import { dirname, extname, join, relative, resolve as resolvePath } from 'path'
+import {
+  satisfies,
+  extractCompletionIssues,
+  collectTsEntryExports,
+  extractSmokeTestRequiredArrays,
+} from './audit-standards-helpers.mjs'
 
 const RED = '\x1b[31m'
 const GREEN = '\x1b[32m'
@@ -1878,6 +1883,68 @@ console.log(`\n${BOLD}28. VS Code Command ↔ Test Pairing (SMI-4194)${RESET}`)
       }
     } catch (e) {
       warn('Could not check vscode command↔test pairing: ' + e.message)
+    }
+  }
+}
+
+// 29. Smoke-test export drift (SMI-4193)
+// Every name listed in a `required` array inside scripts/smoke-test-published.ts
+// must be exported from @skillsmith/core's public entry point. Catches the
+// SMI-4189 regression pattern: an export is removed from core but lingers in
+// the smoke-test required list → workspace tests pass (resolved via source),
+// published-package smoke fails (import missing).
+console.log(`\n${BOLD}29. Smoke-test Export Drift (SMI-4193)${RESET}`)
+{
+  const smokePath = 'scripts/smoke-test-published.ts'
+  const coreEntry = 'packages/core/src/index.ts'
+  if (!existsSync(smokePath)) {
+    warn(`${smokePath} not found — skipping smoke-test drift check`)
+  } else if (!existsSync(coreEntry)) {
+    warn(`${coreEntry} not found — skipping smoke-test drift check`)
+  } else {
+    try {
+      const readFileIfExists = (absPath) =>
+        existsSync(absPath) ? readFileSync(absPath, 'utf8') : null
+      // Resolve the .js-in-source convention used across packages/core:
+      //   export * from './exports/services.js' → services.ts in the same dir
+      //   export * from './foo/index.js' → foo/index.ts
+      const resolveModule = (fromFile, spec) => {
+        if (!spec.startsWith('.')) return null
+        const base = resolvePath(dirname(fromFile), spec.replace(/\.(m?js)$/, ''))
+        for (const candidate of [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`]) {
+          if (existsSync(candidate)) return candidate
+        }
+        return null
+      }
+      const coreExports = collectTsEntryExports(
+        resolvePath(coreEntry),
+        readFileIfExists,
+        resolveModule
+      )
+      const smokeContent = readFileSync(smokePath, 'utf8')
+      const entries = extractSmokeTestRequiredArrays(smokeContent)
+      if (entries.length === 0) {
+        warn(
+          `No \`required\` arrays found in ${smokePath} — check may be stale; verify the smoke-test structure`
+        )
+      } else {
+        const missing = entries.filter((e) => !coreExports.has(e.name))
+        if (missing.length === 0) {
+          pass(
+            `All ${entries.length} smoke-test required names resolve in @skillsmith/core (${coreExports.size} exports)`
+          )
+        } else {
+          const formatted = missing
+            .map((e) => `  - '${e.name}' (required array #${e.arrayIndex + 1})`)
+            .join('\n')
+          fail(
+            `Smoke-test references ${missing.length} name(s) not exported from @skillsmith/core:\n${formatted}`,
+            `Either restore the export in ${coreEntry} or remove the name from the matching \`required\` array in ${smokePath}. This check prevents the SMI-4189 republish regression.`
+          )
+        }
+      }
+    } catch (e) {
+      warn(`Could not check smoke-test export drift: ${e.message}`)
     }
   }
 }
