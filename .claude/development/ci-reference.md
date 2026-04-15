@@ -32,6 +32,24 @@ The CI system classifies changes into tiers to run appropriate checks:
 | `scripts/ci/classify-changes.ts` | Classifies commits into tiers |
 | `scripts/ci/detect-affected.ts` | Detects affected packages |
 
+### Git-Crypt and root vitest config (SMI-4221)
+
+`vitest.config.root-tests.ts` detects git-crypt lock state at load by reading
+the first 9 bytes of `supabase/functions/_shared/cors.ts` and checking for the
+`\x00GITCRYPT` magic header. When locked, it appends `supabase/functions/**`
+to the exclude list.
+
+| Workflow            | Unlocks git-crypt | Vitest config                     | Encrypted tests run? |
+|---------------------|-------------------|-----------------------------------|----------------------|
+| Pre-push (`.husky`) | Yes (dev env)     | root + per-package                | Yes                  |
+| `ci.yml` PR matrix  | Yes (action step) | scoped (`scripts/tests supabase/functions`) | Yes                  |
+| `post-merge-verify` | No                | root                              | No (skipped)         |
+
+Coverage trade-off: drift in `supabase/functions/**/*.test.ts` is caught only
+by the PR matrix, not by post-merge-verify. Accepted because unlocking
+git-crypt in post-merge-verify would duplicate PR-matrix coverage and defeat
+SMI-4211's drift-detection intent. Refs: SMI-4221, SMI-2672.
+
 ## Turborepo Build Orchestration (SMI-2196)
 
 ```bash
