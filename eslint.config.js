@@ -29,6 +29,10 @@ const globalIgnores = {
     // Deno files have incompatible module semantics; lint them with deno lint instead
     'supabase/functions/**',
     'supabase/migrations/**',
+    // VS Code extension integration tests use @vscode/test-electron and Mocha globals
+    // that aren't represented in the TS project graph; they're executed by the VS Code
+    // test runner, not Vitest. Lint them separately if needed.
+    'packages/vscode-extension/src/__tests__/integration/**',
   ],
 }
 
