@@ -193,6 +193,48 @@ export function extractCategoryFromTags(tags: string[] | undefined | null): Skil
 }
 
 /**
+ * Normalize a category name from the API into a valid SkillCategory.
+ *
+ * The API (via skills-get edge function) joins skill_categories and returns
+ * display names from the categories table. Those names drift from the
+ * lowercase SkillCategory enum in three ways:
+ *   - Case: "Database" / "AI/ML" / "Other" vs "database" / "ai-ml" / "other"
+ *   - Separator: "AI/ML" uses slash; enum uses dash
+ *   - Pluralization: "integrations" (DB) vs "integration" (enum)
+ *
+ * Returns null when the input is missing or not mappable, letting the caller
+ * fall back to tag-based inference without laundering garbage into the enum.
+ *
+ * @param name - Raw category name from API response
+ * @returns Valid SkillCategory, or null when not mappable
+ *
+ * @example
+ * normalizeApiCategory('Database')       // 'database'
+ * normalizeApiCategory('AI/ML')          // 'ai-ml'
+ * normalizeApiCategory('integrations')   // 'integration'
+ * normalizeApiCategory('product')        // null (not in enum)
+ * normalizeApiCategory(undefined)        // null
+ */
+export function normalizeApiCategory(name: string | undefined | null): SkillCategory | null {
+  if (!name) return null
+
+  const normalized = name.toLowerCase().replace(/\//g, '-')
+
+  if (VALID_CATEGORIES.includes(normalized as SkillCategory)) {
+    return normalized as SkillCategory
+  }
+
+  if (normalized.endsWith('s')) {
+    const singular = normalized.slice(0, -1)
+    if (VALID_CATEGORIES.includes(singular as SkillCategory)) {
+      return singular as SkillCategory
+    }
+  }
+
+  return null
+}
+
+/**
  * Get trust badge string for display.
  *
  * Returns a formatted badge string for terminal/CLI display

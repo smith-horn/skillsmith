@@ -72,8 +72,21 @@ export interface ApiSkill {
   created_at: string
   /** Last update timestamp (ISO 8601) */
   updated_at: string
-  /** Associated category names */
+  /** Associated category names (joined from skill_categories by skills-get) */
   categories?: string[]
+  /**
+   * SMI-4240: Security scan fields returned by skills-get via `...skill` spread.
+   * All optional/nullable to preserve compatibility with pre-4240 responses and
+   * with endpoints like skills-search that don't select these columns.
+   */
+  /** Security score 0-100 (lower is safer); null until first scan */
+  security_score?: number | null
+  /** ISO 8601 timestamp of last security scan; null until first scan */
+  last_scanned_at?: string | null
+  /** Security findings array (jsonb); length drives findingsCount derivation */
+  security_findings?: unknown[] | null
+  /** True when the skill is quarantined due to security score threshold */
+  quarantined?: boolean
 }
 
 // ============================================================================

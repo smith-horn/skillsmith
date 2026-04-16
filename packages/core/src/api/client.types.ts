@@ -43,6 +43,9 @@ export class ApiClientError extends Error {
 /**
  * Search result from API
  * SMI-1577: Made repo_url, created_at, updated_at optional to match schema
+ * SMI-4240: Added categories, security_score, last_scanned_at, security_findings
+ *   to match the full `...skill` spread returned by skills-get (present on
+ *   get-skill responses, omitted on skills-search responses).
  */
 export interface ApiSearchResult {
   id: string
@@ -62,6 +65,14 @@ export interface ApiSearchResult {
   content?: string | null
   created_at?: string
   updated_at?: string
+  /** SMI-4240: Category display names joined from skill_categories */
+  categories?: string[]
+  /** SMI-4240: Security score 0-100 (lower is safer); null until first scan */
+  security_score?: number | null
+  /** SMI-4240: ISO 8601 timestamp of last security scan; null until first scan */
+  last_scanned_at?: string | null
+  /** SMI-4240: Security findings array (jsonb); length drives findingsCount */
+  security_findings?: unknown[] | null
 }
 
 /**

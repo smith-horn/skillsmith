@@ -98,7 +98,10 @@ export function getLoadingHtml(nonce: string, csp: string): string {
 }
 
 /**
- * SMI-3857/3858: Generate the security scan status HTML for the details grid
+ * SMI-3857/3858: Generate the security scan status HTML for the details grid.
+ * SMI-4240: Tier-aware "pending" copy — verified skills show "Pending review"
+ * (neutral), community/experimental/local/unknown show "Pending scan". The row
+ * stays visible across all tiers so the grid layout is stable.
  */
 function getSecurityScanHtml(skill: ExtendedSkillData): string {
   const passed = skill.securityPassed
@@ -107,6 +110,7 @@ function getSecurityScanHtml(skill: ExtendedSkillData): string {
 
   let statusText: string
   let statusClass: string
+  let tooltip: string | null = null
   if (passed === true) {
     statusText = 'PASS'
     statusClass = 'scan-pass'
@@ -114,17 +118,21 @@ function getSecurityScanHtml(skill: ExtendedSkillData): string {
     statusText = risk != null ? `FAIL (risk: ${risk}/100)` : 'FAIL'
     statusClass = 'scan-fail'
   } else {
-    statusText = 'Not scanned'
+    // passed === null || undefined: no scan result available.
+    statusText = skill.trustTier === 'verified' ? 'Pending review' : 'Pending scan'
     statusClass = 'scan-none'
+    tooltip = 'Security scan status — see https://skillsmith.app/docs/security'
   }
 
   const dateStr = scannedAt
     ? ` <span class="scan-date">${escapeHtml(scannedAt.split('T')[0] ?? scannedAt)}</span>`
     : ''
 
+  const titleAttr = tooltip ? ` title="${escapeHtml(tooltip)}"` : ''
+
   return `<div class="meta-item">
                 <div class="meta-label">Security Scan</div>
-                <div class="meta-value"><span class="${statusClass}">${statusText}</span>${dateStr}</div>
+                <div class="meta-value"><span class="${statusClass}"${titleAttr}>${statusText}</span>${dateStr}</div>
             </div>`
 }
 
@@ -282,12 +290,11 @@ export function getSkillDetailHtml(
         <span class="inferred-label">(inferred from skill ID)</span>
     </div>
     `
-          : `
-    <div class="section">
-        <h2>Repository</h2>
-        <span class="meta-label">No repository URL available</span>
-    </div>
-    `
+          : // SMI-4240: Hide the entire section when no URL is available rather than rendering
+            // a "No repository URL available" placeholder — matches the tag-section pattern
+            // (lines 257-267). For intentionally non-installable skills (SMI-2723) or
+            // cross-ecosystem discovery-only skills, the section simply doesn't appear.
+            ''
     }
 
     <div class="actions">

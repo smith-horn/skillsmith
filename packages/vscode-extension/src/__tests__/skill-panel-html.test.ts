@@ -58,13 +58,14 @@ describe('getSkillDetailHtml', () => {
     it('does not infer URL for IDs without slash', () => {
       const html = getSkillDetailHtml(makeSkill({ id: 'no-slash-id' }), NONCE, CSP)
       expect(html).not.toContain('inferred from skill ID')
-      expect(html).toContain('No repository URL available')
+      // SMI-4240: Repository section is hidden entirely when no URL is available.
+      expect(html).not.toContain('<h2>Repository</h2>')
     })
 
     it('rejects path traversal IDs (multiple segments)', () => {
       const html = getSkillDetailHtml(makeSkill({ id: 'evil/../../../other' }), NONCE, CSP)
       expect(html).not.toContain('inferred from skill ID')
-      expect(html).toContain('No repository URL available')
+      expect(html).not.toContain('<h2>Repository</h2>')
     })
 
     it('does not infer URL for claude-plugins/UUID IDs', () => {
@@ -74,13 +75,13 @@ describe('getSkillDetailHtml', () => {
         CSP
       )
       expect(html).not.toContain('inferred from skill ID')
-      expect(html).toContain('No repository URL available')
+      expect(html).not.toContain('<h2>Repository</h2>')
     })
 
     it('does not infer URL for IDs with 3+ segments', () => {
       const html = getSkillDetailHtml(makeSkill({ id: 'source/sub/path' }), NONCE, CSP)
       expect(html).not.toContain('inferred from skill ID')
-      expect(html).toContain('No repository URL available')
+      expect(html).not.toContain('<h2>Repository</h2>')
     })
 
     it('infers URL for repo names with dots', () => {
@@ -185,20 +186,32 @@ describe('getSkillDetailHtml', () => {
     })
   })
 
-  describe('no-repo placeholder', () => {
-    it('shows placeholder when no repository and no inference', () => {
+  describe('no-repo section hiding (SMI-4240)', () => {
+    it('hides the repository section entirely when no URL and no inference', () => {
       const html = getSkillDetailHtml(makeSkill({ id: 'no-slash' }), NONCE, CSP)
-      expect(html).toContain('No repository URL available')
-      expect(html).toContain('<h2>Repository</h2>')
+      // Plan review finding: a "No repository URL available" placeholder reads
+      // like a broken feature for intentionally non-installable skills
+      // (SMI-2723). Match the tag-section pattern: if there's nothing to show,
+      // render nothing.
+      expect(html).not.toContain('No repository URL available')
+      expect(html).not.toContain('<h2>Repository</h2>')
     })
 
-    it('does not show placeholder when explicit repository exists', () => {
+    it('still renders the section when an explicit repository exists', () => {
       const html = getSkillDetailHtml(
         makeSkill({ repository: 'https://github.com/tester/repo' }),
         NONCE,
         CSP
       )
-      expect(html).not.toContain('No repository URL available')
+      expect(html).toContain('<h2>Repository</h2>')
+      expect(html).toContain('https://github.com/tester/repo')
+    })
+
+    it('still renders the section when an inferred URL is available', () => {
+      const html = getSkillDetailHtml(makeSkill({ id: 'tester/my-repo' }), NONCE, CSP)
+      expect(html).toContain('<h2>Repository</h2>')
+      expect(html).toContain('https://github.com/tester/my-repo')
+      expect(html).toContain('inferred from skill ID')
     })
   })
 
@@ -293,59 +306,7 @@ describe('getTrustBadgeText', () => {
   })
 })
 
-describe('security scan rendering (SMI-3857/3858)', () => {
-  it('shows PASS for securityPassed: true', () => {
-    const html = getSkillDetailHtml(makeSkill({ securityPassed: true }), NONCE, CSP)
-    expect(html).toContain('scan-pass')
-    expect(html).toContain('PASS')
-  })
-
-  it('shows FAIL with risk score for securityPassed: false', () => {
-    const html = getSkillDetailHtml(
-      makeSkill({ securityPassed: false, securityRiskScore: 72 }),
-      NONCE,
-      CSP
-    )
-    expect(html).toContain('scan-fail')
-    expect(html).toContain('FAIL (risk: 72/100)')
-  })
-
-  it('shows FAIL without risk when riskScore is null', () => {
-    const html = getSkillDetailHtml(
-      makeSkill({ securityPassed: false, securityRiskScore: null }),
-      NONCE,
-      CSP
-    )
-    expect(html).toContain('scan-fail')
-    expect(html).toContain('>FAIL<')
-  })
-
-  it('shows Not scanned for securityPassed: null', () => {
-    const html = getSkillDetailHtml(makeSkill({ securityPassed: null }), NONCE, CSP)
-    expect(html).toContain('scan-none')
-    expect(html).toContain('Not scanned')
-  })
-
-  it('shows Not scanned when securityPassed is undefined', () => {
-    const html = getSkillDetailHtml(makeSkill(), NONCE, CSP)
-    expect(html).toContain('Not scanned')
-  })
-
-  it('includes scan date when provided', () => {
-    const html = getSkillDetailHtml(
-      makeSkill({ securityPassed: true, securityScannedAt: '2026-04-03T12:00:00Z' }),
-      NONCE,
-      CSP
-    )
-    expect(html).toContain('scan-date')
-    expect(html).toContain('2026-04-03')
-  })
-
-  it('omits scan date span when not provided', () => {
-    const html = getSkillDetailHtml(makeSkill({ securityPassed: true }), NONCE, CSP)
-    expect(html).not.toContain('<span class="scan-date">')
-  })
-})
+// Security scan tests live in skill-panel-security.test.ts (SMI-4240 file-size split).
 
 describe('getLoadingHtml', () => {
   it('returns loading spinner HTML with CSP', () => {
