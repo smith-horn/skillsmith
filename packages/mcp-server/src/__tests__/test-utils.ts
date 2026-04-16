@@ -1,8 +1,10 @@
 /**
  * Test utilities for MCP server tests
  * @see SMI-792: Database initialization
+ * @see SMI-4240: createApiMockContext for API-path coverage
  */
 
+import type { ApiResponse, ApiSearchResult, ApiSkill } from '@skillsmith/core'
 import { createToolContext, type ToolContext } from '../context.js'
 
 export type { ToolContext }
@@ -98,5 +100,67 @@ export function seedTestData(context: ToolContext): void {
 export function createSeededTestContext(): ToolContext {
   const context = createTestContext()
   seedTestData(context)
+  return context
+}
+
+/**
+ * SMI-4240: Minimal `ApiSkill` fields every mock fixture must provide.
+ * Anything not listed here is optional and filled with sensible defaults.
+ */
+export type ApiSkillFixtureInput = Partial<ApiSkill> &
+  Pick<ApiSkill, 'id' | 'name'> & { trust_tier?: ApiSkill['trust_tier'] }
+
+/**
+ * SMI-4240: Create a ToolContext wired to an in-memory apiClient mock so
+ * get-skill / search / recommend tests can exercise the API path
+ * (`!isOffline()` branch) without touching the network.
+ *
+ * Pass a partial `ApiSkill`; defaults are filled in to satisfy the real
+ * response validators. If the test calls `apiClient.getSkill(id)` with
+ * an ID that doesn't match the fixture, the mock throws an Error whose
+ * message matches the API client's own "Skill not found" shape so the
+ * tool's fallback logic behaves identically to production.
+ */
+export function createApiMockContext(opts: {
+  apiSkill: ApiSkillFixtureInput
+  /** Category names joined by the edge function; defaults to `[]`. */
+  categories?: string[]
+}): ToolContext {
+  const context = createToolContext({
+    dbPath: ':memory:',
+    apiClientConfig: { offlineMode: false },
+  })
+
+  const fixture: ApiSearchResult = {
+    id: opts.apiSkill.id,
+    name: opts.apiSkill.name,
+    description: opts.apiSkill.description ?? null,
+    author: opts.apiSkill.author ?? null,
+    repo_url: opts.apiSkill.repo_url ?? null,
+    quality_score: opts.apiSkill.quality_score ?? null,
+    trust_tier: opts.apiSkill.trust_tier ?? 'community',
+    tags: opts.apiSkill.tags ?? [],
+    stars: opts.apiSkill.stars ?? null,
+    created_at: opts.apiSkill.created_at ?? '2026-01-01T00:00:00.000Z',
+    updated_at: opts.apiSkill.updated_at ?? '2026-01-01T00:00:00.000Z',
+    categories: opts.categories ?? opts.apiSkill.categories ?? [],
+    security_score: opts.apiSkill.security_score,
+    last_scanned_at: opts.apiSkill.last_scanned_at,
+    security_findings: opts.apiSkill.security_findings,
+    quarantined: opts.apiSkill.quarantined,
+  }
+
+  const apiClient = context.apiClient as typeof context.apiClient & {
+    isOffline: () => boolean
+    getSkill: (id: string) => Promise<ApiResponse<ApiSearchResult>>
+  }
+  apiClient.isOffline = () => false
+  apiClient.getSkill = async (id: string) => {
+    if (id !== fixture.id) {
+      throw new Error(`[mock] Skill "${id}" not found`)
+    }
+    return { data: fixture }
+  }
+
   return context
 }

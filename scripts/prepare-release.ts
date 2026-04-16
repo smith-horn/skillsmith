@@ -317,6 +317,55 @@ export function checkVersionCollision(
 }
 
 /**
+ * Reserved / deprecated version ranges per package.
+ *
+ * SMI-4207 / ADR-115: `@skillsmith/core@2.0.0`–`2.1.2` were self-published in January 2026
+ * during an aborted version-strategy experiment and rolled back to the 0.4.x line. The full
+ * `>=2.0.0 <3.0.0` range is now deprecated on npm and permanently reserved — the next major
+ * for `@skillsmith/core` jumps from 0.x straight to 3.0.0.
+ *
+ * Used by TWO guards:
+ *   1. `checkReservedVersionRanges` — refuses proposing new versions in the range.
+ *   2. `resolveNpmLookups` — filters the range out of `allVersions`/`latest` so normal
+ *      patch bumps on the live 0.5.x line aren't blocked by orphaned 2.x entries.
+ */
+export const RESERVED_RANGES: Record<string, string> = {
+  '@skillsmith/core': '>=2.0.0 <3.0.0',
+}
+
+/**
+ * Refuse proposed versions that fall inside reserved/orphaned ranges.
+ *
+ * Belt-and-suspenders on top of `checkVersionCollision`: the npm-latest guard alone would
+ * catch `@skillsmith/core@2.1.3` indirectly, but this rule states the skip explicitly and
+ * refuses unconditionally — no `--allow-downgrade` override. Error message points at ADR-115.
+ *
+ * Pure function — no network I/O.
+ */
+export function checkReservedVersionRanges(plans: BumpPlan[]): CollisionCheckResult {
+  const errors: string[] = []
+  const report: string[] = []
+
+  for (const plan of plans) {
+    const { spec, newVersion } = plan
+    const reservedRange = RESERVED_RANGES[spec.name]
+    if (reservedRange && semver.satisfies(newVersion, reservedRange)) {
+      errors.push(
+        `${spec.name}: proposed ${newVersion} falls inside the reserved 2.x range ` +
+          `(>=2.0.0 <3.0.0). This range is permanently deprecated on npm — the next major ` +
+          `must jump to 3.0.0 or later. No override flag applies. ` +
+          `See ADR-115 (docs/internal/adr/115-skillsmith-core-version-namespace-reconciliation.md) ` +
+          `and scripts/prepare-release.ts.`
+      )
+      continue
+    }
+    report.push(`  ${spec.name}: proposed ${newVersion} outside reserved ranges → proceed`)
+  }
+
+  return { ok: errors.length === 0, errors, report }
+}
+
+/**
  * Resolve npm lookups for every plan. Separated from checkVersionCollision so tests can
  * inject lookups without patching network. Throws (fail-closed) on any non-404 npm error.
  */
@@ -326,7 +375,14 @@ export async function resolveNpmLookups(plans: BumpPlan[]): Promise<Map<string, 
     const allVersions = await fetchAllPublishedVersions(plan.spec.name)
     let latest: string | null = null
     if (allVersions !== null) {
-      const valid = allVersions.filter((v) => semver.valid(v))
+      // Exclude reserved ranges (SMI-4207 / ADR-115) from the "live" pool used to compute
+      // `latest`. Deprecated orphaned versions must not block normal bumps on the live line.
+      // `allVersions` retains the full list — Rule 3's isPublished check still catches
+      // attempts to republish any existing semver, reserved or not.
+      const reservedRange = RESERVED_RANGES[plan.spec.name]
+      const valid = allVersions
+        .filter((v) => semver.valid(v))
+        .filter((v) => !reservedRange || !semver.satisfies(v, reservedRange))
       latest = valid.length === 0 ? null : (semver.rsort([...valid])[0] ?? null)
     }
     lookups.set(plan.spec.name, { latest, allVersions })
@@ -579,6 +635,18 @@ async function main(): Promise<void> {
     console.log(`  ${name}  ${plan.currentVersion.padEnd(9)} →  ${plan.newVersion}`)
   }
   console.log()
+
+  // Step 3.4: Reserved version-range guard (SMI-4207 / ADR-115).
+  // Runs before the npm-latest check so operators see the policy reason rather than a
+  // confusing "proposed < latest" message when targeting an orphaned range.
+  const reserved = checkReservedVersionRanges(plans)
+  if (!reserved.ok) {
+    console.error('\n  ✗ Reserved version range guard failed:')
+    for (const err of reserved.errors) {
+      console.error(`    - ${err}`)
+    }
+    process.exit(1)
+  }
 
   // Step 3.5: NPM collision guard — ALWAYS runs before any write (including --dry-run preview).
   console.log('  Checking npm registry for version collisions...')

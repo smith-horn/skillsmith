@@ -97,6 +97,7 @@ export {
   type SearchResponse as MCPSearchResponse,
   type GetSkillResponse,
   type AlsoInstalledSkill,
+  type SecuritySummary,
 } from '../types.js'
 
 // ============================================================================

@@ -5,13 +5,17 @@ name: Post-Merge Verify
 # that the PR matrix does not exercise.
 #
 # SMI-4220: This workflow runs natively on ubuntu-latest, not inside Docker.
-# Scope is deliberately narrow — typecheck + root vitest config are pure
-# compile-time TS/JS checks. Neither exercises better-sqlite3 or
-# onnxruntime-node native bindings (WASM fallback covers any runtime path).
-# ADR-002 (Docker-first) still applies to package builds, tests that load
-# native modules, and developer workflows; this observer is a scoped
-# exception. If a future root-test starts loading SQLite natively, this
-# workflow will silently pass — add it to a package-level vitest config.
+# ADR-002 (Docker-first) applies to package builds and developer workflows;
+# this CI observer runs natively because the runner environment is
+# reproducible, and adding Docker would roughly double runtime for a
+# non-gating job.
+# SMI-4239: npm ci runs install lifecycle scripts so better-sqlite3 and
+# onnxruntime-node prebuilt binaries are available. The co-located package
+# tests in vitest.config.root-tests.ts load these via new Database() and
+# service contexts — without scripts, module-load fails. This matches the
+# behavior of ci.yml, batch-transform.yml, and all publish workflows.
+# If a new native module enters the dep tree, it must ship prebuilt binaries
+# for linux-x64 on Node 22 — otherwise this workflow will fail at module-load.
 #
 # See docs/internal/implementation/smi-4210-4212-ci-safety-net.md (SMI-4211).
 #
@@ -53,7 +57,7 @@ jobs:
           gh label create post-merge-verify --color FBCA04 --description "Post-merge verification observer" 2>/dev/null || true
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci
 
       - name: Typecheck (full workspace)
         run: npm run typecheck

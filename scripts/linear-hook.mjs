@@ -20,19 +20,10 @@ import { existsSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 
-// Source code patterns for implementation verification (SMI-3540)
-const SOURCE_PATTERNS = [
-  /^packages\/.*\.(ts|tsx|js|jsx)$/,
-  /^supabase\/functions\/.*\.(ts|js)$/,
-  /^scripts\/.*\.(ts|js|mjs)$/,
-]
-const EXCLUDED_PATTERNS = [
-  /\.test\.(ts|tsx|js)$/,
-  /\.spec\.(ts|tsx|js)$/,
-  /\.md$/,
-  /^\.claude\//,
-  /^docs\//,
-]
+// SMI-4243: shared with scripts/ci/verify-implementation.ts — single source of truth
+import { SOURCE_PATTERNS, TEST_PATTERNS, DOCS_PATTERNS } from './ci/source-patterns.mjs'
+
+const EXCLUDED_PATTERNS = [...TEST_PATTERNS, ...DOCS_PATTERNS]
 
 // Conventional commit prefixes that do NOT require source code changes
 const NON_SOURCE_PREFIXES = new Set(['docs', 'chore', 'style', 'ci', 'test', 'refactor'])

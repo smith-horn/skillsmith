@@ -28,13 +28,19 @@ import {
   type GetSkillResponse,
   type AlsoInstalledSkill,
   type MCPTrustTier as TrustTier,
+  type SecuritySummary,
   TrustTierDescriptions,
   SkillsmithError,
   ErrorCodes,
   trackSkillView,
 } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
-import { isValidSkillId, mapTrustTierFromDb, extractCategoryFromTags } from '../utils/validation.js'
+import {
+  isValidSkillId,
+  mapTrustTierFromDb,
+  extractCategoryFromTags,
+  normalizeApiCategory,
+} from '../utils/validation.js'
 
 /**
  * Zod schema for get-skill input validation
@@ -126,6 +132,30 @@ export async function executeGetSkill(
       const apiResponse = await context.apiClient.getSkill(skillId, { includeContent: true })
       const apiSkill = apiResponse.data
 
+      // SMI-4240: Derive security summary from the API response so the extension
+      // can render real scan status instead of falling back to "Not scanned"
+      // for every skill. Schema-confirmed via Wave 0: no dedicated
+      // security_findings_count column exists — count is derived from the
+      // security_findings jsonb array. Skills that have never been scanned
+      // return `undefined` (the extension treats undefined and { passed: null }
+      // identically in getSecurityScanHtml).
+      const security: SecuritySummary | undefined =
+        apiSkill.last_scanned_at == null
+          ? undefined
+          : {
+              passed:
+                apiSkill.quarantined === true
+                  ? false
+                  : apiSkill.security_score == null
+                    ? null
+                    : true,
+              riskScore: apiSkill.security_score ?? null,
+              findingsCount: Array.isArray(apiSkill.security_findings)
+                ? apiSkill.security_findings.length
+                : 0,
+              scannedAt: apiSkill.last_scanned_at,
+            }
+
       // Convert API skill to MCP skill format
       const skill: Skill = {
         id: apiSkill.id,
@@ -134,12 +164,19 @@ export async function executeGetSkill(
         author: apiSkill.author || 'unknown',
         repository: apiSkill.repo_url || undefined,
         version: undefined,
-        category: extractCategoryFromTags(apiSkill.tags),
+        // SMI-4240: Prefer the category joined from skill_categories by the API
+        // (populated by the indexer's classifier) over tag-based inference.
+        // normalizeApiCategory handles case/slash/pluralization drift between
+        // the DB categories table and the SkillCategory enum; null falls back
+        // to tag inference for skills where the API didn't return a category.
+        category:
+          normalizeApiCategory(apiSkill.categories?.[0]) ?? extractCategoryFromTags(apiSkill.tags),
         trustTier: mapTrustTierFromDb(apiSkill.trust_tier as import('@skillsmith/core').TrustTier),
         score: Math.round((apiSkill.quality_score ?? 0) * 100),
         scoreBreakdown: undefined,
         tags: apiSkill.tags || [],
         installCommand: 'claude skill add ' + apiSkill.id,
+        security,
         // SMI-1577: Handle optional date fields with sentinel value
         createdAt: apiSkill.created_at ?? '1970-01-01T00:00:00.000Z',
         updatedAt: apiSkill.updated_at ?? '1970-01-01T00:00:00.000Z',

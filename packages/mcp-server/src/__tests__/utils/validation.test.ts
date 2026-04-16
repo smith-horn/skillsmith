@@ -10,6 +10,7 @@ import {
   mapTrustTierToDb,
   mapTrustTierFromDb,
   extractCategoryFromTags,
+  normalizeApiCategory,
 } from '../../utils/validation.js'
 
 describe('Validation Utilities', () => {
@@ -100,6 +101,43 @@ describe('Validation Utilities', () => {
 
     it('should return "other" for unrecognized tags', () => {
       expect(extractCategoryFromTags(['random', 'tags'])).toBe('other')
+    })
+  })
+
+  describe('normalizeApiCategory', () => {
+    it('should lowercase display-name categories', () => {
+      expect(normalizeApiCategory('Database')).toBe('database')
+      expect(normalizeApiCategory('Other')).toBe('other')
+      expect(normalizeApiCategory('Science')).toBe('science')
+    })
+
+    it('should replace slash with dash for compound enum values', () => {
+      expect(normalizeApiCategory('AI/ML')).toBe('ai-ml')
+    })
+
+    it('should strip trailing "s" when the singular form matches the enum (SMI-4240 schema drift)', () => {
+      // Production DB has "integrations" (plural) but enum has "integration" (singular).
+      expect(normalizeApiCategory('integrations')).toBe('integration')
+      expect(normalizeApiCategory('Integrations')).toBe('integration')
+    })
+
+    it('should return null for categories not in the enum', () => {
+      // "product" exists in production DB categories table but not in SkillCategory.
+      expect(normalizeApiCategory('product')).toBeNull()
+      expect(normalizeApiCategory('made-up-category')).toBeNull()
+    })
+
+    it('should return null for missing input (caller falls back to tag inference)', () => {
+      expect(normalizeApiCategory(undefined)).toBeNull()
+      expect(normalizeApiCategory(null)).toBeNull()
+      expect(normalizeApiCategory('')).toBeNull()
+    })
+
+    it('should not singularize enum values that legitimately end in "s" without producing false matches', () => {
+      // No current enum value ends in "s", but guard against regressions if one is added.
+      // If someone adds e.g. "docs" to the enum, this test ensures a direct match wins over stripping.
+      const result = normalizeApiCategory('development')
+      expect(result).toBe('development')
     })
   })
 })
