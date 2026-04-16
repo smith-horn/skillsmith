@@ -268,11 +268,20 @@ jobs:
           retention-days: 1
 
       - name: Extract node_modules from Docker image
+        # SMI-4209: capture nested per-package node_modules alongside root.
+        # npm nests deps that can't be hoisted (e.g. @astrojs/vercel@10.0.4 under
+        # packages/website/ due to peer-dep conflicts). If the extract only grabs
+        # /app/node_modules, Astro's ESM config resolver fails at
+        # packages/website/astro.config.mjs → @astrojs/vercel.
         run: |
           docker create --name extract-deps skillsmith-publish:${{ github.sha }}
           docker cp extract-deps:/app/node_modules /tmp/node_modules
+          mkdir -p /tmp/packages
+          for pkg in cli core enterprise mcp-server vscode-extension website; do
+            docker cp "extract-deps:/app/packages/$pkg/node_modules" "/tmp/packages/$pkg/node_modules" 2>/dev/null || true
+          done
           docker rm extract-deps
-          tar -czf /tmp/node_modules.tar.gz -C /tmp node_modules
+          tar -czf /tmp/node_modules.tar.gz -C /tmp node_modules packages
 
       - name: Upload node_modules artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
