@@ -111,6 +111,10 @@ jobs:
           RUN_TYPE="${{ steps.config.outputs.run_type }}"
           STALE_DAYS="${{ steps.config.outputs.stale_days }}"
 
+          # SMI-4241: $STALE_DAYS MUST remain unquoted below so JSON renders
+          # as numeric (edge function requires typeof === 'number' on the
+          # discovery branch; maintenance defaults to 7 if missing, but
+          # quoting would still be a silent observability regression).
           BODY=$(cat <<EOF
           {
             "maxPages": $MAX_PAGES,
@@ -156,51 +160,76 @@ jobs:
 
       - name: Parse Results
         if: success()
+        env:
+          # SMI-4241: pass via env so bash never sees the response body as
+          # inline source. jq is the only consumer of $RESPONSE below.
+          RESPONSE: ${{ steps.indexer.outputs.response }}
+          RUN_TYPE: ${{ steps.config.outputs.run_type }}
         run: |
-          RESPONSE='${{ steps.indexer.outputs.response }}'
+          FOUND=$(printf '%s' "$RESPONSE" | jq -r '.data.found // 0')
+          INDEXED=$(printf '%s' "$RESPONSE" | jq -r '.data.indexed // 0')
+          FAILED=$(printf '%s' "$RESPONSE" | jq -r '.data.failed // 0')
+          STALE=$(printf '%s' "$RESPONSE" | jq -r '.data.stale // 0')
+          UNCHANGED=$(printf '%s' "$RESPONSE" | jq -r '.data.unchanged // 0')
+          CODE_SEARCH=$(printf '%s' "$RESPONSE" | jq -r '.data.code_search.repos_found // 0')
+          DRY_RUN=$(printf '%s' "$RESPONSE" | jq -r '.data.dryRun // false')
 
-          # Extract metrics using jq
-          FOUND=$(echo "$RESPONSE" | jq -r '.data.found // 0')
-          INDEXED=$(echo "$RESPONSE" | jq -r '.data.indexed // 0')
-          FAILED=$(echo "$RESPONSE" | jq -r '.data.failed // 0')
-          STALE=$(echo "$RESPONSE" | jq -r '.data.stale // 0')
-          UNCHANGED=$(echo "$RESPONSE" | jq -r '.data.unchanged // 0')
-          CODE_SEARCH=$(echo "$RESPONSE" | jq -r '.data.code_search.repos_found // 0')
-          DRY_RUN=$(echo "$RESPONSE" | jq -r '.data.dryRun // false')
-          RUN_TYPE="${{ steps.config.outputs.run_type }}"
-
-          echo "### Indexer Results ($RUN_TYPE)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Found | $FOUND |" >> $GITHUB_STEP_SUMMARY
-          echo "| Indexed (new) | $INDEXED |" >> $GITHUB_STEP_SUMMARY
-          echo "| Unchanged | $UNCHANGED |" >> $GITHUB_STEP_SUMMARY
-          echo "| Stale Quarantined | $STALE |" >> $GITHUB_STEP_SUMMARY
-          echo "| Code Search Repos | $CODE_SEARCH |" >> $GITHUB_STEP_SUMMARY
-          echo "| Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
-          echo "| Dry Run | $DRY_RUN |" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### Indexer Results ($RUN_TYPE)"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Found | $FOUND |"
+            echo "| Indexed (new) | $INDEXED |"
+            echo "| Unchanged | $UNCHANGED |"
+            echo "| Stale Quarantined | $STALE |"
+            echo "| Code Search Repos | $CODE_SEARCH |"
+            echo "| Failed | $FAILED |"
+            echo "| Dry Run | $DRY_RUN |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report Failure
         if: failure()
+        env:
+          # SMI-4241: response body via env so parens/quotes/backticks in
+          # the payload can never crash bash. Truncate at 4 KB so the step
+          # summary stays readable; full body is still in the workflow log.
+          HTTP_CODE: ${{ steps.indexer.outputs.http_code }}
+          RESPONSE: ${{ steps.indexer.outputs.response }}
         run: |
-          echo "### Indexer Failed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "HTTP Code: ${{ steps.indexer.outputs.http_code }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Response: \`${{ steps.indexer.outputs.response }}\`" >> $GITHUB_STEP_SUMMARY
+          TRUNCATED=$(printf '%s' "$RESPONSE" | head -c 4096)
+          SUFFIX=""
+          if [ "${#RESPONSE}" -gt 4096 ]; then
+            SUFFIX=$'\n… (truncated, see workflow logs for full body)'
+          fi
+          {
+            echo "### Indexer Failed"
+            echo ""
+            echo "HTTP Code: ${HTTP_CODE}"
+            echo ""
+            echo "Response:"
+            echo '```'
+            printf '%s' "$TRUNCATED"
+            printf '%s' "$SUFFIX"
+            echo ""
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Send Alert on Failure
         if: failure()
+        env:
+          # SMI-4241: env + jq -n prevents future injection via run metadata.
+          HTTP_CODE: ${{ steps.indexer.outputs.http_code }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          BODY=$(jq -n \
+            --arg msg "The skill indexer workflow failed. HTTP Code: $HTTP_CODE" \
+            --arg rid "$RUN_ID" \
+            --arg url "$RUN_URL" \
+            '{type:"indexer_failed", message:$msg, workflow:"Skill Indexer", runId:$rid, runUrl:$url}')
           curl -s -X POST \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
-            -d '{
-              "type": "indexer_failed",
-              "message": "The skill indexer workflow failed. HTTP Code: ${{ steps.indexer.outputs.http_code }}",
-              "workflow": "Skill Indexer",
-              "runId": "${{ github.run_id }}",
-              "runUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            }' \
+            -d "$BODY" \
             "$SUPABASE_URL/functions/v1/alert-notify" || true

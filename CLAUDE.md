@@ -277,7 +277,7 @@ npx supabase functions deploy admin-grant-subscription --no-verify-jwt
 
 | Job | Schedule | Function |
 |-----|----------|----------|
-| Skill Indexer | Daily 2 AM UTC | `indexer` |
+| Skill Indexer | 4× daily (00 UTC maintenance + 06/12/18 UTC discovery) | `indexer` |
 | Metadata Refresh | Hourly :30 | `skills-refresh-metadata` |
 | Ops Report | Monday 9 AM UTC | `ops-report` |
 | Quality Outreach | Manual (beta) | `skills-outreach` |
