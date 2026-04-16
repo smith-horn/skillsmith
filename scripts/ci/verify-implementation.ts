@@ -21,6 +21,8 @@
 import { execFileSync } from 'child_process'
 import { appendFileSync, existsSync } from 'fs'
 
+import { SOURCE_PATTERNS, TEST_PATTERNS, DOCS_PATTERNS } from './source-patterns.mjs'
+
 // --- Types ---
 
 export type Verdict = 'pass' | 'warn' | 'fail' | 'skip'
@@ -43,20 +45,6 @@ export interface VerificationResult {
 
 const ISSUE_PATTERN = /\b(SMI-\d+)\b/gi
 const SKIP_MARKER = '[skip-impl-check]'
-
-const SOURCE_PATTERNS = [
-  /^packages\/.*\.(ts|tsx|js|jsx)$/,
-  /^supabase\/functions\/.*\.(ts|js)$/,
-  /^scripts\/.*\.(ts|js|mjs)$/,
-  // SMI-4243: root-level *.config.{ts,mjs,cjs,js} (vitest.config.ts, lint-staged.config.js, etc.)
-  /^[^/]+\.config(\.[^./]+)?\.(ts|mjs|cjs|js)$/,
-  // SMI-4243: GitHub Actions workflow YAML
-  /^\.github\/workflows\/.*\.ya?ml$/,
-]
-
-const TEST_PATTERNS = [/\.test\.(ts|tsx|js)$/, /\.spec\.(ts|tsx|js)$/]
-
-const DOCS_PATTERNS = [/\.md$/, /^\.claude\//, /^docs\//]
 
 const EXCLUDED_FROM_SOURCE = [...TEST_PATTERNS, ...DOCS_PATTERNS]
 
