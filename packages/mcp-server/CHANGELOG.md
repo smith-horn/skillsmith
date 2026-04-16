@@ -2,6 +2,11 @@
 
 All notable changes to `@skillsmith/mcp-server` are documented here.
 
+## v0.4.10
+
+- **Fix**: restore category/security/repo in skill detail view (SMI-4240) (#583)
+- **Other**: SMI-4190: release cadence docs — ADR-114 + CHANGELOG backfill + CONTRIBUTING (#552)
+
 ## [Unreleased]
 
 - **Feature**: SMI-4124 `skill_pack_audit` trigger-quality + namespace collision checks (PR #505).
