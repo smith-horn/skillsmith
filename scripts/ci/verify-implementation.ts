@@ -48,6 +48,10 @@ const SOURCE_PATTERNS = [
   /^packages\/.*\.(ts|tsx|js|jsx)$/,
   /^supabase\/functions\/.*\.(ts|js)$/,
   /^scripts\/.*\.(ts|js|mjs)$/,
+  // SMI-4243: root-level *.config.{ts,mjs,cjs,js} (vitest.config.ts, lint-staged.config.js, etc.)
+  /^[^/]+\.config(\.[^./]+)?\.(ts|mjs|cjs|js)$/,
+  // SMI-4243: GitHub Actions workflow YAML
+  /^\.github\/workflows\/.*\.ya?ml$/,
 ]
 
 const TEST_PATTERNS = [/\.test\.(ts|tsx|js)$/, /\.spec\.(ts|tsx|js)$/]

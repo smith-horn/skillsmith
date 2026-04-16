@@ -32,11 +32,33 @@ describe('SMI-3541: verify-implementation', () => {
       expect(categorizeFile('.claude/development/docker-guide.md')).toBe('docs')
     })
 
-    it('should identify config files', () => {
+    it('should identify root config files as source (SMI-4243)', () => {
+      expect(categorizeFile('vitest.config.ts')).toBe('source')
+      expect(categorizeFile('vitest.config.root-tests.ts')).toBe('source')
+      expect(categorizeFile('vitest-e2e.config.ts')).toBe('source')
+      expect(categorizeFile('lint-staged.config.js')).toBe('source')
+      expect(categorizeFile('eslint.config.js')).toBe('source')
+    })
+
+    it('should identify workflow YAML as source (SMI-4243)', () => {
+      expect(categorizeFile('.github/workflows/ci.yml')).toBe('source')
+      expect(categorizeFile('.github/workflows/post-merge-verify.yml')).toBe('source')
+      expect(categorizeFile('.github/workflows/ci.yaml')).toBe('source')
+    })
+
+    it('should still classify JSON configs and non-workflow .github files as config (SMI-4243)', () => {
       expect(categorizeFile('package.json')).toBe('config')
-      expect(categorizeFile('.github/workflows/ci.yml')).toBe('config')
       expect(categorizeFile('tsconfig.json')).toBe('config')
+      expect(categorizeFile('turbo.json')).toBe('config')
+      expect(categorizeFile('.github/CODEOWNERS')).toBe('config')
+      expect(categorizeFile('.github/dependabot.yml')).toBe('config')
       expect(categorizeFile('.eslintrc.json')).toBe('config')
+    })
+
+    it('should NOT reclassify non-config root TS, action YAML, or templates (SMI-4243)', () => {
+      expect(categorizeFile('vitest.preset.ts')).toBe('config')
+      expect(categorizeFile('.github/actions/setup/action.yml')).toBe('config')
+      expect(categorizeFile('.github/PULL_REQUEST_TEMPLATE.md')).toBe('docs')
     })
   })
 
