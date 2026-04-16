@@ -63,3 +63,10 @@ _Add additional waves as needed. Order by risk: database migrations and producti
 - [ ] `docker exec skillsmith-dev-1 npm run preflight`
 - [ ] [Manual testing steps specific to this change]
 - [ ] Linear issue(s) updated with commit SHA
+- [ ] **If this change targets a non-Docker CI workflow** (e.g. `post-merge-verify.yml`,
+      any workflow running on `ubuntu-latest` without the Docker dev container):
+      verify in a clean-install environment — `npm ci` in a fresh clone or after
+      `docker volume rm skillsmith_node_modules`. Do NOT rely on a pre-built Docker
+      volume where native modules (better-sqlite3, onnxruntime-node) are already
+      compiled. The pre-built state masks `--ignore-scripts` and similar install
+      flag errors. (Lesson: SMI-4221/SMI-4239)
