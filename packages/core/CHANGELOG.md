@@ -2,6 +2,11 @@
 
 All notable changes to `@skillsmith/core` are documented here.
 
+## v0.5.2
+
+- **Fix**: restore category/security/repo in skill detail view (SMI-4240) (#583)
+- **Other**: SMI-4190: release cadence docs — ADR-114 + CHANGELOG backfill + CONTRIBUTING (#552)
+
 ## [Unreleased]
 
 - **SMI-4124**: `skill_pack_audit` trigger-quality + namespace collision checks (PR #505).
