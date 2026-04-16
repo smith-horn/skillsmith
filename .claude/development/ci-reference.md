@@ -25,12 +25,15 @@ The CI system classifies changes into tiers to run appropriate checks:
 
 **Important**: Mixed commits (docs + code) trigger full CI. Docs-only commits run lightweight `docs-only.yml`. See [ADR-105](../adr/105-ci-path-filtering.md).
 
+**`verify-implementation.ts` vs `classify-changes.ts` (SMI-4243)**: these answer different questions. `classify-changes.ts` routes a commit to the right CI workflow (tier above). `verify-implementation.ts` asks whether an SMI-referenced PR contains real implementation; its `source` set now includes root-level `*.config.{ts,mjs,cjs,js}` and `.github/workflows/*.{yml,yaml}` so legitimate infra-only PRs pass without `[skip-impl-check]`.
+
 ### CI Scripts
 
 | Script | Purpose |
 |--------|---------|
 | `scripts/ci/classify-changes.ts` | Classifies commits into tiers |
 | `scripts/ci/detect-affected.ts` | Detects affected packages |
+| `scripts/ci/verify-implementation.ts` | Validates SMI-referenced PRs include source changes (SMI-3541, SMI-4243) |
 
 ### Git-Crypt and root vitest config (SMI-4221)
 
