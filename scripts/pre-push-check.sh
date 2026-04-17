@@ -76,6 +76,40 @@ run_cmd() {
 }
 
 # =============================================================================
+# SMI-4249: Detect docs-only / submodule-pointer pushes
+# Skip npm audit (CHECK 2) when no file in the push could introduce a
+# production dependency. CHECKS 1 (security tests) and 3 (hardcoded secrets)
+# remain unconditional.
+#
+# SAFE_REGEX matches files that cannot introduce production deps:
+#   - docs/**, **/*.md (including submodule pointer to docs/internal)
+#   - .claude/development/**, .claude/templates/**
+#   - LICENSE, .github/ISSUE_TEMPLATE/**, .github/CODEOWNERS, PR template
+#   - .gitmodules (submodule pointer bumps only)
+#
+# Drift note: CI mirrors similar logic in scripts/ci/classify-changes.ts.
+# Keeping in bash (no tsx dep). Worst case of drift is false-positive audit
+# run on a docs-only push (safe; never a false-negative skip).
+# =============================================================================
+DOCS_ONLY=0
+SAFE_REGEX='^(docs/|\.claude/development/|\.claude/templates/|\.github/(ISSUE_TEMPLATE/|CODEOWNERS|PULL_REQUEST_TEMPLATE\.md)|LICENSE$|.*\.md$|\.gitmodules$)'
+
+if UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
+  CHANGED_FILES=$(git diff --name-only "$UPSTREAM..HEAD" 2>/dev/null || true)
+else
+  # No upstream set — likely first push of a new branch. Diff against origin/main.
+  git fetch origin main --quiet 2>/dev/null || true
+  CHANGED_FILES=$(git diff --name-only origin/main..HEAD 2>/dev/null || true)
+fi
+
+if [ -n "$CHANGED_FILES" ]; then
+  UNSAFE=$(printf '%s\n' "$CHANGED_FILES" | grep -vE "$SAFE_REGEX" || true)
+  if [ -z "$UNSAFE" ]; then
+    DOCS_ONLY=1
+  fi
+fi
+
+# =============================================================================
 # CHECK 1: Security Test Suite (Optimized - single run)
 # SMI-1366: Uses run_cmd for Docker/local fallback
 # =============================================================================
@@ -101,40 +135,46 @@ echo ""
 # CHECK 2: npm audit (Optimized - single run)
 # SMI-1255: Only audit production dependencies, skip devDependencies
 # SMI-1366: Uses run_cmd for Docker/local fallback
+# SMI-4249: Skip entirely for docs-only / submodule-pointer pushes
 # Dev tools like vercel CLI have transitive vulnerabilities that don't affect production
 # =============================================================================
-echo "🔍 Running npm audit (production dependencies, high severity)..."
-
-# Run audit once, capture both output and exit code
-# --omit=dev skips devDependencies (vercel, tsx, etc.) which have known vulnerabilities
-# that don't affect production code
-AUDIT_OUTPUT=$(run_cmd npm audit --audit-level=high --omit=dev 2>&1) || AUDIT_STATUS=$?
-AUDIT_STATUS=${AUDIT_STATUS:-0}
-
-if [ $AUDIT_STATUS -ne 0 ]; then
-  # SMI-2369: Distinguish network errors from actual vulnerabilities
-  # Network errors should warn but not block the push
-  if echo "$AUDIT_OUTPUT" | grep -qiE "getaddrinfo|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|fetch failed|request to .* failed"; then
-    echo -e "${YELLOW}⚠️  npm audit skipped - network unavailable${NC}"
-    echo -e "${YELLOW}   DNS or network error detected inside container.${NC}"
-    echo -e "${YELLOW}   CI will run npm audit on push. To fix locally:${NC}"
-    echo -e "${YELLOW}   docker network prune -f && docker compose --profile dev restart${NC}"
-    # Don't set CHECKS_FAILED - network errors are non-blocking
-  else
-    # Real vulnerabilities found - block the push
-    echo "$AUDIT_OUTPUT"
-    echo -e "${RED}✗ High-severity vulnerabilities detected${NC}"
-    if [ $USE_DOCKER -eq 1 ]; then
-      echo -e "${YELLOW}Run 'docker exec $DOCKER_CONTAINER npm audit fix' to resolve issues${NC}"
-    else
-      echo -e "${YELLOW}Run 'npm audit fix' to resolve issues${NC}"
-    fi
-    CHECKS_FAILED=1
-  fi
+if [ $DOCS_ONLY -eq 1 ]; then
+  echo -e "${BLUE}ℹ️  Skipping npm audit — docs-only push (no production dependency change)${NC}"
+  echo ""
 else
-  echo -e "${GREEN}✓ No high-severity vulnerabilities found${NC}"
+  echo "🔍 Running npm audit (production dependencies, high severity)..."
+
+  # Run audit once, capture both output and exit code
+  # --omit=dev skips devDependencies (vercel, tsx, etc.) which have known vulnerabilities
+  # that don't affect production code
+  AUDIT_OUTPUT=$(run_cmd npm audit --audit-level=high --omit=dev 2>&1) || AUDIT_STATUS=$?
+  AUDIT_STATUS=${AUDIT_STATUS:-0}
+
+  if [ $AUDIT_STATUS -ne 0 ]; then
+    # SMI-2369: Distinguish network errors from actual vulnerabilities
+    # Network errors should warn but not block the push
+    if echo "$AUDIT_OUTPUT" | grep -qiE "getaddrinfo|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|fetch failed|request to .* failed"; then
+      echo -e "${YELLOW}⚠️  npm audit skipped - network unavailable${NC}"
+      echo -e "${YELLOW}   DNS or network error detected inside container.${NC}"
+      echo -e "${YELLOW}   CI will run npm audit on push. To fix locally:${NC}"
+      echo -e "${YELLOW}   docker network prune -f && docker compose --profile dev restart${NC}"
+      # Don't set CHECKS_FAILED - network errors are non-blocking
+    else
+      # Real vulnerabilities found - block the push
+      echo "$AUDIT_OUTPUT"
+      echo -e "${RED}✗ High-severity vulnerabilities detected${NC}"
+      if [ $USE_DOCKER -eq 1 ]; then
+        echo -e "${YELLOW}Run 'docker exec $DOCKER_CONTAINER npm audit fix' to resolve issues${NC}"
+      else
+        echo -e "${YELLOW}Run 'npm audit fix' to resolve issues${NC}"
+      fi
+      CHECKS_FAILED=1
+    fi
+  else
+    echo -e "${GREEN}✓ No high-severity vulnerabilities found${NC}"
+  fi
+  echo ""
 fi
-echo ""
 
 # =============================================================================
 # CHECK 3: Hardcoded Secrets Detection
