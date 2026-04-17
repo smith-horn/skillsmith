@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/cli` are documented here.
 
+## v0.5.6
+
+- Version bump
+
 ## v0.5.5
 
 - **Other**: SMI-4190: release cadence docs — ADR-114 + CHANGELOG backfill + CONTRIBUTING (#552)
