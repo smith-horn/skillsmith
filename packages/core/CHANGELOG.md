@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/core` are documented here.
 
+## v0.5.3
+
+- **Fix**: add missing SMI-4240 fields to ApiSearchResultSchema (SMI-4246, SMI-4247) (#611)
+
 ## v0.5.2
 
 - **Fix**: restore category/security/repo in skill detail view (SMI-4240) (#583)

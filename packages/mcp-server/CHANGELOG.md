@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/mcp-server` are documented here.
 
+## v0.4.11
+
+- Version bump
+
 ## v0.4.10
 
 - **Fix**: restore category/security/repo in skill detail view (SMI-4240) (#583)
