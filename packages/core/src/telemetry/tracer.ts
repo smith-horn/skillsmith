@@ -33,6 +33,7 @@ import type {
 } from './tracer-types.js'
 
 import { NoOpSpanWrapper, ActiveSpanWrapper } from './span-utils.js'
+import { dynamicImport, INSTRUMENTATION_PACKAGES } from './tracer-imports.js'
 
 // Lazy import to avoid loading OTEL if not needed
 let api: unknown = null
@@ -40,15 +41,6 @@ let sdk: unknown = null
 let resources: unknown = null
 let semanticConventions: unknown = null
 let otelAvailable: boolean | null = null
-
-async function dynamicImport(moduleName: string): Promise<unknown> {
-  try {
-    const importFn = new Function('m', 'return import(m)') as (m: string) => Promise<unknown>
-    return await importFn(moduleName)
-  } catch {
-    return null
-  }
-}
 
 async function checkOTelAvailability(): Promise<boolean> {
   if (otelAvailable !== null) return otelAvailable
@@ -152,21 +144,26 @@ export class SkillsmithTracer {
       })
 
       if (this.config.autoInstrument) {
-        try {
-          const autoInst = (await dynamicImport('@opentelemetry/auto-instrumentations-node')) as {
-            getNodeAutoInstrumentations?: (config: unknown) => unknown[]
-          } | null
-          if (autoInst?.getNodeAutoInstrumentations) {
-            sdkConfig.instrumentations = [
-              autoInst.getNodeAutoInstrumentations({
-                '@opentelemetry/instrumentation-fs': { enabled: false },
-                '@opentelemetry/instrumentation-dns': { enabled: false },
-                '@opentelemetry/instrumentation-net': { enabled: false },
-              }),
-            ]
+        // SMI-4250: explicit per-package instrumentation registration replaces
+        // the @opentelemetry/auto-instrumentations-node bundle (which transitively
+        // pinned @opentelemetry/core@2.5.0 across ~40 packages and blocked otel
+        // upgrades). Each entry is optional at runtime: aws-sdk only loads when
+        // @skillsmith/enterprise is in the consuming install. Registry lives in
+        // tracer-imports.ts so tests can mock the import surface.
+        const instrumentations: unknown[] = []
+        for (const [pkgName, exportName] of INSTRUMENTATION_PACKAGES) {
+          const mod = (await dynamicImport(pkgName)) as Record<string, unknown> | null
+          if (mod && typeof mod[exportName] === 'function') {
+            const InstrumentationClass = mod[exportName] as new () => unknown
+            instrumentations.push(new InstrumentationClass())
+          } else if (process.env.OTEL_LOG_LEVEL === 'debug') {
+            console.debug(
+              `[Skillsmith Telemetry] Instrumentation ${pkgName} not installed; skipping.`
+            )
           }
-        } catch {
-          // Auto-instrumentation optional
+        }
+        if (instrumentations.length > 0) {
+          sdkConfig.instrumentations = instrumentations
         }
       }
 
