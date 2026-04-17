@@ -15,6 +15,7 @@ import {
   initializeTracing,
   shutdownTracing,
 } from '../src/telemetry/tracer.js'
+import * as tracerImports from '../src/telemetry/tracer-imports.js'
 import {
   MetricsRegistry,
   getMetrics,
@@ -24,6 +25,73 @@ import {
   LATENCY_BUCKETS,
 } from '../src/telemetry/metrics.js'
 import { initializeTelemetry, shutdownTelemetry } from '../src/telemetry/index.js'
+
+// SMI-4250: spy on tracer-imports so autoInstrument loop tests can inspect
+// which instrumentation packages were attempted and stub specific failures.
+// Default behavior wraps real dynamicImport — transparent to other tests.
+vi.mock('../src/telemetry/tracer-imports.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/telemetry/tracer-imports.js')>(
+    '../src/telemetry/tracer-imports.js'
+  )
+  return {
+    ...actual,
+    dynamicImport: vi.fn(actual.dynamicImport),
+  }
+})
+
+// SMI-4250: stub catalog used by the autoInstrument describe block. Defined at
+// module scope (not inside the describe) so it can run BEFORE other describes
+// populate the module-level `otelAvailable` cache in tracer.ts with `false`.
+// Once cached, subsequent tests can't reach the instrumentation loop.
+//
+// Stubs must implement enough of the OTel API surface for existing tests
+// (getCurrentSpan, span methods, NodeSDK lifecycle) to keep passing once
+// otelAvailable is cached as true.
+const makeStubSpan = () => ({
+  setAttributes: () => undefined,
+  setStatus: () => undefined,
+  addEvent: () => undefined,
+  recordException: () => undefined,
+  end: () => undefined,
+})
+const STUB_OTEL_CORE = {
+  '@opentelemetry/api': {
+    trace: {
+      getTracer: () => ({ startSpan: () => makeStubSpan() }),
+      getActiveSpan: () => null,
+    },
+  },
+  '@opentelemetry/sdk-node': {
+    NodeSDK: class {
+      constructor(public sdkConfig: unknown) {}
+      async start(): Promise<void> {}
+      async shutdown(): Promise<void> {}
+    },
+  },
+  '@opentelemetry/resources': {
+    resourceFromAttributes: (attrs: unknown) => ({ attributes: attrs }),
+  },
+  '@opentelemetry/semantic-conventions': {
+    ATTR_SERVICE_NAME: 'service.name',
+    ATTR_SERVICE_VERSION: 'service.version',
+  },
+} as const
+const INSTRUMENTATION_EXPORT_NAMES: Record<string, string> = {
+  '@opentelemetry/instrumentation-http': 'HttpInstrumentation',
+  '@opentelemetry/instrumentation-undici': 'UndiciInstrumentation',
+  '@opentelemetry/instrumentation-runtime-node': 'RuntimeNodeInstrumentation',
+  '@opentelemetry/instrumentation-aws-sdk': 'AwsInstrumentation',
+}
+const defaultStubImport = async (name: string): Promise<unknown> => {
+  if (name in STUB_OTEL_CORE) {
+    return STUB_OTEL_CORE[name as keyof typeof STUB_OTEL_CORE]
+  }
+  const exportName = INSTRUMENTATION_EXPORT_NAMES[name]
+  if (exportName) {
+    return { [exportName]: class StubInstrumentation {} }
+  }
+  return null
+}
 
 describe('Telemetry Module', () => {
   describe('SkillsmithTracer', () => {
@@ -40,6 +108,87 @@ describe('Telemetry Module', () => {
       if (tracer) {
         await tracer.shutdown()
       }
+    })
+
+    describe('autoInstrument (SMI-4250 — explicit registration)', () => {
+      // PLACED FIRST in source order so the otelAvailable cache in tracer.ts
+      // gets populated as `true` (via stubs) before any other test sets it to
+      // `false`. Cache is module-private and persists across tests in this file.
+
+      beforeEach(() => {
+        delete process.env.OTEL_LOG_LEVEL
+        vi.mocked(tracerImports.dynamicImport).mockImplementation(defaultStubImport)
+        vi.mocked(tracerImports.dynamicImport).mockClear()
+      })
+
+      afterEach(() => {
+        delete process.env.OTEL_LOG_LEVEL
+      })
+
+      it('attempts to load all 4 instrumentation packages when autoInstrument: true', async () => {
+        tracer = new SkillsmithTracer({ consoleExport: true })
+        await tracer.initialize()
+
+        const importedPackages = vi
+          .mocked(tracerImports.dynamicImport)
+          .mock.calls.map((c) => c[0])
+          .filter(
+            (name): name is string =>
+              typeof name === 'string' && name.startsWith('@opentelemetry/instrumentation-')
+          )
+
+        expect(importedPackages).toEqual(
+          expect.arrayContaining([
+            '@opentelemetry/instrumentation-http',
+            '@opentelemetry/instrumentation-undici',
+            '@opentelemetry/instrumentation-runtime-node',
+            '@opentelemetry/instrumentation-aws-sdk',
+          ])
+        )
+      })
+
+      it('continues initialization when one instrumentation package is missing', async () => {
+        vi.mocked(tracerImports.dynamicImport).mockImplementation(async (name: string) => {
+          if (name === '@opentelemetry/instrumentation-aws-sdk') return null
+          return defaultStubImport(name)
+        })
+
+        tracer = new SkillsmithTracer({ consoleExport: true })
+        await expect(tracer.initialize()).resolves.toBeUndefined()
+      })
+
+      it('does not load instrumentation packages when autoInstrument: false', async () => {
+        tracer = new SkillsmithTracer({ consoleExport: true, autoInstrument: false })
+        await tracer.initialize()
+
+        const instrumentationImports = vi
+          .mocked(tracerImports.dynamicImport)
+          .mock.calls.map((c) => c[0])
+          .filter(
+            (name): name is string =>
+              typeof name === 'string' && name.startsWith('@opentelemetry/instrumentation-')
+          )
+
+        expect(instrumentationImports).toHaveLength(0)
+      })
+
+      it('logs skipped instrumentations at debug level when OTEL_LOG_LEVEL=debug', async () => {
+        process.env.OTEL_LOG_LEVEL = 'debug'
+        const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {})
+        vi.mocked(tracerImports.dynamicImport).mockImplementation(async (name: string) => {
+          if (name === '@opentelemetry/instrumentation-aws-sdk') return null
+          return defaultStubImport(name)
+        })
+
+        tracer = new SkillsmithTracer({ consoleExport: true })
+        await tracer.initialize()
+
+        expect(debugSpy).toHaveBeenCalledWith(
+          expect.stringContaining('@opentelemetry/instrumentation-aws-sdk')
+        )
+
+        debugSpy.mockRestore()
+      })
     })
 
     describe('constructor', () => {
