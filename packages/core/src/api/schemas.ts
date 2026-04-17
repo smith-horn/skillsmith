@@ -46,6 +46,14 @@ export const ApiSearchResultSchema = z.object({
   content: z.string().nullable().optional(),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
+  // SMI-4240 / SMI-4246 / SMI-4247: fields added to ApiSkill in types.ts must
+  // also be declared here or Zod strips them before get-skill.ts can read them.
+  // All .optional() — skills-search doesn't select these columns.
+  categories: z.array(z.string()).optional(),
+  security_score: z.number().nullable().optional(),
+  last_scanned_at: z.string().nullable().optional(),
+  security_findings: z.array(z.unknown()).nullable().optional(),
+  quarantined: z.boolean().optional(),
 })
 
 // ============================================================================

@@ -80,6 +80,45 @@ describe('API Response Validation Schemas', () => {
       const invalidResult = { ...validResult, tags: 'not-an-array' }
       expect(ApiSearchResultSchema.safeParse(invalidResult).success).toBe(false)
     })
+
+    // SMI-4246 / SMI-4247: these fields exist on the ApiSkill interface
+    // (types.ts:52-90) and are returned by the skills-get edge function, but
+    // were missing from ApiSearchResultSchema. Zod's strict-strip mode silently
+    // removed them, so get-skill.ts saw `undefined` and fell back to "not
+    // scanned" / "other" for every skill. This regression test asserts all
+    // five fields survive parsing.
+    it('should preserve SMI-4240 security + categories fields after parsing', () => {
+      const resultWithSecurityAndCategories = {
+        ...validResult,
+        categories: ['Development', 'DevOps'],
+        security_score: 12,
+        last_scanned_at: '2026-04-15T18:32:00Z',
+        security_findings: [{ severity: 'low', rule: 'example' }],
+        quarantined: false,
+      }
+      const parsed = ApiSearchResultSchema.parse(resultWithSecurityAndCategories)
+      expect(parsed.categories).toEqual(['Development', 'DevOps'])
+      expect(parsed.security_score).toBe(12)
+      expect(parsed.last_scanned_at).toBe('2026-04-15T18:32:00Z')
+      expect(parsed.security_findings).toEqual([{ severity: 'low', rule: 'example' }])
+      expect(parsed.quarantined).toBe(false)
+    })
+
+    it('should accept null values for SMI-4240 security fields (never scanned)', () => {
+      const neverScanned = {
+        ...validResult,
+        security_score: null,
+        last_scanned_at: null,
+        security_findings: null,
+      }
+      const result = ApiSearchResultSchema.safeParse(neverScanned)
+      expect(result.success).toBe(true)
+      if (result.success) {
+        expect(result.data.security_score).toBeNull()
+        expect(result.data.last_scanned_at).toBeNull()
+        expect(result.data.security_findings).toBeNull()
+      }
+    })
   })
 
   describe('SearchResponseSchema', () => {
