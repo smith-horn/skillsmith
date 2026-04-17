@@ -33,7 +33,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "4.11.1",
-    "@playwright/test": "1.55.1",
+    "@playwright/test": "1.59.1",
     "@tailwindcss/typography": "0.5.19",
     "@types/node": "^22.15.0",
     "@types/turndown": "^5.0.5",
