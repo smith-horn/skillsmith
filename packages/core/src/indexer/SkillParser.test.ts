@@ -86,9 +86,7 @@ describe('SkillParser.extractFrontmatter', () => {
   })
 
   it('parses an inline array', () => {
-    const result = parser.extractFrontmatter(
-      makeSkillMd('name: x\ntags: [alpha, beta, gamma]')
-    )
+    const result = parser.extractFrontmatter(makeSkillMd('name: x\ntags: [alpha, beta, gamma]'))
     expect(result?.tags).toEqual(['alpha', 'beta', 'gamma'])
   })
 
@@ -271,9 +269,7 @@ describe('SkillParser.parseWithValidation', () => {
   const parser = new SkillParser()
 
   it('returns failed validation when frontmatter is missing', () => {
-    const { metadata, validation, frontmatter } = parser.parseWithValidation(
-      'No frontmatter here.'
-    )
+    const { metadata, validation, frontmatter } = parser.parseWithValidation('No frontmatter here.')
     expect(metadata).toBeNull()
     expect(frontmatter).toBeNull()
     expect(validation.valid).toBe(false)
@@ -419,23 +415,17 @@ describe('SkillParser.checkReferences', () => {
   })
 
   it('detects a Docker container name', () => {
-    const { matches } = SkillParser.checkReferences(
-      'Run `docker exec myproject-dev-1 npm test`.'
-    )
+    const { matches } = SkillParser.checkReferences('Run `docker exec myproject-dev-1 npm test`.')
     expect(matches.some((m) => m.pattern === 'Docker container name')).toBe(true)
   })
 
   it('detects an npm package scope', () => {
-    const { matches } = SkillParser.checkReferences(
-      'Install `@skillsmith-tools/helper` first.'
-    )
+    const { matches } = SkillParser.checkReferences('Install `@skillsmith-tools/helper` first.')
     expect(matches.some((m) => m.pattern === 'npm package scope')).toBe(true)
   })
 
   it('detects a GitHub repo reference', () => {
-    const { matches } = SkillParser.checkReferences(
-      'See github.com/acme-corp/my-repo for details.'
-    )
+    const { matches } = SkillParser.checkReferences('See github.com/acme-corp/my-repo for details.')
     expect(matches.some((m) => m.pattern === 'GitHub repo reference')).toBe(true)
   })
 
@@ -463,9 +453,7 @@ describe('SkillParser.checkReferences', () => {
   })
 
   it('applies custom patterns alongside the defaults', () => {
-    const { matches } = SkillParser.checkReferences('The secret token is abc-123.', [
-      /abc-\d+/g,
-    ])
+    const { matches } = SkillParser.checkReferences('The secret token is abc-123.', [/abc-\d+/g])
     expect(matches.some((m) => m.pattern === 'Custom pattern')).toBe(true)
   })
 
