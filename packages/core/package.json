@@ -76,7 +76,7 @@
     "lru-cache": "11.3.3",
     "posthog-node": "5.29.2",
     "stripe": "20.3.0",
-    "typescript": "5.9.3",
+    "typescript": "6.0.3",
     "zod": "4.2.1"
   },
   "devDependencies": {

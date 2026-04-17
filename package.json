@@ -93,7 +93,7 @@
     "supabase": "2.83.0",
     "tsx": "4.21.0",
     "turbo": "2.9.3",
-    "typescript": "5.9.3",
+    "typescript": "6.0.3",
     "typescript-eslint": "8.58.2",
     "varlock": "0.1.4",
     "vercel": "50.38.1",
