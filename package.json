@@ -112,7 +112,6 @@
     "h3": "^1.15.9",
     "hono": "^4.12.14",
     "@hono/node-server": "^1.19.13",
-    "protobufjs": "^7.5.5",
     "vite": "^7.3.2",
     "fast-xml-parser": "^5.5.7",
     "astro": "^5.18.1",
