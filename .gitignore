@@ -140,8 +140,6 @@ wrangler.toml.local
 # Ruflo (claude-flow) runtime DB created by mcp__ruflo__swarm_init + memory_store
 ruvector.db
 
-# Logarithmic quality score recalculation (internal tooling, SMI-4208 pending)
-scripts/trigger-quality-recalculation.sh
 docs/irap/
 .worktrees/
 
