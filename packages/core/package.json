@@ -70,7 +70,7 @@
     "@opentelemetry/instrumentation-undici": "0.24.0",
     "@opentelemetry/resources": "2.6.1",
     "@opentelemetry/sdk-node": "0.214.0",
-    "@opentelemetry/sdk-trace-base": "2.6.1",
+    "@opentelemetry/sdk-trace-base": "2.7.0",
     "@opentelemetry/semantic-conventions": "1.40.0",
     "fts5-sql-bundle": "1.0.2",
     "lru-cache": "11.3.3",
