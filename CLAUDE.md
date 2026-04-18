@@ -230,6 +230,15 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 
 ## Supabase Edge Functions
 
+**Project refs — do not confuse (SMI-4252 retro 2026-04-17)**:
+
+| Ref | Role | Used for |
+|-----|------|----------|
+| `vrcnzpmndtroqxxoqkzy` | **Prod** | `.env` `SUPABASE_URL` / `SUPABASE_PROJECT_REF`; all `supabase functions deploy`; `audit_logs` / `v_indexer_health` / `/functions/v1/stats` when validating prod |
+| `ovhcifugwqnzoebwfuku` | Staging | Low-cadence — data lags prod; never curl this when verifying a prod deploy |
+
+When verifying a prod edge function via `curl`, always use `$SUPABASE_URL` (under `varlock run --`) or the literal `https://vrcnzpmndtroqxxoqkzy.supabase.co`. Hardcoding `ovhcifugwqnzoebwfuku` will make a healthy prod deploy look stale — a 2026-04-17 session burned ~7 minutes on this.
+
 | Function | Auth | `--no-verify-jwt` |
 |----------|------|--------------------|
 | `early-access-signup`, `contact-submit`, `stats`, `checkout`, `stripe-webhook`, `events` | Anonymous | Yes |
