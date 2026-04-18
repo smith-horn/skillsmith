@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# deploy-edge-functions.sh — Deploy all Supabase Edge Functions to a target project
+# deploy-edge-functions.sh — Deploy Supabase Edge Functions to a target project
 #
 # Usage:
-#   ./scripts/deploy-edge-functions.sh --project-ref <ref>
+#   ./scripts/deploy-edge-functions.sh --project-ref <ref> [--functions <name1,name2,...>]
 #
 # Validates the provided ref against known refs in .env before deploying.
-# Reads verify_jwt config from supabase/config.toml.
+# When --functions is omitted, deploys all 25 functions.
+# When --functions is provided, deploys only the listed functions.
 
 set -euo pipefail
 
@@ -13,22 +14,34 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- Parse arguments ---
 PROJECT_REF=""
+FILTER_FUNCTIONS=""
 while [[ $# -gt 0 ]]; do
   case $1 in
     --project-ref)
       PROJECT_REF="$2"
       shift 2
       ;;
+    --functions)
+      FILTER_FUNCTIONS="$2"
+      shift 2
+      ;;
     -h|--help)
-      echo "Usage: $0 --project-ref <ref>"
+      echo "Usage: $0 --project-ref <ref> [--functions <name1,name2,...>]"
       echo ""
-      echo "Deploys all 25 Supabase Edge Functions to the specified project."
-      echo "Validates ref against STAGING_SUPABASE_PROJECT_REF and SUPABASE_PROJECT_REF in .env."
+      echo "Deploys Supabase Edge Functions to the specified project."
+      echo "When --functions is omitted, deploys all 25 functions."
+      echo "When --functions is provided, deploys only the listed functions."
+      echo ""
+      echo "Options:"
+      echo "  --project-ref <ref>           Target Supabase project reference (required)"
+      echo "  --functions <name1,name2,...>  Deploy only these functions (comma-separated)"
+      echo ""
+      echo "Validates ref against STAGING_SUPABASE_PROJECT_REF and SUPABASE_PROJECT_REF."
       exit 0
       ;;
     *)
       echo "ERROR: Unknown argument: $1"
-      echo "Usage: $0 --project-ref <ref>"
+      echo "Usage: $0 --project-ref <ref> [--functions <name1,name2,...>]"
       exit 1
       ;;
   esac
@@ -36,7 +49,7 @@ done
 
 if [[ -z "$PROJECT_REF" ]]; then
   echo "ERROR: --project-ref is required"
-  echo "Usage: $0 --project-ref <ref>"
+  echo "Usage: $0 --project-ref <ref> [--functions <name1,name2,...>]"
   exit 1
 fi
 
@@ -98,7 +111,44 @@ VERIFY_JWT_FUNCTIONS=(
   update-seat-count
 )
 
-echo "Deploying 25 edge functions to project: $PROJECT_REF"
+# --- Filter to specific functions if --functions provided ---
+if [[ -n "$FILTER_FUNCTIONS" ]]; then
+  IFS=',' read -ra REQUESTED <<< "$FILTER_FUNCTIONS"
+  FILTERED_NO_VERIFY=()
+  FILTERED_VERIFY=()
+
+  for req in "${REQUESTED[@]}"; do
+    FOUND=false
+    for func in "${NO_VERIFY_JWT_FUNCTIONS[@]}"; do
+      if [[ "$req" == "$func" ]]; then
+        FILTERED_NO_VERIFY+=("$func")
+        FOUND=true
+        break
+      fi
+    done
+    if [[ "$FOUND" == "false" ]]; then
+      for func in "${VERIFY_JWT_FUNCTIONS[@]}"; do
+        if [[ "$req" == "$func" ]]; then
+          FILTERED_VERIFY+=("$func")
+          FOUND=true
+          break
+        fi
+      done
+    fi
+    if [[ "$FOUND" == "false" ]]; then
+      echo "WARNING: Unknown function '$req' — skipping"
+    fi
+  done
+
+  NO_VERIFY_JWT_FUNCTIONS=("${FILTERED_NO_VERIFY[@]}")
+  VERIFY_JWT_FUNCTIONS=("${FILTERED_VERIFY[@]}")
+  TOTAL=$((${#NO_VERIFY_JWT_FUNCTIONS[@]} + ${#VERIFY_JWT_FUNCTIONS[@]}))
+  echo "Deploying $TOTAL edge function(s) to project: $PROJECT_REF"
+else
+  TOTAL=25
+  echo "Deploying all 25 edge functions to project: $PROJECT_REF"
+fi
+
 echo "=================================================="
 
 DEPLOYED=0
@@ -124,17 +174,21 @@ deploy_function() {
   fi
 }
 
-echo ""
-echo "--- Functions with --no-verify-jwt ---"
-for func in "${NO_VERIFY_JWT_FUNCTIONS[@]}"; do
-  deploy_function "$func" "true"
-done
+if [[ ${#NO_VERIFY_JWT_FUNCTIONS[@]} -gt 0 ]]; then
+  echo ""
+  echo "--- Functions with --no-verify-jwt ---"
+  for func in "${NO_VERIFY_JWT_FUNCTIONS[@]}"; do
+    deploy_function "$func" "true"
+  done
+fi
 
-echo ""
-echo "--- Functions with JWT verification ---"
-for func in "${VERIFY_JWT_FUNCTIONS[@]}"; do
-  deploy_function "$func" "false"
-done
+if [[ ${#VERIFY_JWT_FUNCTIONS[@]} -gt 0 ]]; then
+  echo ""
+  echo "--- Functions with JWT verification ---"
+  for func in "${VERIFY_JWT_FUNCTIONS[@]}"; do
+    deploy_function "$func" "false"
+  done
+fi
 
 echo ""
 echo "=================================================="
@@ -145,4 +199,4 @@ if [[ $FAILED -gt 0 ]]; then
   exit 1
 fi
 
-echo "All 25 functions deployed successfully."
+echo "All $TOTAL function(s) deployed successfully."

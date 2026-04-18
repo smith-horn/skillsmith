@@ -269,6 +269,8 @@ npx supabase functions deploy skills-outreach-preferences --no-verify-jwt
 npx supabase functions deploy admin-grant-subscription --no-verify-jwt
 ```
 
+**Auto-deploy**: Edge functions are automatically deployed when changes to `supabase/functions/**` are merged to main. The `deploy-edge-functions.yml` workflow detects changed functions and deploys only those. `_shared/` changes trigger a full deploy of all 25 functions. Manual full deploy: `gh workflow run deploy-edge-functions.yml -f deploy_all=true`.
+
 **CORS & monitoring details**: [deployment-guide.md](.claude/development/deployment-guide.md)
 
 ---
@@ -285,6 +287,7 @@ npx supabase functions deploy admin-grant-subscription --no-verify-jwt
 | Weekly Analytics | Monday 9 AM UTC | GitHub Actions (`analytics-report.yml`) |
 | Billing Monitor | Monday 9 AM UTC | GitHub Actions |
 | A/B Experiment Results | Monday 9 AM UTC | GitHub Actions (`ab-results.yml`) — creates issue with verdict |
+| Edge Function Deploy | On merge to main | GitHub Actions (`deploy-edge-functions.yml`) |
 
 Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table. Manual trigger & audit log details: [deployment-guide.md](.claude/development/deployment-guide.md#monitoring--alerts).
 
