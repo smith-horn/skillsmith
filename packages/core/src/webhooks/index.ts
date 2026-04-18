@@ -46,3 +46,11 @@ export {
   type QueueStats,
   type WebhookQueueOptions,
 } from './WebhookQueue.js'
+
+// SMI-4291: WebhookDeadLetterRepository - DLQ persistence
+export {
+  WebhookDeadLetterRepository,
+  type DeadLetterRow,
+  type InsertDeadLetterInput,
+  type SupabaseLikeClient,
+} from './WebhookDeadLetterRepository.js'
