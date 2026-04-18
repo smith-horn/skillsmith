@@ -22,7 +22,7 @@ import {
 } from '@skillsmith/core'
 import type { ToolContext } from '../context.js'
 import { getToolContext } from '../context.js'
-import { type InstallInput, type InstallResult } from './install.types.js'
+import { installInputSchema, type InstallResult } from './install.types.js'
 import { loadManifest, lookupSkillFromRegistry } from './install.helpers.js'
 
 // SMI-1867: Conflict resolution logic (extracted per governance review)
@@ -48,19 +48,58 @@ class McpRegistryLookup implements RegistryLookup {
 }
 
 /**
+ * Build an application-level validation failure result.
+ *
+ * SMI-4288 / GitHub #599: When an MCP caller passes a malformed argument
+ * payload (e.g. `{}`, wrong `skillId` type, invalid `conflictAction` enum),
+ * return a structured `InstallResult` with `success: false` rather than
+ * throwing. Matches the existing `team-workspace.ts` error-envelope
+ * convention (application-level failure, not MCP protocol-level `isError`).
+ *
+ * @see #599
+ */
+function buildValidationError(message: string): InstallResult {
+  return {
+    success: false,
+    skillId: '',
+    installPath: '',
+    error: `Invalid install input: ${message}`,
+  }
+}
+
+/**
  * Install a skill from GitHub to the local Claude Code skills directory.
  *
  * Delegates core logic to SkillInstallationService from @skillsmith/core.
  * Adds MCP-specific conflict resolution (three-way merge, backup).
  *
- * @param input - Installation parameters (skillId, force, skipScan)
+ * SMI-4288 / GitHub #599: Signature accepts `unknown` so the Zod `safeParse`
+ * guard actually runs at the MCP tool boundary. The prior `InstallInput`
+ * parameter type made the guard unreachable — callers passed a pre-typed
+ * object, leaving the underlying `request.params.arguments` crash surface
+ * unprotected when the dispatcher forwards raw args.
+ *
+ * @param input - Raw MCP tool arguments (unvalidated); parsed via Zod here
  * @param _context - Optional tool context (falls back to singleton)
  * @returns Installation result with success status, security report, and dep intel
  */
-export async function installSkill(
-  input: InstallInput,
-  _context?: ToolContext
-): Promise<InstallResult> {
+export async function installSkill(input: unknown, _context?: ToolContext): Promise<InstallResult> {
+  // SMI-4288 / #599: Zod validation boundary. Unlike the previous typed
+  // signature, this runs at every call site (tool-dispatch, runFirstTimeSetup,
+  // integration tests). Validation failures return a structured InstallResult
+  // instead of throwing, preserving the MCP application-level error envelope.
+  const parsed = installInputSchema.safeParse(input)
+  if (!parsed.success) {
+    const message = parsed.error.issues
+      .map((issue) => {
+        const path = issue.path.length > 0 ? issue.path.join('.') : '<root>'
+        return `${path}: ${issue.message}`
+      })
+      .join('; ')
+    return buildValidationError(message)
+  }
+  const validInput = parsed.data
+
   const context = _context ?? getToolContext()
 
   // SMI-3483: Create core service instance with MCP context wiring
@@ -76,10 +115,10 @@ export async function installSkill(
 
   // SMI-1867: Pre-flight conflict check for reinstall with force
   // This is MCP-specific (three-way merge UI, backup, storeOriginal)
-  if (input.force && input.conflictAction) {
+  if (validInput.force && validInput.conflictAction) {
     try {
       const manifest = await loadManifest()
-      const skillName = extractSkillName(input.skillId)
+      const skillName = extractSkillName(validInput.skillId)
 
       if (manifest.installedSkills[skillName]) {
         const installPath = manifest.installedSkills[skillName].installPath
@@ -88,8 +127,8 @@ export async function installSkill(
           skillName,
           installPath,
           manifest,
-          input.conflictAction,
-          input.skillId
+          validInput.conflictAction,
+          validInput.skillId
         )
 
         if (!conflictCheck.shouldProceed) {
@@ -103,17 +142,17 @@ export async function installSkill(
 
   // Delegate to core service
   const installStart = Date.now()
-  const result = await service.install(input.skillId, {
-    force: input.force,
-    skipScan: input.skipScan,
-    skipOptimize: input.skipOptimize,
-    conflictAction: input.conflictAction,
-    confirmed: input.confirmed,
+  const result = await service.install(validInput.skillId, {
+    force: validInput.force,
+    skipScan: validInput.skipScan,
+    skipOptimize: validInput.skipOptimize,
+    conflictAction: validInput.conflictAction,
+    confirmed: validInput.confirmed,
   })
 
   // SMI-4182: fire-and-forget install telemetry for usage report funnel
   void emitInstallEvent({
-    skillId: input.skillId,
+    skillId: validInput.skillId,
     source: 'mcp',
     success: result.success,
     durationMs: Date.now() - installStart,
