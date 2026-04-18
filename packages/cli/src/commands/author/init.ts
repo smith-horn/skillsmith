@@ -14,10 +14,10 @@ import { dirname, join, resolve } from 'path'
 import { createHash } from 'crypto'
 import { SkillParser } from '@skillsmith/core'
 
-import { SKILL_MD_TEMPLATE, README_MD_TEMPLATE } from '../../templates/index.js'
 import { sanitizeError } from '../../utils/sanitize.js'
 import { validateSkillName } from '../../utils/skill-name.js'
 import { printValidationResult } from './utils.js'
+import { scaffoldSkillDirectory } from './init.helpers.js'
 
 /**
  * SMI-1473: Options for non-interactive init command
@@ -103,9 +103,14 @@ export async function initSkill(
 
   const skillDir = resolve(targetPath, skillName)
 
-  // Check if directory already exists
+  // SMI-4289: Track whether this invocation created the directory fresh.
+  // Used by the scaffold helper to decide if rollback can safely rm -rf
+  // on mid-scaffold failure. When false (user confirmed overwrite of
+  // pre-existing dir), rollback MUST no-op to protect the user's files.
+  let skillDirPreExisted = false
   try {
     await stat(skillDir)
+    skillDirPreExisted = true
     // Skip confirmation if --yes flag is set
     if (!options.yes) {
       const overwrite = await confirm({
@@ -123,72 +128,42 @@ export async function initSkill(
 
   const spinner = ora('Creating skill structure...').start()
 
+  // SMI-4289: mkdir is outside the scaffold helper so we can detect EACCES
+  // / EPERM / ENOSPC here and set createdFresh appropriately. If mkdir
+  // itself fails on a fresh path, there is no partial directory to roll
+  // back — we simply report the error.
+  let createdFresh = false
   try {
-    // Create directory structure
     await mkdir(skillDir, { recursive: true })
-    await mkdir(join(skillDir, 'scripts'), { recursive: true })
-    await mkdir(join(skillDir, 'resources'), { recursive: true })
-
-    // Generate SKILL.md from template
-    const skillMdContent = SKILL_MD_TEMPLATE.replace(/\{\{name\}\}/g, skillName)
-      .replace(/\{\{description\}\}/g, description)
-      .replace(/\{\{author\}\}/g, author)
-      .replace(/\{\{category\}\}/g, category)
-      .replace(/\{\{date\}\}/g, new Date().toISOString().split('T')[0] || '')
-      .replace(/\{\{behavioralClassification\}\}/g, '')
-
-    await writeFile(join(skillDir, 'SKILL.md'), skillMdContent, 'utf-8')
-
-    // Generate README.md from template
-    const readmeContent = README_MD_TEMPLATE.replace(/\{\{name\}\}/g, skillName).replace(
-      /\{\{description\}\}/g,
-      description
-    )
-
-    await writeFile(join(skillDir, 'README.md'), readmeContent, 'utf-8')
-
-    // Create placeholder script
-    const placeholderScript = `#!/usr/bin/env node
-/**
- * ${skillName} - Example Script
- *
- * Add your skill's automation scripts here.
- */
-
-console.log('${skillName} script executed');
-`
-    await writeFile(join(skillDir, 'scripts', 'example.js'), placeholderScript, 'utf-8')
-
-    // Create .gitignore
-    const gitignore = `# Dependencies
-node_modules/
-
-# Build output
-dist/
-
-# Environment
-.env
-.env.local
-
-# OS files
-.DS_Store
-Thumbs.db
-`
-    await writeFile(join(skillDir, '.gitignore'), gitignore, 'utf-8')
-
-    spinner.succeed(`Created skill at ${skillDir}`)
-
-    console.log(chalk.bold('\nNext steps:'))
-    console.log(chalk.dim(`  1. cd ${skillDir}`))
-    console.log(chalk.dim('  2. Edit SKILL.md to customize your skill'))
-    console.log(chalk.dim('  3. Add scripts to the scripts/ directory'))
-    console.log(chalk.dim('  4. Run skillsmith validate to check your skill'))
-    console.log(chalk.dim('  5. Run skillsmith publish to prepare for sharing'))
-    console.log()
+    createdFresh = !skillDirPreExisted
   } catch (error) {
     spinner.fail(`Failed to create skill: ${sanitizeError(error)}`)
-    throw error
+    process.exit(1)
   }
+
+  const result = await scaffoldSkillDirectory({
+    skillDir,
+    skillName,
+    description,
+    author,
+    category,
+    createdFresh,
+  })
+
+  if (!result.ok) {
+    spinner.fail(`Failed to create skill: ${result.error}`)
+    process.exit(1)
+  }
+
+  spinner.succeed(`Created skill at ${skillDir}`)
+
+  console.log(chalk.bold('\nNext steps:'))
+  console.log(chalk.dim(`  1. cd ${skillDir}`))
+  console.log(chalk.dim('  2. Edit SKILL.md to customize your skill'))
+  console.log(chalk.dim('  3. Add scripts to the scripts/ directory'))
+  console.log(chalk.dim('  4. Run skillsmith validate to check your skill'))
+  console.log(chalk.dim('  5. Run skillsmith publish to prepare for sharing'))
+  console.log()
 }
 
 /**
