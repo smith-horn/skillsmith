@@ -15,6 +15,8 @@ import { z } from 'zod'
 import type { ToolContext } from '../context.js'
 import { isSupabaseConfigured } from '../supabase-client.js'
 import { createStubService } from './team-workspace.stub.js'
+import { createLiveService } from './team-workspace.live.js'
+import { readLicenseKey } from './team-resolver.js'
 
 // Re-export stub factory for external consumers and tests
 export { createStubService } from './team-workspace.stub.js'
@@ -212,8 +214,14 @@ export function checkSharingPolicy(
   return null
 }
 
-// Module-level singleton (swapped when Supabase RPCs are ready)
-let service: TeamWorkspaceService = createStubService()
+/**
+ * Module-level singleton. Picks the live Supabase-backed service when
+ * SUPABASE_URL + SUPABASE_ANON_KEY are configured; otherwise falls back
+ * to the in-memory stub (useful for tests and unauthenticated env).
+ */
+let service: TeamWorkspaceService = isSupabaseConfigured()
+  ? createLiveService()
+  : createStubService()
 
 /** Replace the workspace service implementation (for testing or Supabase swap) */
 export function setTeamWorkspaceService(svc: TeamWorkspaceService): void {
@@ -240,9 +248,28 @@ export async function executeTeamWorkspace(
   _context: ToolContext
 ): Promise<TeamWorkspaceResult> {
   const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
-  // TODO: Extract license key from context/env and resolve team_id via Supabase
-  const licenseKey = process.env.SKILLSMITH_LICENSE_KEY ?? ''
-  const teamId = await service.resolveTeamId(licenseKey)
+  // SMI-4292: License key resolution order — explicit env, then anon fallback.
+  // In live mode, missing/invalid keys surface as typed errors (not stub data).
+  const licenseKey = readLicenseKey()
+  if (dataSource === 'live' && !licenseKey) {
+    return {
+      success: false,
+      dataSource,
+      error:
+        'SKILLSMITH_LICENSE_KEY is required for team workspace operations. ' +
+        'Set it in your MCP server config — shell exports do not reach MCP subprocesses.',
+    }
+  }
+  let teamId: string
+  try {
+    teamId = await service.resolveTeamId(licenseKey ?? '')
+  } catch (err) {
+    return {
+      success: false,
+      dataSource,
+      error: err instanceof Error ? err.message : 'Failed to resolve team from license key.',
+    }
+  }
 
   switch (input.action) {
     case 'create': {
@@ -301,8 +328,26 @@ export async function executeShareSkill(
   _context: ToolContext
 ): Promise<ShareSkillResult> {
   const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
-  const licenseKey = process.env.SKILLSMITH_LICENSE_KEY ?? ''
-  const teamId = await service.resolveTeamId(licenseKey)
+  const licenseKey = readLicenseKey()
+  if (dataSource === 'live' && !licenseKey) {
+    return {
+      success: false,
+      dataSource,
+      error:
+        'SKILLSMITH_LICENSE_KEY is required for skill-sharing operations. ' +
+        'Set it in your MCP server config — shell exports do not reach MCP subprocesses.',
+    }
+  }
+  let teamId: string
+  try {
+    teamId = await service.resolveTeamId(licenseKey ?? '')
+  } catch (err) {
+    return {
+      success: false,
+      dataSource,
+      error: err instanceof Error ? err.message : 'Failed to resolve team from license key.',
+    }
+  }
 
   switch (input.action) {
     case 'add': {

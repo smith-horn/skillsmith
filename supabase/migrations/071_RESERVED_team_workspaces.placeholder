@@ -1,5 +1,0 @@
--- Migration slot 071 RESERVED for Wave 5A: team_workspaces + workspace_skills + resolve_team_from_license RPC
--- Tracking: SMI-4292 — Team workspaces foundation
--- Plan: docs/internal/implementation/github-wave-5a-team-workspaces.md
--- Plan-review finding C1: foundation schema does not exist; this wave creates it from scratch
--- This file MUST be deleted when the real 071_team_workspaces.sql migration is committed.

@@ -3,9 +3,10 @@
  * Team Member Management
  *
  * @see SMI-3897: Team Admin Dashboard (Wave 2b)
+ * @see SMI-4292: Wave 5A — live member list (closes GitHub #605)
  *
- * Shows: member list with roles (owner/admin/member), invite button placeholder.
- * Placeholder data with TODO comments for Supabase integration.
+ * Invite + pending-invites are descoped to SMI-4294 (team_invitations schema
+ * does not exist yet — plan-review finding C2).
  */
 
 export const prerender = false
@@ -14,6 +15,9 @@ import { ClientRouter } from 'astro:transitions'
 import Footer from '../../../components/Footer.astro'
 import Nav from '../../../components/Nav.astro'
 import TeamNav from '../../../components/TeamNav.astro'
+import { getSupabaseConfig } from '../../../lib/supabase-config'
+
+const supabaseConfig = getSupabaseConfig()
 ---
 
 <!doctype html>
@@ -30,6 +34,9 @@ import TeamNav from '../../../components/TeamNav.astro'
       href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
       rel="stylesheet"
     />
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig
+    </script>
     <ClientRouter />
   </head>
   <body>
@@ -40,83 +47,54 @@ import TeamNav from '../../../components/TeamNav.astro'
 
       <TeamNav activePath="/account/team/members" />
 
-      <section class="section">
-        <div class="section-header">
-          <h2>Members (4)</h2>
-          <!-- TODO: Wire invite button to Supabase team invite RPC -->
-          <button class="btn btn-primary" id="invite-btn" disabled>Invite Member</button>
-        </div>
+      <!-- Loading skeleton -->
+      <div id="loading-state" class="loading-state">
+        <p>Loading members...</p>
+      </div>
 
-        <!-- TODO: Replace placeholder data with Supabase team members query -->
-        <div class="member-list">
-          <div class="member-card">
-            <div class="member-info">
-              <div class="member-avatar">A</div>
-              <div class="member-details">
-                <div class="member-name">Alice Johnson</div>
-                <div class="member-email">alice@example.com</div>
-              </div>
-            </div>
-            <div class="member-meta">
-              <span class="role-badge role-owner">Owner</span>
-              <span class="member-joined">Joined Jan 2026</span>
-            </div>
+      <!-- Error alert -->
+      <div
+        id="error-state"
+        class="error-state"
+        style="display: none;"
+        role="alert"
+        aria-live="polite"
+      >
+        <h3>Failed to load members</h3>
+        <p id="error-message">Something went wrong.</p>
+        <button onclick="location.reload()" class="btn btn-primary">Try Again</button>
+      </div>
+
+      <div id="content" style="display: none;">
+        <section class="section">
+          <div class="section-header">
+            <h2 id="members-heading">Members</h2>
+            <!-- Invite flow is descoped to SMI-4294 (team_invitations schema does not exist yet). -->
+            <button
+              class="btn btn-primary"
+              id="invite-btn"
+              disabled
+              aria-label="Invite member (coming soon)"
+              title="Invite flow ships with SMI-4294"
+            >
+              Invite Member (Coming soon)
+            </button>
           </div>
 
-          <div class="member-card">
-            <div class="member-info">
-              <div class="member-avatar">B</div>
-              <div class="member-details">
-                <div class="member-name">Bob Smith</div>
-                <div class="member-email">bob@example.com</div>
-              </div>
-            </div>
-            <div class="member-meta">
-              <span class="role-badge role-admin">Admin</span>
-              <span class="member-joined">Joined Feb 2026</span>
-            </div>
-          </div>
+          <div class="member-list" id="member-list"></div>
+        </section>
 
-          <div class="member-card">
-            <div class="member-info">
-              <div class="member-avatar">C</div>
-              <div class="member-details">
-                <div class="member-name">Carol Davis</div>
-                <div class="member-email">carol@example.com</div>
-              </div>
-            </div>
-            <div class="member-meta">
-              <span class="role-badge role-member">Member</span>
-              <span class="member-joined">Joined Mar 2026</span>
-            </div>
+        <section class="section">
+          <h2>Pending Invites</h2>
+          <div class="empty-state">
+            <p>Pending invites not available in this release.</p>
+            <p class="text-muted">
+              Team invitation flow ships with SMI-4294. Current seats can be adjusted from the
+              <a href="/account/subscription/">subscription page</a>.
+            </p>
           </div>
-
-          <div class="member-card">
-            <div class="member-info">
-              <div class="member-avatar">D</div>
-              <div class="member-details">
-                <div class="member-name">Dave Wilson</div>
-                <div class="member-email">dave@example.com</div>
-              </div>
-            </div>
-            <div class="member-meta">
-              <span class="role-badge role-member">Member</span>
-              <span class="member-joined">Joined Mar 2026</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- TODO: Wire pending invites section to Supabase -->
-      <section class="section">
-        <h2>Pending Invites</h2>
-        <div class="empty-state">
-          <p>No pending invitations.</p>
-          <p class="text-muted">
-            Invite team members to collaborate on shared workspaces and skills.
-          </p>
-        </div>
-      </section>
+        </section>
+      </div>
     </main>
 
     <Footer compact />
@@ -303,10 +281,43 @@ import TeamNav from '../../../components/TeamNav.astro'
     color: #9ca3af;
   }
 
+  .empty-state a {
+    color: #e07a5f;
+    text-decoration: none;
+  }
+
+  .empty-state a:hover {
+    text-decoration: underline;
+  }
+
   .text-muted {
     color: #6b7280;
     font-size: 0.875rem;
     margin-top: 0.25rem;
+  }
+
+  .loading-state {
+    padding: 4rem 2rem;
+    text-align: center;
+    color: #9ca3af;
+  }
+
+  .error-state {
+    background: rgba(239, 68, 68, 0.08);
+    border-left: 3px solid #ef4444;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .error-state h3 {
+    color: #f87171;
+    margin-bottom: 0.5rem;
+  }
+
+  .error-state p {
+    color: #9ca3af;
+    margin-bottom: 1rem;
   }
 
   @media (max-width: 640px) {
@@ -322,3 +333,123 @@ import TeamNav from '../../../components/TeamNav.astro'
     }
   }
 </style>
+
+<script>
+  import { createClient } from '@supabase/supabase-js'
+
+  const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+
+  function escapeHtml(text: string): string {
+    const div = document.createElement('div')
+    div.textContent = text
+    return div.innerHTML
+  }
+
+  function showState(state: 'loading' | 'content' | 'error', message?: string) {
+    const loading = document.getElementById('loading-state') as HTMLDivElement
+    const content = document.getElementById('content') as HTMLDivElement
+    const errorEl = document.getElementById('error-state') as HTMLDivElement
+    const errorMsg = document.getElementById('error-message') as HTMLParagraphElement
+    if (loading) loading.style.display = 'none'
+    if (content) content.style.display = 'none'
+    if (errorEl) errorEl.style.display = 'none'
+    if (state === 'loading' && loading) loading.style.display = 'block'
+    if (state === 'content' && content) content.style.display = 'block'
+    if (state === 'error' && errorEl) {
+      errorEl.style.display = 'block'
+      if (message && errorMsg) errorMsg.textContent = message
+    }
+  }
+
+  document.addEventListener('astro:page-load', async () => {
+    if (
+      window.location.pathname !== '/account/team/members' &&
+      window.location.pathname !== '/account/team/members/'
+    )
+      return
+
+    if (!config.url || !config.anonKey) {
+      showState('error', 'Configuration error.')
+      return
+    }
+
+    const supabase = createClient(config.url, config.anonKey)
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session) {
+      window.location.href = '/login?redirect=/account/team/members'
+      return
+    }
+
+    try {
+      // Find my team_id
+      const { data: myMemberships } = await supabase
+        .from('team_members')
+        .select('team_id')
+        .eq('user_id', session.user.id)
+        .limit(1)
+
+      if (!myMemberships || myMemberships.length === 0) {
+        showState('error', 'You are not a member of any team yet.')
+        return
+      }
+
+      const teamId = myMemberships[0].team_id
+
+      // All members of that team (+ profile)
+      const { data: members, error } = await supabase
+        .from('team_members')
+        .select(
+          'id, role, invited_at, joined_at, user_id, profiles:profiles!team_members_user_id_fkey(full_name, email)'
+        )
+        .eq('team_id', teamId)
+
+      if (error) throw new Error(error.message)
+
+      const list = document.getElementById('member-list')!
+      const heading = document.getElementById('members-heading')!
+      heading.textContent = `Members (${members?.length ?? 0})`
+
+      if (!members || members.length === 0) {
+        list.innerHTML = '<p class="empty-state">No members yet.</p>'
+      } else {
+        list.innerHTML = members
+          .map((m) => {
+            // profiles may come back as an array or an object depending on driver
+            const p = Array.isArray(m.profiles) ? m.profiles[0] : m.profiles
+            const name = p?.full_name || p?.email?.split('@')[0] || 'Team member'
+            const email = p?.email ?? ''
+            const initial = (name[0] || '?').toUpperCase()
+            const joined = m.joined_at
+              ? new Date(m.joined_at).toLocaleDateString(undefined, {
+                  year: 'numeric',
+                  month: 'short',
+                })
+              : '—'
+            const roleLower = String(m.role).toLowerCase()
+            const roleLabel = roleLower.charAt(0).toUpperCase() + roleLower.slice(1)
+            return `<div class="member-card">
+              <div class="member-info">
+                <div class="member-avatar">${escapeHtml(initial)}</div>
+                <div class="member-details">
+                  <div class="member-name">${escapeHtml(name)}</div>
+                  <div class="member-email">${escapeHtml(email)}</div>
+                </div>
+              </div>
+              <div class="member-meta">
+                <span class="role-badge role-${escapeHtml(roleLower)}">${escapeHtml(roleLabel)}</span>
+                <span class="member-joined">Joined ${escapeHtml(joined)}</span>
+              </div>
+            </div>`
+          })
+          .join('')
+      }
+
+      showState('content')
+    } catch (err) {
+      console.error('Members load failed:', err)
+      showState('error', err instanceof Error ? err.message : 'Unexpected error.')
+    }
+  })
+</script>

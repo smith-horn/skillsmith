@@ -14,6 +14,7 @@
 import { z } from 'zod'
 import type { ToolContext } from '../context.js'
 import { isSupabaseConfigured } from '../supabase-client.js'
+import { resolveLicenseTeamId, readLicenseKey } from './team-resolver.js'
 
 // ============================================================================
 // Input schemas
@@ -220,10 +221,30 @@ export function getPrivateRegistryService(): PrivateRegistryService {
 
 /**
  * Resolve team ID from license key.
- * TODO: Replace with Supabase RPC when Supabase integration is ready.
+ *
+ * SMI-4292 (finding C3): unified resolution — calls the same
+ * `resolve_team_from_license` RPC as team-workspace.ts. When Supabase is
+ * configured but the license key is missing/invalid, the caller receives
+ * a typed error (bubbled up via thrown Error).
+ *
+ * Falls back to a static stub id when Supabase is not configured (local dev).
  */
 async function resolveTeamId(): Promise<string> {
-  return 'team_stub_00000000-0000-0000-0000-000000000000'
+  if (!isSupabaseConfigured()) return 'team_stub_00000000-0000-0000-0000-000000000000'
+  const licenseKey = readLicenseKey()
+  if (!licenseKey) {
+    throw new Error(
+      'SKILLSMITH_LICENSE_KEY is required for private registry operations. ' +
+        'Set it in your MCP server config — shell exports do not reach MCP subprocesses.'
+    )
+  }
+  const teamId = await resolveLicenseTeamId(licenseKey)
+  if (!teamId) {
+    throw new Error(
+      'Unable to resolve team from license key. Ensure the key is active and attached to a Team-tier subscription.'
+    )
+  }
+  return teamId
 }
 
 /**
@@ -234,7 +255,16 @@ export async function executePrivateRegistryPublish(
   _context: ToolContext
 ): Promise<PrivateRegistryPublishResult> {
   const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
-  const teamId = await resolveTeamId()
+  let teamId: string
+  try {
+    teamId = await resolveTeamId()
+  } catch (err) {
+    return {
+      success: false,
+      dataSource,
+      error: err instanceof Error ? err.message : 'Failed to resolve team from license key.',
+    }
+  }
 
   const skill = await service.publish(teamId, input.skillId, input.version, input.description)
   return {
@@ -255,7 +285,16 @@ export async function executePrivateRegistryManage(
   _context: ToolContext
 ): Promise<PrivateRegistryManageResult> {
   const dataSource: 'stub' | 'live' = isSupabaseConfigured() ? 'live' : 'stub'
-  const teamId = await resolveTeamId()
+  let teamId: string
+  try {
+    teamId = await resolveTeamId()
+  } catch (err) {
+    return {
+      success: false,
+      dataSource,
+      error: err instanceof Error ? err.message : 'Failed to resolve team from license key.',
+    }
+  }
 
   switch (input.action) {
     case 'list': {

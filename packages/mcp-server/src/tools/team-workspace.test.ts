@@ -2,9 +2,10 @@
  * @fileoverview Unit tests for team_workspace and share_skill MCP tools
  * @see SMI-3895: Team Workspace + Share Skill MCP Tools
  * @see SMI-3898: Skill Sharing Controls
+ * @see SMI-4292: Wave 5A — live Supabase integration + typed error paths
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   teamWorkspaceInputSchema,
   shareSkillInputSchema,
@@ -18,6 +19,14 @@ import {
   type SharingPolicy,
 } from './team-workspace.js'
 import type { ToolContext } from '../context.js'
+
+// Mock isSupabaseConfigured so we can flip between 'stub' and 'live' modes
+vi.mock('../supabase-client.js', () => ({
+  isSupabaseConfigured: vi.fn(() => false),
+  getSupabaseClient: vi.fn(),
+  getSupabaseAdminClient: vi.fn(),
+  resetSupabaseClients: vi.fn(),
+}))
 
 // ============================================================================
 // Helpers
@@ -268,6 +277,22 @@ describe('executeTeamWorkspace', () => {
     )
     expect(result.success).toBe(false)
   })
+
+  // SMI-4292: Typed error when Supabase live but license key missing
+  it('returns typed error in live mode when SKILLSMITH_LICENSE_KEY is missing', async () => {
+    const { isSupabaseConfigured } = await import('../supabase-client.js')
+    vi.mocked(isSupabaseConfigured).mockReturnValueOnce(true)
+    const orig = process.env.SKILLSMITH_LICENSE_KEY
+    delete process.env.SKILLSMITH_LICENSE_KEY
+    try {
+      const result = await executeTeamWorkspace({ action: 'list' }, makeContext())
+      expect(result.success).toBe(false)
+      expect(result.dataSource).toBe('live')
+      expect(result.error).toContain('SKILLSMITH_LICENSE_KEY')
+    } finally {
+      if (orig !== undefined) process.env.SKILLSMITH_LICENSE_KEY = orig
+    }
+  })
 })
 
 // ============================================================================
@@ -325,6 +350,22 @@ describe('executeShareSkill', () => {
     )
     expect(result.success).toBe(false)
     expect(result.error).toContain('not found')
+  })
+
+  // SMI-4292: Typed error when Supabase live but license key missing
+  it('returns typed error in live mode when SKILLSMITH_LICENSE_KEY is missing', async () => {
+    const { isSupabaseConfigured } = await import('../supabase-client.js')
+    vi.mocked(isSupabaseConfigured).mockReturnValueOnce(true)
+    const orig = process.env.SKILLSMITH_LICENSE_KEY
+    delete process.env.SKILLSMITH_LICENSE_KEY
+    try {
+      const result = await executeShareSkill({ action: 'list', workspaceId: wsId }, makeContext())
+      expect(result.success).toBe(false)
+      expect(result.dataSource).toBe('live')
+      expect(result.error).toContain('SKILLSMITH_LICENSE_KEY')
+    } finally {
+      if (orig !== undefined) process.env.SKILLSMITH_LICENSE_KEY = orig
+    }
   })
 
   // SMI-3898: Deny list enforcement
