@@ -1,0 +1,162 @@
+# SMI-4256: Auto-deploy edge functions on merge to main
+# Prevents SMI-4252-class failures (function merged but never deployed)
+name: Deploy Edge Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+  workflow_dispatch:
+    inputs:
+      function_name:
+        description: 'Deploy a specific function by name (for manual triggers; leave empty and use deploy_all for full redeploy)'
+        required: false
+        type: string
+      deploy_all:
+        description: 'Deploy ALL 25 functions (ignores function_name)'
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-edge-functions
+  cancel-in-progress: false # Never cancel a deploy mid-flight
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy Edge Functions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - name: Validate secrets
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::error::SUPABASE_ACCESS_TOKEN secret is not set"
+            exit 1
+          fi
+          if [ -z "$SUPABASE_PROJECT_REF" ]; then
+            echo "::error::SUPABASE_PROJECT_REF secret is not set"
+            exit 1
+          fi
+          echo "Secrets validated"
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 2 # Need parent commit for diff (assumes squash-merge)
+
+      # REQUIRED — supabase/functions/** is encrypted. Without unlock,
+      # deploy pushes encrypted binary blobs. Hard fail if key is missing.
+      - name: Unlock git-crypt
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          if [ -z "$GIT_CRYPT_KEY" ]; then
+            echo "::error::GIT_CRYPT_KEY secret is not set — cannot deploy encrypted edge functions"
+            exit 1
+          fi
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+          echo "git-crypt unlocked"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: Install Supabase CLI
+        run: npm install -g supabase@latest
+
+      - name: Determine functions to deploy
+        id: detect
+        env:
+          INPUT_DEPLOY_ALL: ${{ inputs.deploy_all }}
+          INPUT_FUNCTION_NAME: ${{ inputs.function_name }}
+        run: |
+          if [ "$INPUT_DEPLOY_ALL" = "true" ]; then
+            echo "mode=all" >> "$GITHUB_OUTPUT"
+            echo "functions=" >> "$GITHUB_OUTPUT"
+            echo "Deploying ALL functions (manual override)"
+          elif [ -n "$INPUT_FUNCTION_NAME" ]; then
+            echo "mode=specific" >> "$GITHUB_OUTPUT"
+            echo "functions=$INPUT_FUNCTION_NAME" >> "$GITHUB_OUTPUT"
+            echo "Deploying specific function: $INPUT_FUNCTION_NAME"
+          else
+            # Detect changed functions from the merge commit
+            # Uses sed instead of grep -oP for portability (no PCRE dependency)
+            CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'supabase/functions/' \
+              | sed -n 's|supabase/functions/\([^/]*\)/.*|\1|p' \
+              | grep -v '^_shared$' \
+              | sort -u \
+              | paste -sd ',' -)
+            if [ -z "$CHANGED" ]; then
+              echo "No function changes detected (may be _shared only)"
+              # If _shared changed, deploy all — shared code affects every function
+              if git diff --name-only HEAD~1 HEAD -- 'supabase/functions/_shared/' | grep -q .; then
+                echo "mode=all" >> "$GITHUB_OUTPUT"
+                echo "functions=" >> "$GITHUB_OUTPUT"
+                echo "_shared/ changed — deploying ALL functions"
+              else
+                echo "mode=none" >> "$GITHUB_OUTPUT"
+                echo "functions=" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "mode=changed" >> "$GITHUB_OUTPUT"
+              echo "functions=$CHANGED" >> "$GITHUB_OUTPUT"
+              echo "Changed functions: $CHANGED"
+            fi
+          fi
+
+      - name: Deploy
+        if: steps.detect.outputs.mode != 'none'
+        run: |
+          ARGS=(--project-ref "$SUPABASE_PROJECT_REF")
+          FUNCTIONS="${{ steps.detect.outputs.functions }}"
+          if [ -n "$FUNCTIONS" ]; then
+            ARGS+=(--functions "$FUNCTIONS")
+          fi
+          ./scripts/deploy-edge-functions.sh "${ARGS[@]}"
+
+      - name: Verify deployment
+        if: steps.detect.outputs.mode != 'none'
+        run: |
+          echo "Verifying deployed functions..."
+          ./scripts/validate-edge-functions.sh --check-deployment
+
+      - name: Generate deploy summary
+        if: always()
+        run: |
+          echo "## Edge Function Deploy" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Status**: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Trigger**: ${{ github.event_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Mode**: ${{ steps.detect.outputs.mode }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Functions**: ${{ steps.detect.outputs.functions || 'all' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Commit**: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Alert on failure
+        if: failure() && github.event_name == 'push'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          jq -n \
+            --arg type "edge_function_deploy_failure" \
+            --arg source "github-actions" \
+            --arg workflow "deploy-edge-functions" \
+            --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg functions "${{ steps.detect.outputs.functions || 'all' }}" \
+            --arg commit "${{ github.sha }}" \
+            '{type: $type, source: $source, details: {workflow: $workflow, run_url: $run_url, functions: $functions, commit: $commit}}' \
+          | curl -s -X POST "$SUPABASE_URL/functions/v1/alert-notify" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d @- || true

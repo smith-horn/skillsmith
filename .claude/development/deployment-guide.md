@@ -46,6 +46,37 @@ CI validates anonymous function configuration. When adding a new one:
 
 CI will fail if any anonymous function is missing from `config.toml` or CLAUDE.md.
 
+### Auto-Deploy on Merge (SMI-4256)
+
+Edge functions are automatically deployed when changes to `supabase/functions/**` merge to main via `deploy-edge-functions.yml`.
+
+**How it works**:
+
+1. Path filter triggers on `supabase/functions/**` changes to `main`
+2. `git diff HEAD~1 HEAD` detects which function directories changed
+3. Only changed functions deploy (not all 25)
+4. `_shared/` changes trigger a full deploy of all functions
+5. Post-deploy verification via `validate-edge-functions.sh --check-deployment`
+6. Failure alerts sent to `alert-notify` edge function
+
+**Manual triggers**:
+
+```bash
+# Deploy a specific function
+gh workflow run deploy-edge-functions.yml -f function_name=health
+
+# Deploy all 25 functions
+gh workflow run deploy-edge-functions.yml -f deploy_all=true
+```
+
+**Troubleshooting**:
+
+- **Workflow not triggering**: Verify `supabase/functions/**` path filter matches the changed files. Git-crypt encryption does not affect path matching.
+- **git-crypt unlock failure**: `GIT_CRYPT_KEY` secret must be set. Without it, the workflow hard-fails (encrypted blobs cannot be deployed).
+- **Secret rotation**: `SUPABASE_ACCESS_TOKEN` is a Supabase Management API personal access token. Rotate via Supabase dashboard > Account > Access Tokens. Update GitHub secret: `varlock run -- sh -c 'echo "$SUPABASE_ACCESS_TOKEN" | gh secret set SUPABASE_ACCESS_TOKEN'`.
+
+**Rollback**: `git revert <merge-sha> && git push origin main` triggers a re-deploy of the previous function version. For immediate recovery, use `gh workflow run deploy-edge-functions.yml -f deploy_all=true` after the revert lands on main.
+
 ## CORS Configuration (SMI-1904)
 
 Configured in `supabase/functions/_shared/cors.ts`:
