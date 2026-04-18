@@ -121,11 +121,21 @@ export class TreeSitterManager {
 
   private async doInitialize(): Promise<void> {
     try {
-      // Dynamic import for web-tree-sitter (WASM-based)
-      // @ts-expect-error - Optional dependency, may not have type declarations
-      const TreeSitter = await import('web-tree-sitter')
-      await TreeSitter.default.init()
-      this.ParserClass = TreeSitter.default as unknown as new () => TreeSitterParser
+      // Dynamic import for web-tree-sitter (WASM-based). Newer versions (>=0.25)
+      // expose named exports; fall back to a default export for older builds.
+      const TreeSitter = (await import('web-tree-sitter')) as unknown as {
+        Parser?: new () => TreeSitterParser
+        default?: new () => TreeSitterParser
+      }
+      const ParserCtor = TreeSitter.Parser ?? TreeSitter.default
+      if (!ParserCtor) {
+        throw new Error('web-tree-sitter Parser export not found')
+      }
+      const maybeInit = (ParserCtor as unknown as { init?: () => Promise<void> }).init
+      if (typeof maybeInit === 'function') {
+        await maybeInit.call(ParserCtor)
+      }
+      this.ParserClass = ParserCtor
       this.initialized = true
     } catch {
       // Fallback: try native tree-sitter if WASM unavailable
