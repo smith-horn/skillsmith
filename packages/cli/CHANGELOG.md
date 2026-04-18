@@ -12,7 +12,11 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
-_No unreleased changes._
+- **Fix**: `skillsmith author init` now reports a friendly error and cleans up
+  partial output when a file operation fails. When an init is run against a
+  pre-existing directory that the user confirms to overwrite, the existing
+  directory is preserved on mid-scaffold failure instead of being removed
+  (SMI-4289, closes #602).
 
 ## v0.5.4
 
