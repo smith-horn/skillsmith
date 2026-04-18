@@ -13,7 +13,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ToolContext } from './context.js'
 import { executeSearch, type SearchInput } from './tools/search.js'
 import { executeGetSkill, type GetSkillInput } from './tools/get-skill.js'
-import { installSkill, installInputSchema } from './tools/install.js'
+import { installSkill } from './tools/install.js'
 import { uninstallSkill, uninstallInputSchema } from './tools/uninstall.js'
 import { recommendInputSchema, executeRecommend } from './tools/recommend.js'
 import { validateInputSchema, executeValidate } from './tools/validate.js'
@@ -119,7 +119,10 @@ export async function dispatchToolCall(
     }
 
     case 'install_skill':
-      return ok(await installSkill(installInputSchema.parse(args), toolContext))
+      // SMI-4288 / #599: forward raw args; installSkill() performs Zod
+      // validation at its boundary and returns a structured error envelope
+      // on failure instead of throwing. See install.ts buildValidationError.
+      return ok(await installSkill(args, toolContext))
 
     case 'uninstall_skill':
       return ok(await uninstallSkill(uninstallInputSchema.parse(args), toolContext))
