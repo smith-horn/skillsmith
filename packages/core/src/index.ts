@@ -173,7 +173,11 @@ export {
   SourceIndexer,
   defaultRegistry,
   isSourceAdapter,
+  LocalFilesystemAdapter,
+  createLocalFilesystemAdapter,
 } from './sources/index.js'
+
+export type { LocalFilesystemConfig } from './sources/index.js'
 
 export type {
   ISourceAdapter,
@@ -189,6 +193,7 @@ export type {
   SkillIndexResult,
   BatchIndexResult,
   SourceHealth,
+  AdapterError,
   SourceAdapterFactory,
   RegistryStats,
   ParsedSkillMetadata as SourceParsedSkillMetadata,

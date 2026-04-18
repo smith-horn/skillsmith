@@ -1,8 +1,18 @@
 /**
- * Local Filesystem Source Adapter (SMI-591)
+ * Local Filesystem Source Adapter (SMI-591, SMI-4287)
  *
  * Scans local directories for SKILL.md files.
  * Useful for local development and testing.
+ *
+ * SMI-4287 hardening:
+ * - Symlink targets are resolved via `fs.realpath` and checked against the
+ *   adapter's `rootDir`. Targets outside root are skipped with a
+ *   `symlink-escape` warning (unless `allowSymlinksOutsideRoot` is `true`).
+ * - Permission (EACCES/EPERM), not-found (ENOENT), and loop (ELOOP) errors
+ *   are surfaced as `AdapterError` entries on `SourceSearchResult.warnings`
+ *   instead of throwing, so siblings continue to be scanned.
+ * - All `fs.*` calls route through the typed `safeFs` helpers; the historic
+ *   bare `try/catch` for EACCES in `scanDirectory` is removed.
  */
 
 import { BaseSourceAdapter } from './BaseSourceAdapter.js'
@@ -14,19 +24,19 @@ import type {
   SourceSearchResult,
   SkillContent,
   SourceHealth,
+  AdapterError,
 } from './types.js'
 import { createHash } from 'crypto'
-import { promises as fs } from 'fs'
-import { join, basename, dirname, relative, resolve } from 'path'
+import { basename, dirname, resolve, join } from 'path'
 import { createLogger } from '../utils/logger.js'
 import { validatePath, safePatternMatch } from '../validation/index.js'
+import { safeFs } from './LocalFilesystemAdapter.helpers.js'
+import {
+  scanDirectoryRecursive,
+  type DiscoveredSkillRecord,
+} from './LocalFilesystemAdapter.scan.js'
 
 const log = createLogger('LocalFilesystemAdapter')
-
-/**
- * Default skill file names to search for
- */
-const SKILL_FILE_NAMES = ['SKILL.md', 'skill.md']
 
 /**
  * Configuration for local filesystem adapter
@@ -40,24 +50,22 @@ export interface LocalFilesystemConfig extends SourceConfig {
   excludePatterns?: string[]
   /** Whether to follow symlinks (default: false) */
   followSymlinks?: boolean
-}
-
-/**
- * Discovered skill information
- */
-interface DiscoveredSkill {
-  /** Full path to the skill file */
-  path: string
-  /** Relative path from root directory */
-  relativePath: string
-  /** Directory containing the skill */
-  directory: string
-  /** File stats */
-  stats: {
-    size: number
-    mtime: Date
-    ctime: Date
-  }
+  /**
+   * Allow symlinks whose target resolves outside `rootDir` (SMI-4287).
+   *
+   * Default `false`: symlinks pointing outside the scan root are skipped and
+   * a `symlink-escape` entry is added to `SourceSearchResult.warnings`. This
+   * prevents an attacker with write access to `rootDir` from exfiltrating
+   * content from arbitrary locations on the filesystem (GitHub #600).
+   *
+   * Set to `true` only if you trust every symlink inside `rootDir` (e.g.
+   * monorepo layouts that intentionally point at sibling packages). The
+   * caller accepts the security tradeoff.
+   *
+   * Note: this flag has no effect when `followSymlinks` is `false` — symlinks
+   * are never traversed in that case.
+   */
+  allowSymlinksOutsideRoot?: boolean
 }
 
 /**
@@ -78,6 +86,9 @@ interface DiscoveredSkill {
  *
  * await adapter.initialize()
  * const result = await adapter.search({})
+ * for (const warning of result.warnings ?? []) {
+ *   console.warn(`[${warning.code}] ${warning.message}`)
+ * }
  * ```
  */
 export class LocalFilesystemAdapter extends BaseSourceAdapter {
@@ -85,7 +96,14 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
   private readonly maxDepth: number
   private readonly excludePatterns: string[]
   private readonly followSymlinks: boolean
-  private discoveredSkills: DiscoveredSkill[] = []
+  private readonly allowSymlinksOutsideRoot: boolean
+  private discoveredSkills: DiscoveredSkillRecord[] = []
+  /**
+   * Warnings accumulated during the most recent scan. Consumed and cleared
+   * by `search()` so each caller sees only the warnings from that call's
+   * underlying scan.
+   */
+  private scanWarnings: AdapterError[] = []
 
   constructor(config: LocalFilesystemConfig) {
     super(config)
@@ -93,45 +111,52 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
     this.maxDepth = config.maxDepth ?? 5
     this.excludePatterns = config.excludePatterns ?? ['node_modules', '.git', '.svn', 'dist']
     this.followSymlinks = config.followSymlinks ?? false
+    this.allowSymlinksOutsideRoot = config.allowSymlinksOutsideRoot ?? false
   }
 
   /**
    * Initialize by scanning the filesystem
    */
   protected override async doInitialize(): Promise<void> {
-    await this.scanDirectory(this.rootDir, 0)
+    this.scanWarnings = []
+    await this.runScan()
   }
 
   /**
-   * Check if root directory exists and is accessible
+   * Check if root directory exists and is accessible.
+   *
+   * SMI-4287: routes `fs.stat(rootDir)` through `safeFs` so the raw Node
+   * error is translated to a typed `AdapterError` message.
    */
   protected async doHealthCheck(): Promise<Partial<SourceHealth>> {
-    try {
-      const stats = await fs.stat(this.rootDir)
-      return {
-        healthy: stats.isDirectory(),
-        error: stats.isDirectory() ? undefined : 'Root path is not a directory',
-      }
-    } catch (error) {
+    const statResult = await safeFs.stat(this.rootDir)
+    if (!statResult.ok) {
       return {
         healthy: false,
-        error: error instanceof Error ? error.message : 'Directory not accessible',
+        error: statResult.error.message,
       }
+    }
+    return {
+      healthy: statResult.value.isDirectory(),
+      error: statResult.value.isDirectory() ? undefined : 'Root path is not a directory',
     }
   }
 
   /**
-   * Search for skills in the scanned directories
+   * Search for skills in the scanned directories.
+   *
+   * SMI-4287: `warnings` collects non-fatal `AdapterError` entries from the
+   * scan (symlink escapes, permission denials, loops). An empty array is
+   * returned as `undefined` to keep the field strictly optional.
    */
   async search(options: SourceSearchOptions = {}): Promise<SourceSearchResult> {
-    // Re-scan if needed
     if (this.discoveredSkills.length === 0) {
-      await this.scanDirectory(this.rootDir, 0)
+      this.scanWarnings = []
+      await this.runScan()
     }
 
     let filtered = [...this.discoveredSkills]
 
-    // Filter by query (search in path/directory name)
     if (options.query) {
       const query = options.query.toLowerCase()
       filtered = filtered.filter(
@@ -141,84 +166,93 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
       )
     }
 
-    // Apply limit
     const limit = options.limit ?? 100
     const limitedResults = filtered.slice(0, limit)
 
-    // Convert to SourceRepository format
-    const repositories = await Promise.all(
+    const repositoriesWithWarnings = await Promise.all(
       limitedResults.map((skill) => this.skillToRepository(skill))
     )
+    const repositories = repositoriesWithWarnings.map((r) => r.repo)
+    const repoWarnings = repositoriesWithWarnings.flatMap((r) => r.warnings)
+    const allWarnings = [...this.scanWarnings, ...repoWarnings]
 
     return {
       repositories,
       totalCount: filtered.length,
       hasMore: filtered.length > limit,
+      warnings: allWarnings.length > 0 ? allWarnings : undefined,
     }
   }
 
   /**
-   * Get repository info for a skill location
+   * Get repository info for a skill location.
+   *
+   * SMI-4287: `fs.stat` is routed through `safeFs`; permission errors are
+   * converted to typed Error messages instead of raw Node throws.
    */
   async getRepository(location: SourceLocation): Promise<SourceRepository> {
     const skillPath = this.resolveSkillPath(location)
     const skill = this.discoveredSkills.find((s) => s.path === skillPath)
 
     if (skill) {
-      return this.skillToRepository(skill)
+      const { repo } = await this.skillToRepository(skill)
+      return repo
     }
 
-    // Try to get info even if not in discovered list
-    try {
-      const stats = await fs.stat(skillPath)
-      return {
-        id: this.generateId(skillPath),
-        name: basename(dirname(skillPath)),
-        url: `file://${skillPath}`,
-        description: null,
-        owner: 'local',
-        defaultBranch: 'main',
-        stars: 0,
-        forks: 0,
-        topics: ['local'],
-        updatedAt: stats.mtime.toISOString(),
-        createdAt: stats.ctime.toISOString(),
-        license: null,
-        metadata: {
-          sourceType: 'local',
-          path: skillPath,
-        },
-      }
-    } catch (error) {
-      throw new Error(
-        `Skill not found at ${skillPath}: ${error instanceof Error ? error.message : String(error)}`
-      )
+    const statResult = await safeFs.stat(skillPath)
+    if (!statResult.ok) {
+      throw new Error(`Skill not found at ${skillPath}: ${statResult.error.message}`)
+    }
+    const stats = statResult.value
+    return {
+      id: this.generateId(skillPath),
+      name: basename(dirname(skillPath)),
+      url: `file://${skillPath}`,
+      description: null,
+      owner: 'local',
+      defaultBranch: 'main',
+      stars: 0,
+      forks: 0,
+      topics: ['local'],
+      updatedAt: stats.mtime.toISOString(),
+      createdAt: stats.ctime.toISOString(),
+      license: null,
+      metadata: {
+        sourceType: 'local',
+        path: skillPath,
+      },
     }
   }
 
   /**
-   * Fetch skill content from local file
+   * Fetch skill content from local file.
+   *
+   * SMI-4287: both `fs.readFile` and `fs.stat` route through `safeFs`, so
+   * permission errors (EACCES/EPERM) raise typed Errors with path context
+   * instead of raw Node errors.
    */
   async fetchSkillContent(location: SourceLocation): Promise<SkillContent> {
     const skillPath = this.resolveSkillPath(location)
 
-    try {
-      const rawContent = await fs.readFile(skillPath, 'utf-8')
-      const stats = await fs.stat(skillPath)
-      const sha = this.generateSha(rawContent)
+    const contentResult = await safeFs.readFile(skillPath)
+    if (!contentResult.ok) {
+      throw new Error(`Failed to read skill file at ${skillPath}: ${contentResult.error.message}`)
+    }
+    const statResult = await safeFs.stat(skillPath)
+    if (!statResult.ok) {
+      throw new Error(`Failed to stat skill file at ${skillPath}: ${statResult.error.message}`)
+    }
+    const rawContent = contentResult.value
+    const stats = statResult.value
+    const sha = this.generateSha(rawContent)
 
-      return {
-        rawContent,
-        sha,
-        location,
-        filePath: skillPath,
-        encoding: 'utf-8',
-        lastModified: stats.mtime.toISOString(),
-      }
-    } catch (error) {
-      throw new Error(
-        `Failed to read skill file at ${skillPath}: ${error instanceof Error ? error.message : String(error)}`
-      )
+    return {
+      rawContent,
+      sha,
+      location,
+      filePath: skillPath,
+      encoding: 'utf-8',
+      lastModified: stats.mtime.toISOString(),
     }
   }
 
@@ -227,20 +261,20 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
    */
   override async skillExists(location: SourceLocation): Promise<boolean> {
     const skillPath = this.resolveSkillPath(location)
-    try {
-      await fs.access(skillPath)
-      return true
-    } catch {
-      return false
-    }
+    const statResult = await safeFs.stat(skillPath)
+    return statResult.ok
   }
 
   /**
-   * Rescan the filesystem for new skills
+   * Rescan the filesystem for new skills.
+   *
+   * Returns the count of discovered skills. Warnings from the rescan are
+   * available via the next call to `search()`.
    */
   async rescan(): Promise<number> {
     this.discoveredSkills = []
-    await this.scanDirectory(this.rootDir, 0)
+    this.scanWarnings = []
+    await this.runScan()
     return this.discoveredSkills.length
   }
 
@@ -252,61 +286,20 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
   }
 
   /**
-   * Scan a directory recursively for skill files
+   * Run the recursive scan starting at `rootDir`. Delegates to the extracted
+   * `scanDirectoryRecursive` helper (see `LocalFilesystemAdapter.scan.ts`).
    */
-  private async scanDirectory(dirPath: string, depth: number): Promise<void> {
-    if (depth > this.maxDepth) return
-
-    try {
-      const entries = await fs.readdir(dirPath, { withFileTypes: true })
-
-      for (const entry of entries) {
-        const fullPath = join(dirPath, entry.name)
-
-        // Skip excluded patterns
-        if (this.isExcluded(entry.name)) continue
-
-        // Handle symlinks
-        let isDirectory = entry.isDirectory()
-        let isFile = entry.isFile()
-
-        if (entry.isSymbolicLink()) {
-          if (!this.followSymlinks) continue
-          try {
-            const stats = await fs.stat(fullPath)
-            isDirectory = stats.isDirectory()
-            isFile = stats.isFile()
-          } catch {
-            continue // Skip broken symlinks
-          }
-        }
-
-        // Check for skill files
-        if (isFile && SKILL_FILE_NAMES.includes(entry.name)) {
-          const stats = await fs.stat(fullPath)
-          this.discoveredSkills.push({
-            path: fullPath,
-            relativePath: relative(this.rootDir, fullPath),
-            directory: dirname(fullPath),
-            stats: {
-              size: stats.size,
-              mtime: stats.mtime,
-              ctime: stats.ctime,
-            },
-          })
-        }
-
-        // Recurse into directories
-        if (isDirectory) {
-          await this.scanDirectory(fullPath, depth + 1)
-        }
-      }
-    } catch (error) {
-      // Ignore permission errors and continue scanning
-      if ((error as NodeJS.ErrnoException).code !== 'EACCES') {
-        log.warn(`Error scanning directory ${dirPath}: ${error}`)
-      }
-    }
+  private async runScan(): Promise<void> {
+    await scanDirectoryRecursive(this.rootDir, 0, {
+      rootDir: this.rootDir,
+      maxDepth: this.maxDepth,
+      followSymlinks: this.followSymlinks,
+      allowSymlinksOutsideRoot: this.allowSymlinksOutsideRoot,
+      isExcluded: (name) => this.isExcluded(name),
+      discovered: this.discoveredSkills,
+      warnings: this.scanWarnings,
+      log,
+    })
   }
 
   /**
@@ -318,8 +311,15 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
   }
 
   /**
-   * Resolve a skill location to a full filesystem path
-   * Validates that the resolved path remains within rootDir to prevent path traversal attacks (SMI-720, SMI-726)
+   * Resolve a skill location to a full filesystem path.
+   *
+   * Validates that the resolved path remains within rootDir to prevent path
+   * traversal attacks (SMI-720, SMI-726, SMI-4287).
+   *
+   * SMI-4287: removes the historic absolute-path bypass — every path flows
+   * through `validatePath`, including `location.path` that happens to start
+   * with `/`. Absolute paths outside `rootDir` now throw `ValidationError`
+   * consistently.
    */
   private resolveSkillPath(location: SourceLocation): string {
     let resolvedPath: string
@@ -336,57 +336,63 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
       throw new Error('Invalid location: must specify path or repo')
     }
 
-    // Use centralized path validation to prevent path traversal attacks
     validatePath(resolvedPath, this.rootDir)
 
     return resolve(resolvedPath)
   }
 
   /**
-   * Convert discovered skill to SourceRepository
+   * Convert discovered skill to SourceRepository.
+   *
+   * Returns both the repository and any warnings encountered while reading
+   * the file (typically permission errors on SKILL.md after discovery).
    */
-  private async skillToRepository(skill: DiscoveredSkill): Promise<SourceRepository> {
+  private async skillToRepository(
+    skill: DiscoveredSkillRecord
+  ): Promise<{ repo: SourceRepository; warnings: AdapterError[] }> {
     const dirName = basename(skill.directory)
+    const warnings: AdapterError[] = []
 
-    // Try to extract metadata from the skill file
     let description: string | null = null
     let name = dirName
 
-    try {
-      const content = await fs.readFile(skill.path, 'utf-8')
-      // Try to extract name from frontmatter
+    const contentResult = await safeFs.readFile(skill.path)
+    if (contentResult.ok) {
+      const content = contentResult.value
       const nameMatch = content.match(/^---[\s\S]*?name:\s*["']?([^"'\n]+)["']?/m)
       if (nameMatch) {
         name = nameMatch[1].trim()
       }
-      // Try to extract description from frontmatter
       const descMatch = content.match(/^---[\s\S]*?description:\s*["']?([^"'\n]+)["']?/m)
       if (descMatch) {
         description = descMatch[1].trim()
       }
-    } catch {
-      // Use defaults
+    } else {
+      warnings.push(contentResult.error)
     }
 
     return {
-      id: this.generateId(skill.path),
-      name,
-      url: `file://${skill.path}`,
-      description,
-      owner: 'local',
-      defaultBranch: 'main',
-      stars: 0,
-      forks: 0,
-      topics: ['local'],
-      updatedAt: skill.stats.mtime.toISOString(),
-      createdAt: skill.stats.ctime.toISOString(),
-      license: null,
-      metadata: {
-        sourceType: 'local',
-        path: skill.path,
-        relativePath: skill.relativePath,
-        size: skill.stats.size,
+      repo: {
+        id: this.generateId(skill.path),
+        name,
+        url: `file://${skill.path}`,
+        description,
+        owner: 'local',
+        defaultBranch: 'main',
+        stars: 0,
+        forks: 0,
+        topics: ['local'],
+        updatedAt: skill.stats.mtime.toISOString(),
+        createdAt: skill.stats.ctime.toISOString(),
+        license: null,
+        metadata: {
+          sourceType: 'local',
+          path: skill.path,
+          relativePath: skill.relativePath,
+          size: skill.stats.size,
+        },
       },
+      warnings,
     }
   }
 

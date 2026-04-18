@@ -31,6 +31,7 @@ import {
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { formatDuration, formatDate, formatTimeUntil } from '../utils/formatters.js'
+import { scanLocalSkillsForWarnings, formatAdapterWarnings } from './sync.helpers.js'
 
 /**
  * Run sync operation
@@ -216,6 +217,18 @@ async function showStatus(options: { dbPath: string; json: boolean }): Promise<v
       console.log(
         `  Avg duration:   ${stats.averageDurationMs ? formatDuration(stats.averageDurationMs) : 'N/A'}`
       )
+
+      // Local-skills adapter warnings (SMI-4287, GitHub #600).
+      // Surface symlink-escape / permission / loop errors so the user can
+      // act on them (e.g. `chmod +r`, remove rogue symlink).
+      const adapterWarnings = await scanLocalSkillsForWarnings()
+      if (adapterWarnings.length > 0) {
+        console.log()
+        console.log(chalk.bold.yellow('Local skill warnings:'))
+        for (const line of formatAdapterWarnings(adapterWarnings)) {
+          console.error(line)
+        }
+      }
     } finally {
       db.close()
     }
