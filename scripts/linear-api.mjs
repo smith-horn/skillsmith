@@ -410,10 +410,12 @@ const commands = {
   },
 
   async 'update-status'(args) {
-    const { issue, status } = args
+    const issue = args.issue || args._[1]
+    const { status } = args
 
     if (!issue || !status) {
-      console.error('Error: --issue and --status are required')
+      console.error('Error: issue (positional or --issue) and --status are required')
+      console.error('Example: linear-api.mjs update-status SMI-123 --status done')
       process.exit(1)
     }
 
@@ -423,10 +425,12 @@ const commands = {
   },
 
   async 'add-comment'(args) {
-    const { issue, body } = args
+    const issue = args.issue || args._[1]
+    const body = args.body || args._[2]
 
     if (!issue || !body) {
-      console.error('Error: --issue and --body are required')
+      console.error('Error: issue (positional or --issue) and body (positional or --body) are required')
+      console.error('Example: linear-api.mjs add-comment SMI-123 "Progress update"')
       process.exit(1)
     }
 
