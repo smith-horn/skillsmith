@@ -51,6 +51,7 @@ CI will fail if any anonymous function is missing from `config.toml` or CLAUDE.m
 Edge functions are automatically deployed when changes to `supabase/functions/**` merge to main via `deploy-edge-functions.yml`.
 
 **How it works**:
+
 1. Path filter triggers on `supabase/functions/**` changes to `main`
 2. `git diff HEAD~1 HEAD` detects which function directories changed
 3. Only changed functions deploy (not all 25)
@@ -59,6 +60,7 @@ Edge functions are automatically deployed when changes to `supabase/functions/**
 6. Failure alerts sent to `alert-notify` edge function
 
 **Manual triggers**:
+
 ```bash
 # Deploy a specific function
 gh workflow run deploy-edge-functions.yml -f function_name=health
@@ -68,6 +70,7 @@ gh workflow run deploy-edge-functions.yml -f deploy_all=true
 ```
 
 **Troubleshooting**:
+
 - **Workflow not triggering**: Verify `supabase/functions/**` path filter matches the changed files. Git-crypt encryption does not affect path matching.
 - **git-crypt unlock failure**: `GIT_CRYPT_KEY` secret must be set. Without it, the workflow hard-fails (encrypted blobs cannot be deployed).
 - **Secret rotation**: `SUPABASE_ACCESS_TOKEN` is a Supabase Management API personal access token. Rotate via Supabase dashboard > Account > Access Tokens. Update GitHub secret: `varlock run -- sh -c 'echo "$SUPABASE_ACCESS_TOKEN" | gh secret set SUPABASE_ACCESS_TOKEN'`.
