@@ -394,12 +394,12 @@ describe('SkillParser.parseDependencyBlock', () => {
     expect(SkillParser.parseDependencyBlock('dependencies: some-string')).toBeUndefined()
   })
 
-  it('returns a value when dependencies has a flat array item', () => {
+  it('returns a parsed array when dependencies has a flat array item', () => {
     // The built-in parser is best-effort; nested objects need js-yaml.
     // A flat array under dependencies is the simplest case it can handle.
     const yaml = 'dependencies:\n  - some-skill'
     const result = SkillParser.parseDependencyBlock(yaml)
-    expect(result).toBeDefined()
+    expect(result).toEqual(['some-skill'])
   })
 })
 
@@ -447,9 +447,8 @@ describe('SkillParser.checkReferences', () => {
     const longUrl = 'https://very-long-project.app/' + 'x'.repeat(100) + '/'
     const { matches } = SkillParser.checkReferences(`See ${longUrl} for info.`)
     const urlMatch = matches.find((m) => m.pattern === 'Project URL')
-    if (urlMatch) {
-      expect(urlMatch.text.length).toBeLessThanOrEqual(83) // 80 chars + '...'
-    }
+    expect(urlMatch).toBeDefined()
+    expect(urlMatch!.text.length).toBeLessThanOrEqual(83) // 80 chars + '...'
   })
 
   it('applies custom patterns alongside the defaults', () => {
