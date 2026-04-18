@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-04-17
+
+### Fixed
+
+- Skill detail view now shows **category**, **security scan**, and **repository link** correctly. Previously these fields could render as empty or incorrect values.
+- Repository section is hidden when a skill has no repository URL (previously rendered as an empty stub).
+- Security scan copy now reflects the skill's trust tier — verified skills show "Pending review" while community and experimental skills show "Pending scan" when no scan result is available.
+
 ## [0.2.0] - 2026-04-14
 
 ### Added
