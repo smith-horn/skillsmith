@@ -11,6 +11,7 @@
 import { LanguageAdapter, type SupportedLanguage, type FrameworkRule } from './base.js'
 import type { ParseResult, ImportInfo, ExportInfo, FunctionInfo } from '../types.js'
 import { PYTHON_FRAMEWORK_RULES } from './python-frameworks.js'
+import { PythonIncrementalParser } from '../tree-sitter/pythonIncremental.js'
 
 /**
  * Python adapter using regex-based parsing with optional tree-sitter
@@ -40,56 +41,23 @@ export class PythonAdapter extends LanguageAdapter {
   readonly language: SupportedLanguage = 'python'
   readonly extensions = ['.py', '.pyi', '.pyw']
 
-  private parser: unknown = null
-  private parserInitialized = false
-  private parserInitPromise: Promise<void> | null = null
+  private incremental: PythonIncrementalParser | null = null
+  private initPromise: Promise<void> | null = null
 
   /**
    * Initialize the tree-sitter parser (lazy loaded)
    *
-   * This method is called automatically when using parseFileAsync.
-   * Tree-sitter provides more accurate parsing but requires WASM modules.
+   * Instantiates the WASM-backed PythonIncrementalParser so subsequent
+   * incremental / query-based calls can run synchronously.
    */
   async initParser(): Promise<void> {
-    if (this.parserInitialized) return
-    if (this.parserInitPromise) return this.parserInitPromise
-
-    this.parserInitPromise = this.doInitParser()
-    await this.parserInitPromise
-  }
-
-  private async doInitParser(): Promise<void> {
-    try {
-      // Lazy load web-tree-sitter (optional dependency)
-      // @ts-expect-error - Optional dependency, may not have type declarations
-      const treeSitterModule = await import('web-tree-sitter').catch(() => null)
-
-      if (!treeSitterModule) {
-        // Tree-sitter not available, will use regex fallback
-        this.parserInitialized = false
-        return
-      }
-
-      const Parser = treeSitterModule.default
-      await Parser.init()
-      this.parser = new Parser()
-
-      // Load Python language WASM
-      // Note: The WASM file path would need to be provided via configuration
-      // For now, we use a relative path that works in typical setups
-      const wasmPath = 'tree-sitter-python.wasm'
-      const Python = await Parser.Language.load(wasmPath)
-      ;(this.parser as { setLanguage: (lang: unknown) => void }).setLanguage(Python)
-
-      this.parserInitialized = true
-    } catch (error) {
-      // Tree-sitter not available, will use regex fallback
-      console.warn(
-        '[PythonAdapter] tree-sitter initialization failed, using regex fallback:',
-        error instanceof Error ? error.message : String(error)
-      )
-      this.parserInitialized = false
-    }
+    if (this.incremental?.isReady) return
+    if (this.initPromise) return this.initPromise
+    if (!this.incremental) this.incremental = new PythonIncrementalParser()
+    this.initPromise = this.incremental.ensureReady().finally(() => {
+      this.initPromise = null
+    })
+    await this.initPromise
   }
 
   /**
@@ -113,33 +81,35 @@ export class PythonAdapter extends LanguageAdapter {
    * @returns Promise resolving to parsed imports, exports, and functions
    */
   async parseFileAsync(content: string, filePath: string): Promise<ParseResult> {
-    if (!this.parserInitialized && !this.parserInitPromise) {
-      await this.initParser()
-    } else if (this.parserInitPromise) {
-      await this.parserInitPromise
+    await this.initParser()
+    if (this.incremental?.isReady) {
+      const result = this.incremental.parseSync(content, filePath)
+      if (result) return result
     }
-
-    if (this.parser && this.parserInitialized) {
-      return this.parseWithTreeSitter(content, filePath)
-    }
-
     return this.parseWithRegex(content, filePath)
   }
 
   /**
-   * Parse file incrementally using previous parse tree
+   * Parse file incrementally using a previously cached parse tree.
    *
-   * Currently falls back to full regex parsing. Tree-sitter
-   * incremental parsing will be implemented in SMI-1309.
+   * When the WASM parser has been initialised (via `parseFileAsync` or
+   * `initParser`), this path reuses the cached tree with `tree.edit()` and
+   * re-parses only the changed region, delegating extraction to
+   * tree-sitter queries. On any failure it gracefully falls back to the
+   * regex baseline.
    *
    * @param content - Updated Python source code
    * @param filePath - Path to the file
-   * @param _previousTree - Previous parse tree (not yet used)
+   * @param _previousTree - Reserved for external callers that want to pass
+   *   a tree explicitly; the adapter manages its own cache and ignores it.
    * @returns Parsed imports, exports, and functions
    */
   parseIncremental(content: string, filePath: string, _previousTree?: unknown): ParseResult {
-    // TODO: SMI-1309 - Implement incremental parsing with tree-sitter
-    return this.parseFile(content, filePath)
+    if (this.incremental?.isReady) {
+      const result = this.incremental.parseSync(content, filePath)
+      if (result) return result
+    }
+    return this.parseWithRegex(content, filePath)
   }
 
   /**
@@ -155,12 +125,11 @@ export class PythonAdapter extends LanguageAdapter {
    * Clean up resources
    */
   dispose(): void {
-    if (this.parser && typeof (this.parser as { delete?: () => void }).delete === 'function') {
-      ;(this.parser as { delete: () => void }).delete()
+    if (this.incremental) {
+      this.incremental.dispose()
+      this.incremental = null
     }
-    this.parser = null
-    this.parserInitialized = false
-    this.parserInitPromise = null
+    this.initPromise = null
   }
 
   // ============================================================
@@ -391,12 +360,16 @@ export class PythonAdapter extends LanguageAdapter {
   }
 
   /**
-   * Parse Python source code using tree-sitter for more accurate results
+   * Parse Python source code using tree-sitter for more accurate results.
+   *
+   * Delegates to the query-based extractor when the WASM parser is ready;
+   * falls back to regex otherwise so the adapter always returns a result.
    */
   private parseWithTreeSitter(content: string, filePath: string): ParseResult {
-    // Tree-sitter parsing for more accurate results
-    // For now, fall back to regex until tree-sitter queries are implemented
-    // TODO: SMI-1309 - Implement tree-sitter query-based extraction
+    if (this.incremental?.isReady) {
+      const result = this.incremental.parseSync(content, filePath)
+      if (result) return result
+    }
     return this.parseWithRegex(content, filePath)
   }
 }

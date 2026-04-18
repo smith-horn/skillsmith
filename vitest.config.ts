@@ -109,8 +109,10 @@ export default defineConfig({
         // VS Code activation (requires VS Code API)
         'packages/core/src/activation/ActivationManager.ts',
 
-        // Tree-sitter (requires native WASM bindings unavailable in test env)
-        '**/analysis/tree-sitter/**',
+        // Tree-sitter manager (still WASM-load-dependent; not unit-covered).
+        // SMI-4293: pythonIncremental / pythonExtractor / queries/python.ts
+        // are covered by dedicated tests and are intentionally NOT excluded.
+        '**/analysis/tree-sitter/manager.ts',
 
         // Barrel re-export directories (no testable logic, verified pure re-exports)
         '**/exports/**',
