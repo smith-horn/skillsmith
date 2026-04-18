@@ -9,6 +9,7 @@
  */
 
 import type { Database as DatabaseType } from '../db/database-interface.js'
+import { ValidationError } from '../validation/validation-error.js'
 import { AnalyticsRepository } from './AnalyticsRepository.js'
 import type { ROIDashboard, ROIMetrics, ExportFormat, UsageEvent } from './types.js'
 
@@ -18,6 +19,19 @@ export interface ROIComputeOptions {
   startDate?: string
   endDate?: string
 }
+
+/**
+ * Options for the public {@link ROIDashboardService.getDashboard} entrypoint.
+ * Both dates must be provided together (or neither, which defaults to the last 30 days).
+ */
+export interface GetDashboardOptions {
+  userId?: string
+  startDate?: string
+  endDate?: string
+}
+
+/** Default window applied by {@link ROIDashboardService.getDashboard} when both dates are omitted. */
+const DEFAULT_DASHBOARD_WINDOW_DAYS = 30
 
 export class ROIDashboardService {
   private repo: AnalyticsRepository
@@ -29,11 +43,19 @@ export class ROIDashboardService {
   }
 
   /**
-   * Get user ROI dashboard data
+   * Get user ROI dashboard data for a rolling window (last `days` days).
+   * For an explicit ISO-8601 range, use {@link getDashboard}.
    */
   getUserROI(userId: string, days: number = 30): ROIDashboard['user'] {
     const { startDate, endDate } = this.getDateRange(days)
+    return this.buildUserROI(userId, startDate, endDate)
+  }
 
+  /**
+   * Core per-user ROI computation over an explicit ISO-8601 range.
+   * Shared between {@link getUserROI} (days-based) and {@link getDashboard}.
+   */
+  private buildUserROI(userId: string, startDate: string, endDate: string): ROIDashboard['user'] {
     // Get user's usage events
     const events = this.repo.getUsageEventsForUser(userId, startDate, endDate)
 
@@ -54,7 +76,7 @@ export class ROIDashboardService {
       .sort((a, b) => b.timeSaved - a.timeSaved)
       .slice(0, 5)
 
-    // Calculate weekly trend
+    // Calculate weekly trend (filtered to [startDate, endDate])
     const weeklyTrend = this.calculateWeeklyTrend(events, startDate, endDate)
 
     return {
@@ -67,11 +89,19 @@ export class ROIDashboardService {
   }
 
   /**
-   * Get stakeholder aggregate ROI dashboard
+   * Get stakeholder aggregate ROI dashboard for a rolling window (last `days` days).
+   * For an explicit ISO-8601 range, use {@link getDashboard}.
    */
   getStakeholderROI(days: number = 30): ROIDashboard['stakeholder'] {
     const { startDate, endDate } = this.getDateRange(days)
+    return this.buildStakeholderROI(startDate, endDate)
+  }
 
+  /**
+   * Core stakeholder ROI computation over an explicit ISO-8601 range.
+   * Shared between {@link getStakeholderROI} (days-based) and {@link getDashboard}.
+   */
+  private buildStakeholderROI(startDate: string, endDate: string): ROIDashboard['stakeholder'] {
     // Get ROI metrics for the period
     const metrics = this.repo.getROIMetrics('daily', startDate, endDate)
 
@@ -111,6 +141,30 @@ export class ROIDashboardService {
       adoptionRate,
       skillLeaderboard,
     }
+  }
+
+  /**
+   * Public date-range-aware dashboard entrypoint (SMI-1683 / GitHub #603).
+   *
+   * Behavior:
+   * - Both dates omitted: defaults to the last 30 days ending now.
+   * - Exactly one date provided: throws {@link ValidationError} (the range is ambiguous).
+   * - `startDate >= endDate`: throws {@link ValidationError}.
+   * - `userId` provided: returns `{ user }` with date-filtered per-user metrics.
+   * - `userId` omitted: returns `{ stakeholder }` aggregated over the range.
+   *
+   * @param options.userId    Optional — when supplied, returns the per-user dashboard.
+   * @param options.startDate Optional ISO-8601 timestamp; must be paired with `endDate`.
+   * @param options.endDate   Optional ISO-8601 timestamp; must be paired with `startDate`.
+   */
+  getDashboard(options: GetDashboardOptions = {}): ROIDashboard {
+    const { startDate, endDate } = this.resolveDashboardRange(options.startDate, options.endDate)
+
+    if (options.userId) {
+      return { user: this.buildUserROI(options.userId, startDate, endDate) }
+    }
+
+    return { stakeholder: this.buildStakeholderROI(startDate, endDate) }
   }
 
   /**
@@ -190,6 +244,54 @@ export class ROIDashboardService {
     }
   }
 
+  /**
+   * Resolve the range for {@link getDashboard}: default to last 30 days when both
+   * dates are omitted, validate that exactly-one-date was not supplied, and enforce
+   * `startDate < endDate`.
+   */
+  private resolveDashboardRange(
+    startDate: string | undefined,
+    endDate: string | undefined
+  ): { startDate: string; endDate: string } {
+    if (startDate === undefined && endDate === undefined) {
+      return this.getDateRange(DEFAULT_DASHBOARD_WINDOW_DAYS)
+    }
+
+    if (startDate === undefined || endDate === undefined) {
+      throw new ValidationError(
+        'Must provide both startDate and endDate, or neither',
+        'INVALID_DATE_RANGE'
+      )
+    }
+
+    this.assertValidRange(startDate, endDate)
+    return { startDate, endDate }
+  }
+
+  /**
+   * Throw a typed {@link ValidationError} when the supplied range is malformed.
+   * Accepts any string that `Date` parses to a finite epoch; rejects when
+   * `startDate >= endDate` or either value fails to parse.
+   */
+  private assertValidRange(startDate: string, endDate: string): void {
+    const start = Date.parse(startDate)
+    const end = Date.parse(endDate)
+
+    if (Number.isNaN(start) || Number.isNaN(end)) {
+      throw new ValidationError(
+        'startDate and endDate must be valid ISO-8601 timestamps',
+        'INVALID_DATE_RANGE'
+      )
+    }
+
+    if (start >= end) {
+      throw new ValidationError(
+        'Invalid range: startDate must be before endDate',
+        'INVALID_DATE_RANGE'
+      )
+    }
+  }
+
   private calculateTimeSaved(events: UsageEvent[]): number {
     const successCount = events.filter((e) => e.eventType === 'success').length
     return successCount * this.TIME_SAVED_PER_SUCCESS
@@ -208,13 +310,19 @@ export class ROIDashboardService {
 
   private calculateWeeklyTrend(
     events: UsageEvent[],
-    _startDate: string, // TODO: SMI-1683 - Implement date range filtering
-    _endDate: string
+    startDate: string,
+    endDate: string
   ): Array<{ week: string; timeSaved: number }> {
-    // Group events by week
+    // Filter events to the requested inclusive range (SMI-1683 / GitHub #603).
+    // ISO-8601 timestamps sort lexicographically, so string comparison is correct.
+    const filtered = events.filter(
+      (event) => event.timestamp >= startDate && event.timestamp <= endDate
+    )
+
+    // Group filtered events by week
     const weeklyGroups: Record<string, UsageEvent[]> = {}
 
-    for (const event of events) {
+    for (const event of filtered) {
       const weekStart = this.getWeekStart(event.timestamp)
       if (!weeklyGroups[weekStart]) {
         weeklyGroups[weekStart] = []
@@ -240,10 +348,20 @@ export class ROIDashboardService {
   }
 
   private computeStakeholderROIOnTheFly(
-    _startDate: string, // TODO: SMI-1683 - Implement date range filtering
-    _endDate: string
+    startDate: string,
+    endDate: string
   ): ROIDashboard['stakeholder'] {
-    // This is a simplified version - in production, query events directly
+    // SMI-1683 scope: validate the date range even though the on-the-fly branch
+    // still returns zeroed stakeholder data. This guards callers from passing
+    // malformed ranges while the event-query implementation remains deferred.
+    //
+    // DESCOPE: The actual event aggregation (users, activations, time saved,
+    // leaderboard) lands in SMI-4296. Until then this method intentionally
+    // returns a zeroed struct regardless of the events present in the range,
+    // and the unit test for this branch asserts the zeroed shape to document
+    // the incompleteness.
+    this.assertValidRange(startDate, endDate)
+
     return {
       totalUsers: 0,
       totalActivations: 0,
