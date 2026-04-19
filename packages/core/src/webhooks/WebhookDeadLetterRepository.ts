@@ -97,8 +97,29 @@ export class WebhookDeadLetterRepository {
    * Validates `endpoint_url` length at the application layer so the DB
    * CHECK constraint is never hit in practice; a row that would violate the
    * check throws a sanitized error without the payload.
+   *
+   * SMI-4307 F-03/F-02: When `input.teamId` is null or empty, the caller is an
+   * Individual-tier user (or a user whose team has not been provisioned yet).
+   * `webhook_dead_letters.team_id` is NOT NULL and RLS is team-scoped, so an
+   * insert would fail the FK/CHECK or land unreachable for its owner.
+   * Short-circuit instead: emit a console warning for ops visibility and
+   * return. A follow-on issue can promote this to an `audit_logs` write if
+   * orphan-DLQ observability becomes operationally valuable.
+   *
+   * F-02 overload note: the guard uses `input.teamId` (already resolved by the
+   * caller). Do NOT call `user_team_ids()` from here — the SMI-4309 overload
+   * collision between migrations 070 and 071 makes any such call brittle.
    */
   async insertDeadLetter(input: InsertDeadLetterInput): Promise<void> {
+    if (!input.teamId || input.teamId.length === 0) {
+      console.warn('webhook-dlq: skipping DLQ insert — no teamId (orphan event)', {
+        originalEventId: input.originalEventId,
+        failureReason: input.failureReason,
+        attemptCount: input.attemptCount,
+      })
+      return
+    }
+
     const endpointUrl = input.endpointUrl ?? ''
     if (endpointUrl.length === 0 || endpointUrl.length > 2048) {
       throw new Error(`webhook-dlq: endpoint_url length ${endpointUrl.length} outside [1, 2048]`)
