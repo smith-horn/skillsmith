@@ -250,6 +250,7 @@ When verifying a prod edge function via `curl`, always use `$SUPABASE_URL` (unde
 | `generate-license`, `regenerate-license`, `create-portal-session`, `list-invoices` | Authenticated (internal JWT) | Yes |
 | `skills-outreach-preferences` | Authenticated (User JWT, handler-level) | Yes |
 | `admin-grant-subscription` | Authenticated (Admin JWT) | Yes |
+| `webhook-dlq` | Authenticated (User JWT, gateway-verified for RLS) | No |
 | `update-seat-count` | Authenticated | No |
 | `indexer`, `skills-refresh-metadata`, `ops-report`, `alert-notify` | Service Role | No |
 | `process-pending-subscription` | Service Role | No |
@@ -278,6 +279,12 @@ npx supabase functions deploy create-portal-session --no-verify-jwt
 npx supabase functions deploy list-invoices --no-verify-jwt
 npx supabase functions deploy skills-outreach-preferences --no-verify-jwt
 npx supabase functions deploy admin-grant-subscription --no-verify-jwt
+```
+
+**Gateway-verified auth** (SMI-4291 — relies on `auth.uid()` for RLS; no `--no-verify-jwt`):
+
+```bash
+npx supabase functions deploy webhook-dlq
 ```
 
 **Auto-deploy**: Edge functions are automatically deployed when changes to `supabase/functions/**` are merged to main. The `deploy-edge-functions.yml` workflow detects changed functions and deploys only those. `_shared/` changes trigger a full deploy of all 25 functions. Manual full deploy: `gh workflow run deploy-edge-functions.yml -f deploy_all=true`.

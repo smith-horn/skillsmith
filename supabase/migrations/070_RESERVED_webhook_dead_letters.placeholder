@@ -1,5 +1,0 @@
--- Migration slot 070 RESERVED for Wave 4: webhook_dead_letters table
--- Tracking: SMI-4291 — Webhook dead-letter queue
--- Plan: docs/internal/implementation/github-wave-4-webhook-dlq.md
--- Plan-review finding M1: burn slot visibly to prevent parallel wave collisions (SMI-4200 retro)
--- This file MUST be deleted when the real 070_webhook_dead_letters.sql migration is committed.
