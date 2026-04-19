@@ -86,7 +86,7 @@ describe('ActivationManager', () => {
       expect(second.undo_token).toBeUndefined()
     })
 
-    it('creates a timestamped backup when force is true and exposes an undo token', async () => {
+    it('creates a timestamped backup on force-reinstall; undo restores the original install from the backup', async () => {
       const first = await manager.activateSkill({ skill_id: 'anthropic/commit' })
       expect(first.success).toBe(true)
 
@@ -104,26 +104,53 @@ describe('ActivationManager', () => {
       // The fresh install has overwritten the sentinel.
       expect(await exists(sentinel)).toBe(false)
 
-      // A backup directory exists alongside the install, preserving the sentinel.
-      // NOTE: `ActivationManager.createUndoSnapshot()` does NOT currently wire
-      // the backup_path into the snapshot (source lines 354-375), so `undo()`
-      // of a force-reinstall removes the fresh install without restoring the
-      // backup. This test asserts the current contract — restoration from the
-      // backup would require a source change tracked separately.
+      // Sanity: a backup directory exists alongside the install, preserving the
+      // sentinel. This is the pre-undo state created by `createBackup`.
       const entries = await fs.readdir(skillsDir)
       const backupDir = entries.find((e) => e.startsWith('anthropic-commit.backup-'))
       expect(backupDir).toBeTruthy()
       expect(await exists(path.join(skillsDir, backupDir!, 'sentinel.txt'))).toBe(true)
 
-      // Undo of a force-reinstall removes the new install directory. The
-      // backup remains on disk (caller must reconcile manually).
+      // Undo of a force-reinstall RESTORES the original install from the backup
+      // (SMI-4297). The snapshot now carries `backup_path`, so `undo()` renames
+      // the backup back over the install path instead of just deleting it.
       const undone = await manager.undo(second.undo_token!)
       expect(undone).toBe(true)
-      expect(await exists(second.install_path!)).toBe(false)
 
-      // The backup directory is preserved.
+      // The original install path exists with the original sentinel content.
+      expect(await exists(second.install_path!)).toBe(true)
+      expect(await exists(sentinel)).toBe(true)
+      const sentinelContent = await fs.readFile(sentinel, 'utf-8')
+      expect(sentinelContent).toBe('original-install')
+
+      // The backup dir has been consumed (renamed back into place).
       const afterEntries = await fs.readdir(skillsDir)
-      expect(afterEntries.some((e) => e.startsWith('anthropic-commit.backup-'))).toBe(true)
+      expect(afterEntries.some((e) => e.startsWith('anthropic-commit.backup-'))).toBe(false)
+    })
+
+    it('undo of force-reinstall restores the original install from its backup', async () => {
+      const first = await manager.activateSkill({ skill_id: 'anthropic/commit' })
+      expect(first.success).toBe(true)
+
+      // Write an identifying marker in the original install.
+      const marker = path.join(first.install_path!, 'marker.txt')
+      await fs.writeFile(marker, 'v1-original', 'utf-8')
+
+      const second = await manager.activateSkill({
+        skill_id: 'anthropic/commit',
+        force: true,
+      })
+      expect(second.success).toBe(true)
+      expect(second.undo_token).toBeTruthy()
+
+      // Fresh install has overwritten the marker.
+      expect(await exists(marker)).toBe(false)
+
+      // Undo restores the v1 marker by moving the backup back.
+      const ok = await manager.undo(second.undo_token!)
+      expect(ok).toBe(true)
+      expect(await exists(marker)).toBe(true)
+      expect(await fs.readFile(marker, 'utf-8')).toBe('v1-original')
     })
   })
 

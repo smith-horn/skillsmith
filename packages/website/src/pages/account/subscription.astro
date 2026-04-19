@@ -95,7 +95,7 @@ const tierLookup = Object.fromEntries(
           </svg>
           <h3>Failed to load subscription data</h3>
           <p id="error-message">Something went wrong</p>
-          <button onclick="location.reload()" class="btn btn-primary">Try Again</button>
+          <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
         </div>
       </div>
 
@@ -680,6 +680,13 @@ const tierLookup = Object.fromEntries(
 
   // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation)
   document.addEventListener('astro:page-load', async () => {
+    // Bind CSP-safe reload handler (SMI-4311)
+    document.querySelectorAll<HTMLButtonElement>('[data-action="reload"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        window.location.reload()
+      })
+    })
+
     const loadingState = document.getElementById('loading-state') as HTMLDivElement
     const content = document.getElementById('subscription-content') as HTMLDivElement
     const errorState = document.getElementById('error-state') as HTMLDivElement

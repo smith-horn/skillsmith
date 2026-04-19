@@ -56,7 +56,7 @@ const supabaseConfig = getSupabaseConfig()
 
       <div id="error-state" class="center-state" style="display:none;">
         <p id="error-message" class="error-text">Something went wrong</p>
-        <button onclick="location.reload()" class="btn btn-primary">Try Again</button>
+        <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
       </div>
 
       <div id="page-content" style="display:none;">
@@ -160,6 +160,13 @@ const supabaseConfig = getSupabaseConfig()
   }
 
   document.addEventListener('astro:page-load', async () => {
+    // Bind CSP-safe reload handler (SMI-4311)
+    document.querySelectorAll<HTMLButtonElement>('[data-action="reload"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        window.location.reload()
+      })
+    })
+
     const $ = (id: string) => document.getElementById(id)
     const loadingEl = $('loading-state') as HTMLDivElement | null
     const errorEl = $('error-state') as HTMLDivElement | null
