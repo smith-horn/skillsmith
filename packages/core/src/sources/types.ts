@@ -141,6 +141,29 @@ export interface SourceSearchOptions {
 }
 
 /**
+ * Non-fatal adapter error surfaced to the caller via SourceSearchResult.warnings
+ *
+ * SMI-4287: Introduced to let adapters continue scanning after permission /
+ * symlink / loop failures on individual paths instead of throwing.
+ *
+ * - `permission` — EACCES or EPERM reading a path
+ * - `not-found` — ENOENT on a path that should exist (e.g. broken symlink)
+ * - `io` — Other filesystem errors (EIO, EMFILE, etc.)
+ * - `loop` — ELOOP from circular symlinks
+ * - `symlink-escape` — Symlink resolved outside the adapter's root directory
+ */
+export interface AdapterError {
+  /** Machine-readable error category */
+  code: 'permission' | 'not-found' | 'io' | 'loop' | 'symlink-escape'
+  /** Path (or best-effort identifier) that triggered the error */
+  path: string
+  /** Human-readable message */
+  message: string
+  /** Underlying error for debugging (not serialised) */
+  cause?: unknown
+}
+
+/**
  * Result of a search operation
  */
 export interface SourceSearchResult {
@@ -152,6 +175,12 @@ export interface SourceSearchResult {
   hasMore: boolean
   /** Cursor for next page (if applicable) */
   nextCursor?: string
+  /**
+   * Non-fatal errors encountered during the scan (SMI-4287).
+   * Adapters surface `AdapterError` entries here instead of throwing, so the
+   * caller can continue processing successful results.
+   */
+  warnings?: AdapterError[]
 }
 
 /**
