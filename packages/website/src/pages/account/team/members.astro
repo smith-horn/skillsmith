@@ -62,7 +62,7 @@ const supabaseConfig = getSupabaseConfig()
       >
         <h3>Failed to load members</h3>
         <p id="error-message">Something went wrong.</p>
-        <button onclick="location.reload()" class="btn btn-primary">Try Again</button>
+        <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
       </div>
 
       <div id="content" style="display: none;">
@@ -367,6 +367,13 @@ const supabaseConfig = getSupabaseConfig()
       window.location.pathname !== '/account/team/members/'
     )
       return
+
+    // Bind CSP-safe reload handler (SMI-4311)
+    document.querySelectorAll<HTMLButtonElement>('[data-action="reload"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        window.location.reload()
+      })
+    })
 
     if (!config.url || !config.anonKey) {
       showState('error', 'Configuration error.')

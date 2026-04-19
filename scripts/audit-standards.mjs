@@ -731,6 +731,45 @@ if (existsSync(websiteSrcDir)) {
   warn('Website src directory not found - skipping ClientRouter check')
 }
 
+// CSP-safe event handlers on /account/** (SMI-4311)
+console.log(`\n${BOLD}CSP: No inline event handlers on /account/** pages (SMI-4311)${RESET}\n`)
+
+const accountPagesDir = 'packages/website/src/pages/account'
+if (existsSync(accountPagesDir)) {
+  const accountAstroFiles = getFilesRecursive(accountPagesDir, ['.astro'])
+  const inlineHandlerFiles = []
+
+  for (const file of accountAstroFiles) {
+    const content = readFileSync(file, 'utf8')
+    const lines = content.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      // Match any "on<event>=" attribute (onclick, onload, onchange, etc.)
+      // Word-boundary anchored. Skip comment lines.
+      if (
+        /\bon[a-z]+\s*=\s*["']/.test(line) &&
+        !line.trim().startsWith('//') &&
+        !line.trim().startsWith('*') &&
+        !line.trim().startsWith('<!--')
+      ) {
+        inlineHandlerFiles.push({ file: relative('.', file), line: i + 1 })
+      }
+    }
+  }
+
+  if (inlineHandlerFiles.length === 0) {
+    pass('No inline event handlers on /account/** pages (CSP-safe)')
+  } else {
+    fail(
+      `${inlineHandlerFiles.length} inline event handler(s) found on /account/** pages`,
+      'Replace inline on<event>= attributes with data-action attrs + addEventListener in <script> block (see SMI-4311)'
+    )
+    inlineHandlerFiles.forEach(({ file, line }) => console.log(`    ${file}:${line}`))
+  }
+} else {
+  warn('/account/** pages directory not found - skipping inline-handler check')
+}
+
 // 14. Accessibility Patterns (SMI-2541)
 console.log(`\n${BOLD}14. Accessibility Patterns (SMI-2541)${RESET}`)
 
