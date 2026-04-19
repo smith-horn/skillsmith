@@ -17,12 +17,22 @@
  * @module analysis/tree-sitter/pythonIncremental
  */
 
+import * as fs from 'node:fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import type { ParseResult } from '../types.js'
 import { calculateEdit, findMinimalEdit, type FileEdit } from '../incremental.js'
+import { createLogger } from '../../utils/logger.js'
+import { rateLimited } from '../../utils/rate-limit.js'
 import type { TreeSitterLanguage, TreeSitterParser, TreeSitterTree } from './manager.js'
 import { PythonQuerySet, extractPythonParseResult, type QueryCtor } from './pythonExtractor.js'
+
+const logger = createLogger('PythonIncrementalParser')
+
+/** First line of a string, truncated to 200 chars. Used to avoid leaking source content into logs. */
+function firstLine(s: string): string {
+  return s.split('\n', 1)[0]?.slice(0, 200) ?? ''
+}
 
 /** Maximum number of cached trees (per SMI-1309 / SMI-4293 spec). */
 const DEFAULT_MAX_TREES = 100
@@ -46,7 +56,7 @@ export function resolvePythonWasmPath(): string {
       'out',
       'tree-sitter-python.wasm'
     ),
-    // Package-local (when not hoisted)
+    // Package-local (npm-registry install consumers without hoist)
     path.resolve(
       here,
       '..',
@@ -59,6 +69,12 @@ export function resolvePythonWasmPath(): string {
       'tree-sitter-python.wasm'
     ),
   ]
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate
+  }
+  // Neither exists on disk; return the first so `doInit()` has a stable
+  // error path to surface. Probe is best-effort — the real load failure
+  // is still caught by `doInit()` below.
   return candidates[0]
 }
 
@@ -214,9 +230,19 @@ export class PythonIncrementalParser {
       const entry = this.cache.get(filePath)
       if (entry) entry.lastResult = result
       return result
-    } catch {
+    } catch (error) {
       // Any failure (corrupt tree, grammar error) invalidates this file's
       // cache and signals the adapter to use regex fallback for this call.
+      // Log rate-limited so a pathological grammar hit cannot flood logs.
+      // Emit only `{ file, error(firstLine, <=200) }` — never the source
+      // content or the stack (tree-sitter errors can quote source lines).
+      if (rateLimited(`python-parse:${filePath}`)) {
+        const message = error instanceof Error ? error.message : String(error)
+        logger.warn('Python parseSync failed; regex fallback for this file', {
+          file: filePath,
+          error: firstLine(message),
+        })
+      }
       this.invalidate(filePath)
       return null
     }
@@ -277,11 +303,20 @@ export class PythonIncrementalParser {
       this.parser = parser
       this.language = language
       this.queries = new PythonQuerySet(deps.Query, language)
-    } catch {
+    } catch (error) {
       this.initFailed = true
       this.parser = null
       this.language = null
       this.queries = null
+      // One-shot warn per parser instance: fires at most once in `doInit`.
+      // Log `{ wasmPath, error, stack }` for operator diagnostics; the WASM
+      // path is not secret, the stack points inside web-tree-sitter /
+      // resolvePythonWasmPath, not user source.
+      logger.warn('Python tree-sitter init failed; regex fallback in use', {
+        wasmPath: this.wasmPath,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      })
     }
   }
 

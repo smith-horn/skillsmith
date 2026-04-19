@@ -165,6 +165,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       quotaMiddleware
     )
   } catch (error) {
+    // SMI-4313: Validation now runs through `safeParseOrError` at every
+    // dispatch site, so a `ZodError` reaching this catch is a regression
+    // signal (a new site was added without going through the helper).
+    // Log a warn on stderr so production telemetry surfaces it within a
+    // day; the outer envelope still returns an isError response so
+    // clients aren't broken by the observability alarm.
+    if (error instanceof Error && error.name === 'ZodError') {
+      console.error(
+        `[skillsmith:dispatch] Unexpected ZodError reached outer catch — validation helper missed a site (tool=${name}): ${error.message}`
+      )
+    }
     return {
       content: [
         {

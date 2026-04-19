@@ -88,6 +88,7 @@ import {
 } from './middleware/license.js'
 import type { LicenseMiddleware } from './middleware/license.js'
 import type { QuotaMiddleware } from './middleware/quota.js'
+import { safeParseOrError } from './validation.js'
 
 /**
  * Dispatch a tool call to its handler, applying license and quota checks
@@ -124,20 +125,34 @@ export async function dispatchToolCall(
       // on failure instead of throwing. See install.ts buildValidationError.
       return ok(await installSkill(args, toolContext))
 
-    case 'uninstall_skill':
-      return ok(await uninstallSkill(uninstallInputSchema.parse(args), toolContext))
+    case 'uninstall_skill': {
+      const parsed = safeParseOrError(uninstallInputSchema, args, 'uninstall_skill')
+      if (!parsed.ok) return parsed.response
+      return ok(await uninstallSkill(parsed.data, toolContext))
+    }
 
-    case 'skill_recommend':
-      return ok(await executeRecommend(recommendInputSchema.parse(args), toolContext))
+    case 'skill_recommend': {
+      const parsed = safeParseOrError(recommendInputSchema, args, 'skill_recommend')
+      if (!parsed.ok) return parsed.response
+      return ok(await executeRecommend(parsed.data, toolContext))
+    }
 
-    case 'skill_validate':
-      return ok(await executeValidate(validateInputSchema.parse(args), toolContext))
+    case 'skill_validate': {
+      const parsed = safeParseOrError(validateInputSchema, args, 'skill_validate')
+      if (!parsed.ok) return parsed.response
+      return ok(await executeValidate(parsed.data, toolContext))
+    }
 
-    case 'skill_compare':
-      return ok(await executeCompare(compareInputSchema.parse(args), toolContext))
+    case 'skill_compare': {
+      const parsed = safeParseOrError(compareInputSchema, args, 'skill_compare')
+      if (!parsed.ok) return parsed.response
+      return ok(await executeCompare(parsed.data, toolContext))
+    }
 
     case 'skill_suggest': {
-      const input = suggestInputSchema.parse(args)
+      const parsed = safeParseOrError(suggestInputSchema, args, 'skill_suggest')
+      if (!parsed.ok) return parsed.response
+      const input = parsed.data
       let licenseInfo = null
       try {
         licenseInfo = await licenseMiddleware.getLicenseInfo()
@@ -150,14 +165,23 @@ export async function dispatchToolCall(
       return ok(await executeSuggest(input, toolContext))
     }
 
-    case 'index_local':
-      return ok(await executeIndexLocal(indexLocalInputSchema.parse(args), toolContext))
+    case 'index_local': {
+      const parsed = safeParseOrError(indexLocalInputSchema, args, 'index_local')
+      if (!parsed.ok) return parsed.response
+      return ok(await executeIndexLocal(parsed.data, toolContext))
+    }
 
-    case 'skill_outdated':
-      return ok(await executeOutdated(outdatedInputSchema.parse(args), toolContext))
+    case 'skill_outdated': {
+      const parsed = safeParseOrError(outdatedInputSchema, args, 'skill_outdated')
+      if (!parsed.ok) return parsed.response
+      return ok(await executeOutdated(parsed.data, toolContext))
+    }
 
-    case 'skill_publish':
-      return ok(await executePublish(publishInputSchema.parse(args), toolContext))
+    case 'skill_publish': {
+      const parsed = safeParseOrError(publishInputSchema, args, 'skill_publish')
+      if (!parsed.ok) return parsed.response
+      return ok(await executePublish(parsed.data, toolContext))
+    }
 
     case 'skill_updates':
       return withLicenseAndQuota(
@@ -203,8 +227,11 @@ export async function dispatchToolCall(
         quotaMiddleware
       )
 
-    case 'skill_rescan':
-      return ok(await executeSkillRescan(skillRescanInputSchema.parse(args)))
+    case 'skill_rescan': {
+      const parsed = safeParseOrError(skillRescanInputSchema, args, 'skill_rescan')
+      if (!parsed.ok) return parsed.response
+      return ok(await executeSkillRescan(parsed.data))
+    }
 
     case 'audit_export':
       return withLicenseAndQuota(
