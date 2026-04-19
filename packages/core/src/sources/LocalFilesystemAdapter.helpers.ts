@@ -1,16 +1,23 @@
 /**
- * LocalFilesystemAdapter helpers (SMI-4287)
+ * LocalFilesystemAdapter helpers (SMI-4287, SMI-4319, SMI-4320)
  *
  * Typed filesystem wrappers and symlink containment helpers used by
  * LocalFilesystemAdapter. These surface `AdapterError` return values instead
  * of throwing, so the adapter can continue scanning past individual failures
  * (permission, symlink escape, loop) and aggregate them into
  * `SourceSearchResult.warnings`.
+ *
+ * SMI-4320: drops platform-based `normaliseForFs` in favour of byte-wise
+ * `startsWith(root + sep)` on realpath outputs. The FS itself canonicalises
+ * case via `realpath` — platform heuristics miscategorise case-sensitive
+ * volumes (HFS+ case-sensitive macOS volumes, ext4 case-folded dirs).
+ * `resolveSafeRealpath` now accepts an `allowSymlinksOutsideRoot` opt-in
+ * (see SMI-4287) so direct-access callers can inherit the same containment
+ * policy as the scan loop.
  */
 
 import { promises as fs, type Dirent, type Stats } from 'fs'
-import { platform } from 'os'
-import { validatePath } from '../validation/index.js'
+import { sep } from 'path'
 import type { AdapterError } from './types.js'
 
 /**
@@ -95,22 +102,40 @@ export const safeFs = {
 } as const
 
 /**
- * Normalise a filesystem path for case-insensitive comparison on macOS / APFS
- * (and Windows, when support is added). Other Linux / ext4 / xfs filesystems
- * are case-sensitive, so we leave them untouched.
+ * Byte-wise containment check on two realpath outputs (SMI-4320).
+ *
+ * Compares raw realpath bytes: `candidateReal === rootReal` or
+ * `candidateReal.startsWith(rootReal + sep)`. No platform lowercasing — the
+ * filesystem is authoritative. Case-insensitive volumes (APFS default, NTFS)
+ * already canonicalise case through `fs.realpath`; case-sensitive volumes
+ * (HFS+ case-sensitive, ext4 case-folded) keep distinct paths distinct.
+ *
+ * The trailing-separator guard is load-bearing: without `+ sep`,
+ * `rootDir = /a/root` would accept `/a/rootfoo` as contained.
  */
-function normaliseForFs(input: string): string {
-  // APFS (macOS default) and NTFS (Windows) are case-insensitive in practice.
-  // Linux ext4/btrfs/xfs are case-sensitive.
-  return platform() === 'darwin' || platform() === 'win32' ? input.toLowerCase() : input
+export function isRealpathContained(candidateReal: string, rootReal: string): boolean {
+  return candidateReal === rootReal || candidateReal.startsWith(rootReal + sep)
+}
+
+/**
+ * Options accepted by `resolveSafeRealpath`.
+ *
+ * - `allowSymlinksOutsideRoot` (SMI-4287): when `true`, skip the containment
+ *   re-check and return the realpath unconditionally. Callers that opt in
+ *   accept the security tradeoff — used by dev-install tooling that scans
+ *   linked sibling packages.
+ */
+export interface ResolveSafeRealpathOptions {
+  allowSymlinksOutsideRoot?: boolean
 }
 
 /**
  * Resolve `candidate` to a realpath and verify it remains within `root`.
  *
- * Delegates containment to `validatePath` after running `fs.realpath` on both
- * the candidate and the root — this catches symlinks pointing outside the
- * root even when the unresolved lexical path is contained.
+ * Runs `fs.realpath` on both the candidate and the root, then performs a
+ * byte-wise `startsWith(rootReal + sep)` check (SMI-4320). On case-insensitive
+ * volumes the FS canonicalises case inside `realpath`; on case-sensitive
+ * volumes distinct cases remain distinct — both outcomes are correct.
  *
  * Returns `{ ok: true, value: resolvedRealpath }` on success. On failure
  * returns an `AdapterError` with:
@@ -119,23 +144,33 @@ function normaliseForFs(input: string): string {
  * - `permission` / `not-found` / `io` for other filesystem errors
  *
  * Does NOT throw for containment violations (caller drives the warning list).
+ *
+ * SMI-4287 opt-in: when `opts.allowSymlinksOutsideRoot === true`, containment
+ * is skipped entirely. The loop-detection + other realpath errors still apply.
+ *
+ * TOCTOU caveat: this is a check-then-use pattern. Between the realpath
+ * check and a subsequent `fs.readFile`, a malicious actor with write access
+ * inside `rootDir` could swap the symlink target. True atomicity requires
+ * fd-based I/O (`fs.open` + fstat-by-fd + read-by-fd) and is out of scope
+ * here — this helper closes the 99% case where the attack window is
+ * scan-to-fetch (minutes to hours). See plan doc for the residual risk.
  */
 export async function resolveSafeRealpath(
   candidate: string,
-  root: string
+  root: string,
+  opts: ResolveSafeRealpathOptions = {}
 ): Promise<FsResult<string>> {
   const candidateResult = await safeFs.realpath(candidate)
   if (!candidateResult.ok) return candidateResult
 
+  if (opts.allowSymlinksOutsideRoot === true) {
+    return candidateResult
+  }
+
   const rootResult = await safeFs.realpath(root)
   if (!rootResult.ok) return rootResult
 
-  const normalisedCandidate = normaliseForFs(candidateResult.value)
-  const normalisedRoot = normaliseForFs(rootResult.value)
-
-  try {
-    validatePath(normalisedCandidate, normalisedRoot)
-  } catch {
+  if (!isRealpathContained(candidateResult.value, rootResult.value)) {
     // Report the symlink path the user can identify (not the opaque
     // realpath target). Including the target would leak the external
     // location, which is exactly what the guard is protecting against.

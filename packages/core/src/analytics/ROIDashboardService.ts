@@ -34,6 +34,16 @@ export interface GetDashboardOptions {
 /** Default window applied by {@link ROIDashboardService.getDashboard} when both dates are omitted. */
 const DEFAULT_DASHBOARD_WINDOW_DAYS = 30
 
+/**
+ * Strict ISO-8601 / RFC-3339 profile matcher (SMI-4317). Accepts `YYYY-MM-DD`
+ * and `YYYY-MM-DDTHH:MM:SS(.sss)?(Z|[+-]HH:MM)`; rejects RFC-2822, slash
+ * separators, space-as-T, bare date-time without offset, and any trailing
+ * content. Syntactic guard only — calendar validity (e.g., `2026-13-01`) is
+ * caught by the paired `Date.parse` check. Exported for tests/reuse.
+ */
+export const ISO_8601_STRICT =
+  /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2}))?$/
+
 export class ROIDashboardService {
   private repo: AnalyticsRepository
   private readonly TIME_SAVED_PER_SUCCESS = 5 // minutes (configurable)
@@ -235,6 +245,14 @@ export class ROIDashboardService {
   // ==================== Private Helper Methods ====================
 
   private getDateRange(days: number): { startDate: string; endDate: string } {
+    // SMI-4317: fail fast on non-positive-integer `days`. Without this guard,
+    // `getUserROI(userId, -5)` silently inverts the range (start > end), which
+    // downstream either yields empty results or throws a confusing
+    // "startDate must be before endDate" error.
+    if (!Number.isFinite(days) || !Number.isInteger(days) || days <= 0) {
+      throw new ValidationError('days must be a positive integer', 'INVALID_DATE_RANGE')
+    }
+
     const endDate = new Date()
     const startDate = new Date(endDate)
     startDate.setDate(startDate.getDate() - days)
@@ -271,16 +289,29 @@ export class ROIDashboardService {
 
   /**
    * Throw a typed {@link ValidationError} when the supplied range is malformed.
-   * Accepts any string that `Date` parses to a finite epoch; rejects when
-   * `startDate >= endDate` or either value fails to parse.
+   *
+   * Validation layers (SMI-4317):
+   * 1. Strict ISO-8601 / RFC-3339 regex — rejects shapes like `2026/01/01`,
+   *    `2026-01-01 00:00:00` (space), `Jan 1 2026`, or RFC-2822 that
+   *    `Date.parse` would otherwise accept.
+   * 2. `Date.parse` NaN check — catches syntactically valid but semantically
+   *    invalid dates (e.g., `2026-13-01`) that the regex cannot detect.
+   * 3. Ordering — rejects when `startDate >= endDate`.
    */
   private assertValidRange(startDate: string, endDate: string): void {
+    if (!ISO_8601_STRICT.test(startDate) || !ISO_8601_STRICT.test(endDate)) {
+      throw new ValidationError(
+        'startDate and endDate must be strict ISO-8601 timestamps (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS[.sss][Z|±HH:MM])',
+        'INVALID_DATE_RANGE'
+      )
+    }
+
     const start = Date.parse(startDate)
     const end = Date.parse(endDate)
 
     if (Number.isNaN(start) || Number.isNaN(end)) {
       throw new ValidationError(
-        'startDate and endDate must be valid ISO-8601 timestamps',
+        'startDate and endDate must be parseable ISO-8601 timestamps',
         'INVALID_DATE_RANGE'
       )
     }

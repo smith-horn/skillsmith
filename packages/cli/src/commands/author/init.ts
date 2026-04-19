@@ -15,6 +15,7 @@ import { createHash } from 'crypto'
 import { SkillParser } from '@skillsmith/core'
 
 import { sanitizeError } from '../../utils/sanitize.js'
+import { InitSkillError } from '../../utils/errors.js'
 import { validateSkillName } from '../../utils/skill-name.js'
 import { printValidationResult } from './utils.js'
 import { scaffoldSkillDirectory } from './init.helpers.js'
@@ -58,8 +59,8 @@ export async function initSkill(
     }))
 
   if (name && validateSkillName(skillName) !== true) {
-    console.error(chalk.red(`Invalid skill name: ${validateSkillName(skillName)}`))
-    process.exit(1)
+    // SMI-4314: throw typed error; the wrapper prints exactly once and exits.
+    throw new InitSkillError(chalk.red(`Invalid skill name: ${validateSkillName(skillName)}`))
   }
 
   // Use provided options or prompt interactively
@@ -79,12 +80,12 @@ export async function initSkill(
 
   // Validate category if provided via CLI
   if (options.category && !VALID_CATEGORIES.includes(options.category)) {
-    console.error(
+    // SMI-4314: throw typed error; the wrapper prints exactly once and exits.
+    throw new InitSkillError(
       chalk.red(
         `Invalid category: ${options.category}. Valid categories: ${VALID_CATEGORIES.join(', ')}`
       )
     )
-    process.exit(1)
   }
 
   const category =
@@ -137,8 +138,13 @@ export async function initSkill(
     await mkdir(skillDir, { recursive: true })
     createdFresh = !skillDirPreExisted
   } catch (error) {
-    spinner.fail(`Failed to create skill: ${sanitizeError(error)}`)
-    process.exit(1)
+    // SMI-4314: stop spinner silently and throw typed error. The wrapper
+    // prints the message exactly once (spinner.fail + console.error would
+    // double-print the same text in the real CLI path).
+    spinner.stop()
+    throw new InitSkillError(chalk.red(`Failed to create skill: ${sanitizeError(error)}`), 1, {
+      cause: error,
+    })
   }
 
   const result = await scaffoldSkillDirectory({
@@ -151,8 +157,10 @@ export async function initSkill(
   })
 
   if (!result.ok) {
-    spinner.fail(`Failed to create skill: ${result.error}`)
-    process.exit(1)
+    // SMI-4314: stop spinner silently and throw typed error. The wrapper
+    // prints the sanitized message exactly once.
+    spinner.stop()
+    throw new InitSkillError(chalk.red(`Failed to create skill: ${result.error}`))
   }
 
   spinner.succeed(`Created skill at ${skillDir}`)
@@ -414,6 +422,14 @@ export function createInitCommand(): Command {
             yes: opts['yes'] as boolean | undefined,
           })
         } catch (error) {
+          // SMI-4314: typed InitSkillError → user-facing message is already
+          // composed (and chalk-styled); print it verbatim and exit with the
+          // requested code. Anything else is an unexpected bug — route
+          // through sanitizeError with the generic prefix.
+          if (error instanceof InitSkillError) {
+            console.error(error.message)
+            process.exit(error.exitCode)
+          }
           console.error(chalk.red('Error initializing skill:'), sanitizeError(error))
           process.exit(1)
         }
