@@ -69,7 +69,10 @@ describe('LocalFilesystemAdapter SMI-4287 coverage', () => {
   describe('Symlink containment', () => {
     it('should follow symlinks that stay inside rootDir when enabled', async () => {
       // Target is a directory _inside_ rootDir, so containment passes without
-      // `allowSymlinksOutsideRoot`.
+      // `allowSymlinksOutsideRoot`. SMI-4319 updates the semantics: a symlink
+      // whose target realpath is already visited is treated as a loop (the
+      // alias does NOT double-surface the same SKILL.md). The scan still
+      // succeeds and the original skills are reported.
       const target = join(testDir, 'skill-two')
       const link = join(testDir, 'alias-of-skill-two')
       try {
@@ -90,10 +93,14 @@ describe('LocalFilesystemAdapter SMI-4287 coverage', () => {
       })
 
       await followAdapter.initialize()
-      // Original skill-one + skill-two + the aliased skill-two
-      expect(followAdapter.skillCount).toBe(3)
+      // Post-SMI-4319: aliased directory is de-duplicated via the
+      // visited-realpath set. Only the two canonical skill dirs surface.
+      expect(followAdapter.skillCount).toBe(2)
       const result = await followAdapter.search({})
-      expect(result.warnings ?? []).toEqual([])
+      // The alias traversal emits a `loop` warning (already-visited realpath).
+      // Non-loop warning categories must still be empty.
+      const nonLoop = (result.warnings ?? []).filter((w) => w.code !== 'loop')
+      expect(nonLoop).toEqual([])
     })
 
     it('should reject symlinks escaping rootDir with a symlink-escape warning', async () => {
