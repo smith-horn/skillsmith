@@ -143,6 +143,8 @@ wrangler.toml.local
 
 # Ruflo (claude-flow) runtime DB created by mcp__ruflo__swarm_init + memory_store
 ruvector.db
+agentdb.rvf
+agentdb.rvf.lock
 
 docs/irap/
 .worktrees/
