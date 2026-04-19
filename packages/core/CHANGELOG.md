@@ -14,6 +14,7 @@ All notable changes to `@skillsmith/core` are documented here.
 ## [Unreleased]
 
 - **SMI-4293**: tree-sitter incremental parsing for Python analyzer — WASM-backed (`web-tree-sitter@0.25.10`), LRU tree cache (100 entries), query-based extraction replaces regex fallback. Unchanged file re-parse ~0ms (memoised); incremental edit ~60ms on 1955-line fixture (well under 100ms target); ~27,000× speedup on cache hits vs cold parse. Regression guard ensures query extraction matches or exceeds prior regex coverage on all fixtures (PR #633, closes #604).
+- **SMI-4291**: Webhook dead-letter queue — new `WebhookDeadLetterRepository`, optional `deadLetterSink` on `WebhookQueueOptions`, and `webhook-dlq` authenticated edge function. Closes GitHub #601.
 - **SMI-4124**: `skill_pack_audit` trigger-quality + namespace collision checks (PR #505).
 
 ## v0.5.1

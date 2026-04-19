@@ -46,6 +46,7 @@ export class WebhookQueue {
   private processor?: (item: WebhookQueueItem) => Promise<void>
   private onProcessed?: (result: QueueProcessResult) => void
   private log: (level: 'info' | 'warn' | 'error', message: string, data?: unknown) => void
+  private deadLetterSink?: (item: WebhookQueueItem, reason: string) => Promise<void>
 
   constructor(options: WebhookQueueOptions = {}) {
     this.concurrency = options.concurrency ?? 2
@@ -56,6 +57,7 @@ export class WebhookQueue {
     this.processor = options.processor
     this.onProcessed = options.onProcessed
     this.log = options.onLog ?? (() => {})
+    this.deadLetterSink = options.deadLetterSink
   }
 
   /**
@@ -271,6 +273,23 @@ export class WebhookQueue {
       if (item.retries >= this.maxRetries) {
         // Max retries exceeded - remove from queue
         this.items.delete(item.id)
+
+        // SMI-4291: dead-letter sink (plan-review finding C3).
+        // Catch + console.error; never rethrow. Local queue state is already
+        // cleared, so a sink failure must not cascade or re-queue the item.
+        if (this.deadLetterSink) {
+          try {
+            await this.deadLetterSink(item, errorMessage)
+          } catch (sinkError) {
+            const sinkMessage = sinkError instanceof Error ? sinkError.message : String(sinkError)
+            // Operator-visibility fallback: finding C3 requires no rethrow.
+            console.error('[webhook-dlq] Sink failed; event dropped locally', {
+              event_id: item.id,
+              reason: errorMessage,
+              sink_error: sinkMessage,
+            })
+          }
+        }
 
         const result: QueueProcessResult = {
           item,
