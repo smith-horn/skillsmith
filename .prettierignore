@@ -25,6 +25,9 @@ supabase/migrations/
 
 # Git worktrees - each worktree has its own encrypted content and Prettier config
 .worktrees/
+# Worktrees created outside `.worktrees/` (e.g. top-level `smi-<n>-*` dirs).
+# Each worktree carries its own encrypted / unformatted content tree.
+smi-*/
 
 # Local settings (untracked, varies per developer)
 .claude/settings.local.json
