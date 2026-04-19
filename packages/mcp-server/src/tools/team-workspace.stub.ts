@@ -27,7 +27,9 @@ export function createStubService(): TeamWorkspaceService {
 
   return {
     async resolveTeamId(_licenseKey: string): Promise<string> {
-      // TODO: Replace with Supabase RPC: license_key -> subscription -> team_id
+      // SMI-4292: Live resolution lives in team-workspace.live.ts via
+      // resolve_team_from_license RPC (migration 071). This stub returns a
+      // static team id for unit tests and unauthenticated environments.
       return 'team_stub_00000000-0000-0000-0000-000000000000'
     },
 

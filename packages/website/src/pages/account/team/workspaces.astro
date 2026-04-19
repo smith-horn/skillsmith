@@ -3,9 +3,7 @@
  * Team Workspaces
  *
  * @see SMI-3897: Team Admin Dashboard (Wave 2b)
- *
- * Shows: workspace cards with name, description, skill count.
- * Placeholder data with TODO comments for Supabase integration.
+ * @see SMI-4292: Wave 5A — live Supabase queries (closes GitHub #605 + #606)
  */
 
 export const prerender = false
@@ -14,6 +12,9 @@ import { ClientRouter } from 'astro:transitions'
 import Footer from '../../../components/Footer.astro'
 import Nav from '../../../components/Nav.astro'
 import TeamNav from '../../../components/TeamNav.astro'
+import { getSupabaseConfig } from '../../../lib/supabase-config'
+
+const supabaseConfig = getSupabaseConfig()
 ---
 
 <!doctype html>
@@ -30,6 +31,9 @@ import TeamNav from '../../../components/TeamNav.astro'
       href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
       rel="stylesheet"
     />
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig
+    </script>
     <ClientRouter />
   </head>
   <body>
@@ -40,76 +44,83 @@ import TeamNav from '../../../components/TeamNav.astro'
 
       <TeamNav activePath="/account/team/workspaces" />
 
-      <section class="section">
-        <div class="section-header">
-          <h2>Workspaces (2)</h2>
-          <!-- TODO: Wire create button to Supabase team_workspace create RPC -->
-          <button class="btn btn-primary" id="create-workspace-btn" disabled>
-            Create Workspace
-          </button>
-        </div>
+      <!-- Loading skeleton -->
+      <div id="loading-state" class="loading-state">
+        <p>Loading workspaces...</p>
+      </div>
 
-        <!-- TODO: Replace placeholder data with Supabase workspace query -->
-        <div class="workspace-grid">
-          <div class="workspace-card">
-            <div class="workspace-header">
-              <h3 class="workspace-name">Frontend Tools</h3>
-              <span class="workspace-badge">5 skills</span>
-            </div>
-            <p class="workspace-description">
-              Shared skills for the frontend team: React best practices, accessibility auditing,
-              performance optimization.
-            </p>
-            <div class="workspace-meta">
-              <span class="workspace-owner">Created by alice@example.com</span>
-              <span class="workspace-date">Jan 15, 2026</span>
-            </div>
-            <div class="workspace-skills">
-              <span class="skill-tag">react-best-practices</span>
-              <span class="skill-tag">accessibility</span>
-              <span class="skill-tag">performance</span>
-              <span class="skill-tag">+2 more</span>
-            </div>
+      <!-- Error alert -->
+      <div
+        id="error-state"
+        class="error-state"
+        style="display: none;"
+        role="alert"
+        aria-live="polite"
+      >
+        <h3>Failed to load workspaces</h3>
+        <p id="error-message">Something went wrong.</p>
+        <button onclick="location.reload()" class="btn btn-primary">Try Again</button>
+      </div>
+
+      <div id="content" style="display: none;">
+        <section class="section">
+          <div class="section-header">
+            <h2 id="ws-heading">Workspaces</h2>
+            <button class="btn btn-primary" id="create-workspace-btn" aria-label="Create workspace">
+              Create Workspace
+            </button>
           </div>
 
-          <div class="workspace-card">
-            <div class="workspace-header">
-              <h3 class="workspace-name">Backend Tools</h3>
-              <span class="workspace-badge">7 skills</span>
-            </div>
-            <p class="workspace-description">
-              Server-side development skills: Docker optimization, CI/CD, security auditing,
-              database patterns.
-            </p>
-            <div class="workspace-meta">
-              <span class="workspace-owner">Created by bob@example.com</span>
-              <span class="workspace-date">Feb 3, 2026</span>
-            </div>
-            <div class="workspace-skills">
-              <span class="skill-tag">docker-optimizer</span>
-              <span class="skill-tag">ci-doctor</span>
-              <span class="skill-tag">security-auditor</span>
-              <span class="skill-tag">+4 more</span>
-            </div>
+          <div class="workspace-grid" id="ws-grid"></div>
+
+          <div class="empty-state" id="empty-state" style="display: none;">
+            <h3>No workspaces yet</h3>
+            <p>Create a workspace to start sharing skills with your team.</p>
+          </div>
+        </section>
+      </div>
+
+      <!-- Create dialog -->
+      <div
+        id="create-modal"
+        class="modal"
+        style="display: none;"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-modal-title"
+      >
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 id="create-modal-title">New Workspace</h3>
+            <button class="modal-close" id="close-modal" aria-label="Close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <label class="field">
+              <span class="field-label">Name</span>
+              <input
+                type="text"
+                id="ws-name"
+                placeholder="Backend Tools"
+                maxlength="100"
+                required
+              />
+            </label>
+            <label class="field">
+              <span class="field-label">Description (optional)</span>
+              <textarea
+                id="ws-description"
+                placeholder="Shared skills for the backend team"
+                maxlength="500"
+                rows="3"></textarea>
+            </label>
+            <p id="create-error" class="error-inline" style="display: none;"></p>
+          </div>
+          <div class="modal-footer">
+            <button id="cancel-create" class="btn btn-secondary">Cancel</button>
+            <button id="submit-create" class="btn btn-primary">Create</button>
           </div>
         </div>
-      </section>
-
-      <!-- Empty state for teams with no workspaces -->
-      <!-- Shown when workspace count is 0; hidden when workspaces exist -->
-      <section class="section empty-section" style="display: none;" id="empty-state">
-        <div class="empty-state">
-          <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="1.5"
-              d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
-          </svg>
-          <h3>No workspaces yet</h3>
-          <p>Create a workspace to start sharing skills with your team.</p>
-        </div>
-      </section>
+      </div>
     </main>
 
     <Footer compact />
@@ -206,6 +217,11 @@ import TeamNav from '../../../components/TeamNav.astro'
     background: #a04530;
   }
 
+  .btn-secondary {
+    background: #2a2a2f;
+    color: #fafafa;
+  }
+
   .workspace-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
@@ -250,6 +266,7 @@ import TeamNav from '../../../components/TeamNav.astro'
     font-size: 0.875rem;
     margin-bottom: 0.75rem;
     line-height: 1.5;
+    min-height: 1.3em;
   }
 
   .workspace-meta {
@@ -257,48 +274,116 @@ import TeamNav from '../../../components/TeamNav.astro'
     justify-content: space-between;
     font-size: 0.8125rem;
     color: #6b7280;
-    margin-bottom: 0.75rem;
   }
 
-  .workspace-skills {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.375rem;
-  }
-
-  .skill-tag {
-    padding: 0.1875rem 0.5rem;
-    border-radius: 0.25rem;
-    font-size: 0.75rem;
-    background: #2a2a2f;
+  .loading-state {
+    padding: 4rem 2rem;
+    text-align: center;
     color: #9ca3af;
   }
 
-  .empty-section {
-    text-align: center;
+  .error-state {
+    background: rgba(239, 68, 68, 0.08);
+    border-left: 3px solid #ef4444;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .error-state h3 {
+    color: #f87171;
+    margin-bottom: 0.5rem;
+  }
+
+  .error-state p {
+    color: #9ca3af;
+    margin-bottom: 1rem;
   }
 
   .empty-state {
-    padding: 2rem 1rem;
+    text-align: center;
+    padding: 2rem;
     color: #9ca3af;
-  }
-
-  .empty-icon {
-    width: 3rem;
-    height: 3rem;
-    margin: 0 auto 1rem;
-    color: #6b7280;
   }
 
   .empty-state h3 {
     color: #fafafa;
-    font-size: 1.125rem;
-    font-weight: 600;
     margin-bottom: 0.5rem;
   }
 
-  .empty-state p {
-    font-size: 0.875rem;
+  .error-inline {
+    color: #f87171;
+    font-size: 0.8125rem;
+    margin-top: 0.5rem;
+  }
+
+  .modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal-content {
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    width: min(480px, 90vw);
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #2a2a2f;
+  }
+
+  .modal-close {
+    background: transparent;
+    border: none;
+    color: #9ca3af;
+    font-size: 1.5rem;
+    cursor: pointer;
+  }
+
+  .modal-body {
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .field-label {
+    font-size: 0.8125rem;
+    color: #9ca3af;
+  }
+
+  .field input,
+  .field textarea {
+    background: #1a1a1f;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    color: #fafafa;
+    font-family: inherit;
+  }
+
+  .modal-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid #2a2a2f;
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
   }
 
   @media (max-width: 640px) {
@@ -313,3 +398,189 @@ import TeamNav from '../../../components/TeamNav.astro'
     }
   }
 </style>
+
+<script>
+  import { createClient } from '@supabase/supabase-js'
+
+  const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+
+  function escapeHtml(text: string): string {
+    const div = document.createElement('div')
+    div.textContent = text
+    return div.innerHTML
+  }
+
+  function showState(state: 'loading' | 'content' | 'error', message?: string) {
+    const loading = document.getElementById('loading-state') as HTMLDivElement
+    const content = document.getElementById('content') as HTMLDivElement
+    const errorEl = document.getElementById('error-state') as HTMLDivElement
+    const errorMsg = document.getElementById('error-message') as HTMLParagraphElement
+    if (loading) loading.style.display = 'none'
+    if (content) content.style.display = 'none'
+    if (errorEl) errorEl.style.display = 'none'
+    if (state === 'loading' && loading) loading.style.display = 'block'
+    if (state === 'content' && content) content.style.display = 'block'
+    if (state === 'error' && errorEl) {
+      errorEl.style.display = 'block'
+      if (message && errorMsg) errorMsg.textContent = message
+    }
+  }
+
+  document.addEventListener('astro:page-load', async () => {
+    if (
+      window.location.pathname !== '/account/team/workspaces' &&
+      window.location.pathname !== '/account/team/workspaces/'
+    )
+      return
+
+    if (!config.url || !config.anonKey) {
+      showState('error', 'Configuration error.')
+      return
+    }
+
+    const supabase = createClient(config.url, config.anonKey)
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session) {
+      window.location.href = '/login?redirect=/account/team/workspaces'
+      return
+    }
+
+    async function loadWorkspaces(teamId: string) {
+      const { data: workspaces, error } = await supabase
+        .from('team_workspaces')
+        .select('id, name, description, created_at')
+        .eq('team_id', teamId)
+        .order('created_at', { ascending: false })
+      if (error) throw new Error(error.message)
+
+      const grid = document.getElementById('ws-grid')!
+      const empty = document.getElementById('empty-state')!
+      const heading = document.getElementById('ws-heading')!
+      heading.textContent = `Workspaces (${workspaces?.length ?? 0})`
+
+      if (!workspaces || workspaces.length === 0) {
+        grid.innerHTML = ''
+        empty.style.display = 'block'
+        return
+      }
+
+      // For each workspace, count skills (parallel)
+      const counts = await Promise.all(
+        workspaces.map(async (ws) => {
+          const { count } = await supabase
+            .from('workspace_skills')
+            .select('skill_id', { count: 'exact', head: true })
+            .eq('workspace_id', ws.id)
+          return count ?? 0
+        })
+      )
+
+      empty.style.display = 'none'
+      grid.innerHTML = workspaces
+        .map((ws, i) => {
+          const created = new Date(ws.created_at).toLocaleDateString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+          })
+          return `<div class="workspace-card">
+            <div class="workspace-header">
+              <h3 class="workspace-name">${escapeHtml(ws.name)}</h3>
+              <span class="workspace-badge">${counts[i]} skill${counts[i] === 1 ? '' : 's'}</span>
+            </div>
+            <p class="workspace-description">${escapeHtml(ws.description ?? '')}</p>
+            <div class="workspace-meta">
+              <span class="workspace-date">Created ${escapeHtml(created)}</span>
+            </div>
+          </div>`
+        })
+        .join('')
+    }
+
+    try {
+      // Find team
+      const { data: myMemberships } = await supabase
+        .from('team_members')
+        .select('team_id, role')
+        .eq('user_id', session.user.id)
+        .limit(1)
+
+      if (!myMemberships || myMemberships.length === 0) {
+        showState('error', 'You are not a member of any team yet.')
+        return
+      }
+
+      const teamId = myMemberships[0].team_id
+      const role = String(myMemberships[0].role ?? '').toLowerCase()
+
+      await loadWorkspaces(teamId)
+
+      // Wire create-workspace flow (admins/owners only per RLS)
+      const createBtn = document.getElementById('create-workspace-btn') as HTMLButtonElement
+      const modal = document.getElementById('create-modal') as HTMLDivElement
+      const closeBtn = document.getElementById('close-modal') as HTMLButtonElement
+      const cancelBtn = document.getElementById('cancel-create') as HTMLButtonElement
+      const submitBtn = document.getElementById('submit-create') as HTMLButtonElement
+      const nameInput = document.getElementById('ws-name') as HTMLInputElement
+      const descInput = document.getElementById('ws-description') as HTMLTextAreaElement
+      const errInline = document.getElementById('create-error') as HTMLParagraphElement
+
+      if (role !== 'admin' && role !== 'owner') {
+        createBtn.disabled = true
+        createBtn.title = 'Only team admins and owners can create workspaces.'
+      }
+
+      const openModal = () => {
+        errInline.style.display = 'none'
+        errInline.textContent = ''
+        nameInput.value = ''
+        descInput.value = ''
+        modal.style.display = 'flex'
+        nameInput.focus()
+      }
+      const closeModal = () => {
+        modal.style.display = 'none'
+      }
+
+      createBtn.addEventListener('click', openModal)
+      closeBtn.addEventListener('click', closeModal)
+      cancelBtn.addEventListener('click', closeModal)
+
+      submitBtn.addEventListener('click', async () => {
+        const name = nameInput.value.trim()
+        const description = descInput.value.trim() || null
+        if (!name) {
+          errInline.textContent = 'Name is required.'
+          errInline.style.display = 'block'
+          return
+        }
+        submitBtn.disabled = true
+        submitBtn.textContent = 'Creating...'
+        try {
+          const { error } = await supabase.from('team_workspaces').insert({
+            team_id: teamId,
+            name,
+            description,
+            created_by: session.user.id,
+          })
+          if (error) throw new Error(error.message)
+          closeModal()
+          await loadWorkspaces(teamId)
+        } catch (err) {
+          errInline.textContent = err instanceof Error ? err.message : 'Failed to create.'
+          errInline.style.display = 'block'
+        } finally {
+          submitBtn.disabled = false
+          submitBtn.textContent = 'Create'
+        }
+      })
+
+      showState('content')
+    } catch (err) {
+      console.error('Workspaces load failed:', err)
+      showState('error', err instanceof Error ? err.message : 'Unexpected error.')
+    }
+  })
+</script>

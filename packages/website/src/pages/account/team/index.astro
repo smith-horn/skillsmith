@@ -3,9 +3,11 @@
  * Team Dashboard Overview
  *
  * @see SMI-3897: Team Admin Dashboard (Wave 2b)
+ * @see SMI-4292: Wave 5A — live Supabase queries (closes GitHub #605)
  *
- * Shows: team name, member count, workspace count, usage summary.
- * Placeholder content with TODO comments for Supabase integration.
+ * Auth pattern: client-side JS queries via Supabase JS client (matches
+ * account/index.astro precedent — SSR auth is unreliable through the
+ * Cloudflare edge per ADR-111).
  */
 
 export const prerender = false
@@ -14,6 +16,9 @@ import { ClientRouter } from 'astro:transitions'
 import Footer from '../../../components/Footer.astro'
 import Nav from '../../../components/Nav.astro'
 import TeamNav from '../../../components/TeamNav.astro'
+import { getSupabaseConfig } from '../../../lib/supabase-config'
+
+const supabaseConfig = getSupabaseConfig()
 ---
 
 <!doctype html>
@@ -30,6 +35,9 @@ import TeamNav from '../../../components/TeamNav.astro'
       href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
       rel="stylesheet"
     />
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig
+    </script>
     <ClientRouter />
   </head>
   <body>
@@ -40,85 +48,77 @@ import TeamNav from '../../../components/TeamNav.astro'
 
       <TeamNav activePath="/account/team" />
 
-      <!-- TODO: Replace placeholder data with Supabase team query -->
-      <section class="section">
-        <h2>Team Overview</h2>
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-value" id="team-name">Acme Engineering</div>
-            <div class="stat-label">Team Name</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" id="member-count">4</div>
-            <div class="stat-label">Members</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" id="workspace-count">2</div>
-            <div class="stat-label">Workspaces</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" id="skill-count">12</div>
-            <div class="stat-label">Shared Skills</div>
-          </div>
-        </div>
-      </section>
+      <!-- Loading skeleton -->
+      <div id="loading-state" class="loading-state">
+        <p>Loading team data...</p>
+      </div>
 
-      <!-- TODO: Replace with real usage data from audit_logs -->
-      <section class="section">
-        <h2>Usage Summary (Last 30 Days)</h2>
-        <div class="usage-grid">
-          <div class="usage-row">
-            <span class="usage-label">Total API Calls</span>
-            <span class="usage-value">2,847</span>
-          </div>
-          <div class="usage-row">
-            <span class="usage-label">Skills Installed</span>
-            <span class="usage-value">18</span>
-          </div>
-          <div class="usage-row">
-            <span class="usage-label">Security Audits Run</span>
-            <span class="usage-value">6</span>
-          </div>
-          <div class="usage-row">
-            <span class="usage-label">Quota Used</span>
-            <div class="progress-bar">
-              <div class="progress-fill" style="width: 28%"></div>
+      <!-- Error alert -->
+      <div
+        id="error-state"
+        class="error-state"
+        style="display: none;"
+        role="alert"
+        aria-live="polite"
+      >
+        <h3>Failed to load team</h3>
+        <p id="error-message">Something went wrong.</p>
+        <button onclick="location.reload()" class="btn btn-primary">Try Again</button>
+      </div>
+
+      <!-- Content -->
+      <div id="team-content" style="display: none;">
+        <section class="section">
+          <h2>Team Overview</h2>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-value" id="team-name">—</div>
+              <div class="stat-label">Team Name</div>
             </div>
-            <span class="usage-value">28%</span>
+            <div class="stat-card">
+              <div class="stat-value" id="member-count">—</div>
+              <div class="stat-label">Members</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" id="workspace-count">—</div>
+              <div class="stat-label">Workspaces</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" id="skill-count">—</div>
+              <div class="stat-label">Shared Skills</div>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- TODO: Replace with real recent activity from audit_logs -->
-      <section class="section">
-        <h2>Recent Activity</h2>
-        <div class="activity-list">
-          <div class="activity-item">
-            <span class="activity-user">alice@example.com</span>
-            <span class="activity-action">installed skill</span>
-            <span class="activity-target">governance</span>
-            <span class="activity-time">2 hours ago</span>
+        <section class="section">
+          <h2>Usage Summary (Last 30 Days)</h2>
+          <div class="usage-grid" id="usage-grid">
+            <div class="usage-row">
+              <span class="usage-label">Total Events</span>
+              <span class="usage-value" id="total-events">—</span>
+            </div>
+            <div class="usage-row">
+              <span class="usage-label">API Calls</span>
+              <span class="usage-value" id="api-calls">—</span>
+            </div>
+            <div class="usage-row">
+              <span class="usage-label">Skills Installed</span>
+              <span class="usage-value" id="skills-installed">—</span>
+            </div>
+            <div class="usage-row">
+              <span class="usage-label">Security Audits</span>
+              <span class="usage-value" id="audits-run">—</span>
+            </div>
           </div>
-          <div class="activity-item">
-            <span class="activity-user">bob@example.com</span>
-            <span class="activity-action">created workspace</span>
-            <span class="activity-target">Backend Tools</span>
-            <span class="activity-time">5 hours ago</span>
+        </section>
+
+        <section class="section">
+          <h2>Recent Activity</h2>
+          <div class="activity-list" id="activity-list">
+            <p class="empty-text">No recent activity.</p>
           </div>
-          <div class="activity-item">
-            <span class="activity-user">carol@example.com</span>
-            <span class="activity-action">shared skill</span>
-            <span class="activity-target">security-auditor</span>
-            <span class="activity-time">1 day ago</span>
-          </div>
-          <div class="activity-item">
-            <span class="activity-user">dave@example.com</span>
-            <span class="activity-action">ran audit</span>
-            <span class="activity-target">3 skills</span>
-            <span class="activity-time">2 days ago</span>
-          </div>
-        </div>
-      </section>
+        </section>
+      </div>
     </main>
 
     <Footer compact />
@@ -231,21 +231,6 @@ import TeamNav from '../../../components/TeamNav.astro'
     font-size: 0.875rem;
   }
 
-  .progress-bar {
-    flex: 1;
-    max-width: 200px;
-    height: 6px;
-    background: #2a2a2f;
-    border-radius: 3px;
-    margin: 0 1rem;
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: #b8523a;
-    border-radius: 3px;
-  }
-
   .activity-list {
     display: flex;
     flex-direction: column;
@@ -286,14 +271,187 @@ import TeamNav from '../../../components/TeamNav.astro'
     font-size: 0.8125rem;
   }
 
+  .loading-state {
+    padding: 4rem 2rem;
+    text-align: center;
+    color: #9ca3af;
+  }
+
+  .error-state {
+    background: rgba(239, 68, 68, 0.08);
+    border-left: 3px solid #ef4444;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .error-state h3 {
+    color: #f87171;
+    margin-bottom: 0.5rem;
+  }
+
+  .error-state p {
+    color: #9ca3af;
+    margin-bottom: 1rem;
+  }
+
+  .btn {
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+  }
+
+  .btn-primary {
+    background: #b8523a;
+    color: #fafafa;
+  }
+
+  .empty-text {
+    color: #9ca3af;
+    font-size: 0.875rem;
+    padding: 0.5rem 0;
+  }
+
   @media (max-width: 640px) {
     .stats-grid {
       grid-template-columns: repeat(2, 1fr);
     }
-
-    .activity-time {
-      width: 100%;
-      margin-left: 0;
-    }
   }
 </style>
+
+<script>
+  import { createClient } from '@supabase/supabase-js'
+
+  const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+
+  function escapeHtml(text: string): string {
+    const div = document.createElement('div')
+    div.textContent = text
+    return div.innerHTML
+  }
+
+  function showState(state: 'loading' | 'content' | 'error', message?: string) {
+    const loading = document.getElementById('loading-state') as HTMLDivElement
+    const content = document.getElementById('team-content') as HTMLDivElement
+    const errorEl = document.getElementById('error-state') as HTMLDivElement
+    const errorMsg = document.getElementById('error-message') as HTMLParagraphElement
+    if (loading) loading.style.display = 'none'
+    if (content) content.style.display = 'none'
+    if (errorEl) errorEl.style.display = 'none'
+    if (state === 'loading' && loading) loading.style.display = 'block'
+    if (state === 'content' && content) content.style.display = 'block'
+    if (state === 'error' && errorEl) {
+      errorEl.style.display = 'block'
+      if (message && errorMsg) errorMsg.textContent = message
+    }
+  }
+
+  document.addEventListener('astro:page-load', async () => {
+    // Only run on this page
+    if (
+      window.location.pathname !== '/account/team' &&
+      window.location.pathname !== '/account/team/'
+    )
+      return
+
+    if (!config.url || !config.anonKey) {
+      showState('error', 'Configuration error — Supabase is not set up.')
+      return
+    }
+
+    const supabase = createClient(config.url, config.anonKey)
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session) {
+      window.location.href = '/login?redirect=/account/team'
+      return
+    }
+
+    try {
+      // 1. Find teams I belong to
+      const { data: memberships, error: memberErr } = await supabase
+        .from('team_members')
+        .select('team_id, role')
+        .eq('user_id', session.user.id)
+      if (memberErr) throw new Error(memberErr.message)
+      if (!memberships || memberships.length === 0) {
+        showState('error', 'You are not a member of any team yet.')
+        return
+      }
+
+      const teamId = memberships[0].team_id as string
+
+      // 2. Team details + member list (parallel)
+      const [teamRes, workspacesRes, skillsRes] = await Promise.all([
+        supabase.from('teams').select('id, name, slug, max_members').eq('id', teamId).single(),
+        supabase.from('team_workspaces').select('id').eq('team_id', teamId),
+        supabase
+          .from('workspace_skills')
+          .select('workspace_id, team_workspaces!inner(team_id)')
+          .eq('team_workspaces.team_id', teamId),
+      ])
+
+      if (teamRes.error) throw new Error(teamRes.error.message)
+
+      const team = teamRes.data
+      const workspaceCount = workspacesRes.data?.length ?? 0
+      const skillCount = skillsRes.data?.length ?? 0
+
+      document.getElementById('team-name')!.textContent = team.name
+      document.getElementById('member-count')!.textContent = String(memberships.length)
+      document.getElementById('workspace-count')!.textContent = String(workspaceCount)
+      document.getElementById('skill-count')!.textContent = String(skillCount)
+
+      // 3. Usage (last 30 days) via RPC
+      const periodEnd = new Date()
+      const periodStart = new Date()
+      periodStart.setDate(periodStart.getDate() - 30)
+
+      const { data: usage, error: usageErr } = await supabase.rpc('get_team_usage_for_period', {
+        p_team_id: teamId,
+        p_period_start: periodStart.toISOString(),
+        p_period_end: periodEnd.toISOString(),
+      })
+      if (!usageErr && usage) {
+        document.getElementById('total-events')!.textContent = String(usage.total_events ?? 0)
+        document.getElementById('api-calls')!.textContent = String(usage.api_calls ?? 0)
+        document.getElementById('skills-installed')!.textContent = String(
+          usage.skills_installed ?? 0
+        )
+        document.getElementById('audits-run')!.textContent = String(usage.audits_run ?? 0)
+      }
+
+      // 4. Recent activity — audit_logs filtered by team_id in metadata
+      const { data: activity } = await supabase
+        .from('audit_logs')
+        .select('id, event_type, actor, resource, action, timestamp, metadata')
+        .eq('metadata->>team_id', teamId)
+        .order('timestamp', { ascending: false })
+        .limit(10)
+
+      const list = document.getElementById('activity-list')!
+      if (activity && activity.length > 0) {
+        list.innerHTML = activity
+          .map((ev) => {
+            const when = new Date(ev.timestamp).toLocaleString()
+            return `<div class="activity-item">
+              <span class="activity-user">${escapeHtml(ev.actor ?? 'system')}</span>
+              <span class="activity-action">${escapeHtml(ev.action ?? ev.event_type)}</span>
+              <span class="activity-target">${escapeHtml(ev.resource ?? '')}</span>
+              <span class="activity-time">${escapeHtml(when)}</span>
+            </div>`
+          })
+          .join('')
+      }
+
+      showState('content')
+    } catch (err) {
+      console.error('Team dashboard load failed:', err)
+      showState('error', err instanceof Error ? err.message : 'Unexpected error.')
+    }
+  })
+</script>
