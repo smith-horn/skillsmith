@@ -447,6 +447,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ZodType, ZodTypeDef } from 'zod'
 import type { ToolContext } from '../context.types.js'
 import type { QuotaMiddleware } from './quota-types.js'
+import { safeParseOrError } from '../validation.js'
 
 /**
  * Build a standard tool success response wrapping a JSON-serialisable result.
@@ -457,11 +458,7 @@ export function ok(result: unknown): CallToolResult {
   }
 }
 
-/**
- * Cast a middleware error response (MCPErrorResponse) to CallToolResult.
- * MCPErrorResponse is structurally compatible but lacks the index signature
- * that Zod's $loose schema infers on CallToolResult.
- */
+/** Cast MCPErrorResponse to CallToolResult (structurally compatible). */
 export function errResponse(response: {
   content: Array<{ type: 'text'; text: string }>
   isError?: boolean
@@ -470,7 +467,11 @@ export function errResponse(response: {
   return response as unknown as CallToolResult
 }
 
-/** SMI-3911: Unified license + quota gate for tool handlers. */
+/**
+ * SMI-3911: Unified license + quota gate for tool handlers.
+ * SMI-4313: Validation uses `safeParseOrError` (non-throwing) → structured
+ * `ValidationError` envelope on invalid input. Validation order unchanged.
+ */
 export async function withLicenseAndQuota<T>(
   toolName: string,
   args: Record<string, unknown> | undefined,
@@ -480,13 +481,14 @@ export async function withLicenseAndQuota<T>(
   licenseMiddleware: LicenseMiddleware,
   quotaMiddleware: QuotaMiddleware
 ): Promise<CallToolResult> {
-  const input = schema.parse(args)
+  const parsed = safeParseOrError(schema, args, toolName)
+  if (!parsed.ok) return parsed.response
   const licenseResult = await licenseMiddleware.checkTool(toolName)
   if (!licenseResult.valid) return errResponse(createLicenseErrorResponse(licenseResult))
   const licenseInfo = await licenseMiddleware.getLicenseInfo()
   const quotaResult = await quotaMiddleware.checkAndTrack(toolName, licenseInfo)
   if (!quotaResult.allowed) return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
-  return ok(await handler(input, toolContext))
+  return ok(await handler(parsed.data, toolContext))
 }
 
 // Re-export types from toolFeatureMapping
