@@ -1,10 +1,11 @@
 /**
  * SMI-4289: author init error-handling helpers (closes #602)
- *
- * Extracted from init.ts to keep it under the 500-line limit and to isolate
- * the scaffold logic so it can return a typed result instead of throwing.
- * Throwing from initSkill() was causing double-error-print because the outer
- * createInitCommand().action() handler re-printed the same error.
+ * SMI-4314: error-contract update — initSkill now throws InitSkillError on
+ * expected user-facing failures. The createInitCommand() action wrapper
+ * catches, prints the sanitized message exactly once, and exits with
+ * InitSkillError.exitCode. Helpers here keep the library-to-library
+ * { ok, error } signalling contract: they never call process.exit and never
+ * print user-facing output directly.
  *
  * Design notes:
  * - scaffoldSkillDirectory catches all fs errors and returns { ok, error }.
