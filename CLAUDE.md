@@ -430,6 +430,7 @@ varlock run -- sh -c 'npx @vscode/vsce publish --no-dependencies --pat "$VSCE_SK
 | Docker DNS failure | `docker network prune -f` then restart container |
 | Stale CJS artifacts | `docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f -delete'` |
 | Orphaned agents | `./scripts/cleanup-orphans.sh` (`--dry-run` to preview) |
+| Symlink outside skills root skipped (SMI-4287) | LocalFilesystemAdapter rejects symlinks whose target resolves outside `rootDir` (GitHub #600). Set `allowSymlinksOutsideRoot: true` in `LocalFilesystemConfig` to opt in; caller accepts the security tradeoff. |
 
 **Detailed diagnostics** (Symptoms / Root Cause / Fix): [docker-guide.md](.claude/development/docker-guide.md#troubleshooting)
 

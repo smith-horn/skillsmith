@@ -47,6 +47,7 @@ export type {
   SkillIndexResult,
   BatchIndexResult,
   SourceHealth,
+  AdapterError,
 } from './types.js'
 
 // Interfaces
