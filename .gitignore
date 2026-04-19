@@ -2,6 +2,10 @@
 node_modules/
 .pnpm-store/
 
+# Ruflo AgentDB runtime persistence (hive-mind state)
+agentdb.rvf
+agentdb.rvf.lock
+
 # Build outputs
 dist/
 *.tsbuildinfo
