@@ -420,6 +420,13 @@ verify_jwt = false
 [functions.admin-grant-subscription]
 verify_jwt = false
 
+# SMI-4291: webhook-dlq relies on gateway JWT validation for RLS.
+# Unlike the internal-validation functions above, this one uses the
+# standard Authorization: Bearer flow so auth.uid() resolves for RLS
+# policies on webhook_dead_letters (migration 070).
+[functions.webhook-dlq]
+verify_jwt = true
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

@@ -175,4 +175,16 @@ export interface WebhookQueueOptions {
    * Callback for logging
    */
   onLog?: (level: 'info' | 'warn' | 'error', message: string, data?: unknown) => void
+
+  /**
+   * SMI-4291: Dead-letter sink invoked when an item exhausts maxRetries.
+   *
+   * Contract (plan-review finding C3):
+   *  - `WebhookQueue` wraps the call in try/catch and logs sink errors via
+   *    `console.error`. Sink implementations therefore MUST NOT rely on the
+   *    queue re-throwing — local in-memory state has already been cleared.
+   *  - The sink should be idempotent: a failure during persistence will not
+   *    cause the queue to retry the write.
+   */
+  deadLetterSink?: (item: WebhookQueueItem, reason: string) => Promise<void>
 }

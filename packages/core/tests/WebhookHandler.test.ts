@@ -7,7 +7,7 @@
  * - WebhookQueue: Priority queue with debouncing and retry
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createHmac } from 'crypto'
 import {
   isSkillFile,
@@ -672,6 +672,119 @@ describe('WebhookQueue', () => {
 
     it('should return false when queue is empty', () => {
       expect(queue.hasPendingItems()).toBe(false)
+    })
+  })
+
+  // --------------------------------------------------------------------
+  // SMI-4291: deadLetterSink — exhaustion path writes to the DLQ
+  //
+  // Plan: docs/internal/implementation/github-wave-4-webhook-dlq.md
+  // Finding C3: sink failures must NOT rethrow; console.error only.
+  // --------------------------------------------------------------------
+  describe('deadLetterSink (SMI-4291)', () => {
+    it('invokes sink with reason when item exhausts maxRetries', async () => {
+      const sinkCalls: Array<{ itemId: string; reason: string }> = []
+
+      // maxRetries=1 exhausts on the first failure (matches Wave 3's
+      // "onProcessed callback on failure" test timing assumptions).
+      const dlqQueue = new WebhookQueue({
+        debounceMs: 0,
+        maxRetries: 1,
+        retryDelayMs: 1,
+        processor: async () => {
+          throw new Error('Always fails')
+        },
+        deadLetterSink: async (item, reason) => {
+          sinkCalls.push({ itemId: item.id, reason })
+        },
+      })
+
+      dlqQueue.addImmediate(createQueueItem({ id: 'dlq-1' }))
+
+      await new Promise((r) => setTimeout(r, 100))
+      await dlqQueue.waitForProcessing()
+
+      expect(sinkCalls).toHaveLength(1)
+      expect(sinkCalls[0].itemId).toBe('dlq-1')
+      expect(sinkCalls[0].reason).toContain('Always fails')
+    })
+
+    it('does NOT invoke sink on successful processing', async () => {
+      const sinkCalls: Array<{ itemId: string; reason: string }> = []
+
+      const successQueue = new WebhookQueue({
+        debounceMs: 0,
+        maxRetries: 2,
+        retryDelayMs: 1,
+        processor: async () => {
+          // no-op success
+        },
+        deadLetterSink: async (item, reason) => {
+          sinkCalls.push({ itemId: item.id, reason })
+        },
+      })
+
+      successQueue.addImmediate(createQueueItem({ id: 'dlq-2' }))
+      await new Promise((r) => setTimeout(r, 50))
+      await successQueue.waitForProcessing()
+
+      expect(sinkCalls).toHaveLength(0)
+    })
+
+    it('swallows sink errors via console.error; does not rethrow (finding C3)', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      const processedResults: Array<{ success: boolean }> = []
+      const crashQueue = new WebhookQueue({
+        debounceMs: 0,
+        maxRetries: 1,
+        retryDelayMs: 1,
+        processor: async () => {
+          throw new Error('Processor fail')
+        },
+        deadLetterSink: async () => {
+          throw new Error('Sink crashed')
+        },
+        onProcessed: (result) => {
+          processedResults.push({ success: result.success })
+        },
+      })
+
+      crashQueue.addImmediate(createQueueItem({ id: 'dlq-3' }))
+      await new Promise((r) => setTimeout(r, 150))
+      await crashQueue.waitForProcessing()
+
+      // sink error must be logged via console.error
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        '[webhook-dlq] Sink failed; event dropped locally',
+        expect.objectContaining({
+          event_id: 'dlq-3',
+          sink_error: 'Sink crashed',
+        })
+      )
+
+      // onProcessed must still fire (exhaustion path completed)
+      expect(processedResults).toHaveLength(1)
+      expect(processedResults[0].success).toBe(false)
+
+      consoleErrorSpy.mockRestore()
+    })
+
+    it('is optional — queue works without a sink', async () => {
+      const noSinkQueue = new WebhookQueue({
+        debounceMs: 0,
+        maxRetries: 1,
+        retryDelayMs: 1,
+        processor: async () => {
+          throw new Error('Fail')
+        },
+      })
+
+      noSinkQueue.addImmediate(createQueueItem({ id: 'dlq-4' }))
+      await new Promise((r) => setTimeout(r, 100))
+      await noSinkQueue.waitForProcessing()
+
+      expect(noSinkQueue.getStats().total).toBe(0)
     })
   })
 })
