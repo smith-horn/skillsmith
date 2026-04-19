@@ -32,6 +32,7 @@
     "ci:quick": "npm run lint -- --cache && npm run typecheck && npm run test",
     "preflight": "npx tsx scripts/preflight-check.ts && node scripts/verify-publish-deps.mjs",
     "pre-impl": "node scripts/pre-impl-check.mjs",
+    "postinstall": "bash scripts/submodule-hash.sh || true",
     "prepare": "husky",
     "benchmark": "npm run benchmark --workspace=@skillsmith/core",
     "benchmark:search": "npm run benchmark:search --workspace=@skillsmith/core",

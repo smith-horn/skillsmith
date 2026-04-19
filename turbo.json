@@ -26,6 +26,10 @@
       "persistent": true
     }
   },
-  "globalDependencies": ["tsconfig.json", "package-lock.json"],
+  "globalDependencies": [
+    "tsconfig.json",
+    "package-lock.json",
+    "packages/enterprise/.submodule-hash"
+  ],
   "globalEnv": ["NODE_ENV", "CI"]
 }
