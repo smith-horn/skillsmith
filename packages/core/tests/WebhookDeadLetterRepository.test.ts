@@ -1,8 +1,14 @@
 /**
- * SMI-4291: Tests for WebhookDeadLetterRepository
+ * SMI-4291 / SMI-4308: Tests for WebhookDeadLetterRepository
  *
- * Exercises the insert / list / markRetried paths against an in-memory fake
- * that mirrors the Supabase PostgREST client surface we actually use.
+ * Exercises the insert / list / markRetried / markResolved paths against an
+ * in-memory fake that mirrors the Supabase PostgREST client surface we
+ * actually use.
+ *
+ * SMI-4308 updates:
+ *  - `listUnretried` → `listOpen` (alias retained; both exercised here)
+ *  - new `markResolved` suite
+ *  - in-process filter now compound on `retried_at === null && resolved_at === null`
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import {
@@ -43,8 +49,13 @@ function createFake(): { client: SupabaseLikeClient; state: FakeState } {
             id: `row-${state.rows.length + 1}`,
             retried_at: null,
             retry_success: null,
+            resolved_at: null,
+            resolved_by: null,
             created_at: new Date().toISOString(),
-            ...(row as Omit<DeadLetterRow, 'id' | 'retried_at' | 'retry_success' | 'created_at'>),
+            ...(row as Omit<
+              DeadLetterRow,
+              'id' | 'retried_at' | 'retry_success' | 'resolved_at' | 'resolved_by' | 'created_at'
+            >),
           }
           state.rows.push(newRow)
           return { error: null }
@@ -113,6 +124,8 @@ describe('WebhookDeadLetterRepository.insertDeadLetter', () => {
     expect(row.attempt_count).toBe(3)
     expect(row.retried_at).toBeNull()
     expect(row.retry_success).toBeNull()
+    expect(row.resolved_at).toBeNull()
+    expect(row.resolved_by).toBeNull()
   })
 
   it('rejects empty endpoint_url', async () => {
@@ -175,10 +188,10 @@ describe('WebhookDeadLetterRepository.insertDeadLetter', () => {
 })
 
 // ---------------------------------------------------------------------------
-// listUnretried
+// listOpen (+ deprecated listUnretried alias)
 // ---------------------------------------------------------------------------
 
-describe('WebhookDeadLetterRepository.listUnretried', () => {
+describe('WebhookDeadLetterRepository.listOpen', () => {
   let fake: ReturnType<typeof createFake>
   let repo: WebhookDeadLetterRepository
 
@@ -186,7 +199,7 @@ describe('WebhookDeadLetterRepository.listUnretried', () => {
     fake = createFake()
     repo = new WebhookDeadLetterRepository(fake.client)
 
-    // seed: two unretried, one retried, one for different team
+    // Seed: one open, one retried, one resolved, one open on team-b.
     const base = {
       payload: {},
       failureReason: 'r',
@@ -195,58 +208,74 @@ describe('WebhookDeadLetterRepository.listUnretried', () => {
     }
     await repo.insertDeadLetter({
       ...base,
-      originalEventId: 'e1',
+      originalEventId: 'e1-retried',
       firstFailedAt: '2026-04-18T00:00:00Z',
       lastFailedAt: '2026-04-18T00:00:00Z',
       teamId: 'team-a',
     })
     await repo.insertDeadLetter({
       ...base,
-      originalEventId: 'e2',
+      originalEventId: 'e2-open',
       firstFailedAt: '2026-04-18T01:00:00Z',
       lastFailedAt: '2026-04-18T01:00:00Z',
       teamId: 'team-a',
     })
     await repo.insertDeadLetter({
       ...base,
-      originalEventId: 'e3-team-b',
+      originalEventId: 'e3-resolved',
       firstFailedAt: '2026-04-18T02:00:00Z',
       lastFailedAt: '2026-04-18T02:00:00Z',
+      teamId: 'team-a',
+    })
+    await repo.insertDeadLetter({
+      ...base,
+      originalEventId: 'e4-team-b',
+      firstFailedAt: '2026-04-18T03:00:00Z',
+      lastFailedAt: '2026-04-18T03:00:00Z',
       teamId: 'team-b',
     })
-    // mark one as retried
+
+    // Mark terminal states post-insert.
     fake.state.rows[0].retried_at = '2026-04-18T03:00:00Z'
     fake.state.rows[0].retry_success = true
+    fake.state.rows[2].resolved_at = '2026-04-18T04:00:00Z'
+    fake.state.rows[2].resolved_by = 'user-abc'
   })
 
-  it('returns only unretried rows for the given team', async () => {
-    const rows = await repo.listUnretried('team-a')
+  it('returns only open rows for the given team (excludes retried + resolved)', async () => {
+    const rows = await repo.listOpen('team-a')
     expect(rows).toHaveLength(1)
-    expect(rows[0].original_event_id).toBe('e2')
+    expect(rows[0].original_event_id).toBe('e2-open')
   })
 
   it('isolates teams (2-team test, finding from SMI-4292)', async () => {
-    const a = await repo.listUnretried('team-a')
-    const b = await repo.listUnretried('team-b')
+    const a = await repo.listOpen('team-a')
+    const b = await repo.listOpen('team-b')
     const aIds = a.map((r) => r.original_event_id)
     const bIds = b.map((r) => r.original_event_id)
-    expect(aIds).not.toContain('e3-team-b')
-    expect(bIds).toEqual(['e3-team-b'])
+    expect(aIds).not.toContain('e4-team-b')
+    expect(bIds).toEqual(['e4-team-b'])
   })
 
   it('returns empty array when no rows match', async () => {
-    const rows = await repo.listUnretried('team-nonexistent')
+    const rows = await repo.listOpen('team-nonexistent')
     expect(rows).toEqual([])
   })
 
   it('surfaces select errors', async () => {
     fake.state.selectError = 'query timeout'
-    await expect(repo.listUnretried('team-a')).rejects.toThrow(/list failed: query timeout/)
+    await expect(repo.listOpen('team-a')).rejects.toThrow(/list failed: query timeout/)
+  })
+
+  it('deprecated listUnretried alias still works and delegates to listOpen', async () => {
+    const rows = await repo.listUnretried('team-a')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].original_event_id).toBe('e2-open')
   })
 })
 
 // ---------------------------------------------------------------------------
-// markRetried
+// markRetried (kept — dormant until SMI-4322 delivery worker)
 // ---------------------------------------------------------------------------
 
 describe('WebhookDeadLetterRepository.markRetried', () => {
@@ -283,6 +312,52 @@ describe('WebhookDeadLetterRepository.markRetried', () => {
     fake.state.updateError = 'update denied'
     await expect(repo.markRetried('row-1', true)).rejects.toThrow(
       /markRetried failed: update denied/
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// markResolved (SMI-4308 — operator acknowledgement)
+// ---------------------------------------------------------------------------
+
+describe('WebhookDeadLetterRepository.markResolved', () => {
+  let fake: ReturnType<typeof createFake>
+  let repo: WebhookDeadLetterRepository
+
+  beforeEach(async () => {
+    fake = createFake()
+    repo = new WebhookDeadLetterRepository(fake.client)
+    await repo.insertDeadLetter({
+      originalEventId: 'e1',
+      endpointUrl: 'https://example.com/h',
+      payload: {},
+      failureReason: 'r',
+      attemptCount: 1,
+      firstFailedAt: new Date(),
+      teamId: 'team-a',
+    })
+  })
+
+  it('sets resolved_at + resolved_by on success', async () => {
+    await repo.markResolved('row-1', 'user-abc')
+    const row = fake.state.rows[0]
+    expect(row.resolved_at).not.toBeNull()
+    expect(row.resolved_by).toBe('user-abc')
+    // retry columns must stay untouched (three-state semantic preserved).
+    expect(row.retried_at).toBeNull()
+    expect(row.retry_success).toBeNull()
+  })
+
+  it('writes resolved_by = null when not provided', async () => {
+    await repo.markResolved('row-1')
+    expect(fake.state.rows[0].resolved_by).toBeNull()
+    expect(fake.state.rows[0].resolved_at).not.toBeNull()
+  })
+
+  it('surfaces update errors', async () => {
+    fake.state.updateError = 'update denied'
+    await expect(repo.markResolved('row-1', 'user-abc')).rejects.toThrow(
+      /markResolved failed: update denied/
     )
   })
 })
