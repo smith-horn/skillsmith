@@ -9,7 +9,11 @@
 #
 # Works in both pre-Wave-0 (enterprise as a regular directory) and
 # post-Wave-0 (enterprise as a git submodule) layouts:
-#   - pre-Wave-0:  git tree hash of packages/enterprise at HEAD
+#   - pre-Wave-0:  hash of explicit build inputs under packages/enterprise
+#                  (src, tests, package.json, tsconfig.json, etc.) —
+#                  intentionally excludes the sentinel file itself to
+#                  avoid a self-referential hash that changes whenever
+#                  the sentinel changes.
 #   - post-Wave-0: git rev-parse HEAD inside packages/enterprise
 #
 # Idempotent; safe to call repeatedly. Intended invocation points:
@@ -52,18 +56,33 @@ if [[ -e "$ENTERPRISE_DIR/.git" ]]; then
   HASH=$(git -C "$ENTERPRISE_DIR" rev-parse HEAD 2>/dev/null || echo "")
   SOURCE="submodule HEAD"
 else
-  # Pre-Wave-0: enterprise is a regular directory in the parent repo.
-  # Use the git tree hash of the packages/enterprise entry at HEAD.
-  HASH=$(git -C "$REPO_ROOT" rev-parse HEAD:packages/enterprise 2>/dev/null || echo "")
-  SOURCE="tree hash"
+  # Pre-Wave-0: compute a deterministic fingerprint over explicit build
+  # inputs ONLY. Hashing the whole packages/enterprise tree is wrong here
+  # because the tree contains this sentinel file, creating a self-
+  # referential hash that changes whenever the sentinel changes.
+  # Hashing only build-relevant entries (source, tests, package config,
+  # license/readme) gives a stable value that only moves when actual
+  # enterprise content does.
+  HASH=$(git -C "$REPO_ROOT" ls-tree HEAD \
+      packages/enterprise/src \
+      packages/enterprise/tests \
+      packages/enterprise/package.json \
+      packages/enterprise/tsconfig.json \
+      packages/enterprise/vitest.config.ts \
+      packages/enterprise/LICENSE.md \
+      packages/enterprise/README.md \
+      2>/dev/null \
+    | git -C "$REPO_ROOT" hash-object --stdin 2>/dev/null || echo "")
+  SOURCE="build-inputs hash"
 fi
 
 if [[ -z "$HASH" ]]; then
-  # Enterprise exists but is not tracked (e.g., checked-in externally,
-  # fresh scaffold, or filter-repo in progress). Write a timestamp so
-  # turbo still invalidates on re-run but we don't error the build.
-  HASH="untracked-$(date -u +%s)"
-  SOURCE="timestamp fallback"
+  # Enterprise exists but is not tracked (fresh scaffold or filter-repo
+  # in progress). Emit a STABLE fallback — never a timestamp, because
+  # non-deterministic sentinel content destroys remote cache effectiveness
+  # across CI runners.
+  HASH="untracked-scaffold"
+  SOURCE="untracked fallback"
 fi
 
 PREV=""
