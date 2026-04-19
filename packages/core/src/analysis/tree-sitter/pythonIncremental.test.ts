@@ -14,7 +14,21 @@
  * @see docs/internal/implementation/github-wave-5c-tree-sitter-incremental.md
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+
+// Silence warn output from the SMI-4316 hardening paths; behavioural
+// assertions live in pythonIncremental.hardening.test.ts.
+vi.mock('../../utils/logger.js', () => ({
+  createLogger: () => ({
+    warn: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    debug: vi.fn(),
+    auditLog: vi.fn(),
+    securityLog: vi.fn(),
+  }),
+}))
+
 import { PythonIncrementalParser, type WebTreeSitterLoader } from './pythonIncremental.js'
 
 describe('PythonIncrementalParser', () => {
