@@ -401,6 +401,7 @@ const supabaseConfig = getSupabaseConfig()
 
 <script>
   import { createClient } from '@supabase/supabase-js'
+  import { checkTeamAccess, resolveGateRedirect } from '../../../lib/team-access'
 
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
 
@@ -446,6 +447,23 @@ const supabaseConfig = getSupabaseConfig()
     }
 
     const supabase = createClient(config.url, config.anonKey)
+
+    // SMI-4321: authoritative tier-gate via check_team_tier_access RPC.
+    const gate = await checkTeamAccess(supabase)
+    if (!gate.ok) {
+      const redirect = resolveGateRedirect(gate, '/account/team/workspaces')
+      if (redirect) {
+        window.location.href = redirect
+        return
+      }
+      showState('error', 'You are not a member of any team yet.')
+      return
+    }
+
+    const gatedTeamId = gate.teamId as string
+
+    // Session still needed for created_by on workspace inserts; RPC already
+    // validated auth.uid() so this call is effectively guaranteed.
     const {
       data: { session },
     } = await supabase.auth.getSession()
@@ -507,20 +525,18 @@ const supabaseConfig = getSupabaseConfig()
     }
 
     try {
-      // Find team
-      const { data: myMemberships } = await supabase
+      // Gate already resolved the team_id; fetch the caller's role for the
+      // create-workspace control (admins/owners only per RLS).
+      const teamId = gatedTeamId
+      const { data: myMembership } = await supabase
         .from('team_members')
-        .select('team_id, role')
+        .select('role')
+        .eq('team_id', teamId)
         .eq('user_id', session.user.id)
         .limit(1)
+        .single()
 
-      if (!myMemberships || myMemberships.length === 0) {
-        showState('error', 'You are not a member of any team yet.')
-        return
-      }
-
-      const teamId = myMemberships[0].team_id
-      const role = String(myMemberships[0].role ?? '').toLowerCase()
+      const role = String(myMembership?.role ?? '').toLowerCase()
 
       await loadWorkspaces(teamId)
 

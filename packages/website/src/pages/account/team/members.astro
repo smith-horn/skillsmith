@@ -336,6 +336,7 @@ const supabaseConfig = getSupabaseConfig()
 
 <script>
   import { createClient } from '@supabase/supabase-js'
+  import { checkTeamAccess, resolveGateRedirect } from '../../../lib/team-access'
 
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
 
@@ -381,29 +382,22 @@ const supabaseConfig = getSupabaseConfig()
     }
 
     const supabase = createClient(config.url, config.anonKey)
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
-    if (!session) {
-      window.location.href = '/login?redirect=/account/team/members'
+
+    // SMI-4321: authoritative tier-gate via check_team_tier_access RPC.
+    const gate = await checkTeamAccess(supabase)
+    if (!gate.ok) {
+      const redirect = resolveGateRedirect(gate, '/account/team/members')
+      if (redirect) {
+        window.location.href = redirect
+        return
+      }
+      showState('error', 'You are not a member of any team yet.')
       return
     }
 
+    const teamId = gate.teamId as string
+
     try {
-      // Find my team_id
-      const { data: myMemberships } = await supabase
-        .from('team_members')
-        .select('team_id')
-        .eq('user_id', session.user.id)
-        .limit(1)
-
-      if (!myMemberships || myMemberships.length === 0) {
-        showState('error', 'You are not a member of any team yet.')
-        return
-      }
-
-      const teamId = myMemberships[0].team_id
-
       // All members of that team (+ profile)
       const { data: members, error } = await supabase
         .from('team_members')
