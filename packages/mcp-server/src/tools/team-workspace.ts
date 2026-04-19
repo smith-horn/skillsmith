@@ -156,6 +156,20 @@ export const shareSkillToolSchema = {
 // Service interface (swappable: stub now, Supabase RPC later)
 // ============================================================================
 
+/**
+ * TeamWorkspaceService — registry-mediated workspace CRUD.
+ *
+ * **Invariant (SMI-4312)**: every method MUST treat `teamId` as the
+ * authoritative scoping key. Implementations that hit a SQL backend
+ * MUST either (a) include an explicit `team_id = <teamId>` filter in
+ * the query, or (b) assert the target workspace belongs to `teamId`
+ * before performing `workspace_skills` operations. The live Supabase
+ * implementation uses the service-role client, which bypasses RLS —
+ * tenant isolation is enforced here, not by the database.
+ *
+ * @see packages/mcp-server/src/tools/team-workspace.live.ts
+ * @see docs/internal/adr/116-mcp-server-service-role-for-team-scoped-tools.md
+ */
 export interface TeamWorkspaceService {
   resolveTeamId(licenseKey: string): Promise<string>
   createWorkspace(teamId: string, name: string, description?: string): Promise<Workspace>
@@ -271,46 +285,56 @@ export async function executeTeamWorkspace(
     }
   }
 
-  switch (input.action) {
-    case 'create': {
-      if (!input.name) {
-        return { success: false, dataSource, error: 'Name is required for workspace creation.' }
+  // SMI-4312: Wrap service calls so missing service-role config or other
+  // live-mode errors surface as typed {success:false} results.
+  try {
+    switch (input.action) {
+      case 'create': {
+        if (!input.name) {
+          return { success: false, dataSource, error: 'Name is required for workspace creation.' }
+        }
+        const ws = await service.createWorkspace(teamId, input.name, input.description)
+        return {
+          success: true,
+          dataSource,
+          workspace: ws,
+          message: `Workspace "${ws.name}" created.`,
+        }
       }
-      const ws = await service.createWorkspace(teamId, input.name, input.description)
-      return {
-        success: true,
-        dataSource,
-        workspace: ws,
-        message: `Workspace "${ws.name}" created.`,
+
+      case 'list': {
+        const list = await service.listWorkspaces(teamId)
+        return {
+          success: true,
+          dataSource,
+          workspaces: list,
+          message: `Found ${list.length} workspace(s).`,
+        }
+      }
+
+      case 'get': {
+        if (!input.workspaceId) {
+          return { success: false, dataSource, error: 'workspaceId is required for get.' }
+        }
+        const ws = await service.getWorkspace(teamId, input.workspaceId)
+        if (!ws) return { success: false, dataSource, error: 'Workspace not found.' }
+        return { success: true, dataSource, workspace: ws }
+      }
+
+      case 'delete': {
+        if (!input.workspaceId) {
+          return { success: false, dataSource, error: 'workspaceId is required for delete.' }
+        }
+        const deleted = await service.deleteWorkspace(teamId, input.workspaceId)
+        if (!deleted) return { success: false, dataSource, error: 'Workspace not found.' }
+        return { success: true, dataSource, message: 'Workspace deleted.' }
       }
     }
-
-    case 'list': {
-      const list = await service.listWorkspaces(teamId)
-      return {
-        success: true,
-        dataSource,
-        workspaces: list,
-        message: `Found ${list.length} workspace(s).`,
-      }
-    }
-
-    case 'get': {
-      if (!input.workspaceId) {
-        return { success: false, dataSource, error: 'workspaceId is required for get.' }
-      }
-      const ws = await service.getWorkspace(teamId, input.workspaceId)
-      if (!ws) return { success: false, dataSource, error: 'Workspace not found.' }
-      return { success: true, dataSource, workspace: ws }
-    }
-
-    case 'delete': {
-      if (!input.workspaceId) {
-        return { success: false, dataSource, error: 'workspaceId is required for delete.' }
-      }
-      const deleted = await service.deleteWorkspace(teamId, input.workspaceId)
-      if (!deleted) return { success: false, dataSource, error: 'Workspace not found.' }
-      return { success: true, dataSource, message: 'Workspace deleted.' }
+  } catch (err) {
+    return {
+      success: false,
+      dataSource,
+      error: err instanceof Error ? err.message : 'Workspace operation failed.',
     }
   }
 }
@@ -349,44 +373,62 @@ export async function executeShareSkill(
     }
   }
 
-  switch (input.action) {
-    case 'add': {
-      if (!input.skillId) {
-        return { success: false, dataSource, error: 'skillId is required for add.' }
+  // SMI-4312: All service calls wrapped so thrown tenant-isolation errors
+  // (e.g. cross-team workspace access) surface as typed {success:false} results
+  // instead of propagating as unhandled exceptions.
+  try {
+    switch (input.action) {
+      case 'add': {
+        if (!input.skillId) {
+          return { success: false, dataSource, error: 'skillId is required for add.' }
+        }
+
+        // SMI-3898: Check sharing policy before adding
+        const settings = await service.getWorkspaceSettings(teamId, input.workspaceId)
+        const policyError = checkSharingPolicy(input.skillId, settings.sharing)
+        if (policyError) {
+          return { success: false, dataSource, error: policyError }
+        }
+
+        const skill = await service.addSkill(teamId, input.workspaceId, input.skillId)
+        return {
+          success: true,
+          dataSource,
+          skills: [skill],
+          message: `Skill "${input.skillId}" shared to workspace.`,
+        }
       }
 
-      // SMI-3898: Check sharing policy before adding
-      const settings = await service.getWorkspaceSettings(teamId, input.workspaceId)
-      const policyError = checkSharingPolicy(input.skillId, settings.sharing)
-      if (policyError) {
-        return { success: false, dataSource, error: policyError }
+      case 'remove': {
+        if (!input.skillId) {
+          return { success: false, dataSource, error: 'skillId is required for remove.' }
+        }
+        const removed = await service.removeSkill(teamId, input.workspaceId, input.skillId)
+        if (!removed) {
+          return { success: false, dataSource, error: 'Skill not found in workspace.' }
+        }
+        return {
+          success: true,
+          dataSource,
+          message: `Skill "${input.skillId}" removed from workspace.`,
+        }
       }
 
-      const skill = await service.addSkill(teamId, input.workspaceId, input.skillId)
-      return {
-        success: true,
-        dataSource,
-        skills: [skill],
-        message: `Skill "${input.skillId}" shared to workspace.`,
+      case 'list': {
+        const list = await service.listSkills(teamId, input.workspaceId)
+        return {
+          success: true,
+          dataSource,
+          skills: list,
+          message: `${list.length} shared skill(s).`,
+        }
       }
     }
-
-    case 'remove': {
-      if (!input.skillId) {
-        return { success: false, dataSource, error: 'skillId is required for remove.' }
-      }
-      const removed = await service.removeSkill(teamId, input.workspaceId, input.skillId)
-      if (!removed) return { success: false, dataSource, error: 'Skill not found in workspace.' }
-      return {
-        success: true,
-        dataSource,
-        message: `Skill "${input.skillId}" removed from workspace.`,
-      }
-    }
-
-    case 'list': {
-      const list = await service.listSkills(teamId, input.workspaceId)
-      return { success: true, dataSource, skills: list, message: `${list.length} shared skill(s).` }
+  } catch (err) {
+    return {
+      success: false,
+      dataSource,
+      error: err instanceof Error ? err.message : 'Share skill operation failed.',
     }
   }
 }
