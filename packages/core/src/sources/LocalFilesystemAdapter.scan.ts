@@ -1,9 +1,17 @@
 /**
- * LocalFilesystemAdapter scan loop (SMI-4287)
+ * LocalFilesystemAdapter scan loop (SMI-4287, SMI-4319)
  *
  * Extracted from `LocalFilesystemAdapter.ts` to keep the main adapter file
  * under the 500-line governance ceiling. Pure function of its inputs — no
  * shared instance state other than the `warnings` sink.
+ *
+ * SMI-4319: tracks visited directory realpaths in a per-scan `Set<string>`
+ * so mutually-recursive symlinks (A→B, B→A) are detected and skipped with a
+ * `loop` warning. Each `scanDirectoryRecursive` invocation checks the set
+ * BEFORE recursing; the set is keyed on the raw realpath (no
+ * `normaliseForFs`) so legitimate case-sensitive distinctions are preserved.
+ * Loop detection runs regardless of `allowSymlinksOutsideRoot` — loops are a
+ * correctness issue (infinite work), not a security issue.
  */
 
 import { join, relative, dirname } from 'path'
@@ -48,6 +56,13 @@ export interface ScanDirectoryOptions {
   discovered: DiscoveredSkillRecord[]
   /** Destination array for non-fatal errors (mutated in place). */
   warnings: AdapterError[]
+  /**
+   * Visited directory realpaths for this scan (SMI-4319). Mutated in place.
+   * Keyed on the raw realpath string (no platform lowercasing). Must be a
+   * fresh `Set` per `runScan` invocation so back-to-back scans don't share
+   * state.
+   */
+  visitedRealpaths: Set<string>
   /** Logger instance from the parent adapter. */
   log: ReturnType<typeof createLogger>
 }
@@ -58,6 +73,13 @@ export interface ScanDirectoryOptions {
  *
  * SMI-4287: all filesystem access routes through `safeFs`. Per-entry errors
  * are recorded on `warnings` and the scan continues for siblings.
+ *
+ * SMI-4319: before descending, realpath `dirPath` and check
+ * `options.visitedRealpaths` for a prior visit. On hit, push a `loop` warning
+ * and return — prevents A↔B / self-loop directory symlinks from wasting
+ * `maxDepth` traversals and surfacing the same SKILL.md under multiple
+ * lexical paths. Realpath errors (permission, ENOENT, ELOOP on the dir
+ * itself) are recorded and the subtree is skipped.
  */
 export async function scanDirectoryRecursive(
   dirPath: string,
@@ -65,6 +87,24 @@ export async function scanDirectoryRecursive(
   options: ScanDirectoryOptions
 ): Promise<void> {
   if (depth > options.maxDepth) return
+
+  // SMI-4319: loop detection runs before readdir so we short-circuit on a
+  // repeat directory even if the prior visit populated `discovered`.
+  const realDirResult = await safeFs.realpath(dirPath)
+  if (!realDirResult.ok) {
+    options.warnings.push(realDirResult.error)
+    return
+  }
+  const realDir = realDirResult.value
+  if (options.visitedRealpaths.has(realDir)) {
+    options.warnings.push({
+      code: 'loop',
+      path: dirPath,
+      message: `Symlink loop detected: ${dirPath} resolves to already-visited ${realDir}`,
+    })
+    return
+  }
+  options.visitedRealpaths.add(realDir)
 
   const dirResult = await safeFs.readdir(dirPath)
   if (!dirResult.ok) {
@@ -88,12 +128,12 @@ export async function scanDirectoryRecursive(
     if (entry.isSymbolicLink()) {
       if (!options.followSymlinks) continue
 
-      if (!options.allowSymlinksOutsideRoot) {
-        const resolvedResult = await resolveSafeRealpath(fullPath, options.rootDir)
-        if (!resolvedResult.ok) {
-          options.warnings.push(resolvedResult.error)
-          continue
-        }
+      const resolvedResult = await resolveSafeRealpath(fullPath, options.rootDir, {
+        allowSymlinksOutsideRoot: options.allowSymlinksOutsideRoot,
+      })
+      if (!resolvedResult.ok) {
+        options.warnings.push(resolvedResult.error)
+        continue
       }
 
       const statResult = await safeFs.stat(fullPath)

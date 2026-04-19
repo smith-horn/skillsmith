@@ -154,8 +154,9 @@ export class ActivationManager {
       }
 
       // 3. Create backup if reinstalling
+      let backupPath: string | undefined
       if (alreadyInstalled && force) {
-        await this.createBackup(skill_id, installPath)
+        backupPath = await this.createBackup(skill_id, installPath)
       }
 
       // 4. Prefetch skill (if not cached)
@@ -172,7 +173,12 @@ export class ActivationManager {
       }
 
       // 7. Create undo snapshot
-      const undoToken = await this.createUndoSnapshot(skill_id, installPath, alreadyInstalled)
+      const undoToken = await this.createUndoSnapshot(
+        skill_id,
+        installPath,
+        alreadyInstalled,
+        backupPath
+      )
 
       const endTime = performance.now()
 
@@ -350,11 +356,19 @@ export class ActivationManager {
 
   /**
    * Create undo snapshot for rollback
+   *
+   * @param skillId - Skill identifier (author/name)
+   * @param installPath - Absolute install path
+   * @param previouslyInstalled - Whether a prior install existed at installPath
+   * @param backupPath - Path to the pre-reinstall backup directory, if one was
+   *   created by `createBackup`. When present, `undo()` will restore the backup
+   *   to `installPath`. When undefined, `undo()` will simply remove the install.
    */
   private async createUndoSnapshot(
     skillId: string,
     installPath: string,
-    previouslyInstalled: boolean
+    previouslyInstalled: boolean,
+    backupPath?: string
   ): Promise<string> {
     const token = `undo-${skillId}-${Date.now()}`
 
@@ -365,11 +379,12 @@ export class ActivationManager {
       activated_at: new Date().toISOString(),
       previous_state: {
         existed: previouslyInstalled,
+        backup_path: backupPath,
       },
     }
 
     this.undoSnapshots.set(token, snapshot)
-    log.debug('Created undo snapshot', { token, skillId })
+    log.debug('Created undo snapshot', { token, skillId, backupPath })
 
     return token
   }

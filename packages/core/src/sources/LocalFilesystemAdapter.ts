@@ -1,5 +1,5 @@
 /**
- * Local Filesystem Source Adapter (SMI-591, SMI-4287)
+ * Local Filesystem Source Adapter (SMI-591, SMI-4287, SMI-4319, SMI-4320)
  *
  * Scans local directories for SKILL.md files.
  * Useful for local development and testing.
@@ -13,6 +13,24 @@
  *   instead of throwing, so siblings continue to be scanned.
  * - All `fs.*` calls route through the typed `safeFs` helpers; the historic
  *   bare `try/catch` for EACCES in `scanDirectory` is removed.
+ *
+ * SMI-4319 hardening:
+ * - `runScan` allocates a fresh `visitedRealpaths: Set<string>` per
+ *   invocation so mutually-recursive / self-looping directory symlinks are
+ *   detected and skipped with a `loop` warning instead of silently wasting
+ *   `maxDepth` traversals.
+ *
+ * SMI-4320 hardening:
+ * - `resolveSkillPath` is now async and routes through `resolveSafeRealpath`
+ *   (byte-wise `startsWith(rootReal + sep)` on realpath outputs — no
+ *   platform lowercasing). Direct-access methods (`getRepository`,
+ *   `fetchSkillContent`, `skillExists`) inherit containment instead of
+ *   relying solely on lexical `validatePath`. This closes the scan-to-fetch
+ *   TOCTOU window where an indexed-then-swapped symlink previously escaped
+ *   containment. `allowSymlinksOutsideRoot` is honoured at every realpath
+ *   callsite. Residual TOCTOU between `resolveSkillPath` and the subsequent
+ *   `fs.readFile` is documented; closing it requires fd-based I/O and is
+ *   tracked as a separate follow-up.
  */
 
 import { BaseSourceAdapter } from './BaseSourceAdapter.js'
@@ -30,7 +48,7 @@ import { createHash } from 'crypto'
 import { basename, dirname, resolve, join } from 'path'
 import { createLogger } from '../utils/logger.js'
 import { validatePath, safePatternMatch } from '../validation/index.js'
-import { safeFs } from './LocalFilesystemAdapter.helpers.js'
+import { safeFs, resolveSafeRealpath } from './LocalFilesystemAdapter.helpers.js'
 import {
   scanDirectoryRecursive,
   type DiscoveredSkillRecord,
@@ -191,7 +209,7 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
    * converted to typed Error messages instead of raw Node throws.
    */
   async getRepository(location: SourceLocation): Promise<SourceRepository> {
-    const skillPath = this.resolveSkillPath(location)
+    const skillPath = await this.resolveSkillPath(location)
     const skill = this.discoveredSkills.find((s) => s.path === skillPath)
 
     if (skill) {
@@ -232,7 +250,7 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
    * instead of raw Node errors.
    */
   async fetchSkillContent(location: SourceLocation): Promise<SkillContent> {
-    const skillPath = this.resolveSkillPath(location)
+    const skillPath = await this.resolveSkillPath(location)
 
     const contentResult = await safeFs.readFile(skillPath)
     if (!contentResult.ok) {
@@ -260,7 +278,11 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
    * Check if skill exists at location
    */
   override async skillExists(location: SourceLocation): Promise<boolean> {
-    const skillPath = this.resolveSkillPath(location)
+    // SMI-720 contract: lexical path-traversal attempts throw
+    // `ValidationError('Path traversal detected: ...')` from `resolveSkillPath`
+    // — callers (and the SMI-720 test suite) rely on this. Only absence on
+    // disk should return `false`; traversal attempts surface as exceptions.
+    const skillPath = await this.resolveSkillPath(location)
     const statResult = await safeFs.stat(skillPath)
     return statResult.ok
   }
@@ -288,6 +310,12 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
   /**
    * Run the recursive scan starting at `rootDir`. Delegates to the extracted
    * `scanDirectoryRecursive` helper (see `LocalFilesystemAdapter.scan.ts`).
+   *
+   * SMI-4319: allocates a fresh `visitedRealpaths` set per invocation so
+   * back-to-back scans don't share state. Sibling directories within a
+   * single scan share the set (they're in the same call tree), so
+   * cross-linked loops (A↔B) are caught even when the loop isn't on the
+   * descent path from `rootDir`.
    */
   private async runScan(): Promise<void> {
     await scanDirectoryRecursive(this.rootDir, 0, {
@@ -298,6 +326,7 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
       isExcluded: (name) => this.isExcluded(name),
       discovered: this.discoveredSkills,
       warnings: this.scanWarnings,
+      visitedRealpaths: new Set<string>(),
       log,
     })
   }
@@ -311,17 +340,23 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
   }
 
   /**
-   * Resolve a skill location to a full filesystem path.
+   * Resolve a skill location to a full filesystem path
+   * (SMI-720, SMI-726, SMI-4287, SMI-4320).
    *
-   * Validates that the resolved path remains within rootDir to prevent path
-   * traversal attacks (SMI-720, SMI-726, SMI-4287).
+   * Two-stage containment: (1) lexical `validatePath` fast-fails
+   * `../`-style traversal (SMI-720 contract — callers assert the
+   * "Path traversal detected" message), then (2) `resolveSafeRealpath`
+   * enforces realpath byte-wise containment so symlinks can't escape
+   * `rootDir` even when the lexical path is clean. Honours the SMI-4287
+   * `allowSymlinksOutsideRoot` opt-in.
    *
-   * SMI-4287: removes the historic absolute-path bypass — every path flows
-   * through `validatePath`, including `location.path` that happens to start
-   * with `/`. Absolute paths outside `rootDir` now throw `ValidationError`
-   * consistently.
+   * Not-found behaviour: realpath ENOENT falls back to the lexically
+   * resolved path so downstream `stat` / `readFile` produce the canonical
+   * caller-visible error. TOCTOU caveat: the window between this resolve
+   * and the caller's subsequent read remains open; closing it requires
+   * fd-based I/O and is tracked separately.
    */
-  private resolveSkillPath(location: SourceLocation): string {
+  private async resolveSkillPath(location: SourceLocation): Promise<string> {
     let resolvedPath: string
 
     if (location.path?.startsWith('/')) {
@@ -336,9 +371,32 @@ export class LocalFilesystemAdapter extends BaseSourceAdapter {
       throw new Error('Invalid location: must specify path or repo')
     }
 
+    // Lexical fast-fail (SMI-720 contract — callers test for
+    // "Path traversal detected" on obvious traversal attempts).
     validatePath(resolvedPath, this.rootDir)
 
-    return resolve(resolvedPath)
+    const absolutePath = resolve(resolvedPath)
+
+    // SMI-4320: realpath-based containment. Honours SMI-4287 opt-in.
+    const realResult = await resolveSafeRealpath(absolutePath, this.rootDir, {
+      allowSymlinksOutsideRoot: this.allowSymlinksOutsideRoot,
+    })
+
+    if (realResult.ok) {
+      return realResult.value
+    }
+
+    // `not-found` is expected for skillExists / fetchSkillContent on paths
+    // that the caller hasn't verified exist. Fall back to the lexically
+    // resolved path so downstream `stat` / `readFile` produce the canonical
+    // error message callers already depend on.
+    if (realResult.error.code === 'not-found') {
+      return absolutePath
+    }
+
+    // `symlink-escape`, `loop`, `permission`, `io` all throw — the caller
+    // asked for a path that either escapes root or can't be validated.
+    throw new Error(`Path rejected by realpath containment: ${realResult.error.message}`)
   }
 
   /**
