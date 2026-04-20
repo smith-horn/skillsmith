@@ -4,6 +4,7 @@ import { sharedTestConfig, coverageDefaults, coverageThresholds } from './vitest
 export default defineConfig({
   test: {
     ...sharedTestConfig,
+    setupFiles: ['./vitest.setup.ts'],
     include: [
       'packages/*/src/**/*.test.ts',
       'packages/*/src/**/*.spec.ts',

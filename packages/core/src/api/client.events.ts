@@ -78,7 +78,16 @@ export function createBatchFlushFn(
  * config changes (e.g. API key rotation) are honored.
  */
 export function buildClientEventBatcher(ctx: () => BatchPostContext): EventBatcher {
-  return createEventBatcher(createBatchFlushFn(ctx))
+  // SMI-4244: suppress process-exit handlers during vitest runs. Each EventBatcher
+  // attaches 3 listeners (beforeExit, SIGINT, SIGTERM). With ~24 test files
+  // instantiating SkillsmithApiClient, we blow Node's default 10-listener
+  // ceiling and emit MaxListenersExceededWarning, which racily coincides with
+  // SIGTERM under CI runner orchestration. VITEST is injected directly by the
+  // vitest runner and is authoritative — NODE_ENV=test leaks from docker-compose.
+  const isTest = process.env.VITEST === 'true'
+  return createEventBatcher(createBatchFlushFn(ctx), {
+    registerExitHandlers: !isTest,
+  })
 }
 
 /**
