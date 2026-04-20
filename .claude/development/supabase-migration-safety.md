@@ -53,7 +53,7 @@ For simple additions (new table, new index with `CONCURRENTLY`, function definit
 
 **What**: Supabase CLI 2.83+ enforces `<timestamp>_name.sql` regex for NEW migration files. A file with a letter suffix or non-timestamp prefix (e.g., `077a_foo.sql`, `my-migration.sql`) gets SILENTLY skipped at `supabase db push`. Legacy numeric-prefix files (`NNN_foo.sql`) continue to work **only if already registered** in `schema_migrations` — but UN-registered new migrations with non-matching prefixes are rejected with:
 
-```
+```text
 Skipping migration 077a_foo.sql... (file name must match pattern "<timestamp>_name.sql")
 ```
 
