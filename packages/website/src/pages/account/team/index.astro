@@ -324,6 +324,7 @@ const supabaseConfig = getSupabaseConfig()
 
 <script>
   import { createClient } from '@supabase/supabase-js'
+  import { checkTeamAccess, resolveGateRedirect } from '../../../lib/team-access'
 
   const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
 
@@ -370,6 +371,26 @@ const supabaseConfig = getSupabaseConfig()
     }
 
     const supabase = createClient(config.url, config.anonKey)
+
+    // SMI-4321: tier-gate runs before any team data query. Authoritative check
+    // lives in the `check_team_tier_access` RPC (migration 078); a stale session
+    // cookie cannot grant access because the RPC reads live profiles/subscriptions
+    // at request time.
+    const gate = await checkTeamAccess(supabase)
+    if (!gate.ok) {
+      const redirect = resolveGateRedirect(gate, '/account/team')
+      if (redirect) {
+        window.location.href = redirect
+        return
+      }
+      showState('error', 'You are not a member of any team yet.')
+      return
+    }
+
+    const teamId = gate.teamId as string
+
+    // Session still needed for user_id on downstream queries; RPC already
+    // validated auth.uid() so this call is effectively guaranteed.
     const {
       data: { session },
     } = await supabase.auth.getSession()
@@ -379,18 +400,12 @@ const supabaseConfig = getSupabaseConfig()
     }
 
     try {
-      // 1. Find teams I belong to
+      // Member count derived from team_members (RLS-scoped to this team).
       const { data: memberships, error: memberErr } = await supabase
         .from('team_members')
         .select('team_id, role')
-        .eq('user_id', session.user.id)
+        .eq('team_id', teamId)
       if (memberErr) throw new Error(memberErr.message)
-      if (!memberships || memberships.length === 0) {
-        showState('error', 'You are not a member of any team yet.')
-        return
-      }
-
-      const teamId = memberships[0].team_id as string
 
       // 2. Team details + member list (parallel)
       const [teamRes, workspacesRes, skillsRes] = await Promise.all([
