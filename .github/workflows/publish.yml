@@ -215,9 +215,15 @@ jobs:
 
   # Build Docker image once, use for all jobs (matches ci.yml pattern)
   # SMI-1319: Skip Docker build if nothing to publish
+  # SMI-4361: also build for explicit workflow_dispatch dry_run=true so the
+  # Validate job actually exercises the extract+build path. Without this,
+  # `gh workflow run publish.yml -f dry_run=true` is a no-op when all versions
+  # are already published — you cannot smoke-test a CI change.
   docker-build:
     needs: pre-publish-check
-    if: needs.pre-publish-check.outputs.any-to-publish == 'true'
+    if: |
+      needs.pre-publish-check.outputs.any-to-publish == 'true' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true')
     name: Build Docker Image
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -303,12 +309,15 @@ jobs:
 
   # Validate before publishing (using Docker)
   # SMI-1319: Skip validation if nothing to publish
+  # SMI-4361: also run on explicit dry_run=true — see docker-build comment.
   validate:
     name: Validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [pre-publish-check, docker-build]
-    if: needs.pre-publish-check.outputs.any-to-publish == 'true'
+    if: |
+      needs.pre-publish-check.outputs.any-to-publish == 'true' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true')
 
     steps:
       - name: Checkout
