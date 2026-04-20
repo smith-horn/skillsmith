@@ -2,6 +2,12 @@
 
 All notable changes to `@skillsmith/core` are documented here.
 
+## v0.5.4
+
+- **Fix**: rename webhook-dlq /retry → /resolve with migration 077 (SMI-4308) (#647)
+- **Feature**: team provisioning on subscription (SMI-4307) (#646)
+- **Fix**: populate UndoSnapshot.backup_path in ActivationManager (SMI-4297) (#644)
+
 ## v0.5.3
 
 - **Fix**: add missing SMI-4240 fields to ApiSearchResultSchema (SMI-4246, SMI-4247) (#611)

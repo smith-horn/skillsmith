@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/cli` are documented here.
 
+## v0.5.7
+
+- **Refactor**: initSkill throws InitSkillError instead of process.exit (SMI-4314) (#642)
+
 ## v0.5.6
 
 - Version bump
