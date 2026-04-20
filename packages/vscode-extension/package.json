@@ -2,7 +2,7 @@
   "name": "skillsmith-vscode",
   "displayName": "Skillsmith",
   "description": "Discover and install agent skills directly in VS Code",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "skillsmith",
   "engines": {
     "vscode": "^1.110.0"

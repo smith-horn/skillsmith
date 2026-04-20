@@ -4,6 +4,10 @@ All notable changes to the Skillsmith VS Code extension will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## v0.2.2
+
+- Version bump
+
 ## [Unreleased]
 
 ## [0.2.1] - 2026-04-17
