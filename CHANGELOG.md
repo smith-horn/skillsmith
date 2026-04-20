@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Team Tier-Gate** (2026-04-20, SMI-4321): Server-side tier-gate on
+  `/account/team/**` pages. Downgraded or expired Team users are now
+  redirected to `/account/subscription` with a contextual banner rather
+  than retaining access until session invalidation. New `/account/team/analytics`
+  stub page + Analytics nav tab. Backed by `check_team_tier_access` RPC
+  (migration 078) reading live `profiles` / `subscriptions` / `team_members`
+  state; includes `past_due` in the active whitelist to preserve Stripe's
+  retry grace window (#663).
 - **JWT Authentication for Website Users**: Logged-in users now automatically
   receive their subscription tier rate limits without needing to configure an API key.
   This provides a seamless experience where your subscription benefits apply immediately.
