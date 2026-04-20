@@ -396,20 +396,6 @@ jobs:
           FILTERS: --filter=${{ join(fromJSON(env.PUBLISHABLE_PACKAGES_JSON), ' --filter=') }}
         run: npx turbo build $FILTERS
 
-      # SMI-4188: non-gating website build canary.
-      # Keeps the @astrojs/vercel root-cause follow-up visible as a yellow
-      # warning on every publish run. If this persists week over week, the
-      # linked Linear issue is visibly overdue.
-      - name: Website build canary (non-gating)
-        if: steps.download-docker.outcome == 'success'
-        continue-on-error: true # audit:allow-continue-on-error — visibility canary, not a gate
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/app \
-            -w /app \
-            skillsmith-publish:${{ github.sha }} \
-            sh -c "npx turbo build --filter=@skillsmith/website || true"
-
       - name: Run tests (Docker)
         if: steps.download-docker.outcome == 'success'
         run: |
