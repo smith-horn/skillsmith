@@ -269,18 +269,25 @@ jobs:
 
       - name: Extract node_modules from Docker image
         # SMI-4209: capture nested per-package node_modules alongside root.
-        # npm nests deps that can't be hoisted (e.g. @astrojs/vercel@10.0.4 under
-        # packages/website/ due to peer-dep conflicts). If the extract only grabs
-        # /app/node_modules, Astro's ESM config resolver fails at
-        # packages/website/astro.config.mjs → @astrojs/vercel.
-        # Packages enumerated from the image (not hardcoded) so future workspaces
-        # are covered automatically.
+        # SMI-4361: align with ci.yml/e2e-tests.yml pattern (mkdir parent +
+        # trailing-slash dest). Previous shape failed silently because
+        # `docker cp` needs the destination's parent to exist — only
+        # `/tmp/packages` was created, not `/tmp/packages/<pkg>`. Result: every
+        # per-package extraction silently no-op'd. Symptom: web-tree-sitter
+        # (core-only nested dep, no root-hoisted fallback) surfaced TS2307 in
+        # the Validate job's tsc run.
         run: |
+          docker rm -f extract-deps 2>/dev/null || true
           docker create --name extract-deps skillsmith-publish:${{ github.sha }}
           docker cp extract-deps:/app/node_modules /tmp/node_modules
-          mkdir -p /tmp/packages
-          docker run --rm skillsmith-publish:${{ github.sha }} sh -c 'ls /app/packages' | while read -r pkg; do
-            docker cp "extract-deps:/app/packages/$pkg/node_modules" "/tmp/packages/$pkg/node_modules" 2>/dev/null || true
+          for pkg in $(docker run --rm skillsmith-publish:${{ github.sha }} sh -c 'ls /app/packages'); do
+            mkdir -p "/tmp/packages/$pkg"
+            if docker cp "extract-deps:/app/packages/$pkg/node_modules" "/tmp/packages/$pkg/" 2>/dev/null; then
+              echo "✓ Copied packages/$pkg/node_modules"
+              ls "/tmp/packages/$pkg/node_modules/" 2>/dev/null | head -5 || true
+            else
+              echo "- No node_modules in packages/$pkg (hoisted or doesn't exist)"
+            fi
           done
           docker rm extract-deps
           tar -czf /tmp/node_modules.tar.gz -C /tmp node_modules packages
