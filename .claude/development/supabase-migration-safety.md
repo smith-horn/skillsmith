@@ -49,6 +49,83 @@ For simple additions (new table, new index with `CONCURRENTLY`, function definit
 
 **Fix**: apply during the quietest window — **Sunday 03:00–05:00 UTC** is ideal (after Saturday indexer run at 00, before Monday morning crons). If urgency forces a weekday apply, hit the gap between hourly `:30` metadata refreshes.
 
+### R-Filename — CLI filename-pattern silent-skip (SMI-4353 attempt-1)
+
+**What**: Supabase CLI 2.83+ enforces `<timestamp>_name.sql` regex for NEW migration files. A file with a letter suffix or non-timestamp prefix (e.g., `077a_foo.sql`, `my-migration.sql`) gets SILENTLY skipped at `supabase db push`. Legacy numeric-prefix files (`NNN_foo.sql`) continue to work **only if already registered** in `schema_migrations` — but UN-registered new migrations with non-matching prefixes are rejected with:
+
+```text
+Skipping migration 077a_foo.sql... (file name must match pattern "<timestamp>_name.sql")
+```
+
+Exit code is 0. No error. Post-apply policy state on target env is unchanged. The deploy appears successful.
+
+**Detection signal**: CLI output contains `Skipping migration ...`. Post-apply §1 shows no state change. Always diff `pg_policy` before/after apply; don't trust exit code alone.
+
+**Fix**: rename to timestamp pattern `YYYYMMDDHHMMSS_name.sql`. SQL content unchanged. Pre-push sanity check:
+
+```bash
+# Any NEW migration filename must match the 14-digit timestamp regex.
+for f in supabase/migrations/*.sql; do
+  base=$(basename "$f")
+  if [[ ! "$base" =~ ^[0-9]{14}_[a-z_]+\.sql$ ]] && [[ ! "$base" =~ ^[0-9]+_[a-z_]+\.sql$ ]]; then
+    echo "R-Filename risk: $base does not match supported prefix patterns"
+  fi
+done
+```
+
+Already-applied legacy `NNN_` files (001-078) keep working because they're registered in `schema_migrations` under their version string. Don't rename those retroactively — only new migrations.
+
+### R-ReturnType — SETOF scalar implicit column name (SMI-4353 attempt-2)
+
+**What**: When a SQL function returns `SETOF TEXT` (or any scalar type), `SELECT <identifier> FROM fn()` exposes the value **under the function name**, NOT any alias from the function body. `user_team_ids()` is defined as:
+
+```sql
+CREATE FUNCTION user_team_ids() RETURNS SETOF TEXT AS $$
+  SELECT tm.team_id FROM team_members tm WHERE tm.user_id = auth.uid();
+$$;
+```
+
+The internal `tm.team_id` alias is scoped to the function body. Callers see the value exposed under the function's own name:
+
+```sql
+SELECT * FROM public.user_team_ids() LIMIT 0;
+-- column name: "user_team_ids"  ← NOT "team_id"
+
+SELECT team_id FROM public.user_team_ids();
+-- ERROR: column "team_id" does not exist (SQLSTATE 42703)
+```
+
+**Detection signal**: `ERROR: column "X" does not exist (SQLSTATE 42703)` during policy DDL execution. Transaction rolls back cleanly — target env state unchanged.
+
+**Fix**: use one of the idiomatic forms when calling a SETOF-scalar function inside `IN`:
+
+```sql
+-- ✅ Preferred inside IN clauses — scalar-IN form
+OR metadata->>'team_id' IN (SELECT public.user_team_ids())
+
+-- ✅ Alternative — explicit *, column name = function name
+OR metadata->>'team_id' IN (SELECT * FROM public.user_team_ids())
+
+-- ❌ WRONG — "team_id" is not exposed to callers
+OR metadata->>'team_id' IN (SELECT team_id FROM public.user_team_ids())
+```
+
+**Pre-apply check** (requires pooler URL — add to §Pre-apply verification query catalog):
+
+```sql
+-- Verify the column name exposed by each helper function used in the policy.
+-- Run before first apply of any migration that references helper functions
+-- in an RLS USING clause.
+SELECT p.proname, p.proretset, pg_get_function_result(p.oid) AS return_type
+  FROM pg_proc p
+ WHERE p.pronamespace = 'public'::regnamespace
+   AND p.proname IN ('user_team_ids', 'user_admin_team_ids');
+-- If return_type is a scalar (e.g. 'SETOF text'), the column name in
+-- `SELECT FROM fn()` is the function name, not any internal alias.
+```
+
+**Alternative**: change the helper to `RETURNS TABLE(team_id TEXT)` form — exposes named columns to callers. Higher maintenance cost (changing the return-type signature is a breaking change for any existing consumer), so prefer adjusting the policy `USING` clause instead.
+
 ---
 
 ## Mandatory template
