@@ -63,6 +63,19 @@ const tierLookup = Object.fromEntries(
     <Nav activePath="/account/subscription" />
 
     <main class="subscription-container">
+      <!-- Team tier-gate notice (SMI-4321) — shown when the user was redirected
+           here from /account/team/** because their tier or subscription no longer
+           qualifies for Team access. Populated client-side from ?gated=<reason>. -->
+      <div
+        id="team-gated-notice"
+        class="gated-notice"
+        style="display: none;"
+        role="status"
+        aria-live="polite"
+      >
+        <p id="team-gated-notice-text"></p>
+      </div>
+
       <!-- Loading State -->
       <div id="loading-state" class="loading-state">
         <div class="spinner-container">
@@ -306,6 +319,21 @@ const tierLookup = Object.fromEntries(
     margin: 0 auto;
     padding: 2rem;
     width: 100%;
+  }
+
+  /* SMI-4321: team tier-gate notice */
+  .gated-notice {
+    background: rgba(184, 82, 58, 0.1);
+    border-left: 3px solid #b8523a;
+    border-radius: 0.5rem;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .gated-notice p {
+    margin: 0;
+    color: #fafafa;
+    font-size: 0.9375rem;
   }
 
   .subscription-container h1 {
@@ -678,6 +706,20 @@ const tierLookup = Object.fromEntries(
   const supabaseUrl = config.url
   const supabaseAnonKey = config.anonKey
 
+  // SMI-4321: map a tier-gate reason to a short user-facing sentence.
+  function teamGatedMessage(reason: string | null): string | null {
+    switch (reason) {
+      case 'not_team_tier':
+        return 'Your plan no longer includes team features. Upgrade to re-enable.'
+      case 'no_active_subscription':
+        return 'Your Team subscription is not currently active.'
+      case 'subscription_paused':
+        return 'Your Team subscription is paused. Contact support to resume.'
+      default:
+        return null
+    }
+  }
+
   // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation)
   document.addEventListener('astro:page-load', async () => {
     // Bind CSP-safe reload handler (SMI-4311)
@@ -686,6 +728,25 @@ const tierLookup = Object.fromEntries(
         window.location.reload()
       })
     })
+
+    // SMI-4321: render the team-gate notice when redirected here from /account/team.
+    try {
+      const params = new URLSearchParams(window.location.search)
+      const gatedReason = params.get('gated')
+      const message = teamGatedMessage(gatedReason)
+      if (message) {
+        const notice = document.getElementById('team-gated-notice') as HTMLDivElement | null
+        const text = document.getElementById(
+          'team-gated-notice-text'
+        ) as HTMLParagraphElement | null
+        if (notice && text) {
+          text.textContent = message
+          notice.style.display = 'block'
+        }
+      }
+    } catch {
+      // URLSearchParams unavailable or query string malformed — ignore.
+    }
 
     const loadingState = document.getElementById('loading-state') as HTMLDivElement
     const content = document.getElementById('subscription-content') as HTMLDivElement

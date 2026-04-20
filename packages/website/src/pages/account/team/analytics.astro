@@ -1,0 +1,233 @@
+---
+/**
+ * Team Analytics (placeholder)
+ *
+ * @see SMI-4321: scaffolded with tier-gate baked in so the gate pattern is
+ *                already tested when follow-on work lands real analytics.
+ *
+ * Auth pattern matches the other /account/team pages (ADR-111 / SMI-4292):
+ * client-side Supabase JS, authoritative tier-gate via check_team_tier_access
+ * RPC (migration 078).
+ */
+
+export const prerender = false
+
+import { ClientRouter } from 'astro:transitions'
+import Footer from '../../../components/Footer.astro'
+import Nav from '../../../components/Nav.astro'
+import TeamNav from '../../../components/TeamNav.astro'
+import { getSupabaseConfig } from '../../../lib/supabase-config'
+
+const supabaseConfig = getSupabaseConfig()
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+    <meta name="description" content="Team analytics" />
+    <title>Team Analytics | Skillsmith</title>
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,700,900&display=swap"
+      rel="stylesheet"
+    />
+    <script is:inline define:vars={{ supabaseConfig }}>
+      window.__SUPABASE_CONFIG__ = supabaseConfig
+    </script>
+    <ClientRouter />
+  </head>
+  <body>
+    <Nav activePath="/account/team" />
+
+    <main class="analytics-container">
+      <h1>Team Analytics</h1>
+
+      <TeamNav activePath="/account/team/analytics" />
+
+      <div id="loading-state" class="loading-state">
+        <p>Loading analytics...</p>
+      </div>
+
+      <div
+        id="error-state"
+        class="error-state"
+        style="display: none;"
+        role="alert"
+        aria-live="polite"
+      >
+        <h3>Failed to load analytics</h3>
+        <p id="error-message">Something went wrong.</p>
+        <button type="button" data-action="reload" class="btn btn-primary">Try Again</button>
+      </div>
+
+      <div id="content" style="display: none;">
+        <section class="section">
+          <h2>Coming soon</h2>
+          <p class="muted">
+            Team analytics dashboards ship in a follow-on release. Your team passes the access check
+            — this page is the stub the tier-gate protects.
+          </p>
+        </section>
+      </div>
+    </main>
+
+    <Footer compact />
+  </body>
+</html>
+
+<style>
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family:
+      'Satoshi',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
+    line-height: 1.6;
+    color: #fafafa;
+    background: #0d0d0f;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .analytics-container {
+    flex: 1;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem;
+    width: 100%;
+  }
+
+  .analytics-container h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin-bottom: 1.5rem;
+  }
+
+  .section {
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+  }
+
+  .section h2 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+  }
+
+  .muted {
+    color: #9ca3af;
+    font-size: 0.9375rem;
+  }
+
+  .loading-state {
+    padding: 4rem 2rem;
+    text-align: center;
+    color: #9ca3af;
+  }
+
+  .error-state {
+    background: rgba(239, 68, 68, 0.08);
+    border-left: 3px solid #ef4444;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .error-state h3 {
+    color: #f87171;
+    margin-bottom: 0.5rem;
+  }
+
+  .error-state p {
+    color: #9ca3af;
+    margin-bottom: 1rem;
+  }
+
+  .btn {
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+  }
+
+  .btn-primary {
+    background: #b8523a;
+    color: #fafafa;
+  }
+</style>
+
+<script>
+  import { createClient } from '@supabase/supabase-js'
+  import { checkTeamAccess, resolveGateRedirect } from '../../../lib/team-access'
+
+  const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
+
+  function showState(state: 'loading' | 'content' | 'error', message?: string) {
+    const loading = document.getElementById('loading-state') as HTMLDivElement
+    const content = document.getElementById('content') as HTMLDivElement
+    const errorEl = document.getElementById('error-state') as HTMLDivElement
+    const errorMsg = document.getElementById('error-message') as HTMLParagraphElement
+    if (loading) loading.style.display = 'none'
+    if (content) content.style.display = 'none'
+    if (errorEl) errorEl.style.display = 'none'
+    if (state === 'loading' && loading) loading.style.display = 'block'
+    if (state === 'content' && content) content.style.display = 'block'
+    if (state === 'error' && errorEl) {
+      errorEl.style.display = 'block'
+      if (message && errorMsg) errorMsg.textContent = message
+    }
+  }
+
+  document.addEventListener('astro:page-load', async () => {
+    if (
+      window.location.pathname !== '/account/team/analytics' &&
+      window.location.pathname !== '/account/team/analytics/'
+    )
+      return
+
+    document.querySelectorAll<HTMLButtonElement>('[data-action="reload"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        window.location.reload()
+      })
+    })
+
+    if (!config.url || !config.anonKey) {
+      showState('error', 'Configuration error — Supabase is not set up.')
+      return
+    }
+
+    const supabase = createClient(config.url, config.anonKey)
+
+    const gate = await checkTeamAccess(supabase)
+    if (!gate.ok) {
+      const redirect = resolveGateRedirect(gate, '/account/team/analytics')
+      if (redirect) {
+        window.location.href = redirect
+        return
+      }
+      showState('error', 'You are not a member of any team yet.')
+      return
+    }
+
+    showState('content')
+  })
+</script>
