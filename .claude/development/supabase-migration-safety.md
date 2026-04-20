@@ -88,7 +88,7 @@ COMMIT;
 -- WARNING: <what reverting this restores — if it re-opens a known bug, say so>
 ```
 
-The rollback block is non-negotiable — an on-call operator under incident pressure should not have to reconstruct the reverse SQL from older migrations. See migration 074, 075, 077a for reference.
+The rollback block is non-negotiable — an on-call operator under incident pressure should not have to reconstruct the reverse SQL from older migrations. See migration 074, 075, 20260420020000_audit_logs_team_rls for reference.
 
 ---
 
@@ -109,7 +109,7 @@ SELECT polname,
 
 -- 2. Prerequisite migrations applied
 SELECT version FROM supabase_migrations.schema_migrations
- WHERE version IN ('071','072','074','075','077')
+ WHERE version IN ('071','072','074','075','20260420020000')
  ORDER BY version;
 -- Expect all listed prerequisites present.
 
