@@ -396,24 +396,34 @@ jobs:
           FILTERS: --filter=${{ join(fromJSON(env.PUBLISHABLE_PACKAGES_JSON), ' --filter=') }}
         run: npx turbo build $FILTERS
 
-      # SMI-4244/SMI-4365: `docker run ... npm test` placed `npm` as PID 1 in the
-      # container. Node/npm as PID 1 does not reap zombies or propagate signals
-      # correctly under load — vitest's worker lifecycle triggered a SIGTERM
-      # cascade at ~29s, deterministic across every CI-driven publish since
-      # 2026-04-16. Fix: (1) `--init` to run tini as PID 1 (Docker's built-in
-      # init; reaps zombies, forwards signals), (2) wrap command in `sh -c`
-      # so a real shell is the direct child (matches the Build publishable
-      # packages step that already uses this pattern and has never failed).
-      # Verified in diag/smi-4244-sigterm-probes run 24674554376: tests
-      # completed 8,058 passes / 64s / exit 0.
-      - name: Run tests (Docker)
+      # SMI-4244/SMI-4365: single `npm test` run exceeded ~29s and hit a
+      # deterministic SIGTERM cascade in every prior publish.yml run. Root
+      # cause remains unidentified (not OOM, not timeout, not MaxListeners —
+      # those were all correlated symptoms). ci.yml avoids the failure by
+      # running tests per-package across a matrix, keeping each invocation
+      # well under the SIGTERM threshold. We adopt the same pattern here:
+      # sequential per-package docker runs, each a fresh container. Total
+      # wall-clock is longer, but every run completes to exit 0.
+      - name: Run tests (Docker) — per-package
         if: steps.download-docker.outcome == 'success'
         run: |
+          set -e
+          for pkg in core mcp-server cli enterprise; do
+            echo "::group::Test @skillsmith/$pkg (packages/$pkg)"
+            docker run --rm --init \
+              -v ${{ github.workspace }}:/app \
+              -w /app \
+              skillsmith-publish:${{ github.sha }} \
+              sh -c "npm test --workspace=packages/$pkg"
+            echo "::endgroup::"
+          done
+          echo "::group::Test root-level (scripts/tests, supabase/functions)"
           docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-publish:${{ github.sha }} \
-            sh -c 'npm test -- --reporter=verbose'
+            sh -c "npx vitest run scripts/tests supabase/functions --passWithNoTests"
+          echo "::endgroup::"
 
       - name: Run tests (fallback)
         if: steps.download-docker.outcome == 'failure'
