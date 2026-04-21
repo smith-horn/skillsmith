@@ -161,8 +161,10 @@ The script handles:
 4. Checks out files with decryption working
    - 4b. Initializes submodules (`docs/internal`)
    - 4c. Scans `.claude/skills/**` for encrypted files; if `.env` is present, attempts auto-unlock via `varlock run -- git-crypt unlock` before warning (SMI-2676)
+   - 4d. Symlinks `node_modules` from main repo (SMI-4377) so host-side pre-commit hooks resolve `lint-staged`, `eslint`, `prettier`, `scripts/check-file-length.mjs`. Hard-errors if main repo's host `node_modules/.bin/lint-staged` is missing — fix with `(cd $REPO_ROOT && npm install --ignore-scripts)`
 5. Generates Docker override file
 6. Patches `.mcp.json` skillsmith entry to `npx -y @skillsmith/mcp-server` — the main repo uses a local dist path that doesn't exist in worktrees; this prevents "Failed to reconnect to skillsmith" on every worktree session
+7. Idempotent backfill: ensures all existing worktrees have the Step 4d `node_modules` symlink (SMI-4377). Run standalone via `./scripts/repair-worktrees.sh`
 
 **`.env` in worktrees**: New worktrees get `.env` auto-symlinked from the main repo (Step 3b). Existing worktrees need a manual symlink: `ln -sf /path/to/main/repo/.env .env`
 
@@ -170,7 +172,9 @@ The script handles:
 
 **If step 6 warns "jq unavailable"**: install jq (`brew install jq`) and re-run `create-worktree.sh`, or manually set the `skillsmith` entry in `.mcp.json` to `{"command": "npx", "args": ["-y", "@skillsmith/mcp-server"]}`.
 
-**Existing worktrees**: Step 6 only runs during creation. If you have an existing worktree with a broken skillsmith MCP, apply the manual fix above.
+**Existing worktrees**: Step 6 only runs during creation. If you have an existing worktree with a broken skillsmith MCP, apply the manual fix above. For the Step 4d / Step 7 `node_modules` symlink (SMI-4377), run `./scripts/repair-worktrees.sh` — idempotent, safe to re-run.
+
+**Pre-commit hook behavior in worktrees (SMI-4377)**: Phase 2 typecheck falls back to host `tsc` when invoked from a worktree (the Docker bind-mount covers only the main repo at `/app`; `docker exec -w /app` would target main repo HEAD instead of the worktree's staged changes). This is visible in pre-commit output as `📂 Worktree detected — falling back to host tooling`. SMI-4381 tracks the proper Docker fix.
 
 ### Manual Method
 
