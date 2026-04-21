@@ -183,6 +183,7 @@ For documentation, see https://github.com/testing-library/react-testing-library
         inTable: false,
         isIndentedCode: false,
         isInlineCode: true,
+        inFrontmatter: false, // SMI-4396 Wave 2: new required field
       })
       expect(result).toBe(false)
     })

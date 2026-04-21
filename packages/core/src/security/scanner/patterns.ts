@@ -21,19 +21,32 @@ export const DEFAULT_ALLOWED_DOMAINS = [
 ]
 
 // Sensitive file path patterns
+// SMI-4396 Wave 2: bare-keyword variants (credentials, secrets?, password) tightened
+// to require assignment/path/file-extension context. Without this tuning,
+// documentation keywords in SKILL.md frontmatter and prose (1Password integration
+// guides, security-research skill domain vocabulary) tripped HIGH severity.
 export const SENSITIVE_PATH_PATTERNS = [
   /\.env/i,
-  /credentials/i,
-  /secrets?/i,
+  // Contextual credentials: filename or assignment, not bare prose
+  /credentials\.(?:json|ya?ml|env|toml|txt)/i,
+  /credentials\s*[:=]/i,
+  // Contextual secrets: assignment or path, not bare word
+  /\bsecrets?\s*[:=]/i,
+  /\bsecrets?\/[a-z0-9_.-]+/i,
   /\.pem$/i,
   /\.key$/i,
   /\.crt$/i,
-  /password/i,
+  // Contextual password: assignment or URL (postgres://user:pass@host) only
+  /password\s*[:=]/i,
   /api[_-]?key/i,
   /auth[_-]?token/i,
   /~\/\.ssh/i,
   /~\/\.aws/i,
   /~\/\.config/i,
+  // SMI-4396 Wave 2: explicit system-file paths. Added so that tightening
+  // bare /credentials/i and /password/i into assignment-context variants
+  // doesn't drop coverage of obvious sensitive references like /etc/passwd.
+  /\/etc\/(?:passwd|shadow|sudoers|hosts)\b/i,
 ]
 
 // Jailbreak attempt patterns
@@ -125,7 +138,17 @@ export const DATA_EXFILTRATION_PATTERNS = [
   /data\s*:\s*['"]/i, // Data URLs
   /\.writeFile.*https?:\/\//i,
   /send\s+.*(to|the)\s+(external|remote)/i,
-  /upload\s+.*(to|the)\s+(server|cloud|remote)/i,
+  // SMI-4396 Wave 2: word-boundary \bcloud\b + bounded wildcard.
+  // Previous /upload\s+.*(to|the)\s+(server|cloud|remote)/i matched
+  // "upload to Cloudinary" (the Cloud prefix substring-matches) —
+  // triggered skill-image-pipeline as data_exfiltration FP. The
+  // bounded [\w\s]{0,30}? prevents ReDoS; \bcloud\b excludes
+  // Cloudinary/cloudfront/cloudflare/iCloud/cloudstorage.
+  /upload\s+[\w\s]{0,30}?\s*(?:to|the)\s+(?:server|\bcloud\b|remote)/i,
+  // SMI-4396 Wave 2: explicit key/secret/credential/token upload detector.
+  // Ensures "upload private keys to our cdn bucket" still triggers even
+  // though \bcloud\b word-boundary now excludes "cdn bucket" prose.
+  /upload\s+[\w\s]{0,50}?\s*(?:private\s+)?(?:key|secret|credential|token)s?\b/i,
   /post\s+data\s+to/i,
   /to\s+external\s+(api|server|endpoint)/i,
 ]
@@ -147,7 +170,16 @@ export const PRIVILEGE_ESCALATION_PATTERNS = [
   /setuid/i,
   /setgid/i,
   /capability\s+cap_/i,
-  /escalat(e|ion)/i,
+  // SMI-4396 Wave 2: contextual privilege_escalation patterns.
+  // Previous bare /escalat(e|ion)/i matched documentation prose in
+  // security-research and prompt-injection-scanner skills that legitimately
+  // enumerate "privilege escalation" as an adversarial technique they
+  // detect — triggered 3/5 CRITICAL FPs. Bare pattern removed; these three
+  // contextual variants preserve real coverage (exploit-escalate calls,
+  // attack/vector noun phrases, to-root/to-admin targets).
+  /privilege[_\s-]+escalat(?:e|ion)/i,
+  /escalat(?:e|ion)\s+(?:attack|vector|(?:to|as)\s+(?:root|admin|superuser))/i,
+  /exploit\s+[\w\s]{0,30}?\s*escalat(?:e|ion)/i,
   /privilege[ds]?\s+(elevat|escal)/i,
   /run\s+.*as\s+root/i,
   /(run|execute)\s+as\s+(root|admin)/i,

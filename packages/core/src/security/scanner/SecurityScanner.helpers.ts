@@ -26,6 +26,14 @@ export interface LineContext {
   inTable: boolean
   isIndentedCode: boolean
   isInlineCode: boolean
+  /**
+   * SMI-4396 Wave 2: line falls within a YAML frontmatter block
+   * (between opening `---` at file start and the next `---`). SKILL.md
+   * authors legitimately include domain keywords (`password`, `secrets`,
+   * `privilege escalation`) in `description:` fields — findings in
+   * this context are documentation, not code.
+   */
+  inFrontmatter: boolean
 }
 
 // ============================================================================
@@ -51,33 +59,66 @@ export function isMultilinePattern(pattern: RegExp): boolean {
 /**
  * Analyze markdown content and return context for each line
  * Used to reduce false positives in documentation/examples
+ *
+ * SMI-4396 Wave 2: tracks YAML frontmatter context (the `---`-fenced block
+ * at the top of a SKILL.md). Opening `---` must be at line 0 (ignoring
+ * leading blank lines); closing `---` ends the block. Lines within are
+ * marked inFrontmatter=true so their keyword matches downgrade to
+ * documentation severity.
  */
 export function analyzeMarkdownContext(content: string): LineContext[] {
   const lines = content.split('\n')
   const contexts: LineContext[] = []
   let inFencedCodeBlock = false
+  // SMI-4396 Wave 2: frontmatter state machine
+  // frontmatterState: 'pending' (before any non-blank line), 'open' (inside), 'closed' (after second fence).
+  let frontmatterState: 'pending' | 'open' | 'closed' = 'pending'
+  let frontmatterOpenedAtLine = -1
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     const trimmedLine = line.trim()
 
-    // Check for fenced code block boundaries (``` or ~~~)
-    if (/^(`{3,}|~{3,})/.test(trimmedLine)) {
+    // SMI-4396 Wave 2: detect opening/closing frontmatter fence.
+    // Opening must be at file start (only blank lines precede); closing is
+    // the next `---` on its own line after the opening.
+    let lineInFrontmatter = false
+    if (trimmedLine === '---') {
+      if (frontmatterState === 'pending') {
+        // Opening fence: only valid if no content lines have preceded.
+        frontmatterState = 'open'
+        frontmatterOpenedAtLine = i
+        lineInFrontmatter = true // the fence itself is part of frontmatter
+      } else if (frontmatterState === 'open') {
+        frontmatterState = 'closed'
+        lineInFrontmatter = true // the closing fence too
+      }
+    } else if (frontmatterState === 'pending' && trimmedLine.length > 0) {
+      // First non-blank non-fence line: frontmatter never opened. Abort the pending state.
+      frontmatterState = 'closed'
+    } else if (frontmatterState === 'open') {
+      lineInFrontmatter = true
+    }
+
+    // Check for fenced code block boundaries (``` or ~~~). Frontmatter lines
+    // never participate — YAML is not markdown code fences.
+    if (!lineInFrontmatter && /^(`{3,}|~{3,})/.test(trimmedLine)) {
       inFencedCodeBlock = !inFencedCodeBlock
     }
 
     // Check for table row (starts with |)
-    const inTable = trimmedLine.startsWith('|')
+    const inTable = !lineInFrontmatter && trimmedLine.startsWith('|')
 
     // Check for indented code block (4+ spaces or tab at start, not in list)
     const isIndentedCode =
+      !lineInFrontmatter &&
       /^( {4,}|\t)/.test(line) &&
       !inFencedCodeBlock &&
       !trimmedLine.startsWith('-') &&
       !trimmedLine.startsWith('*')
 
     // Check for inline code (content between backticks on same line)
-    const isInlineCode = /`[^`]+`/.test(line) && !inFencedCodeBlock
+    const isInlineCode = !lineInFrontmatter && /`[^`]+`/.test(line) && !inFencedCodeBlock
 
     contexts.push({
       lineNumber: i + 1,
@@ -85,7 +126,17 @@ export function analyzeMarkdownContext(content: string): LineContext[] {
       inTable,
       isIndentedCode,
       isInlineCode,
+      inFrontmatter: lineInFrontmatter,
     })
+  }
+
+  // If we opened frontmatter but never closed it, unwind — do NOT mark the
+  // whole file as frontmatter. This is defensive against malformed files
+  // where a bare `---` sneaks in without a close.
+  if (frontmatterState === 'open' && frontmatterOpenedAtLine >= 0) {
+    for (let i = frontmatterOpenedAtLine; i < contexts.length; i++) {
+      contexts[i].inFrontmatter = false
+    }
   }
 
   return contexts
@@ -96,9 +147,13 @@ export function analyzeMarkdownContext(content: string): LineContext[] {
  * Note: isInlineCode is intentionally excluded — it marks the entire line,
  * but only specific match positions within backtick spans should reduce severity.
  * Use isWithinInlineCode() for per-span granularity (SMI-3521).
+ *
+ * SMI-4396 Wave 2: inFrontmatter also counts as documentation context.
+ * SKILL.md authors legitimately include domain keywords in description:
+ * fields (1Password integrations, security-research skills, etc.).
  */
 export function isDocumentationContext(ctx: LineContext): boolean {
-  return ctx.inCodeBlock || ctx.inTable || ctx.isIndentedCode
+  return ctx.inCodeBlock || ctx.inTable || ctx.isIndentedCode || ctx.inFrontmatter
 }
 
 /**
