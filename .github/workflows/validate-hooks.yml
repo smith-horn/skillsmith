@@ -1,0 +1,54 @@
+# SMI-4377: validate worktree hook infrastructure before merge.
+# Prevents regression of the hook silent-no-op and Docker `-w /app`
+# false-green failure modes that SMI-4377 Wave 1 fixes.
+#
+# Per plan-review finding #10: this runs on PRs but is NOT wired into
+# branch protection as a required check until it has logged a 4-week
+# clean window. Historic CI runner reliability concerns (SMI-4244
+# SIGTERM thread) suggest gating it only after proven stable.
+name: Validate Hooks
+
+on:
+  pull_request:
+    paths:
+      - '.husky/**'
+      - 'scripts/create-worktree.sh'
+      - 'scripts/remove-worktree.sh'
+      - 'scripts/repair-worktrees.sh'
+      - 'scripts/_lib.sh'
+      - 'scripts/tests/create-worktree-hooks.test.sh'
+      - 'scripts/check-file-length.mjs'
+      - 'lint-staged.config.js'
+      - '.github/workflows/validate-hooks.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  hooks-test:
+    name: Hooks Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: shellcheck
+        run: |
+          shellcheck scripts/_lib.sh \
+            scripts/create-worktree.sh \
+            scripts/remove-worktree.sh \
+            scripts/repair-worktrees.sh \
+            scripts/tests/create-worktree-hooks.test.sh
+
+      - name: Syntax check (bash -n)
+        run: |
+          bash -n scripts/_lib.sh
+          bash -n scripts/create-worktree.sh
+          bash -n scripts/remove-worktree.sh
+          bash -n scripts/repair-worktrees.sh
+          bash -n scripts/tests/create-worktree-hooks.test.sh
+          sh -n .husky/pre-commit
+
+      - name: Hooks unit tests
+        run: |
+          bash scripts/tests/create-worktree-hooks.test.sh
