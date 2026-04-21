@@ -33,7 +33,7 @@ fi
 CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'supabase/functions/' \
   | sed -n 's|supabase/functions/\([^/]*\)/.*|\1|p' \
   | sort -u \
-  | paste -sd ',' -)
+  | paste -s -d ',' -)
 if [ -n "$CHANGED" ]; then
   echo "mode=changed"
   echo "functions=$CHANGED"

@@ -50,7 +50,7 @@ case "$1" in
     echo 'abc123'
     ;;
   *)
-    exec /usr/bin/env -i PATH=/usr/bin:/bin git "$@"
+    exec /usr/bin/env git "$@"
     ;;
 esac
 SHIM
@@ -105,6 +105,22 @@ run_case "shared_subdir" \
   "supabase/functions/_shared/auth/jwt.ts" \
   "all" ""
 
+# Case 8: function rename (git diff --name-only --no-renames emits both old + new
+# paths — we want the new fn name in output). Simulates `git mv` of a fn dir.
+run_case "function_rename" \
+  "supabase/functions/old-name/index.ts
+supabase/functions/new-name/index.ts" \
+  "changed" "new-name,old-name"
+
+# Case 9: function deletion. `git diff --name-only` lists deleted files — the
+# sed pipeline will emit the deleted fn name. Deploy step will then fail
+# loudly at the Supabase CLI rather than silently shipping partial state.
+# This is expected behavior — covered here so we'd notice if classifier
+# started swallowing deletes.
+run_case "function_deletion" \
+  "supabase/functions/deprecated-fn/index.ts" \
+  "changed" "deprecated-fn"
+
 if [ "$fail" -eq 1 ]; then
   echo ""
   echo "FAILURES above"
@@ -112,4 +128,4 @@ if [ "$fail" -eq 1 ]; then
 fi
 
 echo ""
-echo "all 7 cases passed"
+echo "all 9 cases passed"
