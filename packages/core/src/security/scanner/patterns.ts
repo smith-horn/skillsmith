@@ -151,6 +151,14 @@ export const DATA_EXFILTRATION_PATTERNS = [
   /upload\s+[\w\s]{0,50}?\s*(?:private\s+)?(?:key|secret|credential|token)s?\b/i,
   /post\s+data\s+to/i,
   /to\s+external\s+(api|server|endpoint)/i,
+  // SMI-4396 Wave 2: restore prose coverage dropped by tightening bare /password/i
+  // and /credentials/i to assignment-context only. These unambiguous exfiltration
+  // verbs (send/transmit/leak/dump/steal/extract) + credential noun preserve detection
+  // of "send the user's passwords to attacker.com" and similar imperative instructions
+  // without re-introducing FPs on "This skill handles passwords" or
+  // "Never expose the password to Claude Code" (expose excluded: weak intent signal
+  // + negation-context FP in 1Password-style SKILL.md fixtures).
+  /(?:send|transmit|leak|dump|steal|extract)\s+[\w\s']{0,40}(?:passwords?|credentials?|secrets?)\b/i,
 ]
 
 // SMI-685: Privilege escalation patterns
