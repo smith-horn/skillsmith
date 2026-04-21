@@ -88,10 +88,11 @@ The `main` branch is protected. Config: `.github/branch-protection.json`.
 | Build | ci.yml | Build all packages via Turborepo |
 | Markdown Lint | docs-only.yml | Documentation quality |
 | Verify Implementation Completeness | ci.yml | Verify PRs with SMI refs contain source changes |
+| Dependency Guard | ci.yml | Block known-vulnerable dep upgrades (SMI-3985, promoted 2026-04-21) |
 
 ### How It Works
 
-- **Code PRs**: All 12 checks must pass
+- **Code PRs**: All 13 checks must pass
 - **Docs-only PRs**: Only Secret Scan + Markdown Lint (from `docs-only.yml`)
 - **Mixed PRs**: Full CI runs
 

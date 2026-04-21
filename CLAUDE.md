@@ -71,7 +71,7 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 
 **Build**: Uses Turborepo (`npm run build`). Legacy fallback: `npm run build:legacy`. See [ADR-106](docs/internal/adr/106-turborepo-build-orchestration.md).
 
-**Branch protection**: 12 required checks for code PRs, 2 for docs-only. Admin bypass for emergencies. Details: [ci-reference.md](.claude/development/ci-reference.md#branch-protection).
+**Branch protection**: 13 required checks for code PRs, 2 for docs-only. Admin bypass for emergencies. Details: [ci-reference.md](.claude/development/ci-reference.md#branch-protection).
 
 ---
 
