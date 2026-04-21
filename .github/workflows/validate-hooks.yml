@@ -33,8 +33,11 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: shellcheck
+        # -S warning skips info-level findings (SC1091 can't-follow-source
+        # is unavoidable for scripts that source _lib.sh; SC2016 single-quote
+        # expansion is intentional in the git-crypt unlock invocation).
         run: |
-          shellcheck scripts/_lib.sh \
+          shellcheck -S warning scripts/_lib.sh \
             scripts/create-worktree.sh \
             scripts/remove-worktree.sh \
             scripts/repair-worktrees.sh \
