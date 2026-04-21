@@ -51,7 +51,6 @@
       "credentialFiles": [
         "credentials.json in the root",
         "~/.aws/credentials file",
-        "The CREDENTIALS file",
         "my-credentials.txt backup"
       ],
       "keyFiles": [
@@ -69,7 +68,8 @@
         "The envelope icon represents email",
         "Press the key to continue",
         "This is a secret feature",
-        "API documentation"
+        "API documentation",
+        "The CREDENTIALS file"
       ]
     },
     "suspiciousPatternEdgeCases": {

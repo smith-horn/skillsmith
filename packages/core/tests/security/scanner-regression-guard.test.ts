@@ -6,7 +6,19 @@
  * pattern removal during refactoring.
  *
  * Baseline validated: 2026-04-03
+ * SMI-4396 Wave 2 (2026-04-21): adjusted baselines for FP-rate tuning.
+ * - SENSITIVE_PATH_PATTERNS: 12 → 14 (tightened bare-keyword patterns
+ *   to require assignment/path/file-ext context, expanding some into
+ *   multiple variants).
+ * - DATA_EXFILTRATION_PATTERNS: 20 → 21 (word-boundary `\bcloud\b` fix
+ *   plus new key/secret upload detector to preserve attack-shape coverage).
+ * - PRIVILEGE_ESCALATION_PATTERNS: 23 → 25 (removed bare `/escalat(e|ion)/i`
+ *   documentation-keyword trigger; added 3 contextual variants).
+ * - Additionally: 12 → 15 ends up at 15 after adding explicit /etc/passwd
+ *   system-file coverage (offsets the bare-keyword tightening).
+ *
  * Reference: docs/internal/security/two-scanner-runbook.md
+ *            docs/internal/implementation/smi-4396-imported-skills-security-triage.md
  */
 
 import { describe, it, expect } from 'vitest'
@@ -30,13 +42,13 @@ import {
  * removing patterns requires updating this file with justification.
  */
 const BASELINE_PATTERN_COUNTS = {
-  SENSITIVE_PATH_PATTERNS: 12,
+  SENSITIVE_PATH_PATTERNS: 15, // SMI-4396 Wave 2: 12 → 15 (bare-keyword tightened + /etc/passwd explicit)
   JAILBREAK_PATTERNS: 15,
   SUSPICIOUS_PATTERNS: 11,
   SOCIAL_ENGINEERING_PATTERNS: 12,
   PROMPT_LEAKING_PATTERNS: 14,
-  DATA_EXFILTRATION_PATTERNS: 20,
-  PRIVILEGE_ESCALATION_PATTERNS: 23,
+  DATA_EXFILTRATION_PATTERNS: 22, // SMI-4396 Wave 2: 20 → 22 (word-boundary + key-upload + verb-object prose)
+  PRIVILEGE_ESCALATION_PATTERNS: 25, // SMI-4396 Wave 2: 23 → 25 (-1 bare +3 contextual)
   SSRF_INSTRUCTION_PATTERNS: 13,
   AI_DEFENCE_PATTERNS: 16,
   PII_PATTERNS: 11,
