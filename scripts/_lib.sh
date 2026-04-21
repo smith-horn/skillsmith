@@ -126,3 +126,101 @@ is_git_crypt_encrypted() {
     # git-crypt binary header: \x00GIT = 00 47 49 54 (4-byte read = exactly 8 hex chars)
     [[ "$header" == "00474954" ]]
 }
+
+#######################################
+# Assert host-visible node_modules resolves lint-staged (SMI-4377)
+#
+# Pre-commit hooks run lint-staged on host (not Docker; see SMI-2604),
+# so host-visible node_modules is required. Docker named-volume installs
+# (CLAUDE.md docker-first policy) populate only the container volume.
+# Fails loudly per SMI-4374 retro ("silent degradation is the enemy").
+#
+# Arguments:
+#   $1 - Repository root path
+#######################################
+assert_host_node_modules() {
+    local repo_root="$1"
+    if [[ ! -x "$repo_root/node_modules/.bin/lint-staged" ]]; then
+        error "Main repo's host node_modules is missing or incomplete.
+
+Pre-commit hooks require host-visible node_modules to resolve lint-staged,
+eslint, and prettier. Docker named-volume installs (CLAUDE.md docker-first
+policy) populate the container volume but not the host path.
+
+Remediation (one-time, per clone):
+  (cd $repo_root && npm install --ignore-scripts)
+
+Then re-run this script. Host node_modules need not match the Docker
+environment's native modules — it only needs the CLI binaries under
+node_modules/.bin."
+    fi
+}
+
+#######################################
+# Symlink node_modules from main repo into a worktree (SMI-4377)
+#
+# Idempotent: refreshes an existing symlink, skips a real directory,
+# creates the symlink if missing.
+#
+# Arguments:
+#   $1 - Worktree path
+#   $2 - Repository root path (symlink target)
+#
+# Returns:
+#   0 on success or no-op, 1 if skipped due to unexpected state
+#######################################
+link_worktree_node_modules() {
+    local worktree_path="$1"
+    local repo_root="$2"
+
+    if [[ -L "$worktree_path/node_modules" ]]; then
+        ln -sfn "$repo_root/node_modules" "$worktree_path/node_modules"
+        return 0
+    fi
+
+    if [[ -e "$worktree_path/node_modules" ]]; then
+        warn "  node_modules exists at $worktree_path and is not a symlink — skipping"
+        return 1
+    fi
+
+    ln -sfn "$repo_root/node_modules" "$worktree_path/node_modules"
+    return 0
+}
+
+#######################################
+# Idempotent backfill of node_modules symlinks across all worktrees (SMI-4377)
+#
+# Iterates `git worktree list`, skips the main repo (real node_modules),
+# creates the symlink on any worktree missing it. Leaves existing real
+# dirs untouched. Safe to run repeatedly.
+#
+# Arguments:
+#   $1 - Repository root path
+#######################################
+repair_worktrees_node_modules() {
+    local repo_root="$1"
+    local wt_count=0
+    local repaired=0
+
+    while IFS= read -r wt_path; do
+        [[ -z "$wt_path" ]] && continue
+        [[ "$wt_path" == "$repo_root" ]] && continue
+        [[ ! -d "$wt_path" ]] && continue
+
+        wt_count=$((wt_count + 1))
+
+        if [[ -L "$wt_path/node_modules" ]] || [[ -d "$wt_path/node_modules" ]]; then
+            continue
+        fi
+
+        ln -sfn "$repo_root/node_modules" "$wt_path/node_modules"
+        info "  Repaired: $wt_path"
+        repaired=$((repaired + 1))
+    done < <(git -C "$repo_root" worktree list --porcelain | awk '/^worktree / { print $2 }')
+
+    if [[ $repaired -gt 0 ]]; then
+        success "  Repaired $repaired of $wt_count worktree(s)"
+    elif [[ $wt_count -gt 0 ]]; then
+        success "  All $wt_count worktree(s) already have node_modules"
+    fi
+}

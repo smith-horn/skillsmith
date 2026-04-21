@@ -117,6 +117,8 @@ git submodule update --init                           # Init internal docs (auth
 
 **Worktrees**: Unlock main repo first, then `./scripts/create-worktree.sh`. Remove with `./scripts/remove-worktree.sh --prune`.
 
+**Hooks in worktrees (SMI-4377)**: Pre-commit hooks work inside worktrees via two mechanisms: (1) `.husky/_/` is tracked in git (husky's dispatch stubs) so hook discovery inherits through checkout; (2) `scripts/create-worktree.sh` symlinks `node_modules` from the main repo so `lint-staged`, `eslint`, `prettier`, and `scripts/check-file-length.mjs` resolve. **One-time host setup required** (after fresh clone): `npm install --ignore-scripts` to populate `$REPO_ROOT/node_modules` — Docker named-volume installs don't populate the host path. Caveats: (a) do not run `npm install` in the main repo while a pre-commit is active in a worktree — re-run the commit if it aborts; (b) Phase 2 typecheck falls back to host `tsc` when invoked from a worktree (the Docker bind-mount covers only the main repo; SMI-4381 tracks the proper fix); (c) repair existing worktrees with `./scripts/repair-worktrees.sh` (idempotent).
+
 **Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Use `--dry-run` to preview. Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
 
 **Full guide**: [git-crypt-guide.md](.claude/development/git-crypt-guide.md)
