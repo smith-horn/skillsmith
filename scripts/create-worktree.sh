@@ -410,6 +410,15 @@ create_worktree() {
     info "Step 4c: Verifying project-level skill readability..."
     verify_skill_readability "$worktree_path"
 
+    # Step 4d: Symlink node_modules so host-side pre-commit hooks resolve
+    # lint-staged, eslint, prettier, and check-file-length.mjs (SMI-4377).
+    # Hook discovery (Layer 1) is handled by the committed .husky/_/ tree.
+    info "Step 4d: Symlinking node_modules from main repo (SMI-4377)..."
+    assert_host_node_modules "$REPO_ROOT"
+    if link_worktree_node_modules "$worktree_path" "$REPO_ROOT"; then
+        success "  node_modules → $REPO_ROOT/node_modules"
+    fi
+
     # Step 5: Generate Docker override file (if docker-compose.yml exists)
     if [[ -f "$worktree_path/docker-compose.yml" ]]; then
         info "Step 5: Generating Docker override file..."
@@ -436,6 +445,11 @@ create_worktree() {
         echo "To start Docker in this worktree:"
         echo "  cd $worktree_path && docker compose --profile dev up -d"
     fi
+    echo ""
+    echo "Pre-commit hooks: active (SMI-4377)"
+    echo "  - Hook discovery: .husky/_/ is tracked in main repo (inherited via checkout)"
+    echo "  - Host tooling: node_modules symlinked to main repo"
+    echo "  - Typecheck: runs on host tsc when invoked from worktree (Docker bind-mount doesn't cover .worktrees/)"
     echo ""
     echo "Note: existing worktrees need a one-time manual fix if skillsmith MCP fails:"
     echo "  Edit .mcp.json: set skillsmith command to 'npx', args to ['-y', '@skillsmith/mcp-server']"
@@ -494,6 +508,12 @@ Run '$(basename "$0") --help' for usage information."
 
     # Create the worktree
     create_worktree "$WORKTREE_PATH" "$BRANCH_NAME" "$BASE_BRANCH"
+
+    # Idempotent backfill: ensure all existing worktrees have node_modules
+    # symlinks (SMI-4377). The newly-created worktree is a no-op pass.
+    echo ""
+    info "Step 7: Backfilling node_modules symlinks on existing worktrees (SMI-4377)..."
+    repair_worktrees_node_modules "$REPO_ROOT"
 }
 
 # Run main function

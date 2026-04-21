@@ -179,6 +179,13 @@ main() {
     # Step 1: Stop Docker containers
     stop_worktree_containers "$worktree_path"
 
+    # Step 1b: Unlink node_modules symlink so `git worktree remove` sees a
+    # clean tree (SMI-4377). A dangling symlink could confuse the removal
+    # check; explicit cleanup keeps intent clear.
+    if [[ -L "$worktree_path/node_modules" ]]; then
+        rm -f "$worktree_path/node_modules"
+    fi
+
     # Step 2: Remove the worktree
     info "Removing git worktree..."
     if git worktree remove "$worktree_path" $force_flag 2>&1; then
