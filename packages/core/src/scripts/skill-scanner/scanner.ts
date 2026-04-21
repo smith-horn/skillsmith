@@ -7,12 +7,14 @@
 import * as path from 'path'
 import { SecurityScanner } from '../../security/index.js'
 import type {
+  AllowlistMatcher,
   ImportedSkill,
   SkillScanResult,
   FindingWithContext,
   ScannerCliOptions,
   JsonOutput,
 } from './types.js'
+import { EMPTY_ALLOWLIST, loadAllowlist } from './allowlist.js'
 import {
   shouldQuarantine,
   getPassFailStats,
@@ -66,6 +68,8 @@ export interface ScannerConfig {
   trustConfig: TrustScorerConfig
   /** Progress logging interval */
   progressInterval: number
+  /** SMI-4396: Path to the version-controlled allowlist file. */
+  allowlistPath: string
 }
 
 /** Default scanner configuration */
@@ -77,24 +81,32 @@ export const DEFAULT_CONFIG: ScannerConfig = {
   },
   trustConfig: DEFAULT_TRUST_CONFIG,
   progressInterval: 100,
+  allowlistPath: './data/skills-security-allowlist.json',
 }
 
 /**
  * Scan a single skill and return the result
  *
+ * SMI-4396: accepts an optional AllowlistMatcher. Findings whose
+ * (skillId, type, message/location) match a non-expired allowlist entry are
+ * excluded from the quarantine decision. severityCategory still reflects
+ * the raw findings so the security report preserves audit visibility.
+ *
  * @param skill - The skill to scan
  * @param scanner - The security scanner instance
  * @param config - Trust scorer configuration
+ * @param allowlist - Optional per-skill allowlist (SMI-4396)
  * @returns The scan result
  */
 export function scanSkill(
   skill: ImportedSkill,
   scanner: SecurityScanner,
-  config: TrustScorerConfig = DEFAULT_TRUST_CONFIG
+  config: TrustScorerConfig = DEFAULT_TRUST_CONFIG,
+  allowlist: AllowlistMatcher = EMPTY_ALLOWLIST
 ): SkillScanResult {
   const content = extractScannableContent(skill)
   const report = scanner.scan(skill.id, content)
-  const isQuarantined = shouldQuarantine(report, config)
+  const isQuarantined = shouldQuarantine(report, config, allowlist)
   const severityCategory = determineSeverityCategory(report.findings)
 
   return {
@@ -234,6 +246,11 @@ export async function scanImportedSkills(
   // Initialize scanner
   const scanner = new SecurityScanner(config.scannerOptions)
 
+  // SMI-4396: Load the security allowlist (returns EMPTY_ALLOWLIST if the file
+  // doesn't exist, so pre-SMI-4396 environments keep working). A malformed
+  // file throws — fail-safe toward quarantine, never silently proceed.
+  const allowlist = loadAllowlist(config.allowlistPath)
+
   // Scan all skills
   const results: SkillScanResult[] = []
   const allFindings: FindingWithContext[] = []
@@ -245,7 +262,7 @@ export async function scanImportedSkills(
   for (const skill of skills) {
     processedCount++
 
-    const result = scanSkill(skill, scanner, config.trustConfig)
+    const result = scanSkill(skill, scanner, config.trustConfig, allowlist)
     results.push(result)
 
     // Collect findings with skill context

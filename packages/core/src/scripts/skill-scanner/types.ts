@@ -149,5 +149,58 @@ export interface JsonOutput {
   }
 }
 
+/**
+ * SMI-4396: Allowlist entry for per-skill, per-finding-type exemptions.
+ *
+ * Entries are loaded from data/skills-security-allowlist.json. Each entry
+ * exempts a specific (skillId, findingType, messagePattern) triple from
+ * triggering quarantine. Genuine new attacks on an allowlisted skill still
+ * quarantine because the match is per-finding, not per-skill.
+ */
+export interface AllowlistEntry {
+  /** Exact skill identifier (no wildcards). Must match SecurityFinding context. */
+  skillId: string
+  /** Finding type to exempt (must match SecurityFinding.type). */
+  findingType: string
+  /**
+   * Which field of the finding the pattern matches against.
+   * - `message` (default): the finding's human-readable message string
+   * - `location`: the raw line / location where the finding occurred (use for
+   *   matching raw UTF-8 bytes like CJK full-width spaces that don't survive
+   *   escape-sequence round-tripping through finding.message)
+   */
+  matchField?: 'message' | 'location'
+  /** Regex pattern (ReDoS-validated at load time). */
+  messagePattern: string
+  /** Human-readable justification (required). */
+  reason: string
+  /** GitHub username or team who reviewed the entry (required). */
+  reviewedBy: string
+  /** YYYY-MM-DD when the entry was reviewed. */
+  reviewedAt: string
+  /** YYYY-MM-DD after which the entry stops applying (fail-safe toward quarantine). */
+  expiresAt: string
+}
+
+/**
+ * SMI-4396: Root shape of data/skills-security-allowlist.json.
+ */
+export interface AllowlistFile {
+  version: number
+  generatedAt: string
+  allowlist: AllowlistEntry[]
+}
+
+/**
+ * SMI-4396: Matcher interface consumed by shouldQuarantine and scanSkill.
+ *
+ * An empty matcher (no entries loaded) returns false for every check — callers
+ * can always pass one regardless of whether allowlist data exists, keeping the
+ * quarantine path backward-compatible.
+ */
+export interface AllowlistMatcher {
+  isAllowed(skillId: string, finding: SecurityFinding, today?: Date): boolean
+}
+
 // Re-export security types for convenience
 export type { ScanReport, SecurityFinding, SecuritySeverity }
