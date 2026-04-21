@@ -233,24 +233,35 @@ describe('SMI-4241: indexer.yml — Send Alert on Failure step', () => {
   })
 })
 
-describe('SMI-4241: indexer.yml — Trigger Indexer heredoc keeps staleThresholdDays numeric', () => {
+describe('SMI-4241 + SMI-4374: indexer.yml — Trigger Indexer keeps staleThresholdDays numeric', () => {
   const workflow = readFileSync(WORKFLOW_PATH, 'utf8')
 
-  it('renders "staleThresholdDays": $STALE_DAYS unquoted (load-bearing for edge function)', () => {
+  it('staleThresholdDays renders as numeric JSON, never as a quoted string', () => {
     // Edge function at supabase/functions/indexer/index.ts requires
     // typeof staleThresholdDays === 'number' on the discovery branch and
     // defaults to 7 on the maintenance branch. A future change that quotes
     // $STALE_DAYS would silently degrade observability — this assertion
-    // locks the unquoted form in.
-    expect(workflow).toMatch(/"staleThresholdDays":\s*\$STALE_DAYS/)
-    // Specifically must NOT be quoted as a string.
+    // locks the numeric form in regardless of whether the body is built via
+    // a heredoc (SMI-4241 original) or jq (SMI-4374 — uses --argjson which
+    // treats the arg as typed JSON).
+    const heredocPattern = /"staleThresholdDays":\s*\$STALE_DAYS/
+    const jqPattern = /--argjson\s+stale_days\s+"\$STALE_DAYS"/
+    expect(
+      heredocPattern.test(workflow) || jqPattern.test(workflow),
+      'expected heredoc "staleThresholdDays": $STALE_DAYS OR jq --argjson stale_days "$STALE_DAYS"'
+    ).toBe(true)
+    // Either path must NOT quote the value as a JSON string.
     expect(workflow).not.toMatch(/"staleThresholdDays":\s*"\$STALE_DAYS"/)
+    // And the jq path must use --argjson (typed) for stale_days, never --arg (string).
+    expect(workflow).not.toMatch(/--arg\s+stale_days\s+/)
   })
 
-  it('has the SMI-4241 explanatory comment near the heredoc', () => {
-    // If a contributor strips the comment, the unquoted-numeric invariant
+  it('has an explanatory comment about the numeric-JSON invariant', () => {
+    // If a contributor strips the comment, the numeric-JSON invariant
     // becomes implicit and easier to break. Keep the documentation in code.
-    expect(workflow).toMatch(/SMI-4241:.*unquoted/i)
+    // Accept either SMI-4241 (original heredoc comment) or SMI-4241 reference
+    // in the SMI-4374 jq block.
+    expect(workflow).toMatch(/SMI-4241.*(unquoted|numeric)/i)
   })
 
   it('Configure Run step emits STALE_DAYS=7 for the 00:00 maintenance cron', () => {

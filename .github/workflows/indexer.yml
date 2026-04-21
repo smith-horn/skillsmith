@@ -77,17 +77,40 @@ jobs:
         id: config
         run: |
           # For scheduled runs, determine run type from github.event.schedule
-          # (deterministic — matches the cron expression, not the wall clock)
+          # (deterministic — matches the cron expression, not the wall clock).
+          # SMI-4374: CRON_SLOT (6/12/18) feeds the discovery topic-rotation
+          # selector. Empty string on workflow_dispatch and on maintenance —
+          # the indexer treats absent cronSlot as "full DEFAULT_TOPICS".
+          CRON_SLOT=""
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            if [ "${{ github.event.schedule }}" = "0 0 * * *" ]; then
-              RUN_TYPE="maintenance"
-              STALE_DAYS="7"
-            else
-              RUN_TYPE="discovery"
-              STALE_DAYS="30"
-            fi
+            case "${{ github.event.schedule }}" in
+              "0 0 * * *")
+                RUN_TYPE="maintenance"
+                STALE_DAYS="7"
+                ;;
+              "0 6 * * *")
+                RUN_TYPE="discovery"
+                STALE_DAYS="30"
+                CRON_SLOT="6"
+                ;;
+              "0 12 * * *")
+                RUN_TYPE="discovery"
+                STALE_DAYS="30"
+                CRON_SLOT="12"
+                ;;
+              "0 18 * * *")
+                RUN_TYPE="discovery"
+                STALE_DAYS="30"
+                CRON_SLOT="18"
+                ;;
+              *)
+                RUN_TYPE="discovery"
+                STALE_DAYS="30"
+                ;;
+            esac
           else
-            # Manual dispatch uses inputs
+            # Manual dispatch uses inputs; CRON_SLOT stays empty so the
+            # indexer uses full DEFAULT_TOPICS (backward-compat for ad-hoc reruns).
             RUN_TYPE="${{ github.event.inputs.run_type || 'discovery' }}"
             STALE_DAYS="${{ github.event.inputs.stale_days }}"
             if [ -z "$STALE_DAYS" ]; then
@@ -100,30 +123,35 @@ jobs:
           fi
           echo "run_type=$RUN_TYPE" >> $GITHUB_OUTPUT
           echo "stale_days=$STALE_DAYS" >> $GITHUB_OUTPUT
-          echo "Run type: $RUN_TYPE, Stale days: $STALE_DAYS"
+          echo "cron_slot=$CRON_SLOT" >> $GITHUB_OUTPUT
+          echo "Run type: $RUN_TYPE, Stale days: $STALE_DAYS, Cron slot: ${CRON_SLOT:-<none>}"
 
       - name: Trigger Indexer
         id: indexer
         run: |
-          # Build request body
+          # Build request body. SMI-4241 requires numeric JSON for staleThresholdDays
+          # (edge function rejects strings). SMI-4374 adds cronSlot (numeric) on
+          # scheduled runs; omitted entirely on workflow_dispatch so the indexer
+          # falls back to full DEFAULT_TOPICS for ad-hoc operator reruns.
           DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
           MAX_PAGES="${{ github.event.inputs.max_pages || '5' }}"
           RUN_TYPE="${{ steps.config.outputs.run_type }}"
           STALE_DAYS="${{ steps.config.outputs.stale_days }}"
+          CRON_SLOT="${{ steps.config.outputs.cron_slot }}"
 
-          # SMI-4241: $STALE_DAYS MUST remain unquoted below so JSON renders
-          # as numeric (edge function requires typeof === 'number' on the
-          # discovery branch; maintenance defaults to 7 if missing, but
-          # quoting would still be a silent observability regression).
-          BODY=$(cat <<EOF
-          {
-            "maxPages": $MAX_PAGES,
-            "dryRun": $DRY_RUN,
-            "runType": "$RUN_TYPE",
-            "staleThresholdDays": $STALE_DAYS
-          }
-          EOF
-          )
+          BODY=$(jq -c -n \
+            --argjson max_pages "$MAX_PAGES" \
+            --argjson dry_run "$DRY_RUN" \
+            --arg run_type "$RUN_TYPE" \
+            --argjson stale_days "$STALE_DAYS" \
+            --arg cron_slot "$CRON_SLOT" \
+            '{
+              maxPages: $max_pages,
+              dryRun: $dry_run,
+              runType: $run_type,
+              staleThresholdDays: $stale_days
+            }
+            | if $cron_slot == "" then . else . + { cronSlot: ($cron_slot | tonumber) } end')
 
           echo "Triggering indexer with: $BODY"
 
