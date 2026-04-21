@@ -43,6 +43,9 @@ AUTHENTICATED_FUNCTIONS=(
   "update-seat-count"
   "generate-license"
   "regenerate-license"
+  "admin-grant-subscription"
+  "skills-outreach-preferences"
+  "webhook-dlq"
 )
 
 # Service role functions (scheduled jobs, internal)
@@ -52,6 +55,9 @@ SERVICE_ROLE_FUNCTIONS=(
   "ops-report"
   "alert-notify"
   "email-inbound"
+  "process-pending-subscription"
+  "expire-complimentary"
+  "skills-outreach"
 )
 
 echo ""
@@ -132,15 +138,27 @@ if [ "$1" = "--check-deployment" ]; then
   if [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$SUPABASE_PROJECT_REF" ]; then
     echo -e "${YELLOW}  ⚠ SUPABASE_ACCESS_TOKEN or SUPABASE_PROJECT_REF not set, skipping deployment check${NC}"
   else
-    DEPLOYED=$(supabase functions list --project-ref "$SUPABASE_PROJECT_REF" 2>/dev/null | tail -n +2 | awk '{print $1}' || true)
-    for fn in $FUNCTION_DIRS; do
-      if echo "$DEPLOYED" | grep -q "^$fn$"; then
-        echo -e "${GREEN}  ✓ $fn: Deployed${NC}"
-      else
-        echo -e "${RED}  ✗ $fn: NOT DEPLOYED${NC}"
-        ERRORS=$((ERRORS + 1))
-      fi
-    done
+    # Parse pipe-delimited table. Skip header + separator rows (NR > 2), skip
+    # separator rows with few fields (NF > 2 guards against dashes-only rows),
+    # extract the NAME column ($2 when splitting on '|'), trim whitespace.
+    # Prior `awk '{print $1}'` returned the UUID column, causing every function
+    # to be reported NOT DEPLOYED after a Supabase CLI output-format change.
+    DEPLOYED=$(supabase functions list --project-ref "$SUPABASE_PROJECT_REF" 2>/dev/null \
+      | awk -F '|' 'NR > 2 && NF > 2 { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2 }')
+
+    if [ -z "$DEPLOYED" ]; then
+      echo -e "${RED}  ✗ 'supabase functions list' returned no functions — CLI invocation failed or token lacks project access${NC}"
+      ERRORS=$((ERRORS + 1))
+    else
+      for fn in $FUNCTION_DIRS; do
+        if echo "$DEPLOYED" | grep -q "^$fn$"; then
+          echo -e "${GREEN}  ✓ $fn: Deployed${NC}"
+        else
+          echo -e "${RED}  ✗ $fn: NOT DEPLOYED${NC}"
+          ERRORS=$((ERRORS + 1))
+        fi
+      done
+    fi
   fi
   echo ""
 fi
