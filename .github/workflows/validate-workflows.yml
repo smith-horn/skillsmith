@@ -1,0 +1,36 @@
+# SMI-4372: validate deploy-edge-functions classifier + test harness before merge.
+# Keeps detection logic honest — a shell regression in classify-deploy-mode.sh
+# can silently ship partial deploys (the original SMI-4372 bug).
+name: Validate Deploy Workflow
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/deploy-edge-functions.yml'
+      - '.github/workflows/validate-workflows.yml'
+      - 'scripts/classify-deploy-mode.sh'
+      - 'scripts/tests/deploy-detection.test.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  detection-test:
+    name: Detection Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: shellcheck
+        run: |
+          shellcheck scripts/classify-deploy-mode.sh scripts/tests/deploy-detection.test.sh
+
+      - name: Syntax check (bash -n)
+        run: |
+          bash -n scripts/classify-deploy-mode.sh
+          bash -n scripts/tests/deploy-detection.test.sh
+
+      - name: Detection unit tests
+        run: |
+          bash scripts/tests/deploy-detection.test.sh

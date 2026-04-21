@@ -396,14 +396,34 @@ jobs:
           FILTERS: --filter=${{ join(fromJSON(env.PUBLISHABLE_PACKAGES_JSON), ' --filter=') }}
         run: npx turbo build $FILTERS
 
-      - name: Run tests (Docker)
+      # SMI-4244/SMI-4365: single `npm test` run exceeded ~29s and hit a
+      # deterministic SIGTERM cascade in every prior publish.yml run. Root
+      # cause remains unidentified (not OOM, not timeout, not MaxListeners —
+      # those were all correlated symptoms). ci.yml avoids the failure by
+      # running tests per-package across a matrix, keeping each invocation
+      # well under the SIGTERM threshold. We adopt the same pattern here:
+      # sequential per-package docker runs, each a fresh container. Total
+      # wall-clock is longer, but every run completes to exit 0.
+      - name: Run tests (Docker) — per-package
         if: steps.download-docker.outcome == 'success'
         run: |
-          docker run --rm \
+          set -e
+          for pkg in core mcp-server cli enterprise; do
+            echo "::group::Test @skillsmith/$pkg (packages/$pkg)"
+            docker run --rm --init \
+              -v ${{ github.workspace }}:/app \
+              -w /app \
+              skillsmith-publish:${{ github.sha }} \
+              sh -c "npm test --workspace=packages/$pkg"
+            echo "::endgroup::"
+          done
+          echo "::group::Test root-level (scripts/tests, supabase/functions)"
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-publish:${{ github.sha }} \
-            npm test -- --reporter=verbose
+            sh -c "npx vitest run scripts/tests supabase/functions --passWithNoTests"
+          echo "::endgroup::"
 
       - name: Run tests (fallback)
         if: steps.download-docker.outcome == 'failure'
@@ -412,11 +432,11 @@ jobs:
       - name: Type check (Docker)
         if: steps.download-docker.outcome == 'success'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-publish:${{ github.sha }} \
-            npm run typecheck
+            sh -c 'npm run typecheck'
 
       - name: Type check (fallback)
         if: steps.download-docker.outcome == 'failure'
@@ -425,11 +445,11 @@ jobs:
       - name: Lint (Docker)
         if: steps.download-docker.outcome == 'success'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-publish:${{ github.sha }} \
-            npm run lint
+            sh -c 'npm run lint'
 
       - name: Lint (fallback)
         if: steps.download-docker.outcome == 'failure'
