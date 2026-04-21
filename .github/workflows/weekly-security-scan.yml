@@ -276,6 +276,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Ensure ci-alert label exists (idempotent; security-scan.yml
+          # pattern, SMI-3335). Without this, first-time alert creation
+          # fails with "could not add label".
+          gh label create ci-alert --color "B60205" --description "CI workflow failure requiring attention" 2>/dev/null || true
+
           EXISTING=$(gh issue list --repo "${{ github.repository }}" --label "ci-alert" --search "Weekly Security Scan failed" --state open --json number --jq '.[0].number // empty')
           if [ -n "$EXISTING" ]; then
             gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Still failing: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

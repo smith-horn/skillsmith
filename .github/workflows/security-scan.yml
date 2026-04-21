@@ -261,6 +261,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # SMI-4392: ensure ci-alert label exists. Without this, every
+          # prior alert attempt failed silently (the label had never been
+          # created — zero issues on the label per `gh issue list --label
+          # ci-alert --state all`). Idempotent.
+          gh label create ci-alert --color "B60205" --description "CI workflow failure requiring attention" 2>/dev/null || true
+
           EXISTING=$(gh issue list --repo "${{ github.repository }}" --label "ci-alert" --search "Security Scan failed" --state open --json number --jq '.[0].number // empty')
           if [ -n "$EXISTING" ]; then
             gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Still failing: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
