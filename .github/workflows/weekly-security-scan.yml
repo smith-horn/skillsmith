@@ -1,8 +1,16 @@
-# SMI-XXXX: Weekly Security Scan for Imported Skills
+# SMI-4392: Weekly Security Scan for Imported Skills
 # Runs the security scanner to identify vulnerabilities in skill definitions
-# Creates GitHub issues when critical findings are detected
+# imported from the broader GitHub skill ecosystem. Distinct from
+# `security-scan.yml` (SMI-1456), which scans fixture seed-skill data.
+#
+# Pipeline:
+#   1. Run the GitHub importer to produce data/imported-skills.json
+#   2. Run the scanner against that file
+#   3. Create a security issue if HIGH/CRITICAL findings are present
+#   4. Alert on scheduled failure (SMI-3335 alert-on-failure parity)
 #
 # Output Files:
+# - data/imported-skills.json: GitHub-sourced skill corpus (input to scanner)
 # - data/security-report.json: Full security report with all findings
 # - data/quarantine-skills.json: Skills with HIGH/CRITICAL findings (blocked)
 # - data/safe-skills.json: Skills approved for import (passed security scan)
@@ -32,7 +40,9 @@ jobs:
   security-scan:
     name: Scan Imported Skills
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Bumped from 15m: GitHub import step adds ~20-30m (rate-limited search
+    # across ~20 queries with pagination).
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -50,13 +60,32 @@ jobs:
       - name: Build packages
         run: npm run build
 
+      # SMI-4392: produce data/imported-skills.json (the scanner's expected
+      # input). Prior to this step the workflow silently failed because the
+      # input file was never materialised on the runner — `mkdir -p data`
+      # created an empty directory and scan-imported-skills.ts exited 1 with
+      # "Input file not found".
+      - name: Import skills from GitHub
+        id: import
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p data
+          npx tsx packages/core/src/scripts/import-github-skills.ts
+
+          if [ ! -s data/imported-skills.json ]; then
+            echo "::error::GitHub import did not produce data/imported-skills.json"
+            exit 1
+          fi
+
+          SKILL_COUNT=$(jq 'length // 0' data/imported-skills.json)
+          echo "Imported $SKILL_COUNT skills"
+          echo "skill_count=$SKILL_COUNT" >> $GITHUB_OUTPUT
+
       - name: Run security scan
         id: scan
         run: |
-          # Create data directory if it doesn't exist
-          mkdir -p data
-
-          # Run the security scanner
+          # Run the security scanner against the GitHub-imported corpus
           npx tsx packages/core/src/scripts/scan-imported-skills.ts
 
           # Parse results for GitHub Actions outputs
@@ -237,3 +266,28 @@ jobs:
           echo "- Passed: ${{ steps.scan.outputs.passed }}"
           echo "- Quarantined: ${{ steps.scan.outputs.quarantined }}"
           echo "- No critical or high severity findings"
+
+      # SMI-3335: Alert on scheduled workflow failure. Parity with
+      # security-scan.yml (lines ~258-273). Without this step, scheduled
+      # runs have failed silently for 10+ consecutive weeks (2026-02-15
+      # onwards) because the workflow had no observable failure signal.
+      - name: Alert on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Ensure ci-alert label exists (idempotent; security-scan.yml
+          # pattern, SMI-3335). Without this, first-time alert creation
+          # fails with "could not add label".
+          gh label create ci-alert --color "B60205" --description "CI workflow failure requiring attention" 2>/dev/null || true
+
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --label "ci-alert" --search "Weekly Security Scan failed" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "Still failing: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "CI: Weekly Security Scan failed ($(date -u +%Y-%m-%d))" --label "ci-alert" --body "**Workflow**: Weekly Security Scan
+          **Run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          **Branch**: ${{ github.ref_name }}
+
+          This issue was auto-created by SMI-3335 (parity ported via SMI-4392). Close when resolved."
+          fi
