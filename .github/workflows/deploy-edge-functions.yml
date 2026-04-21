@@ -92,29 +92,12 @@ jobs:
             echo "functions=$INPUT_FUNCTION_NAME" >> "$GITHUB_OUTPUT"
             echo "Deploying specific function: $INPUT_FUNCTION_NAME"
           else
-            # Detect changed functions from the merge commit
-            # Uses sed instead of grep -oP for portability (no PCRE dependency)
-            CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'supabase/functions/' \
-              | sed -n 's|supabase/functions/\([^/]*\)/.*|\1|p' \
-              | grep -v '^_shared$' \
-              | sort -u \
-              | paste -sd ',' -)
-            if [ -z "$CHANGED" ]; then
-              echo "No function changes detected (may be _shared only)"
-              # If _shared changed, deploy all — shared code affects every function
-              if git diff --name-only HEAD~1 HEAD -- 'supabase/functions/_shared/' | grep -q .; then
-                echo "mode=all" >> "$GITHUB_OUTPUT"
-                echo "functions=" >> "$GITHUB_OUTPUT"
-                echo "_shared/ changed — deploying ALL functions"
-              else
-                echo "mode=none" >> "$GITHUB_OUTPUT"
-                echo "functions=" >> "$GITHUB_OUTPUT"
-              fi
-            else
-              echo "mode=changed" >> "$GITHUB_OUTPUT"
-              echo "functions=$CHANGED" >> "$GITHUB_OUTPUT"
-              echo "Changed functions: $CHANGED"
-            fi
+            # push-triggered auto-deploy: delegate to the classifier script so
+            # the detection logic is unit-testable (scripts/tests/deploy-detection.test.sh).
+            # Priority: _shared/ → all, specific fns → changed, else → none.
+            # The _shared/ branch MUST fire first so mixed-scope PRs fan out to every
+            # caller — a specific fn plus _shared/ is not a partial deploy.
+            ./scripts/classify-deploy-mode.sh >> "$GITHUB_OUTPUT"
           fi
 
       - name: Deploy
