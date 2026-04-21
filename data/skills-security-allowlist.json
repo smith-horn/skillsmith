@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "generatedAt": "2026-04-21T18:30:00.000Z",
+  "allowlist": [
+    {
+      "skillId": "github/smith-horn/skill-image-pipeline",
+      "findingType": "data_exfiltration",
+      "messagePattern": "upload to (?:cloud|cloudinary)",
+      "reason": "Smith Horn's own Cloudinary upload pipeline. 'Upload to Cloudinary' is the declared product purpose (CDN delivery). Quarantined because the pre-SMI-4396 data_exfiltration regex matched 'upload ... to ... cloud' substring-style and did not word-boundary 'Cloudinary'. Wave 2 sources a word-boundary fix at packages/core/src/security/scanner/patterns.ts so this entry can be retired at next review.",
+      "reviewedBy": "ryansmith108",
+      "reviewedAt": "2026-04-21",
+      "expiresAt": "2026-07-21"
+    },
+    {
+      "skillId": "github/kcmadden/claude-code-1password-skill",
+      "findingType": "sensitive_path",
+      "messagePattern": "password|credentials",
+      "reason": "1Password integration skill. The product literally contains the word 'password' and its SKILL.md is security guidance telling Claude Code NEVER to ask users to paste passwords/credentials in chat. Bare-keyword sensitive_path regex cannot distinguish 'documents handling of passwords' from 'hardcoded password'. Wave 2 tightens patterns to require assignment/path context.",
+      "reviewedBy": "ryansmith108",
+      "reviewedAt": "2026-04-21",
+      "expiresAt": "2026-07-21"
+    },
+    {
+      "skillId": "github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill",
+      "findingType": "privilege_escalation",
+      "messagePattern": "escalation",
+      "reason": "Prompt-injection scanner skill whose description enumerates adversarial techniques it detects ('role manipulation, privilege escalation, ...'). Bare /escalat(e|ion)/i pattern triggered CRITICAL on a defensive-security tool describing its own subject matter. Wave 2 replaces with contextual patterns (privilege_escalation, escalate to root, exploit-to-escalate).",
+      "reviewedBy": "ryansmith108",
+      "reviewedAt": "2026-04-21",
+      "expiresAt": "2026-07-21"
+    },
+    {
+      "skillId": "github/rhysha/claude-security-research-skill",
+      "findingType": "sensitive_path",
+      "messagePattern": "secrets?",
+      "reason": "Security-research skill. 'Secrets' is domain vocabulary (talks about finding/handling secrets as a research topic), not an instruction to access a sensitive path. Bare-keyword match. Wave 2 tightens sensitive_path patterns to require assignment/path/file-extension context.",
+      "reviewedBy": "ryansmith108",
+      "reviewedAt": "2026-04-21",
+      "expiresAt": "2026-07-21"
+    },
+    {
+      "skillId": "github/straygizmo/mdium",
+      "findingType": "ai_defence",
+      "matchField": "location",
+      "messagePattern": "[\\u200B-\\u200F\\u2028-\\u202F\\uFEFF\\u3000]",
+      "reason": "Japanese-authored markdown-to-Medium skill. Repo description renders as 'designed for the AI  era' where the gap between AI and era is a U+3000 CJK full-width space from Japanese keyboard input — not an invisible-char prompt-injection payload. matchField=location required because finding.message embeds the literal bytes, which do not round-trip through JSON escape sequences.",
+      "reviewedBy": "ryansmith108",
+      "reviewedAt": "2026-04-21",
+      "expiresAt": "2026-07-21"
+    }
+  ]
+}

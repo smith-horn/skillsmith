@@ -1,4 +1,5 @@
 # SMI-4392: Weekly Security Scan for Imported Skills
+# SMI-4396: Gate reads post-allowlist quarantine count instead of raw severity.
 # Runs the security scanner to identify vulnerabilities in skill definitions
 # imported from the broader GitHub skill ecosystem. Distinct from
 # `security-scan.yml` (SMI-1456), which scans fixture seed-skill data.
@@ -12,8 +13,9 @@
 # Output Files:
 # - data/imported-skills.json: GitHub-sourced skill corpus (input to scanner)
 # - data/security-report.json: Full security report with all findings
-# - data/quarantine-skills.json: Skills with HIGH/CRITICAL findings (blocked)
+# - data/quarantine-skills.json: Skills with HIGH/CRITICAL findings (blocked), post-allowlist
 # - data/safe-skills.json: Skills approved for import (passed security scan)
+# - data/skills-security-allowlist.json: Version-controlled per-skill exemptions (SMI-4396)
 
 name: Weekly Security Scan
 
@@ -110,12 +112,22 @@ jobs:
             echo "avg_risk=$AVG_RISK" >> $GITHUB_OUTPUT
             echo "max_risk=$MAX_RISK" >> $GITHUB_OUTPUT
 
-            # Determine if there are critical findings
-            if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+            # SMI-4396: Gate on post-allowlist quarantine count, not raw
+            # severity tally. security-report.json.summary.bySeverity is
+            # computed pre-allowlist and will still show non-zero critical/
+            # high for allowlisted findings; quarantine-skills.json.count
+            # is the post-allowlist view the allowlist was designed to drain.
+            QUARANTINE_COUNT=$(jq -r '.count // 0' data/quarantine-skills.json)
+            echo "quarantine_count=$QUARANTINE_COUNT" >> $GITHUB_OUTPUT
+
+            if [ "$QUARANTINE_COUNT" -gt 0 ]; then
               echo "has_critical=true" >> $GITHUB_OUTPUT
             else
               echo "has_critical=false" >> $GITHUB_OUTPUT
             fi
+
+            echo "::notice::Pre-allowlist severity tally: critical=$CRITICAL high=$HIGH medium=$MEDIUM low=$LOW"
+            echo "::notice::Post-allowlist quarantine count: $QUARANTINE_COUNT (SMI-4396)"
           else
             echo "::error::Security report not generated"
             exit 1
@@ -250,11 +262,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Fail if critical findings
+      - name: Fail if post-allowlist quarantine is non-empty
         if: steps.scan.outputs.has_critical == 'true'
         run: |
-          echo "::error::Security scan found ${{ steps.scan.outputs.critical }} CRITICAL and ${{ steps.scan.outputs.high }} HIGH severity findings"
+          echo "::error::Security scan quarantined ${{ steps.scan.outputs.quarantine_count }} skill(s) post-allowlist (pre-allowlist severity: critical=${{ steps.scan.outputs.critical }} high=${{ steps.scan.outputs.high }})"
           echo "Review the quarantine-skills artifact and created issue for details."
+          echo "If a quarantined skill is a documented false positive, add an entry to data/skills-security-allowlist.json (SMI-4396)."
           exit 1
 
       - name: Report success
@@ -264,8 +277,8 @@ jobs:
           echo "Security scan completed successfully"
           echo "- Total scanned: ${{ steps.scan.outputs.total }}"
           echo "- Passed: ${{ steps.scan.outputs.passed }}"
-          echo "- Quarantined: ${{ steps.scan.outputs.quarantined }}"
-          echo "- No critical or high severity findings"
+          echo "- Quarantined (post-allowlist): ${{ steps.scan.outputs.quarantine_count }}"
+          echo "- Pre-allowlist severity: critical=${{ steps.scan.outputs.critical }} high=${{ steps.scan.outputs.high }} medium=${{ steps.scan.outputs.medium }} low=${{ steps.scan.outputs.low }}"
 
       # SMI-3335: Alert on scheduled workflow failure. Parity with
       # security-scan.yml (lines ~258-273). Without this step, scheduled

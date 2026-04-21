@@ -88,7 +88,11 @@ docs/backlog/
 docs/strategy/
 
 # Development artifacts (anchored to root level)
-/data/
+# SMI-4396: /data/* instead of /data/ so the SMI-4396 allowlist negation below
+# can re-include its one version-controlled file — gitignore forbids negating
+# a child when the parent directory itself is excluded.
+/data/*
+!/data/skills-security-allowlist.json
 /output/
 test-results/
 playwright-report/
