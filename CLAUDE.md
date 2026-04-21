@@ -305,7 +305,6 @@ npx supabase functions deploy webhook-dlq
 | Expire Complimentary | Daily 3 AM UTC | GitHub Actions (`expire-complimentary.yml`) |
 | Weekly Analytics | Monday 9 AM UTC | GitHub Actions (`analytics-report.yml`) |
 | Billing Monitor | Monday 9 AM UTC | GitHub Actions |
-| A/B Experiment Results | Monday 9 AM UTC | GitHub Actions (`ab-results.yml`) — creates issue with verdict |
 | Edge Function Deploy | On merge to main | GitHub Actions (`deploy-edge-functions.yml`) |
 
 Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table. Manual trigger & audit log details: [deployment-guide.md](.claude/development/deployment-guide.md#monitoring--alerts).

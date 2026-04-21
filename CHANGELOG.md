@@ -74,6 +74,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependabot lockfile regeneration automated via script (#453).
 - Shallow clone guard added to audit-standards CI check (#456).
 
+### Removed
+
+- **SMI-1537 V3 migration benchmark + A/B reporter workflow** (2026-04-20, SMI-4378):
+  removed the synthetic V3 migration benchmark (`scripts/benchmark-v3-migration.ts`,
+  `benchmark:v3` npm script, `benchmark:` CI job, optimization-report integration,
+  hive-mind perf-validation wave, dev docs) — introduced during the claude-flow v2
+  → v3 (ruflo) migration in Phase 5 (Jan 2026), now obsolete post-migration.
+  Removed the weekly homepage A/B reporter workflow (`ab-results.yml`) — experiment
+  never reached 500/cohort significance in 9+ weeks. Follow-up SMI-4379 tracks
+  winding down the live variant-assignment infrastructure on skillsmith.app.
+
 ### Security
 
 - Removed `X-Tier` header from public API responses to protect subscription privacy.
