@@ -13,7 +13,6 @@ Developer guides for local development, testing, and debugging.
 | [claude-flow-guide.md](claude-flow-guide.md) | Agent spawning, swarm orchestration, hive mind, SPARC modes |
 | [mcp-registry.md](mcp-registry.md) | MCP Registry publishing workflow and CI setup |
 | [mcp-tools-guide.md](mcp-tools-guide.md) | Skillsmith MCP server tool reference, authentication, CLI |
-| [benchmarks.md](benchmarks.md) | V3 migration performance benchmarks and metrics |
 | [edge-function-patterns.md](edge-function-patterns.md) | Supabase Edge Function patterns and Deno gotchas |
 | [neural-testing.md](neural-testing.md) | Neural integration testing guide |
 | [stripe-testing.md](stripe-testing.md) | Stripe CLI testing setup and webhooks |
@@ -33,7 +32,6 @@ Developer guides for local development, testing, and debugging.
 - **Claude-Flow**: Agent types, swarm init, SPARC modes, hive mind configs
 - **MCP Registry**: Publishing, version sync, CI automation
 - **MCP Tools**: Skillsmith MCP tool reference, auth methods, CLI usage
-- **Benchmarks**: Query performance, embedding timing, migration metrics
 - **Edge Functions**: Deno patterns, Supabase query handling
 - **Neural Testing**: EmbeddingService tests, ONNX runtime validation
 - **Stripe**: Webhook testing, checkout flows, subscription testing, billing portal
