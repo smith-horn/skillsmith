@@ -6,8 +6,8 @@ name: Linear Drift Audit
 
 on:
   schedule:
-    # Monday 9 AM UTC — alongside ops-report
-    - cron: '0 9 * * 1'
+    # SMI-4393: staggered off 09:00 UTC slot (see analytics-report.yml)
+    - cron: '9 9 * * 1'
   workflow_dispatch:
 
 permissions:

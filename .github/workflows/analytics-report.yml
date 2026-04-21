@@ -6,8 +6,10 @@ name: Weekly Analytics Report
 
 on:
   schedule:
-    # Every Monday at 9:00 AM UTC (aligned with ops-report and billing-monitor)
-    - cron: '0 9 * * 1'
+    # SMI-4393: staggered off 09:00 UTC to avoid contention against
+    # ops-report/billing-monitor/linear-drift-audit/user-growth-report
+    # which used to share the same cron slot.
+    - cron: '3 9 * * 1'
   workflow_dispatch:
     inputs:
       days:

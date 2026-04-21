@@ -5,8 +5,8 @@ name: Billing Monitor
 
 on:
   schedule:
-    # Every Monday at 9 AM UTC
-    - cron: '0 9 * * 1'
+    # SMI-4393: staggered off 09:00 UTC slot (see analytics-report.yml)
+    - cron: '6 9 * * 1'
   workflow_dispatch:
     inputs:
       create_issue:

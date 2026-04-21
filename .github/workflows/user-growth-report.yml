@@ -7,8 +7,8 @@ name: Weekly User Growth Report
 
 on:
   schedule:
-    # Every Monday at 9:00 AM UTC (aligned with other Monday reports)
-    - cron: '0 9 * * 1'
+    # SMI-4393: staggered off 09:00 UTC slot (see analytics-report.yml)
+    - cron: '12 9 * * 1'
   workflow_dispatch:
     inputs:
       days:

@@ -54,7 +54,15 @@ jobs:
           node scripts/check-unreleased-threshold.mjs --file CHANGELOG.md
           EXIT=$?
           set -e
-          COUNT=$(node scripts/check-unreleased-threshold.mjs --file CHANGELOG.md 2>/dev/null || echo 0)
+          # SMI-4394: pipe through `head -n 1` + whitespace-strip + numeric
+          # sanity check. Prior `|| echo 0` fallback concatenated fallback
+          # stdout with the script's earlier stdout on non-zero exits,
+          # producing multi-line COUNT like "33\n0" which then made
+          # `echo "count=$COUNT" >> $GITHUB_OUTPUT` emit two lines — the
+          # bare "0" tripped GHA's "Invalid format '0'" file-command error
+          # on 2026-04-19 first run.
+          COUNT=$(node scripts/check-unreleased-threshold.mjs --file CHANGELOG.md 2>/dev/null | head -n 1 | tr -d '[:space:]')
+          if ! echo "$COUNT" | grep -qE '^[0-9]+$'; then COUNT=0; fi
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           echo "exit=$EXIT" >> "$GITHUB_OUTPUT"
           echo "## Cadence Check" >> "$GITHUB_STEP_SUMMARY"
