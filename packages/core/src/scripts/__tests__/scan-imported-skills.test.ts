@@ -63,7 +63,11 @@ describe('SMI-864: Scan Imported Skills', () => {
   })
 
   describe('Quarantine Decision', () => {
-    it('should quarantine when scan failed', () => {
+    it('should NOT quarantine when passed=false but findings are empty and score is zero (SMI-4396: predicate recomputes from findings, ignores report.passed)', () => {
+      // SMI-4396: shouldQuarantine no longer uses !report.passed. The pre-allowlist
+      // `passed` field is excluded because it was computed before allowlist filtering,
+      // so using it would re-quarantine every allowlisted skill. A report with zero
+      // findings and zero risk score is safe regardless of the stale passed flag.
       const report: ScanReport = {
         skillId: 'test/skill',
         passed: false,
@@ -86,17 +90,42 @@ describe('SMI-864: Scan Imported Skills', () => {
         },
       }
 
-      expect(shouldQuarantine(report)).toBe(true)
+      expect(shouldQuarantine(report)).toBe(false)
     })
 
-    it('should quarantine when risk score exceeds threshold', () => {
+    it('should quarantine when post-allowlist findings push risk score past threshold (no high/critical)', () => {
+      // SMI-4396: shouldQuarantine recomputes risk from findings (not report.riskScore).
+      // 4 medium jailbreaks saturate the jailbreak category (4 * 15 * 2.0 = 120 → capped 100)
+      // contributing 20 to total; 5 medium social_engineering (5 * 15 * 1.5 = 112.5 → 100)
+      // contributing 11; 4 medium prompt_leaking (4 * 15 * 1.8 = 108 → 100) contributing 11.
+      // Total = 42 >= threshold 40 → quarantine.
+      const med = (type: SecurityFinding['type'], message: string): SecurityFinding => ({
+        type,
+        severity: 'medium',
+        message,
+        confidence: 'high',
+      })
       const report: ScanReport = {
         skillId: 'test/skill',
         passed: true,
-        findings: [],
+        findings: [
+          med('jailbreak', 'DAN hint #1'),
+          med('jailbreak', 'DAN hint #2'),
+          med('jailbreak', 'DAN hint #3'),
+          med('jailbreak', 'DAN hint #4'),
+          med('social_engineering', 'trust-me #1'),
+          med('social_engineering', 'trust-me #2'),
+          med('social_engineering', 'trust-me #3'),
+          med('social_engineering', 'trust-me #4'),
+          med('social_engineering', 'trust-me #5'),
+          med('prompt_leaking', 'leak #1'),
+          med('prompt_leaking', 'leak #2'),
+          med('prompt_leaking', 'leak #3'),
+          med('prompt_leaking', 'leak #4'),
+        ],
         scannedAt: new Date(),
         scanDurationMs: 10,
-        riskScore: 45,
+        riskScore: 0, // stale pre-allowlist value — predicate must ignore this
         riskBreakdown: {
           jailbreak: 0,
           socialEngineering: 0,
