@@ -126,7 +126,7 @@ gh api repos/Smith-Horn/skillsmith/branches/main/protection -X PUT --input .gith
 
 ## `continue-on-error` Audit (SMI-3217)
 
-Check 21 in `audit-standards.mjs` flags `continue-on-error: true` steps that lack downstream outcome checks — the pattern that caused 18 days of silent zero-data in `ab-results.yml`.
+Check 21 in `audit-standards.mjs` flags `continue-on-error: true` steps that lack downstream outcome checks — the pattern that caused 18 days of silent zero-data in the now-decommissioned `ab-results.yml` workflow.
 
 ### Rules
 
