@@ -1,0 +1,399 @@
+---
+/**
+ * /check-email — Email-verification interstitial
+ *
+ * SMI-4401 Wave 2 — Spec §5.3.
+ *
+ * Serves the 22-user email_verified=FALSE cohort after signup (and any future email-signup
+ * user) with a clear "Check your email" page, a rate-limited resend CTA, and three escape
+ * hatches (H3 — 22-user cohort needs dead-end exits).
+ *
+ * Query params:
+ *   ?email=<addr>  — the email captured at signup (or from signup.astro's fallback localStorage).
+ *   ?next=<path>   — passed through to Supabase `options.emailRedirectTo` on resend.
+ *
+ * M8 — Email resolution order: URL ?email= → localStorage['skillsmith_pending_signup_email'] → fallback copy.
+ * L1 — Resend cooldown persisted in localStorage['skillsmith_resend_cooldown_until:<emailLower>'].
+ * M6 — No client-side profiles.email_verified branch (anon caller cannot SELECT via RLS).
+ */
+
+export const prerender = false
+
+import BaseLayout from '../layouts/BaseLayout.astro'
+
+const rawEmail = Astro.url.searchParams.get('email')?.trim() ?? ''
+const rawNext = Astro.url.searchParams.get('next')?.trim() ?? ''
+// Simple shape check only — full validation happens client-side when resend is invoked.
+const emailFromUrl = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail) ? rawEmail : ''
+---
+
+<BaseLayout title="Check your email — Skillsmith" noindex={true}>
+  <section class="check-container">
+    <div class="check-card">
+      <h1 id="check-heading" tabindex="-1" class="check-heading">Check your email</h1>
+
+      <p id="check-subhead" class="check-subhead">
+        We sent a confirmation link to <strong id="email-display">{emailFromUrl}</strong>
+      </p>
+
+      <p id="check-fallback" class="check-fallback" style={emailFromUrl ? 'display: none;' : ''}>
+        Check the email you signed up with for a confirmation link.
+      </p>
+
+      <p class="check-expiry">The link expires in 24 hours.</p>
+
+      <button
+        type="button"
+        id="resend-btn"
+        class="btn btn-primary"
+        aria-label="Resend confirmation email"
+      >
+        <span id="resend-label">Didn&rsquo;t get it? Resend</span>
+      </button>
+
+      <div
+        id="resend-status"
+        role="status"
+        aria-live="polite"
+        class="check-status"
+        style="display: none;"
+      >
+      </div>
+
+      <div id="resend-error" role="alert" class="check-error" style="display: none;"></div>
+
+      <div class="check-footer">
+        <p>
+          Used the wrong email? <a href="/signup" class="check-link">Sign up again &rarr;</a>
+        </p>
+        <p>
+          Already confirmed? <a href="/login" class="check-link">Sign in &rarr;</a>
+        </p>
+        <p>
+          <a
+            href="mailto:support@smithhorn.ca?subject=Confirm%20email%20not%20received"
+            class="check-link"
+          >
+            Check your spam folder
+          </a>
+          &mdash; or contact us.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <script is:inline define:vars={{ emailFromUrl, rawNext }}>
+    window.__CHECK_EMAIL_CTX__ = {
+      emailFromUrl: emailFromUrl,
+      next: rawNext,
+    }
+  </script>
+
+  <script>
+    import { getSupabaseClient } from '../lib/supabase-client'
+
+    const PENDING_EMAIL_KEY = 'skillsmith_pending_signup_email'
+    const COOLDOWN_PREFIX = 'skillsmith_resend_cooldown_until:'
+    const COOLDOWN_MS = 60 * 1000
+
+    document.addEventListener('astro:page-load', () => {
+      const ctx = (window as unknown as { __CHECK_EMAIL_CTX__?: { emailFromUrl: string; next: string } })
+        .__CHECK_EMAIL_CTX__
+      const heading = document.getElementById('check-heading') as HTMLElement | null
+      const emailDisplay = document.getElementById('email-display')
+      const fallback = document.getElementById('check-fallback')
+      const subhead = document.getElementById('check-subhead')
+      const resendBtn = document.getElementById('resend-btn') as HTMLButtonElement | null
+      const resendLabel = document.getElementById('resend-label')
+      const status = document.getElementById('resend-status')
+      const errorEl = document.getElementById('resend-error')
+
+      if (!heading || !emailDisplay || !fallback || !subhead || !resendBtn || !resendLabel || !status || !errorEl) {
+        return
+      }
+
+      // Focus heading for screen readers.
+      try {
+        heading.focus({ preventScroll: true })
+      } catch {
+        /* non-critical */
+      }
+
+      // M8: resolve email from URL → localStorage → fallback copy.
+      let email = ctx?.emailFromUrl ?? ''
+      if (!email) {
+        try {
+          email = localStorage.getItem(PENDING_EMAIL_KEY) ?? ''
+        } catch {
+          email = ''
+        }
+      }
+
+      if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        emailDisplay.textContent = email
+        fallback.style.display = 'none'
+        subhead.style.display = ''
+      } else {
+        subhead.style.display = 'none'
+        fallback.style.display = ''
+        email = ''
+      }
+
+      const next = ctx?.next && ctx.next.length > 0 ? ctx.next : '/account/cli-token'
+
+      // L1: cooldown persistence keyed by email.
+      function cooldownKey(addr: string): string {
+        return COOLDOWN_PREFIX + addr.toLowerCase()
+      }
+
+      function readCooldownUntil(addr: string): number | null {
+        if (!addr) return null
+        try {
+          const raw = localStorage.getItem(cooldownKey(addr))
+          if (!raw) return null
+          const ts = Date.parse(raw)
+          if (isNaN(ts) || ts <= Date.now()) {
+            localStorage.removeItem(cooldownKey(addr))
+            return null
+          }
+          return ts
+        } catch {
+          return null
+        }
+      }
+
+      function writeCooldown(addr: string) {
+        if (!addr) return
+        try {
+          const until = new Date(Date.now() + COOLDOWN_MS).toISOString()
+          localStorage.setItem(cooldownKey(addr), until)
+        } catch {
+          /* no-op */
+        }
+      }
+
+      let cooldownTimer: number | null = null
+
+      function applyCooldownUI(until: number) {
+        if (!resendBtn || !resendLabel) return
+        function tick() {
+          const remaining = Math.max(0, Math.ceil((until - Date.now()) / 1000))
+          if (remaining <= 0) {
+            if (cooldownTimer !== null) {
+              window.clearInterval(cooldownTimer)
+              cooldownTimer = null
+            }
+            if (resendBtn && resendLabel) {
+              resendBtn.disabled = false
+              resendBtn.removeAttribute('aria-disabled')
+              resendLabel.textContent = "Didn't get it? Resend"
+            }
+            return
+          }
+          if (resendBtn && resendLabel) {
+            resendBtn.disabled = true
+            resendBtn.setAttribute('aria-disabled', 'true')
+            resendLabel.textContent = `Resend (${remaining}s)`
+          }
+        }
+        tick()
+        cooldownTimer = window.setInterval(tick, 1000)
+      }
+
+      // Re-apply any pre-existing cooldown on load.
+      const existingUntil = readCooldownUntil(email)
+      if (existingUntil) applyCooldownUI(existingUntil)
+
+      resendBtn.addEventListener('click', async () => {
+        errorEl.style.display = 'none'
+        errorEl.textContent = ''
+        status.style.display = 'none'
+
+        if (!email) {
+          errorEl.textContent =
+            'We could not recover your email. Please sign up again to receive a new link.'
+          errorEl.style.display = 'block'
+          return
+        }
+
+        resendBtn.disabled = true
+        resendBtn.setAttribute('aria-busy', 'true')
+
+        try {
+          const supabase = getSupabaseClient()
+          if (!supabase) {
+            errorEl.textContent = 'Resend failed. Try again in a moment or contact support.'
+            errorEl.style.display = 'block'
+            return
+          }
+
+          const origin = window.location.origin
+          const emailRedirectTo = `${origin}/auth/callback?next=${encodeURIComponent(next)}`
+
+          const { error } = await supabase.auth.resend({
+            type: 'signup',
+            email,
+            options: { emailRedirectTo },
+          })
+
+          if (error) {
+            errorEl.textContent =
+              'Resend failed. Try again in a moment or contact us at support@smithhorn.ca.'
+            errorEl.style.display = 'block'
+            return
+          }
+
+          status.textContent = 'Sent. Check your inbox again in a minute.'
+          status.style.display = 'block'
+          writeCooldown(email)
+          const until = readCooldownUntil(email)
+          if (until) applyCooldownUI(until)
+        } catch {
+          errorEl.textContent =
+            'Resend failed. Try again in a moment or contact us at support@smithhorn.ca.'
+          errorEl.style.display = 'block'
+        } finally {
+          resendBtn.removeAttribute('aria-busy')
+        }
+      })
+    })
+  </script>
+</BaseLayout>
+
+<style>
+  .check-container {
+    max-width: 32rem;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 4rem;
+  }
+
+  .check-card {
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 2rem;
+  }
+
+  .check-heading {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #fafafa;
+    margin: 0 0 0.75rem;
+    line-height: 1.25;
+  }
+
+  .check-heading:focus-visible {
+    outline: 2px solid #e07a5f;
+    outline-offset: 4px;
+    border-radius: 0.25rem;
+  }
+
+  .check-subhead {
+    font-size: 1rem;
+    color: #d4d4d8;
+    margin: 0 0 0.5rem;
+    line-height: 1.5;
+  }
+
+  #email-display {
+    color: #fafafa;
+    font-weight: 600;
+    word-break: break-all;
+  }
+
+  .check-fallback {
+    font-size: 1rem;
+    color: #d4d4d8;
+    margin: 0 0 0.5rem;
+    line-height: 1.5;
+  }
+
+  .check-expiry {
+    font-size: 0.875rem;
+    color: #a1a1aa;
+    margin: 0 0 1.5rem;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: 1px solid transparent;
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: #E07A5F;
+    color: #fafafa;
+    border-color: #E07A5F;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: #D4694E;
+    border-color: #D4694E;
+  }
+
+  .check-status {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    background: rgba(34, 197, 94, 0.08);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+    color: #86efac;
+  }
+
+  .check-error {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+  }
+
+  .check-footer {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #2a2a2f;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .check-footer p {
+    margin: 0;
+    font-size: 0.875rem;
+    color: #a1a1aa;
+    line-height: 1.5;
+  }
+
+  .check-link {
+    color: #E07A5F;
+    text-decoration: none;
+    font-weight: 500;
+  }
+
+  .check-link:hover {
+    text-decoration: underline;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .btn {
+      transition: none;
+    }
+  }
+</style>

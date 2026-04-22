@@ -1,0 +1,301 @@
+---
+/**
+ * /return-to-cli — Post-submit landing for CLI-originated profile completion
+ *
+ * SMI-4401 Wave 2 — Spec §5.2.
+ *
+ * Flow: user arrives here after submitting /complete-profile with source=cli. The CLI's
+ * 403-recovery message told them to come to the web; this page reassures them that their
+ * terminal command will now work, with a 30s countdown matching worst-case tier-cache
+ * propagation (TIER_CACHE_TTL_SECONDS=60) and a "Check key status" button.
+ *
+ * M4 — Countdown UI + check-status button with fallback to direct license_keys query.
+ * A11y — H1 receives focus on load via tabindex="-1"; countdown announced via aria-live="polite".
+ */
+
+export const prerender = false
+
+import BaseLayout from '../layouts/BaseLayout.astro'
+---
+
+<BaseLayout title="You can go back to your terminal — Skillsmith" noindex={true}>
+  <section class="return-container">
+    <div class="return-card">
+      <h1 id="return-heading" tabindex="-1" class="return-heading">Head back to your terminal.</h1>
+      <p class="return-subhead">Your Skillsmith command will work now.</p>
+
+      <pre class="return-code" aria-label="Example CLI command"><code>skillsmith search &lt;query&gt;</code></pre>
+
+      <p id="countdown-text" role="status" aria-live="polite" class="return-countdown">
+        Your key should work in <span id="countdown-value">30</span>s.
+      </p>
+
+      <p class="return-reassurance">
+        If it still doesn&rsquo;t work, wait a few seconds and try again &mdash; your account is
+        propagating.
+      </p>
+
+      <div class="return-actions">
+        <button
+          type="button"
+          id="check-status-btn"
+          class="btn btn-secondary"
+          aria-label="Check CLI key status"
+        >
+          Check key status
+        </button>
+        <a href="/account/cli-token" class="return-link">View your key on the dashboard &rarr;</a>
+      </div>
+
+      <div
+        id="status-toast"
+        role="status"
+        aria-live="polite"
+        class="return-toast"
+        style="display: none;"
+      >
+      </div>
+    </div>
+  </section>
+
+  <script>
+    import { getSupabaseClient } from '../lib/supabase-client'
+
+    document.addEventListener('astro:page-load', () => {
+      const heading = document.getElementById('return-heading') as HTMLElement | null
+      const countdownValue = document.getElementById('countdown-value')
+      const countdownText = document.getElementById('countdown-text')
+      const checkBtn = document.getElementById('check-status-btn') as HTMLButtonElement | null
+      const toast = document.getElementById('status-toast')
+
+      if (!heading || !countdownValue || !countdownText || !checkBtn || !toast) return
+
+      // Focus the heading so screen readers announce the landing state.
+      try {
+        heading.focus({ preventScroll: true })
+      } catch {
+        /* older browsers — non-critical */
+      }
+
+      // 30-second countdown (M4).
+      let remaining = 30
+      const interval = window.setInterval(() => {
+        remaining -= 1
+        if (remaining <= 0) {
+          window.clearInterval(interval)
+          countdownText.innerHTML =
+            'Your key should be live now. If not, tap <strong>Check key status</strong> below.'
+          checkBtn.classList.add('btn-primary')
+          checkBtn.classList.remove('btn-secondary')
+          return
+        }
+        countdownValue.textContent = String(remaining)
+      }, 1000)
+
+      function showToast(message: string, variant: 'success' | 'info' | 'error') {
+        if (!toast) return
+        toast.textContent = message
+        toast.className = `return-toast return-toast--${variant}`
+        toast.style.display = 'block'
+      }
+
+      checkBtn.addEventListener('click', async () => {
+        checkBtn.disabled = true
+        checkBtn.setAttribute('aria-busy', 'true')
+
+        try {
+          const supabase = getSupabaseClient()
+          if (!supabase) {
+            showToast('Still propagating — try again in 15 seconds.', 'info')
+            return
+          }
+
+          const {
+            data: { session },
+          } = await supabase.auth.getSession()
+
+          if (!session) {
+            showToast('Please sign in to check your key status.', 'error')
+            return
+          }
+
+          // Direct license_keys query is the most reliable signal that does not require an API call.
+          const { data, error } = await supabase
+            .from('license_keys')
+            .select('status')
+            .eq('user_id', session.user.id)
+            .eq('status', 'active')
+            .limit(1)
+
+          if (error) {
+            showToast('Still propagating — try again in 15 seconds.', 'info')
+            return
+          }
+
+          if (Array.isArray(data) && data.length > 0) {
+            showToast('Key is live!', 'success')
+          } else {
+            showToast('Still propagating — try again in 15 seconds.', 'info')
+          }
+        } catch {
+          showToast('Still propagating — try again in 15 seconds.', 'info')
+        } finally {
+          checkBtn.disabled = false
+          checkBtn.removeAttribute('aria-busy')
+        }
+      })
+    })
+  </script>
+</BaseLayout>
+
+<style>
+  .return-container {
+    max-width: 32rem;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 4rem;
+  }
+
+  .return-card {
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 2rem;
+  }
+
+  .return-heading {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #fafafa;
+    margin: 0 0 0.5rem;
+    line-height: 1.25;
+  }
+
+  .return-heading:focus-visible {
+    outline: 2px solid #e07a5f;
+    outline-offset: 4px;
+    border-radius: 0.25rem;
+  }
+
+  .return-subhead {
+    font-size: 1rem;
+    color: #a1a1aa;
+    margin: 0 0 1.5rem;
+  }
+
+  .return-code {
+    margin: 0 0 1.5rem;
+    padding: 0.875rem 1rem;
+    background: #0d0d0f;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.5rem;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.875rem;
+    color: #E07A5F;
+    overflow-x: auto;
+  }
+
+  .return-countdown {
+    font-size: 0.9375rem;
+    color: #d4d4d8;
+    margin: 0 0 0.75rem;
+  }
+
+  .return-reassurance {
+    font-size: 0.875rem;
+    color: #a1a1aa;
+    margin: 0 0 1.5rem;
+    line-height: 1.5;
+  }
+
+  .return-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: center;
+  }
+
+  .return-link {
+    color: #E07A5F;
+    text-decoration: none;
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+
+  .return-link:hover {
+    text-decoration: underline;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: 1px solid transparent;
+  }
+
+  .btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: #E07A5F;
+    color: #fafafa;
+    border-color: #E07A5F;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: #D4694E;
+    border-color: #D4694E;
+  }
+
+  .btn-secondary {
+    background: #18181b;
+    color: #d4d4d8;
+    border-color: #3f3f46;
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background: #27272a;
+    color: #fafafa;
+  }
+
+  .return-toast {
+    margin-top: 1.25rem;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    border: 1px solid transparent;
+  }
+
+  .return-toast--success {
+    background: rgba(34, 197, 94, 0.08);
+    border-color: rgba(34, 197, 94, 0.25);
+    color: #86efac;
+  }
+
+  .return-toast--info {
+    background: rgba(161, 161, 170, 0.08);
+    border-color: #2a2a2f;
+    color: #d4d4d8;
+  }
+
+  .return-toast--error {
+    background: rgba(239, 68, 68, 0.08);
+    border-color: rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .btn {
+      transition: none;
+    }
+  }
+</style>

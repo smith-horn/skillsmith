@@ -1,0 +1,491 @@
+---
+/**
+ * /complete-profile — Profile-completion form (quid-pro-quo signup)
+ *
+ * SMI-4401 Wave 2 — Spec §5.1.
+ *
+ * Users land here after signup/callback when first_name / last_name / profile_completed_at
+ * are missing on their `profiles` row. Collecting these two fields unlocks free-tier
+ * license-key issuance via the Wave 1 `issue_license_key_if_profile_complete(user_id)` RPC.
+ *
+ * Context params:
+ *   ?source=cli     — CLI-originated 403 recovery; copy leans on "re-run your terminal command".
+ *   ?next=<path>    — post-submit redirect; validated via validateNextParam (§4.4).
+ *
+ * Precedence (H6): source=cli > bare next= > no-params default. (team_invite_token removed per Option A §4.3.)
+ *
+ * Validation (M2): min 2, max 64, trimmed, /[A-Za-z]/ required. Matches Wave 1 SQL gate exactly.
+ * DROP "no sequential / no repeat" — do not client-reject names Wave 1 SQL accepts.
+ *
+ * Tier-cache interim (H9): Wave 2 does NOT call invalidate_tier_cache(user_id). That RPC
+ * doesn't exist yet — see TODO(SMI-4405) in the submit flow below. The TTL bump covers us.
+ */
+
+export const prerender = false
+
+import BaseLayout from '../layouts/BaseLayout.astro'
+
+const rawSource = Astro.url.searchParams.get('source')?.trim() ?? ''
+const rawNext = Astro.url.searchParams.get('next')?.trim() ?? ''
+const source = rawSource === 'cli' ? 'cli' : ''
+// SSR does NOT validate `next` — client-side validator (validateNextParam) handles that on submit.
+// We pass the raw value through so the client can resolve + sanitize in one place.
+---
+
+<BaseLayout title="Complete your profile — Skillsmith" noindex={true}>
+  <section class="profile-container" aria-busy="true" id="profile-main">
+    <!-- Loading skeleton -->
+    <div id="state-loading" class="profile-card" aria-hidden="false">
+      <div class="skeleton skeleton-heading"></div>
+      <div class="skeleton skeleton-sub"></div>
+      <div class="skeleton skeleton-field"></div>
+      <div class="skeleton skeleton-field"></div>
+      <div class="skeleton skeleton-button"></div>
+    </div>
+
+    <!-- Ready state: form -->
+    <div id="state-ready" class="profile-card" style="display: none;">
+      <h1 class="profile-heading">Almost there &mdash; tell us who you are.</h1>
+
+      <p id="profile-subhead" class="profile-subhead"></p>
+
+      <div
+        id="github-helper"
+        class="profile-helper"
+        role="note"
+        style="display: none;"
+      >
+        We grabbed this from your GitHub. Edit if wrong.
+      </div>
+
+      <div
+        id="profile-error-banner"
+        role="alert"
+        class="profile-error-banner"
+        style="display: none;"
+      >
+      </div>
+
+      <form id="profile-form" class="profile-form" novalidate>
+        <fieldset class="profile-fieldset">
+          <legend class="sr-only">Your name</legend>
+
+          <div class="form-group">
+            <label for="first-name" class="form-label">First name</label>
+            <input
+              id="first-name"
+              name="first_name"
+              type="text"
+              required
+              autocomplete="given-name"
+              minlength="2"
+              maxlength="64"
+              aria-describedby="first-name-error"
+              class="form-input"
+            />
+            <p id="first-name-error" class="form-error" role="alert"></p>
+          </div>
+
+          <div class="form-group">
+            <label for="last-name" class="form-label">Last name</label>
+            <input
+              id="last-name"
+              name="last_name"
+              type="text"
+              required
+              autocomplete="family-name"
+              minlength="2"
+              maxlength="64"
+              aria-describedby="last-name-error"
+              class="form-input"
+            />
+            <p id="last-name-error" class="form-error" role="alert"></p>
+          </div>
+        </fieldset>
+
+        <button type="submit" id="submit-btn" class="btn btn-primary btn-full">
+          <span id="submit-label">Activate free access</span>
+          <span id="submit-spinner" class="submit-spinner" style="display: none;" aria-hidden="true">
+            <svg viewBox="0 0 24 24" class="spinner-svg">
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+                fill="none"
+                opacity="0.25"></circle>
+              <path
+                d="M12 2a10 10 0 0 1 10 10"
+                stroke="currentColor"
+                stroke-width="4"
+                fill="none"></path>
+            </svg>
+          </span>
+        </button>
+
+        <p class="profile-fineprint">
+          You&rsquo;ll get 1,000 free API calls per month. No card required.
+        </p>
+
+        <p class="profile-legal">
+          We use this for your CLI identity only. <a href="/privacy" class="profile-link"
+            >Privacy policy &rarr;</a
+          >
+        </p>
+      </form>
+
+      <!-- Success toast -->
+      <div
+        id="profile-toast"
+        role="status"
+        aria-live="polite"
+        class="profile-toast"
+        style="display: none;"
+      >
+        Free tier activated
+      </div>
+    </div>
+  </section>
+
+  <script is:inline define:vars={{ source, rawNext }}>
+    window.__COMPLETE_PROFILE_CONTEXT__ = {
+      source: source,
+      next: rawNext,
+    }
+  </script>
+
+  <script>
+    import { getSupabaseClient } from '../lib/supabase-client'
+    import { validateNextParam } from '../lib/validate-next-redirect'
+    import {
+      COPY,
+      resolveSubhead,
+      validateName,
+      type CompleteProfileContext,
+    } from '../lib/complete-profile-copy'
+
+    document.addEventListener('astro:page-load', async () => {
+      const ctx =
+        (window as unknown as { __COMPLETE_PROFILE_CONTEXT__?: CompleteProfileContext })
+          .__COMPLETE_PROFILE_CONTEXT__ ?? { source: '', next: '' }
+
+      const main = document.getElementById('profile-main')
+      const loading = document.getElementById('state-loading')
+      const ready = document.getElementById('state-ready')
+      const subhead = document.getElementById('profile-subhead')
+      const githubHelper = document.getElementById('github-helper')
+      const banner = document.getElementById('profile-error-banner')
+      const form = document.getElementById('profile-form') as HTMLFormElement | null
+      const firstInput = document.getElementById('first-name') as HTMLInputElement | null
+      const lastInput = document.getElementById('last-name') as HTMLInputElement | null
+      const firstErr = document.getElementById('first-name-error')
+      const lastErr = document.getElementById('last-name-error')
+      const submitBtn = document.getElementById('submit-btn') as HTMLButtonElement | null
+      const submitLabel = document.getElementById('submit-label')
+      const submitSpinner = document.getElementById('submit-spinner')
+      const toast = document.getElementById('profile-toast')
+
+      if (
+        !main ||
+        !loading ||
+        !ready ||
+        !subhead ||
+        !githubHelper ||
+        !banner ||
+        !form ||
+        !firstInput ||
+        !lastInput ||
+        !firstErr ||
+        !lastErr ||
+        !submitBtn ||
+        !submitLabel ||
+        !submitSpinner ||
+        !toast
+      ) {
+        return
+      }
+
+      // Resolve the effective next path client-side through the validator.
+      // Precedence (H6): source=cli wins over bare next; else validated next; else no-params default.
+      const validatedNext = validateNextParam(ctx.next, ctx.source)
+
+      // Copy selection matrix per spec §5.1 — precedence: source=cli > bare next > no-params default.
+      const subheadCopy = resolveSubhead(ctx, validatedNext)
+      if (subheadCopy.text) {
+        subhead.textContent = subheadCopy.text
+      } else if (subheadCopy.html) {
+        subhead.innerHTML = subheadCopy.html
+      }
+
+      const supabase = getSupabaseClient()
+      if (!supabase) {
+        showError(COPY.errorSupabaseInit)
+        revealReady()
+        return
+      }
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+
+      // No session: bounce to /login preserving context through next=.
+      if (!session) {
+        const preserved = new URLSearchParams()
+        preserved.set('next', '/complete-profile')
+        if (ctx.source) preserved.set('source', ctx.source)
+        if (ctx.next) preserved.set('next_after', ctx.next)
+        window.location.href = `/login?${preserved.toString()}`
+        return
+      }
+
+      // Fetch existing profile for pre-fill.
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('first_name, last_name, tier')
+        .eq('id', session.user.id)
+        .single()
+
+      if (profileError) {
+        showError(COPY.errorProfileLoad)
+        revealReady()
+        return
+      }
+
+      // Pre-fill from existing profile (binds via `value=`, not `placeholder=`).
+      if (profile?.first_name) firstInput.value = profile.first_name
+      if (profile?.last_name) lastInput.value = profile.last_name
+
+      // GitHub helper row (A-GH-3): only when session provider is github.
+      const provider = session.user?.app_metadata?.provider
+      if (provider === 'github' && (firstInput.value || lastInput.value)) {
+        githubHelper.style.display = 'block'
+      }
+
+      revealReady()
+
+      // Focus management: first empty field, else first field.
+      if (!firstInput.value) {
+        firstInput.focus()
+      } else if (!lastInput.value) {
+        lastInput.focus()
+      } else {
+        firstInput.focus()
+      }
+
+      form.addEventListener('submit', (event) => {
+        event.preventDefault()
+        void handleSubmit()
+      })
+
+      function revealReady() {
+        if (!main || !loading || !ready) return
+        loading.style.display = 'none'
+        ready.style.display = ''
+        main.setAttribute('aria-busy', 'false')
+      }
+
+      function showError(html: string) {
+        if (!banner) return
+        banner.innerHTML = html
+        banner.style.display = 'block'
+        // Focus moves to the banner for screen-reader announce.
+        try {
+          banner.setAttribute('tabindex', '-1')
+          ;(banner as HTMLElement).focus({ preventScroll: false })
+        } catch {
+          /* non-critical */
+        }
+      }
+
+      function clearBanner() {
+        if (!banner) return
+        banner.style.display = 'none'
+        banner.innerHTML = ''
+      }
+
+      function setFieldError(
+        input: HTMLInputElement,
+        errEl: HTMLElement,
+        message: string | null,
+      ) {
+        if (message) {
+          input.setAttribute('aria-invalid', 'true')
+          errEl.textContent = message
+          errEl.style.display = 'block'
+        } else {
+          input.removeAttribute('aria-invalid')
+          errEl.textContent = ''
+          errEl.style.display = 'none'
+        }
+      }
+
+      function setSubmitting(isSubmitting: boolean) {
+        if (!submitBtn || !submitLabel || !submitSpinner || !firstInput || !lastInput) return
+        submitBtn.disabled = isSubmitting
+        firstInput.disabled = isSubmitting
+        lastInput.disabled = isSubmitting
+        if (isSubmitting) {
+          submitBtn.setAttribute('aria-busy', 'true')
+          submitLabel.textContent = COPY.submittingLabel
+          submitSpinner.style.display = 'inline-flex'
+        } else {
+          submitBtn.removeAttribute('aria-busy')
+          submitLabel.textContent = COPY.submitLabel
+          submitSpinner.style.display = 'none'
+        }
+      }
+
+      async function handleSubmit() {
+        if (!firstInput || !lastInput || !firstErr || !lastErr) return
+        clearBanner()
+
+        const firstName = firstInput.value.trim()
+        const lastName = lastInput.value.trim()
+
+        // Client-side validation (parity with Wave 1 SQL gate — M2).
+        const firstMsg = validateName(firstName)
+        const lastMsg = validateName(lastName)
+        setFieldError(firstInput, firstErr, firstMsg)
+        setFieldError(lastInput, lastErr, lastMsg)
+
+        if (firstMsg) {
+          firstInput.focus()
+          return
+        }
+        if (lastMsg) {
+          lastInput.focus()
+          return
+        }
+
+        if (!supabase || !session) {
+          showError(COPY.errorSessionLost)
+          return
+        }
+
+        setSubmitting(true)
+
+        try {
+          // Step 2: update profile (RLS permits self-update per migration 011).
+          const nowIso = new Date().toISOString()
+          const { error: updateError } = await supabase
+            .from('profiles')
+            .update({
+              first_name: firstName,
+              last_name: lastName,
+              profile_completed_at: nowIso,
+            })
+            .eq('id', session.user.id)
+
+          if (updateError) {
+            showError(COPY.errorGeneric)
+            setSubmitting(false)
+            return
+          }
+
+          // Step 3: issue license key via Wave 1 RPC.
+          const { data: rpcData, error: rpcError } = await supabase.rpc(
+            'issue_license_key_if_profile_complete',
+            { user_id_input: session.user.id },
+          )
+
+          if (rpcError) {
+            showError(COPY.errorKeyIssuance)
+            setSubmitting(false)
+            return
+          }
+
+          // Wave 1 RPC returns TABLE(issued_now BOOLEAN, reason TEXT). Unpack defensively.
+          const row = Array.isArray(rpcData) ? rpcData[0] : rpcData
+          const issuedNow = row?.issued_now === true
+          const reason: string | null = row?.reason ?? null
+
+          // Resolve RPC response: success branches fall through; error branches bail early.
+          // - { issued_now: true, reason: null }    → first-time issuance (happy path)
+          // - { issued_now: false, reason: 'already_issued' } → legacy user with an active key (happy path)
+          // - { issued_now: false, reason: 'concurrent_call' } → race w/ retry webhook; probe keys
+          // - { issued_now: false, reason: 'profile_incomplete' } → server-side re-validation failed
+          const happyPath = issuedNow || reason === 'already_issued'
+          if (!happyPath && reason === 'concurrent_call') {
+            await new Promise((resolve) => setTimeout(resolve, 500))
+            const { data: keys } = await supabase
+              .from('license_keys')
+              .select('status')
+              .eq('user_id', session.user.id)
+              .eq('status', 'active')
+              .limit(1)
+            if (!Array.isArray(keys) || keys.length === 0) {
+              showError(COPY.errorConcurrent)
+              setSubmitting(false)
+              return
+            }
+          } else if (!happyPath && reason === 'profile_incomplete') {
+            showError(COPY.errorProfileIncomplete)
+            setSubmitting(false)
+            return
+          } else if (!happyPath) {
+            showError(COPY.errorUnexpected)
+            setSubmitting(false)
+            return
+          }
+
+          // Step 4: tier-cache invalidation interim.
+          // TODO(SMI-4405): once invalidate_tier_cache(user_id) RPC ships in Wave 3, call it here.
+          // Wave 2 relies on the TIER_CACHE_TTL_SECONDS=60 env bump (Wave 1 spec §7 E1, H9) — no action required.
+
+          // Step 5: success toast + redirect.
+          if (toast) {
+            toast.style.display = 'block'
+          }
+          setTimeout(() => {
+            window.location.href = validatedNext
+          }, 2000)
+        } catch {
+          showError(COPY.errorGeneric)
+          setSubmitting(false)
+        }
+      }
+    })
+  </script>
+</BaseLayout>
+
+<style>
+  /* Dark-mode palette: bg #0d0d0f, card #121214, border #2a2a2f, accent #E07A5F. */
+  .profile-container { max-width: 32rem; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
+  .profile-card { background: #121214; border: 1px solid #2a2a2f; border-radius: 0.75rem; padding: 2rem; }
+  .profile-heading { font-size: 1.75rem; font-weight: 700; color: #fafafa; margin: 0 0 0.75rem; line-height: 1.25; }
+  .profile-subhead { font-size: 1rem; color: #d4d4d8; margin: 0 0 1.25rem; line-height: 1.5; }
+  .profile-helper { font-size: 0.8125rem; color: #a1a1aa; padding: 0.625rem 0.875rem; background: rgba(161, 161, 170, 0.06); border: 1px solid #2a2a2f; border-radius: 0.5rem; margin: 0 0 1.25rem; }
+  .profile-error-banner { padding: 0.75rem 1rem; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 0.5rem; color: #fca5a5; font-size: 0.875rem; margin: 0 0 1.25rem; line-height: 1.5; }
+  .profile-error-banner:focus-visible { outline: 2px solid #e07a5f; outline-offset: 2px; }
+  .profile-form { display: flex; flex-direction: column; gap: 1rem; }
+  .profile-fieldset { display: flex; flex-direction: column; gap: 1rem; margin: 0; padding: 0; border: none; }
+  .form-group { display: flex; flex-direction: column; gap: 0.375rem; }
+  .form-label { font-size: 0.875rem; font-weight: 500; color: #d4d4d8; }
+  .form-input { width: 100%; padding: 0.625rem 0.875rem; background: #0d0d0f; border: 1px solid #3f3f46; border-radius: 0.5rem; color: #fafafa; font-family: inherit; font-size: 0.9375rem; transition: border-color 0.15s; }
+  .form-input:hover:not(:disabled) { border-color: #52525b; }
+  .form-input:focus-visible { outline: 2px solid #e07a5f; outline-offset: 2px; border-color: #e07a5f; }
+  .form-input:disabled { opacity: 0.6; cursor: not-allowed; }
+  .form-input[aria-invalid='true'] { border-color: #ef4444; }
+  .form-error { font-size: 0.8125rem; color: #fca5a5; margin: 0; display: none; line-height: 1.4; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.75rem 1.25rem; border-radius: 0.5rem; font-size: 0.9375rem; font-weight: 600; font-family: inherit; cursor: pointer; transition: all 0.15s; border: 1px solid transparent; }
+  .btn:disabled { opacity: 0.7; cursor: not-allowed; }
+  .btn-primary { background: #e07a5f; color: #fafafa; border-color: #e07a5f; }
+  .btn-primary:hover:not(:disabled) { background: #d4694e; border-color: #d4694e; }
+  .btn-full { width: 100%; }
+  .submit-spinner { display: inline-flex; width: 18px; height: 18px; }
+  .spinner-svg { width: 100%; height: 100%; animation: spin 0.8s linear infinite; color: #fafafa; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .profile-fineprint { font-size: 0.8125rem; color: #a1a1aa; margin: 0.5rem 0 0; text-align: center; line-height: 1.5; }
+  .profile-legal { font-size: 0.75rem; color: #71717a; margin: 0; text-align: center; text-transform: uppercase; letter-spacing: 0.05em; line-height: 1.5; }
+  .profile-link { color: #e07a5f; text-decoration: none; font-weight: 500; }
+  .profile-link:hover { text-decoration: underline; }
+  .profile-toast { margin-top: 1.25rem; padding: 0.75rem 1rem; background: rgba(34, 197, 94, 0.08); border: 1px solid rgba(34, 197, 94, 0.25); border-radius: 0.5rem; color: #86efac; font-size: 0.875rem; text-align: center; }
+  .skeleton { background: linear-gradient(90deg, #18181b 0%, #27272a 50%, #18181b 100%); background-size: 200% 100%; animation: shimmer 1.4s ease-in-out infinite; border-radius: 0.375rem; margin-bottom: 1rem; }
+  .skeleton-heading { height: 1.75rem; width: 75%; }
+  .skeleton-sub { height: 1rem; width: 90%; margin-bottom: 1.5rem; }
+  .skeleton-field { height: 2.5rem; width: 100%; }
+  .skeleton-button { height: 2.75rem; width: 100%; margin-top: 0.5rem; }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+  /* prefers-reduced-motion: BaseLayout's global reset already neutralizes animations/transitions. */
+</style>
