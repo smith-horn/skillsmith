@@ -35,6 +35,7 @@ export * from './github-client.js'
 export * from './checkpoint.js'
 export * from './deduplication.js'
 export * from './output.js'
+export * from './signal-of-intent.js'
 
 /**
  * Main import function.

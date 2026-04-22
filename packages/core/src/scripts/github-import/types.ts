@@ -126,6 +126,24 @@ export interface ImportStats {
   blocked_count: number
   /** SMI-4408: the repos (owner/name) that were blocked this run, for audit. */
   blocked_repos: string[]
+  /**
+   * SMI-4415: count of post-dedup skills rejected by the signal-of-intent gate
+   * before reaching the blocklist stage. Optional for checkpoint-resume compat
+   * with pre-SMI-4415 files (backfilled to 0 at load time).
+   */
+  rejected_for_intent_count?: number
+  /**
+   * SMI-4415: aggregated reason strings for intent-gate rejections this run
+   * (e.g. `"metadata-only"`, `"mcp-server-topic"`). One entry per rejected
+   * repo, appropriate for grouping/reporting downstream.
+   */
+  rejected_for_intent_reasons?: string[]
+  /**
+   * SMI-4415: `admitted / (admitted + rejected_for_intent)` ratio. Operator
+   * gauge — a ≥20% delta from the rolling baseline requires plan-review
+   * per the SMI-4415 plan.
+   */
+  intent_admit_rate?: number
   queries_completed: string[]
   errors: string[]
   started_at: string
