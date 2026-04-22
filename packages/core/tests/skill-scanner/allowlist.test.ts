@@ -375,22 +375,24 @@ describe('loadAllowlist (SMI-4396)', () => {
 // ------------------------ ship-it ------------------------
 
 describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
-  it('is parseable and matches the 5 verified FPs', () => {
+  // SMI-4409: skill-image-pipeline entry retired — SMI-4396 Wave 2 sourced a
+  // \bcloud\b word-boundary at patterns.ts so Cloudinary no longer matches
+  // upload-to-cloud; the allowlist entry became redundant.
+  it('is parseable and matches the 4 verified FPs', () => {
     const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
     const parsed = parseAllowlistFile(raw)
-    expect(parsed.allowlist.length).toBe(5)
+    expect(parsed.allowlist.length).toBe(4)
     const ids = parsed.allowlist.map((e) => e.skillId).sort()
     expect(ids).toEqual(
       [
         'github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill',
         'github/kcmadden/claude-code-1password-skill',
         'github/rhysha/claude-security-research-skill',
-        'github/smith-horn/skill-image-pipeline',
         'github/straygizmo/mdium',
       ].sort()
     )
-    // All 5 must share the 2026-07-21 (90-day) expiry.
+    // All must share the 2026-07-21 (90-day) expiry.
     expect(parsed.allowlist.every((e) => e.expiresAt === '2026-07-21')).toBe(true)
   })
 })
