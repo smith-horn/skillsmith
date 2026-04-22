@@ -1,5 +1,11 @@
 # Contributing to Skillsmith
 
+## Code of Conduct
+
+This project and everyone participating in it is governed by the
+[Skillsmith Code of Conduct](CODE_OF_CONDUCT.md). By participating, you agree to
+uphold it. Report unacceptable behavior to `support@skillsmith.app`.
+
 ## Development Workflow
 
 ### Prerequisites
