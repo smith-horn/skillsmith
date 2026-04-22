@@ -3,15 +3,6 @@
   "generatedAt": "2026-04-21T18:30:00.000Z",
   "allowlist": [
     {
-      "skillId": "github/smith-horn/skill-image-pipeline",
-      "findingType": "data_exfiltration",
-      "messagePattern": "upload to (?:cloud|cloudinary)",
-      "reason": "Smith Horn's own Cloudinary upload pipeline. 'Upload to Cloudinary' is the declared product purpose (CDN delivery). Quarantined because the pre-SMI-4396 data_exfiltration regex matched 'upload ... to ... cloud' substring-style and did not word-boundary 'Cloudinary'. Wave 2 sources a word-boundary fix at packages/core/src/security/scanner/patterns.ts so this entry can be retired at next review.",
-      "reviewedBy": "ryansmith108",
-      "reviewedAt": "2026-04-21",
-      "expiresAt": "2026-07-21"
-    },
-    {
       "skillId": "github/kcmadden/claude-code-1password-skill",
       "findingType": "sensitive_path",
       "messagePattern": "password|credentials",
