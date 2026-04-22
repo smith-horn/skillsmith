@@ -50,4 +50,19 @@ fi
 # SMI-710: Sync Linear issues from commit messages (background, non-blocking)
 node "$(dirname "$0")/../scripts/linear-hook.mjs" post-commit &
 
+# SMI-4417: Background incremental re-index of doc corpus.
+# Non-blocking, failure non-fatal, skipped if .rvf absent (first run manual)
+# or in CI. GIT_OPTIONAL_LOCKS=0 + --no-optional-locks inside the indexer
+# prevent SMI-2536 smudge-filter hazards during `git diff` against the index.
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+if [ -n "$REPO_ROOT" ] && [ -z "$CI" ] && [ -z "$SKILLSMITH_CI" ] \
+  && [ -f "$REPO_ROOT/.ruvector/skillsmith-docs.rvf" ] \
+  && [ -f "$REPO_ROOT/packages/doc-retrieval-mcp/dist/src/cli.js" ]; then
+  (
+    cd "$REPO_ROOT" || exit 0
+    GIT_OPTIONAL_LOCKS=0 nohup node packages/doc-retrieval-mcp/dist/src/cli.js reindex --incremental --quiet \
+      >/dev/null 2>&1 &
+  )
+fi
+
 exit 0

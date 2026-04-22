@@ -6,6 +6,12 @@ node_modules/
 agentdb.rvf
 agentdb.rvf.lock
 
+# SMI-4417: doc-retrieval-mcp — local-only .rvf corpus index + metadata.
+# Never committed, never built in CI. .rvf is untracked, so smudge/clean
+# filters never run on it — no .git-crypt-ignore entry is needed.
+.ruvector/
+*.rvf
+
 # Build outputs
 dist/
 *.tsbuildinfo

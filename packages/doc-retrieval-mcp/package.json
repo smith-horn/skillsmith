@@ -1,0 +1,33 @@
+{
+  "name": "@skillsmith/doc-retrieval-mcp",
+  "version": "0.0.1",
+  "description": "Thin MCP server wrapping @ruvector/core for semantic doc retrieval over the Skillsmith corpus (SMI-4417, internal only)",
+  "private": true,
+  "type": "module",
+  "main": "./dist/src/server.js",
+  "bin": {
+    "skillsmith-doc-retrieval": "./dist/src/server.js",
+    "skillsmith-doc-retrieval-cli": "./dist/src/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "postbuild": "chmod +x dist/src/server.js dist/src/cli.js || true",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/src/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@ruvector/core": "0.1.30",
+    "@skillsmith/core": "^0.5.4",
+    "glob": "11.1.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "tsx": "4.21.0",
+    "vitest": "4.1.2"
+  },
+  "license": "Elastic-2.0"
+}
