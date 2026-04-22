@@ -53,7 +53,7 @@ Restart Claude Code so it picks up the new `.mcp.json` entry.
 |------|---------|-------|
 | `skill_docs_search` | Semantic doc search | `{ query, k?, min_score?, scope_globs? } → { chunks: [{ id, file_path, line_start, line_end, heading_chain, text, score }] }` |
 | `skill_docs_reindex` | Rebuild / refresh | `{ mode: 'full' \| 'incremental' }` |
-| `skill_docs_status` | Index health check | `{} → { chunkCount, fileCount, lastIndexedSha, lastRunAt, rvfPath, corpusVersion }` |
+| `skill_docs_status` | Index health check | `{} → { chunkCount, fileCount, lastIndexedSha, lastRunAt, storagePath, corpusVersion }` |
 
 ### Score semantics
 

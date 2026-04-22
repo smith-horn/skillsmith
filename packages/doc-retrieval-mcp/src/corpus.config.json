@@ -1,5 +1,5 @@
 {
-  "rvfPath": ".ruvector/skillsmith-docs.rvf",
+  "storagePath": ".ruvector/skillsmith-docs",
   "metadataPath": ".ruvector/metadata.json",
   "stateFile": ".ruvector/.index-state.json",
   "embeddingDim": 384,
@@ -19,5 +19,6 @@
     "docs/internal/**/*.md",
     "packages/*/README.md"
   ],
-  "requireSubmodule": "docs/internal"
+  "requireSubmodule": "docs/internal",
+  "_storagePathRationale": "@ruvector/core@0.1.30 writes a DIRECTORY (collections/, vectors.db redb KV, metadata.json, aliases.json, hnsw dumps), not a single .rvf file. SMI-4426 renamed `rvfPath` to `storagePath` to match reality; legacy *.rvf gitignore entry kept harmless."
 }

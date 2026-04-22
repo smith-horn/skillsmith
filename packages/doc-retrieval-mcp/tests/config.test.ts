@@ -68,7 +68,7 @@ describe('loadConfig', () => {
       await writeFile(
         good,
         JSON.stringify({
-          rvfPath: '.ruvector/x.rvf',
+          storagePath: '.ruvector/skillsmith-docs',
           metadataPath: '.ruvector/m.json',
           stateFile: '.ruvector/s.json',
           embeddingDim: 384,
@@ -78,13 +78,14 @@ describe('loadConfig', () => {
       )
       const cfg = await loadConfig(good)
       expect(cfg.embeddingDim).toBe(384)
+      expect(cfg.storagePath).toBe('.ruvector/skillsmith-docs')
 
       const bad = join(dir, 'bad.json')
       resetConfigCache()
       await writeFile(
         bad,
         JSON.stringify({
-          rvfPath: 'x',
+          storagePath: 'x',
           metadataPath: 'm',
           stateFile: 's',
           embeddingDim: 768,
@@ -96,5 +97,33 @@ describe('loadConfig', () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  it('rejects missing storagePath explicitly', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'doc-retrieval-cfg-'))
+    try {
+      const bad = join(dir, 'missing-storage.json')
+      resetConfigCache()
+      await writeFile(
+        bad,
+        JSON.stringify({
+          metadataPath: 'm',
+          stateFile: 's',
+          embeddingDim: 384,
+          chunk: { targetTokens: 240, overlapTokens: 48, minTokens: 8 },
+          globs: ['**/*.md'],
+        })
+      )
+      await expect(loadConfig(bad)).rejects.toThrow(/storagePath.*required/)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('DEFAULT_MIN_SIMILARITY', () => {
+  it('exports 0.35 per ADR-117 band table', async () => {
+    const { DEFAULT_MIN_SIMILARITY } = await import('../src/config.js')
+    expect(DEFAULT_MIN_SIMILARITY).toBe(0.35)
   })
 })
