@@ -91,14 +91,16 @@ const emailFromUrl = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail) ? rawEmail : ''
 
   <script>
     import { getSupabaseClient } from '../lib/supabase-client'
+    import { validateNextParam } from '../lib/validate-next-redirect'
 
     const PENDING_EMAIL_KEY = 'skillsmith_pending_signup_email'
     const COOLDOWN_PREFIX = 'skillsmith_resend_cooldown_until:'
     const COOLDOWN_MS = 60 * 1000
 
     document.addEventListener('astro:page-load', () => {
-      const ctx = (window as unknown as { __CHECK_EMAIL_CTX__?: { emailFromUrl: string; next: string } })
-        .__CHECK_EMAIL_CTX__
+      const ctx = (
+        window as unknown as { __CHECK_EMAIL_CTX__?: { emailFromUrl: string; next: string } }
+      ).__CHECK_EMAIL_CTX__
       const heading = document.getElementById('check-heading') as HTMLElement | null
       const emailDisplay = document.getElementById('email-display')
       const fallback = document.getElementById('check-fallback')
@@ -108,7 +110,16 @@ const emailFromUrl = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail) ? rawEmail : ''
       const status = document.getElementById('resend-status')
       const errorEl = document.getElementById('resend-error')
 
-      if (!heading || !emailDisplay || !fallback || !subhead || !resendBtn || !resendLabel || !status || !errorEl) {
+      if (
+        !heading ||
+        !emailDisplay ||
+        !fallback ||
+        !subhead ||
+        !resendBtn ||
+        !resendLabel ||
+        !status ||
+        !errorEl
+      ) {
         return
       }
 
@@ -139,7 +150,10 @@ const emailFromUrl = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail) ? rawEmail : ''
         email = ''
       }
 
-      const next = ctx?.next && ctx.next.length > 0 ? ctx.next : '/account/cli-token'
+      // Validate `next` through the OWASP redirect validator before embedding it in
+      // emailRedirectTo. An unvalidated next param in a confirmation email link would
+      // allow an attacker to craft a phishing URL (open redirect via email).
+      const next = validateNextParam(ctx?.next, null)
 
       // L1: cooldown persistence keyed by email.
       function cooldownKey(addr: string): string {
@@ -335,14 +349,14 @@ const emailFromUrl = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail) ? rawEmail : ''
   }
 
   .btn-primary {
-    background: #E07A5F;
+    background: #e07a5f;
     color: #fafafa;
-    border-color: #E07A5F;
+    border-color: #e07a5f;
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: #D4694E;
-    border-color: #D4694E;
+    background: #d4694e;
+    border-color: #d4694e;
   }
 
   .check-status {
@@ -382,7 +396,7 @@ const emailFromUrl = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail) ? rawEmail : ''
   }
 
   .check-link {
-    color: #E07A5F;
+    color: #e07a5f;
     text-decoration: none;
     font-weight: 500;
   }

@@ -74,9 +74,23 @@ function isSelfReference(pathname: string): boolean {
  */
 export function validateNextParam(
   next: string | null | undefined,
-  source: string | null | undefined,
+  source: string | null | undefined
 ): string {
   const fallback = defaultFor(source)
+
+  // H6 precedence: source=cli wins over bare next. CLI-originated flows always
+  // land on /return-to-cli regardless of what `next` says — the CLI itself knows
+  // where to send the user; the web form is not the right redirect-resolver.
+  //
+  // Exception (H2 over H6): when `next` targets `/device?user_code=...`, the
+  // device-code passthrough takes precedence even for CLI-sourced requests.
+  // The CLI originates this URL itself (RFC 8628 §3.3) and must be able to
+  // pass the `user_code` through; dropping it would strand the user mid-flow.
+  // We do a lightweight pre-check on the raw string here; the full validation
+  // block below handles all other safety concerns.
+  const isDeviceNext =
+    typeof next === 'string' && /^\/device(\?|$)/.test(next.trim()) && next.includes('user_code=')
+  if (source === 'cli' && !isDeviceNext) return fallback
 
   if (typeof next !== 'string' || next.length === 0) return fallback
 

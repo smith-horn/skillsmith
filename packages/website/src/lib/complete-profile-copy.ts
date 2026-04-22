@@ -113,7 +113,6 @@ export function resolveSubhead(ctx: CompleteProfileContext, validatedNext: strin
     }
   }
   return {
-    html:
-      'Takes 30 seconds. <a href="/privacy" class="profile-link">We use this for your CLI identity only.</a>',
+    html: 'Takes 30 seconds. <a href="/privacy" class="profile-link">We use this for your CLI identity only.</a>',
   }
 }

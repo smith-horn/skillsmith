@@ -49,12 +49,7 @@ const source = rawSource === 'cli' ? 'cli' : ''
 
       <p id="profile-subhead" class="profile-subhead"></p>
 
-      <div
-        id="github-helper"
-        class="profile-helper"
-        role="note"
-        style="display: none;"
-      >
+      <div id="github-helper" class="profile-helper" role="note" style="display: none;">
         We grabbed this from your GitHub. Edit if wrong.
       </div>
 
@@ -105,7 +100,12 @@ const source = rawSource === 'cli' ? 'cli' : ''
 
         <button type="submit" id="submit-btn" class="btn btn-primary btn-full">
           <span id="submit-label">Activate free access</span>
-          <span id="submit-spinner" class="submit-spinner" style="display: none;" aria-hidden="true">
+          <span
+            id="submit-spinner"
+            class="submit-spinner"
+            style="display: none;"
+            aria-hidden="true"
+          >
             <svg viewBox="0 0 24 24" class="spinner-svg">
               <circle
                 cx="12"
@@ -115,11 +115,8 @@ const source = rawSource === 'cli' ? 'cli' : ''
                 stroke-width="4"
                 fill="none"
                 opacity="0.25"></circle>
-              <path
-                d="M12 2a10 10 0 0 1 10 10"
-                stroke="currentColor"
-                stroke-width="4"
-                fill="none"></path>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="4" fill="none"
+              ></path>
             </svg>
           </span>
         </button>
@@ -166,9 +163,8 @@ const source = rawSource === 'cli' ? 'cli' : ''
     } from '../lib/complete-profile-copy'
 
     document.addEventListener('astro:page-load', async () => {
-      const ctx =
-        (window as unknown as { __COMPLETE_PROFILE_CONTEXT__?: CompleteProfileContext })
-          .__COMPLETE_PROFILE_CONTEXT__ ?? { source: '', next: '' }
+      const ctx = (window as unknown as { __COMPLETE_PROFILE_CONTEXT__?: CompleteProfileContext })
+        .__COMPLETE_PROFILE_CONTEXT__ ?? { source: '', next: '' }
 
       const main = document.getElementById('profile-main')
       const loading = document.getElementById('state-loading')
@@ -304,11 +300,7 @@ const source = rawSource === 'cli' ? 'cli' : ''
         banner.innerHTML = ''
       }
 
-      function setFieldError(
-        input: HTMLInputElement,
-        errEl: HTMLElement,
-        message: string | null,
-      ) {
+      function setFieldError(input: HTMLInputElement, errEl: HTMLElement, message: string | null) {
         if (message) {
           input.setAttribute('aria-invalid', 'true')
           errEl.textContent = message
@@ -386,7 +378,7 @@ const source = rawSource === 'cli' ? 'cli' : ''
           // Step 3: issue license key via Wave 1 RPC.
           const { data: rpcData, error: rpcError } = await supabase.rpc(
             'issue_license_key_if_profile_complete',
-            { user_id_input: session.user.id },
+            { user_id_input: session.user.id }
           )
 
           if (rpcError) {
@@ -451,41 +443,221 @@ const source = rawSource === 'cli' ? 'cli' : ''
 
 <style>
   /* Dark-mode palette: bg #0d0d0f, card #121214, border #2a2a2f, accent #E07A5F. */
-  .profile-container { max-width: 32rem; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
-  .profile-card { background: #121214; border: 1px solid #2a2a2f; border-radius: 0.75rem; padding: 2rem; }
-  .profile-heading { font-size: 1.75rem; font-weight: 700; color: #fafafa; margin: 0 0 0.75rem; line-height: 1.25; }
-  .profile-subhead { font-size: 1rem; color: #d4d4d8; margin: 0 0 1.25rem; line-height: 1.5; }
-  .profile-helper { font-size: 0.8125rem; color: #a1a1aa; padding: 0.625rem 0.875rem; background: rgba(161, 161, 170, 0.06); border: 1px solid #2a2a2f; border-radius: 0.5rem; margin: 0 0 1.25rem; }
-  .profile-error-banner { padding: 0.75rem 1rem; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 0.5rem; color: #fca5a5; font-size: 0.875rem; margin: 0 0 1.25rem; line-height: 1.5; }
-  .profile-error-banner:focus-visible { outline: 2px solid #e07a5f; outline-offset: 2px; }
-  .profile-form { display: flex; flex-direction: column; gap: 1rem; }
-  .profile-fieldset { display: flex; flex-direction: column; gap: 1rem; margin: 0; padding: 0; border: none; }
-  .form-group { display: flex; flex-direction: column; gap: 0.375rem; }
-  .form-label { font-size: 0.875rem; font-weight: 500; color: #d4d4d8; }
-  .form-input { width: 100%; padding: 0.625rem 0.875rem; background: #0d0d0f; border: 1px solid #3f3f46; border-radius: 0.5rem; color: #fafafa; font-family: inherit; font-size: 0.9375rem; transition: border-color 0.15s; }
-  .form-input:hover:not(:disabled) { border-color: #52525b; }
-  .form-input:focus-visible { outline: 2px solid #e07a5f; outline-offset: 2px; border-color: #e07a5f; }
-  .form-input:disabled { opacity: 0.6; cursor: not-allowed; }
-  .form-input[aria-invalid='true'] { border-color: #ef4444; }
-  .form-error { font-size: 0.8125rem; color: #fca5a5; margin: 0; display: none; line-height: 1.4; }
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.75rem 1.25rem; border-radius: 0.5rem; font-size: 0.9375rem; font-weight: 600; font-family: inherit; cursor: pointer; transition: all 0.15s; border: 1px solid transparent; }
-  .btn:disabled { opacity: 0.7; cursor: not-allowed; }
-  .btn-primary { background: #e07a5f; color: #fafafa; border-color: #e07a5f; }
-  .btn-primary:hover:not(:disabled) { background: #d4694e; border-color: #d4694e; }
-  .btn-full { width: 100%; }
-  .submit-spinner { display: inline-flex; width: 18px; height: 18px; }
-  .spinner-svg { width: 100%; height: 100%; animation: spin 0.8s linear infinite; color: #fafafa; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .profile-fineprint { font-size: 0.8125rem; color: #a1a1aa; margin: 0.5rem 0 0; text-align: center; line-height: 1.5; }
-  .profile-legal { font-size: 0.75rem; color: #71717a; margin: 0; text-align: center; text-transform: uppercase; letter-spacing: 0.05em; line-height: 1.5; }
-  .profile-link { color: #e07a5f; text-decoration: none; font-weight: 500; }
-  .profile-link:hover { text-decoration: underline; }
-  .profile-toast { margin-top: 1.25rem; padding: 0.75rem 1rem; background: rgba(34, 197, 94, 0.08); border: 1px solid rgba(34, 197, 94, 0.25); border-radius: 0.5rem; color: #86efac; font-size: 0.875rem; text-align: center; }
-  .skeleton { background: linear-gradient(90deg, #18181b 0%, #27272a 50%, #18181b 100%); background-size: 200% 100%; animation: shimmer 1.4s ease-in-out infinite; border-radius: 0.375rem; margin-bottom: 1rem; }
-  .skeleton-heading { height: 1.75rem; width: 75%; }
-  .skeleton-sub { height: 1rem; width: 90%; margin-bottom: 1.5rem; }
-  .skeleton-field { height: 2.5rem; width: 100%; }
-  .skeleton-button { height: 2.75rem; width: 100%; margin-top: 0.5rem; }
-  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+  .profile-container {
+    max-width: 32rem;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 4rem;
+  }
+  .profile-card {
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 2rem;
+  }
+  .profile-heading {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #fafafa;
+    margin: 0 0 0.75rem;
+    line-height: 1.25;
+  }
+  .profile-subhead {
+    font-size: 1rem;
+    color: #d4d4d8;
+    margin: 0 0 1.25rem;
+    line-height: 1.5;
+  }
+  .profile-helper {
+    font-size: 0.8125rem;
+    color: #a1a1aa;
+    padding: 0.625rem 0.875rem;
+    background: rgba(161, 161, 170, 0.06);
+    border: 1px solid #2a2a2f;
+    border-radius: 0.5rem;
+    margin: 0 0 1.25rem;
+  }
+  .profile-error-banner {
+    padding: 0.75rem 1rem;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: 0.5rem;
+    color: #fca5a5;
+    font-size: 0.875rem;
+    margin: 0 0 1.25rem;
+    line-height: 1.5;
+  }
+  .profile-error-banner:focus-visible {
+    outline: 2px solid #e07a5f;
+    outline-offset: 2px;
+  }
+  .profile-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+  .profile-fieldset {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin: 0;
+    padding: 0;
+    border: none;
+  }
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+  .form-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #d4d4d8;
+  }
+  .form-input {
+    width: 100%;
+    padding: 0.625rem 0.875rem;
+    background: #0d0d0f;
+    border: 1px solid #3f3f46;
+    border-radius: 0.5rem;
+    color: #fafafa;
+    font-family: inherit;
+    font-size: 0.9375rem;
+    transition: border-color 0.15s;
+  }
+  .form-input:hover:not(:disabled) {
+    border-color: #52525b;
+  }
+  .form-input:focus-visible {
+    outline: 2px solid #e07a5f;
+    outline-offset: 2px;
+    border-color: #e07a5f;
+  }
+  .form-input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .form-input[aria-invalid='true'] {
+    border-color: #ef4444;
+  }
+  .form-error {
+    font-size: 0.8125rem;
+    color: #fca5a5;
+    margin: 0;
+    display: none;
+    line-height: 1.4;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.25rem;
+    border-radius: 0.5rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: 1px solid transparent;
+  }
+  .btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background: #e07a5f;
+    color: #fafafa;
+    border-color: #e07a5f;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: #d4694e;
+    border-color: #d4694e;
+  }
+  .btn-full {
+    width: 100%;
+  }
+  .submit-spinner {
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+  }
+  .spinner-svg {
+    width: 100%;
+    height: 100%;
+    animation: spin 0.8s linear infinite;
+    color: #fafafa;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .profile-fineprint {
+    font-size: 0.8125rem;
+    color: #a1a1aa;
+    margin: 0.5rem 0 0;
+    text-align: center;
+    line-height: 1.5;
+  }
+  .profile-legal {
+    font-size: 0.75rem;
+    color: #71717a;
+    margin: 0;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    line-height: 1.5;
+  }
+  .profile-link {
+    color: #e07a5f;
+    text-decoration: none;
+    font-weight: 500;
+  }
+  .profile-link:hover {
+    text-decoration: underline;
+  }
+  .profile-toast {
+    margin-top: 1.25rem;
+    padding: 0.75rem 1rem;
+    background: rgba(34, 197, 94, 0.08);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+    border-radius: 0.5rem;
+    color: #86efac;
+    font-size: 0.875rem;
+    text-align: center;
+  }
+  .skeleton {
+    background: linear-gradient(90deg, #18181b 0%, #27272a 50%, #18181b 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+    border-radius: 0.375rem;
+    margin-bottom: 1rem;
+  }
+  .skeleton-heading {
+    height: 1.75rem;
+    width: 75%;
+  }
+  .skeleton-sub {
+    height: 1rem;
+    width: 90%;
+    margin-bottom: 1.5rem;
+  }
+  .skeleton-field {
+    height: 2.5rem;
+    width: 100%;
+  }
+  .skeleton-button {
+    height: 2.75rem;
+    width: 100%;
+    margin-top: 0.5rem;
+  }
+  @keyframes shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
   /* prefers-reduced-motion: BaseLayout's global reset already neutralizes animations/transitions. */
 </style>

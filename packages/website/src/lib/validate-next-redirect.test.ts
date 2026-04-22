@@ -84,7 +84,7 @@ describe('validateNextParam — OWASP rejection class (c) dangerous schemes', ()
 
   it('rejects data:text/html,<script>... → default', () => {
     expect(validateNextParam('data:text/html,<script>alert(1)</script>', null)).toBe(
-      NON_CLI_DEFAULT,
+      NON_CLI_DEFAULT
     )
   })
 
@@ -162,13 +162,13 @@ describe('validateNextParam — empty / missing input', () => {
 describe('validateNextParam — /device user_code passthrough (H2)', () => {
   it('preserves user_code on /device?user_code=BCDF-GHJK', () => {
     expect(validateNextParam('/device?user_code=BCDF-GHJK', 'cli')).toBe(
-      '/device?user_code=BCDF-GHJK',
+      '/device?user_code=BCDF-GHJK'
     )
   })
 
   it('preserves user_code without source hint too (validator is source-agnostic for /device)', () => {
     expect(validateNextParam('/device?user_code=BCDF-GHJK', null)).toBe(
-      '/device?user_code=BCDF-GHJK',
+      '/device?user_code=BCDF-GHJK'
     )
   })
 
