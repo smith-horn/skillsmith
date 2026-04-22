@@ -1,5 +1,20 @@
 # RuVector Dev Tooling — `skillsmith-doc-retrieval` MCP
 
+> ⚠️ **Runtime status: BLOCKED on [SMI-4426](https://linear.app/smith-horn-group/issue/SMI-4426)**
+>
+> Wave 2 Step 1 ([PR #722](https://github.com/smith-horn/skillsmith/pull/722))
+> ships this package as a **scaffold**. Unit tests cover chunker, metadata
+> store, and config guards (19/19 green), but the `@ruvector/core@0.1.30`
+> integration surface has **not** been runtime-validated. `skill_docs_search`
+> and `skill_docs_reindex` will throw a clear SMI-4426 error at invocation
+> rather than NPE. `skill_docs_status` works (metadata-only). The rest of
+> this guide documents the *intended* end-state — treat it as a spec until
+> SMI-4426 lands.
+>
+> See SMI-4426 for the API mismatch findings (`VectorDb` vs `VectorDB`,
+> `withDimensions(n)` factory, opaque persistence, distance-like scores,
+> platform native bindings).
+
 Local, private semantic search over the Skillsmith doc corpus. Wraps
 `@ruvector/core` with Skillsmith's existing `EmbeddingService` so agents can
 hit 3 tools (`skill_docs_search`, `skill_docs_reindex`, `skill_docs_status`)

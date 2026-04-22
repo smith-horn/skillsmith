@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "postbuild": "chmod +x dist/src/server.js dist/src/cli.js || true",
+    "postbuild": "cp src/corpus.config.json dist/src/ && chmod +x dist/src/server.js dist/src/cli.js || true",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/src/server.js",
     "test": "vitest run",
