@@ -31,6 +31,11 @@ const DEFAULT_POLL_MS = 100
  * net — SIGKILL still leaves the lock behind, but the next run's kill -0
  * staleness check breaks it.
  *
+ * NOTE: callers MUST validate `storagePath` via `assertSafeIndexTarget` from
+ * `./config.js` BEFORE calling this helper. This helper trusts its input so
+ * it remains testable against tmpdir paths that live outside the normal
+ * `$REPO_ROOT/.ruvector` boundary.
+ *
  * @throws Error('indexer lock timeout ...') when acquisition exceeds timeoutMs
  * while the existing holder remains alive.
  */

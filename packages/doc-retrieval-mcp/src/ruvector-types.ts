@@ -25,16 +25,10 @@ declare module '@ruvector/core' {
     metadata?: Record<string, unknown>
   }
 
-  // `VectorDb.withDimensions(n)` is present at runtime but deliberately not
-  // augmented here — the documented constructor `new VectorDb({ dimensions,
-  // storagePath, distanceMetric })` is the path Step 2 uses. Adding a static
-  // method to an already-exported class across module boundaries requires
-  // brittle namespace-merging syntax we don't need for correctness.
-
-  class CollectionManager {
-    constructor(options: { storagePath: string })
-    createCollection(name: string, options: { dimensions: number }): Promise<unknown>
-    getCollection(name: string): Promise<unknown>
-    listCollections(): Promise<string[]>
-  }
+  // `VectorDb.withDimensions(n)` and `CollectionManager` are present at
+  // runtime in @ruvector/core@0.1.30 but deliberately not augmented here —
+  // the documented constructor `new VectorDb({ dimensions, storagePath,
+  // distanceMetric })` is the path Steps 2-3 use, and no current caller
+  // needs `CollectionManager`. YAGNI per CLAUDE.md; add these back if/when
+  // a caller actually needs them.
 }

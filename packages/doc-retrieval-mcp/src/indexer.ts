@@ -27,10 +27,9 @@ export interface IndexResult {
 }
 
 const RUVECTOR_BLOCKED =
-  'doc-retrieval: RuVector integration is blocked on SMI-4426 ' +
-  '(https://linear.app/smith-horn-group/issue/SMI-4426). ' +
-  'The scaffold in PR #722 (SMI-4417) has not been runtime-validated against ' +
-  '@ruvector/core. See .claude/development/ruvector-dev-tooling.md.'
+  'doc-retrieval: runIndexer() is blocked on SMI-4426 Wave 2 Step 2. ' +
+  'Wave 2 Step 1 (types + lock helper + score transform + storagePath rename) ' +
+  'shipped in d804515a. See docs/internal/implementation/smi-4426-ruvector-runtime-fix.md.'
 
 export async function runIndexer(
   _mode: 'full' | 'incremental',
