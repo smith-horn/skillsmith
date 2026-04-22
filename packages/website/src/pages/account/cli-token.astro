@@ -217,15 +217,16 @@ const supabaseConfig = getSupabaseConfig()
         } = await supabase.auth.getSession()
 
         if (!session || sessionError) {
-          window.location.href = '/login?redirect=/account/cli-token'
+          // SMI-4401 Wave 2: use new `next=` param (canonical).
+          window.location.href = '/login?next=/account/cli-token'
           return
         }
 
-        // Load profile to show tier info
+        // Load profile to show tier info + Wave 2 grace-window surface (SMI-4401 A-GRACE-1 / M10).
         try {
           const { data: profile } = await supabase
             .from('profiles')
-            .select('tier')
+            .select('tier, profile_grace_until, profile_completed_at')
             .eq('id', session.user.id)
             .single()
 
@@ -235,6 +236,35 @@ const supabaseConfig = getSupabaseConfig()
           if (tierNote) {
             tierNote.textContent = `Your ${tier} plan allows up to ${maxKeys} active key${maxKeys === 1 ? '' : 's'}.`
             tierNote.style.display = 'block'
+          }
+
+          // SMI-4401 Wave 2 A-GRACE-1: render grace-window reminder if grace is active.
+          // Gracefully renders nothing when column is NULL (common pre-grace case).
+          const graceUntilRaw = (profile as { profile_grace_until?: string | null } | null)
+            ?.profile_grace_until
+          if (graceUntilRaw) {
+            const graceUntil = new Date(graceUntilRaw)
+            if (!Number.isNaN(graceUntil.getTime()) && graceUntil.getTime() > Date.now()) {
+              const pageContainer = document.querySelector('.page-container')
+              if (pageContainer) {
+                const humanDate = graceUntil.toLocaleDateString(undefined, {
+                  month: 'long',
+                  day: 'numeric',
+                  year: 'numeric',
+                })
+                const banner = document.createElement('div')
+                banner.className = 'grace-banner'
+                banner.setAttribute('role', 'status')
+                banner.innerHTML = `
+                  <p>
+                    <strong>One more thing</strong> — add your first and last name by
+                    <strong>${escapeHtml(humanDate)}</strong> to keep your key active.
+                    <a href="/complete-profile?next=/account/cli-token">Complete now →</a>
+                  </p>
+                `
+                pageContainer.insertBefore(banner, pageContainer.firstChild)
+              }
+            }
           }
         } catch {
           // Non-critical — tier note is informational only
@@ -249,17 +279,43 @@ const supabaseConfig = getSupabaseConfig()
           .eq('name', 'CLI Token')
           .order('created_at', { ascending: false })
 
-        // Render active CLI tokens section
+        // SMI-4401 Wave 2 C2: humanize a "Last used" timestamp ("2 hours ago", "3 days ago").
+        function humanizeAgo(iso: string | null | undefined): string {
+          if (!iso) return 'Never used'
+          const ts = new Date(iso).getTime()
+          if (Number.isNaN(ts)) return 'Never used'
+          const diffMs = Date.now() - ts
+          if (diffMs < 0) return 'Just now'
+          const minutes = Math.floor(diffMs / 60000)
+          if (minutes < 1) return 'Just now'
+          if (minutes < 60) return `Last used ${minutes} minute${minutes === 1 ? '' : 's'} ago`
+          const hours = Math.floor(minutes / 60)
+          if (hours < 24) return `Last used ${hours} hour${hours === 1 ? '' : 's'} ago`
+          const days = Math.floor(hours / 24)
+          if (days < 30) return `Last used ${days} day${days === 1 ? '' : 's'} ago`
+          const months = Math.floor(days / 30)
+          if (months < 12) return `Last used ${months} month${months === 1 ? '' : 's'} ago`
+          const years = Math.floor(days / 365)
+          return `Last used ${years} year${years === 1 ? '' : 's'} ago`
+        }
+
+        // SMI-4401 Wave 2 C2: last 6 chars of key_prefix for visual recognition.
+        function keyPreviewSuffix(prefix: string | null | undefined): string {
+          if (!prefix) return ''
+          const trimmed = prefix.replace(/_+$/, '')
+          return trimmed.slice(-6)
+        }
+
+        // Render active CLI tokens section — SMI-4401 Wave 2 return-visit state.
         const tokenCard = document.querySelector('.token-card')
         if (cliKeys && cliKeys.length > 0 && tokenCard) {
           const keysHtml = `
-            <section class="keys-section">
-              <h2 class="keys-section-heading">
-                Active CLI Token${cliKeys.length > 1 ? 's' : ''}
+            <section class="keys-section" aria-labelledby="keys-section-heading">
+              <h2 id="keys-section-heading" class="keys-section-heading">
+                Your CLI token is live
               </h2>
               <p class="section-desc">
-                This token is used by the <code>skillsmith</code> CLI. Revoke it here before
-                generating a replacement.
+                Revoke and regenerate here — the old key will stop working immediately.
               </p>
               <ul class="key-list">
                 ${cliKeys
@@ -267,28 +323,33 @@ const supabaseConfig = getSupabaseConfig()
                     (key) => `
                   <li class="key-item">
                     <div class="key-info">
-                      <span class="key-prefix">${escapeHtml(key.key_prefix)}&hellip;</span>
+                      <code class="key-prefix">sk_live_...${escapeHtml(keyPreviewSuffix(key.key_prefix))}</code>
                       <span class="key-meta">
-                        Created ${new Date(key.created_at).toLocaleDateString()}${
-                          key.last_used_at
-                            ? ` &middot; Last used ${new Date(key.last_used_at).toLocaleDateString()}`
-                            : ''
-                        }
+                        ${escapeHtml(humanizeAgo(key.last_used_at))}
+                        &middot; Created ${new Date(key.created_at).toLocaleDateString()}
                       </span>
                       <span class="tier-badge ${escapeHtml(key.tier)}">${escapeHtml(key.tier)}</span>
                     </div>
                     <button
-                      class="revoke-btn btn btn-danger btn-sm"
+                      class="revoke-regen-btn btn btn-danger btn-sm"
                       data-key-id="${escapeHtml(key.id)}"
-                      aria-label="Revoke CLI token ending in ${escapeHtml(key.key_prefix)}"
+                      data-key-prefix="${escapeHtml(key.key_prefix)}"
+                      aria-label="Revoke and regenerate CLI token ending in ${escapeHtml(keyPreviewSuffix(key.key_prefix))}"
                     >
-                      Revoke
+                      Revoke &amp; regenerate
                     </button>
                   </li>
                 `
                   )
                   .join('')}
               </ul>
+              <div
+                id="regen-status"
+                class="regen-status"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+              ></div>
             </section>
           `
           tokenCard.insertAdjacentHTML('beforebegin', keysHtml)
@@ -301,29 +362,181 @@ const supabaseConfig = getSupabaseConfig()
           }
         }
 
-        // Revoke handlers
-        document.querySelectorAll<HTMLButtonElement>('.revoke-btn').forEach((btn) => {
-          btn.addEventListener('click', async () => {
+        // SMI-4401 Wave 2 C2: inject a focus-trapped confirmation modal for Revoke & regenerate.
+        function ensureConfirmModal(): HTMLDivElement {
+          let modal = document.getElementById('revoke-confirm-modal') as HTMLDivElement | null
+          if (modal) return modal
+          modal = document.createElement('div')
+          modal.id = 'revoke-confirm-modal'
+          modal.className = 'revoke-modal-backdrop'
+          modal.setAttribute('role', 'dialog')
+          modal.setAttribute('aria-modal', 'true')
+          modal.setAttribute('aria-labelledby', 'revoke-modal-title')
+          modal.setAttribute('aria-describedby', 'revoke-modal-desc')
+          modal.setAttribute('hidden', 'true')
+          modal.innerHTML = `
+            <div class="revoke-modal">
+              <h2 id="revoke-modal-title">Revoke this key?</h2>
+              <p id="revoke-modal-desc">
+                Revoke this key and generate a new one? Any CLI sessions using the old key will stop working.
+              </p>
+              <div class="revoke-modal-actions">
+                <button type="button" class="btn btn-secondary" data-modal-cancel>Cancel</button>
+                <button type="button" class="btn btn-danger" data-modal-confirm>Confirm</button>
+              </div>
+            </div>
+          `
+          document.body.appendChild(modal)
+          return modal
+        }
+
+        // SMI-4401 Wave 2 C2: flip the UI into first-visit key display with a freshly generated key.
+        function showFreshKey(apiKey: string, keyPrefix: string) {
+          const keysSection = document.querySelector('.keys-section')
+          if (keysSection) {
+            ;(keysSection as HTMLElement).style.display = 'none'
+          }
+          keyValue.textContent = apiKey
+          generateSection.style.display = 'none'
+          keySection.style.display = 'block'
+          const status = document.getElementById('regen-status')
+          if (status) {
+            status.textContent = `New key generated (prefix ${keyPrefix}). Copy it now — it will not be shown again.`
+          }
+        }
+
+        function openConfirmModal(onConfirm: () => void) {
+          const modal = ensureConfirmModal()
+          modal.removeAttribute('hidden')
+          const cancelBtn = modal.querySelector<HTMLButtonElement>('[data-modal-cancel]')
+          const confirmBtn = modal.querySelector<HTMLButtonElement>('[data-modal-confirm]')
+          const previouslyFocused = document.activeElement as HTMLElement | null
+          const focusables = [cancelBtn, confirmBtn].filter(
+            (el): el is HTMLButtonElement => el !== null
+          )
+          if (confirmBtn) confirmBtn.focus()
+
+          function close() {
+            modal.setAttribute('hidden', 'true')
+            cancelBtn?.removeEventListener('click', onCancel)
+            confirmBtn?.removeEventListener('click', onConfirmClick)
+            modal.removeEventListener('keydown', onKeydown)
+            if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+              previouslyFocused.focus()
+            }
+          }
+          function onCancel() {
+            close()
+          }
+          function onConfirmClick() {
+            close()
+            onConfirm()
+          }
+          function onKeydown(ev: KeyboardEvent) {
+            if (ev.key === 'Escape') {
+              ev.preventDefault()
+              close()
+            } else if (ev.key === 'Tab' && focusables.length > 0) {
+              const first = focusables[0]
+              const last = focusables[focusables.length - 1]
+              if (ev.shiftKey && document.activeElement === first) {
+                ev.preventDefault()
+                last.focus()
+              } else if (!ev.shiftKey && document.activeElement === last) {
+                ev.preventDefault()
+                first.focus()
+              }
+            }
+          }
+          cancelBtn?.addEventListener('click', onCancel)
+          confirmBtn?.addEventListener('click', onConfirmClick)
+          modal.addEventListener('keydown', onKeydown)
+        }
+
+        // SMI-4401 Wave 2 C2: Revoke & regenerate handlers — fetch skeleton with full error matrix.
+        document.querySelectorAll<HTMLButtonElement>('.revoke-regen-btn').forEach((btn) => {
+          btn.addEventListener('click', () => {
             const keyId = btn.dataset.keyId
             if (!keyId) return
-            if (!confirm('Are you sure you want to revoke this key? This cannot be undone.')) return
 
-            btn.disabled = true
-            btn.textContent = 'Revoking\u2026'
+            openConfirmModal(async () => {
+              btn.disabled = true
+              const originalText = btn.textContent
+              btn.textContent = 'Regenerating...'
+              btn.setAttribute('aria-busy', 'true')
+              const status = document.getElementById('regen-status')
+              if (status) status.textContent = ''
 
-            const { error } = await supabase
-              .from('license_keys')
-              .update({ status: 'revoked', revoked_at: new Date().toISOString() })
-              .eq('id', keyId)
-              .eq('user_id', session.user.id) // defense-in-depth; RLS also enforces ownership
+              function resetButton() {
+                btn.disabled = false
+                if (originalText) btn.textContent = originalText
+                btn.removeAttribute('aria-busy')
+              }
 
-            if (error) {
-              alert('Failed to revoke token. Please try again.')
-              btn.disabled = false
-              btn.textContent = 'Revoke'
-            } else {
-              location.reload()
-            }
+              function showRegenError(message: string) {
+                if (status) status.textContent = message
+                resetButton()
+              }
+
+              // Refresh session before hitting the edge function.
+              const {
+                data: { session: currentSession },
+              } = await supabase.auth.getSession()
+              if (!currentSession) {
+                showRegenError('Session expired. Please sign in again.')
+                return
+              }
+
+              let response: Response
+              try {
+                response = await fetch(`${supabaseUrl}/functions/v1/regenerate-license`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${currentSession.access_token}`,
+                    apikey: supabaseAnonKey,
+                  },
+                  body: JSON.stringify({ key_id: keyId }),
+                })
+              } catch {
+                showRegenError('Network error. Check your connection and try again.')
+                return
+              }
+
+              if (response.status === 401) {
+                showRegenError('Your session expired. Please sign in again and retry.')
+                return
+              }
+              if (response.status === 429) {
+                const retryAfter = response.headers.get('Retry-After') ?? '60'
+                showRegenError(`Too many requests. Try again in ${retryAfter} seconds.`)
+                return
+              }
+              if (response.status >= 500) {
+                showRegenError(
+                  'Something went wrong on our end. Try again in a moment, or contact us at /contact?topic=cli-token.'
+                )
+                return
+              }
+              if (!response.ok) {
+                showRegenError('Could not regenerate key. Try again or contact support.')
+                return
+              }
+
+              try {
+                const body = (await response.json()) as {
+                  api_key?: string
+                  key_prefix?: string
+                }
+                if (!body.api_key || !body.key_prefix) {
+                  showRegenError('Unexpected response from server. Please reload the page.')
+                  return
+                }
+                showFreshKey(body.api_key, body.key_prefix)
+              } catch {
+                showRegenError('Could not parse server response. Please reload the page.')
+              }
+            })
           })
         })
 
@@ -799,6 +1012,88 @@ const supabaseConfig = getSupabaseConfig()
       .tier-badge.enterprise {
         background: rgba(245, 158, 11, 0.2);
         color: #f59e0b;
+      }
+
+      /* SMI-4401 Wave 2: grace-window reminder banner. */
+      .grace-banner {
+        background: rgba(234, 179, 8, 0.08);
+        border: 1px solid rgba(234, 179, 8, 0.35);
+        color: #fde68a;
+        border-radius: 10px;
+        padding: 0.75rem 1rem;
+        margin: 0 0 1.5rem;
+      }
+
+      .grace-banner p {
+        margin: 0;
+        font-size: 0.9rem;
+        line-height: 1.5;
+      }
+
+      .grace-banner a {
+        color: #a78bfa;
+        text-decoration: underline;
+        font-weight: 500;
+      }
+
+      .grace-banner a:hover {
+        color: #c4b5fd;
+      }
+
+      /* SMI-4401 Wave 2: post-regenerate aria-live region. */
+      .regen-status {
+        margin-top: 1rem;
+        font-size: 0.875rem;
+        color: #a1a1aa;
+      }
+
+      .regen-status:empty {
+        display: none;
+      }
+
+      /* SMI-4401 Wave 2: focus-trapped revoke confirmation modal. */
+      .revoke-modal-backdrop[hidden] {
+        display: none;
+      }
+
+      .revoke-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.65);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+        z-index: 9999;
+      }
+
+      .revoke-modal {
+        background: #121214;
+        border: 1px solid #2a2a2f;
+        border-radius: 12px;
+        padding: 1.5rem;
+        max-width: 420px;
+        width: 100%;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+      }
+
+      .revoke-modal h2 {
+        font-size: 1.125rem;
+        font-weight: 600;
+        margin: 0 0 0.75rem;
+      }
+
+      .revoke-modal p {
+        color: #a1a1aa;
+        font-size: 0.9375rem;
+        line-height: 1.5;
+        margin: 0 0 1.25rem;
+      }
+
+      .revoke-modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.5rem;
       }
     </style>
   </body>

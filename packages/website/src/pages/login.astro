@@ -22,7 +22,9 @@ import Nav from '../components/Nav.astro'
 const supabaseConfig = getSupabaseConfig()
 
 // Get redirect URL from query params
-const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
+// H7: accept both `next=` (new canonical param) and legacy `redirect=` — new pages use `next`.
+const redirectTo =
+  Astro.url.searchParams.get('next') ?? Astro.url.searchParams.get('redirect') ?? '/account'
 ---
 
 <!doctype html>
@@ -564,8 +566,9 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session) {
           // Already logged in, redirect to account
-          const redirectTo =
-            new URLSearchParams(window.location.search).get('redirect') || '/account'
+          // H7: prefer `next=` (new canonical), fall back to legacy `redirect=`.
+          const params = new URLSearchParams(window.location.search)
+          const redirectTo = params.get('next') ?? params.get('redirect') ?? '/account'
           window.location.href = redirectTo
         }
       })
@@ -623,8 +626,9 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
           }
 
           // Redirect after short delay
-          const redirectTo =
-            new URLSearchParams(window.location.search).get('redirect') || '/account'
+          // H7: prefer `next=` (new canonical), fall back to legacy `redirect=`.
+          const params = new URLSearchParams(window.location.search)
+          const redirectTo = params.get('next') ?? params.get('redirect') ?? '/account'
           setTimeout(() => {
             window.location.href = redirectTo
           }, 500)

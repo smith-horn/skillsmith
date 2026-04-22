@@ -19,7 +19,9 @@ import { getSupabaseConfig } from '../../lib/supabase-config'
 const supabaseConfig = getSupabaseConfig()
 
 // Get redirect URL from query params (for OAuth flows)
-const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
+// H7: accept both `next=` (new canonical param, SMI-4401 Wave 2) and legacy `redirect=`.
+const redirectTo =
+  Astro.url.searchParams.get('next') ?? Astro.url.searchParams.get('redirect') ?? '/account'
 ---
 
 <!doctype html>
@@ -239,7 +241,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
 </style>
 
 <script>
-  import { createClient } from '@supabase/supabase-js'
+  import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
   // Read config injected by SSR script in head
   const config = (window as unknown as { __SUPABASE_CONFIG__?: { url: string; anonKey: string } })
@@ -249,11 +251,105 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
   const authRedirectTo =
     (window as unknown as { __AUTH_REDIRECT_TO__?: string }).__AUTH_REDIRECT_TO__ || '/account'
 
-  document.addEventListener('astro:page-load', async () => {
+  // Module-scoped Supabase client. Lazy-initialized on first use so the SSR-injected config is
+  // guaranteed present. Shared by the `astro:page-load` handler and `routePostAuth()`.
+  let _supabaseSingleton: SupabaseClient | null = null
+  function getSupabase(): SupabaseClient | null {
+    if (_supabaseSingleton) return _supabaseSingleton
+    if (!supabaseUrl || !supabaseAnonKey) return null
+    _supabaseSingleton = createClient(supabaseUrl, supabaseAnonKey)
+    return _supabaseSingleton
+  }
+
+  // Module-scoped UI helpers so `routePostAuth()` (also module-scoped) can call them without
+  // capturing closures from `astro:page-load`. The DOM lookups defer to call-time, which is
+  // safe because these are only invoked after `astro:page-load` fires.
+  function showSuccess() {
     const loadingState = document.getElementById('loading-state') as HTMLDivElement | null
     const successState = document.getElementById('success-state') as HTMLDivElement | null
+    if (loadingState) loadingState.style.display = 'none'
+    if (successState) successState.style.display = 'block'
+    // Auto-redirect after 2 seconds
+    setTimeout(() => {
+      window.location.href = authRedirectTo
+    }, 2000)
+  }
+
+  function showError(message?: string) {
+    const loadingState = document.getElementById('loading-state') as HTMLDivElement | null
     const errorState = document.getElementById('error-state') as HTMLDivElement | null
     const errorMessageEl = document.getElementById('error-message') as HTMLParagraphElement | null
+    if (loadingState) loadingState.style.display = 'none'
+    if (errorState) errorState.style.display = 'block'
+    if (message && errorMessageEl) {
+      errorMessageEl.textContent = message
+    }
+  }
+
+  // Module-scoped — shared by all four callback success paths (email signin, email signup,
+  // OAuth signin, OAuth signup). Never inline inside handler closures: keeps behavior identical
+  // across branches and avoids four divergent copies.
+  async function routePostAuth() {
+    const supabase = getSupabase()
+    if (!supabase) {
+      showError('Authentication service not configured')
+      return
+    }
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session) {
+      showError('Session lost. Please sign in again.')
+      return
+    }
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('first_name, last_name, profile_completed_at')
+      .eq('id', session.user.id)
+      .single()
+    // H1: on profile fetch failure, do NOT default-redirect — surface the error instead.
+    // A silent default-redirect to `/complete-profile` on transient network error would trap
+    // already-complete users in the form. Keep them on callback with a clear retry prompt.
+    if (profileError) {
+      showError(
+        'We could not verify your profile. Please try again — if it keeps failing, contact us at /contact?topic=signup-help.'
+      )
+      return
+    }
+    const needsProfile =
+      !profile?.profile_completed_at ||
+      !profile?.first_name?.trim() ||
+      !profile?.last_name?.trim()
+    if (needsProfile) {
+      // H1 loop-guard: if the user arrived here FROM /complete-profile (referrer check) and
+      // we'd just send them back, surface an error instead of looping.
+      const cameFromCompleteProfile =
+        typeof document !== 'undefined' &&
+        !!document.referrer &&
+        (() => {
+          try {
+            return (
+              new URL(document.referrer, window.location.origin).pathname === '/complete-profile'
+            )
+          } catch {
+            return false
+          }
+        })()
+      if (cameFromCompleteProfile) {
+        showError(
+          'Something went wrong saving your profile. Try again at /complete-profile or contact us at /contact?topic=signup-help.'
+        )
+        return
+      }
+      const nextParam = encodeURIComponent(authRedirectTo)
+      window.location.href = `/complete-profile?next=${nextParam}`
+      return
+    }
+    showSuccess()
+  }
+
+  document.addEventListener('astro:page-load', async () => {
+    const successState = document.getElementById('success-state') as HTMLDivElement | null
     const dashboardLink = successState?.querySelector(
       'a[href="/account"]'
     ) as HTMLAnchorElement | null
@@ -263,30 +359,12 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
       dashboardLink.href = authRedirectTo
     }
 
-    function showSuccess() {
-      if (loadingState) loadingState.style.display = 'none'
-      if (successState) successState.style.display = 'block'
-      // Auto-redirect after 2 seconds
-      setTimeout(() => {
-        window.location.href = authRedirectTo
-      }, 2000)
-    }
-
-    function showError(message?: string) {
-      if (loadingState) loadingState.style.display = 'none'
-      if (errorState) errorState.style.display = 'block'
-      if (message && errorMessageEl) {
-        errorMessageEl.textContent = message
-      }
-    }
-
     try {
-      if (!supabaseUrl || !supabaseAnonKey) {
+      const supabase = getSupabase()
+      if (!supabase) {
         showError('Authentication service not configured')
         return
       }
-
-      const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
       // Get the hash fragment from URL (Supabase Auth uses hash-based routing)
       const hashParams = new URLSearchParams(window.location.hash.substring(1))
@@ -347,7 +425,8 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
             showError(error.message)
           } else {
             await fetchAndStoreGitHubOrgs()
-            showSuccess()
+            // SMI-4401 Wave 2: gate post-auth on profile completion.
+            await routePostAuth()
           }
         } else {
           // Try to exchange code for session (PKCE flow)
@@ -356,7 +435,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
             showError(error.message)
           } else {
             await fetchAndStoreGitHubOrgs()
-            showSuccess()
+            await routePostAuth()
           }
         }
       } else if (type === 'recovery') {
@@ -373,7 +452,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
           showError(error.message)
         } else {
           await fetchAndStoreGitHubOrgs()
-          showSuccess()
+          await routePostAuth()
         }
       } else {
         // Check if already logged in
@@ -381,7 +460,10 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
           data: { session },
         } = await supabase.auth.getSession()
         if (session) {
-          showSuccess()
+          // SMI-4401 Wave 2: even for "already-logged-in" fast-path, re-check profile
+          // completion. A user with an incomplete profile who bounces back here must still
+          // be routed through /complete-profile.
+          await routePostAuth()
         } else {
           // No tokens found, try PKCE exchange
           try {
@@ -390,7 +472,7 @@ const redirectTo = Astro.url.searchParams.get('redirect') || '/account'
               showError('Invalid or expired verification link. Please request a new one.')
             } else {
               await fetchAndStoreGitHubOrgs()
-              showSuccess()
+              await routePostAuth()
             }
           } catch (pkceError) {
             console.error('PKCE exchange error:', pkceError)
