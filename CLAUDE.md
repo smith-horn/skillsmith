@@ -15,6 +15,7 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 | [vscode-publishing-guide.md](.claude/development/vscode-publishing-guide.md) | VS Code Marketplace publishing, local/CI workflow, PAT rotation |
 | [subagent-tool-permissions-guide.md](.claude/development/subagent-tool-permissions-guide.md) | Subagent tool access by type, foreground/background behavior, skill author checklist |
 | [supabase-migration-safety.md](.claude/development/supabase-migration-safety.md) | Pre/post-apply query catalog, ACCESS EXCLUSIVE lock discipline, rollback convention, pooler rules. Invoke via `supabase-migration-reviewer` skill for automated review. |
+| [ruvector-dev-tooling.md](.claude/development/ruvector-dev-tooling.md) | `skillsmith-doc-retrieval` MCP — local semantic doc search (SMI-4417). Setup, tool surface, privacy boundary, post-commit hook, token-delta gate. |
 
 **Implementation plan template**: [.claude/templates/implementation-plan.md](.claude/templates/implementation-plan.md) — use this structure for all plans in `docs/internal/implementation/`.
 

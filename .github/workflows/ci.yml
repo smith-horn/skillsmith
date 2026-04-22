@@ -693,7 +693,7 @@ jobs:
           # Copy nested workspace node_modules (for non-hoisted dependencies)
           # docker cp works on stopped containers - no need for docker exec
           # NOTE: Package list must stay consistent with extract-builds step below
-          for pkg in core mcp-server cli enterprise vscode-extension website; do
+          for pkg in core mcp-server cli enterprise vscode-extension website doc-retrieval-mcp; do
             mkdir -p /tmp/packages/$pkg
             if docker cp extract-deps:/app/packages/$pkg/node_modules /tmp/packages/$pkg/ 2>/dev/null; then
               echo "✓ Copied packages/$pkg/node_modules"
@@ -734,6 +734,7 @@ jobs:
             packages/cli/dist
             packages/enterprise/dist
             packages/vscode-extension/dist
+            packages/doc-retrieval-mcp/dist
             packages/website/.astro
             .turbo
             packages/*/.turbo
@@ -752,7 +753,7 @@ jobs:
           docker create --name extract-builds skillsmith-ci:${{ github.sha }}
 
           # Extract dist/ from each package (consistent list with node_modules extraction)
-          for pkg in core mcp-server cli enterprise vscode-extension website; do
+          for pkg in core mcp-server cli enterprise vscode-extension website doc-retrieval-mcp; do
             mkdir -p packages/$pkg
             if docker cp extract-builds:/app/packages/$pkg/dist packages/$pkg/ 2>/dev/null; then
               echo "✓ Extracted packages/$pkg/dist"
@@ -774,7 +775,7 @@ jobs:
           if docker cp extract-builds:/app/.turbo ./ 2>/dev/null; then
             echo "✓ Extracted root .turbo cache"
           fi
-          for pkg in core mcp-server cli enterprise vscode-extension website; do
+          for pkg in core mcp-server cli enterprise vscode-extension website doc-retrieval-mcp; do
             if docker cp extract-builds:/app/packages/$pkg/.turbo packages/$pkg/ 2>/dev/null; then
               echo "✓ Extracted packages/$pkg/.turbo"
             fi

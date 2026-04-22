@@ -1,0 +1,14 @@
+[
+  {
+    "id": "git-crypt-worktree-interaction",
+    "prompt": "Explain how git-crypt interacts with worktrees in this repo. List the exact commands for creating a worktree, initializing git-crypt in it, and rebasing a worktree onto main. Cite file:line references."
+  },
+  {
+    "id": "file-length-enforcement",
+    "prompt": "What file-length limits does this repo enforce, where are they checked (hooks vs CI), and how does the pre-commit hook report violations? Reference the actual scripts."
+  },
+  {
+    "id": "plan-review-anti-patterns",
+    "prompt": "Identify anti-patterns to watch for when reviewing implementation plans in this repo. Cite docs/internal retros or plan-review artifacts."
+  }
+]

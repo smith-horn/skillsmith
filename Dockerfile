@@ -55,6 +55,7 @@ COPY packages/mcp-server/package*.json ./packages/mcp-server/
 COPY packages/cli/package*.json ./packages/cli/
 COPY packages/vscode-extension/package*.json ./packages/vscode-extension/
 COPY packages/website/package*.json ./packages/website/
+COPY packages/doc-retrieval-mcp/package*.json ./packages/doc-retrieval-mcp/
 
 # Install ALL dependencies (including devDependencies for building)
 # Using npm ci for reproducible builds from package-lock.json

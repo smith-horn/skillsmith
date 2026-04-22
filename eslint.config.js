@@ -55,6 +55,7 @@ const tsConfig = tseslint.config(
           './packages/cli/tsconfig.json',
           './packages/enterprise/tsconfig.json',
           './packages/vscode-extension/tsconfig.json',
+          './packages/doc-retrieval-mcp/tsconfig.json',
         ],
         tsconfigRootDir: import.meta.dirname,
       },

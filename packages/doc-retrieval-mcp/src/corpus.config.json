@@ -1,0 +1,23 @@
+{
+  "rvfPath": ".ruvector/skillsmith-docs.rvf",
+  "metadataPath": ".ruvector/metadata.json",
+  "stateFile": ".ruvector/.index-state.json",
+  "embeddingDim": 384,
+  "chunk": {
+    "targetTokens": 240,
+    "overlapTokens": 48,
+    "minTokens": 32,
+    "_rationale": "all-MiniLM-L6-v2 has a 256-token hard cap + EmbeddingService truncates to 1000 chars (~250 tokens). 240 fits under both. Plan's 500-token target was infeasible with this model; re-evaluated for Phase 3 (SMI-4419)."
+  },
+  "globs": [
+    "CLAUDE.md",
+    "CONTRIBUTING.md",
+    "README.md",
+    ".claude/development/**/*.md",
+    ".claude/skills/**/SKILL.md",
+    ".claude/templates/**/*.md",
+    "docs/internal/**/*.md",
+    "packages/*/README.md"
+  ],
+  "requireSubmodule": "docs/internal"
+}
