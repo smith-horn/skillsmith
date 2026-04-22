@@ -122,6 +122,10 @@ export interface ImportStats {
   total_found: number
   total_imported: number
   duplicates_removed: number
+  /** SMI-4408: count of post-dedup skills dropped by the indexer blocklist. */
+  blocked_count: number
+  /** SMI-4408: the repos (owner/name) that were blocked this run, for audit. */
+  blocked_repos: string[]
   queries_completed: string[]
   errors: string[]
   started_at: string

@@ -93,6 +93,8 @@ docs/strategy/
 # a child when the parent directory itself is excluded.
 /data/*
 !/data/skills-security-allowlist.json
+# SMI-4408: indexer blocklist for non-skill repos (imported-skill ingest filter).
+!/data/indexer-blocklist.json
 /output/
 test-results/
 playwright-report/

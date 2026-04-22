@@ -27,7 +27,12 @@ import { log, sleep } from './github-import/utils.js'
 import { checkRateLimit, fetchGitHubSearch } from './github-import/github-client.js'
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint } from './github-import/checkpoint.js'
 import { deduplicateSkills } from './github-import/deduplication.js'
+import { loadBlocklist } from './github-import/blocklist.js'
 import { saveOutput } from './github-import/output.js'
+
+// SMI-4408: blocklist file path — mirror the OUTPUT_PATH env-override pattern
+// so the importer can be pointed at a non-default blocklist in CI/test runs.
+const BLOCKLIST_PATH = process.env.INDEXER_BLOCKLIST_PATH || './data/indexer-blocklist.json'
 
 async function main(): Promise<void> {
   const startTime = Date.now()
@@ -56,6 +61,8 @@ async function main(): Promise<void> {
     total_found: 0,
     total_imported: 0,
     duplicates_removed: 0,
+    blocked_count: 0,
+    blocked_repos: [],
     queries_completed: [],
     errors: [],
     started_at: new Date().toISOString(),
@@ -68,6 +75,10 @@ async function main(): Promise<void> {
     if (checkpoint) {
       allSkills = checkpoint.skills
       stats = checkpoint.stats
+      // SMI-4408: backfill new stats fields if resuming from a pre-SMI-4408
+      // checkpoint (JSON load casts to Checkpoint but old files lack fields).
+      if (typeof stats.blocked_count !== 'number') stats.blocked_count = 0
+      if (!Array.isArray(stats.blocked_repos)) stats.blocked_repos = []
       const lastQueryIndex = SEARCH_QUERIES.findIndex((q) => q.name === checkpoint.last_query)
       if (lastQueryIndex >= 0) {
         startQueryIndex = lastQueryIndex
@@ -142,16 +153,41 @@ async function main(): Promise<void> {
   log('Deduplicating results...')
   const { unique, duplicateCount } = deduplicateSkills(allSkills)
   stats.duplicates_removed = duplicateCount
-  stats.total_imported = unique.length
   log(`Removed ${duplicateCount} duplicates`)
-  log(`Final count: ${unique.length} unique skills`)
+  log(`Post-dedup count: ${unique.length} unique skills`)
+  console.log()
+
+  // SMI-4408: Apply indexer blocklist — filters known non-skill repos
+  // before they reach data/imported-skills.json. Exact owner/name match.
+  log('Applying indexer blocklist...')
+  const blocklist = loadBlocklist(BLOCKLIST_PATH)
+  const filtered: ImportedSkill[] = []
+  const blockedRepos: string[] = []
+  for (const skill of unique) {
+    const repoKey = `${skill.author}/${skill.name}`
+    if (blocklist.isBlocked(repoKey)) {
+      blockedRepos.push(repoKey)
+    } else {
+      filtered.push(skill)
+    }
+  }
+  stats.blocked_count = blockedRepos.length
+  stats.blocked_repos = blockedRepos
+  stats.total_imported = filtered.length
+  log(`Blocked ${blockedRepos.length} non-skill repo(s)`)
+  if (blockedRepos.length > 0) {
+    for (const repo of blockedRepos) {
+      log(`  - ${repo}`)
+    }
+  }
+  log(`Final count: ${filtered.length} skills`)
   console.log()
 
   stats.completed_at = new Date().toISOString()
   stats.duration_ms = Date.now() - startTime
 
   log('Saving output...')
-  saveOutput(unique, stats)
+  saveOutput(filtered, stats)
   clearCheckpoint()
 
   console.log()
@@ -160,6 +196,7 @@ async function main(): Promise<void> {
   console.log('======================================================================')
   console.log(`  Total Found:        ${stats.total_found}`)
   console.log(`  Duplicates Removed: ${stats.duplicates_removed}`)
+  console.log(`  Blocked (SMI-4408): ${stats.blocked_count}`)
   console.log(`  Total Imported:     ${stats.total_imported}`)
   console.log(`  Duration:           ${(stats.duration_ms! / 1000).toFixed(2)}s`)
   console.log(`  Queries Completed:  ${stats.queries_completed.join(', ')}`)

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "updatedAt": "2026-04-21",
+  "blocked": [
+    {
+      "repo": "vinayaksavle/UploadDownloadPDF",
+      "reason": "ASP.NET MVC file-upload tutorial (C#). README contains 'multipart/form-data' which triggers data_exfiltration 'upload' pattern. Not a Claude Code skill — surfaced by SMI-4396 Wave 2 scan as a post-tuning residual.",
+      "addedBy": "ryansmith108",
+      "addedAt": "2026-04-21"
+    },
+    {
+      "repo": "Sfedfcv/redesigned-pancake",
+      "reason": "GitHub docs-repo mirror with misleading name (random-generator). Unrelated to Claude Code skills — surfaced by SMI-4396 Wave 2 scan as a post-tuning residual.",
+      "addedBy": "ryansmith108",
+      "addedAt": "2026-04-21"
+    }
+  ]
+}
