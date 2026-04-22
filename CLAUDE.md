@@ -270,6 +270,7 @@ When verifying a prod edge function via `curl`, always use `$SUPABASE_URL` (unde
 | `process-pending-subscription` | Service Role | No |
 | `expire-complimentary` | Service Role (daily 3 AM UTC cron) | No |
 | `skills-outreach` | Service Role | No |
+| `advance-notice-email` | Service Role | Yes |
 
 **Adding anonymous functions** (CI validates): Add to `supabase/config.toml` with `verify_jwt = false`, add to `NO_VERIFY_JWT_FUNCTIONS` in `scripts/audit-standards.mjs`, and add deploy command below.
 
@@ -293,6 +294,7 @@ npx supabase functions deploy create-portal-session --no-verify-jwt
 npx supabase functions deploy list-invoices --no-verify-jwt
 npx supabase functions deploy skills-outreach-preferences --no-verify-jwt
 npx supabase functions deploy admin-grant-subscription --no-verify-jwt
+npx supabase functions deploy advance-notice-email --no-verify-jwt
 ```
 
 **Gateway-verified auth** (SMI-4291 — relies on `auth.uid()` for RLS; no `--no-verify-jwt`):
