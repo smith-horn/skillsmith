@@ -65,6 +65,8 @@ async function _main(): Promise<void> {
     total_found: 0,
     total_imported: 0,
     duplicates_removed: 0,
+    blocked_count: 0,
+    blocked_repos: [],
     queries_completed: [],
     errors: [],
     started_at: new Date().toISOString(),
