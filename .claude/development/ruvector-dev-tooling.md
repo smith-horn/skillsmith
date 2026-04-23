@@ -42,15 +42,15 @@ Restart Claude Code so it picks up the new `.mcp.json` entry.
 
 ### Score semantics
 
-Cosine similarity, ∈ `[0, 1]`, higher is better. Default `min_score = 0.30`.
+Cosine similarity, ∈ `[0, 1]`, higher is better. Default `min_score = 0.35` (matches `DEFAULT_MIN_SIMILARITY` in `config.ts`).
 
 | Range | Meaning |
 |-------|---------|
-| `< 0.25` | Noise |
-| `0.25–0.40` | Weakly related |
-| `0.40–0.60` | Loosely relevant |
-| `0.60–0.80` | Strongly relevant |
-| `> 0.80` | Near-duplicate / exact |
+| `< 0.20` | Noise |
+| `0.20–0.35` | Weak |
+| `0.35–0.55` | Loose |
+| `0.55–0.75` | Strong |
+| `> 0.75` | Near-duplicate / exact |
 
 ---
 
@@ -81,7 +81,7 @@ this if we adopt a longer-context model.
 1. `.ruvector/` is **git-ignored** and **CI-refused**. The indexer exits
    non-zero if `CI=true` or `SKILLSMITH_CI=true`. It also refuses to write
    outside `$REPO_ROOT/.ruvector/`.
-2. `.claude/settings.json` carries a `permissions.deny` list covering 44 Ruflo
+2. `.claude/settings.json` carries a `permissions.deny` list covering 37 Ruflo
    tools with remote-persistence surfaces (AgentDB, hive-mind_memory,
    transfer_*, memory_store, etc.). This is the only Claude Code-enforced
    mechanism — `.mcp.json` `disabledTools` is silently ignored (SMI-4427).
