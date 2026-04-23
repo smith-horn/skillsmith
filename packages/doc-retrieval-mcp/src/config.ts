@@ -3,6 +3,22 @@ import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+/**
+ * Default similarity threshold for skill_docs_search results.
+ *
+ * ADR-117 band table (post-distance→similarity transform, [0, 1], 1 = best):
+ *   <0.20        noise
+ *   0.20 - 0.35  weak
+ *   0.35 - 0.55  loose
+ *   0.55 - 0.75  strong
+ *   >0.75        near-duplicate
+ *
+ * 0.35 mirrors the ADR recommendation. Wave 2 Step 6 token-delta harness
+ * will empirically validate before lock-in; tuning changes land here in
+ * one place (plan-review amendment I).
+ */
+export const DEFAULT_MIN_SIMILARITY = 0.35
+
 export interface ChunkConfig {
   targetTokens: number
   overlapTokens: number
@@ -10,7 +26,13 @@ export interface ChunkConfig {
 }
 
 export interface CorpusConfig {
-  rvfPath: string
+  /**
+   * Directory where @ruvector/core writes `collections/`, `vectors.db`
+   * (redb KV), `metadata.json`, `aliases.json`, and `<basename>.hnsw.*` dumps.
+   * Renamed from `rvfPath` under SMI-4426 — the binding persists a directory
+   * tree, not a single `.rvf` file.
+   */
+  storagePath: string
   metadataPath: string
   stateFile: string
   embeddingDim: number
@@ -41,8 +63,8 @@ function defaultConfigPath(): string {
 }
 
 function validate(c: CorpusConfig): void {
-  if (!c.rvfPath || !c.metadataPath || !c.stateFile) {
-    throw new Error('corpus.config.json: rvfPath, metadataPath, stateFile are required')
+  if (!c.storagePath || !c.metadataPath || !c.stateFile) {
+    throw new Error('corpus.config.json: storagePath, metadataPath, stateFile are required')
   }
   if (c.embeddingDim !== 384) {
     throw new Error(

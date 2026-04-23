@@ -16,7 +16,7 @@ const SearchArgs = z.object({
     .max(1)
     .optional()
     .describe(
-      'Minimum cosine similarity. Default 0.30. <0.25=noise, 0.25-0.40=weak, 0.40-0.60=loose, 0.60-0.80=strong, >0.80=near-duplicate'
+      'Minimum cosine similarity (post distance→similarity transform). Default 0.35. <0.20=noise, 0.20-0.35=weak, 0.35-0.55=loose, 0.55-0.75=strong, >0.75=near-duplicate'
     ),
   scope_globs: z
     .array(z.string())

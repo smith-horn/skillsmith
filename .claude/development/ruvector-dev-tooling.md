@@ -1,20 +1,5 @@
 # RuVector Dev Tooling — `skillsmith-doc-retrieval` MCP
 
-> ⚠️ **Runtime status: BLOCKED on [SMI-4426](https://linear.app/smith-horn-group/issue/SMI-4426)**
->
-> Wave 2 Step 1 ([PR #722](https://github.com/smith-horn/skillsmith/pull/722))
-> ships this package as a **scaffold**. Unit tests cover chunker, metadata
-> store, and config guards (19/19 green), but the `@ruvector/core@0.1.30`
-> integration surface has **not** been runtime-validated. `skill_docs_search`
-> and `skill_docs_reindex` will throw a clear SMI-4426 error at invocation
-> rather than NPE. `skill_docs_status` works (metadata-only). The rest of
-> this guide documents the *intended* end-state — treat it as a spec until
-> SMI-4426 lands.
->
-> See SMI-4426 for the API mismatch findings (`VectorDb` vs `VectorDB`,
-> `withDimensions(n)` factory, opaque persistence, distance-like scores,
-> platform native bindings).
-
 Local, private semantic search over the Skillsmith doc corpus. Wraps
 `@ruvector/core` with Skillsmith's existing `EmbeddingService` so agents can
 hit 3 tools (`skill_docs_search`, `skill_docs_reindex`, `skill_docs_status`)
@@ -38,8 +23,8 @@ git submodule update --init   # required: docs/internal must be present
 node packages/doc-retrieval-mcp/dist/src/cli.js reindex --full
 ```
 
-Output lands at `.ruvector/skillsmith-docs.rvf` +
-`.ruvector/metadata.json` + `.ruvector/.index-state.json`. All three are
+Output lands at `.ruvector/skillsmith-docs/vectors` (single-file VectorDb),
+`.ruvector/metadata.json`, and `.ruvector/.index-state.json`. All three are
 git-ignored. `.git-crypt-ignore` is **not** needed — smudge/clean filters
 never run on untracked files.
 
@@ -53,7 +38,7 @@ Restart Claude Code so it picks up the new `.mcp.json` entry.
 |------|---------|-------|
 | `skill_docs_search` | Semantic doc search | `{ query, k?, min_score?, scope_globs? } → { chunks: [{ id, file_path, line_start, line_end, heading_chain, text, score }] }` |
 | `skill_docs_reindex` | Rebuild / refresh | `{ mode: 'full' \| 'incremental' }` |
-| `skill_docs_status` | Index health check | `{} → { chunkCount, fileCount, lastIndexedSha, lastRunAt, rvfPath, corpusVersion }` |
+| `skill_docs_status` | Index health check | `{} → { chunkCount, fileCount, lastIndexedSha, lastRunAt, storagePath, corpusVersion }` |
 
 ### Score semantics
 
@@ -96,14 +81,13 @@ this if we adopt a longer-context model.
 1. `.ruvector/` is **git-ignored** and **CI-refused**. The indexer exits
    non-zero if `CI=true` or `SKILLSMITH_CI=true`. It also refuses to write
    outside `$REPO_ROOT/.ruvector/`.
-2. `.claude/settings.json` `permissions.deny` lists 37 Ruflo tools with
-   remote-persistence surfaces (AgentDB, hive-mind_memory, transfer_*,
-   memory_store, etc.). Authoritative list lives in
+2. `.claude/settings.json` carries a `permissions.deny` list covering 44 Ruflo
+   tools with remote-persistence surfaces (AgentDB, hive-mind_memory,
+   transfer_*, memory_store, etc.). This is the only Claude Code-enforced
+   mechanism — `.mcp.json` `disabledTools` is silently ignored (SMI-4427).
+   Authoritative list lives in
    [`docs/internal/architecture/ruflo-tool-classification.md`](../../docs/internal/architecture/ruflo-tool-classification.md)
-   (SMI-4420). SMI-4417 initially shipped this block in `.mcp.json` under a
-   `disabledTools` key — that field is not part of the `.mcp.json` schema and
-   is silently ignored; SMI-4427 moved it to the correct enforcement point.
-   Re-audit when Ruflo bumps a minor version.
+   (SMI-4420). Re-audit when Ruflo bumps a minor version.
 3. The corpus includes `docs/internal/**/*.md` (private submodule). The
    resulting `.rvf` is a searchable index of that content — treat it with
    the same confidentiality as the submodule itself.
@@ -114,17 +98,18 @@ this if we adopt a longer-context model.
 
 `.husky/post-commit` runs an incremental re-index in the background when:
 
-- `$REPO_ROOT/.ruvector/skillsmith-docs.rvf` exists (first run is manual).
+- `$REPO_ROOT/.ruvector/skillsmith-docs/vectors` exists (first run is manual).
 - `packages/doc-retrieval-mcp/dist/src/cli.js` exists (package is built).
 - `CI` and `SKILLSMITH_CI` are unset.
+- The `skillsmith-dev-1` Docker container is running (indexer requires the linux-arm64-gnu native binding).
 
 The indexer uses `GIT_OPTIONAL_LOCKS=0` and passes
 `--no-optional-locks` to every `git diff` invocation, avoiding the
 SMI-2536 smudge-filter branch-switch hazard. Hook failure is non-fatal
 and non-blocking.
 
-To disable the auto-reindex: delete the `.rvf` (first-run branch skips),
-or unset the cli by removing `packages/doc-retrieval-mcp/dist/`.
+To disable the auto-reindex: `rm -rf .ruvector/skillsmith-docs/` (first-run
+branch skips), or remove `packages/doc-retrieval-mcp/dist/`.
 
 ---
 

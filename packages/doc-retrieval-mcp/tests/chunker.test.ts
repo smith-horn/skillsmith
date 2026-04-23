@@ -8,7 +8,7 @@ import {
 import type { CorpusConfig } from '../src/config.js'
 
 const cfg: CorpusConfig = {
-  rvfPath: '.ruvector/x.rvf',
+  storagePath: '.ruvector/skillsmith-docs',
   metadataPath: '.ruvector/m.json',
   stateFile: '.ruvector/s.json',
   embeddingDim: 384,

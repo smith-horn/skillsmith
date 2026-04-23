@@ -1,5 +1,5 @@
 {
-  "rvfPath": ".ruvector/skillsmith-docs.rvf",
+  "storagePath": ".ruvector/skillsmith-docs",
   "metadataPath": ".ruvector/metadata.json",
   "stateFile": ".ruvector/.index-state.json",
   "embeddingDim": 384,
@@ -19,5 +19,6 @@
     "docs/internal/**/*.md",
     "packages/*/README.md"
   ],
-  "requireSubmodule": "docs/internal"
+  "requireSubmodule": "docs/internal",
+  "_storagePathRationale": "@ruvector/core@0.1.30 creates a SINGLE FILE at the exact storagePath given (not a directory tree as the initial plan assumed). SMI-4426 renamed `rvfPath` to `storagePath`. The indexer creates this as a DIRECTORY and passes join(storageAbs,'vectors') to VectorDb, so the lock (.indexer.lock) and the db file (vectors) coexist inside this directory. Legacy *.rvf gitignore entry kept harmless."
 }

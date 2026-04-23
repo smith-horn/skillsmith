@@ -8,7 +8,7 @@ export async function getStatus(configPath?: string): Promise<StatusInfo> {
   const cfg = await loadConfig(configPath)
   const metaAbs = resolveRepoPath(cfg.metadataPath)
   const stateAbs = resolveRepoPath(cfg.stateFile)
-  const rvfAbs = resolveRepoPath(cfg.rvfPath)
+  const storagePathAbs = resolveRepoPath(cfg.storagePath)
 
   const store = existsSync(metaAbs) ? await MetadataStore.load(metaAbs) : null
   const state: IndexState | null = existsSync(stateAbs)
@@ -20,7 +20,7 @@ export async function getStatus(configPath?: string): Promise<StatusInfo> {
     fileCount: store?.fileCount() ?? 0,
     lastIndexedSha: state?.lastIndexedSha ?? null,
     lastRunAt: state?.lastRunAt ?? null,
-    rvfPath: rvfAbs,
+    storagePath: storagePathAbs,
     corpusVersion: state?.corpusVersion ?? 0,
   }
 }
