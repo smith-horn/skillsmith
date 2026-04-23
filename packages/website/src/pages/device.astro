@@ -1,0 +1,142 @@
+---
+/**
+ * /device — CLI device-code approval stub (Wave 2)
+ *
+ * SMI-4401 Wave 2 — Routable skeleton only. Wave 3 (SMI-4402) owns RFC 8628
+ * device-code approval behavior; this stub exists so the URL does not 404 during
+ * Wave 3 development.
+ *
+ * H4 — User-facing copy only; no "Coming soon — complete Wave 3" jargon.
+ * L6 — No disabled Approve button; info-style text instead.
+ * §4.1 A-SEO-4 — Explicit inline robots noindex meta regardless of BaseLayout prop.
+ *
+ * Query params: `?user_code=XXXX-XXXX` (RFC 8628) — displayed read-only; not acted on.
+ */
+
+// Disable prerendering — SSR reads query params from the request URL.
+export const prerender = false
+
+import BaseLayout from '../layouts/BaseLayout.astro'
+
+const userCode = Astro.url.searchParams.get('user_code')?.trim() ?? ''
+const hasUserCode = userCode.length > 0 && userCode.length <= 128
+---
+
+<BaseLayout title="Approve CLI — Skillsmith" noindex={true}>
+  <!-- H4: explicit inline robots noindex — guarantees no indexing even if BaseLayout prop semantics change. -->
+  <meta slot="head" name="robots" content="noindex, nofollow" />
+
+  <section class="device-container">
+    <div class="device-card">
+      <h1 class="device-heading">Approve CLI sign-in</h1>
+
+      {
+        hasUserCode && (
+          <div class="code-row">
+            <label for="device-user-code" class="code-label">
+              Approval code
+            </label>
+            <input
+              id="device-user-code"
+              type="text"
+              value={userCode}
+              readonly
+              aria-readonly="true"
+              aria-label="Approval code"
+              class="code-input"
+            />
+          </div>
+        )
+      }
+
+      <p class="device-copy">
+        CLI approval is rolling out &mdash; check back soon. In the meantime,
+        <a href="/account/cli-token" class="device-link">view your CLI token</a>
+        or <a href="https://www.skillsmith.app/docs" class="device-link">read the docs</a>.
+      </p>
+
+      <p class="device-status">Approval UI will appear here once CLI support is live.</p>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .device-container {
+    max-width: 32rem;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 4rem;
+  }
+
+  .device-card {
+    background: #121214;
+    border: 1px solid #2a2a2f;
+    border-radius: 0.75rem;
+    padding: 2rem;
+  }
+
+  .device-heading {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #fafafa;
+    margin: 0 0 1.5rem;
+    line-height: 1.3;
+  }
+
+  .code-row {
+    margin-bottom: 1.5rem;
+  }
+
+  .code-label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #a1a1aa;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+  }
+
+  .code-input {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+    font-size: 1.125rem;
+    letter-spacing: 0.1em;
+    background: #0d0d0f;
+    border: 1px solid #3f3f46;
+    border-radius: 0.5rem;
+    color: #e07a5f;
+  }
+
+  .code-input:focus-visible {
+    outline: 2px solid #e07a5f;
+    outline-offset: 2px;
+  }
+
+  .device-copy {
+    font-size: 0.9375rem;
+    color: #d4d4d8;
+    line-height: 1.6;
+    margin: 0 0 1.25rem;
+  }
+
+  .device-link {
+    color: #e07a5f;
+    text-decoration: none;
+    font-weight: 500;
+  }
+
+  .device-link:hover {
+    text-decoration: underline;
+  }
+
+  .device-status {
+    font-size: 0.875rem;
+    color: #a1a1aa;
+    padding: 0.75rem 1rem;
+    background: rgba(161, 161, 170, 0.06);
+    border: 1px solid #2a2a2f;
+    border-radius: 0.5rem;
+    margin: 0;
+  }
+</style>

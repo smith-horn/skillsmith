@@ -1,5 +1,6 @@
 import rss from '@astrojs/rss'
 import { getCollection } from 'astro:content'
+import type { CollectionEntry } from 'astro:content'
 import type { APIContext } from 'astro'
 
 /**
@@ -7,14 +8,17 @@ import type { APIContext } from 'astro'
  * SMI-2532: RSS feed implementation
  */
 export async function GET(context: APIContext) {
-  const posts = (await getCollection('blog', ({ data }) => !data.draft)).sort(
-    (a, b) => b.data.date.valueOf() - a.data.date.valueOf()
+  const posts = (
+    await getCollection('blog', ({ data }: CollectionEntry<'blog'>) => !data.draft)
+  ).sort(
+    (a: CollectionEntry<'blog'>, b: CollectionEntry<'blog'>) =>
+      b.data.date.valueOf() - a.data.date.valueOf()
   )
   return rss({
     title: 'Skillsmith Blog',
     description: 'AI-powered agent skill discovery and management',
     site: context.site!,
-    items: posts.map((post) => ({
+    items: posts.map((post: CollectionEntry<'blog'>) => ({
       title: post.data.title,
       pubDate: post.data.date,
       description: post.data.description,

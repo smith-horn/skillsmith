@@ -314,7 +314,7 @@ const savingsPercent = period === 'annual' ? 17 : 0 // ~17% savings
                 <span>or sign up with email</span>
               </div>
 
-              <form id="register-form" class="auth-form">
+              <form id="register-form" class="auth-form" novalidate>
                 <div class="form-group">
                   <label for="full-name">Full Name (optional)</label>
                   <input
@@ -324,6 +324,45 @@ const savingsPercent = period === 'annual' ? 17 : 0 // ~17% savings
                     placeholder="John Doe"
                     autocomplete="name"
                   />
+                </div>
+
+                {/* SMI-4401 Wave 2: required first/last name for quid-pro-quo free tier (Wave 1 G2 trigger).
+                    Validation mirrors the Wave 1 SQL gate: min 2, max 64, at least one letter.
+                    No sequential/repeat rules. */}
+                <div class="form-group">
+                  <label for="first-name">First name</label>
+                  <input
+                    type="text"
+                    id="first-name"
+                    name="first_name"
+                    placeholder="Jane"
+                    required
+                    autocomplete="given-name"
+                    minlength="2"
+                    maxlength="64"
+                    aria-describedby="first-name-hint"
+                  />
+                  <p id="first-name-hint" class="input-hint">
+                    Your real name helps us personalize recommendations.
+                  </p>
+                </div>
+
+                <div class="form-group">
+                  <label for="last-name">Last name</label>
+                  <input
+                    type="text"
+                    id="last-name"
+                    name="last_name"
+                    placeholder="Doe"
+                    required
+                    autocomplete="family-name"
+                    minlength="2"
+                    maxlength="64"
+                    aria-describedby="last-name-hint"
+                  />
+                  <p id="last-name-hint" class="input-hint">
+                    &nbsp;
+                  </p>
                 </div>
 
                 <div class="form-group">
@@ -1204,12 +1243,42 @@ const savingsPercent = period === 'annual' ? 17 : 0 // ~17% savings
           const email = formData.get('email') as string
           const password = formData.get('password') as string
           const fullName = (formData.get('fullName') as string) || ''
+          // SMI-4401 Wave 2: required fields for Wave 1 `handle_new_user` trigger fast-path.
+          const firstName = ((formData.get('first_name') as string) || '').trim()
+          const lastName = ((formData.get('last_name') as string) || '').trim()
+
+          // SMI-4401 Wave 2 client validation (mirrors Wave 1 SQL gate: min 2, max 64, ≥1 letter).
+          const nameRe = /[A-Za-z]/
+          const firstNameInput = document.getElementById('first-name') as HTMLInputElement | null
+          const lastNameInput = document.getElementById('last-name') as HTMLInputElement | null
+          if (firstNameInput) firstNameInput.setAttribute('aria-invalid', 'false')
+          if (lastNameInput) lastNameInput.setAttribute('aria-invalid', 'false')
+
+          const invalid = (val: string) => val.length < 2 || val.length > 64 || !nameRe.test(val)
+          if (invalid(firstName)) {
+            if (firstNameInput) {
+              firstNameInput.setAttribute('aria-invalid', 'true')
+              firstNameInput.focus()
+            }
+            throw new Error(
+              'Please enter your first name (2-64 characters, must contain a letter).'
+            )
+          }
+          if (invalid(lastName)) {
+            if (lastNameInput) {
+              lastNameInput.setAttribute('aria-invalid', 'true')
+              lastNameInput.focus()
+            }
+            throw new Error('Please enter your last name (2-64 characters, must contain a letter).')
+          }
 
           const { data, error } = await supabase.auth.signUp({
             email,
             password,
             options: {
               data: {
+                first_name: firstName,
+                last_name: lastName,
                 full_name: fullName,
               },
               emailRedirectTo: `${window.location.origin}/auth/callback`,
@@ -1227,15 +1296,20 @@ const savingsPercent = period === 'annual' ? 17 : 0 // ~17% savings
               window.gtag('event', 'sign_up', { method: 'email' })
             }
 
-            if (registerSuccess) {
-              registerSuccess.innerHTML = `
-                <strong>Check your email!</strong><br>
-                We've sent a verification link to <strong>${email}</strong>.<br>
-                Please verify your email to complete registration.
-              `
-              registerSuccess.style.display = 'block'
-            }
-            registerForm.reset()
+            // SMI-4401 Wave 2 (M8): stash pending email in localStorage so /check-email can
+            // recover if the URL param is stripped by a user agent or extension. The
+            // `setTimeout(..., 0)` defers the write past the current microtask — synchronous
+            // localStorage writes immediately before navigation can be truncated on slow
+            // devices in some browsers. Wrap in try/catch because private-mode browsers throw.
+            setTimeout(() => {
+              try {
+                localStorage.setItem('skillsmith_pending_signup_email', email)
+              } catch {
+                /* private mode — non-fatal */
+              }
+              window.location.href = `/check-email?email=${encodeURIComponent(email)}&next=/account/cli-token`
+            }, 0)
+            return
           } else if (data.session) {
             // Logged in directly (email confirmation disabled)
             // GA4: Track successful signup (SMI-2460)

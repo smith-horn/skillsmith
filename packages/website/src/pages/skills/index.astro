@@ -1,5 +1,9 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro'
+// SMI-4401 Wave 2: crawler-aware signed-out overlay (L7 — SSR branch, not JS-gated).
+// Overlay markup is never emitted to crawlers so organic skills traffic remains indexable.
+import SignedOutOverlay from '../../components/SignedOutOverlay.astro'
+import { isCrawlerUserAgent } from '../../lib/crawler-detect'
 
 const categories = [
   { value: '', label: 'All Categories' },
@@ -18,6 +22,11 @@ const trustTiers = [
   { value: 'community', label: 'Community' },
   { value: 'experimental', label: 'Experimental' },
 ]
+
+// SMI-4401 Wave 2: SSR-time crawler detection. Emits a human-only overlay while keeping
+// structured data and card markup intact for GoogleBot et al.
+const userAgent = Astro.request.headers.get('user-agent') ?? ''
+const isCrawler = isCrawlerUserAgent(userAgent)
 ---
 
 <BaseLayout title="Skills" description="Search and discover agent skills">
@@ -109,7 +118,14 @@ const trustTiers = [
     }
   </script>
 
-  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 relative">
+    {
+      /* SMI-4401 Wave 2: signed-out overlay for humans only — never emitted to crawlers.
+         Client-side script on the overlay hides itself when an authenticated session is
+         detected (data-hidden-when-auth hook). Positioned relative to the catalog container. */
+    }
+    {!isCrawler && <SignedOutOverlay data-hidden-when-auth="true" />}
+
     <!-- Header -->
     <div class="text-center mb-12">
       <h1 class="text-4xl md:text-5xl font-bold mb-4">
@@ -118,6 +134,16 @@ const trustTiers = [
       <p class="text-dark-400 text-lg max-w-2xl mx-auto">
         Search through our collection of verified skills to enhance your development experience.
       </p>
+    </div>
+
+    {/* SMI-4401 Wave 2 A-M9-1: personalized quota banner (hidden until session + first search). */}
+    <div
+      id="skills-quota-banner"
+      class="hidden mb-6 rounded-lg border border-primary-500/30 bg-primary-500/5 px-4 py-3 text-sm text-primary-100"
+      role="status"
+      aria-live="polite"
+    >
+      <span id="skills-quota-banner-text"></span>
     </div>
 
     <!-- Search and Filters -->
@@ -374,6 +400,9 @@ const trustTiers = [
       // JWT auth provides tier-based rate limits vs anon key's community limits
       let authToken = supabaseAnonKey // Default to anon key
       let authMethod = 'anon_key'
+      // SMI-4401 Wave 2 A-M9-2: authenticated user's GitHub orgs (for signal-boost re-sort).
+      let userGithubOrgs = []
+      let userId = null
 
       async function initAuth() {
         try {
@@ -390,7 +419,27 @@ const trustTiers = [
           if (session?.access_token) {
             authToken = session.access_token
             authMethod = 'jwt'
+            userId = session.user?.id ?? null
             console.debug('[Skills] Using JWT auth for tier-based rate limits')
+
+            // SMI-4401 Wave 2 A-M9-2: fetch github_orgs for signal-boost personalization.
+            // Non-fatal on error — just skip personalization.
+            if (userId) {
+              try {
+                const { data: profile, error: profileError } = await supabase
+                  .from('profiles')
+                  .select('github_orgs')
+                  .eq('id', userId)
+                  .single()
+                if (!profileError && Array.isArray(profile?.github_orgs)) {
+                  userGithubOrgs = profile.github_orgs
+                    .map((o) => (typeof o === 'string' ? o.trim().toLowerCase() : ''))
+                    .filter(Boolean)
+                }
+              } catch (orgErr) {
+                console.debug('[Skills] github_orgs fetch failed (non-fatal):', orgErr?.message)
+              }
+            }
           } else {
             console.debug('[Skills] Using anon key (community rate limits)')
           }
@@ -444,12 +493,22 @@ const trustTiers = [
         return { color: 'text-red-400', label: 'New' }
       }
 
+      // SMI-4401 Wave 2 A-M9-2: render a "Matches your org" badge when signal-boost applies.
+      function createOrgMatchBadge(orgName) {
+        if (!orgName) return ''
+        return `<span class="inline-flex items-center gap-1 px-2 py-0.5 mt-2 rounded-full text-xs font-medium bg-primary-500/10 text-primary-300 border border-primary-500/30" aria-label="Matches your org: ${escapeHtml(orgName)}">
+          <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2a6 6 0 100 12 6 6 0 000-12zm0 2a4 4 0 110 8 4 4 0 010-8z"/></svg>
+          Matches your org: ${escapeHtml(orgName)}
+        </span>`
+      }
+
       // Create skill card HTML
       function createSkillCard(skill) {
         const trustClass = trustBadgeClasses[skill.trust_tier] || trustBadgeClasses.unknown
         const stars = skill.stars ?? 0
         const tier = getQualityTier(stars)
         const ariaLabel = `${tier.label}: ${formatNumber(stars)} stars`
+        const orgMatchBadge = createOrgMatchBadge(skill._orgMatch)
 
         return `
         <a href="/skills/${encodeURIComponent(skill.id)}" class="card-hover block bg-dark-900 rounded-xl border border-dark-800 p-6 hover:border-primary-500/50">
@@ -457,6 +516,7 @@ const trustTiers = [
             <div class="flex-1 min-w-0">
               <h3 class="text-lg font-semibold text-white truncate">${escapeHtml(skill.name)}</h3>
               <p class="text-dark-500 text-sm">${escapeHtml(skill.author || 'Unknown author')}</p>
+              ${orgMatchBadge}
             </div>
             <span class="ml-4 px-2.5 py-1 text-xs font-medium rounded-full border ${trustClass}">
               ${escapeHtml(skill.trust_tier || 'unknown')}
@@ -622,7 +682,7 @@ const trustTiers = [
             if (retryButton) retryButton.classList.add('hidden')
             errorMessage.innerHTML =
               "Looks like you're enjoying Skillsmith with 100 requests so far. Great! " +
-              '<a href="/signin" class="text-primary-400 hover:text-primary-300 underline">Sign in</a> ' +
+              '<a href="/login" class="text-primary-400 hover:text-primary-300 underline">Sign in</a> ' +
               'for free for 1,000 per month.'
             showState('error')
             resultsCount.textContent = ''
@@ -689,8 +749,57 @@ const trustTiers = [
             throw new Error(`HTTP ${response.status}: ${response.statusText}`)
           }
 
+          // SMI-4401 Wave 2 A-M9-1: read rate-limit headers and surface quota banner for
+          // authenticated callers. Anon callers share a tiny global bucket so the banner only
+          // renders when we have a JWT (tier-based limits).
+          try {
+            const remaining = response.headers.get('X-RateLimit-Remaining')
+            const limit = response.headers.get('X-RateLimit-Limit')
+            const banner = document.getElementById('skills-quota-banner')
+            const bannerText = document.getElementById('skills-quota-banner-text')
+            if (
+              banner &&
+              bannerText &&
+              authMethod === 'jwt' &&
+              remaining !== null &&
+              limit !== null
+            ) {
+              const remainingNum = Number(remaining)
+              const limitNum = Number(limit)
+              if (Number.isFinite(remainingNum) && Number.isFinite(limitNum) && limitNum > 0) {
+                bannerText.textContent = `${remainingNum} of ${limitNum} free requests remaining this month`
+                banner.classList.remove('hidden')
+              }
+            }
+          } catch (headerErr) {
+            console.debug('[Skills] quota header parse failed:', headerErr?.message)
+          }
+
           const data = await response.json()
           allResults = data.data || data.skills || data.results || []
+
+          // SMI-4401 Wave 2 A-M9-2: signal-boost — surface skills whose topics or author
+          // substring match an org the user belongs to. Decorate matching cards + float
+          // them to the top of the list, preserving original order within each bucket.
+          if (userGithubOrgs.length > 0 && Array.isArray(allResults) && allResults.length > 0) {
+            allResults.forEach((skill) => {
+              if (!skill || typeof skill !== 'object') return
+              const authorLower = (skill.author || '').toLowerCase()
+              const topics = Array.isArray(skill.metadata?.topics) ? skill.metadata.topics : []
+              const topicsLower = topics
+                .map((t) => (typeof t === 'string' ? t.toLowerCase() : ''))
+                .filter(Boolean)
+              const match = userGithubOrgs.find(
+                (org) => authorLower.includes(org) || topicsLower.some((t) => t.includes(org))
+              )
+              if (match) {
+                skill._orgMatch = match
+              }
+            })
+            const matched = allResults.filter((s) => s && s._orgMatch)
+            const others = allResults.filter((s) => !s || !s._orgMatch)
+            allResults = matched.concat(others)
+          }
 
           // GA4: Track skill search (SMI-2453)
           if (typeof window.gtag === 'function') {
