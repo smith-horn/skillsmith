@@ -271,6 +271,9 @@ When verifying a prod edge function via `curl`, always use `$SUPABASE_URL` (unde
 | `expire-complimentary` | Service Role (daily 3 AM UTC cron) | No |
 | `skills-outreach` | Service Role | No |
 | `advance-notice-email` | Service Role | Yes |
+| `auth-device-code` | Anonymous (RFC 8628 device auth) | Yes |
+| `auth-device-token` | Anonymous (RFC 8628 token poll) | Yes |
+| `auth-device-approve` | Authenticated (User JWT, gateway-verified) | No |
 
 **Adding anonymous functions** (CI validates): Add to `supabase/config.toml` with `verify_jwt = false`, add to `NO_VERIFY_JWT_FUNCTIONS` in `scripts/audit-standards.mjs`, and add deploy command below.
 
@@ -295,12 +298,15 @@ npx supabase functions deploy list-invoices --no-verify-jwt
 npx supabase functions deploy skills-outreach-preferences --no-verify-jwt
 npx supabase functions deploy admin-grant-subscription --no-verify-jwt
 npx supabase functions deploy advance-notice-email --no-verify-jwt
+npx supabase functions deploy auth-device-code --no-verify-jwt
+npx supabase functions deploy auth-device-token --no-verify-jwt
 ```
 
 **Gateway-verified auth** (SMI-4291 — relies on `auth.uid()` for RLS; no `--no-verify-jwt`):
 
 ```bash
 npx supabase functions deploy webhook-dlq
+npx supabase functions deploy auth-device-approve
 ```
 
 **Auto-deploy**: Edge functions are automatically deployed when changes to `supabase/functions/**` are merged to main. The `deploy-edge-functions.yml` workflow detects changed functions and deploys only those. `_shared/` changes trigger a full deploy of all 25 functions. Manual full deploy: `gh workflow run deploy-edge-functions.yml -f deploy_all=true`.
