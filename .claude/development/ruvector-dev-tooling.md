@@ -96,11 +96,14 @@ this if we adopt a longer-context model.
 1. `.ruvector/` is **git-ignored** and **CI-refused**. The indexer exits
    non-zero if `CI=true` or `SKILLSMITH_CI=true`. It also refuses to write
    outside `$REPO_ROOT/.ruvector/`.
-2. `.mcp.json` carries an explicit `disabledTools` block listing 37 Ruflo
-   tools with remote-persistence surfaces (AgentDB, hive-mind_memory,
-   transfer_*, memory_store, etc.). Authoritative list lives in
+2. `.claude/settings.json` `permissions.deny` lists 37 Ruflo tools with
+   remote-persistence surfaces (AgentDB, hive-mind_memory, transfer_*,
+   memory_store, etc.). Authoritative list lives in
    [`docs/internal/architecture/ruflo-tool-classification.md`](../../docs/internal/architecture/ruflo-tool-classification.md)
-   (SMI-4420). Re-audit when Ruflo bumps a minor version.
+   (SMI-4420). SMI-4417 initially shipped this block in `.mcp.json` under a
+   `disabledTools` key — that field is not part of the `.mcp.json` schema and
+   is silently ignored; SMI-4427 moved it to the correct enforcement point.
+   Re-audit when Ruflo bumps a minor version.
 3. The corpus includes `docs/internal/**/*.md` (private submodule). The
    resulting `.rvf` is a searchable index of that content — treat it with
    the same confidentiality as the submodule itself.
