@@ -1,8 +1,12 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { createRequire } from 'node:module'
 import { minimatch } from 'minimatch'
-import { VectorDb } from '@ruvector/core'
 import './ruvector-types.js'
+// @ruvector/core is CJS; ESM named imports fail at runtime in Node.js v22.
+const { VectorDb } = createRequire(import.meta.url)(
+  '@ruvector/core'
+) as typeof import('@ruvector/core')
 import { loadConfig, resolveRepoPath, DEFAULT_MIN_SIMILARITY } from './config.js'
 import { embedBatch } from './embedding.js'
 import type { SearchHit } from './types.js'
