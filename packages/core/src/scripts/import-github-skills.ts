@@ -28,6 +28,7 @@ import { checkRateLimit, fetchGitHubSearch } from './github-import/github-client
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint } from './github-import/checkpoint.js'
 import { deduplicateSkills } from './github-import/deduplication.js'
 import { loadBlocklist } from './github-import/blocklist.js'
+import { computeSignalScore, shouldIngest } from './github-import/signal-of-intent.js'
 import { saveOutput } from './github-import/output.js'
 
 // SMI-4408: blocklist file path — mirror the OUTPUT_PATH env-override pattern
@@ -79,6 +80,11 @@ async function main(): Promise<void> {
       // checkpoint (JSON load casts to Checkpoint but old files lack fields).
       if (typeof stats.blocked_count !== 'number') stats.blocked_count = 0
       if (!Array.isArray(stats.blocked_repos)) stats.blocked_repos = []
+      // SMI-4415: backfill intent-gate fields (resume from a pre-SMI-4415
+      // checkpoint leaves them undefined). Dropped on the final re-assignment
+      // below, but keeps the stats object well-typed during the run.
+      stats.rejected_for_intent_count ??= 0
+      stats.rejected_for_intent_reasons ??= []
       const lastQueryIndex = SEARCH_QUERIES.findIndex((q) => q.name === checkpoint.last_query)
       if (lastQueryIndex >= 0) {
         startQueryIndex = lastQueryIndex
@@ -157,13 +163,37 @@ async function main(): Promise<void> {
   log(`Post-dedup count: ${unique.length} unique skills`)
   console.log()
 
+  // SMI-4415: Apply signal-of-intent gate BEFORE the SMI-4408 blocklist.
+  // Drops repos that don't exhibit structural signals of being a Claude skill
+  // (topic tag OR HIGH_TRUST_OWNERS membership) combined with a composite
+  // score ≥ SIGNAL_THRESHOLD. Per-skill reason captured for audit.
+  log('Applying signal-of-intent gate...')
+  const admitted: ImportedSkill[] = []
+  const rejectedReasons: string[] = []
+  for (const skill of unique) {
+    if (shouldIngest(skill)) {
+      admitted.push(skill)
+    } else {
+      const { signals } = computeSignalScore(skill)
+      rejectedReasons.push(signals.length > 0 ? signals.join('+') : 'no-signal')
+    }
+  }
+  const rejectedForIntent = unique.length - admitted.length
+  stats.rejected_for_intent_count = rejectedForIntent
+  stats.rejected_for_intent_reasons = rejectedReasons
+  stats.intent_admit_rate = unique.length > 0 ? admitted.length / unique.length : 1
+  log(`Rejected ${rejectedForIntent} for intent`)
+  log(`Intent admit rate: ${(stats.intent_admit_rate * 100).toFixed(1)}%`)
+  log(`Post-gate count: ${admitted.length} skills`)
+  console.log()
+
   // SMI-4408: Apply indexer blocklist — filters known non-skill repos
   // before they reach data/imported-skills.json. Exact owner/name match.
   log('Applying indexer blocklist...')
   const blocklist = loadBlocklist(BLOCKLIST_PATH)
   const filtered: ImportedSkill[] = []
   const blockedRepos: string[] = []
-  for (const skill of unique) {
+  for (const skill of admitted) {
     const repoKey = `${skill.author}/${skill.name}`
     if (blocklist.isBlocked(repoKey)) {
       blockedRepos.push(repoKey)
@@ -196,6 +226,8 @@ async function main(): Promise<void> {
   console.log('======================================================================')
   console.log(`  Total Found:        ${stats.total_found}`)
   console.log(`  Duplicates Removed: ${stats.duplicates_removed}`)
+  console.log(`  Rejected for Intent: ${stats.rejected_for_intent_count ?? 0}`)
+  console.log(`  Intent Gate Admit Rate: ${((stats.intent_admit_rate ?? 1) * 100).toFixed(1)}%`)
   console.log(`  Blocked (SMI-4408): ${stats.blocked_count}`)
   console.log(`  Total Imported:     ${stats.total_imported}`)
   console.log(`  Duration:           ${(stats.duration_ms! / 1000).toFixed(2)}s`)
