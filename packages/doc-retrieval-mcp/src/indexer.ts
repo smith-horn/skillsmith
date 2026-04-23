@@ -3,9 +3,14 @@ import type { Dirent } from 'node:fs'
 import { existsSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { execSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { minimatch } from 'minimatch'
-import { VectorDb } from '@ruvector/core'
 import './ruvector-types.js'
+// @ruvector/core is CJS; ESM named imports fail at runtime in Node.js v22.
+// Use createRequire so the module.exports object is accessible as-is.
+const { VectorDb } = createRequire(import.meta.url)(
+  '@ruvector/core'
+) as typeof import('@ruvector/core')
 import {
   loadConfig,
   resolveRepoPath,
