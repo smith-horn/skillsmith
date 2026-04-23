@@ -439,57 +439,13 @@ export function createLicenseErrorResponse(result: LicenseValidationResult): {
   }
 }
 
-// ============================================================================
-// Shared response helpers (used by license, quota, and tool-dispatch)
-// ============================================================================
-
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import type { ZodType, ZodTypeDef } from 'zod'
-import type { ToolContext } from '../context.types.js'
-import type { QuotaMiddleware } from './quota-types.js'
-import { safeParseOrError } from '../validation.js'
-
-/**
- * Build a standard tool success response wrapping a JSON-serialisable result.
- */
-export function ok(result: unknown): CallToolResult {
-  return {
-    content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-  }
-}
-
-/** Cast MCPErrorResponse to CallToolResult (structurally compatible). */
-export function errResponse(response: {
-  content: Array<{ type: 'text'; text: string }>
-  isError?: boolean
-  _meta?: Record<string, unknown>
-}): CallToolResult {
-  return response as unknown as CallToolResult
-}
-
-/**
- * SMI-3911: Unified license + quota gate for tool handlers.
- * SMI-4313: Validation uses `safeParseOrError` (non-throwing) → structured
- * `ValidationError` envelope on invalid input. Validation order unchanged.
- */
-export async function withLicenseAndQuota<T>(
-  toolName: string,
-  args: Record<string, unknown> | undefined,
-  schema: ZodType<T, ZodTypeDef, unknown>,
-  handler: (input: T, ctx: ToolContext) => Promise<unknown>,
-  toolContext: ToolContext,
-  licenseMiddleware: LicenseMiddleware,
-  quotaMiddleware: QuotaMiddleware
-): Promise<CallToolResult> {
-  const parsed = safeParseOrError(schema, args, toolName)
-  if (!parsed.ok) return parsed.response
-  const licenseResult = await licenseMiddleware.checkTool(toolName)
-  if (!licenseResult.valid) return errResponse(createLicenseErrorResponse(licenseResult))
-  const licenseInfo = await licenseMiddleware.getLicenseInfo()
-  const quotaResult = await quotaMiddleware.checkAndTrack(toolName, licenseInfo)
-  if (!quotaResult.allowed) return errResponse(quotaMiddleware.buildExceededResponse(quotaResult))
-  return ok(await handler(parsed.data, toolContext))
-}
+// SMI-3911/4402: Gate helpers extracted to license.gate.ts (500-line limit)
+export {
+  ok,
+  errResponse,
+  withLicenseAndQuota,
+  createProfileIncompleteResponse,
+} from './license.gate.js'
 
 // Re-export types from toolFeatureMapping
 export type { FeatureFlag } from './toolFeatureMapping.js'

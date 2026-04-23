@@ -32,6 +32,7 @@ export * from './exports/types.js'
 // API Client (SMI-1244, SMI-1245, SMI-1300)
 export {
   SkillsmithApiClient,
+  ApiClientError,
   createApiClient,
   generateAnonymousId,
   ApiCache,
@@ -219,6 +220,15 @@ export {
   getAuthStatus,
   type SkillsmithConfig,
 } from './config/index.js'
+
+// SMI-4402: JWT token credentials (device-code OAuth flow)
+export {
+  storeCredentials,
+  loadCredentials,
+  refreshAccessToken,
+  type TokenCredentials,
+} from './config/token-credentials.js'
+export { tryRefreshToken, loadStoredAccessToken } from './api/client.token-refresh.js'
 
 // Version Check (SMI-1952)
 export {

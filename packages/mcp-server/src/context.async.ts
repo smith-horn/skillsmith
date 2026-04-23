@@ -29,6 +29,8 @@ import {
   SkillDependencyRepository,
   BackgroundSyncService,
   getApiKey,
+  loadCredentials,
+  tryRefreshToken,
   type SyncResult,
   type DatabaseType,
 } from '@skillsmith/core'
@@ -113,11 +115,32 @@ export async function createToolContextAsync(
   // SMI-1851: Use shared config module (handles env var > config file precedence)
   const apiKey = options.apiKey || getApiKey()
 
+  // SMI-4402: If no legacy API key, try JWT from ~/.skillsmith/config.json.
+  // Refresh if expired; log a hint if neither credential is present.
+  let jwtToken: string | undefined
+  if (!apiKey) {
+    const creds = await loadCredentials()
+    if (creds) {
+      if (Date.now() < creds.expiresAt - 60_000) {
+        jwtToken = creds.accessToken
+      } else {
+        const refreshed = await tryRefreshToken()
+        if (refreshed) {
+          jwtToken = refreshed
+        }
+      }
+    }
+    if (!apiKey && !jwtToken) {
+      console.error('[skillsmith] No credentials found. Run `skillsmith login` to authenticate.')
+    }
+  }
+
   // SMI-1183: Initialize API client with configuration
   const apiClient = new SkillsmithApiClient({
     baseUrl: options.apiClientConfig?.baseUrl,
     anonKey: options.apiClientConfig?.anonKey,
     apiKey,
+    jwtToken,
     timeout: options.apiClientConfig?.timeout ?? 10000,
     maxRetries: options.apiClientConfig?.maxRetries ?? 3,
     debug: options.apiClientConfig?.debug,

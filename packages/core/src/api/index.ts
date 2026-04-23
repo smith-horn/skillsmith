@@ -15,6 +15,7 @@ export {
   SkillsmithApiClient,
   createApiClient,
   generateAnonymousId,
+  ApiClientError,
   type ApiClientConfig,
   type ApiResponse,
   type ApiErrorResponse,
