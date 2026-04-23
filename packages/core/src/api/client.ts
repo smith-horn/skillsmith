@@ -54,9 +54,6 @@ export {
 // API Client Class
 // ============================================================================
 
-/**
- * Skillsmith API Client. See module docstring for SMI refs.
- */
 export class SkillsmithApiClient {
   private baseUrl: string
   private anonKey: string | undefined
