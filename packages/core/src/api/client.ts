@@ -1,11 +1,4 @@
-/**
- * Skillsmith API Client
- * @module api/client
- *
- * SMI-1244: API client for Supabase endpoints. SMI-1258: Zod response validation.
- * SMI-4119: `recordEvent` batches via EventBatcher (see client.events.ts).
- */
-
+// SMI-1244: API client. SMI-1258: Zod validation. SMI-4119: event batching. SMI-4402: JWT auth.
 import { z } from 'zod'
 import type { Skill, SearchOptions } from '../types/skill.js'
 import { SkillsmithError, ErrorCodes } from '../errors.js'
@@ -105,29 +98,16 @@ export class SkillsmithApiClient {
     return this.responseCache
   }
 
-  /**
-   * Check if client is running in offline mode
-   */
   isOffline(): boolean {
     return this.offlineMode
   }
 
-  /**
-   * Check if a personal API key is configured
-   * SMI-1953: Allows users to verify their API key is being used
-   *
-   * @returns True if SKILLSMITH_API_KEY env var or config.apiKey is set
-   */
+  // SMI-1953: returns true if SKILLSMITH_API_KEY env var or config.apiKey is set
   hasPersonalApiKey(): boolean {
     return !!this.apiKey
   }
 
-  /**
-   * Get the authentication mode being used
-   * SMI-1953: Helps users understand which auth method is active
-   *
-   * @returns 'personal' if API key configured, 'anonymous' if using anon key, 'none' if no auth
-   */
+  // SMI-1953: returns 'jwt' | 'personal' | 'anonymous' | 'none' based on active credential
   getAuthMode(): 'jwt' | 'personal' | 'anonymous' | 'none' {
     if (this.jwtToken) return 'jwt'
     if (this.apiKey) return 'personal'
@@ -140,19 +120,13 @@ export class SkillsmithApiClient {
     this.jwtToken = token
   }
 
-  /**
-   * Log debug message
-   */
   private log(message: string, data?: unknown): void {
     if (this.debug) {
       console.log(`[SkillsmithApiClient] ${message}`, data ?? '')
     }
   }
 
-  /**
-   * Make API request with retry logic and optional schema validation
-   * SMI-1258: Added runtime validation for API responses
-   */
+  // SMI-1258: runtime Zod validation; SMI-4402: refresh-on-401 with refreshAttempted guard
   private async request<T>(
     endpoint: string,
     options: RequestInit = {},
@@ -309,11 +283,7 @@ export class SkillsmithApiClient {
     throw lastError || new Error('Request failed after retries')
   }
 
-  /**
-   * Search for skills
-   * SMI-1258: Validates response against SearchResponseSchema
-   * SMI-4120: Client LRU cache; opt-out via `{ cache: 'no-store' }`.
-   */
+  // SMI-1258: validates via SearchResponseSchema. SMI-4120: LRU cache, opt-out via { cache: 'no-store' }
   async search(
     options: SearchOptions,
     callOptions?: CallCacheOptions
@@ -338,12 +308,7 @@ export class SkillsmithApiClient {
     )
   }
 
-  /**
-   * Get skill by ID
-   * SMI-1258: Validates response against SingleSkillResponseSchema
-   * SMI-3672: Added includeContent option to fetch SKILL.md content
-   * SMI-4120: Client LRU cache; opt-out via `{ cache: 'no-store' }`.
-   */
+  // SMI-1258: SingleSkillResponseSchema. SMI-3672: includeContent. SMI-4120: LRU cache.
   async getSkill(
     id: string,
     options?: { includeContent?: boolean } & CallCacheOptions
@@ -360,11 +325,7 @@ export class SkillsmithApiClient {
     )
   }
 
-  /**
-   * Get skill recommendations based on tech stack
-   * SMI-1258: Validates response against SearchResponseSchema
-   * SMI-4120: Client LRU cache; opt-out via `{ cache: 'no-store' }`.
-   */
+  // SMI-1258: SearchResponseSchema. SMI-4120: LRU cache.
   async getRecommendations(
     request: RecommendationRequest,
     callOptions?: CallCacheOptions
@@ -391,12 +352,7 @@ export class SkillsmithApiClient {
     )
   }
 
-  /**
-   * Record telemetry event
-   * SMI-4119: Enqueue to in-memory batcher instead of POSTing immediately.
-   * Returns `{ ok: true }` synchronously — batcher handles failures silently,
-   * matching the prior "fail silently" contract for telemetry.
-   */
+  // SMI-4119: enqueues to in-memory batcher; returns { ok: true } synchronously
   async recordEvent(event: TelemetryEvent): Promise<{ ok: boolean }> {
     if (this.offlineMode) return { ok: true }
     this.getOrCreateBatcher().enqueue(event)
@@ -428,9 +384,6 @@ export class SkillsmithApiClient {
     return this.eventBatcher
   }
 
-  /**
-   * Check API health status
-   */
   async checkHealth(): Promise<{
     status: 'healthy' | 'degraded' | 'unhealthy'
     timestamp: string
@@ -439,11 +392,7 @@ export class SkillsmithApiClient {
     return checkApiHealth(this.baseUrl, this.anonKey, this.offlineMode)
   }
 
-  /**
-   * Convert API result to Skill type
-   * SMI-1577: Handle optional fields with sensible defaults
-   * SMI-825: Added security scan fields
-   */
+  // SMI-1577: optional field defaults. SMI-825: security scan fields default to not-scanned.
   static toSkill(result: ApiSearchResult): Skill {
     // Sentinel value for missing timestamps - clearly indicates unknown date
     const UNKNOWN_DATE = '1970-01-01T00:00:00.000Z'
@@ -472,9 +421,6 @@ export class SkillsmithApiClient {
 // Factory Function
 // ============================================================================
 
-/**
- * Create a default API client instance
- */
 export function createApiClient(config?: ApiClientConfig): SkillsmithApiClient {
   return new SkillsmithApiClient(config)
 }

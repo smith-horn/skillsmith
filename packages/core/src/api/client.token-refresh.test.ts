@@ -1,12 +1,4 @@
-/**
- * client.token-refresh tests (SMI-4402)
- * TR-1: tryRefreshToken — succeeds when credentials exist and refresh succeeds
- * TR-2: tryRefreshToken — returns null when loadCredentials returns null
- * TR-3: tryRefreshToken — returns null when refreshAccessToken returns null
- * TR-4: loadStoredAccessToken — returns accessToken when credentials exist
- * TR-5: loadStoredAccessToken — returns null when no credentials stored
- */
-
+// SMI-4402 TR-1..5: tryRefreshToken (success/null-creds/null-refresh) + loadStoredAccessToken (success/null)
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('../config/token-credentials.js', () => ({
