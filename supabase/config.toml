@@ -416,6 +416,12 @@ verify_jwt = false
 [functions.skills-outreach-preferences]
 verify_jwt = false
 
+# SMI-4400: advance-notice-email — service-role cron-eligible batch send.
+# Mirrors indexer / skills-outreach / ops-report pattern: service-role header
+# bypasses gateway JWT; server-side enforces the service-role requirement.
+[functions.advance-notice-email]
+verify_jwt = false
+
 # Admin grant — validates JWT internally via adminClient.auth.getUser(token)
 [functions.admin-grant-subscription]
 verify_jwt = false

@@ -358,6 +358,12 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   'list-invoices',
   'skills-outreach-preferences',
   'admin-grant-subscription',
+  // Service-role batch-send functions (SMI-4400)
+  // Deployed with --no-verify-jwt because service-role callers present the
+  // service-role key in the Authorization header; gateway JWT check would
+  // reject it. Server-side re-checks the service-role header via
+  // createSupabaseAdminClient().
+  'advance-notice-email',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'
