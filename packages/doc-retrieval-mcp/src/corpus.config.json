@@ -20,5 +20,5 @@
     "packages/*/README.md"
   ],
   "requireSubmodule": "docs/internal",
-  "_storagePathRationale": "@ruvector/core@0.1.30 writes a DIRECTORY (collections/, vectors.db redb KV, metadata.json, aliases.json, hnsw dumps), not a single .rvf file. SMI-4426 renamed `rvfPath` to `storagePath` to match reality; legacy *.rvf gitignore entry kept harmless."
+  "_storagePathRationale": "@ruvector/core@0.1.30 creates a SINGLE FILE at the exact storagePath given (not a directory tree as the initial plan assumed). SMI-4426 renamed `rvfPath` to `storagePath`. The indexer creates this as a DIRECTORY and passes join(storageAbs,'vectors') to VectorDb, so the lock (.indexer.lock) and the db file (vectors) coexist inside this directory. Legacy *.rvf gitignore entry kept harmless."
 }

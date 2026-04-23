@@ -14,7 +14,11 @@ import type {} from '@ruvector/core'
 
 declare module '@ruvector/core' {
   interface VectorEntry {
-    metadata?: Record<string, unknown>
+    // The binding serializes metadata as a plain string (not an object).
+    // Callers must JSON.stringify on insert and JSON.parse on retrieval.
+    // SMI-4426 empirical finding: passing an object throws
+    // "Failed to convert ... into rust type `String`".
+    metadata?: string
   }
 
   interface SearchQuery {
@@ -22,7 +26,8 @@ declare module '@ruvector/core' {
   }
 
   interface SearchResult {
-    metadata?: Record<string, unknown>
+    // Returned as the same JSON string that was stored at insert time.
+    metadata?: string
   }
 
   // `VectorDb.withDimensions(n)` and `CollectionManager` are present at
