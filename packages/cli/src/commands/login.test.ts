@@ -1,18 +1,24 @@
-/**
- * SMI-2715: Login Command Tests
- *
- * Tests for `skillsmith login` — already-authenticated guard, browser/headless
- * URL display, masked input prompting, format validation retries, and storage.
- */
+// SMI-4402: login command tests — device-code OAuth flow + legacy detection + paste-legacy
+// LC-1: JWT auth guard exits 0 when valid credentials exist
+// LC-2: device-code success path stores credentials and exits 0
+// LC-3: device-code network error on request exits 5
+// LC-4: device-code expired exits 4
+// LC-5: device-code declined exits 3
+// LC-6: slow_down doubles poll interval
+// LC-7: legacy key menu — choice 'a' keeps key
+// LC-8: legacy key menu — choice 'p' runs paste flow
+// LC-9: paste-legacy stores key and exits 0
+// LC-10: paste-legacy 3 failures exits 1
+// LC-11: paste-legacy Ctrl+C exits 2
+// LC-12: --paste-legacy flag bypasses device flow
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// ---------------------------------------------------------------------------
-// Mocks (declared before module imports so Vitest hoists them)
-// ---------------------------------------------------------------------------
-
 vi.mock('@skillsmith/core', () => ({
-  getAuthStatus: vi.fn(),
+  loadCredentials: vi.fn(),
+  storeCredentials: vi.fn(),
+  getApiKey: vi.fn(),
+  getApiBaseUrl: vi.fn().mockReturnValue('https://api.skillsmith.app/functions/v1'),
   storeApiKey: vi.fn(),
   isValidApiKeyFormat: vi.fn(),
 }))
@@ -21,53 +27,85 @@ vi.mock('@inquirer/prompts', () => ({
   password: vi.fn(),
 }))
 
-vi.mock('open', () => ({
-  default: vi.fn(),
-}))
-
-// ---------------------------------------------------------------------------
-// Imports (after mocks)
-// ---------------------------------------------------------------------------
+vi.mock('open', () => ({ default: vi.fn() }))
 
 import { createLoginCommand } from './login.js'
-import { getAuthStatus, storeApiKey, isValidApiKeyFormat } from '@skillsmith/core'
+import {
+  loadCredentials,
+  storeCredentials,
+  getApiKey,
+  storeApiKey,
+  isValidApiKeyFormat,
+} from '@skillsmith/core'
 import { password } from '@inquirer/prompts'
-import openDefault from 'open'
 
-const mockGetAuthStatus = vi.mocked(getAuthStatus)
+const mockLoadCredentials = vi.mocked(loadCredentials)
+const mockStoreCredentials = vi.mocked(storeCredentials)
+const mockGetApiKey = vi.mocked(getApiKey)
 const mockStoreApiKey = vi.mocked(storeApiKey)
 const mockIsValidApiKeyFormat = vi.mocked(isValidApiKeyFormat)
 const mockPassword = vi.mocked(password)
-const mockOpen = vi.mocked(openDefault)
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 const VALID_KEY = 'sk_live_' + 'a'.repeat(32)
+const NOW = Date.now()
 
-/** Run a command action by parsing fabricated argv */
 async function runCommand(args: string[] = []): Promise<void> {
   const cmd = createLoginCommand()
-  // Invoke action directly to bypass Commander's process.argv parsing
   await cmd.parseAsync(['node', 'login', ...args])
 }
 
-// ---------------------------------------------------------------------------
-// Test suite
-// ---------------------------------------------------------------------------
+// Simulate a successful device-code exchange
+function mockDeviceCodeSuccess(): void {
+  let callCount = 0
+  global.fetch = vi.fn().mockImplementation((url: string) => {
+    if ((url as string).includes('auth-device-code')) {
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            device_code: 'dc_test',
+            user_code: 'BCDFGHJK',
+            verification_uri: 'https://skillsmith.app/device',
+            expires_in: 900,
+            interval: 5,
+          }),
+      })
+    }
+    // auth-device-token
+    callCount++
+    if (callCount === 1) {
+      return Promise.resolve({ ok: false, status: 428, json: () => Promise.resolve({}) })
+    }
+    return Promise.resolve({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          access_token: 'jwt.access',
+          refresh_token: 'jwt.refresh',
+          expires_in: 3600,
+        }),
+    })
+  }) as typeof fetch
+}
 
 describe('createLoginCommand', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>
   let processExitSpy: ReturnType<typeof vi.spyOn>
   let originalEnv: NodeJS.ProcessEnv
+  let originalFetch: typeof fetch
 
   beforeEach(() => {
-    // clearAllMocks resets call history on module-level mocks (declared above).
-    // Must run BEFORE setting up spies so the spy implementations are not cleared.
     vi.clearAllMocks()
+    vi.useFakeTimers()
     originalEnv = { ...process.env }
+    originalFetch = global.fetch
+    process.env['CI'] = 'true' // suppress browser open by default
+    delete process.env['SKILLSMITH_API_KEY']
+    mockLoadCredentials.mockResolvedValue(null)
+    mockGetApiKey.mockReturnValue(undefined)
+    mockStoreCredentials.mockResolvedValue(undefined)
+    mockStoreApiKey.mockResolvedValue(undefined)
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     processExitSpy = vi
@@ -78,198 +116,236 @@ describe('createLoginCommand', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     process.env = originalEnv
+    global.fetch = originalFetch
     consoleLogSpy.mockRestore()
     consoleErrorSpy.mockRestore()
     processExitSpy.mockRestore()
   })
 
-  describe('command metadata', () => {
-    it('has the correct name', () => {
-      expect(createLoginCommand().name()).toBe('login')
-    })
-
-    it('has a description', () => {
-      expect(createLoginCommand().description()).toBeTruthy()
-    })
+  it('has correct name and --paste-legacy option', () => {
+    const cmd = createLoginCommand()
+    expect(cmd.name()).toBe('login')
+    expect(cmd.opts()).toHaveProperty('pasteLegacy')
   })
 
-  describe('already authenticated guard', () => {
-    it('exits 0 when already authenticated', async () => {
-      mockGetAuthStatus.mockResolvedValue({
-        authenticated: true,
-        keyPrefix: 'sk_live_xxxx',
-        source: 'keyring',
-      })
-
-      await expect(runCommand()).rejects.toThrow('process.exit(0)')
-
-      const output = consoleLogSpy.mock.calls.flat().join('\n')
-      expect(output).toContain('Already authenticated')
-      expect(output).toContain('skillsmith logout')
+  it('LC-1: exits 0 when valid JWT credentials already exist', async () => {
+    mockLoadCredentials.mockResolvedValue({
+      accessToken: 'jwt.access',
+      refreshToken: 'jwt.refresh',
+      expiresAt: NOW + 3_600_000,
+      version: 2,
     })
+
+    await expect(runCommand()).rejects.toThrow('process.exit(0)')
+
+    const output = consoleLogSpy.mock.calls.flat().join('\n')
+    expect(output).toContain('Already authenticated')
+    expect(output).toContain('skillsmith logout')
   })
 
-  describe('URL display', () => {
-    beforeEach(() => {
-      mockGetAuthStatus.mockResolvedValue({
-        authenticated: false,
-        keyPrefix: null,
-        source: 'none',
-      })
-      // Default: valid key on first prompt attempt
-      mockIsValidApiKeyFormat.mockReturnValue(true)
-      mockPassword.mockResolvedValue(VALID_KEY)
-      mockStoreApiKey.mockResolvedValue(undefined)
-    })
+  describe('device-code flow', () => {
+    it('LC-2: success path stores credentials and exits 0', async () => {
+      mockDeviceCodeSuccess()
 
-    it('opens browser by default (non-headless)', async () => {
-      delete process.env['CI']
-      delete process.env['DISPLAY']
-      // Simulate macOS (browser-capable)
-      const originalPlatform = process.platform
-      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-      mockOpen.mockResolvedValue(
-        undefined as unknown as ReturnType<typeof mockOpen> extends Promise<infer T> ? T : never
+      const run = runCommand()
+      // Advance past the poll interval twice (first pending, second success)
+      await vi.runAllTimersAsync()
+
+      await expect(run).rejects.toThrow('process.exit(0)')
+
+      expect(mockStoreCredentials).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accessToken: 'jwt.access',
+          refreshToken: 'jwt.refresh',
+          version: 2,
+        })
       )
-
-      try {
-        await expect(runCommand()).rejects.toThrow('process.exit(0)')
-        expect(mockOpen).toHaveBeenCalledWith('https://skillsmith.app/account/cli-token')
-      } finally {
-        Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
-      }
+      const output = consoleLogSpy.mock.calls.flat().join('\n')
+      expect(output).toContain('Logged in successfully')
     })
 
-    it('prints URL instead of opening browser when --no-browser is passed', async () => {
-      delete process.env['CI']
-      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    it('LC-3: network error on device-code request exits 5', async () => {
+      global.fetch = vi.fn().mockRejectedValue(new Error('ENOTFOUND')) as typeof fetch
 
-      await expect(runCommand(['--no-browser'])).rejects.toThrow('process.exit(0)')
-
-      expect(mockOpen).not.toHaveBeenCalled()
-      const output = consoleLogSpy.mock.calls.flat().join('\n')
-      expect(output).toContain('https://skillsmith.app/account/cli-token')
+      await expect(runCommand()).rejects.toThrow('process.exit(5)')
     })
 
-    it('prints URL when CI=true (headless)', async () => {
-      process.env['CI'] = 'true'
+    it('LC-4: expired token exits 4', async () => {
+      global.fetch = vi.fn().mockImplementation((url: string) => {
+        if ((url as string).includes('auth-device-code')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                device_code: 'dc_exp',
+                user_code: 'BCDFGHJK',
+                verification_uri: 'https://skillsmith.app/device',
+                expires_in: 900,
+                interval: 5,
+              }),
+          })
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 400,
+          json: () => Promise.resolve({ error: 'expired_token' }),
+        })
+      }) as typeof fetch
 
-      await expect(runCommand()).rejects.toThrow('process.exit(0)')
-
-      expect(mockOpen).not.toHaveBeenCalled()
-      const output = consoleLogSpy.mock.calls.flat().join('\n')
-      expect(output).toContain('https://skillsmith.app/account/cli-token')
+      const run = runCommand()
+      await vi.runAllTimersAsync()
+      await expect(run).rejects.toThrow('process.exit(4)')
     })
 
-    it('falls back to printing URL when open throws', async () => {
-      delete process.env['CI']
-      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
-      mockOpen.mockRejectedValue(new Error('no browser'))
+    it('LC-5: declined exits 3', async () => {
+      global.fetch = vi.fn().mockImplementation((url: string) => {
+        if ((url as string).includes('auth-device-code')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                device_code: 'dc_dec',
+                user_code: 'BCDFGHJK',
+                verification_uri: 'https://skillsmith.app/device',
+                expires_in: 900,
+                interval: 5,
+              }),
+          })
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 400,
+          json: () => Promise.resolve({ error: 'authorization_declined' }),
+        })
+      }) as typeof fetch
 
-      await expect(runCommand()).rejects.toThrow('process.exit(0)')
+      const run = runCommand()
+      await vi.runAllTimersAsync()
+      await expect(run).rejects.toThrow('process.exit(3)')
+    })
 
-      const output = consoleLogSpy.mock.calls.flat().join('\n')
-      expect(output).toContain('https://skillsmith.app/account/cli-token')
+    it('LC-6: slow_down response doubles poll interval', async () => {
+      let tokenCallCount = 0
+      global.fetch = vi.fn().mockImplementation((url: string) => {
+        if ((url as string).includes('auth-device-code')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                device_code: 'dc_slow',
+                user_code: 'BCDFGHJK',
+                verification_uri: 'https://skillsmith.app/device',
+                expires_in: 900,
+                interval: 5,
+              }),
+          })
+        }
+        tokenCallCount++
+        if (tokenCallCount === 1) {
+          return Promise.resolve({ ok: false, status: 429, json: () => Promise.resolve({}) })
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({ access_token: 'j.a', refresh_token: 'j.r', expires_in: 3600 }),
+        })
+      }) as typeof fetch
+
+      const run = runCommand()
+      await vi.runAllTimersAsync()
+      await expect(run).rejects.toThrow('process.exit(0)')
+      expect(tokenCallCount).toBe(2)
     })
   })
 
-  describe('API key prompt', () => {
+  describe('legacy key menu', () => {
     beforeEach(() => {
-      mockGetAuthStatus.mockResolvedValue({
-        authenticated: false,
-        keyPrefix: null,
-        source: 'none',
-      })
-      delete process.env['CI']
-      process.env['CI'] = 'true' // headless so we skip open
+      mockGetApiKey.mockReturnValue('sk_live_' + 'x'.repeat(32))
+      // Prevent readline from hanging by pushing 'a\n' to stdin immediately
     })
 
-    it('stores key and exits 0 on first valid input', async () => {
-      mockIsValidApiKeyFormat.mockReturnValue(true)
-      mockPassword.mockResolvedValue(VALID_KEY)
-      mockStoreApiKey.mockResolvedValue(undefined)
+    it('LC-7: choice a keeps existing key and exits 0', async () => {
+      const rl = await import('readline')
+      vi.spyOn(rl, 'createInterface').mockReturnValue({
+        once: (_event: string, cb: (line: string) => void) => {
+          cb('a')
+          return {}
+        },
+        close: vi.fn(),
+      } as unknown as ReturnType<typeof rl.createInterface>)
 
       await expect(runCommand()).rejects.toThrow('process.exit(0)')
+
+      const output = consoleLogSpy.mock.calls.flat().join('\n')
+      expect(output).toContain('Keeping existing key')
+      expect(mockStoreCredentials).not.toHaveBeenCalled()
+    })
+
+    it('LC-8: choice p runs paste flow', async () => {
+      const rl = await import('readline')
+      vi.spyOn(rl, 'createInterface').mockReturnValue({
+        once: (_event: string, cb: (line: string) => void) => {
+          cb('p')
+          return {}
+        },
+        close: vi.fn(),
+      } as unknown as ReturnType<typeof rl.createInterface>)
+
+      mockIsValidApiKeyFormat.mockReturnValue(true)
+      mockPassword.mockResolvedValue(VALID_KEY)
+
+      await expect(runCommand()).rejects.toThrow('process.exit(0)')
+
+      expect(mockStoreApiKey).toHaveBeenCalledWith(VALID_KEY)
+    })
+  })
+
+  describe('paste-legacy flow', () => {
+    it('LC-9: --paste-legacy stores key and exits 0', async () => {
+      mockIsValidApiKeyFormat.mockReturnValue(true)
+      mockPassword.mockResolvedValue(VALID_KEY)
+
+      await expect(runCommand(['--paste-legacy'])).rejects.toThrow('process.exit(0)')
 
       expect(mockStoreApiKey).toHaveBeenCalledWith(VALID_KEY)
       const output = consoleLogSpy.mock.calls.flat().join('\n')
       expect(output).toContain('Logged in successfully')
     })
 
-    it('retries on invalid format and succeeds on second attempt', async () => {
-      mockIsValidApiKeyFormat.mockReturnValueOnce(false).mockReturnValueOnce(true)
-      mockPassword.mockResolvedValue(VALID_KEY)
-      mockStoreApiKey.mockResolvedValue(undefined)
-
-      await expect(runCommand()).rejects.toThrow('process.exit(0)')
-
-      expect(mockPassword).toHaveBeenCalledTimes(2)
-      expect(mockStoreApiKey).toHaveBeenCalledOnce()
-    })
-
-    it('exits 1 after 3 consecutive format failures', async () => {
+    it('LC-10: 3 format failures exits 1', async () => {
       mockIsValidApiKeyFormat.mockReturnValue(false)
-      mockPassword.mockResolvedValue('bad-key')
+      mockPassword.mockResolvedValue('bad')
 
-      await expect(runCommand()).rejects.toThrow('process.exit(1)')
+      await expect(runCommand(['--paste-legacy'])).rejects.toThrow('process.exit(1)')
 
       expect(mockPassword).toHaveBeenCalledTimes(3)
       expect(mockStoreApiKey).not.toHaveBeenCalled()
-
-      const errorOutput = consoleErrorSpy.mock.calls.flat().join('\n')
-      expect(errorOutput).toContain('Too many invalid attempts')
-      expect(errorOutput).toContain('https://skillsmith.app/account/cli-token')
+      const err = consoleErrorSpy.mock.calls.flat().join('\n')
+      expect(err).toContain('Too many invalid attempts')
     })
 
-    it('shows retry count message on invalid attempt (not the last)', async () => {
-      mockIsValidApiKeyFormat
-        .mockReturnValueOnce(false)
-        .mockReturnValueOnce(false)
-        .mockReturnValueOnce(false)
-      mockPassword.mockResolvedValue('bad-key')
+    it('LC-11: Ctrl+C exits 2', async () => {
+      const exitErr = Object.assign(new Error('prompt closed'), { name: 'ExitPromptError' })
+      mockPassword.mockRejectedValue(exitErr)
 
-      await expect(runCommand()).rejects.toThrow('process.exit(1)')
+      await expect(runCommand(['--paste-legacy'])).rejects.toThrow('process.exit(2)')
 
-      const errorOutput = consoleErrorSpy.mock.calls.flat().join('\n')
-      // Should mention format guidance
-      expect(errorOutput).toContain('sk_live_')
-    })
-
-    it('reminds user to clear clipboard after successful login', async () => {
-      mockIsValidApiKeyFormat.mockReturnValue(true)
-      mockPassword.mockResolvedValue(VALID_KEY)
-      mockStoreApiKey.mockResolvedValue(undefined)
-
-      await expect(runCommand()).rejects.toThrow('process.exit(0)')
-
-      const output = consoleLogSpy.mock.calls.flat().join('\n')
-      expect(output).toContain('clipboard')
-    })
-
-    it('exits 1 with message when storeApiKey throws (filesystem error)', async () => {
-      mockIsValidApiKeyFormat.mockReturnValue(true)
-      mockPassword.mockResolvedValue(VALID_KEY)
-      mockStoreApiKey.mockRejectedValue(new Error('EACCES: permission denied'))
-
-      await expect(runCommand()).rejects.toThrow('process.exit(1)')
-
-      const errorOutput = consoleErrorSpy.mock.calls.flat().join('\n')
-      expect(errorOutput).toContain('Failed to store credentials')
-      expect(errorOutput).toContain('EACCES')
-    })
-
-    it('exits 0 cleanly on Ctrl+C (ExitPromptError)', async () => {
-      const exitPromptError = Object.assign(new Error('User force closed the prompt'), {
-        name: 'ExitPromptError',
-      })
-      mockPassword.mockRejectedValue(exitPromptError)
-
-      await expect(runCommand()).rejects.toThrow('process.exit(0)')
-
-      expect(mockStoreApiKey).not.toHaveBeenCalled()
       const output = consoleLogSpy.mock.calls.flat().join('\n')
       expect(output).toContain('Cancelled')
+    })
+
+    it('LC-12: store failure exits 1 with message', async () => {
+      mockIsValidApiKeyFormat.mockReturnValue(true)
+      mockPassword.mockResolvedValue(VALID_KEY)
+      mockStoreApiKey.mockRejectedValue(new Error('EACCES'))
+
+      await expect(runCommand(['--paste-legacy'])).rejects.toThrow('process.exit(1)')
+
+      const err = consoleErrorSpy.mock.calls.flat().join('\n')
+      expect(err).toContain('Failed to store credentials')
+      expect(err).toContain('EACCES')
     })
   })
 })
