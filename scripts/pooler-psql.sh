@@ -29,6 +29,12 @@ set -eu
 : "${SUPABASE_PROJECT_REF:?must be set — run via 'varlock run -- ./scripts/pooler-psql.sh ...'}"
 : "${SUPABASE_DB_PASSWORD:?must be set — run via 'varlock run -- ./scripts/pooler-psql.sh ...'}"
 
+if ! docker inspect skillsmith-dev-1 --format '{{.State.Running}}' 2>/dev/null | grep -q '^true$'; then
+  echo "error: skillsmith-dev-1 container is not running. Start it with:" >&2
+  echo "  docker compose --profile dev up -d" >&2
+  exit 1
+fi
+
 exec docker exec -i \
   -e PGHOST="aws-1-us-east-1.pooler.supabase.com" \
   -e PGPORT="6543" \
