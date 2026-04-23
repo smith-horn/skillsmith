@@ -299,12 +299,20 @@ export function isValidApiKeyFormat(key: string): boolean {
 /**
  * Store an API key securely.
  *
+ * @deprecated Use storeCredentials() from config/token-credentials.ts for the
+ * new device-code flow (SMI-4402). This wrapper will be removed in 2 minor
+ * releases (Wave 4 / SMI-4403).
+ *
  * Attempts to use the OS keyring first (via @isaacs/keytar).
  * Falls back to saving in ~/.skillsmith/config.json when keyring is unavailable.
  *
  * @param apiKey - The API key to store (must pass isValidApiKeyFormat)
  */
 export async function storeApiKey(apiKey: string): Promise<void> {
+  console.warn(
+    '[skillsmith] Deprecated: storeApiKey() will be removed in a future version. ' +
+      'Use storeCredentials() from the device-code login flow.'
+  )
   const keytar = await getKeytar()
   if (keytar) {
     try {

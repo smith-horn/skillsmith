@@ -42,6 +42,7 @@ import type { EventBatcher } from './event-batcher.js'
 import { buildClientEventBatcher } from './client.events.js'
 import { ApiCache } from './cache.js'
 import { buildResponseCache, withResponseCache, type CallCacheOptions } from './client.cache.js'
+import { tryRefreshToken } from './client.token-refresh.js'
 
 export type { CallCacheOptions } from './client.cache.js'
 
@@ -67,6 +68,7 @@ export class SkillsmithApiClient {
   private baseUrl: string
   private anonKey: string | undefined
   private apiKey: string | undefined
+  private jwtToken: string | undefined
   private timeout: number
   private maxRetries: number
   private debug: boolean
@@ -90,6 +92,8 @@ export class SkillsmithApiClient {
     // SMI-1949: Use production anon key as final fallback so users get authenticated access
     this.anonKey = config.anonKey || process.env.SUPABASE_ANON_KEY || PRODUCTION_ANON_KEY
     this.apiKey = config.apiKey || process.env.SKILLSMITH_API_KEY
+    // SMI-4402: JWT Bearer token from device-code flow (takes precedence over apiKey)
+    this.jwtToken = config.jwtToken
     this.timeout = config.timeout ?? 30000
     this.maxRetries = config.maxRetries ?? 3
     this.debug = config.debug ?? false
@@ -124,10 +128,16 @@ export class SkillsmithApiClient {
    *
    * @returns 'personal' if API key configured, 'anonymous' if using anon key, 'none' if no auth
    */
-  getAuthMode(): 'personal' | 'anonymous' | 'none' {
+  getAuthMode(): 'jwt' | 'personal' | 'anonymous' | 'none' {
+    if (this.jwtToken) return 'jwt'
     if (this.apiKey) return 'personal'
     if (this.anonKey) return 'anonymous'
     return 'none'
+  }
+
+  /** SMI-4402: Update the JWT token (e.g. after a refresh). */
+  setJwtToken(token: string): void {
+    this.jwtToken = token
   }
 
   /**
@@ -165,11 +175,19 @@ export class SkillsmithApiClient {
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), this.timeout)
 
+        // SMI-4402: JWT Bearer takes precedence over X-API-Key (legacy)
+        const authHeader: Record<string, string> = {}
+        if (this.jwtToken) {
+          authHeader['Authorization'] = `Bearer ${this.jwtToken}`
+        } else if (this.apiKey) {
+          authHeader['X-API-Key'] = this.apiKey
+        }
+
         const response = await fetch(url, {
           ...options,
           headers: {
             ...buildRequestHeaders(this.anonKey),
-            ...(this.apiKey && { 'X-API-Key': this.apiKey }),
+            ...authHeader,
             ...options.headers,
           },
           signal: controller.signal,
@@ -181,6 +199,19 @@ export class SkillsmithApiClient {
           const errorBody = (await response
             .json()
             .catch(() => ({ error: 'Unknown error' }))) as ApiErrorResponse
+
+          // SMI-4402: Refresh JWT on 401 expired_token, retry once
+          if (
+            response.status === 401 &&
+            this.jwtToken &&
+            (errorBody.error === 'expired_token' || errorBody.error === 'JWT expired')
+          ) {
+            const newToken = await tryRefreshToken()
+            if (newToken) {
+              this.jwtToken = newToken
+              continue
+            }
+          }
 
           // Don't retry on client errors (4xx) - not retryable
           if (response.status >= 400 && response.status < 500) {

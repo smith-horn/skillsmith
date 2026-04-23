@@ -112,6 +112,8 @@ export interface ApiClientConfig {
   anonKey?: string
   /** API key for authenticated requests (X-API-Key header) */
   apiKey?: string
+  /** SMI-4402: JWT Bearer token from device-code flow (takes precedence over apiKey) */
+  jwtToken?: string
   /** Request timeout in ms (default 30000) */
   timeout?: number
   /** Max retry attempts (default 3) */
