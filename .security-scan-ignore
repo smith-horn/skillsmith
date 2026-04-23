@@ -16,3 +16,7 @@ scripts/utils/path-validation.ts
 packages/web/**
 src/**
 docs/site/**
+
+# Local vector index (gitignored; metadata.json contains indexed doc text
+# that discusses secret patterns — not actual secrets)
+.ruvector/**
