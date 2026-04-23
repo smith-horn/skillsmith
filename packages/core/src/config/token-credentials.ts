@@ -1,14 +1,5 @@
-/**
- * JWT token credential storage for device-code OAuth flow (SMI-4402)
- * @module @skillsmith/core/config/token-credentials
- *
- * Companion to config/index.ts. Handles the new v2 credential schema that
- * stores short-lived JWT access tokens + long-lived refresh tokens obtained
- * from the RFC 8628 device-code flow, replacing raw sk_live_* paste.
- *
- * Schema v2: { accessToken, refreshToken, expiresAt, apiKey?, version: 2 }
- * Schema v1: { apiKey, ... } — legacy, still accepted by loadCredentials
- */
+// SMI-4402: v2 credential schema (JWT + refresh) replacing raw sk_live_* paste.
+// Schema v2: { accessToken, refreshToken, expiresAt, apiKey?, version: 2 }
 
 import { homedir } from 'os'
 import { join } from 'path'
@@ -26,9 +17,6 @@ const KEYTAR_ACCOUNT_REFRESH = 'refresh-token'
 const SUPABASE_AUTH_URL =
   (process.env.SUPABASE_URL ?? 'https://vrcnzpmndtroqxxoqkzy.supabase.co') + '/auth/v1'
 
-/**
- * v2 credential schema returned by the device-code flow.
- */
 export interface TokenCredentials {
   accessToken: string
   refreshToken: string
@@ -89,11 +77,6 @@ async function getKeytar(): Promise<{
   }
 }
 
-/**
- * Store v2 token credentials.
- * Access token + metadata → config file (0600).
- * Refresh token → keyring when available, otherwise config file.
- */
 export async function storeCredentials(creds: TokenCredentials): Promise<void> {
   const existing = readConfigFile()
   const keytar = await getKeytar()
@@ -118,10 +101,6 @@ export async function storeCredentials(creds: TokenCredentials): Promise<void> {
   })
 }
 
-/**
- * Load the stored v2 credentials from disk.
- * Returns null if no v2 credentials are stored.
- */
 export async function loadCredentials(): Promise<TokenCredentials | null> {
   const config = readConfigFile()
   if (config.version !== 2 || !config.accessToken || !config.expiresAt) {
@@ -152,10 +131,6 @@ export async function loadCredentials(): Promise<TokenCredentials | null> {
   }
 }
 
-/**
- * Exchange a refresh token for a new access token via Supabase Auth.
- * Uses the production anon key so this works from MCP subprocess with no env vars.
- */
 export async function refreshAccessToken(refreshToken: string): Promise<TokenCredentials | null> {
   try {
     const resp = await fetch(`${SUPABASE_AUTH_URL}/token?grant_type=refresh_token`, {

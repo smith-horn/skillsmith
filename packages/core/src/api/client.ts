@@ -163,6 +163,7 @@ export class SkillsmithApiClient {
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseUrl}${endpoint}`
     let lastError: Error | undefined
+    let refreshAttempted = false
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
@@ -202,10 +203,12 @@ export class SkillsmithApiClient {
 
           // SMI-4402: Refresh JWT on 401 expired_token, retry once
           if (
+            !refreshAttempted &&
             response.status === 401 &&
             this.jwtToken &&
             (errorBody.error === 'expired_token' || errorBody.error === 'JWT expired')
           ) {
+            refreshAttempted = true
             const newToken = await tryRefreshToken()
             if (newToken) {
               this.jwtToken = newToken
