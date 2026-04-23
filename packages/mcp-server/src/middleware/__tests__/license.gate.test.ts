@@ -3,6 +3,7 @@
 // LG-2: withLicenseAndQuota intercepts profile_incomplete ApiClientError → profile response
 // LG-3: withLicenseAndQuota rethrows non-profile_incomplete errors
 // LG-4: withLicenseAndQuota passes through on success
+// LG-5: checkAndTrack IS called before the handler (quota decremented for profile_incomplete)
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ApiClientError } from '@skillsmith/core'
@@ -20,16 +21,14 @@ const mockLicense: LicenseMiddleware = {
 }
 
 const mockQuota: QuotaMiddleware = {
-  checkAndTrack: vi
-    .fn()
-    .mockResolvedValue({
-      allowed: true,
-      remaining: 999,
-      limit: 1000,
-      percentUsed: 0.1,
-      warningLevel: 0,
-      resetAt: new Date(),
-    }),
+  checkAndTrack: vi.fn().mockResolvedValue({
+    allowed: true,
+    remaining: 999,
+    limit: 1000,
+    percentUsed: 0.1,
+    warningLevel: 0,
+    resetAt: new Date(),
+  }),
   getStatus: vi.fn(),
   buildMetadata: vi.fn(),
   buildExceededResponse: vi.fn(),
@@ -112,5 +111,24 @@ describe('license.gate', () => {
       unknown
     >
     expect(body).toHaveProperty('data')
+  })
+
+  it('LG-5: checkAndTrack is called before handler (quota consumed even for profile_incomplete)', async () => {
+    // H9 design note: QuotaMiddleware.checkAndTrack atomically checks + increments.
+    // There is no split check/track API, so quota IS consumed before profile_incomplete
+    // is detected. This test documents actual behavior to prevent misreading the comment.
+    const handler = vi.fn().mockRejectedValue(new ApiClientError('profile_incomplete', false, 403))
+
+    await withLicenseAndQuota(
+      'search',
+      { query: 'test' },
+      inputSchema,
+      handler,
+      mockCtx,
+      mockLicense,
+      mockQuota
+    )
+
+    expect(mockQuota.checkAndTrack).toHaveBeenCalledOnce()
   })
 })

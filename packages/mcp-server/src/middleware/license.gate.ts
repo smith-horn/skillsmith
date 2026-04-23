@@ -52,9 +52,10 @@ export function createProfileIncompleteResponse(): {
   }
 }
 
-// SMI-4402: H9 — profile_incomplete 403s short-circuit BEFORE quota is consumed.
-// checkAndTrack is called first (pre-check), but if the handler throws
-// profile_incomplete the try-catch intercepts before any further quota writes.
+// SMI-4402: H9 — profile_incomplete 403s are caught and translated to a user-facing
+// response. Note: checkAndTrack runs before the handler (quota IS decremented even
+// for profile_incomplete errors, because the QuotaMiddleware has no split check/track
+// API). A future improvement (SMI-4403) could add a checkOnly + track-on-success path.
 export async function withLicenseAndQuota<T>(
   toolName: string,
   args: Record<string, unknown> | undefined,
