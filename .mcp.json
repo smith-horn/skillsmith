@@ -5,6 +5,14 @@
       "command": "node",
       "args": ["./packages/mcp-server/dist/src/index.js"]
     },
+    "skillsmith-doc-retrieval": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["./packages/doc-retrieval-mcp/dist/src/server.js"],
+      "env": {
+        "SKILLSMITH_REPO_ROOT": "."
+      }
+    },
     "ruflo": {
       "type": "stdio",
       "command": "npx",
@@ -12,7 +20,46 @@
       "env": {
         "CLAUDE_FLOW_LOG_LEVEL": "info",
         "CLAUDE_FLOW_MEMORY_BACKEND": "sqlite"
-      }
+      },
+      "disabledTools": [
+        "mcp__ruflo__agentdb_pattern-store",
+        "mcp__ruflo__agentdb_pattern-search",
+        "mcp__ruflo__agentdb_hierarchical-store",
+        "mcp__ruflo__agentdb_hierarchical-recall",
+        "mcp__ruflo__agentdb_causal-edge",
+        "mcp__ruflo__agentdb_batch",
+        "mcp__ruflo__agentdb_context-synthesize",
+        "mcp__ruflo__agentdb_semantic-route",
+        "mcp__ruflo__agentdb_feedback",
+        "mcp__ruflo__agentdb_consolidate",
+        "mcp__ruflo__hive-mind_memory",
+        "mcp__ruflo__hive-mind_broadcast",
+        "mcp__ruflo__hive-mind_consensus",
+        "mcp__ruflo__hive-mind_spawn",
+        "mcp__ruflo__hive-mind_join",
+        "mcp__ruflo__hive-mind_init",
+        "mcp__ruflo__transfer_store-search",
+        "mcp__ruflo__transfer_store-download",
+        "mcp__ruflo__transfer_store-featured",
+        "mcp__ruflo__transfer_store-info",
+        "mcp__ruflo__transfer_store-trending",
+        "mcp__ruflo__transfer_plugin-search",
+        "mcp__ruflo__transfer_plugin-featured",
+        "mcp__ruflo__transfer_plugin-official",
+        "mcp__ruflo__transfer_plugin-info",
+        "mcp__ruflo__transfer_ipfs-resolve",
+        "mcp__ruflo__hooks_intelligence_pattern-store",
+        "mcp__ruflo__hooks_intelligence_pattern-search",
+        "mcp__ruflo__memory_store",
+        "mcp__ruflo__memory_search",
+        "mcp__ruflo__memory_search_unified",
+        "mcp__ruflo__memory_migrate",
+        "mcp__ruflo__swarm_init",
+        "mcp__ruflo__claims_handoff",
+        "mcp__ruflo__claims_accept-handoff",
+        "mcp__ruflo__hooks_post-task",
+        "mcp__ruflo__hooks_model-outcome"
+      ]
     }
   }
 }

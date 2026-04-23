@@ -15,6 +15,7 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 | [vscode-publishing-guide.md](.claude/development/vscode-publishing-guide.md) | VS Code Marketplace publishing, local/CI workflow, PAT rotation |
 | [subagent-tool-permissions-guide.md](.claude/development/subagent-tool-permissions-guide.md) | Subagent tool access by type, foreground/background behavior, skill author checklist |
 | [supabase-migration-safety.md](.claude/development/supabase-migration-safety.md) | Pre/post-apply query catalog, ACCESS EXCLUSIVE lock discipline, rollback convention, pooler rules. Invoke via `supabase-migration-reviewer` skill for automated review. |
+| [ruvector-dev-tooling.md](.claude/development/ruvector-dev-tooling.md) | `skillsmith-doc-retrieval` MCP — local semantic doc search (SMI-4417). Setup, tool surface, privacy boundary, post-commit hook, token-delta gate. |
 
 **Implementation plan template**: [.claude/templates/implementation-plan.md](.claude/templates/implementation-plan.md) — use this structure for all plans in `docs/internal/implementation/`.
 
@@ -185,6 +186,16 @@ varlock run -- npm test         # Run with secrets injected
 ```
 
 **Never** `echo $SECRET` or `cat .env`. Never ask users to paste secrets in chat. See [AI Agent Secret Handling](docs/internal/architecture/standards-security.md#411-ai-agent-secret-handling-smi-1956).
+
+**Supabase pooler access**: `SUPABASE_POOLER_URL` in `.env` contains a literal `[YOUR-PASSWORD]` placeholder by design — passwords with URL-special characters (`@ / : !`) break URI parsing, so every caller must build the connection from parts. Use the canonical helper instead of hand-rolling it:
+
+```bash
+echo 'SELECT COUNT(*) FROM skills;' | varlock run -- ./scripts/pooler-psql.sh
+varlock run -- ./scripts/pooler-psql.sh -c 'SELECT version();'
+cat query.sql | varlock run -- ./scripts/pooler-psql.sh
+```
+
+The script routes through the transaction pooler (port 6543) which avoids PostgREST's 8s `statement_timeout` on `audit_logs` LIKE queries (error 57014). Requires Docker container `skillsmith-dev-1` running. See `scripts/pooler-psql.sh` header for the full rationale.
 
 ---
 

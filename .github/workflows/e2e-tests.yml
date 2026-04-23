@@ -115,7 +115,7 @@ jobs:
           docker cp extract-deps:/app/node_modules /tmp/node_modules
 
           # Copy nested workspace node_modules (for non-hoisted dependencies)
-          for pkg in core mcp-server cli enterprise vscode-extension website; do
+          for pkg in core mcp-server cli enterprise vscode-extension website doc-retrieval-mcp; do
             mkdir -p /tmp/packages/$pkg
             if docker cp extract-deps:/app/packages/$pkg/node_modules /tmp/packages/$pkg/ 2>/dev/null; then
               echo "✓ Copied packages/$pkg/node_modules"
