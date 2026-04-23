@@ -208,6 +208,8 @@ async function resolveFiles(
 }
 
 function gitChangedFiles(root: string, baseSha: string): string[] {
+  // Validate SHA format before interpolating into the git range argument.
+  if (!/^[0-9a-f]{40}$/i.test(baseSha)) return []
   try {
     const out = execSync(`git --no-optional-locks diff --name-only ${baseSha}..HEAD`, {
       cwd: root,
