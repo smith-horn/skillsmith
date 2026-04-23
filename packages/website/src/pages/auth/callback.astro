@@ -388,6 +388,7 @@ const redirectTo =
       // Must be called BEFORE showSuccess() — showSuccess() starts a 2-second redirect timer.
       // Non-fatal: errors are swallowed so the auth flow always completes.
       async function fetchAndStoreGitHubOrgs() {
+        if (!supabase) return
         try {
           const {
             data: { session: currentSession },
