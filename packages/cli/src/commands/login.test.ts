@@ -11,8 +11,21 @@
 // LC-10: paste-legacy 3 failures exits 1
 // LC-11: paste-legacy Ctrl+C exits 2
 // LC-12: --paste-legacy flag bypasses device flow
+// LC-13: device-code network error during polling exits 5
+// LC-14: legacy key menu — choice 'd' runs device flow
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+
+// readline.createInterface must be mocked via vi.hoisted + vi.mock — ESM namespace
+// objects are not configurable, so vi.spyOn cannot intercept them at runtime.
+const { mockCreateInterface } = vi.hoisted(() => ({
+  mockCreateInterface: vi.fn(),
+}))
+
+vi.mock('readline', () => ({
+  default: { createInterface: mockCreateInterface },
+  createInterface: mockCreateInterface,
+}))
 
 vi.mock('@skillsmith/core', () => ({
   loadCredentials: vi.fn(),
@@ -111,6 +124,9 @@ describe('createLoginCommand', () => {
     processExitSpy = vi
       .spyOn(process, 'exit')
       .mockImplementation((code?: string | number | null | undefined) => {
+        // Clear pending timers so vi.runAllTimersAsync() doesn't fire additional
+        // polling iterations after process.exit, which would create unhandled rejections.
+        vi.clearAllTimers()
         throw new Error(`process.exit(${code ?? 0})`)
       })
   })
@@ -127,7 +143,10 @@ describe('createLoginCommand', () => {
   it('has correct name and --paste-legacy option', () => {
     const cmd = createLoginCommand()
     expect(cmd.name()).toBe('login')
-    expect(cmd.opts()).toHaveProperty('pasteLegacy')
+    // cmd.opts() before parsing excludes boolean flags without defaults;
+    // check the option definition array directly.
+    const hasPasteLegacy = cmd.options.some((o: { long?: string }) => o.long === '--paste-legacy')
+    expect(hasPasteLegacy).toBe(true)
   })
 
   it('LC-1: exits 0 when valid JWT credentials already exist', async () => {
@@ -150,7 +169,10 @@ describe('createLoginCommand', () => {
       mockDeviceCodeSuccess()
 
       const run = runCommand()
-      // Advance past the poll interval twice (first pending, second success)
+      // Suppress unhandledRejection: run rejects inside runAllTimersAsync before
+      // expect(run).rejects can attach a handler. The noop catch prevents the
+      // Node.js unhandled-rejection warning without consuming the rejection.
+      run.catch(() => {})
       await vi.runAllTimersAsync()
 
       await expect(run).rejects.toThrow('process.exit(0)')
@@ -195,6 +217,7 @@ describe('createLoginCommand', () => {
       }) as typeof fetch
 
       const run = runCommand()
+      run.catch(() => {})
       await vi.runAllTimersAsync()
       await expect(run).rejects.toThrow('process.exit(4)')
     })
@@ -222,6 +245,7 @@ describe('createLoginCommand', () => {
       }) as typeof fetch
 
       const run = runCommand()
+      run.catch(() => {})
       await vi.runAllTimersAsync()
       await expect(run).rejects.toThrow('process.exit(3)')
     })
@@ -254,27 +278,51 @@ describe('createLoginCommand', () => {
       }) as typeof fetch
 
       const run = runCommand()
+      run.catch(() => {})
       await vi.runAllTimersAsync()
       await expect(run).rejects.toThrow('process.exit(0)')
       expect(tokenCallCount).toBe(2)
+    })
+
+    it('LC-13: network error during token polling exits 5', async () => {
+      global.fetch = vi.fn().mockImplementation((url: string) => {
+        if ((url as string).includes('auth-device-code')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                device_code: 'dc_neterr',
+                user_code: 'BCDFGHJK',
+                verification_uri: 'https://skillsmith.app/device',
+                expires_in: 900,
+                interval: 5,
+              }),
+          })
+        }
+        // auth-device-token throws network error
+        return Promise.reject(new Error('ECONNRESET'))
+      }) as typeof fetch
+
+      const run = runCommand()
+      run.catch(() => {})
+      await vi.runAllTimersAsync()
+      await expect(run).rejects.toThrow('process.exit(5)')
     })
   })
 
   describe('legacy key menu', () => {
     beforeEach(() => {
       mockGetApiKey.mockReturnValue('sk_live_' + 'x'.repeat(32))
-      // Prevent readline from hanging by pushing 'a\n' to stdin immediately
     })
 
     it('LC-7: choice a keeps existing key and exits 0', async () => {
-      const rl = await import('readline')
-      vi.spyOn(rl, 'createInterface').mockReturnValue({
+      mockCreateInterface.mockReturnValue({
         once: (_event: string, cb: (line: string) => void) => {
           cb('a')
           return {}
         },
         close: vi.fn(),
-      } as unknown as ReturnType<typeof rl.createInterface>)
+      })
 
       await expect(runCommand()).rejects.toThrow('process.exit(0)')
 
@@ -284,14 +332,13 @@ describe('createLoginCommand', () => {
     })
 
     it('LC-8: choice p runs paste flow', async () => {
-      const rl = await import('readline')
-      vi.spyOn(rl, 'createInterface').mockReturnValue({
+      mockCreateInterface.mockReturnValue({
         once: (_event: string, cb: (line: string) => void) => {
           cb('p')
           return {}
         },
         close: vi.fn(),
-      } as unknown as ReturnType<typeof rl.createInterface>)
+      })
 
       mockIsValidApiKeyFormat.mockReturnValue(true)
       mockPassword.mockResolvedValue(VALID_KEY)
@@ -299,6 +346,25 @@ describe('createLoginCommand', () => {
       await expect(runCommand()).rejects.toThrow('process.exit(0)')
 
       expect(mockStoreApiKey).toHaveBeenCalledWith(VALID_KEY)
+    })
+
+    it('LC-14: choice d runs device-code flow', async () => {
+      mockCreateInterface.mockReturnValue({
+        once: (_event: string, cb: (line: string) => void) => {
+          cb('d')
+          return {}
+        },
+        close: vi.fn(),
+      })
+
+      mockDeviceCodeSuccess()
+
+      const run = runCommand()
+      run.catch(() => {})
+      await vi.runAllTimersAsync()
+      await expect(run).rejects.toThrow('process.exit(0)')
+
+      expect(mockStoreCredentials).toHaveBeenCalledWith(expect.objectContaining({ version: 2 }))
     })
   })
 
