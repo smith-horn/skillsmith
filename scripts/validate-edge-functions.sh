@@ -49,6 +49,7 @@ AUTHENTICATED_FUNCTIONS=(
   "skills-outreach-preferences"
   "webhook-dlq"
   "auth-device-approve"
+  "auth-device-preview"
 )
 
 # Service role functions (scheduled jobs, internal)
