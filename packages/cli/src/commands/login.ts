@@ -285,9 +285,8 @@ export function createLoginCommand(): Command {
       // Legacy key detection: offer 3-choice menu (M10)
       const legacyKey = detectLegacyKey()
       if (legacyKey && !options.pasteLegacy) {
-        const suffix = legacyKey.slice(-6)
         console.log()
-        console.log(chalk.yellow(`A legacy API key is active (ends in …${suffix}).`))
+        console.log(chalk.yellow('A legacy API key is active.'))
         console.log()
         console.log(`  ${chalk.bold('(a)')} Keep using this key       [Enter]`)
         console.log(`  ${chalk.bold('(d)')} Switch to device-code flow`)
