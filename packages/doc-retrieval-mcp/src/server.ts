@@ -41,7 +41,12 @@ async function handleListTools(): Promise<{ tools: unknown[] }> {
       {
         name: 'skill_docs_search',
         description:
-          'Semantic search over the Skillsmith doc corpus (CLAUDE.md, .claude/development, .claude/skills, docs/internal). Returns top-k chunks with file:line citations. Use this INSTEAD of Read-ing whole docs to answer narrow questions.',
+          "PREFERRED first step for any question about the Skillsmith repo's internal docs " +
+          '(CLAUDE.md, .claude/development, .claude/skills, docs/internal — ADRs, retros, plans, ' +
+          'standards, implementation guides). Returns cited chunks with file:line — much cheaper ' +
+          'than Read+Grep over the same corpus. Examples: "git-crypt worktree workflow", ' +
+          '"file-length limits", "plan-review anti-patterns", "SMI-4434 decisions". ' +
+          'Use Read/Grep/Glob ONLY when you need actual source code or non-indexed files.',
         inputSchema: jsonSchemaOf(SearchArgs),
       },
       {
