@@ -524,17 +524,15 @@ const supabaseConfig = getSupabaseConfig()
               }
 
               try {
-                // TODO(SMI-4439): regenerate-license returns { key, prefix } while
-                // generate-license returns { key_prefix }. Unify response shapes.
                 const body = (await response.json()) as {
                   key?: string
-                  prefix?: string
+                  key_prefix?: string
                 }
-                if (!body.key || !body.prefix) {
+                if (!body.key || !body.key_prefix) {
                   showRegenError('Unexpected response from server. Please reload the page.')
                   return
                 }
-                showFreshKey(body.key, body.prefix)
+                showFreshKey(body.key, body.key_prefix)
               } catch {
                 showRegenError('Could not parse server response. Please reload the page.')
               }
