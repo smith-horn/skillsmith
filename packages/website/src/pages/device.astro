@@ -134,12 +134,18 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
 
 <script>
   // SMI-4402: device approval state machine.
-  // Calls /functions/v1/auth-device-approve (gateway-verified JWT).
+  // Calls api.skillsmith.app edge functions (gateway-verified JWT).
   // All supabase-js calls use the global window.__SUPABASE_CLIENT__ injected by BaseLayout.
   // Type declaration lives in src/env.d.ts.
+  //
+  // SMI-4454 fix: URLs were relative ('/functions/v1/...') and resolved to the
+  // website origin, returning Astro's 404. The Supabase edge functions live on
+  // api.skillsmith.app (or the project supabase.co URL). Matches how every
+  // other page calls edge functions (contact, signup, skills, etc.).
 
-  const APPROVE_URL = '/functions/v1/auth-device-approve'
-  const PREVIEW_URL = '/functions/v1/auth-device-preview'
+  const API_BASE = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'
+  const APPROVE_URL = `${API_BASE}/functions/v1/auth-device-approve`
+  const PREVIEW_URL = `${API_BASE}/functions/v1/auth-device-preview`
   const COMPLETE_PROFILE_URL = '/complete-profile'
   const LOGIN_URL = '/login'
   const COUNTDOWN_START = 10
