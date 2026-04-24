@@ -121,16 +121,7 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
   // SMI-4402: device approval state machine.
   // Calls /functions/v1/auth-device-approve (gateway-verified JWT).
   // All supabase-js calls use the global window.__SUPABASE_CLIENT__ injected by BaseLayout.
-
-  declare global {
-    interface Window {
-      __SUPABASE_CLIENT__?: {
-        auth: {
-          getSession(): Promise<{ data: { session: { access_token: string } | null } }>
-        }
-      }
-    }
-  }
+  // Type declaration lives in src/env.d.ts.
 
   const APPROVE_URL = '/functions/v1/auth-device-approve'
   const COMPLETE_PROFILE_URL = '/complete-profile'
