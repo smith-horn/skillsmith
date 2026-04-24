@@ -3,7 +3,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { homedir, userInfo } from 'node:os'
 import { basename, join } from 'node:path'
 
-import { chunkBlocks, estimateTokens, parseMarkdown } from '../indexer.helpers.js'
+import { chunkBlocks, chunkId, estimateTokens, parseMarkdown } from '../indexer.helpers.js'
 import type { AdapterContext, AdapterFile, ChunkMetadata, SourceAdapter } from '../types.js'
 
 /**
@@ -138,11 +138,12 @@ function wholeFileChunk(
   fileBasename: string
 ): ChunkMetadata {
   const lines = raw.split('\n')
+  const lineEnd = lines.length
   return {
-    id: `${file.logicalPath}#L1-L${lines.length}`,
+    id: chunkId(file.logicalPath, 1, lineEnd, raw),
     filePath: file.logicalPath,
     lineStart: 1,
-    lineEnd: lines.length,
+    lineEnd,
     headingChain: [fileBasename],
     text: raw,
     tokens,
