@@ -321,19 +321,13 @@ const redirectTo =
       const code = (profileError as { code?: string }).code ?? ''
       const SCHEMA_DRIFT_CODES = ['42703', '42P01', 'PGRST204', 'PGRST205']
       if (SCHEMA_DRIFT_CODES.includes(code)) {
-        // Telemetry via the existing `events` edge function (telemetry:* convention).
-        // Fire-and-forget; swallow failures so the redirect still runs for the user.
-        void fetch(`${supabaseUrl}/functions/v1/events`, {
-          method: 'POST',
-          headers: {
-            apikey: supabaseAnonKey,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            event_type: 'telemetry:callback:schema_drift',
-            metadata: { code, path: '/auth/callback', user_id: session.user.id },
-          }),
-        }).catch(() => {})
+        // Schema/cache drift between website deploy and DB migration state. Log to
+        // console so it surfaces in Sentry breadcrumbs / browser devtools. Server-side
+        // telemetry via the `events` edge function is NOT wired here because that fn's
+        // ALLOWED_EVENTS allowlist rejects `callback:schema_drift` and its
+        // sanitizeMetadata strips `code`/`path`/`user_id`. Wiring it would require an
+        // edge fn deploy; not in this hotfix's scope.
+        console.warn('[auth/callback] schema drift detected', { code, path: '/auth/callback' })
         window.location.href = '/complete-profile?next=' + encodeURIComponent(authRedirectTo)
         return
       }
