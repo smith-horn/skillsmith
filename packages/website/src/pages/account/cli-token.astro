@@ -524,15 +524,17 @@ const supabaseConfig = getSupabaseConfig()
               }
 
               try {
+                // TODO(SMI-4439): regenerate-license returns { key, prefix } while
+                // generate-license returns { key_prefix }. Unify response shapes.
                 const body = (await response.json()) as {
-                  api_key?: string
-                  key_prefix?: string
+                  key?: string
+                  prefix?: string
                 }
-                if (!body.api_key || !body.key_prefix) {
+                if (!body.key || !body.prefix) {
                   showRegenError('Unexpected response from server. Please reload the page.')
                   return
                 }
-                showFreshKey(body.api_key, body.key_prefix)
+                showFreshKey(body.key, body.prefix)
               } catch {
                 showRegenError('Could not parse server response. Please reload the page.')
               }
@@ -1051,12 +1053,14 @@ const supabaseConfig = getSupabaseConfig()
         display: none;
       }
 
-      /* SMI-4401 Wave 2: focus-trapped revoke confirmation modal. */
-      .revoke-modal-backdrop[hidden] {
+      /* SMI-4401 Wave 2: focus-trapped revoke confirmation modal.
+         :global() required — modal is created via document.createElement() and
+         appended to body, so Astro's data-astro-cid scoping never applies. */
+      :global(.revoke-modal-backdrop[hidden]) {
         display: none;
       }
 
-      .revoke-modal-backdrop {
+      :global(.revoke-modal-backdrop) {
         position: fixed;
         inset: 0;
         background: rgba(0, 0, 0, 0.65);
@@ -1067,7 +1071,7 @@ const supabaseConfig = getSupabaseConfig()
         z-index: 9999;
       }
 
-      .revoke-modal {
+      :global(.revoke-modal) {
         background: #121214;
         border: 1px solid #2a2a2f;
         border-radius: 12px;
@@ -1077,20 +1081,20 @@ const supabaseConfig = getSupabaseConfig()
         box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
       }
 
-      .revoke-modal h2 {
+      :global(.revoke-modal h2) {
         font-size: 1.125rem;
         font-weight: 600;
         margin: 0 0 0.75rem;
       }
 
-      .revoke-modal p {
+      :global(.revoke-modal p) {
         color: #a1a1aa;
         font-size: 0.9375rem;
         line-height: 1.5;
         margin: 0 0 1.25rem;
       }
 
-      .revoke-modal-actions {
+      :global(.revoke-modal-actions) {
         display: flex;
         justify-content: flex-end;
         gap: 0.5rem;

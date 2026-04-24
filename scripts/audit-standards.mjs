@@ -1542,7 +1542,7 @@ console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RES
     /\bresolv(e|es|ed)\b/i,
   ]
   const SRC_PATTERNS = [
-    /^packages\/.*\.(ts|tsx|js|jsx)$/,
+    /^packages\/.*\.(ts|tsx|js|jsx|astro)$/,
     /^supabase\/functions\/.*\.(ts|js)$/,
     /^scripts\/.*\.(ts|js|mjs)$/,
   ]
