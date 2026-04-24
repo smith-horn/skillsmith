@@ -109,12 +109,12 @@ function resolveProjectDir(): string {
  * `~/.claude/projects/<encoded-cwd>/retrieval-logs.db`.
  *
  * Test-only override: `RETRIEVAL_LOG_DIR_OVERRIDE`, if set, is used as the
- * final DB directory verbatim (no encoding, no HOME prefix). Documented as
- * test-only — production callers do not set this.
+ * final DB directory verbatim (no encoding, no HOME prefix). Ignored in
+ * production (`NODE_ENV === 'production'`) to prevent env-var redirection.
  */
 function resolveDbPath(): { dir: string; dbPath: string } {
   const override = process.env.RETRIEVAL_LOG_DIR_OVERRIDE
-  if (override) {
+  if (override && process.env.NODE_ENV !== 'production') {
     const dir = resolve(override)
     return { dir, dbPath: join(dir, 'retrieval-logs.db') }
   }
@@ -140,6 +140,9 @@ function isDocker(): boolean {
  *   4. On first open: stamps `meta` rows (schema_version, owner_user, created_at).
  *   5. On subsequent opens: compares `meta.owner_user` to current $USER;
  *      mismatch → emit console.warn, return null, caller no-ops.
+ *
+ * Returns null on any error so callers (logRetrievalEvent, logFrontmatterLintEvent)
+ * degrade to a silent no-op rather than throwing into instrumentation callers.
  */
 function openDb(): BetterSqlite3.Database | null {
   if (cachedDb) return cachedDb
@@ -152,50 +155,55 @@ function openDb(): BetterSqlite3.Database | null {
     return null
   }
 
-  const { dir, dbPath } = resolveDbPath()
+  try {
+    const { dir, dbPath } = resolveDbPath()
 
-  // mode 0700 — user-scoped, private log store (SPARC §S4).
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
+    // mode 0700 — user-scoped, private log store (SPARC §S4).
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
 
-  const isFreshFile = !existsSync(dbPath)
+    const isFreshFile = !existsSync(dbPath)
 
-  // better-sqlite3 is CJS; createRequire keeps the module.exports shape.
-  const Database = require('better-sqlite3') as typeof BetterSqlite3
-  const db = new Database(dbPath)
+    // better-sqlite3 is CJS; createRequire keeps the module.exports shape.
+    const Database = require('better-sqlite3') as typeof BetterSqlite3
+    const db = new Database(dbPath)
 
-  db.exec(SCHEMA_SQL)
+    db.exec(SCHEMA_SQL)
 
-  const currentUser = userInfo().username
+    const currentUser = userInfo().username
 
-  if (isFreshFile) {
-    const insertMeta = db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
-    const stampTx = db.transaction(() => {
-      insertMeta.run('schema_version', String(CURRENT_SCHEMA_VERSION))
-      insertMeta.run('owner_user', currentUser)
-      insertMeta.run('created_at', new Date().toISOString())
-    })
-    stampTx()
-  } else {
-    const row = db.prepare("SELECT value FROM meta WHERE key = 'owner_user'").get() as
-      | { value: string }
-      | undefined
-    const stampedOwner = row?.value
-    if (stampedOwner && stampedOwner !== currentUser) {
-      if (!ownerMismatchWarningEmitted) {
-        console.warn('[retrieval-logs] owner mismatch; refusing to write')
-        ownerMismatchWarningEmitted = true
+    if (isFreshFile) {
+      const insertMeta = db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
+      const stampTx = db.transaction(() => {
+        insertMeta.run('schema_version', String(CURRENT_SCHEMA_VERSION))
+        insertMeta.run('owner_user', currentUser)
+        insertMeta.run('created_at', new Date().toISOString())
+      })
+      stampTx()
+    } else {
+      const row = db.prepare("SELECT value FROM meta WHERE key = 'owner_user'").get() as
+        | { value: string }
+        | undefined
+      const stampedOwner = row?.value
+      if (stampedOwner && stampedOwner !== currentUser) {
+        if (!ownerMismatchWarningEmitted) {
+          console.warn('[retrieval-logs] owner mismatch; refusing to write')
+          ownerMismatchWarningEmitted = true
+        }
+        try {
+          db.close()
+        } catch {
+          // ignore close errors
+        }
+        return null
       }
-      try {
-        db.close()
-      } catch {
-        // ignore close errors
-      }
-      return null
     }
-  }
 
-  cachedDb = db
-  return db
+    cachedDb = db
+    return db
+  } catch (err) {
+    console.warn('[retrieval-logs] failed to open DB; writes will be skipped:', err)
+    return null
+  }
 }
 
 /**
@@ -222,27 +230,31 @@ export function logRetrievalEvent(evt: RetrievalEvent): void {
   const db = openDb()
   if (!db) return
 
-  const stmt = db.prepare(
-    `INSERT INTO retrieval_events (
-      session_id, ts, trigger, query, top_k_results, cited_in_output,
-      tokens_before, tokens_after, hook_outcome, downstream_artifact_id, outcome
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  )
-  stmt.run(
-    evt.sessionId,
-    evt.ts,
-    evt.trigger,
-    evt.query,
-    evt.topKResults,
-    evt.citedInOutput ?? null,
-    evt.tokensBefore ?? null,
-    evt.tokensAfter ?? null,
-    evt.hookOutcome ?? null,
-    evt.downstreamArtifactId ?? null,
-    evt.outcome ?? null
-  )
+  try {
+    const stmt = db.prepare(
+      `INSERT INTO retrieval_events (
+        session_id, ts, trigger, query, top_k_results, cited_in_output,
+        tokens_before, tokens_after, hook_outcome, downstream_artifact_id, outcome
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    stmt.run(
+      evt.sessionId,
+      evt.ts,
+      evt.trigger,
+      evt.query,
+      evt.topKResults,
+      evt.citedInOutput ?? null,
+      evt.tokensBefore ?? null,
+      evt.tokensAfter ?? null,
+      evt.hookOutcome ?? null,
+      evt.downstreamArtifactId ?? null,
+      evt.outcome ?? null
+    )
 
-  maybeWarnRowCount(db)
+    maybeWarnRowCount(db)
+  } catch (err) {
+    console.warn('[retrieval-logs] logRetrievalEvent failed:', err)
+  }
 }
 
 /**
@@ -255,10 +267,14 @@ export function logFrontmatterLintEvent(evt: FrontmatterLintEvent): void {
   const db = openDb()
   if (!db) return
 
-  const stmt = db.prepare(
-    `INSERT INTO frontmatter_lint_events (ts, retro_path, outcome) VALUES (?, ?, ?)`
-  )
-  stmt.run(evt.ts, evt.retroPath, evt.outcome)
+  try {
+    const stmt = db.prepare(
+      `INSERT INTO frontmatter_lint_events (ts, retro_path, outcome) VALUES (?, ?, ?)`
+    )
+    stmt.run(evt.ts, evt.retroPath, evt.outcome)
 
-  maybeWarnRowCount(db)
+    maybeWarnRowCount(db)
+  } catch (err) {
+    console.warn('[retrieval-logs] logFrontmatterLintEvent failed:', err)
+  }
 }

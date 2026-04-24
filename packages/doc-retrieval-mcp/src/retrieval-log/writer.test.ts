@@ -231,6 +231,89 @@ describe('row-count warning', () => {
   })
 })
 
+describe('RETRIEVAL_LOG_DIR_OVERRIDE production guard', () => {
+  it('ignores the override and falls through to real resolver when NODE_ENV=production', async () => {
+    // Set NODE_ENV=production — override must be ignored.
+    const originalNodeEnv = process.env.NODE_ENV
+    process.env.NODE_ENV = 'production'
+    // The override env var is still set (from beforeEach) but must be ignored.
+    // Redirect HOME to scratch so we don't touch the real ~/.claude/projects.
+    const fakeHome = join(scratch, 'home-prod')
+    mkdirSync(fakeHome, { recursive: true })
+    const originalHome = process.env.HOME
+    process.env.HOME = fakeHome
+
+    // We also need to redirect cwd so the project-dir resolver doesn't walk up
+    // to the real repo root (which has a .git dir) and write to the real home.
+    // Spy on cwd to return a leaf with no .git ancestor inside fakeHome.
+    const fakeProject = join(fakeHome, 'project')
+    mkdirSync(fakeProject, { recursive: true })
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(fakeProject)
+
+    try {
+      const { logRetrievalEvent } = await freshWriter()
+      logRetrievalEvent({
+        sessionId: 's',
+        ts: '2026-04-24T12:00:00Z',
+        trigger: 'other',
+        query: 'q',
+        topKResults: '[]',
+      })
+
+      // The DB must NOT be in the scratch override dir.
+      expect(existsSync(join(scratch, 'retrieval-logs.db'))).toBe(false)
+      // The DB must be under fakeHome/.claude/projects/ instead.
+      const encoded = fakeProject.replace(/\//g, '-')
+      const expectedPath = join(fakeHome, '.claude', 'projects', encoded, 'retrieval-logs.db')
+      expect(existsSync(expectedPath)).toBe(true)
+    } finally {
+      cwdSpy.mockRestore()
+      if (originalHome === undefined) delete process.env.HOME
+      else process.env.HOME = originalHome
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV
+      else process.env.NODE_ENV = originalNodeEnv
+    }
+  })
+})
+
+describe('write error resilience', () => {
+  it('emits console.warn and does not throw when the DB insert fails', async () => {
+    // Open the DB normally first so cachedDb is populated.
+    const { logRetrievalEvent, closeRetrievalLog: close } = await freshWriter()
+    logRetrievalEvent({
+      sessionId: 's',
+      ts: '2026-04-24T12:00:00Z',
+      trigger: 'other',
+      query: 'q',
+      topKResults: '[]',
+    })
+
+    // Close the DB handle so the next call re-opens — but corrupt the file
+    // first so open fails, exercising the openDb() catch branch.
+    close()
+    // Overwrite the DB with garbage so better-sqlite3 throws on open.
+    const { writeFileSync: wf } = await import('node:fs')
+    wf(join(scratch, 'retrieval-logs.db'), Buffer.from('not-a-sqlite-db'))
+
+    // This must not throw.
+    expect(() => {
+      logRetrievalEvent({
+        sessionId: 's2',
+        ts: '2026-04-24T12:00:01Z',
+        trigger: 'other',
+        query: 'q',
+        topKResults: '[]',
+      })
+    }).not.toThrow()
+
+    expect(
+      warnSpy.mock.calls.some(
+        (args: unknown[]) => typeof args[0] === 'string' && args[0].includes('failed to open DB')
+      )
+    ).toBe(true)
+  })
+})
+
 describe('worktree path canonicalization', () => {
   it('uses main repo path (dir .git) not worktree path (file .git)', async () => {
     // Build a fake repo + worktree under the scratch tmpdir.
