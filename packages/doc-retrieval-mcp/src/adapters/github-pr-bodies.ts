@@ -111,13 +111,14 @@ async function chunk(file: AdapterFile, ctx: AdapterContext): Promise<ChunkMetad
   const effTokens = text === raw ? tokens : estimateTokens(text)
 
   const title = typeof file.tags?.title === 'string' ? file.tags.title : ''
-  const id = chunkId(file.logicalPath, 1, 1, text)
+  const lineEnd = Math.max(1, text.split('\n').length)
+  const id = chunkId(file.logicalPath, 1, lineEnd, text)
   return [
     {
       id,
       filePath: file.logicalPath,
       lineStart: 1,
-      lineEnd: Math.max(1, text.split('\n').length),
+      lineEnd,
       headingChain: title ? [title] : [file.logicalPath],
       text,
       tokens: effTokens,

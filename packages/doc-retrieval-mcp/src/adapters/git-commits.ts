@@ -99,13 +99,14 @@ async function chunk(file: AdapterFile, ctx: AdapterContext): Promise<ChunkMetad
   const text = raw.length <= maxChars ? raw : raw.slice(0, maxChars)
   const effTokens = text === raw ? tokens : estimateTokens(text)
 
-  const id = chunkId(file.logicalPath, 1, 1, text)
+  const lineEnd = Math.max(1, text.split('\n').length)
+  const id = chunkId(file.logicalPath, 1, lineEnd, text)
   return [
     {
       id,
       filePath: file.logicalPath,
       lineStart: 1,
-      lineEnd: Math.max(1, text.split('\n').length),
+      lineEnd,
       headingChain: [basename(file.logicalPath)],
       text,
       tokens: effTokens,
