@@ -2,6 +2,7 @@ import type { AdapterConfig, SourceAdapter } from '../types.js'
 import type { CorpusConfig } from '../config.js'
 import { createMarkdownCorpusAdapter } from './markdown-corpus.js'
 import { createMemoryTopicFilesAdapter } from './memory-topic-files.js'
+import { createScriptHeadersAdapter } from './script-headers.js'
 
 /**
  * Adapter registry (SMI-4450 Wave 1 Step 4). Resolves a `CorpusConfig` into
@@ -33,13 +34,15 @@ function instantiate(entry: AdapterConfig): SourceAdapter {
   switch (entry.kind) {
     case 'memory-topic-files':
       return createMemoryTopicFilesAdapter()
+    case 'script-headers':
+      return createScriptHeadersAdapter()
     // Remaining adapters land in subsequent commits of SMI-4451 Wave 1 Step 4.
     // Unknown kinds throw so typos in corpus.config.json surface immediately.
     default:
       throw new Error(
         `adapter registry: unknown adapter kind "${entry.kind}". ` +
-          `Known kinds: markdown-corpus (implicit default), memory-topic-files. ` +
-          `Future kinds wired in SMI-4451 Wave 1 Step 4: script-headers, ` +
+          `Known kinds: markdown-corpus (implicit default), memory-topic-files, ` +
+          `script-headers. Future kinds wired in SMI-4451 Wave 1 Step 4: ` +
           `github-pr-bodies, git-commits, supabase-migrations.`
       )
   }
