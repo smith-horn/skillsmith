@@ -2,7 +2,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { existsSync } from 'node:fs'
 import { join, relative } from 'node:path'
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { minimatch } from 'minimatch'
 
 import { chunkDocument } from '../indexer.helpers.js'
@@ -97,11 +97,11 @@ async function expandGlobs(patterns: string[], cwd: string): Promise<string[]> {
 function gitChangedFiles(root: string, baseSha: string): string[] {
   if (!/^[0-9a-f]{40}$/i.test(baseSha)) return []
   try {
-    const out = execSync(`git --no-optional-locks diff --name-only ${baseSha}..HEAD`, {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
-    })
+    const out = execFileSync(
+      'git',
+      ['--no-optional-locks', 'diff', '--name-only', `${baseSha}..HEAD`],
+      { cwd: root, encoding: 'utf8', env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } }
+    )
     return out.split('\n').filter(Boolean)
   } catch {
     return []

@@ -22,14 +22,13 @@ export function buildRegistry(cfg: CorpusConfig): SourceAdapter[] {
   const extras = cfg.adapters ?? []
   for (const entry of extras) {
     if (entry.enabled === false) continue
-    const adapter = instantiate(entry)
-    if (adapter) adapters.push(adapter)
+    adapters.push(instantiate(entry))
   }
 
   return adapters
 }
 
-function instantiate(entry: AdapterConfig): SourceAdapter | null {
+function instantiate(entry: AdapterConfig): SourceAdapter {
   switch (entry.kind) {
     // Adapters land in subsequent commits of SMI-4451 Wave 1 Step 4.
     // Unknown kinds throw so typos in corpus.config.json surface immediately.
