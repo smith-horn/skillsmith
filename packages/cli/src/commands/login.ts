@@ -218,6 +218,9 @@ async function runDeviceCodeFlow(noBrowser: boolean): Promise<void> {
 
     await storeCredentials({ ...result.creds, version: 2 })
     console.log(chalk.green('\nLogged in successfully.'))
+    // SMI-4447: close the "did it work?" gap post-login. A single concrete command the
+    // user can run in-terminal beats a URL (phishing-safe, no browser context switch).
+    console.log(chalk.dim('  Try it: skillsmith skills list'))
     process.exit(EXIT.success)
   }
 

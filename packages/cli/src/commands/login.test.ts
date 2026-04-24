@@ -186,6 +186,9 @@ describe('createLoginCommand', () => {
       )
       const output = consoleLogSpy.mock.calls.flat().join('\n')
       expect(output).toContain('Logged in successfully')
+      // SMI-4447: post-login hint closes the "did it work?" gap that drove users
+      // to visit /account/cli-token just to confirm the session worked.
+      expect(output).toContain('Try it: skillsmith skills list')
     })
 
     it('LC-3: network error on device-code request exits 5', async () => {
