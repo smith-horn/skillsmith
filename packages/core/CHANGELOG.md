@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/core` are documented here.
 
+## v0.5.5
+
+- Version bump
+
 ## v0.5.4
 
 - **Fix**: rename webhook-dlq /retry → /resolve with migration 077 (SMI-4308) (#647)
