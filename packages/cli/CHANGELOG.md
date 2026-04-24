@@ -2,6 +2,12 @@
 
 All notable changes to `@skillsmith/cli` are documented here.
 
+## v0.5.8
+
+- **Feature**: SMI-4454 CLI login UX — paste feedback + device context on /device (#751)
+- **Fix**: SMI-4447 /account/cli-token auto-detect existing key + SMI-4441 error copy (#749)
+- **Feature**: SMI-4402 Wave 3 — RFC 8628 device-code OAuth flow (CLI/MCP/website) (#740)
+
 ## v0.5.7
 
 - **Refactor**: initSkill throws InitSkillError instead of process.exit (SMI-4314) (#642)
