@@ -5,6 +5,8 @@ Local, private semantic search over the Skillsmith doc corpus. Wraps
 hit 3 tools (`skill_docs_search`, `skill_docs_reindex`, `skill_docs_status`)
 instead of `Read`-ing whole guides.
 
+**Prerequisites**: Docker running (`docker compose --profile dev up -d`), `docs/internal` submodule initialized (`git submodule update --init`).
+
 Phase 1 of [SMI-4416](https://linear.app/smith-horn-group/issue/SMI-4416) /
 [SMI-4417](https://linear.app/smith-horn-group/issue/SMI-4417). See ADR-117
 for the design rationale and alternatives considered.
@@ -18,9 +20,9 @@ docker compose --profile dev up -d
 docker exec skillsmith-dev-1 npm install
 docker exec skillsmith-dev-1 npm run build -w packages/doc-retrieval-mcp
 
-# Build the initial .rvf — runs on host because we do not index CI artifacts
+# Build the initial index (requires linux-arm64-gnu binding — must run in Docker)
 git submodule update --init   # required: docs/internal must be present
-node packages/doc-retrieval-mcp/dist/src/cli.js reindex --full
+docker exec skillsmith-dev-1 node /app/packages/doc-retrieval-mcp/dist/src/cli.js reindex --full
 ```
 
 Output lands at `.ruvector/skillsmith-docs/vectors` (single-file VectorDb),
@@ -28,7 +30,7 @@ Output lands at `.ruvector/skillsmith-docs/vectors` (single-file VectorDb),
 git-ignored. `.git-crypt-ignore` is **not** needed — smudge/clean filters
 never run on untracked files.
 
-Restart Claude Code so it picks up the new `.mcp.json` entry.
+Restart Claude Code after the initial setup so the MCP panel discovers the `skillsmith-doc-retrieval` server. No changes to `.mcp.json` are needed — the `docker exec` entry is already in the file.
 
 ---
 
@@ -106,7 +108,7 @@ this if we adopt a longer-context model.
 The indexer uses `GIT_OPTIONAL_LOCKS=0` and passes
 `--no-optional-locks` to every `git diff` invocation, avoiding the
 SMI-2536 smudge-filter branch-switch hazard. Hook failure is non-fatal
-and non-blocking.
+and non-blocking. Sessions opened in worktrees share the same corpus — the Docker container bind-mounts the main repo at `/app` and there is no per-worktree index.
 
 To disable the auto-reindex: `rm -rf .ruvector/skillsmith-docs/` (first-run
 branch skips), or remove `packages/doc-retrieval-mcp/dist/`.
@@ -119,14 +121,14 @@ branch skips), or remove `packages/doc-retrieval-mcp/dist/`.
 
 ```bash
 rm -rf .ruvector/
-node packages/doc-retrieval-mcp/dist/src/cli.js reindex --full
+docker exec skillsmith-dev-1 node /app/packages/doc-retrieval-mcp/dist/src/cli.js reindex --full
 ```
 
 ### Verify a query end-to-end
 
 ```bash
-node packages/doc-retrieval-mcp/dist/src/cli.js status
-node -e "import('./packages/doc-retrieval-mcp/dist/src/search.js').then(m => m.search({ query: 'git-crypt worktrees', k: 3 })).then(r => console.log(JSON.stringify(r, null, 2)))"
+docker exec skillsmith-dev-1 node /app/packages/doc-retrieval-mcp/dist/src/cli.js status
+docker exec skillsmith-dev-1 node -e "import('/app/packages/doc-retrieval-mcp/dist/src/search.js').then(m => m.search({ query: 'git-crypt worktrees', k: 3 })).then(r => console.log(JSON.stringify(r, null, 2)))"
 ```
 
 ### Token-delta measurement (Wave 2 Step 6 gate)
@@ -147,11 +149,13 @@ Fail = Phase 2 abandoned, retro filed.
 
 | Symptom | Fix |
 |---------|-----|
-| `index not built` error from `skill_docs_search` | `node packages/doc-retrieval-mcp/dist/src/cli.js reindex --full` |
+| `Error: Native module not found for darwin-arm64` at Claude Code startup | The MCP server must run in Docker. Ensure `.mcp.json` uses `docker exec` (see Setup). Restart Claude Code after fixing. |
+| MCP server fails: `No such container: skillsmith-dev-1` or `Cannot connect to the Docker daemon` | `docker compose --profile dev up -d`, then restart Claude Code. |
+| `index not built` error from `skill_docs_search` | `docker exec skillsmith-dev-1 node /app/packages/doc-retrieval-mcp/dist/src/cli.js reindex --full` |
 | `required submodule 'docs/internal' is not initialized` | `git submodule update --init` |
 | `refusing to run in CI` | Expected — indexer never runs in CI. |
 | MCP server doesn't appear in Claude Code | Restart Claude Code after editing `.mcp.json`. Run the package build first: `docker exec skillsmith-dev-1 npm run build -w packages/doc-retrieval-mcp`. |
-| Stale results after many edits | `rm -rf .ruvector && node packages/doc-retrieval-mcp/dist/src/cli.js reindex --full` |
+| Stale results after many edits | `rm -rf .ruvector/ && docker exec skillsmith-dev-1 node /app/packages/doc-retrieval-mcp/dist/src/cli.js reindex --full` |
 
 ---
 

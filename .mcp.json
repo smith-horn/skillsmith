@@ -7,11 +7,14 @@
     },
     "skillsmith-doc-retrieval": {
       "type": "stdio",
-      "command": "node",
-      "args": ["./packages/doc-retrieval-mcp/dist/src/server.js"],
-      "env": {
-        "SKILLSMITH_REPO_ROOT": "."
-      }
+      "command": "docker",
+      "args": [
+        "exec",
+        "-i",
+        "skillsmith-dev-1",
+        "node",
+        "/app/packages/doc-retrieval-mcp/dist/src/server.js"
+      ]
     },
     "ruflo": {
       "type": "stdio",
