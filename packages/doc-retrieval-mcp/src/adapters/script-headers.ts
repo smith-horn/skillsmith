@@ -40,7 +40,11 @@ const EXT_PATTERN = /\.(sh|mjs|ts|js|bash)$/
 const MIN_FILE_BYTES = 200
 const MIN_HEADER_TOKENS = 32
 const SCAN_DIRS = ['scripts', '.husky'] as const
-const GENERATED_MARKER = '@generated'
+// Match `@generated` only when it appears inside a comment marker at the
+// start of a line AND is followed by end-of-line or whitespace — avoids
+// false positives when a header mentions the word in prose
+// (e.g. "we avoid writing @generated-looking boilerplate").
+const GENERATED_PATTERN = /^[ \t]*(?:\/\/|\*|#)[ \t]*@generated(?:$|[ \t])/m
 
 async function listFiles(ctx: AdapterContext): Promise<AdapterFile[]> {
   const files: AdapterFile[] = []
@@ -85,7 +89,7 @@ async function listFiles(ctx: AdapterContext): Promise<AdapterFile[]> {
       } catch {
         continue
       }
-      if (raw.includes(GENERATED_MARKER)) continue
+      if (GENERATED_PATTERN.test(raw)) continue
 
       files.push({
         logicalPath: rel.split(sep).join('/'),

@@ -137,7 +137,7 @@ describe('script-headers adapter — listFiles', () => {
     expect(files).toEqual([])
   })
 
-  it('skips @generated files', async () => {
+  it('skips @generated files (comment marker anchor)', async () => {
     writeFileSync(
       join(scratch, 'scripts', 'gen.ts'),
       '// @generated — do not edit\n// header text\n' + padBody() + padBody()
@@ -145,6 +145,17 @@ describe('script-headers adapter — listFiles', () => {
     const adapter = createScriptHeadersAdapter()
     const files = await adapter.listFiles(makeCtx(scratch, 'full'))
     expect(files).toEqual([])
+  })
+
+  it('does NOT false-positive on @generated mentioned in prose', async () => {
+    writeFileSync(
+      join(scratch, 'scripts', 'prose.sh'),
+      '#!/bin/bash\n# we avoid writing @generated-looking boilerplate here\n# line 2 real rationale\n# line 3 more rationale\n' +
+        padBody()
+    )
+    const adapter = createScriptHeadersAdapter()
+    const files = await adapter.listFiles(makeCtx(scratch, 'full'))
+    expect(files.map((f) => f.logicalPath)).toEqual(['scripts/prose.sh'])
   })
 
   it('skips node_modules', async () => {
@@ -204,10 +215,7 @@ describe('script-headers adapter — chunk', () => {
     const adapter = createScriptHeadersAdapter()
     const ctx = makeCtx(scratch, 'full')
     const files = await adapter.listFiles(ctx)
-    if (files.length === 0) {
-      // File fell below 200-byte threshold; accepted edge case.
-      return
-    }
+    expect(files.length).toBe(1)
     const chunks = await adapter.chunk(files[0], ctx)
     expect(chunks).toEqual([])
   })
