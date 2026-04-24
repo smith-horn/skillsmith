@@ -60,6 +60,27 @@ import LoginButton from './auth/LoginButton.astro'
     var overlay = document.getElementById('signed-out-overlay')
     if (!overlay) return
 
+    // Session-aware: if a @supabase/supabase-js v2 session exists and is not expired,
+    // remove the overlay immediately. Reads the sb-<project-ref>-auth-token localStorage
+    // key directly to avoid a full client init. Matches the JSDoc contract at :10-11.
+    try {
+      var keys = Object.keys(localStorage)
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i]
+        if (k.indexOf('sb-') !== 0 || !/-auth-token$/.test(k)) continue
+        var raw = localStorage.getItem(k)
+        if (!raw) continue
+        var parsed = JSON.parse(raw)
+        var expiresAt = parsed && parsed.expires_at
+        if (typeof expiresAt === 'number' && expiresAt * 1000 > Date.now()) {
+          overlay.remove()
+          return
+        }
+      }
+    } catch (_e) {
+      /* localStorage / JSON.parse failed — fall through to dismissal check */
+    }
+
     // On load: if a non-expired dismissal exists, remove the overlay; otherwise sweep a stale key.
     try {
       var storedUntil = localStorage.getItem(DISMISS_KEY)

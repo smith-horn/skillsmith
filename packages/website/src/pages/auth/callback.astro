@@ -312,10 +312,30 @@ const redirectTo =
       .select('first_name, last_name, profile_completed_at')
       .eq('id', session.user.id)
       .single()
-    // H1: on profile fetch failure, do NOT default-redirect — surface the error instead.
-    // A silent default-redirect to `/complete-profile` on transient network error would trap
-    // already-complete users in the form. Keep them on callback with a clear retry prompt.
+    // H1: branch on Postgres/PostgREST error code so schema-drift (42703 / 42P01 /
+    // PGRST204 / PGRST205) and missing-row (PGRST116) degrade gracefully to
+    // /complete-profile. Only permission-denied (42501) keeps the hard error —
+    // that case represents a real trust-boundary violation, not deploy ordering.
+    // authRedirectTo already passed validateNextParam at :257 — do not rebuild.
     if (profileError) {
+      const code = (profileError as { code?: string }).code ?? ''
+      const SCHEMA_DRIFT_CODES = ['42703', '42P01', 'PGRST204', 'PGRST205']
+      if (SCHEMA_DRIFT_CODES.includes(code)) {
+        // Schema/cache drift between website deploy and DB migration state. Log to
+        // console so it surfaces in Sentry breadcrumbs / browser devtools. Server-side
+        // telemetry via the `events` edge function is NOT wired here because that fn's
+        // ALLOWED_EVENTS allowlist rejects `callback:schema_drift` and its
+        // sanitizeMetadata strips `code`/`path`/`user_id`. Wiring it would require an
+        // edge fn deploy; not in this hotfix's scope.
+        console.warn('[auth/callback] schema drift detected', { code, path: '/auth/callback' })
+        window.location.href = '/complete-profile?next=' + encodeURIComponent(authRedirectTo)
+        return
+      }
+      if (code === 'PGRST116') {
+        // Profile row missing (0 rows). Send to /complete-profile to create it.
+        window.location.href = '/complete-profile?next=' + encodeURIComponent(authRedirectTo)
+        return
+      }
       showError(
         'We could not verify your profile. Please try again — if it keeps failing, contact us at /contact?topic=signup-help.'
       )
