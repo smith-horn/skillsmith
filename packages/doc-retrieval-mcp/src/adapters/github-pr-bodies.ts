@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import { chunkId, estimateTokens } from '../indexer.helpers.js'
@@ -50,8 +50,13 @@ const INCREMENTAL_WINDOW_DAYS = 7
 const MIN_BODY_CHARS = 64
 const SMI_PATTERN = /\bSMI-(\d+)\b/
 const OWNER_REPO_DEFAULT = { owner: 'smith-horn', repo: 'skillsmith' }
+// Hard cap: 40 pages × 50 per page = 2,000 PRs per run. 180-day
+// Skillsmith window needs ~28 pages with ~40% headroom. A
+// misconfigured query can't run unbounded.
+const MAX_PAGES = 40
+const PAGE_SIZE = 50
 
-interface CachedPr {
+export interface CachedPr {
   number: number
   title: string
   body: string
@@ -152,11 +157,30 @@ async function loadCache(path: string): Promise<Cache> {
 }
 
 async function saveCache(path: string, cache: Cache): Promise<void> {
+  const tmp = `${path}.tmp`
   try {
     mkdirSync(dirname(path), { recursive: true })
-    await writeFile(path, JSON.stringify(cache, null, 2), 'utf8')
+    await writeFile(tmp, JSON.stringify(cache, null, 2), 'utf8')
+    // Atomic swap — rename is POSIX-atomic within a single
+    // filesystem. Prevents a crash mid-JSON.stringify from
+    // leaving a truncated cache that loadCache would silently
+    // treat as empty on the next run (compounding C1).
+    await rename(tmp, path)
   } catch (err) {
-    console.warn(`github-pr-bodies: failed to persist cache at ${path}: ${(err as Error).message}`)
+    const e = err as NodeJS.ErrnoException
+    try {
+      await unlink(tmp)
+    } catch {
+      // best effort — tmp may not exist
+    }
+    if (e.code === 'EXDEV') {
+      console.warn(
+        'github-pr-bodies: cache path crosses filesystem boundary; ' +
+          'atomic write unavailable. Consider relocating the cache to local disk.'
+      )
+    } else {
+      console.warn(`github-pr-bodies: failed to persist cache at ${path}: ${e.message}`)
+    }
   }
 }
 
@@ -194,30 +218,85 @@ function shouldSkip(pr: CachedPr): boolean {
 }
 
 /**
- * Fetch merged PRs since the given ISO timestamp via `gh api graphql`.
- * Returns `null` on CLI error or auth failure so the caller can fall
- * back to cache without losing the adapter entirely. Exported for tests
- * so the fetch can be stubbed via a dependency-injection test double.
+ * Fetch merged PRs since the given ISO timestamp via `gh api graphql`,
+ * iterating through pages until `hasNextPage` is false or `MAX_PAGES` is
+ * reached. Skillsmith merges ~1,442 PRs per 180-day window (~28 pages);
+ * without pagination, `first: 50` silently drops ~95% of the corpus on
+ * first-run — blocking for the Step 8 regression gate (SMI-4450 C1).
+ *
+ * Returns:
+ * - `null` when the very first page fails (nothing usable — let the
+ *   caller fall back to cache).
+ * - `CachedPr[]` otherwise, including partial accumulation when a
+ *   later page fails mid-loop. Incremental runs backfill the tail.
+ *
+ * Exported for tests so the fetch can be exercised via a DI seam.
  */
 export function fetchMergedPrsSince(
   owner: string,
   repo: string,
   sinceIso: string,
-  token: string
+  token: string,
+  // Injectable for tests — exercises the pagination loop without
+  // requiring the `gh` CLI binary. Default calls through to the real
+  // `gh api graphql` invocation.
+  runPage: (
+    owner: string,
+    repo: string,
+    sinceIso: string,
+    after: string | null,
+    token: string
+  ) => GraphqlPage | null = runGraphql
 ): CachedPr[] | null {
+  const accumulated: CachedPr[] = []
+  let cursor: string | null = null
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const resp = runPage(owner, repo, sinceIso, cursor, token)
+    if (resp === null) {
+      if (page === 0) return null
+      console.warn(
+        `github-pr-bodies: partial fetch — returned ${accumulated.length} PRs after ` +
+          `${page} page(s); next incremental run will backfill the tail.`
+      )
+      return accumulated
+    }
+    accumulated.push(...resp.nodes)
+    if (!resp.hasNextPage || resp.endCursor === null) return accumulated
+    cursor = resp.endCursor
+  }
+
+  // Cap reached without hasNextPage: false — corpus may be incomplete.
+  console.warn(
+    `github-pr-bodies: MAX_PAGES (${MAX_PAGES}) reached with ${accumulated.length} PRs; ` +
+      `corpus may be incomplete — tune MAX_PAGES or narrow the since window.`
+  )
+  return accumulated
+}
+
+export interface GraphqlPage {
+  nodes: CachedPr[]
+  hasNextPage: boolean
+  endCursor: string | null
+}
+
+function runGraphql(
+  owner: string,
+  repo: string,
+  sinceIso: string,
+  after: string | null,
+  token: string
+): GraphqlPage | null {
   const query = `
-    query($q: String!) {
-      search(query: $q, type: ISSUE, first: 50) {
+    query($q: String!, $after: String) {
+      search(query: $q, type: ISSUE, first: ${PAGE_SIZE}, after: $after) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           ... on PullRequest {
-            number
-            title
-            body
-            mergedAt
+            number title body mergedAt
             mergeCommit { oid }
             author { login }
-            isDraft
-            url
+            isDraft url
           }
         }
       }
@@ -225,27 +304,68 @@ export function fetchMergedPrsSince(
   `.trim()
   const q = `repo:${owner}/${repo} is:pr is:merged merged:>=${sinceIso}`
 
+  // R1: always `-f` (literal string) for both `q` and `after`. `gh`'s
+  // `-F` flag applies type inference (numbers, booleans, null), which
+  // would mangle the opaque base64 cursor or any search query with
+  // numeric / date tokens. `after=null` on first page is represented
+  // by OMITTING the `-f after=...` arg entirely — GraphQL treats
+  // absent variables as null.
+  const args = ['api', 'graphql', '-f', `query=${query}`, '-f', `q=${q}`]
+  if (after !== null) args.push('-f', `after=${after}`)
+
   try {
-    const out = execFileSync('gh', ['api', 'graphql', '-f', `query=${query}`, '-F', `q=${q}`], {
+    const out = execFileSync('gh', args, {
       encoding: 'utf8',
       env: { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token },
       maxBuffer: 32 * 1024 * 1024,
     })
     return parseGraphqlResponse(out)
-  } catch {
+  } catch (err) {
+    classifyAndWarn(err)
     return null
   }
 }
 
 /**
- * Parse the `gh api graphql` JSON response into `CachedPr[]`. Exported
- * for tests.
+ * Classify a `gh` invocation error into an actionable warning.
+ * User gets a distinguishing signal for rate-limit vs. missing
+ * CLI vs. auth failure — all three still return `null` upstream
+ * and fall back to cache (SMI-4450 M2).
  */
-export function parseGraphqlResponse(raw: string): CachedPr[] | null {
+export function classifyAndWarn(err: unknown): void {
+  const e = err as NodeJS.ErrnoException & { stderr?: Buffer | string; status?: number }
+  const stderrRaw = e.stderr
+  const stderr = (
+    typeof stderrRaw === 'string' ? stderrRaw : (stderrRaw?.toString('utf8') ?? '')
+  ).slice(0, 500)
+  const stderrLower = stderr.toLowerCase()
+
+  if (e.code === 'ENOENT') {
+    console.warn('github-pr-bodies: gh CLI not installed; skipping adapter')
+    return
+  }
+  // R4: lowercase substring match — resilient to phrasing drift across
+  // gh CLI versions. GitHub's canonical error is "API rate limit
+  // exceeded"; secondary-rate-limit messages vary.
+  if (stderrLower.includes('rate limit') || stderrLower.includes('403')) {
+    console.warn('github-pr-bodies: rate-limited; falling back to cache. Retry in ~60s.')
+    return
+  }
+  const msg = (e.message ?? 'unknown error').slice(0, 200)
+  console.warn(`github-pr-bodies: gh fetch failed (${msg}); falling back to cache`)
+}
+
+/**
+ * Parse the `gh api graphql` JSON response into a `GraphqlPage`.
+ * Exported for tests. Return shape includes pagination cursor so the
+ * caller can loop until `hasNextPage === false`.
+ */
+export function parseGraphqlResponse(raw: string): GraphqlPage | null {
   try {
     const parsed = JSON.parse(raw) as {
       data?: {
         search?: {
+          pageInfo?: { hasNextPage?: boolean; endCursor?: string | null }
           nodes?: Array<{
             number?: number
             title?: string
@@ -259,11 +379,12 @@ export function parseGraphqlResponse(raw: string): CachedPr[] | null {
         }
       }
     }
-    const nodes = parsed.data?.search?.nodes ?? []
-    const out: CachedPr[] = []
-    for (const n of nodes) {
+    const search = parsed.data?.search
+    if (!search) return { nodes: [], hasNextPage: false, endCursor: null }
+    const nodes: CachedPr[] = []
+    for (const n of search.nodes ?? []) {
       if (typeof n.number !== 'number') continue
-      out.push({
+      nodes.push({
         number: n.number,
         title: n.title ?? '',
         body: n.body ?? '',
@@ -274,7 +395,11 @@ export function parseGraphqlResponse(raw: string): CachedPr[] | null {
         url: n.url ?? '',
       })
     }
-    return out
+    return {
+      nodes,
+      hasNextPage: Boolean(search.pageInfo?.hasNextPage),
+      endCursor: search.pageInfo?.endCursor ?? null,
+    }
   } catch {
     return null
   }

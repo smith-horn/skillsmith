@@ -56,7 +56,11 @@ async function listFiles(ctx: AdapterContext): Promise<AdapterFile[]> {
   const out = runGitLog(ctx.repoRoot, since)
   if (out === null) return []
 
-  const repoName = basename(ctx.repoRoot)
+  // SMI-4450 H1: canonical repo name from `git config --get
+  // remote.origin.url`. Falls back to `basename(repoRoot)` — which
+  // varies between worktree and main repo — only when the remote
+  // is missing or unparseable.
+  const repoName = resolveRepoName(ctx)
   const records = parseLogOutput(out)
   const files: AdapterFile[] = []
   for (const rec of records) {
@@ -74,6 +78,9 @@ async function listFiles(ctx: AdapterContext): Promise<AdapterFile[]> {
         sha: short,
         committed_at: rec.isoDate,
         author: rec.author,
+        // SMI-4450 M1: carry the subject line through so chunk() can
+        // use it as the headingChain hint instead of the opaque SHA.
+        subject: rec.subject,
         ...(smiMatch ? { smi: `SMI-${smiMatch[1]}` } : {}),
       },
     })
@@ -101,13 +108,16 @@ async function chunk(file: AdapterFile, ctx: AdapterContext): Promise<ChunkMetad
 
   const lineEnd = Math.max(1, text.split('\n').length)
   const id = chunkId(file.logicalPath, 1, lineEnd, text)
+  // SMI-4450 M1: prefer commit subject in headingChain over the SHA.
+  const subject = typeof file.tags?.subject === 'string' ? file.tags.subject : ''
+  const heading = subject.length > 0 ? [subject] : [basename(file.logicalPath)]
   return [
     {
       id,
       filePath: file.logicalPath,
       lineStart: 1,
       lineEnd,
-      headingChain: [basename(file.logicalPath)],
+      headingChain: heading,
       text,
       tokens: effTokens,
       kind: 'commit',
@@ -181,6 +191,46 @@ export function parseLogOutput(raw: string): CommitRecord[] {
     })
   }
   return records
+}
+
+/**
+ * Derive a stable virtual-namespace repo name (SMI-4450 H1). Without
+ * this, `basename(ctx.repoRoot)` yields `smi-4450-ruvector-ltm` inside
+ * a worktree and `skillsmith` in the main repo — different
+ * `logicalPath`s → different chunk ids for the exact same commit.
+ *
+ * Resolution order:
+ *   1. `adapterCfg.repo_name` (explicit override for forks / custom
+ *      names the user wants pinned).
+ *   2. Parse `git config --get remote.origin.url` — works across SSH
+ *      / HTTPS / ssh-protocol + port URL forms. Worktrees share the
+ *      main repo's remote, so this yields the same name in both.
+ *   3. Fallback to `basename(repoRoot)` — pre-Wave-1 behavior.
+ *
+ * Known caveat: if `origin` points to a fork, the resolved name
+ * reflects the fork, not the canonical upstream. User overrides via
+ * `adapterCfg.repo_name` when upstream identity matters.
+ */
+export function resolveRepoName(ctx: AdapterContext): string {
+  const cfg = ctx.adapterCfg as { repo_name?: string } | undefined
+  if (typeof cfg?.repo_name === 'string' && cfg.repo_name.length > 0) return cfg.repo_name
+
+  try {
+    const url = execFileSync('git', ['config', '--get', 'remote.origin.url'], {
+      cwd: ctx.repoRoot,
+      encoding: 'utf8',
+    }).trim()
+    // Matches the final path segment before an optional `.git` suffix.
+    // Handles: `git@github.com:owner/repo.git`,
+    //          `https://github.com/owner/repo(.git)?`,
+    //          `ssh://git@github.com[:port]/owner/repo.git`.
+    const match = url.match(/[:/]([^/:]+?)(?:\.git)?$/)
+    if (match && match[1].length > 0) return match[1]
+  } catch {
+    /* fall through to basename */
+  }
+
+  return basename(ctx.repoRoot)
 }
 
 function shouldSkip(rec: CommitRecord): boolean {

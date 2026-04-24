@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { createGitCommitsAdapter, parseLogOutput } from './git-commits.js'
+import { createGitCommitsAdapter, parseLogOutput, resolveRepoName } from './git-commits.js'
 import type { AdapterContext } from '../types.js'
 import type { CorpusConfig } from '../config.js'
 
@@ -209,5 +209,84 @@ describe('git-commits adapter — listDeletedPaths', () => {
     const adapter = createGitCommitsAdapter()
     const deleted = await adapter.listDeletedPaths(makeCtx(scratch, 'incremental'))
     expect(deleted).toEqual([])
+  })
+})
+
+describe('resolveRepoName — virtual namespace stability (SMI-4450 H1)', () => {
+  function ctxWith(repoRoot: string, adapterCfg?: Record<string, unknown>): AdapterContext {
+    return {
+      ...makeCtx(repoRoot, 'full'),
+      adapterCfg: adapterCfg as never,
+    }
+  }
+
+  it('honours adapterCfg.repo_name override (config-first)', () => {
+    git(scratch, 'remote', 'add', 'origin', 'git@github.com:other/other.git')
+    const out = resolveRepoName(ctxWith(scratch, { repo_name: 'pinned-name' }))
+    expect(out).toBe('pinned-name')
+  })
+
+  it('extracts name from SSH remote URL', () => {
+    git(scratch, 'remote', 'add', 'origin', 'git@github.com:smith-horn/skillsmith.git')
+    expect(resolveRepoName(ctxWith(scratch))).toBe('skillsmith')
+  })
+
+  it('extracts name from HTTPS remote URL', () => {
+    git(scratch, 'remote', 'add', 'origin', 'https://github.com/smith-horn/skillsmith.git')
+    expect(resolveRepoName(ctxWith(scratch))).toBe('skillsmith')
+  })
+
+  it('extracts name from HTTPS URL without .git suffix', () => {
+    git(scratch, 'remote', 'add', 'origin', 'https://github.com/smith-horn/skillsmith')
+    expect(resolveRepoName(ctxWith(scratch))).toBe('skillsmith')
+  })
+
+  it('extracts name from ssh-protocol URL with non-default port', () => {
+    git(scratch, 'remote', 'add', 'origin', 'ssh://git@github.com:2222/smith-horn/skillsmith.git')
+    expect(resolveRepoName(ctxWith(scratch))).toBe('skillsmith')
+  })
+
+  it('falls back to basename when no remote is configured', () => {
+    // Fresh repo (beforeEach) has no remote — `git config --get` exits 1.
+    expect(resolveRepoName(ctxWith(scratch))).toBe(scratch.split('/').pop())
+  })
+
+  it('documents fork-remote behavior (resolves to fork name, user overrides via config)', () => {
+    git(scratch, 'remote', 'add', 'origin', 'git@github.com:forker/skillsmith-fork.git')
+    expect(resolveRepoName(ctxWith(scratch))).toBe('skillsmith-fork')
+    // With override:
+    expect(resolveRepoName(ctxWith(scratch, { repo_name: 'skillsmith' }))).toBe('skillsmith')
+  })
+})
+
+describe('git-commits headingChain — subject-based display (SMI-4450 M1)', () => {
+  it('uses commit subject as headingChain[0] instead of the SHA', async () => {
+    git(scratch, 'remote', 'add', 'origin', 'git@github.com:smith-horn/skillsmith.git')
+    commit(
+      'fix(SMI-4401): callback H1 guard for overlay session-blindness',
+      'Root cause: the overlay mount/unmount race dropped the session re-check. Adds an explicit H1 guard that survives component re-mount.'
+    )
+    const adapter = createGitCommitsAdapter()
+    const ctx = makeCtx(scratch, 'full')
+    const files = await adapter.listFiles(ctx)
+    expect(files.length).toBe(1)
+    const chunks = await adapter.chunk(files[0], ctx)
+    expect(chunks[0].headingChain).toEqual([
+      'fix(SMI-4401): callback H1 guard for overlay session-blindness',
+    ])
+    expect(chunks[0].headingChain[0]).not.toMatch(/^[0-9a-f]{8}$/)
+  })
+
+  it('virtual key uses resolveRepoName, not basename(repoRoot)', async () => {
+    git(scratch, 'remote', 'add', 'origin', 'git@github.com:smith-horn/skillsmith.git')
+    commit(
+      'feat(SMI-4451): registry extraction',
+      'Pulls the legacy pipeline out of indexer.ts into a pluggable SourceAdapter. Behavior unchanged but the new interface enables per-adapter incremental filters.'
+    )
+    const adapter = createGitCommitsAdapter()
+    const files = await adapter.listFiles(makeCtx(scratch, 'full'))
+    // scratch basename would be a random tmpdir name, but remote name
+    // is skillsmith — confirms the H1 fix overrides basename.
+    expect(files[0].logicalPath).toMatch(/^git:\/\/skillsmith\/commit\/[0-9a-f]{8}$/)
   })
 })

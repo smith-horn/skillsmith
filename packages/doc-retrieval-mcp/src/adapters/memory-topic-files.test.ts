@@ -170,6 +170,37 @@ describe('memory-topic-files adapter — chunk', () => {
   })
 })
 
+describe('memory-topic-files — wholeFileChunk self-sufficiency (SMI-4450 M3)', () => {
+  it('whole-file chunk has kind/lifetime set at construction, not via mapper', async () => {
+    // Small enough to hit the wholeFileChunk path (not split-by-heading).
+    writeFileSync(
+      join(memoryDir, 'feedback_small.md'),
+      '# Small\n\none two three four five six seven eight.\n'.repeat(2)
+    )
+    const adapter = createMemoryTopicFilesAdapter()
+    const ctx = makeCtx('full')
+    const files = await adapter.listFiles(ctx)
+    const chunks = await adapter.chunk(files[0], ctx)
+    expect(chunks[0].kind).toBe('memory')
+    expect(chunks[0].lifetime).toBe('short-term')
+  })
+
+  it('split chunks (chunkBlocks path) also get kind/lifetime', async () => {
+    const bigSection = 'word '.repeat(300) + '\n'
+    const content = `# Top\n\n${bigSection}\n## Sub A\n\n${bigSection}\n## Sub B\n\n${bigSection}`
+    writeFileSync(join(memoryDir, 'feedback_big.md'), content)
+    const adapter = createMemoryTopicFilesAdapter()
+    const ctx = makeCtx('full')
+    const files = await adapter.listFiles(ctx)
+    const chunks = await adapter.chunk(files[0], ctx)
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const c of chunks) {
+      expect(c.kind).toBe('memory')
+      expect(c.lifetime).toBe('short-term')
+    }
+  })
+})
+
 describe('memory-topic-files adapter — listDeletedPaths', () => {
   it('returns [] (no delete oracle in Wave 1 per SPARC §S2a edge case c)', async () => {
     const adapter = createMemoryTopicFilesAdapter()

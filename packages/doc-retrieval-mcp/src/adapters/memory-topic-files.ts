@@ -119,14 +119,19 @@ async function chunk(file: AdapterFile, ctx: AdapterContext): Promise<ChunkMetad
       ...b,
       headingChain: [fileBasename, ...b.headingChain],
     }))
-    chunks = chunkBlocks(withPrefix, file.logicalPath, chunkCfg)
+    chunks = chunkBlocks(withPrefix, file.logicalPath, chunkCfg).map((c) => ({
+      ...c,
+      kind: 'memory',
+      lifetime: 'short-term' as const,
+    }))
   }
 
+  // SMI-4450 M3: `kind` and `lifetime` are now set at the chunk
+  // construction sites above — both `wholeFileChunk` and the
+  // chunkBlocks map — so the mapper here only merges tags.
   const baseTags = file.tags ?? {}
   return chunks.map((c) => ({
     ...c,
-    kind: 'memory',
-    lifetime: 'short-term' as const,
     tags: { ...baseTags, ...(c.tags ?? {}) },
   }))
 }
@@ -147,6 +152,10 @@ function wholeFileChunk(
     headingChain: [fileBasename],
     text: raw,
     tokens,
+    // SMI-4450 M3: kind/lifetime set here directly so this chunk is
+    // fully formed without depending on a downstream mapper step.
+    kind: 'memory',
+    lifetime: 'short-term',
   }
 }
 
