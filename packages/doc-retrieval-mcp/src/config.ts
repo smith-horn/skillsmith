@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { AdapterConfig } from './types.js'
 
 /**
  * Default similarity threshold for skill_docs_search results.
@@ -39,6 +40,14 @@ export interface CorpusConfig {
   chunk: ChunkConfig
   globs: string[]
   requireSubmodule?: string
+  /**
+   * Optional per-adapter configuration (SMI-4450 Wave 1 Step 4).
+   * Backward-compatible: existing `corpus.config.json` files without this
+   * field continue to work — the registry falls back to the hard-wired
+   * `markdown-corpus` default adapter. Each entry's `kind` must match a
+   * registered adapter factory.
+   */
+  adapters?: AdapterConfig[]
 }
 
 let cached: CorpusConfig | null = null
@@ -76,6 +85,16 @@ function validate(c: CorpusConfig): void {
   }
   if (!Array.isArray(c.globs) || c.globs.length === 0) {
     throw new Error('corpus.config.json: globs must be a non-empty array')
+  }
+  if (c.adapters !== undefined) {
+    if (!Array.isArray(c.adapters)) {
+      throw new Error('corpus.config.json: adapters must be an array if present')
+    }
+    for (const a of c.adapters) {
+      if (typeof a?.kind !== 'string' || a.kind.length === 0) {
+        throw new Error('corpus.config.json: each adapter entry requires a non-empty "kind"')
+      }
+    }
   }
 }
 

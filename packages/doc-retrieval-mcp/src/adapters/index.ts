@@ -1,0 +1,44 @@
+import type { AdapterConfig, SourceAdapter } from '../types.js'
+import type { CorpusConfig } from '../config.js'
+import { createMarkdownCorpusAdapter } from './markdown-corpus.js'
+
+/**
+ * Adapter registry (SMI-4450 Wave 1 Step 4). Resolves a `CorpusConfig` into
+ * the ordered list of `SourceAdapter` instances the indexer should run.
+ *
+ * Contract:
+ * - The default `markdown-corpus` adapter is ALWAYS included first. It
+ *   covers the legacy glob-based pipeline with identical semantics.
+ * - Additional adapters are wired in by `kind` in `corpus.config.json`
+ *   under the `adapters` array (new, optional field). Unknown kinds throw
+ *   at load time so a typo in config surfaces immediately rather than
+ *   silently producing an empty ingest for that source.
+ * - `enabled: false` entries are skipped without throwing — operational
+ *   off-switch for flaky adapters.
+ */
+export function buildRegistry(cfg: CorpusConfig): SourceAdapter[] {
+  const adapters: SourceAdapter[] = [createMarkdownCorpusAdapter()]
+
+  const extras = cfg.adapters ?? []
+  for (const entry of extras) {
+    if (entry.enabled === false) continue
+    const adapter = instantiate(entry)
+    if (adapter) adapters.push(adapter)
+  }
+
+  return adapters
+}
+
+function instantiate(entry: AdapterConfig): SourceAdapter | null {
+  switch (entry.kind) {
+    // Adapters land in subsequent commits of SMI-4451 Wave 1 Step 4.
+    // Unknown kinds throw so typos in corpus.config.json surface immediately.
+    default:
+      throw new Error(
+        `adapter registry: unknown adapter kind "${entry.kind}". ` +
+          `Known kinds: markdown-corpus (implicit default). ` +
+          `Future kinds wired in SMI-4451 Wave 1 Step 4: memory-topic-files, ` +
+          `script-headers, github-pr-bodies, git-commits, supabase-migrations.`
+      )
+  }
+}

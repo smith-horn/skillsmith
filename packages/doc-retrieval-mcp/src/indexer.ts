@@ -1,10 +1,8 @@
-import { readFile, writeFile, unlink, mkdir, readdir } from 'node:fs/promises'
-import type { Dirent } from 'node:fs'
+import { readFile, writeFile, unlink, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
 import { execSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { minimatch } from 'minimatch'
 import './ruvector-types.js'
 // @ruvector/core is CJS; ESM named imports fail at runtime in Node.js v22.
 // Use createRequire so the module.exports object is accessible as-is.
@@ -22,8 +20,8 @@ import {
 import { acquireIndexerLock } from './indexer-lock.js'
 import { MetadataStore } from './metadata-store.js'
 import { embedBatch } from './embedding.js'
-import { chunkDocument } from './indexer.helpers.js'
-import type { IndexState } from './types.js'
+import { buildRegistry } from './adapters/index.js'
+import type { AdapterContext, ChunkMetadata, IndexState, SourceAdapter } from './types.js'
 
 export interface IndexResult {
   mode: 'full' | 'incremental'
@@ -73,19 +71,20 @@ async function doIndex(mode: 'full' | 'incremental', ctx: IndexContext): Promise
   const root = repoRoot()
   const store = await MetadataStore.load(metaAbs)
 
+  const prior: IndexState | null =
+    mode === 'incremental' && existsSync(stateAbs)
+      ? (JSON.parse(await readFile(stateAbs, 'utf8')) as IndexState)
+      : null
+
   let chunksUpserted = 0
   let chunksDeleted = 0
   let filesScanned = 0
 
   if (mode === 'full') {
     const existingIds = store.entries().map((e) => e.id)
-    for (const id of existingIds) {
-      store.delete(id)
-    }
+    for (const id of existingIds) store.delete(id)
     chunksDeleted = existingIds.length
-    if (existsSync(vectorsFile)) {
-      await unlink(vectorsFile)
-    }
+    if (existsSync(vectorsFile)) await unlink(vectorsFile)
   }
 
   const db = new VectorDb({
@@ -94,55 +93,46 @@ async function doIndex(mode: 'full' | 'incremental', ctx: IndexContext): Promise
     distanceMetric: 'Cosine',
   })
 
-  const { filesToIndex, deletedFiles } = await resolveFiles(mode, root, cfg, stateAbs)
+  const adapters = buildRegistry(cfg)
 
-  for (const relPath of deletedFiles) {
-    const removed = store.deleteByFile(relPath)
-    for (const id of removed) {
-      await db.delete(id)
-      chunksDeleted++
-    }
-  }
-
-  for (const relPath of filesToIndex) {
-    const absPath = join(root, relPath)
-    let raw: string
-    try {
-      raw = await readFile(absPath, 'utf8')
-    } catch {
-      continue
+  for (const adapter of adapters) {
+    const adapterCtx: AdapterContext = {
+      repoRoot: root,
+      cfg,
+      adapterCfg: cfg.adapters?.find((a) => a.kind === adapter.kind),
+      mode,
+      lastSha: prior?.lastIndexedSha ?? null,
+      lastRunAt: prior?.lastRunAt ?? null,
     }
 
-    if (mode === 'incremental') {
-      const removed = store.deleteByFile(relPath)
+    // Prune deletions first so re-inserts in listFiles don't collide with
+    // stale ids for the same logicalPath.
+    const deletedPaths = await adapter.listDeletedPaths(adapterCtx)
+    for (const logicalPath of deletedPaths) {
+      const removed = store.deleteByFile(logicalPath)
       for (const id of removed) {
         await db.delete(id)
         chunksDeleted++
       }
     }
 
-    const chunks = chunkDocument(raw, relPath, cfg)
-    if (chunks.length === 0) continue
+    const files = await adapter.listFiles(adapterCtx)
+    for (const file of files) {
+      if (mode === 'incremental') {
+        const removed = store.deleteByFile(file.logicalPath)
+        for (const id of removed) {
+          await db.delete(id)
+          chunksDeleted++
+        }
+      }
 
-    const vectors = await embedBatch(chunks.map((c) => c.text))
-    const entries = chunks.map((chunk, i) => ({
-      id: chunk.id,
-      vector: vectors[i],
-      metadata: JSON.stringify({
-        file_path: chunk.filePath,
-        line_start: chunk.lineStart,
-        line_end: chunk.lineEnd,
-        heading_chain: chunk.headingChain,
-        text: chunk.text,
-      }),
-    }))
+      const chunks = await adapter.chunk(file, adapterCtx)
+      if (chunks.length === 0) continue
 
-    await db.insertBatch(entries)
-    for (const chunk of chunks) {
-      store.upsert(chunk)
-      chunksUpserted++
+      const counts = await upsertChunks(db, store, chunks, adapter)
+      chunksUpserted += counts
+      filesScanned++
     }
-    filesScanned++
   }
 
   await store.flush()
@@ -159,72 +149,40 @@ async function doIndex(mode: 'full' | 'incremental', ctx: IndexContext): Promise
   return { mode, filesScanned, chunksUpserted, chunksDeleted, durationMs: Date.now() - t0 }
 }
 
-async function expandGlobs(patterns: string[], cwd: string): Promise<string[]> {
-  let rawEntries: Dirent[]
-  try {
-    rawEntries = (await readdir(cwd, {
-      recursive: true,
-      withFileTypes: true,
-    })) as unknown as Dirent[]
-  } catch {
-    return []
-  }
-  const results = new Set<string>()
-  for (const entry of rawEntries) {
-    if (!entry.isFile()) continue
-    const relPath = relative(cwd, join(entry.parentPath, entry.name))
-    for (const pattern of patterns) {
-      if (minimatch(relPath, pattern, { dot: true })) {
-        results.add(relPath)
-        break
-      }
-    }
-  }
-  return [...results].sort()
+async function upsertChunks(
+  db: InstanceType<typeof VectorDb>,
+  store: MetadataStore,
+  chunks: ChunkMetadata[],
+  adapter: SourceAdapter
+): Promise<number> {
+  const vectors = await embedBatch(chunks.map((c) => c.text))
+  const entries = chunks.map((chunk, i) => ({
+    id: chunk.id,
+    vector: vectors[i],
+    metadata: JSON.stringify(buildStoredMetadata(chunk, adapter)),
+  }))
+  await db.insertBatch(entries)
+  for (const chunk of chunks) store.upsert(chunk)
+  return chunks.length
 }
 
-async function resolveFiles(
-  mode: 'full' | 'incremental',
-  root: string,
-  cfg: Awaited<ReturnType<typeof loadConfig>>,
-  stateAbs: string
-): Promise<{ filesToIndex: string[]; deletedFiles: string[] }> {
-  if (mode === 'full') {
-    return { filesToIndex: await expandGlobs(cfg.globs, root), deletedFiles: [] }
+function buildStoredMetadata(
+  chunk: ChunkMetadata,
+  adapter: SourceAdapter
+): Record<string, unknown> {
+  const blob: Record<string, unknown> = {
+    file_path: chunk.filePath,
+    line_start: chunk.lineStart,
+    line_end: chunk.lineEnd,
+    heading_chain: chunk.headingChain,
+    text: chunk.text,
   }
-
-  const state: IndexState | null = existsSync(stateAbs)
-    ? (JSON.parse(await readFile(stateAbs, 'utf8')) as IndexState)
-    : null
-
-  const changed = state?.lastIndexedSha
-    ? gitChangedFiles(root, state.lastIndexedSha)
-    : await expandGlobs(cfg.globs, root)
-
-  const allCorpusFiles = new Set(await expandGlobs(cfg.globs, root))
-
-  const filesToIndex = changed.filter(
-    (f: string) => allCorpusFiles.has(f) && existsSync(join(root, f))
-  )
-  const deletedFiles = changed.filter(
-    (f: string) => allCorpusFiles.has(f) && !existsSync(join(root, f))
-  )
-  return { filesToIndex, deletedFiles }
-}
-
-function gitChangedFiles(root: string, baseSha: string): string[] {
-  // Validate SHA format before interpolating into the git range argument.
-  if (!/^[0-9a-f]{40}$/i.test(baseSha)) return []
-  try {
-    const out = execSync(`git --no-optional-locks diff --name-only ${baseSha}..HEAD`, {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
-    })
-    return out.split('\n').filter(Boolean)
-  } catch {
-    return []
-  }
+  const kind = chunk.kind ?? adapter.kind
+  if (kind) blob.kind = kind
+  const lifetime = chunk.lifetime ?? adapter.lifetime
+  if (lifetime) blob.lifetime = lifetime
+  if (chunk.tags && Object.keys(chunk.tags).length > 0) blob.tags = chunk.tags
+  return blob
 }
 
 function currentGitSha(root: string): string | null {
