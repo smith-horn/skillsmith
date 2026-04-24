@@ -364,6 +364,11 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   // reject it. Server-side re-checks the service-role header via
   // createSupabaseAdminClient().
   'advance-notice-email',
+  // SMI-4402: Device-code OAuth flow (RFC 8628)
+  // auth-device-code + auth-device-token are anonymous; auth-device-approve
+  // uses gateway-verified JWT (verify_jwt = true) so it is NOT listed here.
+  'auth-device-code',
+  'auth-device-token',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'

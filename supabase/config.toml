@@ -433,6 +433,20 @@ verify_jwt = false
 [functions.webhook-dlq]
 verify_jwt = true
 
+# SMI-4402: Device-code OAuth flow (RFC 8628)
+# auth-device-code: anonymous — CLI/MCP calls before any session exists.
+[functions.auth-device-code]
+verify_jwt = false
+
+# auth-device-token: anonymous — polling endpoint, mints session on approval.
+[functions.auth-device-token]
+verify_jwt = false
+
+# auth-device-approve: gateway-verified JWT — user must be authenticated
+# to approve a device code. auth.uid() resolves for the SECURITY DEFINER RPC.
+[functions.auth-device-approve]
+verify_jwt = true
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

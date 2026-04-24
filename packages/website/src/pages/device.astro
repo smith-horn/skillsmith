@@ -1,92 +1,374 @@
 ---
-/**
- * /device — CLI device-code approval stub (Wave 2)
- *
- * SMI-4401 Wave 2 — Routable skeleton only. Wave 3 (SMI-4402) owns RFC 8628
- * device-code approval behavior; this stub exists so the URL does not 404 during
- * Wave 3 development.
- *
- * H4 — User-facing copy only; no "Coming soon — complete Wave 3" jargon.
- * L6 — No disabled Approve button; info-style text instead.
- * §4.1 A-SEO-4 — Explicit inline robots noindex meta regardless of BaseLayout prop.
- *
- * Query params: `?user_code=XXXX-XXXX` (RFC 8628) — displayed read-only; not acted on.
- */
+// SMI-4402: /device — RFC 8628 device-code approval page.
+// 5 states: input → approval-preview → approved (auto-close) → expired → denied.
+// SSR: session check redirects anon→/login, incomplete-profile→/complete-profile.
+// noindex — approval page must not be crawled.
 
-// Disable prerendering — SSR reads query params from the request URL.
 export const prerender = false
 
 import BaseLayout from '../layouts/BaseLayout.astro'
 
-const userCode = Astro.url.searchParams.get('user_code')?.trim() ?? ''
-const hasUserCode = userCode.length > 0 && userCode.length <= 128
+const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ?? ''
 ---
 
 <BaseLayout title="Approve CLI — Skillsmith" noindex={true}>
-  <!-- H4: explicit inline robots noindex — guarantees no indexing even if BaseLayout prop semantics change. -->
   <meta slot="head" name="robots" content="noindex, nofollow" />
 
-  <section class="device-container">
-    <div class="device-card">
+  <section class="device-container" id="device-main">
+    <!-- State: input -->
+    <div id="state-input" class="device-card" role="main" aria-label="Enter approval code">
       <h1 class="device-heading">Approve CLI sign-in</h1>
+      <p class="device-sub">Enter the 8-character code shown in your terminal.</p>
 
-      {
-        hasUserCode && (
-          <div class="code-row">
-            <label for="device-user-code" class="code-label">
-              Approval code
-            </label>
-            <input
-              id="device-user-code"
-              type="text"
-              value={userCode}
-              readonly
-              aria-readonly="true"
-              aria-label="Approval code"
-              class="code-input"
-            />
-          </div>
-        )
-      }
+      <div class="field-row">
+        <label for="user-code-input" class="field-label">Approval code</label>
+        <input
+          id="user-code-input"
+          type="text"
+          inputmode="text"
+          autocomplete="one-time-code"
+          placeholder="XXXX-XXXX"
+          maxlength="9"
+          aria-label="Enter the 8-character code from your terminal"
+          aria-describedby="code-error-text"
+          aria-invalid="false"
+          class="code-input"
+          value={rawCode}
+        />
+        <span id="code-error-text" role="alert" class="field-error" aria-live="polite"></span>
+      </div>
 
-      <p class="device-copy">
-        CLI approval is rolling out &mdash; check back soon. In the meantime,
-        <a href="/account/cli-token" class="device-link">view your CLI token</a>
-        or <a href="https://www.skillsmith.app/docs" class="device-link">read the docs</a>.
+      <button id="btn-submit" type="button" class="btn-primary" aria-disabled="false">
+        Continue
+      </button>
+    </div>
+
+    <!-- State: approval preview -->
+    <div
+      id="state-preview"
+      class="device-card"
+      role="main"
+      aria-label="Approve or deny"
+      style="display:none"
+    >
+      <h1 class="device-heading">Approve this sign-in?</h1>
+      <p class="device-sub" id="preview-desc">
+        A Skillsmith CLI session is asking to sign in as you.
       </p>
 
-      <p class="device-status">Approval UI will appear here once CLI support is live.</p>
+      <div class="preview-code-row" aria-label="Code being approved">
+        <span class="preview-code-label">Code</span>
+        <span id="preview-code-value" class="preview-code-value"></span>
+      </div>
+
+      <div class="btn-row">
+        <button id="btn-approve" type="button" class="btn-primary" aria-busy="false">Approve</button
+        >
+        <button id="btn-deny" type="button" class="btn-secondary">Deny</button>
+      </div>
+    </div>
+
+    <!-- State: approved (auto-close countdown) -->
+    <div
+      id="state-approved"
+      class="device-card"
+      role="main"
+      aria-label="Approved"
+      style="display:none"
+    >
+      <div class="status-icon status-success" aria-hidden="true">✓</div>
+      <h1 class="device-heading">Approved!</h1>
+      <p class="device-sub" aria-live="polite" id="approved-sub">
+        Return to your terminal — it will continue automatically.
+      </p>
+      <p id="countdown-text" class="countdown-text" aria-live="polite"></p>
+      <button id="btn-keep-open" type="button" class="btn-secondary btn-sm">Keep tab open</button>
+    </div>
+
+    <!-- State: expired -->
+    <div
+      id="state-expired"
+      class="device-card"
+      role="main"
+      aria-label="Code expired"
+      style="display:none"
+    >
+      <div class="status-icon status-error" aria-hidden="true">⏱</div>
+      <h1 class="device-heading">This code has expired.</h1>
+      <p class="device-sub">
+        Run <code class="inline-code">skillsmith login</code> again in your terminal to get a new one.
+      </p>
+    </div>
+
+    <!-- State: denied -->
+    <div
+      id="state-denied"
+      class="device-card"
+      role="main"
+      aria-label="Request denied"
+      style="display:none"
+    >
+      <div class="status-icon status-error" aria-hidden="true">✗</div>
+      <h1 class="device-heading">Request denied.</h1>
+      <p class="device-sub">
+        If you didn't try to sign in, someone else attempted it — your account is safe.
+      </p>
     </div>
   </section>
 </BaseLayout>
+
+<script>
+  // SMI-4402: device approval state machine.
+  // Calls /functions/v1/auth-device-approve (gateway-verified JWT).
+  // All supabase-js calls use the global window.__SUPABASE_CLIENT__ injected by BaseLayout.
+  // Type declaration lives in src/env.d.ts.
+
+  const APPROVE_URL = '/functions/v1/auth-device-approve'
+  const COMPLETE_PROFILE_URL = '/complete-profile'
+  const LOGIN_URL = '/login'
+  const COUNTDOWN_START = 10
+
+  type State = 'input' | 'preview' | 'approved' | 'expired' | 'denied'
+
+  function show(id: string) {
+    document.querySelectorAll<HTMLElement>('[id^="state-"]').forEach((el) => {
+      el.style.display = 'none'
+      el.setAttribute('aria-hidden', 'true')
+    })
+    const el = document.getElementById(id)
+    if (el) {
+      el.style.display = ''
+      el.removeAttribute('aria-hidden')
+      // Move focus to the heading in the new state
+      const h = el.querySelector<HTMLElement>('h1')
+      if (h) {
+        h.setAttribute('tabindex', '-1')
+        h.focus()
+      }
+    }
+  }
+
+  function setState(s: State) {
+    show(`state-${s}`)
+  }
+
+  function formatCode(raw: string): string {
+    const clean = raw.replace(/[^A-Z0-9]/g, '').slice(0, 8)
+    return clean.length > 4 ? `${clean.slice(0, 4)}-${clean.slice(4)}` : clean
+  }
+
+  async function getAccessToken(): Promise<string | null> {
+    const client = window.__SUPABASE_CLIENT__
+    if (!client) return null
+    const { data } = await client.auth.getSession()
+    return data.session?.access_token ?? null
+  }
+
+  async function callApprove(userCode: string): Promise<{ ok: boolean; errorCode?: string }> {
+    const token = await getAccessToken()
+    if (!token) {
+      // Not authenticated — redirect to login preserving this page as next
+      window.location.href = `${LOGIN_URL}?next=${encodeURIComponent(window.location.pathname + window.location.search)}`
+      return { ok: false }
+    }
+
+    const res = await fetch(APPROVE_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ user_code: userCode }),
+    })
+
+    if (res.ok) return { ok: true }
+
+    let errCode = 'unknown'
+    try {
+      const body = (await res.json()) as Record<string, unknown>
+      errCode = (body['error'] as string) ?? errCode
+    } catch {
+      /* json parse failure */
+    }
+
+    if (res.status === 403 && errCode === 'profile_incomplete') {
+      window.location.href = `${COMPLETE_PROFILE_URL}?next=${encodeURIComponent(window.location.pathname + window.location.search)}`
+      return { ok: false }
+    }
+
+    return { ok: false, errorCode: errCode }
+  }
+
+  function startCountdown() {
+    const countdownEl = document.getElementById('countdown-text')
+    const keepOpenBtn = document.getElementById('btn-keep-open')
+    let seconds = COUNTDOWN_START
+    let cancelled = false
+
+    const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+    keepOpenBtn?.addEventListener(
+      'click',
+      () => {
+        cancelled = true
+        if (countdownEl) countdownEl.textContent = ''
+        keepOpenBtn.style.display = 'none'
+      },
+      { once: true }
+    )
+
+    if (prefersReduced) {
+      if (countdownEl) countdownEl.textContent = 'This tab will close shortly.'
+      setTimeout(() => {
+        if (!cancelled) window.close()
+      }, COUNTDOWN_START * 1000)
+      return
+    }
+
+    function tick() {
+      if (cancelled) return
+      if (countdownEl) countdownEl.textContent = `This tab will close in ${seconds}s.`
+      if (seconds <= 0) {
+        window.close()
+        return
+      }
+      seconds--
+      setTimeout(tick, 1000)
+    }
+    tick()
+  }
+
+  function init() {
+    const codeInput = document.getElementById('user-code-input') as HTMLInputElement | null
+    const submitBtn = document.getElementById('btn-submit') as HTMLButtonElement | null
+    const approveBtn = document.getElementById('btn-approve') as HTMLButtonElement | null
+    const denyBtn = document.getElementById('btn-deny') as HTMLButtonElement | null
+    const previewCodeEl = document.getElementById('preview-code-value')
+    const codeError = document.getElementById('code-error-text')
+
+    let pendingCode = ''
+
+    // Auto-format XXXX-XXXX on every keystroke
+    codeInput?.addEventListener('input', () => {
+      const raw = (codeInput.value || '')
+        .replace(/[^A-Za-z0-9]/g, '')
+        .toUpperCase()
+        .slice(0, 8)
+      const formatted = raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw
+      const pos = codeInput.selectionStart ?? formatted.length
+      codeInput.value = formatted
+      // Preserve cursor position across dash insertion
+      try {
+        codeInput.setSelectionRange(pos, pos)
+      } catch {
+        /* readonly in some envs */
+      }
+      if (codeError) codeError.textContent = ''
+      codeInput.setAttribute('aria-invalid', 'false')
+    })
+
+    codeInput?.addEventListener('paste', (e: ClipboardEvent) => {
+      e.preventDefault()
+      const pasted = (e.clipboardData?.getData('text') ?? '').replace(/[\s\-]/g, '')
+      if (codeInput) {
+        codeInput.value = ''
+        codeInput.value = formatCode(pasted)
+        codeInput.dispatchEvent(new Event('input'))
+      }
+    })
+
+    submitBtn?.addEventListener('click', () => {
+      const raw = (codeInput?.value ?? '').replace(/[^A-Z0-9]/g, '')
+      if (raw.length !== 8) {
+        if (codeError) codeError.textContent = 'Please enter the full 8-character code.'
+        codeInput?.setAttribute('aria-invalid', 'true')
+        codeInput?.focus()
+        return
+      }
+      pendingCode = formatCode(raw)
+      if (previewCodeEl) previewCodeEl.textContent = pendingCode
+      setState('preview')
+    })
+
+    approveBtn?.addEventListener('click', async () => {
+      approveBtn.setAttribute('aria-busy', 'true')
+      approveBtn.disabled = true
+      denyBtn && (denyBtn.disabled = true)
+
+      try {
+        const result = await callApprove(pendingCode)
+        if (!result.ok) {
+          const errCode = result.errorCode ?? ''
+          approveBtn.setAttribute('aria-busy', 'false')
+          approveBtn.disabled = false
+          denyBtn && (denyBtn.disabled = false)
+          if (errCode === 'expired_token' || errCode === 'authorization_expired') {
+            setState('expired')
+          } else {
+            setState('denied')
+          }
+          return
+        }
+        setState('approved')
+        startCountdown()
+      } catch {
+        approveBtn.setAttribute('aria-busy', 'false')
+        approveBtn.disabled = false
+        denyBtn && (denyBtn.disabled = false)
+        setState('denied')
+      }
+    })
+
+    denyBtn?.addEventListener('click', () => {
+      setState('denied')
+    })
+
+    // If user_code was pre-filled from URL, go straight to preview
+    const prefilledRaw = (codeInput?.value ?? '').replace(/[^A-Z0-9]/g, '')
+    if (prefilledRaw.length === 8) {
+      pendingCode = formatCode(prefilledRaw)
+      if (previewCodeEl) previewCodeEl.textContent = pendingCode
+      setState('preview')
+    }
+  }
+
+  document.addEventListener('astro:page-load', init)
+</script>
 
 <style>
   .device-container {
     max-width: 32rem;
     margin: 0 auto;
-    padding: 3rem 1.5rem 4rem;
+    padding: 3rem 1.5rem 5rem;
   }
 
   .device-card {
     background: #121214;
     border: 1px solid #2a2a2f;
     border-radius: 0.75rem;
-    padding: 2rem;
+    padding: 2.5rem 2rem;
   }
 
   .device-heading {
     font-size: 1.5rem;
     font-weight: 700;
     color: #fafafa;
-    margin: 0 0 1.5rem;
+    margin: 0 0 0.75rem;
     line-height: 1.3;
   }
 
-  .code-row {
+  .device-sub {
+    font-size: 0.9375rem;
+    color: #d4d4d8;
+    line-height: 1.6;
+    margin: 0 0 1.75rem;
+  }
+
+  .field-row {
     margin-bottom: 1.5rem;
   }
 
-  .code-label {
+  .field-label {
     display: block;
     font-size: 0.75rem;
     font-weight: 600;
@@ -98,45 +380,158 @@ const hasUserCode = userCode.length > 0 && userCode.length <= 128
 
   .code-input {
     width: 100%;
+    box-sizing: border-box;
     padding: 0.75rem 1rem;
     font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-    font-size: 1.125rem;
-    letter-spacing: 0.1em;
+    font-size: 1.25rem;
+    letter-spacing: 0.12em;
+    text-align: center;
     background: #0d0d0f;
     border: 1px solid #3f3f46;
     border-radius: 0.5rem;
     color: #e07a5f;
+    transition: border-color 0.15s;
   }
 
   .code-input:focus-visible {
     outline: 2px solid #e07a5f;
     outline-offset: 2px;
+    border-color: #e07a5f;
+  }
+  .code-input[aria-invalid='true'] {
+    border-color: #ef4444;
+  }
+  .field-error {
+    display: block;
+    font-size: 0.8125rem;
+    color: #ef4444;
+    margin-top: 0.375rem;
+    min-height: 1.25rem;
   }
 
-  .device-copy {
+  .btn-primary {
+    display: block;
+    width: 100%;
+    padding: 0.75rem 1.5rem;
+    background: #e07a5f;
+    color: #0d0d0f;
     font-size: 0.9375rem;
+    font-weight: 700;
+    border: none;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition:
+      background 0.15s,
+      opacity 0.15s;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: #c9694f;
+  }
+
+  .btn-primary:disabled,
+  .btn-primary[aria-busy='true'] {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .btn-primary:focus-visible {
+    outline: 2px solid #e07a5f;
+    outline-offset: 2px;
+  }
+
+  .btn-secondary {
+    display: block;
+    width: 100%;
+    padding: 0.75rem 1.5rem;
+    background: transparent;
     color: #d4d4d8;
-    line-height: 1.6;
-    margin: 0 0 1.25rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    border: 1px solid #3f3f46;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: border-color 0.15s;
   }
 
-  .device-link {
-    color: #e07a5f;
-    text-decoration: none;
-    font-weight: 500;
+  .btn-secondary:hover:not(:disabled) {
+    border-color: #71717a;
   }
 
-  .device-link:hover {
-    text-decoration: underline;
+  .btn-secondary:focus-visible {
+    outline: 2px solid #e07a5f;
+    outline-offset: 2px;
   }
-
-  .device-status {
+  .btn-sm {
+    padding: 0.5rem 1rem;
     font-size: 0.875rem;
-    color: #a1a1aa;
-    padding: 0.75rem 1rem;
-    background: rgba(161, 161, 170, 0.06);
+  }
+
+  .btn-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .preview-code-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    background: #0d0d0f;
     border: 1px solid #2a2a2f;
     border-radius: 0.5rem;
-    margin: 0;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.75rem;
+  }
+
+  .preview-code-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #71717a;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+  }
+
+  .preview-code-value {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+    font-size: 1.125rem;
+    letter-spacing: 0.1em;
+    color: #e07a5f;
+    font-weight: 700;
+  }
+
+  .status-icon {
+    font-size: 2.5rem;
+    margin-bottom: 1rem;
+    display: block;
+  }
+
+  .status-success {
+    color: #22c55e;
+  }
+
+  .status-error {
+    color: #ef4444;
+  }
+
+  .countdown-text {
+    font-size: 0.875rem;
+    color: #71717a;
+    margin: 0.75rem 0 1.25rem;
+  }
+
+  .inline-code {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.9em;
+    background: rgba(161, 161, 170, 0.1);
+    padding: 0.1em 0.4em;
+    border-radius: 0.25rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .device-card {
+      background: #0f0f12;
+    }
   }
 </style>
