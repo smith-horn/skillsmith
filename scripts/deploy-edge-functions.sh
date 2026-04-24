@@ -5,7 +5,7 @@
 #   ./scripts/deploy-edge-functions.sh --project-ref <ref> [--functions <name1,name2,...>]
 #
 # Validates the provided ref against known refs in .env before deploying.
-# When --functions is omitted, deploys all 25 functions.
+# When --functions is omitted, deploys all 30 functions.
 # When --functions is provided, deploys only the listed functions.
 
 set -euo pipefail
@@ -29,7 +29,7 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: $0 --project-ref <ref> [--functions <name1,name2,...>]"
       echo ""
       echo "Deploys Supabase Edge Functions to the specified project."
-      echo "When --functions is omitted, deploys all 25 functions."
+      echo "When --functions is omitted, deploys all 30 functions."
       echo "When --functions is provided, deploys only the listed functions."
       echo ""
       echo "Options:"
@@ -81,6 +81,9 @@ fi
 # --- Functions that require --no-verify-jwt (from supabase/config.toml) ---
 NO_VERIFY_JWT_FUNCTIONS=(
   admin-grant-subscription
+  advance-notice-email
+  auth-device-code
+  auth-device-token
   checkout
   contact-submit
   create-portal-session
@@ -102,6 +105,7 @@ NO_VERIFY_JWT_FUNCTIONS=(
 # --- Functions that use default JWT verification ---
 VERIFY_JWT_FUNCTIONS=(
   alert-notify
+  auth-device-approve
   expire-complimentary
   indexer
   ops-report
@@ -109,6 +113,7 @@ VERIFY_JWT_FUNCTIONS=(
   skills-outreach
   skills-refresh-metadata
   update-seat-count
+  webhook-dlq
 )
 
 # --- Filter to specific functions if --functions provided ---
@@ -145,8 +150,8 @@ if [[ -n "$FILTER_FUNCTIONS" ]]; then
   TOTAL=$((${#NO_VERIFY_JWT_FUNCTIONS[@]} + ${#VERIFY_JWT_FUNCTIONS[@]}))
   echo "Deploying $TOTAL edge function(s) to project: $PROJECT_REF"
 else
-  TOTAL=25
-  echo "Deploying all 25 edge functions to project: $PROJECT_REF"
+  TOTAL=30
+  echo "Deploying all 30 edge functions to project: $PROJECT_REF"
 fi
 
 echo "=================================================="

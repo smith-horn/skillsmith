@@ -33,6 +33,8 @@ ANONYMOUS_FUNCTIONS=(
   "stripe-webhook"
   "events"
   "health"
+  "auth-device-code"
+  "auth-device-token"
 )
 
 # Edge Functions that require authentication
@@ -46,6 +48,7 @@ AUTHENTICATED_FUNCTIONS=(
   "admin-grant-subscription"
   "skills-outreach-preferences"
   "webhook-dlq"
+  "auth-device-approve"
 )
 
 # Service role functions (scheduled jobs, internal)
@@ -58,6 +61,7 @@ SERVICE_ROLE_FUNCTIONS=(
   "process-pending-subscription"
   "expire-complimentary"
   "skills-outreach"
+  "advance-notice-email"
 )
 
 echo ""

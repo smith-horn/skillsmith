@@ -309,7 +309,7 @@ npx supabase functions deploy webhook-dlq
 npx supabase functions deploy auth-device-approve
 ```
 
-**Auto-deploy**: Edge functions are automatically deployed when changes to `supabase/functions/**` are merged to main. The `deploy-edge-functions.yml` workflow detects changed functions and deploys only those. `_shared/` changes trigger a full deploy of all 25 functions. Manual full deploy: `gh workflow run deploy-edge-functions.yml -f deploy_all=true`.
+**Auto-deploy**: Edge functions are automatically deployed when changes to `supabase/functions/**` are merged to main. The `deploy-edge-functions.yml` workflow detects changed functions and deploys only those. `_shared/` changes trigger a full deploy of all 30 functions. Manual full deploy: `gh workflow run deploy-edge-functions.yml -f deploy_all=true`.
 
 **CORS & monitoring details**: [deployment-guide.md](.claude/development/deployment-guide.md)
 
