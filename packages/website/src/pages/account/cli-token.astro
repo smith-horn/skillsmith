@@ -427,7 +427,7 @@ const supabaseConfig = getSupabaseConfig()
           }
         }
 
-        function openConfirmModal(onConfirm: () => void, opts?: { keyName?: string }) {
+        function openConfirmModal(onConfirm: () => void, opts?: { keyName?: string | undefined }) {
           const modal = ensureConfirmModal()
           // SMI-4447: surface origin-note for legacy auto-generated keys so the user
           // recognizes why an unfamiliar key name appears in their account.
