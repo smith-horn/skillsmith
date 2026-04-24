@@ -1,0 +1,101 @@
+{
+  "version": 2,
+  "runs": {
+    "git-crypt-worktree-interaction": {
+      "baseline": {
+        "totalInputAll": 162594,
+        "inputTokens": 5,
+        "cacheCreationInputTokens": 46186,
+        "cacheReadInputTokens": 116403,
+        "outputTokens": 2450,
+        "costWeightedInput": 69378,
+        "totalCostUsd": 0.2453654,
+        "turns": 7,
+        "toolCalls": {
+          "Read": 3
+        },
+        "capturedAt": "2026-04-24T02:56:18.422Z"
+      },
+      "measured": {
+        "totalInputAll": 107346,
+        "inputTokens": 4,
+        "cacheCreationInputTokens": 46947,
+        "cacheReadInputTokens": 60395,
+        "outputTokens": 2697,
+        "costWeightedInput": 64727,
+        "totalCostUsd": 0.23511875,
+        "turns": 7,
+        "toolCalls": {
+          "Read": 4
+        },
+        "capturedAt": "2026-04-24T03:00:25.952Z"
+      }
+    },
+    "file-length-enforcement": {
+      "baseline": {
+        "totalInputAll": 226284,
+        "inputTokens": 7,
+        "cacheCreationInputTokens": 30534,
+        "cacheReadInputTokens": 195743,
+        "outputTokens": 1018,
+        "costWeightedInput": 57749,
+        "totalCostUsd": 0.1889744,
+        "turns": 10,
+        "toolCalls": {
+          "Glob": 3,
+          "Read": 2,
+          "Grep": 1
+        },
+        "capturedAt": "2026-04-24T02:56:52.555Z"
+      },
+      "measured": {
+        "totalInputAll": 225382,
+        "inputTokens": 7,
+        "cacheCreationInputTokens": 30273,
+        "cacheReadInputTokens": 195102,
+        "outputTokens": 1147,
+        "costWeightedInput": 57358,
+        "totalCostUsd": 0.18974834999999998,
+        "turns": 10,
+        "toolCalls": {
+          "Glob": 3,
+          "Read": 2,
+          "Grep": 1
+        },
+        "capturedAt": "2026-04-24T03:01:05.086Z"
+      }
+    },
+    "plan-review-anti-patterns": {
+      "baseline": {
+        "totalInputAll": 364726,
+        "inputTokens": 2762,
+        "cacheCreationInputTokens": 49500,
+        "cacheReadInputTokens": 312464,
+        "outputTokens": 3597,
+        "costWeightedInput": 95883,
+        "totalCostUsd": 0.34205719999999995,
+        "turns": 18,
+        "toolCalls": {
+          "Read": 12,
+          "Glob": 2
+        },
+        "capturedAt": "2026-04-24T02:59:13.241Z"
+      },
+      "measured": {
+        "totalInputAll": 290040,
+        "inputTokens": 1302,
+        "cacheCreationInputTokens": 59751,
+        "cacheReadInputTokens": 228987,
+        "outputTokens": 3871,
+        "costWeightedInput": 98889,
+        "totalCostUsd": 0.35518035,
+        "turns": 17,
+        "toolCalls": {
+          "Glob": 4,
+          "Read": 5
+        },
+        "capturedAt": "2026-04-24T03:03:07.887Z"
+      }
+    }
+  }
+}
