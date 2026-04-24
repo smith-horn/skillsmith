@@ -270,13 +270,15 @@ const supabaseConfig = getSupabaseConfig()
           // Non-critical — tier note is informational only
         }
 
-        // Fetch active CLI tokens for display
+        // SMI-4447: detection query must match `generate-license` enforcement semantics
+        // (name-agnostic, status='active' only). The legacy `name='CLI Token'` filter hid
+        // pre-migration-080 auto-generated keys named 'default' and drove users into a
+        // "Generate" flow that then failed the tier-limit check.
         const { data: cliKeys } = await supabase
           .from('license_keys')
           .select('id, key_prefix, name, tier, created_at, last_used_at')
           .eq('user_id', session.user.id)
           .eq('status', 'active')
-          .eq('name', 'CLI Token')
           .order('created_at', { ascending: false })
 
         // SMI-4401 Wave 2 C2: humanize a "Last used" timestamp ("2 hours ago", "3 days ago").
@@ -309,21 +311,37 @@ const supabaseConfig = getSupabaseConfig()
         // Render active CLI tokens section — SMI-4401 Wave 2 return-visit state.
         const tokenCard = document.querySelector('.token-card')
         if (cliKeys && cliKeys.length > 0 && tokenCard) {
+          // SMI-4447: heading pluralizes on count; origin-note surfaces when any key
+          // has a non-default name (signals legacy auto-generated key from
+          // pre-migration-080 handle_new_user trigger).
+          const heading =
+            cliKeys.length === 1 ? 'Your CLI token is live' : 'Your CLI tokens are live'
+          const hasLegacyName = cliKeys.some((k) => k.name !== 'CLI Token')
+          const originNote = hasLegacyName
+            ? `<p class="key-origin-note">We auto-generated this key when you created your account. You can revoke and regenerate a fresh one below.</p>`
+            : ''
           const keysHtml = `
             <section class="keys-section" aria-labelledby="keys-section-heading">
               <h2 id="keys-section-heading" class="keys-section-heading">
-                Your CLI token is live
+                ${escapeHtml(heading)}
               </h2>
+              ${originNote}
               <p class="section-desc">
                 Revoke and regenerate here — the old key will stop working immediately.
               </p>
               <ul class="key-list">
                 ${cliKeys
-                  .map(
-                    (key) => `
+                  .map((key) => {
+                    const isDefaultName = key.name === 'CLI Token'
+                    const nameWeightClass = isDefaultName ? 'name-default' : 'name-legacy'
+                    return `
                   <li class="key-item">
                     <div class="key-info">
                       <code class="key-prefix">sk_live_...${escapeHtml(keyPreviewSuffix(key.key_prefix))}</code>
+                      <dl class="key-name-dl ${nameWeightClass}">
+                        <dt>Name</dt>
+                        <dd>${escapeHtml(key.name)}</dd>
+                      </dl>
                       <span class="key-meta">
                         ${escapeHtml(humanizeAgo(key.last_used_at))}
                         &middot; Created ${new Date(key.created_at).toLocaleDateString()}
@@ -334,13 +352,14 @@ const supabaseConfig = getSupabaseConfig()
                       class="revoke-regen-btn btn btn-danger btn-sm"
                       data-key-id="${escapeHtml(key.id)}"
                       data-key-prefix="${escapeHtml(key.key_prefix)}"
+                      data-key-name="${escapeHtml(key.name)}"
                       aria-label="Revoke and regenerate CLI token ending in ${escapeHtml(keyPreviewSuffix(key.key_prefix))}"
                     >
                       Revoke &amp; regenerate
                     </button>
                   </li>
                 `
-                  )
+                  })
                   .join('')}
               </ul>
               <div
@@ -380,6 +399,9 @@ const supabaseConfig = getSupabaseConfig()
               <p id="revoke-modal-desc">
                 Revoke this key and generate a new one? Any CLI sessions using the old key will stop working.
               </p>
+              <p id="revoke-modal-origin-note" class="revoke-modal-origin-note" hidden>
+                This key was created automatically when you signed up.
+              </p>
               <div class="revoke-modal-actions">
                 <button type="button" class="btn btn-secondary" data-modal-cancel>Cancel</button>
                 <button type="button" class="btn btn-danger" data-modal-confirm>Confirm</button>
@@ -405,8 +427,19 @@ const supabaseConfig = getSupabaseConfig()
           }
         }
 
-        function openConfirmModal(onConfirm: () => void) {
+        function openConfirmModal(onConfirm: () => void, opts?: { keyName?: string | undefined }) {
           const modal = ensureConfirmModal()
+          // SMI-4447: surface origin-note for legacy auto-generated keys so the user
+          // recognizes why an unfamiliar key name appears in their account.
+          const originNote = modal.querySelector<HTMLElement>('#revoke-modal-origin-note')
+          if (originNote) {
+            const isLegacyName = opts?.keyName !== undefined && opts.keyName !== 'CLI Token'
+            if (isLegacyName) {
+              originNote.removeAttribute('hidden')
+            } else {
+              originNote.setAttribute('hidden', 'true')
+            }
+          }
           modal.removeAttribute('hidden')
           const cancelBtn = modal.querySelector<HTMLButtonElement>('[data-modal-cancel]')
           const confirmBtn = modal.querySelector<HTMLButtonElement>('[data-modal-confirm]')
@@ -458,85 +491,117 @@ const supabaseConfig = getSupabaseConfig()
           btn.addEventListener('click', () => {
             const keyId = btn.dataset.keyId
             if (!keyId) return
+            const keyName = btn.dataset.keyName
 
-            openConfirmModal(async () => {
-              btn.disabled = true
-              const originalText = btn.textContent
-              btn.textContent = 'Regenerating...'
-              btn.setAttribute('aria-busy', 'true')
-              const status = document.getElementById('regen-status')
-              if (status) status.textContent = ''
+            openConfirmModal(
+              async () => {
+                btn.disabled = true
+                const originalText = btn.textContent
+                btn.textContent = 'Regenerating...'
+                btn.setAttribute('aria-busy', 'true')
+                const status = document.getElementById('regen-status')
+                if (status) status.textContent = ''
 
-              function resetButton() {
-                btn.disabled = false
-                if (originalText) btn.textContent = originalText
-                btn.removeAttribute('aria-busy')
-              }
-
-              function showRegenError(message: string) {
-                if (status) status.textContent = message
-                resetButton()
-              }
-
-              // Refresh session before hitting the edge function.
-              const {
-                data: { session: currentSession },
-              } = await supabase.auth.getSession()
-              if (!currentSession) {
-                showRegenError('Session expired. Please sign in again.')
-                return
-              }
-
-              let response: Response
-              try {
-                response = await fetch(`${supabaseUrl}/functions/v1/regenerate-license`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${currentSession.access_token}`,
-                    apikey: supabaseAnonKey,
-                  },
-                  body: JSON.stringify({ key_id: keyId }),
-                })
-              } catch {
-                showRegenError('Network error. Check your connection and try again.')
-                return
-              }
-
-              if (response.status === 401) {
-                showRegenError('Your session expired. Please sign in again and retry.')
-                return
-              }
-              if (response.status === 429) {
-                const retryAfter = response.headers.get('Retry-After') ?? '60'
-                showRegenError(`Too many requests. Try again in ${retryAfter} seconds.`)
-                return
-              }
-              if (response.status >= 500) {
-                showRegenError(
-                  'Something went wrong on our end. Try again in a moment, or contact us at /contact?topic=cli-token.'
-                )
-                return
-              }
-              if (!response.ok) {
-                showRegenError('Could not regenerate key. Try again or contact support.')
-                return
-              }
-
-              try {
-                const body = (await response.json()) as {
-                  key?: string
-                  key_prefix?: string
+                function resetButton() {
+                  btn.disabled = false
+                  if (originalText) btn.textContent = originalText
+                  btn.removeAttribute('aria-busy')
                 }
-                if (!body.key || !body.key_prefix) {
-                  showRegenError('Unexpected response from server. Please reload the page.')
+
+                function showRegenError(message: string) {
+                  if (status) status.textContent = message
+                  resetButton()
+                }
+
+                // SMI-4441: variant that accepts trusted HTML for error messages that
+                // include a contact-support link + reference code. Callers MUST ensure any
+                // interpolated values (reference codes) are from known-safe sources; user
+                // input is never passed through this path.
+                function showRegenErrorHtml(html: string) {
+                  if (status) status.innerHTML = html
+                  resetButton()
+                }
+
+                // Refresh session before hitting the edge function.
+                const {
+                  data: { session: currentSession },
+                } = await supabase.auth.getSession()
+                if (!currentSession) {
+                  showRegenError('Session expired. Please sign in again.')
                   return
                 }
-                showFreshKey(body.key, body.key_prefix)
-              } catch {
-                showRegenError('Could not parse server response. Please reload the page.')
-              }
-            })
+
+                let response: Response
+                try {
+                  response = await fetch(`${supabaseUrl}/functions/v1/regenerate-license`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: `Bearer ${currentSession.access_token}`,
+                      apikey: supabaseAnonKey,
+                    },
+                    body: JSON.stringify({ key_id: keyId }),
+                  })
+                } catch {
+                  showRegenError('Network error. Check your connection and try again.')
+                  return
+                }
+
+                if (response.status === 401) {
+                  showRegenError('Your session expired. Please sign in again and retry.')
+                  return
+                }
+                if (response.status === 429) {
+                  const retryAfter = response.headers.get('Retry-After') ?? '60'
+                  showRegenError(`Too many requests. Try again in ${retryAfter} seconds.`)
+                  return
+                }
+                if (response.status >= 500) {
+                  showRegenError(
+                    'Something went wrong on our end. Try again in a moment, or contact us at /contact?topic=cli-token.'
+                  )
+                  return
+                }
+                if (!response.ok) {
+                  showRegenError('Could not regenerate key. Try again or contact support.')
+                  return
+                }
+
+                try {
+                  const body = (await response.json()) as {
+                    key?: string
+                    key_prefix?: string
+                  }
+                  if (!body.key || !body.key_prefix) {
+                    // SMI-4441: payload-shape failure — reload won't help. Give the user a
+                    // concrete action (contact support) with a reference code that support
+                    // can correlate to audit_logs.
+                    const ref = 'ERR-' + crypto.randomUUID().slice(0, 8)
+                    console.error('[cli-token] regenerate-license payload-shape error', {
+                      ref,
+                      body,
+                    })
+                    showRegenErrorHtml(
+                      `Something went wrong on our end. <a href="/contact?topic=cli-token">Contact support</a> and include this reference: <code>${ref}</code>`
+                    )
+                    return
+                  }
+                  showFreshKey(body.key, body.key_prefix)
+                } catch (parseErr) {
+                  // SMI-4441: JSON-parse failure is structurally different from payload-shape;
+                  // distinct reference prefix (`PARSE-`) helps support triage.
+                  const ref = 'PARSE-' + crypto.randomUUID().slice(0, 8)
+                  console.error('[cli-token] regenerate-license JSON-parse error', {
+                    ref,
+                    error: parseErr,
+                  })
+                  showRegenErrorHtml(
+                    `Something went wrong on our end. <a href="/contact?topic=cli-token">Contact support</a> and include this reference: <code>${ref}</code>`
+                  )
+                }
+              },
+              { keyName }
+            )
           })
         })
 
@@ -561,17 +626,26 @@ const supabaseConfig = getSupabaseConfig()
             const data = await response.json()
 
             if (!response.ok) {
-              // Provide a targeted message for key-limit errors; fall back to API message otherwise.
-              // Check status 429/400 and error text to avoid fragile exact-string dependency.
-              const isLimitError =
-                (response.status === 429 || response.status === 400) &&
-                typeof data?.error === 'string' &&
-                data.error.toLowerCase().includes('limit')
+              // SMI-4447 §3: post-fix, this branch should be unreachable under normal page
+              // interaction (detection query now matches enforcement, so users with
+              // existing keys don't see the Generate button). It still fires on races
+              // (key added in another tab, admin-granted out-of-band) — render a
+              // friendly error with an actionable Refresh button.
+              const isTierLimit =
+                response.status === 400 &&
+                typeof data?.current === 'number' &&
+                typeof data?.max === 'number' &&
+                typeof data?.tier === 'string'
 
-              if (isLimitError) {
-                generateError.textContent =
-                  'You already have an active CLI token. Revoke it above before generating a new one.'
+              if (isTierLimit) {
+                generateError.innerHTML =
+                  'Looks like a key was added from another tab. <button type="button" class="refresh-inline-btn" data-action="reload">Refresh</button> to see your current keys.'
                 generateError.style.display = 'block'
+                // Rebind data-action=reload handler on the new button (initial binding
+                // at astro:page-load only covered elements present at that time).
+                generateError
+                  .querySelectorAll<HTMLButtonElement>('[data-action="reload"]')
+                  .forEach((b) => b.addEventListener('click', () => window.location.reload()))
                 generateBtn.disabled = false
                 generateBtn.textContent = 'Generate CLI Token'
                 return
@@ -1012,6 +1086,92 @@ const supabaseConfig = getSupabaseConfig()
       .tier-badge.enterprise {
         background: rgba(245, 158, 11, 0.2);
         color: #f59e0b;
+      }
+
+      /* SMI-4447: semantic key-name block (screen readers announce as "Name: <value>"). */
+      .key-name-dl {
+        display: flex;
+        align-items: baseline;
+        gap: 0.4rem;
+        margin: 0;
+        font-size: 0.8125rem;
+        color: #a1a1aa;
+      }
+
+      .key-name-dl dt {
+        font-weight: 500;
+        color: #71717a;
+      }
+
+      .key-name-dl dd {
+        margin: 0;
+        color: #d4d4d8;
+        max-width: 40ch;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .key-name-dl.name-default dd {
+        font-weight: 400;
+      }
+
+      .key-name-dl.name-legacy dd {
+        font-weight: 500;
+      }
+
+      /* SMI-4447: origin-note surfaces for legacy auto-generated keys. */
+      .key-origin-note {
+        font-size: 0.8125rem;
+        color: #a1a1aa;
+        margin: 0 0 0.75rem;
+        line-height: 1.5;
+      }
+
+      /* SMI-4447: inline Refresh button inside the generate-error message (tier-limit race). */
+      .refresh-inline-btn {
+        background: transparent;
+        border: none;
+        color: #a78bfa;
+        font-weight: 500;
+        font-family: inherit;
+        font-size: inherit;
+        padding: 0;
+        cursor: pointer;
+        text-decoration: underline;
+      }
+
+      .refresh-inline-btn:hover {
+        color: #c4b5fd;
+      }
+
+      /* SMI-4441: error-text needs to tolerate inline links/buttons + <code> snippet. */
+      .error-text a,
+      .error-text code,
+      .regen-status a,
+      .regen-status code {
+        color: #a78bfa;
+      }
+
+      .error-text code,
+      .regen-status code {
+        background: #18181b;
+        border: 1px solid #27272a;
+        border-radius: 4px;
+        padding: 0.05em 0.35em;
+        font-size: 0.85em;
+      }
+
+      /* SMI-4447: revoke-modal conditional origin-note line. */
+      :global(.revoke-modal-origin-note) {
+        color: #a1a1aa;
+        font-size: 0.875rem;
+        line-height: 1.5;
+        margin: 0 0 1rem;
+      }
+
+      :global(.revoke-modal-origin-note[hidden]) {
+        display: none;
       }
 
       /* SMI-4401 Wave 2: grace-window reminder banner. */
