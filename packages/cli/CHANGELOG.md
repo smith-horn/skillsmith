@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/cli` are documented here.
 
+## v0.5.9
+
+- Version bump
+
 ## v0.5.8
 
 - **Feature**: SMI-4454 CLI login UX — paste feedback + device context on /device (#751)
