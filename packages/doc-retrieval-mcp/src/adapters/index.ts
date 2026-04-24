@@ -5,6 +5,7 @@ import { createMemoryTopicFilesAdapter } from './memory-topic-files.js'
 import { createScriptHeadersAdapter } from './script-headers.js'
 import { createSupabaseMigrationsAdapter } from './supabase-migrations.js'
 import { createGitCommitsAdapter } from './git-commits.js'
+import { createGitHubPrBodiesAdapter } from './github-pr-bodies.js'
 
 /**
  * Adapter registry (SMI-4450 Wave 1 Step 4). Resolves a `CorpusConfig` into
@@ -42,14 +43,14 @@ function instantiate(entry: AdapterConfig): SourceAdapter {
       return createSupabaseMigrationsAdapter()
     case 'git-commits':
       return createGitCommitsAdapter()
-    // Remaining adapters land in subsequent commits of SMI-4451 Wave 1 Step 4.
+    case 'github-pr-bodies':
+      return createGitHubPrBodiesAdapter()
     // Unknown kinds throw so typos in corpus.config.json surface immediately.
     default:
       throw new Error(
         `adapter registry: unknown adapter kind "${entry.kind}". ` +
           `Known kinds: markdown-corpus (implicit default), memory-topic-files, ` +
-          `script-headers, supabase-migrations, git-commits. Future kinds ` +
-          `wired in SMI-4451 Wave 1 Step 4: github-pr-bodies.`
+          `script-headers, supabase-migrations, git-commits, github-pr-bodies.`
       )
   }
 }
