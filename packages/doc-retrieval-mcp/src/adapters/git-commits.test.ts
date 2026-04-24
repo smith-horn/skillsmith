@@ -246,6 +246,14 @@ describe('resolveRepoName — virtual namespace stability (SMI-4450 H1)', () => 
     expect(resolveRepoName(ctxWith(scratch))).toBe('skillsmith')
   })
 
+  it('handles HTTPS URL with trailing slash (git stores verbatim)', () => {
+    // Git accepts and stores trailing-slash URLs verbatim. Without the
+    // pre-strip fix, the regex produces no match and falls back to
+    // basename(repoRoot) — breaking worktree stability (H1 regression).
+    git(scratch, 'remote', 'add', 'origin', 'https://github.com/smith-horn/skillsmith/')
+    expect(resolveRepoName(ctxWith(scratch))).toBe('skillsmith')
+  })
+
   it('falls back to basename when no remote is configured', () => {
     // Fresh repo (beforeEach) has no remote — `git config --get` exits 1.
     expect(resolveRepoName(ctxWith(scratch))).toBe(scratch.split('/').pop())

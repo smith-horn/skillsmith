@@ -417,14 +417,15 @@ describe('classifyAndWarn — error classification (SMI-4450 M2)', () => {
 })
 
 describe('saveCache atomic write (SMI-4450 H2)', () => {
-  it('.tmp file is cleaned up after successful rename (no leftover)', async () => {
+  it('stale .tmp from a prior crash does not corrupt loadCache', async () => {
     process.env.GITHUB_TOKEN = 'fake-token'
-    // Seed a cache then trigger listFiles to invoke saveCache via
-    // the fetch-fails-fallback-to-cache path (fetch returns null,
-    // but the adapter still calls saveCache? — actually it doesn't:
-    // saveCache only runs on successful fetch. We verify instead
-    // that the initial cache load path works regardless of any
-    // .tmp residue from a hypothetical prior crash.)
+    // Verifies the resilience property of H2: a partial `.tmp` left
+    // behind by a prior crash (before `rename()` completed) does not
+    // corrupt the cache on the next run — `loadCache` reads the
+    // canonical `.json`, not the `.tmp`. The successful-rename path
+    // itself relies on POSIX atomic semantics (rename replaces dst
+    // atomically), which are OS-guaranteed and do not require a
+    // test-level assertion.
     const cachePath = join(scratch, '.ruvector', 'pr-bodies-cache.json')
     const tmpPath = `${cachePath}.tmp`
     // Write a valid cache.

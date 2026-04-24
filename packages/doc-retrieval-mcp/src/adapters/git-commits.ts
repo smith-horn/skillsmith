@@ -216,14 +216,19 @@ export function resolveRepoName(ctx: AdapterContext): string {
   if (typeof cfg?.repo_name === 'string' && cfg.repo_name.length > 0) return cfg.repo_name
 
   try {
-    const url = execFileSync('git', ['config', '--get', 'remote.origin.url'], {
+    const rawUrl = execFileSync('git', ['config', '--get', 'remote.origin.url'], {
       cwd: ctx.repoRoot,
       encoding: 'utf8',
     }).trim()
+    // Strip trailing slashes before matching — git accepts and stores them
+    // verbatim, but they cause the regex to produce no match (falling back
+    // to basename, which breaks worktree stability in H1).
+    const url = rawUrl.replace(/\/+$/, '')
     // Matches the final path segment before an optional `.git` suffix.
     // Handles: `git@github.com:owner/repo.git`,
     //          `https://github.com/owner/repo(.git)?`,
-    //          `ssh://git@github.com[:port]/owner/repo.git`.
+    //          `ssh://git@github.com[:port]/owner/repo.git`,
+    //          `https://github.com/owner/repo/` (trailing slash stripped above).
     const match = url.match(/[:/]([^/:]+?)(?:\.git)?$/)
     if (match && match[1].length > 0) return match[1]
   } catch {
