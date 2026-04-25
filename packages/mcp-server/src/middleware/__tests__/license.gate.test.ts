@@ -4,10 +4,15 @@
 // LG-3: withLicenseAndQuota rethrows non-profile_incomplete errors
 // LG-4: withLicenseAndQuota passes through on success
 // LG-5: checkAndTrack IS called before the handler (quota decremented for profile_incomplete)
+// LG-6 (SMI-4463): NETWORK_QUOTA_EXCEEDED → JSON-RPC -32050 + structured quotaInfo
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ApiClientError } from '@skillsmith/core'
-import { createProfileIncompleteResponse, withLicenseAndQuota } from '../license.gate.js'
+import { ApiClientError, SkillsmithError, ErrorCodes } from '@skillsmith/core'
+import {
+  createProfileIncompleteResponse,
+  withLicenseAndQuota,
+  MCP_MONTHLY_QUOTA_EXCEEDED_CODE,
+} from '../license.gate.js'
 import type { LicenseMiddleware } from '../license.js'
 import type { QuotaMiddleware } from '../quota-types.js'
 import type { ToolContext } from '../../context.types.js'
@@ -130,5 +135,43 @@ describe('license.gate', () => {
     )
 
     expect(mockQuota.checkAndTrack).toHaveBeenCalledOnce()
+  })
+
+  it('LG-6 (SMI-4463): NETWORK_QUOTA_EXCEEDED → JSON-RPC -32050 with quotaInfo', async () => {
+    const resetsAt = new Date(Date.now() + 5 * 86400000).toISOString()
+    const handler = vi
+      .fn()
+      .mockRejectedValue(
+        new SkillsmithError(
+          ErrorCodes.NETWORK_QUOTA_EXCEEDED,
+          'Monthly quota reached (1000/1000 community tier).\nUpgrade: https://skillsmith.app/pricing',
+          { details: { used: 1000, limit: 1000, tier: 'community', resetsAt } }
+        )
+      )
+
+    const result = await withLicenseAndQuota(
+      'search',
+      { query: 'test' },
+      inputSchema,
+      handler,
+      mockCtx,
+      mockLicense,
+      mockQuota
+    )
+
+    expect(result.isError).toBe(true)
+    const body = JSON.parse((result.content as Array<{ text: string }>)[0].text) as Record<
+      string,
+      unknown
+    >
+    expect(body.code).toBe(MCP_MONTHLY_QUOTA_EXCEEDED_CODE)
+    expect(body.code).toBe(-32050)
+    expect(body.error).toBe('monthly_quota_exceeded')
+    expect(body.message).toContain('Monthly quota reached')
+    const quotaInfo = (body.data as Record<string, unknown>).quotaInfo as Record<string, unknown>
+    expect(quotaInfo.used).toBe(1000)
+    expect(quotaInfo.limit).toBe(1000)
+    expect(quotaInfo.tier).toBe('community')
+    expect(quotaInfo.resetsAt).toBe(resetsAt)
   })
 })
