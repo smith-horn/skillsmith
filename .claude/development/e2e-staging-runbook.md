@@ -36,6 +36,7 @@ All scoped to the `e2e-staging` environment. Other workflows cannot read them.
    Do not enable required reviewers (CI-only workflow).
 2. Add each secret above (no environment-level deployment branch policy needed).
 3. Locally, run the seed once to provision the test user and capture the user_id:
+
    ```bash
    varlock run -- env \
      STAGING_SUPABASE_URL="https://ovhcifugwqnzoebwfuku.supabase.co" \
@@ -43,6 +44,7 @@ All scoped to the `e2e-staging` environment. Other workflows cannot read them.
      E2E_TEST_USER_PASSWORD="<32-char random>" \
      npx tsx scripts/seed-e2e-device-login-user.ts --emit-id
    ```
+
    Store the printed UUID as the `E2E_TEST_USER_ID` secret.
 4. Verify by manually triggering the workflow:
    `gh workflow run device-login-roundtrip.yml -f negative_control=none`.
