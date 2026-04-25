@@ -2253,6 +2253,126 @@ console.log(`\n${BOLD}34. encoded-cwd helper drift (SMI-4451 Step 7)${RESET}`)
   }
 }
 
+// 35. SMI-4451 Step 8: held-out pair auto-detection (resolves SPARC §S7 L4).
+// Walks `docs/internal/retros/*.md` for entries dated within the 14-day
+// post-Wave-1-ship window with frontmatter `reversal_of` non-empty AND
+// `ground_truth_query` set. Idempotently appends each to
+// `scripts/tests/fixtures/retro-held-out-pairs.jsonl` (tracked, not encrypted).
+// The 6-pair tuning loop must NOT be re-run against held-out entries until
+// Wave 1 soak completes; the regression runner reads training and held-out
+// fixtures separately. Section 35 also warns when a query appears in BOTH
+// fixtures (overfit risk).
+//
+// WAVE_1_SHIP_DATE: 2026-04-25 (PR #774 merge — SessionStart hook landed).
+// Section is a no-op before that date so this audit never blocks pre-ship.
+console.log(`\n${BOLD}35. Held-out pair detection (SMI-4451 Step 8)${RESET}`)
+{
+  const WAVE_1_SHIP_DATE = '2026-04-25'
+  const WAVE_1_SHIP_MS = Date.parse(`${WAVE_1_SHIP_DATE}T00:00:00Z`)
+  const WINDOW_END_MS = WAVE_1_SHIP_MS + 14 * 24 * 60 * 60 * 1000
+  const NOW_MS = Date.now()
+
+  const TRAINING_PATH = 'scripts/tests/fixtures/retro-training-pairs.jsonl'
+  const HELD_OUT_PATH = 'scripts/tests/fixtures/retro-held-out-pairs.jsonl'
+  const RETROS_DIR = 'docs/internal/retros'
+
+  if (NOW_MS < WAVE_1_SHIP_MS) {
+    pass(`Pre-ship (${WAVE_1_SHIP_DATE}) — held-out detection disabled`)
+  } else if (!existsSync(RETROS_DIR)) {
+    warn(`${RETROS_DIR} missing (likely submodule not initialized) — skipping`)
+  } else if (!existsSync(TRAINING_PATH) || !existsSync(HELD_OUT_PATH)) {
+    fail(
+      'Step 8 fixture missing',
+      `Both ${TRAINING_PATH} and ${HELD_OUT_PATH} must exist (Step 8 deliverable).`
+    )
+  } else {
+    try {
+      // js-yaml available via createRequire pattern used by retro-frontmatter.mjs
+      const { createRequire } = await import('node:module')
+      const require = createRequire(import.meta.url)
+      const yaml = require('js-yaml')
+
+      const parseFm = (content) => {
+        const m = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+        if (!m) return null
+        try {
+          return yaml.load(m[1])
+        } catch {
+          return null
+        }
+      }
+
+      const loadJsonl = (path) =>
+        readFileSync(path, 'utf8')
+          .split('\n')
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0 && !l.startsWith('#'))
+          .map((l) => {
+            try {
+              return JSON.parse(l)
+            } catch {
+              return null
+            }
+          })
+          .filter(Boolean)
+
+      const trainingPairs = loadJsonl(TRAINING_PATH)
+      const trainingQueries = new Set(trainingPairs.map((p) => p.query))
+      const existingHeldOut = loadJsonl(HELD_OUT_PATH)
+      const existingQueries = new Set(existingHeldOut.map((p) => p.query))
+
+      const retroFiles = readdirSync(RETROS_DIR)
+        .filter((f) => f.endsWith('.md'))
+        .map((f) => join(RETROS_DIR, f))
+
+      const candidates = []
+      const overlaps = []
+      for (const file of retroFiles) {
+        const fm = parseFm(readFileSync(file, 'utf8'))
+        if (!fm) continue
+        const reversalOf = Array.isArray(fm.reversal_of) ? fm.reversal_of : []
+        if (reversalOf.length === 0) continue
+        const gtQuery =
+          typeof fm.ground_truth_query === 'string' ? fm.ground_truth_query.trim() : ''
+        if (gtQuery.length === 0) continue
+        const dateMs = typeof fm.date === 'string' ? Date.parse(`${fm.date}T00:00:00Z`) : NaN
+        if (Number.isNaN(dateMs)) continue
+        if (dateMs < WAVE_1_SHIP_MS || dateMs > WINDOW_END_MS) continue
+
+        if (trainingQueries.has(gtQuery)) {
+          overlaps.push(`${file}: query also in training set`)
+        }
+        if (existingQueries.has(gtQuery)) continue
+        candidates.push({
+          id: `held-out-${candidates.length + existingHeldOut.length + 1}`,
+          source: file,
+          query: gtQuery,
+          expectedPaths: [file.split('/').pop()],
+        })
+      }
+
+      // Audit is read-only; it warns on missing entries rather than mutating
+      // the tracked fixture (no implicit writes from a check script).
+      if (candidates.length > 0) {
+        warn(
+          `${candidates.length} retro(s) qualify for held-out reservation but not in ${HELD_OUT_PATH}: ` +
+            candidates.map((c) => c.source).join(', ') +
+            ` — append entries manually (one JSON line per retro, schema: {id, query, expectedPaths}).`
+        )
+      } else {
+        pass(
+          `Held-out window ${WAVE_1_SHIP_DATE} → +14d: ${existingHeldOut.length} reserved, no unrecorded candidates`
+        )
+      }
+      for (const o of overlaps) {
+        warn(`Training/held-out overlap risk — ${o}`)
+      }
+    } catch (e) {
+      warn(`Could not run held-out detection: ${e.message}`)
+    }
+  }
+}
+
 // npm override drift check: @modelcontextprotocol/sdk override "." must match mcp-server range
 console.log(`\n${BOLD}Override Drift: @modelcontextprotocol/sdk${RESET}`)
 try {
