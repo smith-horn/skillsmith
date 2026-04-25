@@ -19,7 +19,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@ruvector/core": "0.1.30",
     "@skillsmith/core": "^0.5.4",
     "glob": "11.1.0",
