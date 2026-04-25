@@ -14,6 +14,10 @@ import {
   extractCompletionIssues,
   collectTsEntryExports,
   extractSmokeTestRequiredArrays,
+  extractCliCommandNames,
+  findCliHintCommandRefs,
+  findRelativeFunctionsV1Urls,
+  findReturningTableAmbiguity,
 } from './audit-standards-helpers.mjs'
 
 const RED = '\x1b[31m'
@@ -2036,6 +2040,135 @@ console.log(`\n${BOLD}30. VS Code Integration Tests Excluded from Host Runners${
         errors.join('; '),
         "Add 'packages/vscode-extension/src/__tests__/integration/**' to both exclude lists — these tests require the vscode module (electron host) and mocha globals."
       )
+    }
+  }
+}
+
+// 31. SMI-4456 (R-1): user-visible CLI hints must reference real subcommands.
+// Catches the SMI-4454 B3 pattern: `Try it: skillsmith skills list` shipped to
+// users despite `skills` not being a registered subcommand. See retro
+// docs/internal/retros/2026-04-24-smi-4454-post-merge-bug-trifecta.md.
+console.log(`\n${BOLD}31. CLI Hint Command Existence (R-1, SMI-4456)${RESET}`)
+{
+  const cliIndexPath = 'packages/cli/src/index.ts'
+  const cliCommandsDir = 'packages/cli/src/commands'
+  if (!existsSync(cliIndexPath) || !existsSync(cliCommandsDir)) {
+    pass('CLI source not present — skipping (not a CLI repo checkout)')
+  } else {
+    try {
+      const indexSrc = readFileSync(cliIndexPath, 'utf8')
+      const cliFiles = getFilesRecursive('packages/cli/src', ['.ts']).filter(
+        (f) => !f.includes('.test.') && !f.includes('.d.ts')
+      )
+      const commandSources = {}
+      const cliSrcByPath = {}
+      for (const f of cliFiles) {
+        const src = readFileSync(f, 'utf8')
+        cliSrcByPath[f] = src
+        if (f.startsWith('packages/cli/src/commands/')) commandSources[f] = src
+      }
+      const registered = extractCliCommandNames(indexSrc, commandSources)
+      const refs = findCliHintCommandRefs(cliSrcByPath)
+      const violations = refs.filter((r) => !registered.has(r.refToken))
+      if (registered.size === 0) {
+        warn('Could not extract any registered CLI command names — heuristic miss?')
+      } else if (refs.length === 0) {
+        pass(
+          `No "Try it:/Run:/Visit:/Use: skillsmith <subcmd>" hints found in CLI source (${registered.size} commands registered)`
+        )
+      } else if (violations.length === 0) {
+        pass(
+          `${refs.length} CLI hint(s) all reference registered subcommands (${registered.size} commands in registry)`
+        )
+      } else {
+        const formatted = violations
+          .map(
+            (v) =>
+              `  ${v.file}:${v.line} → "${v.fullMatch}" (subcommand "${v.refToken}" not registered)`
+          )
+          .join('\n')
+        fail(
+          `CLI hint(s) reference nonexistent subcommands:\n${formatted}`,
+          `Either register the subcommand in packages/cli/src/index.ts (Commander.js .command() / .addCommand()) or change the hint to a real one. Registered set: ${[...registered].sort().join(', ')}`
+        )
+      }
+    } catch (e) {
+      warn(`Could not check CLI hint command existence: ${e.message}`)
+    }
+  }
+}
+
+// 32. SMI-4457 (R-2): website client code must not use relative `/functions/v1/`.
+// Catches the SMI-4454 B1 pattern: PR #751 shipped `'/functions/v1/auth-device-preview'`
+// which Astro SSR resolved against www.skillsmith.app (404), masquerading as
+// "code expired". Canonical pattern (see PR #757):
+//   const API_BASE = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'
+console.log(`\n${BOLD}32. Website Edge-Function URL Convention (R-2, SMI-4457)${RESET}`)
+{
+  const websiteSrcDir = 'packages/website/src'
+  if (!existsSync(websiteSrcDir)) {
+    pass('Website source not present — skipping')
+  } else {
+    try {
+      const websiteFiles = getFilesRecursive(websiteSrcDir, ['.astro', '.ts', '.tsx']).filter(
+        (f) => !f.includes('.test.') && !f.includes('.spec.') && !f.includes('.d.ts')
+      )
+      const websiteSrcByPath = {}
+      for (const f of websiteFiles) websiteSrcByPath[f] = readFileSync(f, 'utf8')
+      const violations = findRelativeFunctionsV1Urls(websiteSrcByPath)
+      if (violations.length === 0) {
+        pass(`No relative "/functions/v1/..." URLs in ${websiteFiles.length} website source files`)
+      } else {
+        const formatted = violations.map((v) => `  ${v.file}:${v.line} — ${v.snippet}`).join('\n')
+        fail(
+          `Relative "/functions/v1/..." URL(s) detected (Astro SSR resolves these against the website origin, not the API):\n${formatted}`,
+          `Replace with \`\${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1/...\` or \`\${supabaseUrl}/functions/v1/...\`.`
+        )
+      }
+    } catch (e) {
+      warn(`Could not check website edge-function URL convention: ${e.message}`)
+    }
+  }
+}
+
+// 33. SMI-4458 (R-3): PL/pgSQL `RETURNS TABLE(...)` + unqualified `RETURNING`.
+// Catches the SMI-4454 B2 pattern: `claim_device_token` declared
+// `RETURNS TABLE (status TEXT, user_id UUID)` and used `RETURNING user_id`
+// in an UPDATE — Postgres treats TABLE columns as implicit OUT params,
+// making `user_id` ambiguous between the OUT var and the table column. Bug
+// only fires at runtime on the approved-but-unconsumed branch. See migration
+// 083 for the canonical fix (alias the table, qualify the column).
+console.log(`\n${BOLD}33. PL/pgSQL RETURNS TABLE + RETURNING Ambiguity (R-3, SMI-4458)${RESET}`)
+{
+  const migrationsDir = 'supabase/migrations'
+  if (!existsSync(migrationsDir)) {
+    pass('No migrations directory — skipping')
+  } else {
+    try {
+      const migrationFiles = readdirSync(migrationsDir)
+        .filter((f) => f.endsWith('.sql'))
+        .map((f) => join(migrationsDir, f))
+      const migrationsByPath = {}
+      for (const f of migrationFiles) migrationsByPath[f] = readFileSync(f, 'utf8')
+      const violations = findReturningTableAmbiguity(migrationsByPath)
+      if (violations.length === 0) {
+        pass(
+          `No PL/pgSQL RETURNS TABLE + unqualified RETURNING ambiguity across ${migrationFiles.length} migration(s)`
+        )
+      } else {
+        const formatted = violations
+          .map(
+            (v) =>
+              `  ${v.file}:${v.line} — ${v.fnName}() RETURNING ${v.col} (also a TABLE OUT column)\n    ${v.snippet}`
+          )
+          .join('\n')
+        fail(
+          `PL/pgSQL RETURNS TABLE + unqualified RETURNING detected (ambiguous between OUT var and column):\n${formatted}`,
+          `Alias the table and schema-qualify the RETURNING column. Example: \`UPDATE foo f SET ... RETURNING f.<col> INTO ...\`. The audit walks migrations in version order and only flags the LATEST definition of each function — a later migration with the fix supersedes an earlier broken one.`
+        )
+      }
+    } catch (e) {
+      warn(`Could not check PL/pgSQL RETURNING ambiguity: ${e.message}`)
     }
   }
 }
