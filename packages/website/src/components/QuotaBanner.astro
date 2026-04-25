@@ -1,0 +1,156 @@
+---
+/**
+ * QuotaBanner — page-level alert shown above the account dashboard heading.
+ *
+ * SMI-4463: Surfaces 80% (warn) / 100% (error) thresholds against the user's
+ * monthly API quota. Hidden when percentUsed < 0.8 — banner is only present
+ * when there is something the user needs to know.
+ *
+ * Placement: render at the top of <main>, ABOVE the page heading, to match
+ * WCAG landmark conventions (alerts should appear before primary content
+ * inside the same landmark).
+ *
+ * Styling: uses Tailwind utility classes that already power RateLimitToast
+ * (yellow-500 / yellow-400 for warn, red-600 / red-400 for error). Both
+ * combos meet ≥5:1 contrast ratio against bg-dark-900 — the project memory
+ * `accessibility-patterns.md` target. No new color values introduced.
+ *
+ * Visibility ladder:
+ *   percentUsed < 0.8  → banner is NOT rendered (component returns null)
+ *   0.8 <= pu < 1.0     → yellow warn banner with role="status"
+ *   pu >= 1.0           → red error banner with role="alert"
+ *
+ * Tier-specific copy at 100%:
+ *   community: "New API calls will fail until <resetsAt> — upgrade to continue"
+ *   paid:      "Contact support to extend your limit before <resetsAt>"
+ */
+interface Props {
+  percentUsed: number
+  tier: string
+  resetsAt: string
+}
+
+const { percentUsed, tier, resetsAt } = Astro.props as Props
+
+const showError = percentUsed >= 1.0
+const showWarn = !showError && percentUsed >= 0.8
+
+const isCommunity = tier === 'community'
+const tierName = tier.charAt(0).toUpperCase() + tier.slice(1)
+
+// Reset date is rendered as a UTC date string. The body of the banner
+// keeps it short; the precise ISO ships in the data attribute for any
+// downstream JS that wants to render a relative time.
+let resetsDisplay = resetsAt
+try {
+  resetsDisplay = new Date(resetsAt).toUTCString().replace('GMT', 'UTC')
+} catch {
+  // Fallback to raw ISO if parsing fails.
+}
+
+const percentDisplay = Math.round(percentUsed * 100)
+---
+
+{
+  showError && (
+    <div
+      class="quota-banner quota-banner-error mb-6 rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-sm"
+      role="alert"
+      aria-live="polite"
+      data-resets-at={resetsAt}
+    >
+      <div class="flex items-start gap-3">
+        <svg
+          class="h-6 w-6 flex-shrink-0 text-red-400"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+          />
+        </svg>
+        <div class="flex-1">
+          <p class="font-medium text-white">
+            You've used 100% of your <strong>{tierName}</strong> tier monthly quota.
+          </p>
+          <p class="mt-1 text-dark-300">
+            {isCommunity ? (
+              <>
+                New API calls will fail until your quota resets on{' '}
+                <span class="text-white">{resetsDisplay}</span>, or upgrade for higher limits.
+              </>
+            ) : (
+              <>
+                Contact support to extend your limit before your next billing cycle ({resetsDisplay}
+                ).
+              </>
+            )}
+          </p>
+          <p class="mt-3">
+            {isCommunity ? (
+              <a
+                href="/pricing"
+                class="inline-block rounded-md bg-red-600 px-4 py-2 font-medium text-white hover:bg-red-700"
+              >
+                Upgrade
+              </a>
+            ) : (
+              <a
+                href="mailto:support@skillsmith.app"
+                class="inline-block rounded-md bg-red-600 px-4 py-2 font-medium text-white hover:bg-red-700"
+              >
+                Contact support
+              </a>
+            )}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+{
+  showWarn && (
+    <div
+      class="quota-banner quota-banner-warn mb-6 rounded-xl border border-yellow-500/50 bg-yellow-500/10 p-4 text-sm"
+      role="status"
+      aria-live="polite"
+      data-resets-at={resetsAt}
+    >
+      <div class="flex items-start gap-3">
+        <svg
+          class="h-6 w-6 flex-shrink-0 text-yellow-400"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+          />
+        </svg>
+        <div class="flex-1">
+          <p class="font-medium text-white">
+            You've used <strong>{percentDisplay}%</strong> of your monthly quota.
+          </p>
+          <p class="mt-1 text-dark-300">
+            Resets {resetsDisplay}.{' '}
+            {isCommunity && (
+              <a href="/pricing" class="text-yellow-300 underline hover:text-yellow-200">
+                Upgrade for more headroom
+              </a>
+            )}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}

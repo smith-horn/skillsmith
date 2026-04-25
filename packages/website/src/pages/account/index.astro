@@ -48,6 +48,11 @@ const supabaseConfig = getSupabaseConfig()
     <Nav activePath="/account" />
 
     <main class="dashboard-container">
+      <!-- SMI-4463: Quota banner — populated client-side after the
+           tier-aware billing-period RPC resolves. Hidden until then.
+           Placed above the page heading per WCAG landmark conventions. -->
+      <div id="quota-banner-container" aria-live="polite" style="display: none;"></div>
+
       <!-- Loading State -->
       <div id="loading-state" class="loading-state">
         <div class="spinner-container">
@@ -887,14 +892,18 @@ const supabaseConfig = getSupabaseConfig()
       const keyCountEl = document.getElementById('key-count')
       if (keyCountEl) keyCountEl.textContent = `${activeKeys.length} / ${maxKeys}`
 
-      // SMI-4461: API usage shows month-to-date from user_api_usage (migration 038),
-      // not lifetime SUM(license_keys.usage_count). The old counter missed every
-      // JWT-authenticated CLI/website call and silently undercounted API-key calls
-      // on tier-cache hits.
-      const { data: usageSummary } = await supabase.rpc('get_user_usage_summary', {
+      // SMI-4463: API usage now reads from get_user_usage_for_billing_period
+      // (migration 084) which returns a tier-aware window — calendar month
+      // for community/null, Stripe subscription period for paid tiers — so a
+      // mid-month upgrade buys 30 days, not "until the 1st".
+      // SMI-4461 originally pointed this at get_user_usage_summary; that
+      // helper still exists for backwards compat but the dashboard prefers
+      // the billing-period-aware variant.
+      const { data: usageSummary } = await supabase.rpc('get_user_usage_for_billing_period', {
         p_user_id: user.id,
       })
       const totalUsage = Number(usageSummary?.[0]?.total_requests ?? 0)
+      const periodEnd = usageSummary?.[0]?.period_end || ''
       const quotaLimits: Record<string, number> = {
         community: 1000,
         individual: 10000,
@@ -908,6 +917,55 @@ const supabaseConfig = getSupabaseConfig()
           apiUsageEl.textContent = `${totalUsage.toLocaleString()} / Unlimited`
         } else {
           apiUsageEl.textContent = `${totalUsage.toLocaleString()} / ${quota.toLocaleString()}`
+        }
+      }
+
+      // SMI-4463: render quota banner above the page heading at >=80% usage.
+      const bannerEl = document.getElementById('quota-banner-container')
+      if (bannerEl && quota > 0) {
+        const percentUsed = totalUsage / quota
+        const resetsHuman = periodEnd
+          ? new Date(periodEnd).toUTCString().replace('GMT', 'UTC')
+          : 'next period'
+        const tierName = tier.charAt(0).toUpperCase() + tier.slice(1)
+        const isCommunity = tier === 'community'
+        if (percentUsed >= 1.0) {
+          const ctaHtml = isCommunity
+            ? `<a href="/pricing" class="inline-block rounded-md bg-red-600 px-4 py-2 font-medium text-white hover:bg-red-700">Upgrade</a>`
+            : `<a href="mailto:support@skillsmith.app" class="inline-block rounded-md bg-red-600 px-4 py-2 font-medium text-white hover:bg-red-700">Contact support</a>`
+          const bodyHtml = isCommunity
+            ? `New API calls will fail until your quota resets on <span class="text-white">${resetsHuman}</span>, or upgrade for higher limits.`
+            : `Contact support to extend your limit before your next billing cycle (${resetsHuman}).`
+          bannerEl.innerHTML = `
+            <div class="quota-banner quota-banner-error mb-6 rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-sm" role="alert" data-resets-at="${periodEnd}">
+              <div class="flex items-start gap-3">
+                <svg class="h-6 w-6 flex-shrink-0 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                <div class="flex-1">
+                  <p class="font-medium text-white">You've used 100% of your <strong>${tierName}</strong> tier monthly quota.</p>
+                  <p class="mt-1 text-dark-300">${bodyHtml}</p>
+                  <p class="mt-3">${ctaHtml}</p>
+                </div>
+              </div>
+            </div>`
+          bannerEl.style.display = 'block'
+        } else if (percentUsed >= 0.8) {
+          const percentDisplay = Math.round(percentUsed * 100)
+          const upgradeLink = isCommunity
+            ? ` <a href="/pricing" class="text-yellow-300 underline hover:text-yellow-200">Upgrade for more headroom</a>`
+            : ''
+          bannerEl.innerHTML = `
+            <div class="quota-banner quota-banner-warn mb-6 rounded-xl border border-yellow-500/50 bg-yellow-500/10 p-4 text-sm" role="status" data-resets-at="${periodEnd}">
+              <div class="flex items-start gap-3">
+                <svg class="h-6 w-6 flex-shrink-0 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                <div class="flex-1">
+                  <p class="font-medium text-white">You've used <strong>${percentDisplay}%</strong> of your monthly quota.</p>
+                  <p class="mt-1 text-dark-300">Resets ${resetsHuman}.${upgradeLink}</p>
+                </div>
+              </div>
+            </div>`
+          bannerEl.style.display = 'block'
+        } else {
+          bannerEl.style.display = 'none'
         }
       }
 
