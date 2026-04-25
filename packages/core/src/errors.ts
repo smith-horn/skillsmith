@@ -35,6 +35,12 @@ export const ErrorCodes = {
   NETWORK_UNREACHABLE: 'NETWORK_UNREACHABLE',
   NETWORK_TIMEOUT: 'NETWORK_TIMEOUT',
   NETWORK_RATE_LIMITED: 'NETWORK_RATE_LIMITED',
+  // SMI-4463: distinct from NETWORK_RATE_LIMITED — that's the per-minute
+  // burst limit (recoverable in seconds); MONTHLY_QUOTA_EXCEEDED is the
+  // billing-period quota (recoverable on next period_end). The disambiguator
+  // on the wire is the response body's `error: 'monthly_quota_exceeded'`,
+  // not the status code (both surface as 429).
+  NETWORK_QUOTA_EXCEEDED: 'NETWORK_QUOTA_EXCEEDED',
   NETWORK_INVALID_RESPONSE: 'NETWORK_INVALID_RESPONSE',
 
   // Validation errors
@@ -72,6 +78,8 @@ export const ErrorSuggestions: Partial<Record<ErrorCode, string>> = {
   SEARCH_INDEX_UNAVAILABLE: 'The search index is being updated. Please try again in a moment',
   CONFIG_NOT_FOUND: 'Run "skillsmith init" to create the configuration file',
   NETWORK_RATE_LIMITED: 'Wait a few minutes before trying again',
+  NETWORK_QUOTA_EXCEEDED:
+    'Your monthly quota is exhausted. Upgrade at https://skillsmith.app/pricing or wait until your billing period resets.',
 }
 
 /**
