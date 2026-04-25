@@ -28,3 +28,4 @@ smi-*/
 
 # Local settings (untracked, varies per developer)
 .claude/settings.local.json
+docker-compose.override.yml

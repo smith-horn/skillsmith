@@ -176,6 +176,14 @@ echo "${YELLOW}[3/3] Running lint and format on staged files...${NC}"
 # on the full working tree. After lint-staged, we re-add only originally-staged files.
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=d)
 
+# SMI-4451 Step 5 — frontmatter lint mode flag, consumed by the
+# `docs/internal/retros/*.md` rule in lint-staged.config.js. Default is
+# `warn` for the Wave 1 soak window. Flip to `error` ONLY after the 3-AND
+# precondition lands (15 consecutive complete + 0 bypassed + bypass logging
+# alive — see docs/internal/implementation/smi-4450-step5-frontmatter-lint.md
+# §S4 gate-flip precondition).
+export RETRO_FRONTMATTER_MODE="${RETRO_FRONTMATTER_MODE:-warn}"
+
 if npx lint-staged --no-stash; then
     # Re-stage only originally-staged files (formatters may have modified them)
     if [ -n "$STAGED_FILES" ]; then

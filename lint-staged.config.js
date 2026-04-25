@@ -36,4 +36,18 @@ export default {
 
   // Config and documentation files: format only
   '*.{json,md,yml,yaml}': ['prettier --write'],
+
+  // SMI-4451 Step 5 — frontmatter lint scoped to retros being modified.
+  // Mode is env-driven (RETRO_FRONTMATTER_MODE exported from .husky/pre-commit);
+  // gate-flip is a single-line edit to the hook, not this config. CLI accepts
+  // comma-separated paths, so filenames must not contain commas — every
+  // existing retro under docs/internal/retros/ follows
+  // YYYY-MM-DD-smi-NNNN-kebab-case.md and is comma-free.
+  'docs/internal/retros/*.md': [
+    (files) => {
+      const mode = process.env.RETRO_FRONTMATTER_MODE === 'error' ? '--error' : '--warn'
+      const paths = files.join(',')
+      return `node scripts/audit-standards.mjs --only retro-frontmatter ${mode} --paths ${paths}`
+    },
+  ],
 }

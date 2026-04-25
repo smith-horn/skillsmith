@@ -176,7 +176,12 @@ function finalize(raw: RawChunk, filePath: string): ChunkMetadata {
   }
 }
 
-function chunkId(filePath: string, startLine: number, endLine: number, text: string): string {
+export function chunkId(
+  filePath: string,
+  startLine: number,
+  endLine: number,
+  text: string
+): string {
   const hash = createHash('sha1')
     .update(`${filePath}:${startLine}:${endLine}:${text}`)
     .digest('hex')

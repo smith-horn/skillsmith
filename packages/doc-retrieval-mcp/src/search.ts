@@ -9,7 +9,7 @@ const { VectorDb } = createRequire(import.meta.url)(
 ) as typeof import('@ruvector/core')
 import { loadConfig, resolveRepoPath, DEFAULT_MIN_SIMILARITY } from './config.js'
 import { embedBatch } from './embedding.js'
-import type { SearchHit } from './types.js'
+import type { ChunkStoredMetadata, SearchHit } from './types.js'
 
 export interface SearchOpts {
   query: string
@@ -37,13 +37,7 @@ export function distanceToSimilarity(distance: number): number {
   return Math.max(0, Math.min(1, 1 - distance / 2))
 }
 
-interface StoredMetadata {
-  file_path: string
-  line_start: number
-  line_end: number
-  heading_chain: string[]
-  text: string
-}
+type StoredMetadata = ChunkStoredMetadata
 
 export async function search(opts: SearchOpts): Promise<SearchHit[]> {
   const cfg = await loadConfig(opts.configPath)
@@ -95,6 +89,7 @@ export async function search(opts: SearchOpts): Promise<SearchHit[]> {
       text: meta.text,
       similarity,
       score: similarity,
+      meta,
     })
   }
 
