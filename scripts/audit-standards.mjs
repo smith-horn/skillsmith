@@ -23,6 +23,7 @@ import {
   findCliHintCommandRefs,
   findRelativeFunctionsV1Urls,
   findReturningTableAmbiguity,
+  findUncoveredSurfacePaths,
 } from './audit-standards-helpers.mjs'
 
 const RED = '\x1b[31m'
@@ -2376,6 +2377,67 @@ console.log(`\n${BOLD}35. Held-out pair detection (SMI-4451 Step 8)${RESET}`)
       }
     } catch (e) {
       warn(`Could not run held-out detection: ${e.message}`)
+    }
+  }
+}
+
+// 36. SMI-4459 (R-4): every deployed edge function and conversion-critical
+// website page should have a smoke surface in scripts/smoke-prod/surfaces.json
+// (or be explicitly allowlisted in scripts/smoke-prod/.surfaces-allowlist.txt).
+// Warning-only — adding a new edge function is a perfectly valid PR; this
+// just nudges the author to add the smoke entry in the same PR. The R-1/R-2/R-3
+// backstops above catch string-shape drift; R-4 catches "shipped a surface
+// nobody verifies."
+console.log(`\n${BOLD}36. Smoke Surface Coverage (R-4, SMI-4459)${RESET}`)
+{
+  const surfacesJsonPath = 'scripts/smoke-prod/surfaces.json'
+  const allowlistPath = 'scripts/smoke-prod/.surfaces-allowlist.txt'
+  if (!existsSync(surfacesJsonPath)) {
+    pass('surfaces.json not present — skipping (smoke-prod harness not yet wired)')
+  } else {
+    try {
+      const surfaces = JSON.parse(readFileSync(surfacesJsonPath, 'utf8'))
+      const surfaceGlobs = (surfaces.surfaces || []).flatMap((s) => s.trigger_globs || [])
+      let allowlistGlobs = []
+      if (existsSync(allowlistPath)) {
+        allowlistGlobs = readFileSync(allowlistPath, 'utf8')
+          .split('\n')
+          .map((l) => l.trim())
+          .filter((l) => l.length > 0 && !l.startsWith('#'))
+      }
+      // Candidate paths: every supabase/functions/<name>/index.ts AND every
+      // packages/website/src/pages/**/*.astro file. Walk both trees.
+      const candidates = []
+      const fnDir = 'supabase/functions'
+      if (existsSync(fnDir)) {
+        for (const entry of readdirSync(fnDir, { withFileTypes: true })) {
+          if (!entry.isDirectory()) continue
+          if (entry.name.startsWith('_')) continue
+          const idx = `${fnDir}/${entry.name}/index.ts`
+          if (existsSync(idx)) candidates.push(idx)
+        }
+      }
+      const pagesDir = 'packages/website/src/pages'
+      if (existsSync(pagesDir)) {
+        for (const f of getFilesRecursive(pagesDir, ['.astro'])) {
+          candidates.push(f)
+        }
+      }
+      const uncovered = findUncoveredSurfacePaths(candidates, surfaceGlobs, allowlistGlobs)
+      if (candidates.length === 0) {
+        pass('No edge functions or website pages found — skipping')
+      } else if (uncovered.length === 0) {
+        pass(
+          `All ${candidates.length} user-facing surface(s) covered by surfaces.json or allowlist`
+        )
+      } else {
+        const formatted = uncovered.map((p) => `  ${p}`).join('\n')
+        warn(
+          `${uncovered.length} surface(s) not covered by surfaces.json and not allowlisted:\n${formatted}\n  Add a surface entry to scripts/smoke-prod/surfaces.json or document the exclusion in scripts/smoke-prod/.surfaces-allowlist.txt.`
+        )
+      }
+    } catch (e) {
+      warn(`Could not check smoke surface coverage: ${e.message}`)
     }
   }
 }

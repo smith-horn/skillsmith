@@ -422,6 +422,65 @@ jobs:
             fi
           done
 
+  # SMI-4459: Pre-ship validation for the post-deploy smoke harness.
+  # Runs on every code PR. Asserts:
+  #   - bash -n on smoke-prod.sh + per-surface scripts (syntax)
+  #   - shellcheck (lint; same -S warning level as validate-hooks.yml)
+  #   - --dry-run resolves surfaces from a synthetic changed-file set
+  #   - --surface=health canary against real prod (~1s; proves wiring end-to-end)
+  # The harness itself runs post-deploy via .github/workflows/smoke-prod.yml.
+  smoke-prod-validation:
+    name: Smoke Prod Validation
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: bash -n syntax check
+        run: |
+          bash -n scripts/smoke-prod.sh
+          for f in scripts/smoke-prod/*.sh; do bash -n "$f"; done
+
+      - name: shellcheck
+        run: |
+          # -S warning matches validate-hooks.yml convention; SC1091 (can't
+          # follow source) is unavoidable for sourced lib.sh.
+          shellcheck -S warning \
+            scripts/smoke-prod.sh \
+            scripts/smoke-prod/lib.sh \
+            scripts/smoke-prod/website.sh \
+            scripts/smoke-prod/cli.sh \
+            scripts/smoke-prod/mcp-server.sh \
+            scripts/smoke-prod/alert.sh
+
+      - name: surfaces.json valid JSON
+        run: |
+          jq empty scripts/smoke-prod/surfaces.json
+          jq -e '.surfaces | length > 0' scripts/smoke-prod/surfaces.json
+
+      - name: --dry-run resolves canary
+        run: |
+          set -euo pipefail
+          OUT=$(SMOKE_CHANGED_FILES="docs/foo.md" ./scripts/smoke-prod.sh --dry-run --json)
+          echo "$OUT" | jq -e '.matched_surfaces | index("health")' >/dev/null
+
+      - name: --surface=health canary against prod
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        run: |
+          # Skip if SUPABASE_URL secret is unavailable (forks). The harness
+          # exits 1 with a clear message in that case; in-tree PRs always
+          # have it.
+          if [ -z "${SUPABASE_URL:-}" ]; then
+            echo "::warning::SUPABASE_URL not available — skipping prod canary (likely a fork)"
+            exit 0
+          fi
+          ./scripts/smoke-prod.sh --surface=health --json
+
   # SMI-2595: Validate migration SQL for common issues
   # Catches type mismatches, missing search_path, pg_safeupdate violations
   # Only runs when migration files are changed

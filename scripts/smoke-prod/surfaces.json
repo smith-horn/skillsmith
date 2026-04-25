@@ -1,0 +1,50 @@
+{
+  "$comment": "SMI-4459 surface manifest. Each surface declares trigger_globs (paths whose change implies the surface needs smoking), the script that owns its checks, and the check function names (defined inside that script). Adding a surface = appending one entry. The audit-standards R-4 backstop (Section 34) walks edge-functions + website pages and warns when a path matches no surface. The 'health' canary is always-on (zero trigger_globs) so every PR exercises the harness against real prod.",
+  "version": 1,
+  "surfaces": [
+    {
+      "id": "health",
+      "owner": "always-on-canary",
+      "trigger_globs": ["supabase/functions/health/**"],
+      "always_run": true,
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_health_edge_fn"]
+    },
+    {
+      "id": "website-device-page",
+      "owner": "website",
+      "trigger_globs": [
+        "packages/website/src/pages/device.astro",
+        "packages/website/src/pages/device/**"
+      ],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_device_page_renders"]
+    },
+    {
+      "id": "edge-fn-auth-device",
+      "owner": "edge-functions",
+      "trigger_globs": [
+        "supabase/functions/auth-device-code/**",
+        "supabase/functions/auth-device-preview/**",
+        "supabase/functions/auth-device-approve/**",
+        "supabase/functions/auth-device-token/**"
+      ],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_auth_device_code_reachable", "check_auth_device_preview_requires_jwt"]
+    },
+    {
+      "id": "cli-published",
+      "owner": "cli",
+      "trigger_globs": ["packages/cli/**"],
+      "script": "scripts/smoke-prod/cli.sh",
+      "checks": ["check_cli_help_lists_known_commands", "check_cli_version_exits_zero"]
+    },
+    {
+      "id": "mcp-server-published",
+      "owner": "mcp-server",
+      "trigger_globs": ["packages/mcp-server/**"],
+      "script": "scripts/smoke-prod/mcp-server.sh",
+      "checks": ["check_mcp_server_version_exits_zero"]
+    }
+  ]
+}
