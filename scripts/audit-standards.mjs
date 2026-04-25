@@ -2335,7 +2335,14 @@ console.log(`\n${BOLD}35. Held-out pair detection (SMI-4451 Step 8)${RESET}`)
         const gtQuery =
           typeof fm.ground_truth_query === 'string' ? fm.ground_truth_query.trim() : ''
         if (gtQuery.length === 0) continue
-        const dateMs = typeof fm.date === 'string' ? Date.parse(`${fm.date}T00:00:00Z`) : NaN
+        // js-yaml parses bare `date: 2026-04-25` as a Date instance; quoted
+        // form `date: '2026-04-25'` stays a string. Handle both.
+        let dateMs = NaN
+        if (typeof fm.date === 'string') {
+          dateMs = Date.parse(`${fm.date}T00:00:00Z`)
+        } else if (fm.date instanceof Date) {
+          dateMs = fm.date.getTime()
+        }
         if (Number.isNaN(dateMs)) continue
         if (dateMs < WAVE_1_SHIP_MS || dateMs > WINDOW_END_MS) continue
 
