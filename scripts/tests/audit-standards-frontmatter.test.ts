@@ -5,8 +5,9 @@
  *   1. `scripts/retrieval-log-cli.mjs` — arg validation, DB-missing no-op,
  *      IS_DOCKER no-op, successful INSERT.
  *   2. `scripts/lib/retro-frontmatter.mjs` — required/optional field
- *      validation, pre-Wave-1 mtime filter (git-log), CI-aware memory-file
- *      existence check, spawn-per-record telemetry.
+ *      validation, git-log first-commit-date pre-Wave-1 filter (CI-stable;
+ *      mtime is unreliable across fresh clones), CI-aware memory-file
+ *      existence check, spawn-per-record telemetry, --paths traversal guard.
  *   3. `scripts/audit-standards.mjs` — `--only`, `--paths`, unknown-check
  *      exit 2, `--warn` vs `--error` exit codes.
  *
@@ -308,6 +309,14 @@ describe('audit-standards.mjs — --only dispatch', () => {
     expect(r.stdout).toContain('2026-04-25-smi-a.md')
     expect(r.stdout).not.toContain('2026-04-25-smi-b.md')
     expect(r.status).toBe(1)
+  })
+
+  it('rejects --paths entries outside docs/internal/retros/ (traversal guard)', () => {
+    const r = runAudit(['--error', '--paths', '../../../etc/passwd,docs/internal/retros/../foo.md'])
+    expect(r.stdout + r.stderr).toContain('retro path rejected')
+    // No frontmatter findings (both rejected before validation).
+    expect(r.stdout).not.toContain('frontmatter:')
+    expect(r.status).toBe(0)
   })
 
   it('reads RETRO_FRONTMATTER_MODE env (warn overrides default error)', () => {

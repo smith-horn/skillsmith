@@ -64,14 +64,37 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const BASENAME_RE = /^[a-z0-9_-]+$/
 
 const firstCommitCache = new Map()
+const ALLOWED_PATH_PREFIX = 'docs/internal/retros/'
+const PATH_LEAF_RE = /^[a-z0-9._-]+\.md$/i
 
 /**
- * Main entrypoint — dispatched from audit-standards.mjs `--only retro-frontmatter`.
+ * Main entrypoint — dispatched from `audit-standards.mjs --only retro-frontmatter`.
+ *
+ * @param {object} opts
+ * @param {string|string[]|null|undefined} opts.paths — Comma-separated string,
+ *   array, or null/undefined. When null/undefined, scans the full
+ *   `docs/internal/retros/` glob. Each path must match
+ *   `docs/internal/retros/<safe-leaf>.md` — `..` traversal is rejected.
+ * @param {'warn'|'error'} opts.mode — `error` flips return value to false on
+ *   any incomplete outcome (caller translates to exit 1). `warn` always
+ *   returns true.
+ * @returns {Promise<boolean>} true on pass, false on failure (only in `error`
+ *   mode). Telemetry to `frontmatter_lint_events` is best-effort and never
+ *   affects the return value.
  */
 export async function checkRetroFrontmatter({ paths, mode }) {
   const isCI = process.env.CI === 'true'
   const errorMode = mode === 'error'
-  const targets = normalizePaths(paths) ?? defaultRetros()
+  const requested = normalizePaths(paths)
+  const safe = requested ? requested.filter(isSafeRetroPath) : null
+  if (requested && safe.length !== requested.length) {
+    for (const rejected of requested.filter((p) => !isSafeRetroPath(p))) {
+      console.warn(
+        `${YELLOW}⚠${RESET} retro path rejected (must be under ${ALLOWED_PATH_PREFIX}): ${rejected}`
+      )
+    }
+  }
+  const targets = safe ?? defaultRetros()
 
   const knownRetroBasenames = new Set(defaultRetros().map((p) => basename(p, '.md')))
 
@@ -265,6 +288,22 @@ function defaultRetros() {
   return readdirSync(RETROS_DIR)
     .filter((f) => f.endsWith('.md'))
     .map((f) => join(RETROS_DIR, f))
+}
+
+/**
+ * Defense-in-depth path validation for `--paths` input. lint-staged passes
+ * git-staged files (already trusted), but a developer invoking
+ * `audit-standards.mjs --only retro-frontmatter --paths foo` directly could
+ * supply arbitrary paths. Reject anything outside the retros tree to prevent
+ * `..` traversal reads (e.g. `docs/internal/retros/../../../etc/passwd`).
+ *
+ * Accepted shape: `docs/internal/retros/<safe-leaf>.md` with no path
+ * components after the prefix.
+ */
+function isSafeRetroPath(p) {
+  if (typeof p !== 'string' || !p.startsWith(ALLOWED_PATH_PREFIX)) return false
+  const leaf = p.slice(ALLOWED_PATH_PREFIX.length)
+  return PATH_LEAF_RE.test(leaf)
 }
 
 function normalizePaths(paths) {
