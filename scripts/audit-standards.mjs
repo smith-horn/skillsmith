@@ -4,8 +4,13 @@
  *
  * Checks codebase compliance with engineering standards.
  * Run: npm run audit:standards
+ *
+ * SMI-4450 Step 5: `--only <name>[,<name>]` dispatches to CHECK_REGISTRY
+ * and skips the full audit. Used by lint-staged in pre-commit for retro
+ * frontmatter lint (per SPARC §S5 M5).
  */
 
+import { parseArgs } from 'node:util'
 import { execSync } from 'child_process'
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
 import { dirname, extname, join, relative, resolve as resolvePath } from 'path'
@@ -25,6 +30,53 @@ const BOLD = '\x1b[1m'
 let passed = 0
 let warnings = 0
 let failed = 0
+
+// SMI-4450 Step 5 — selective-check dispatcher. Extend via new entries; each
+// handler returns `true` on pass, `false` on fail (in error mode). The
+// dispatcher below runs only the requested checks and exits — the full audit
+// body (starting at the next `console.log` banner) is skipped.
+const CHECK_REGISTRY = new Map([
+  [
+    'retro-frontmatter',
+    async ({ paths }) => {
+      const { checkRetroFrontmatter } = await import('./lib/retro-frontmatter.mjs')
+      const mode =
+        process.env.RETRO_FRONTMATTER_MODE ??
+        (cliArgs.values.error ? 'error' : cliArgs.values.warn ? 'warn' : 'error')
+      return checkRetroFrontmatter({ paths, mode })
+    },
+  ],
+])
+
+const cliArgs = parseArgs({
+  options: {
+    only: { type: 'string' },
+    paths: { type: 'string' },
+    warn: { type: 'boolean' },
+    error: { type: 'boolean' },
+  },
+  allowPositionals: false,
+  strict: false,
+})
+
+if (cliArgs.values.only) {
+  const requested = cliArgs.values.only
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const valid = [...CHECK_REGISTRY.keys()]
+  let hadFailure = false
+  for (const name of requested) {
+    const fn = CHECK_REGISTRY.get(name)
+    if (!fn) {
+      console.error(`Unknown check: ${name}. Valid: ${valid.join(', ')}`)
+      process.exit(2)
+    }
+    const ok = await fn({ paths: cliArgs.values.paths ?? null })
+    if (!ok) hadFailure = true
+  }
+  process.exit(hadFailure ? 1 : 0)
+}
 
 function pass(msg) {
   console.log(`${GREEN}✓${RESET} ${msg}`)

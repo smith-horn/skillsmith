@@ -72,6 +72,22 @@ export interface FrontmatterLintEvent {
 }
 
 /**
+ * Standalone DDL fragment for `frontmatter_lint_events` (SMI-4450 Step 5).
+ * Exported so the Step-5 test suite can runtime-introspect column layout
+ * via `PRAGMA table_info(frontmatter_lint_events)` and compare against
+ * expected columns. The writer does NOT execute this fragment standalone —
+ * `SCHEMA_SQL` is the single execution path. This constant is documentation
+ * + test reference only. The test `SCHEMA_SQL.includes(FRONTMATTER_LINT_EVENTS_DDL)`
+ * enforces that edits to one also land in the other.
+ */
+export const FRONTMATTER_LINT_EVENTS_DDL = `CREATE TABLE IF NOT EXISTS frontmatter_lint_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  retro_path TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('complete', 'incomplete', 'bypassed_no_verify'))
+);`
+
+/**
  * Full DDL for a fresh `retrieval-logs.db`. Idempotent (all CREATE statements
  * use `IF NOT EXISTS`). Run via `db.exec(SCHEMA_SQL)` on first open.
  *
