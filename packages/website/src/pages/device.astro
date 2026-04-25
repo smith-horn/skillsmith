@@ -24,6 +24,7 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
         <label for="user-code-input" class="field-label">Approval code</label>
         <input
           id="user-code-input"
+          data-smoke="device-input"
           type="text"
           inputmode="text"
           autocomplete="one-time-code"
