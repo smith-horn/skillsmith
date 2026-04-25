@@ -82,7 +82,7 @@ The static-analysis backstops (SMI-4456 R-1, SMI-4457 R-2) catch CLI-hint and ed
 
 _Required when the plan adds or modifies a PL/pgSQL function with `RETURNS TABLE(...)`._
 
-```
+```text
 TABLE() output columns: <list, e.g. status TEXT, user_id UUID>
 DECLARE block variables:  <list>
 RETURNING / WHERE / SELECT identifiers used in body: <list>
