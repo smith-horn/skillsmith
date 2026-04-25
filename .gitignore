@@ -166,3 +166,4 @@ docs/irap/
 
 # Blog image generation working directory
 docs/articles/tmp/
+.tmp/

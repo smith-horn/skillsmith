@@ -19,6 +19,16 @@
     "docs/internal/**/*.md",
     "packages/*/README.md"
   ],
+  "adapters": [
+    {
+      "kind": "memory-topic-files",
+      "_rationale": "SMI-4473 — Step 4 corpus expansion shipped this adapter but the previous corpus.config.json never enabled it, so feedback_*.md memory files were 0-chunk and the 6-pair gate failed 2/6 from a corpus coverage gap (not a ranking gap). Inside Docker, requires SKILLSMITH_MEMORY_DIR_OVERRIDE pointing to a path Docker can read."
+    },
+    {
+      "kind": "script-headers",
+      "_rationale": "SMI-4473 — covers pair-5 alternate (scripts/pooler-psql.sh) and gives the indexer first-class coverage of scripts/*.{sh,mjs,ts} headers."
+    }
+  ],
   "requireSubmodule": "docs/internal",
   "_storagePathRationale": "@ruvector/core@0.1.30 creates a SINGLE FILE at the exact storagePath given (not a directory tree as the initial plan assumed). SMI-4426 renamed `rvfPath` to `storagePath`. The indexer creates this as a DIRECTORY and passes join(storageAbs,'vectors') to VectorDb, so the lock (.indexer.lock) and the db file (vectors) coexist inside this directory. Legacy *.rvf gitignore entry kept harmless."
 }
