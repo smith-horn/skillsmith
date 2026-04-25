@@ -2225,6 +2225,34 @@ console.log(`\n${BOLD}33. PL/pgSQL RETURNS TABLE + RETURNING Ambiguity (R-3, SMI
   }
 }
 
+// 34. SMI-4451 Step 7: encoded-cwd helper drift between writer.ts and
+// session-priming-query.ts. The 4-LOC `'-' + cwd.slice(1).replace(/\//g, '-')`
+// helper is duplicated by design (plan-review #11) instead of extracted to a
+// shared utils/ module — too small to justify a new directory. This check
+// fails if either file lacks the canonical regex form, signaling drift.
+console.log(`\n${BOLD}34. encoded-cwd helper drift (SMI-4451 Step 7)${RESET}`)
+{
+  const PAIR = [
+    'packages/doc-retrieval-mcp/src/retrieval-log/writer.ts',
+    'scripts/session-priming-query.ts',
+  ]
+  // Canonical pattern: replace forward-slashes with hyphens. Match either
+  // regex form (/\//g) or string form ('/'). Both files must match.
+  const ENCODED_CWD_REGEX = /\.replace\(\s*\/\\?\/\/?g\s*,\s*['"]-['"]\s*\)/
+  const missing = PAIR.filter((p) => {
+    if (!existsSync(p)) return true
+    return !ENCODED_CWD_REGEX.test(readFileSync(p, 'utf8'))
+  })
+  if (missing.length === 0) {
+    pass(`Both encoded-cwd duplicates present and aligned (${PAIR.length} files)`)
+  } else {
+    fail(
+      `encoded-cwd helper drift in: ${missing.join(', ')}`,
+      `Both writer.ts and session-priming-query.ts must contain \`replace(/\\//g, '-')\` (or string-form '/'). Helper is duplicated by design per smi-4450-step7-session-start-hook.md §S4 (plan-review #11) — extract to a shared module if this drift fires repeatedly.`
+    )
+  }
+}
+
 // npm override drift check: @modelcontextprotocol/sdk override "." must match mcp-server range
 console.log(`\n${BOLD}Override Drift: @modelcontextprotocol/sdk${RESET}`)
 try {

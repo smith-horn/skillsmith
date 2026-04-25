@@ -141,6 +141,17 @@
         ]
       }
     ],
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/scripts/session-start-priming.sh"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
