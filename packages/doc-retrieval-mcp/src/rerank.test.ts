@@ -7,7 +7,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { bm25Score, buildIdf, minMaxNormalize, rerank, tokenize } from './rerank.js'
+import {
+  bm25Score,
+  buildIdf,
+  classBoostFactor,
+  minMaxNormalize,
+  rerank,
+  tokenize,
+} from './rerank.js'
 import type { ChunkStoredMetadata, SearchHit } from './types.js'
 
 function makeHit(
@@ -251,5 +258,131 @@ describe('rerank — BM25 helpers (exported for unit coverage)', () => {
 
   it('minMaxNormalize returns [] for empty input', () => {
     expect(minMaxNormalize([])).toEqual([])
+  })
+})
+
+describe('rerank — SMI-4468 per-class boost', () => {
+  afterEach(() => {
+    delete process.env.SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY
+    delete process.env.SKILLSMITH_DOC_RETRIEVAL_DAMPEN_PROCESS
+  })
+
+  it('classBoostFactor returns 1.0 when meta is undefined or class missing', () => {
+    expect(classBoostFactor(undefined)).toBe(1.0)
+    const noClass: ChunkStoredMetadata = {
+      file_path: 'x',
+      line_start: 1,
+      line_end: 1,
+      heading_chain: [],
+      text: '',
+    }
+    expect(classBoostFactor(noClass)).toBe(1.0)
+  })
+
+  it('classBoostFactor returns 1.0 for empty or unrecognized class arrays', () => {
+    const empty = makeHit('e', 0.5, 'x', { class: [] })
+    expect(classBoostFactor(empty.meta)).toBe(1.0)
+    const unknown = makeHit('u', 0.5, 'x', { class: ['markdown-doc', 'retro'] })
+    expect(classBoostFactor(unknown.meta)).toBe(1.0)
+  })
+
+  it('boosts feedback-class similarity by default 1.5x', () => {
+    const fb = makeHit('feedback', 0.4, 'feedback content', { class: ['feedback'] })
+    const out = rerank([fb], 'q')
+    // 0.4 * 1.5 = 0.6 (no penalty applies)
+    expect(out[0].score).toBeCloseTo(0.6, 4)
+    expect(out[0].similarity).toBe(0.4) // raw signal preserved
+  })
+
+  it('boosts project-class similarity by default 1.5x', () => {
+    const proj = makeHit('proj', 0.4, 'project content', { class: ['project'] })
+    const out = rerank([proj], 'q')
+    expect(out[0].score).toBeCloseTo(0.6, 4)
+  })
+
+  it('dampens wave-spec class by default 0.85x', () => {
+    const wave = makeHit('wave', 0.6, 'wave spec', { class: ['wave-spec'] })
+    const out = rerank([wave], 'q')
+    expect(out[0].score).toBeCloseTo(0.51, 4) // 0.6 * 0.85
+  })
+
+  it('dampens plans-review class by default 0.85x', () => {
+    const pr = makeHit('pr', 0.6, 'plan review', { class: ['plans-review'] })
+    const out = rerank([pr], 'q')
+    expect(out[0].score).toBeCloseTo(0.51, 4)
+  })
+
+  it('memory boost wins when both memory and process classes co-occur', () => {
+    // Defensive: schema drift could produce co-occurrence; memory provenance
+    // should always win because the chunk is at minimum a feedback chunk.
+    const mixed = makeHit('mixed', 0.4, 'content', { class: ['feedback', 'wave-spec'] })
+    const out = rerank([mixed], 'q')
+    expect(out[0].score).toBeCloseTo(0.6, 4) // 0.4 * 1.5 (memory boost), not 0.34 (dampener)
+  })
+
+  it('boost stacks with absorption cap — boosted+absorbed hits the 0.5 ceiling', () => {
+    // 0.9 * 1.5 = 1.35 (boosted), then * 0.5 = 0.675, capped to 0.5.
+    // Without the cap, boost would smuggle the absorbed chunk past its
+    // canonical replacement; the cap holds that line.
+    const absorbed = makeHit('a', 0.9, 'x', {
+      class: ['feedback'],
+      absorbed_by: 'canonical.md',
+    })
+    const out = rerank([absorbed], 'q')
+    expect(out[0].score).toBe(0.5)
+  })
+
+  it('dampener stacks with supersession penalty', () => {
+    const dampened = makeHit('d', 0.8, 'x', {
+      class: ['wave-spec'],
+      supersedes: 'newer.md',
+    })
+    const out = rerank([dampened], 'q')
+    // 0.8 * 0.85 * 0.5 = 0.34
+    expect(out[0].score).toBeCloseTo(0.34, 4)
+  })
+
+  it('env override SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY changes the boost factor', () => {
+    process.env.SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY = '2.0'
+    const fb = makeHit('fb', 0.3, 'feedback', { class: ['feedback'] })
+    const out = rerank([fb], 'q')
+    expect(out[0].score).toBeCloseTo(0.6, 4) // 0.3 * 2.0
+  })
+
+  it('env override SKILLSMITH_DOC_RETRIEVAL_DAMPEN_PROCESS changes the dampener', () => {
+    process.env.SKILLSMITH_DOC_RETRIEVAL_DAMPEN_PROCESS = '0.5'
+    const wave = makeHit('w', 0.8, 'wave', { class: ['wave-spec'] })
+    const out = rerank([wave], 'q')
+    expect(out[0].score).toBeCloseTo(0.4, 4) // 0.8 * 0.5
+  })
+
+  it('malformed env values fall back to defaults', () => {
+    process.env.SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY = 'not-a-number'
+    const fb = makeHit('fb', 0.4, 'feedback', { class: ['feedback'] })
+    const out = rerank([fb], 'q')
+    expect(out[0].score).toBeCloseTo(0.6, 4) // default 1.5
+  })
+
+  it('negative or zero env values fall back to defaults', () => {
+    process.env.SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY = '-2.0'
+    const fb = makeHit('fb', 0.4, 'feedback', { class: ['feedback'] })
+    const out = rerank([fb], 'q')
+    expect(out[0].score).toBeCloseTo(0.6, 4)
+  })
+
+  it('extreme env values clamp to [0.1, 5.0] range', () => {
+    process.env.SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY = '999'
+    const fb = makeHit('fb', 0.1, 'feedback', { class: ['feedback'] })
+    const out = rerank([fb], 'q')
+    expect(out[0].score).toBeCloseTo(0.5, 4) // 0.1 * clamp(999, 5.0) = 0.5
+  })
+
+  it('reorders feedback chunk above unboosted longer doc with same similarity', () => {
+    // Demonstrates the SMI-4468 use case: short feedback chunk previously
+    // tied with longer impl-doc on cosine; boost gives it the edge.
+    const feedback = makeHit('fb', 0.5, 'feedback bullet', { class: ['feedback'] })
+    const impl = makeHit('impl', 0.5, 'impl doc body')
+    const out = rerank([impl, feedback], 'q')
+    expect(out[0].id).toBe('fb') // boosted to 0.75 vs unboosted 0.5
   })
 })

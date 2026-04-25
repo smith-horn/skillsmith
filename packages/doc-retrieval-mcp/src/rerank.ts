@@ -30,7 +30,7 @@
  *     correct; a per-call flag would invite drift.
  */
 
-import type { SearchHit } from './types.js'
+import type { ChunkStoredMetadata, SearchHit } from './types.js'
 
 // Absorption demotion cap (SMI-4450 plan-review M3): replace hard ×0.3 multiply
 // with `min(similarity * 0.5, 0.5)` so a high-similarity absorbed chunk still
@@ -43,6 +43,18 @@ const ABSORPTION_CEILING = 0.5
 // IS in the index and will rank above the superseded entry, so a clean halve
 // is sufficient.
 const SUPERSESSION_HALVE_FACTOR = 0.5
+
+// SMI-4468 — Per-class rank boost defaults. Wave 1 ship gate halted at 2/6 on
+// 2026-04-25 because short feedback/project memory chunks (1-2 chunks each)
+// were outranked by longer impl docs covering the same topic. Boost factor
+// rewrites that imbalance by scaling similarity before the existing penalties.
+// Defaults are starting values; sweep via env to refine without code change.
+const DEFAULT_BOOST_MEMORY = 1.5
+const DEFAULT_DAMPEN_PROCESS = 0.85
+const BOOST_MIN = 0.1
+const BOOST_MAX = 5.0
+const MEMORY_CLASSES = new Set(['feedback', 'project'])
+const PROCESS_CLASSES = new Set(['wave-spec', 'plans-review'])
 
 // Phase 2 BM25 constants per SPARC §S6.
 const BM25_K1 = 1.5
@@ -79,25 +91,68 @@ export function rerank(hits: SearchHit[], query: string): SearchHit[] {
 }
 
 /**
- * Apply absorption + supersession penalties to a single hit.
+ * Apply class-boost + absorption + supersession penalties to a single hit.
  *
- * Returns a NEW hit with `score` rewritten and `similarity` preserved (so
- * downstream consumers can still see the raw embedding signal). When neither
- * penalty applies, returns a structurally-equal copy with `score === similarity`
- * (already true by construction in `search.ts`).
+ * Order matters: class boost runs FIRST, so a boosted-but-absorbed chunk's
+ * post-cap score still respects the 0.5 ceiling (boost cannot smuggle a
+ * superseded artifact above its canonical replacement). Returns a NEW hit
+ * with `score` rewritten and `similarity` preserved (downstream consumers
+ * see the raw embedding signal untouched).
  */
 function applyPenalties(hit: SearchHit): SearchHit {
   const absorbed = hit.meta?.absorbed_by
   const supersedes = hit.meta?.supersedes
 
-  let score = hit.similarity
+  const boosted = hit.similarity * classBoostFactor(hit.meta)
+
+  let score = boosted
   if (typeof absorbed === 'string' && absorbed.length > 0) {
-    score = Math.min(hit.similarity * ABSORPTION_HALVE_FACTOR, ABSORPTION_CEILING)
+    score = Math.min(boosted * ABSORPTION_HALVE_FACTOR, ABSORPTION_CEILING)
   } else if (typeof supersedes === 'string' && supersedes.length > 0) {
-    score = hit.similarity * SUPERSESSION_HALVE_FACTOR
+    score = boosted * SUPERSESSION_HALVE_FACTOR
   }
 
   return { ...hit, score }
+}
+
+/**
+ * SMI-4468 — Return the per-class similarity multiplier for a chunk.
+ *
+ * - `feedback` / `project` → boost (default 1.5x, env
+ *   `SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY`). Lifts focused memory chunks
+ *   above longer process docs covering the same topic.
+ * - `wave-spec` / `plans-review` → dampen (default 0.85x, env
+ *   `SKILLSMITH_DOC_RETRIEVAL_DAMPEN_PROCESS`). Verbose process docs that
+ *   crowd memory chunks out of the cosine top-K.
+ * - All other classes (or missing/empty `class` array) → 1.0 (no change).
+ *
+ * If a chunk lists both a memory class and a process class, the memory
+ * boost wins — by construction these classes don't co-occur in the
+ * adapter, but defending against schema drift is cheap.
+ */
+export function classBoostFactor(meta: ChunkStoredMetadata | undefined): number {
+  const classes = meta?.class
+  if (!Array.isArray(classes) || classes.length === 0) return 1.0
+  if (classes.some((c) => MEMORY_CLASSES.has(c))) {
+    return readBoostFactor('SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY', DEFAULT_BOOST_MEMORY)
+  }
+  if (classes.some((c) => PROCESS_CLASSES.has(c))) {
+    return readBoostFactor('SKILLSMITH_DOC_RETRIEVAL_DAMPEN_PROCESS', DEFAULT_DAMPEN_PROCESS)
+  }
+  return 1.0
+}
+
+/**
+ * Parse an env-supplied boost factor; clamp to [BOOST_MIN, BOOST_MAX] to keep
+ * malformed values (NaN, negative, huge) from corrupting ranking. Returns the
+ * default when env is unset or unparseable.
+ */
+function readBoostFactor(envVar: string, fallback: number): number {
+  const raw = process.env[envVar]
+  if (raw === undefined || raw === '') return fallback
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  return Math.max(BOOST_MIN, Math.min(BOOST_MAX, parsed))
 }
 
 /**
