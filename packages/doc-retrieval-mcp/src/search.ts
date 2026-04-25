@@ -17,6 +17,14 @@ export interface SearchOpts {
   minScore?: number
   scopeGlobs?: string[]
   configPath?: string
+  /**
+   * Skip the post-distance minScore filter and return the raw top-k pool
+   * (SMI-4450 Wave 1 Step 6 — plan-review H3). Caller hands the pool to
+   * `rerank()` and applies `minScore` AFTER ranking adjustments. Without
+   * this flag, an absorbed-but-still-relevant chunk could be evicted before
+   * the demotion-cap path could keep it in the result set.
+   */
+  preRerank?: boolean
 }
 
 /**
@@ -63,7 +71,7 @@ export async function search(opts: SearchOpts): Promise<SearchHit[]> {
   const hits: SearchHit[] = []
   for (const result of raw) {
     const similarity = distanceToSimilarity(result.score)
-    if (similarity < minScore) continue
+    if (!opts.preRerank && similarity < minScore) continue
 
     let meta: StoredMetadata
     try {

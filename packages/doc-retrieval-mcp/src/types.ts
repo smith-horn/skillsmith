@@ -46,6 +46,18 @@ export interface ChunkStoredMetadata {
   kind?: string
   lifetime?: 'short-term' | 'long-term'
   tags?: Record<string, string | number | null>
+  /**
+   * Frontmatter-derived ranking signals (SMI-4450 Wave 1 Step 6 — plan-review C3).
+   * Read by `rerank.ts` to apply absorption / supersession penalties. Optional
+   * because Wave 1 adapters do not yet stamp them — Wave 2 absorption tracker
+   * populates `absorbed_by`. Field shape matches the retro frontmatter schema
+   * defined in `scripts/lib/retro-frontmatter.mjs`.
+   */
+  smi?: string
+  class?: string[]
+  absorbed_by?: string
+  supersedes?: string
+  source?: string
 }
 
 export interface IndexState {
