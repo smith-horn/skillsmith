@@ -19,6 +19,8 @@ import {
   getUsageRow,
   stagingFunctionUrl,
   stagingCredentialsAbsent,
+  getStagingAnonKey,
+  waitForCounterIncrement,
   type ProvisionedUser,
 } from '../fixtures/usage-counter-fixture.js'
 
@@ -43,7 +45,7 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter Direct X-API-Key → usage co
     const url = `${stagingFunctionUrl('skills-search')}?query=react&limit=5`
     const headers = {
       'X-API-Key': user.apiKey,
-      apikey: process.env['STAGING_SUPABASE_ANON_KEY'] ?? '',
+      apikey: getStagingAnonKey(),
       Accept: 'application/json',
     }
 
@@ -61,17 +63,3 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter Direct X-API-Key → usage co
     expect(after.search_count).toBe(before.search_count + 2)
   }, 45_000)
 })
-
-async function waitForCounterIncrement(
-  userId: string,
-  column: 'search_count' | 'get_count' | 'recommend_count',
-  target: number,
-  timeoutMs = 5_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const row = await getUsageRow(userId)
-    if (row[column] >= target) return
-    await new Promise((resolve) => setTimeout(resolve, 250))
-  }
-}

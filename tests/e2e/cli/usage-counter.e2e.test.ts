@@ -38,6 +38,7 @@ import {
   cleanupTestUser,
   getUsageRow,
   stagingCredentialsAbsent,
+  waitForCounterIncrement,
   type ProvisionedUser,
 } from '../fixtures/usage-counter-fixture.js'
 
@@ -103,22 +104,3 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter CLI ApiClient → usage count
     expect(after.get_count).toBe(before.get_count + 2)
   }, 45_000)
 })
-
-/**
- * Polling helper — increment_api_usage is fire-and-forget downstream of the
- * response. Read the row up to N times, 250ms apart, until the expected value
- * lands or we time out (and let the assertion produce a useful diff).
- */
-async function waitForCounterIncrement(
-  userId: string,
-  column: 'search_count' | 'get_count' | 'recommend_count',
-  target: number,
-  timeoutMs = 5_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const row = await getUsageRow(userId)
-    if (row[column] >= target) return
-    await new Promise((resolve) => setTimeout(resolve, 250))
-  }
-}

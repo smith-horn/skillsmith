@@ -407,3 +407,39 @@ export function stagingCredentialsAbsent(): boolean {
     process.env['STAGING_SUPABASE_ANON_KEY']
   )
 }
+
+/**
+ * Read STAGING_SUPABASE_ANON_KEY with the same fail-loud semantics the rest
+ * of the fixture uses for service-role / URL. Tests that build raw fetch
+ * headers (`apikey: ...`) must use this rather than `process.env[...] ?? ''`
+ * — an empty `apikey` header surfaces as a confusing 401 instead of a clear
+ * "missing env" error (SMI-4466).
+ */
+export function getStagingAnonKey(): string {
+  return readEnv('STAGING_SUPABASE_ANON_KEY')
+}
+
+type CounterColumn = 'search_count' | 'get_count' | 'recommend_count'
+
+/**
+ * Polling helper — `increment_api_usage` is fire-and-forget downstream of the
+ * response. Read the row up to N times, 250ms apart, until the expected
+ * counter value lands or we time out. The caller's subsequent `expect(...)`
+ * produces the actual diff if the target wasn't reached.
+ *
+ * Centralized in the fixture so all four E2E suites share one implementation
+ * (SMI-4466 — was previously duplicated 4×).
+ */
+export async function waitForCounterIncrement(
+  userId: string,
+  column: CounterColumn,
+  target: number,
+  timeoutMs = 5_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const row = await getUsageRow(userId)
+    if (row[column] >= target) return
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+}
