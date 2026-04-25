@@ -1,0 +1,88 @@
+# SMI-4462: API usage counter E2E suite.
+#
+# Runs the @e2e-usage-counter suite (5 paths covered in tests/e2e/{cli,mcp,
+# website,api}) against the staging Supabase project. Provisions a fresh
+# staging user per spec and asserts user_api_usage column increments.
+#
+# Triggers:
+#   - workflow_dispatch (manual, for verifying after counter-touching changes)
+#   - workflow_run (after deploy-edge-functions completes on main)
+#
+# NOT a required check on PRs — staging deployment must land first, and the
+# secrets list below is staging-only. The suite is self-skipping when the
+# STAGING_* vars are absent (see tests/e2e/fixtures/usage-counter-fixture.ts).
+
+name: E2E Usage Counter
+
+on:
+  workflow_dispatch: {}
+  workflow_run:
+    workflows: ['Deploy Edge Functions']
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-usage-counter-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Usage Counter E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only run after a successful edge-function deploy.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
+    env:
+      # Staging Supabase project (ovhcifugwqnzoebwfuku) — never prod.
+      STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+      STAGING_SUPABASE_ANON_KEY: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build (mcp-server needed for stdio E2E)
+        run: npm run build
+
+      - name: Verify staging secrets are populated
+        id: secrets-check
+        run: |
+          missing=0
+          for v in STAGING_SUPABASE_URL STAGING_SUPABASE_SERVICE_ROLE_KEY STAGING_SUPABASE_ANON_KEY; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Required secret $v is not set."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Set the missing GitHub Actions secrets in the repo settings before retrying."
+            exit 1
+          fi
+
+      - name: Run @e2e-usage-counter suite
+        run: npm run test:e2e:usage-counter
+
+      - name: Upload vitest report
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: e2e-usage-counter-report
+          path: |
+            test-results/**
+            *.log
+          retention-days: 7
+          if-no-files-found: ignore

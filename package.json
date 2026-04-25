@@ -57,6 +57,7 @@
     "test:e2e:report": "npx tsx scripts/e2e/generate-report.ts",
     "test:e2e:create-issues": "npx tsx scripts/e2e/create-linear-issues.ts",
     "test:e2e:baseline": "npx tsx scripts/e2e/generate-report.ts --baseline",
+    "test:e2e:usage-counter": "vitest run --config vitest.e2e.config.ts",
     "skillsmith": "node packages/cli/dist/src/index.js",
     "cleanup:orphans": "./scripts/cleanup-orphans.sh",
     "transform:batch": "npx tsx scripts/batch-transform-skills.ts",
