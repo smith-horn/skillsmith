@@ -887,8 +887,14 @@ const supabaseConfig = getSupabaseConfig()
       const keyCountEl = document.getElementById('key-count')
       if (keyCountEl) keyCountEl.textContent = `${activeKeys.length} / ${maxKeys}`
 
-      // API usage (sum usage_count across all license keys - this is lifetime cumulative)
-      const totalUsage = licenseKeys?.reduce((sum, k) => sum + (k.usage_count || 0), 0) || 0
+      // SMI-4461: API usage shows month-to-date from user_api_usage (migration 038),
+      // not lifetime SUM(license_keys.usage_count). The old counter missed every
+      // JWT-authenticated CLI/website call and silently undercounted API-key calls
+      // on tier-cache hits.
+      const { data: usageSummary } = await supabase.rpc('get_user_usage_summary', {
+        p_user_id: user.id,
+      })
+      const totalUsage = Number(usageSummary?.[0]?.total_requests ?? 0)
       const quotaLimits: Record<string, number> = {
         community: 1000,
         individual: 10000,
