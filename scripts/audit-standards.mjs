@@ -426,6 +426,9 @@ const NO_VERIFY_JWT_FUNCTIONS = [
   // uses gateway-verified JWT (verify_jwt = true) so it is NOT listed here.
   'auth-device-code',
   'auth-device-token',
+  // SMI-4463: quota-monitor — service-role cron, mirrors advance-notice-email
+  // pattern (service-role header bypasses gateway JWT, server-side re-checks).
+  'quota-monitor',
 ]
 
 const CONFIG_TOML_PATH = 'supabase/config.toml'

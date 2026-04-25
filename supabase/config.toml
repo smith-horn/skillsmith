@@ -453,6 +453,12 @@ verify_jwt = true
 [functions.auth-device-preview]
 verify_jwt = true
 
+# SMI-4463: quota-monitor — service-role cron that emails users crossing
+# 80% / 100% of their monthly quota. Mirrors indexer / alert-notify shape:
+# service-role header bypasses gateway JWT; server-side enforces service-role.
+[functions.quota-monitor]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
