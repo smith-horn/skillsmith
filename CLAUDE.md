@@ -18,6 +18,7 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 | [ruvector-dev-tooling.md](.claude/development/ruvector-dev-tooling.md) | `skillsmith-doc-retrieval` MCP — local semantic doc search (SMI-4417). Setup, tool surface, privacy boundary, post-commit hook, token-delta gate. |
 | [smoke-prod-guide.md](.claude/development/smoke-prod-guide.md) | Post-deploy smoke harness (SMI-4459). Surface manifest, adding new surfaces, failure triage, phase rollout. |
 | [vercel-deploy-hook.md](.claude/development/vercel-deploy-hook.md) | One-time Vercel→GitHub `repository_dispatch` setup that triggers `smoke-prod.yml` after a website deploy. |
+| [e2e-staging-runbook.md](.claude/development/e2e-staging-runbook.md) | `device-login-roundtrip.yml` (SMI-4460) — secret rotation, Docker-policy carve-out, prod-ref grep gate. |
 
 **Implementation plan template**: [.claude/templates/implementation-plan.md](.claude/templates/implementation-plan.md) — use this structure for all plans in `docs/internal/implementation/`.
 
@@ -333,6 +334,8 @@ npx supabase functions deploy auth-device-preview
 | Weekly Analytics | Monday 9 AM UTC | GitHub Actions (`analytics-report.yml`) |
 | Billing Monitor | Monday 9 AM UTC | GitHub Actions |
 | Edge Function Deploy | On merge to main | GitHub Actions (`deploy-edge-functions.yml`) |
+| Device-login round-trip e2e | Nightly 06:00 UTC + paths-filtered PR (SMI-4460) | GitHub Actions (`device-login-roundtrip.yml`) |
+| Device-login audit_logs cleanup | Sundays 04:00 UTC (SMI-4460) | GitHub Actions (`device-login-roundtrip-cleanup.yml`) |
 
 Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table. Manual trigger & audit log details: [deployment-guide.md](.claude/development/deployment-guide.md#monitoring--alerts).
 

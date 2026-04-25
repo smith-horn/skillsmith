@@ -1,0 +1,238 @@
+# SMI-4460 — prod-parity e2e for the device-code login round-trip.
+# Catches B1 (relative URL), B2 (claim_device_token ambiguity), B3 (nonexistent
+# post-login command) in a single run against staging Supabase
+# (ovhcifugwqnzoebwfuku — never prod).
+#
+# Phase 1 rollout: nightly + paths-filtered PR with `continue-on-error: true`.
+# Phase 3 promotion: remove continue-on-error and add to required checks
+# after 10 consecutive green nightly runs (see plan §Wave 5).
+#
+# Docker carve-out: this workflow runs on ubuntu-latest outside the dev
+# container. Justification (plan §Wave 3 Docker-policy carve-out): no native
+# modules in the spec surface (Playwright + Astro + supabase-js); ADR-113
+# precedent (vscode-extension); ~6 min wallclock saving.
+
+name: Device Login Round-Trip E2E
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # 06:00 UTC daily — after staging deploy windows
+  workflow_dispatch:
+    inputs:
+      negative_control:
+        description: 'Negative-control mode (reverts the named fix in-job; expected to FAIL)'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - b1
+          - b2
+          - b3
+  pull_request:
+    paths:
+      - 'packages/cli/src/commands/login.ts'
+      - 'packages/cli/src/index.ts'
+      - 'packages/website/src/pages/device.astro'
+      - 'packages/website/src/lib/supabase-client.ts'
+      - 'packages/website/src/lib/supabase-config.ts'
+      - 'supabase/functions/auth-device-**'
+      - 'supabase/migrations/08*.sql'
+      - 'packages/website/tests/e2e/device-login-roundtrip.*'
+      - 'scripts/seed-e2e-device-login-user.ts'
+      - 'scripts/e2e-negative-control.sh'
+      - '.github/workflows/device-login-roundtrip.yml'
+
+concurrency:
+  group: device-login-roundtrip-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Preflight (prod-ref grep + migration drift)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Refuse if prod project ref present in test surface (non-negotiable)
+        run: |
+          set -eu
+          # Prod ref must not appear in test surface EXCEPT on lines bearing the
+          # explicit allowlist marker `SMI-4460-allow-prod-ref` (used in
+          # config.ts / seed-e2e-device-login-user.ts to refuse-on-match guards
+          # — the very thing this gate protects). Any other occurrence is
+          # presumed to be an accidentally-pasted prod URL.
+          # The needle is split across two parts so the literal never appears
+          # contiguously in this file (avoids the gate matching its own source).
+          # SMI-4460-allow-prod-ref-needle.
+          NEEDLE="vrcnzpmnd""troqxxoqkzy"
+          MATCHES="$(grep -rEn "$NEEDLE" \
+             packages/website/tests/e2e/device-login-roundtrip* \
+             scripts/seed-e2e-device-login-user.ts \
+             scripts/e2e-negative-control.sh \
+             .github/workflows/device-login-roundtrip.yml \
+             | grep -vE 'SMI-4460-allow-prod-ref' || true)"
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Prod project ref detected in test config — refusing to run"
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "Prod-ref grep gate clean."
+
+  test:
+    name: Round-trip test
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: e2e-staging
+    permissions:
+      contents: read
+    continue-on-error: true # Phase 1 — nightly observability mode; remove after 10 green runs
+    env:
+      NEGATIVE_CONTROL: ${{ github.event.inputs.negative_control || 'none' }}
+      NODE_VERSION: '22'
+      # Build-time PUBLIC_* envs flow through to the Astro bundle so /device
+      # talks to staging Supabase functions instead of api.skillsmith.app.
+      PUBLIC_API_BASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      PUBLIC_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}
+      # Spec-side env (helpers + spec read these via getConfig()).
+      STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+      STAGING_SUPABASE_ANON_KEY: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}
+      STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+      E2E_TEST_USER_PASSWORD: ${{ secrets.E2E_TEST_USER_PASSWORD }}
+      E2E_TEST_USER_ID: ${{ secrets.E2E_TEST_USER_ID }}
+      WEBSITE_BASE_URL: 'http://localhost:4321'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies (no scripts — host has no native module compiler chain)
+        run: npm ci --ignore-scripts
+
+      - name: Migration drift preflight (claim_device_token must contain `dc.user_id`)
+        env:
+          PGPASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+        run: |
+          set -eu
+          # Build pooler connection from STAGING_SUPABASE_URL host's project ref.
+          REF="$(printf '%s' "$STAGING_SUPABASE_URL" | sed -E 's#^https?://([^.]+)\..*#\1#')"
+          if [ -z "$REF" ]; then
+            echo "::error::Could not derive project ref from STAGING_SUPABASE_URL"; exit 1
+          fi
+          # Use the transaction pooler (port 6543) like scripts/pooler-psql.sh.
+          BODY="$(echo "\\df+ public.claim_device_token" | psql \
+            "host=aws-0-us-west-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
+            -P pager=off -At 2>&1 || true)"
+          if ! echo "$BODY" | grep -q 'dc.user_id'; then
+            echo "::error::staging missing migration 083 (claim_device_token still has B2 ambiguity) — deploy migrations first"
+            echo "--- df+ output (first 500 chars) ---"
+            echo "$BODY" | head -c 500
+            exit 1
+          fi
+          echo "Migration drift preflight clean (post-083 body confirmed)."
+
+      - name: Negative-control patch (if requested)
+        if: env.NEGATIVE_CONTROL != 'none'
+        run: ./scripts/e2e-negative-control.sh "$NEGATIVE_CONTROL"
+
+      - name: Build CLI + website
+        run: |
+          set -eu
+          npm run build -w @skillsmith/core
+          npm run build -w @skillsmith/cli
+          npm run build -w @skillsmith/website
+          echo "CLI_PATH=$GITHUB_WORKSPACE/packages/cli/dist/index.js" >> "$GITHUB_ENV"
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Seed e2e test user (idempotent)
+        run: npx tsx scripts/seed-e2e-device-login-user.ts
+
+      - name: Edge-fn warmup (CORS preflight on auth-device-code)
+        run: |
+          curl -fsS -X OPTIONS "${STAGING_SUPABASE_URL}/functions/v1/auth-device-code" \
+            -H 'Origin: http://localhost:4321' \
+            -H 'Access-Control-Request-Method: POST' \
+            -H 'Access-Control-Request-Headers: content-type' \
+            -o /dev/null
+          echo "auth-device-code warmed."
+
+      - name: Start website preview server
+        run: |
+          set -eu
+          cd packages/website
+          nohup npm run preview -- --host 127.0.0.1 --port 4321 > "$GITHUB_WORKSPACE/test-results/preview.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/test-results/preview.pid"
+
+      - name: Wait for preview server
+        run: npx --yes wait-on http://localhost:4321/ -t 60000
+
+      - name: Run round-trip spec
+        run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/device-login-roundtrip.spec.ts --reporter=list
+
+      - name: Upload artifacts on failure (allowlisted paths only — no secrets)
+        if: failure()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: device-login-roundtrip-${{ github.run_id }}
+          path: |
+            packages/website/playwright-report/
+            test-results/cli-*.log
+            test-results/preview.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: SIGTERM preview server
+        if: always()
+        run: |
+          if [ -f test-results/preview.pid ]; then
+            PID="$(cat test-results/preview.pid)"
+            if kill -0 "$PID" 2>/dev/null; then kill -TERM "$PID" || true; fi
+          fi
+
+      - name: Defensive cleanup (any leftover device_codes for the test user)
+        if: always() && env.E2E_TEST_USER_ID != ''
+        env:
+          PGPASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+        run: |
+          set -eu
+          REF="$(printf '%s' "$STAGING_SUPABASE_URL" | sed -E 's#^https?://([^.]+)\..*#\1#')"
+          echo "DELETE FROM device_codes WHERE user_id = '${E2E_TEST_USER_ID}'::uuid AND consumed_at IS NULL;" | psql \
+            "host=aws-0-us-west-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
+            -P pager=off -At || true
+
+  negative-control-assertion:
+    name: Assert negative-control inverted result
+    needs: test
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.negative_control != 'none'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - name: A passing test in negative-control mode is itself a failure
+        run: |
+          set -eu
+          # `needs.test.result` is 'success' when the test job's exit was 0.
+          # In negative-control mode, that means the test FAILED to catch the
+          # injected regression — the whole point of this PR.
+          if [ "${{ needs.test.result }}" = "success" ]; then
+            echo "::error::Negative-control mode '${{ github.event.inputs.negative_control }}' returned success — the test failed to catch the injected regression"
+            exit 1
+          fi
+          echo "Negative-control inverted-result OK (test failed as expected for ${{ github.event.inputs.negative_control }})."
