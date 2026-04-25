@@ -15,8 +15,8 @@ Two pieces, both manual:
 ### 1. GitHub fine-grained PAT for `repository_dispatch`
 
 - Create a fine-grained PAT scoped to the `smith-horn/skillsmith`
-  repository with **only** `Contents: read-only` and `Metadata: read-only`
-  + `Actions: read-and-write`. Expire after 90 days.
+  repository with **only** `Contents: read-only`, `Metadata: read-only`,
+  and `Actions: read-and-write`. Expire after 90 days.
 - Store the value in `gh secret set VERCEL_DEPLOY_HOOK_TOKEN` so the
   hook (whether a Vercel webhook or a GitHub Actions repository_dispatch
   caller) can authenticate. Note: the workflow itself does NOT consume
