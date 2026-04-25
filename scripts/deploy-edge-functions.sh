@@ -106,6 +106,7 @@ NO_VERIFY_JWT_FUNCTIONS=(
 VERIFY_JWT_FUNCTIONS=(
   alert-notify
   auth-device-approve
+  auth-device-preview
   expire-complimentary
   indexer
   ops-report

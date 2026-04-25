@@ -7,12 +7,13 @@
 // LC-6: slow_down doubles poll interval
 // LC-7: legacy key menu — choice 'a' keeps key
 // LC-8: legacy key menu — choice 'p' runs paste flow
-// LC-9: paste-legacy stores key and exits 0
-// LC-10: paste-legacy 3 failures exits 1
+// LC-9: paste-legacy stores key and exits 0 (+ SMI-4454 echo assertion)
+// LC-10: paste-legacy 3 failures exits 1 (+ SMI-4454 echo-per-attempt assertion)
 // LC-11: paste-legacy Ctrl+C exits 2
-// LC-12: --paste-legacy flag bypasses device flow
+// LC-12: --paste-legacy store failure exits 1 with message
 // LC-13: device-code network error during polling exits 5
 // LC-14: legacy key menu — choice 'd' runs device flow
+// LC-15: SMI-4454 — device-code flow sends client_meta with CLI identity
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
@@ -188,7 +189,7 @@ describe('createLoginCommand', () => {
       expect(output).toContain('Logged in successfully')
       // SMI-4447: post-login hint closes the "did it work?" gap that drove users
       // to visit /account/cli-token just to confirm the session worked.
-      expect(output).toContain('Try it: skillsmith skills list')
+      expect(output).toContain('Try it: skillsmith search mcp')
     })
 
     it('LC-3: network error on device-code request exits 5', async () => {
@@ -381,6 +382,12 @@ describe('createLoginCommand', () => {
       expect(mockStoreApiKey).toHaveBeenCalledWith(VALID_KEY)
       const output = consoleLogSpy.mock.calls.flat().join('\n')
       expect(output).toContain('Logged in successfully')
+      // SMI-4454: post-paste echo gives a ground-truth signal when the mask
+      // bullet is stripped by the terminal (Claude Code's embedded PTY, etc).
+      expect(output).toMatch(/Received \d+ characters — validating…/)
+      // And the mask option is forwarded to the prompt so terminals that DO
+      // render it use the denser ASCII mark instead of the invisible default.
+      expect(mockPassword).toHaveBeenCalledWith(expect.objectContaining({ mask: '*' }))
     })
 
     it('LC-10: 3 format failures exits 1', async () => {
@@ -393,6 +400,10 @@ describe('createLoginCommand', () => {
       expect(mockStoreApiKey).not.toHaveBeenCalled()
       const err = consoleErrorSpy.mock.calls.flat().join('\n')
       expect(err).toContain('Too many invalid attempts')
+      // SMI-4454: echo fires before each validation error — one per attempt.
+      const output = consoleLogSpy.mock.calls.flat().join('\n')
+      const echoMatches = output.match(/Received \d+ characters — validating…/g) ?? []
+      expect(echoMatches.length).toBeGreaterThanOrEqual(3)
     })
 
     it('LC-11: Ctrl+C exits 2', async () => {
@@ -415,6 +426,66 @@ describe('createLoginCommand', () => {
       const err = consoleErrorSpy.mock.calls.flat().join('\n')
       expect(err).toContain('Failed to store credentials')
       expect(err).toContain('EACCES')
+    })
+  })
+
+  describe('SMI-4454: client_meta transport', () => {
+    it('LC-15: device-code flow sends client_meta with CLI identity', async () => {
+      const fetchSpy = vi.fn().mockImplementation((url: string) => {
+        if ((url as string).includes('auth-device-code')) {
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                device_code: 'dc_meta',
+                user_code: 'BCDFGHJK',
+                verification_uri: 'https://skillsmith.app/device',
+                expires_in: 900,
+                interval: 5,
+              }),
+          })
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              access_token: 'jwt.access',
+              refresh_token: 'jwt.refresh',
+              expires_in: 3600,
+            }),
+        })
+      })
+      global.fetch = fetchSpy as typeof fetch
+
+      const run = runCommand()
+      run.catch(() => {})
+      await vi.runAllTimersAsync()
+      await expect(run).rejects.toThrow('process.exit(0)')
+
+      const deviceCodeCall = fetchSpy.mock.calls.find((c: unknown[]) =>
+        String(c[0]).includes('auth-device-code')
+      )
+      expect(deviceCodeCall).toBeDefined()
+      const init = deviceCodeCall?.[1] as { body?: string } | undefined
+      const parsed = JSON.parse(init?.body ?? '{}') as {
+        client_type?: string
+        client_meta?: Record<string, unknown>
+      }
+
+      expect(parsed.client_type).toBe('cli')
+      expect(parsed.client_meta).toBeDefined()
+      const meta = parsed.client_meta ?? {}
+
+      for (const key of ['cli_version', 'node_version', 'platform', 'arch', 'hostname']) {
+        expect(meta, `missing ${key}`).toHaveProperty(key)
+        expect(typeof meta[key]).toBe('string')
+        expect((meta[key] as string).length).toBeGreaterThan(0)
+      }
+
+      // node_version is live process.version ('vX.Y.Z'); platform/arch match live.
+      expect(meta['node_version']).toMatch(/^v\d/)
+      expect(meta['platform']).toBe(process.platform)
+      expect(meta['arch']).toBe(process.arch)
     })
   })
 })

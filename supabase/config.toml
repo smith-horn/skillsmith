@@ -447,6 +447,12 @@ verify_jwt = false
 [functions.auth-device-approve]
 verify_jwt = true
 
+# auth-device-preview (SMI-4454): gateway-verified JWT — returns CLI identity
+# fields (cli_version, hostname, etc) for an unapproved device code so the
+# approver can recognize their own terminal before clicking Approve. Read-only.
+[functions.auth-device-preview]
+verify_jwt = true
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

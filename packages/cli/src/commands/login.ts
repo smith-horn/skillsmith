@@ -1,6 +1,8 @@
 // SMI-4402: RFC 8628 device-code OAuth flow replacing paste-key model.
 // --paste-legacy retained as deliberate opt-out (L1 deprecation window).
+// SMI-4454: client_meta on auth-device-code; paste-flow ground-truth echo.
 
+import { hostname } from 'node:os'
 import { Command } from 'commander'
 import { password } from '@inquirer/prompts'
 import chalk from 'chalk'
@@ -13,6 +15,7 @@ import {
   isValidApiKeyFormat,
   type TokenCredentials,
 } from '@skillsmith/core'
+import { VERSION as CLI_VERSION } from '../version.js'
 
 const DEVICE_PAGE_URL = 'https://skillsmith.app/device'
 const DEVICE_CODE_TIMEOUT_MS = 15 * 60 * 1000
@@ -82,10 +85,23 @@ function functionUrl(name: string): string {
 }
 
 async function requestDeviceCode(): Promise<DeviceCodeBody> {
+  // SMI-4454: send CLI identity so /device approval page can surface a
+  // device-recognition cue ("is this really my terminal?") before approve.
+  // Server-side length caps (see supabase/migrations/082) are the defense —
+  // this payload is best-effort identity, not security-relevant.
   const res = await fetch(functionUrl('auth-device-code'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_type: 'cli' }),
+    body: JSON.stringify({
+      client_type: 'cli',
+      client_meta: {
+        cli_version: CLI_VERSION,
+        node_version: process.version,
+        platform: process.platform,
+        arch: process.arch,
+        hostname: hostname(),
+      },
+    }),
   })
   if (!res.ok) throw new Error(`auth-device-code HTTP ${res.status}`)
   return res.json() as Promise<DeviceCodeBody>
@@ -220,7 +236,7 @@ async function runDeviceCodeFlow(noBrowser: boolean): Promise<void> {
     console.log(chalk.green('\nLogged in successfully.'))
     // SMI-4447: close the "did it work?" gap post-login. A single concrete command the
     // user can run in-terminal beats a URL (phishing-safe, no browser context switch).
-    console.log(chalk.dim('  Try it: skillsmith skills list'))
+    console.log(chalk.dim('  Try it: skillsmith search mcp'))
     process.exit(EXIT.success)
   }
 
@@ -235,7 +251,16 @@ async function runPasteLegacyFlow(): Promise<void> {
   let attempts = 0
   try {
     while (attempts < 3) {
-      const raw = await password({ message: 'Paste your API key:' })
+      // SMI-4454: default `•` mask is invisible in some embedded PTYs
+      // (Claude Code's among them). Denser ASCII mask + post-paste echo
+      // gives the user a ground-truth signal even when the mask character
+      // is stripped by the terminal emulator. Echo fires for both valid
+      // and invalid keys (validation error follows).
+      const raw = await password({
+        message: 'Paste your API key:',
+        mask: '*',
+      })
+      console.log(chalk.dim(`  Received ${raw.length} characters — validating…`))
       if (!isValidApiKeyFormat(raw)) {
         attempts++
         if (attempts < 3) {

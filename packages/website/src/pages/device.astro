@@ -61,6 +61,21 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
         <span id="preview-code-value" class="preview-code-value"></span>
       </div>
 
+      <dl class="device-meta" aria-label="Device requesting access">
+        <div class="device-meta-row">
+          <dt>CLI</dt>
+          <dd id="meta-cli">—</dd>
+        </div>
+        <div class="device-meta-row">
+          <dt>Platform</dt>
+          <dd id="meta-platform">—</dd>
+        </div>
+        <div class="device-meta-row">
+          <dt>Host</dt>
+          <dd id="meta-hostname">—</dd>
+        </div>
+      </dl>
+
       <div class="btn-row">
         <button id="btn-approve" type="button" class="btn-primary" aria-busy="false">Approve</button
         >
@@ -119,16 +134,38 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
 
 <script>
   // SMI-4402: device approval state machine.
-  // Calls /functions/v1/auth-device-approve (gateway-verified JWT).
+  // Calls api.skillsmith.app edge functions (gateway-verified JWT).
   // All supabase-js calls use the global window.__SUPABASE_CLIENT__ injected by BaseLayout.
   // Type declaration lives in src/env.d.ts.
+  //
+  // SMI-4454 fix: URLs were relative ('/functions/v1/...') and resolved to the
+  // website origin, returning Astro's 404. The Supabase edge functions live on
+  // api.skillsmith.app (or the project supabase.co URL). Matches how every
+  // other page calls edge functions (contact, signup, skills, etc.).
 
-  const APPROVE_URL = '/functions/v1/auth-device-approve'
+  const API_BASE = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'
+  const APPROVE_URL = `${API_BASE}/functions/v1/auth-device-approve`
+  const PREVIEW_URL = `${API_BASE}/functions/v1/auth-device-preview`
   const COMPLETE_PROFILE_URL = '/complete-profile'
   const LOGIN_URL = '/login'
   const COUNTDOWN_START = 10
 
   type State = 'input' | 'preview' | 'approved' | 'expired' | 'denied'
+
+  interface PreviewMeta {
+    client_type: string
+    cli_version: string | null
+    node_version: string | null
+    platform: string | null
+    arch: string | null
+    hostname: string | null
+    created_at: string | null
+  }
+
+  type PreviewResult =
+    | { kind: 'ok'; meta: PreviewMeta }
+    | { kind: 'degraded' } // network failure or non-2xx non-expired — show preview with em-dashes
+    | { kind: 'terminal' } // handler switched to expired/redirected to login
 
   function show(id: string) {
     document.querySelectorAll<HTMLElement>('[id^="state-"]').forEach((el) => {
@@ -197,6 +234,51 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
     }
 
     return { ok: false, errorCode: errCode }
+  }
+
+  async function fetchPreview(userCode: string): Promise<PreviewResult> {
+    const token = await getAccessToken()
+    if (!token) {
+      // Match existing auth path — redirect to login preserving this page as next.
+      window.location.href = `${LOGIN_URL}?next=${encodeURIComponent(window.location.pathname + window.location.search)}`
+      return { kind: 'terminal' }
+    }
+    try {
+      const res = await fetch(PREVIEW_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ user_code: userCode }),
+      })
+      if (res.status === 404 || res.status === 410 || res.status === 409) {
+        setState('expired')
+        return { kind: 'terminal' }
+      }
+      if (!res.ok) return { kind: 'degraded' }
+      const body = (await res.json()) as PreviewMeta
+      return { kind: 'ok', meta: body }
+    } catch {
+      return { kind: 'degraded' }
+    }
+  }
+
+  function populateMeta(m: PreviewMeta | null) {
+    const cli = m?.cli_version ? `Skillsmith CLI v${m.cli_version}` : '—'
+    const arch = m?.arch ?? ''
+    const platform = m?.platform
+      ? `${m.platform}${arch ? ` ${arch}` : ''}${m.node_version ? ` · node ${m.node_version}` : ''}`
+      : '—'
+    const host = m?.hostname && m.hostname.length > 0 ? m.hostname : '—'
+
+    const cliEl = document.getElementById('meta-cli')
+    const platformEl = document.getElementById('meta-platform')
+    const hostEl = document.getElementById('meta-hostname')
+    // textContent — never innerHTML. Values come from a 3rd-party CLI payload.
+    if (cliEl) cliEl.textContent = cli
+    if (platformEl) platformEl.textContent = platform
+    if (hostEl) hostEl.textContent = host
   }
 
   function startCountdown() {
@@ -277,7 +359,7 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
       }
     })
 
-    submitBtn?.addEventListener('click', () => {
+    submitBtn?.addEventListener('click', async () => {
       const raw = (codeInput?.value ?? '').replace(/[^A-Z0-9]/g, '')
       if (raw.length !== 8) {
         if (codeError) codeError.textContent = 'Please enter the full 8-character code.'
@@ -285,6 +367,10 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
         codeInput?.focus()
         return
       }
+      populateMeta(null) // reset to em-dashes while fetching
+      const result = await fetchPreview(raw)
+      if (result.kind === 'terminal') return
+      populateMeta(result.kind === 'ok' ? result.meta : null)
       pendingCode = formatCode(raw)
       if (previewCodeEl) previewCodeEl.textContent = pendingCode
       setState('preview')
@@ -323,12 +409,18 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
       setState('denied')
     })
 
-    // If user_code was pre-filled from URL, go straight to preview
+    // If user_code was pre-filled from URL, fetch preview meta then jump to preview.
     const prefilledRaw = (codeInput?.value ?? '').replace(/[^A-Z0-9]/g, '')
     if (prefilledRaw.length === 8) {
-      pendingCode = formatCode(prefilledRaw)
-      if (previewCodeEl) previewCodeEl.textContent = pendingCode
-      setState('preview')
+      ;(async () => {
+        populateMeta(null)
+        const result = await fetchPreview(prefilledRaw)
+        if (result.kind === 'terminal') return
+        populateMeta(result.kind === 'ok' ? result.meta : null)
+        pendingCode = formatCode(prefilledRaw)
+        if (previewCodeEl) previewCodeEl.textContent = pendingCode
+        setState('preview')
+      })()
     }
   }
 
@@ -499,6 +591,39 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
     letter-spacing: 0.1em;
     color: #e07a5f;
     font-weight: 700;
+  }
+
+  .device-meta {
+    margin: 0 0 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .device-meta-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    font-size: 0.8125rem;
+  }
+
+  .device-meta-row dt {
+    flex: 0 0 4rem;
+    color: #71717a;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.6875rem;
+  }
+
+  .device-meta-row dd {
+    margin: 0;
+    color: #d4d4d8;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
   }
 
   .status-icon {
