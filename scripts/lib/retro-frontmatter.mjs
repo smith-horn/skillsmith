@@ -16,10 +16,10 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 const require = createRequire(import.meta.url)
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -94,11 +94,6 @@ function validateRetro(retroPath, { isCI, knownRetroBasenames }) {
     return { path: retroPath, outcome: 'skipped', reason: 'exempt-file' }
   }
 
-  const firstCommit = firstCommitDate(retroPath)
-  if (firstCommit && firstCommit < SHIP_DATE) {
-    return { path: retroPath, outcome: 'skipped', reason: 'pre-wave-1' }
-  }
-
   let text
   try {
     text = readFileSync(retroPath, 'utf8').slice(0, 4096)
@@ -111,7 +106,19 @@ function validateRetro(retroPath, { isCI, knownRetroBasenames }) {
   }
 
   const fm = parseYamlFrontmatter(text)
-  if (!fm) return { path: retroPath, outcome: 'incomplete', reason: 'no-frontmatter' }
+
+  // Pre-Wave-1 retros without frontmatter are silently grandfathered in —
+  // we don't want to flood ~140 historical retros with warnings every commit.
+  // Pre-Wave-1 retros WITH frontmatter ARE validated, because the 6-pair
+  // backfill stamps frontmatter on retros that pre-date Wave 1 ship and we
+  // need those to count toward the regression test gate.
+  if (!fm) {
+    const firstCommit = firstCommitDate(retroPath)
+    if (firstCommit && firstCommit < SHIP_DATE) {
+      return { path: retroPath, outcome: 'skipped', reason: 'pre-wave-1-no-frontmatter' }
+    }
+    return { path: retroPath, outcome: 'incomplete', reason: 'no-frontmatter' }
+  }
 
   const required = checkRequired(fm)
   if (required) return { path: retroPath, outcome: 'incomplete', reason: required }
@@ -219,11 +226,37 @@ function firstCommitDate(path) {
   return result
 }
 
+/**
+ * Mirror writer.ts: walk up from cwd until finding a directory whose `.git`
+ * is itself a directory (worktrees have `.git` as a file pointing at the
+ * main repo's gitdir, so they're skipped — this resolves the worktree to
+ * its main repo). Encode the result the way Claude Code encodes project
+ * paths under `~/.claude/projects/`.
+ */
+function memoryDirForCwd() {
+  let current = resolve(process.cwd())
+  for (let i = 0; i < 64; i += 1) {
+    const gitPath = join(current, '.git')
+    if (existsSync(gitPath)) {
+      try {
+        if (statSync(gitPath).isDirectory()) {
+          const encoded = current.replace(/\//g, '-')
+          return join(homedir(), '.claude', 'projects', encoded, 'memory')
+        }
+      } catch {
+        /* unreadable — keep walking */
+      }
+    }
+    const parent = dirname(current)
+    if (parent === current) break
+    current = parent
+  }
+  return null
+}
+
 function memoryFileExists(fileBasename) {
-  const cwd = process.cwd()
-  if (!cwd.startsWith('/')) return false
-  const encoded = '-' + cwd.slice(1).replace(/\//g, '-')
-  const dir = join(homedir(), '.claude', 'projects', encoded, 'memory')
+  const dir = memoryDirForCwd()
+  if (!dir) return false
   return existsSync(join(dir, `${fileBasename}.md`))
 }
 
