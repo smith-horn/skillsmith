@@ -27,8 +27,26 @@ import { basename, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { promisify } from 'node:util'
 import { logRetrievalEvent } from '../packages/doc-retrieval-mcp/src/retrieval-log/writer.js'
-import { search } from '../packages/doc-retrieval-mcp/src/search.js'
 import type { SearchHit } from '../packages/doc-retrieval-mcp/src/types.js'
+
+// search() is dynamically imported inside runQuery — its module loads
+// @ruvector/core's native binding at top-level, which throws on hosts
+// missing the platform-specific optional dep (e.g. ruvector-core-darwin-arm64
+// on macOS without it installed). Top-level static import would crash query.ts
+// at module load before runQuery could log a partial_failure row. Surfaced by
+// the §S9 post-deploy smoke run on 2026-04-25 (host=darwin-arm64).
+type SearchFn = (opts: { query: string; k?: number; minScore?: number }) => Promise<SearchHit[]>
+
+async function loadSearch(): Promise<SearchFn | null> {
+  try {
+    const mod = (await import('../packages/doc-retrieval-mcp/src/search.js')) as {
+      search: SearchFn
+    }
+    return mod.search
+  } catch {
+    return null
+  }
+}
 
 const execFileAsync = promisify(execFile)
 
@@ -227,6 +245,22 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
     [signal1, signal2, signal3].filter(Boolean).join('\n\n'),
     QUERY_CAP_BYTES
   )
+
+  const search = await loadSearch()
+  if (!search) {
+    // @ruvector/core native binding unavailable on this host — log and
+    // gracefully degrade. Common cause: optional platform dep not installed
+    // (e.g. `ruvector-core-darwin-arm64` missing on macOS hosts).
+    logRetrievalEvent({
+      sessionId: args.sessionId,
+      ts: new Date().toISOString(),
+      trigger: 'session_start_priming',
+      query,
+      topKResults: '[]',
+      hookOutcome: 'partial_failure',
+    })
+    return { additionalContext: '' }
+  }
 
   let hits: SearchHit[]
   try {
