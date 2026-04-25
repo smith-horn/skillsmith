@@ -475,3 +475,45 @@ export const findReturningTableAmbiguity = (migrationsByPath) => {
   }
   return violations
 }
+
+/**
+ * R-4 (SMI-4459): given a list of file paths and a set of trigger globs from
+ * `scripts/smoke-prod/surfaces.json`, return paths NOT covered by any glob
+ * and NOT matched by an allowlist entry. The orchestrator's glob semantics
+ * are mirrored exactly:
+ *   - `prefix/**` matches `prefix/anything/below`
+ *   - `prefix/*`  matches files directly under `prefix/`
+ *   - exact path matches iff equal
+ *
+ * @param {string[]} candidatePaths — paths to check (e.g., every
+ *   `supabase/functions/*\/index.ts` and `packages/website/src/pages/**.astro`).
+ * @param {string[]} surfaceGlobs — flattened set of trigger_globs from all
+ *   surfaces in surfaces.json.
+ * @param {string[]} allowlistGlobs — entries from
+ *   `scripts/smoke-prod/.surfaces-allowlist.txt` (non-empty, non-comment lines).
+ * @returns {string[]} paths that are user-facing but neither covered nor allowlisted.
+ */
+export const findUncoveredSurfacePaths = (candidatePaths, surfaceGlobs, allowlistGlobs) => {
+  const matchesGlob = (file, glob) => {
+    if (glob.endsWith('/**')) {
+      const prefix = glob.slice(0, -3)
+      return file === prefix || file.startsWith(prefix + '/')
+    }
+    if (glob.endsWith('/*')) {
+      const prefix = glob.slice(0, -2)
+      if (!file.startsWith(prefix + '/')) return false
+      const rest = file.slice(prefix.length + 1)
+      return rest.length > 0 && !rest.includes('/')
+    }
+    return file === glob
+  }
+  const matchesAny = (file, globs) => globs.some((g) => matchesGlob(file, g))
+
+  const uncovered = []
+  for (const path of candidatePaths) {
+    if (matchesAny(path, surfaceGlobs)) continue
+    if (matchesAny(path, allowlistGlobs)) continue
+    uncovered.push(path)
+  }
+  return uncovered
+}

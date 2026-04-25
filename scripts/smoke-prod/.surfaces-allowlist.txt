@@ -1,0 +1,93 @@
+# SMI-4459 R-4 audit-standards backstop allowlist.
+# Paths listed here are intentionally NOT covered by surfaces.json. One
+# path per line. Comments allowed (lines starting with #). Trailing slashes
+# treated literally; globs allowed using shell-style `*` and `**`.
+#
+# Add a new entry only after confirming the surface is genuinely not
+# user-facing or not deployable (e.g., test fixtures, internal RPCs called
+# only from other functions). Document the rationale inline.
+
+# Internal-only edge functions (called by other functions, not user-facing).
+# alert-notify is invoked by smoke-prod itself + cron jobs; smoking it would
+# create a loop and there is no public surface to verify.
+supabase/functions/alert-notify/**
+
+# Cron-only edge functions (no user-facing HTTP surface; verified via the
+# audit_logs ops-report table, not HTTP smoke).
+supabase/functions/indexer/**
+supabase/functions/skills-refresh-metadata/**
+supabase/functions/ops-report/**
+supabase/functions/skills-outreach/**
+supabase/functions/expire-complimentary/**
+supabase/functions/process-pending-subscription/**
+supabase/functions/email-inbound/**
+supabase/functions/advance-notice-email/**
+supabase/functions/skills-outreach-preferences/**
+supabase/functions/admin-grant-subscription/**
+supabase/functions/update-seat-count/**
+supabase/functions/webhook-dlq/**
+
+# Stripe webhook endpoints (require signed payload to exercise; covered by
+# stripe-webhook-monitor.yml independently).
+supabase/functions/stripe-webhook/**
+supabase/functions/checkout/**
+supabase/functions/create-portal-session/**
+supabase/functions/list-invoices/**
+supabase/functions/generate-license/**
+supabase/functions/regenerate-license/**
+
+# Analytics + early-access (low-stakes; may be added later).
+supabase/functions/events/**
+supabase/functions/early-access-signup/**
+supabase/functions/contact-submit/**
+supabase/functions/stats/**
+
+# Skills public API (covered by direct query + indexer health, not smoke).
+supabase/functions/skills-search/**
+supabase/functions/skills-get/**
+supabase/functions/skills-recommend/**
+
+# Shared module (not a deployed function).
+supabase/functions/_shared/**
+
+# Static / secondary website pages — only conversion-critical pages need
+# explicit smoke. Add any new conversion-critical page to surfaces.json.
+packages/website/src/pages/index.astro
+packages/website/src/pages/index-v2.astro
+packages/website/src/pages/index-v3.astro
+packages/website/src/pages/login.astro
+packages/website/src/pages/signup.astro
+packages/website/src/pages/signup/success.astro
+packages/website/src/pages/check-email.astro
+packages/website/src/pages/verify.astro
+packages/website/src/pages/return-to-cli.astro
+packages/website/src/pages/auth/callback.astro
+packages/website/src/pages/auth/confirm.astro
+packages/website/src/pages/auth/forgot-password.astro
+packages/website/src/pages/auth/reset-password.astro
+packages/website/src/pages/blog/**
+packages/website/src/pages/docs/**
+packages/website/src/pages/legal/**
+packages/website/src/pages/marketing/**
+packages/website/src/pages/api/**
+packages/website/src/pages/account/**
+packages/website/src/pages/skills/**
+packages/website/src/pages/early-access.astro
+packages/website/src/pages/early-access/**
+packages/website/src/pages/install.astro
+packages/website/src/pages/pricing.astro
+packages/website/src/pages/contact.astro
+packages/website/src/pages/changelog.astro
+packages/website/src/pages/about.astro
+packages/website/src/pages/faq.astro
+packages/website/src/pages/license.astro
+packages/website/src/pages/privacy.astro
+packages/website/src/pages/terms.astro
+packages/website/src/pages/404.astro
+packages/website/src/pages/500.astro
+packages/website/src/pages/dashboard.astro
+packages/website/src/pages/dashboard/**
+packages/website/src/pages/complete-profile.astro
+packages/website/src/pages/sitemap.xml.ts
+packages/website/src/pages/robots.txt.ts
+packages/website/src/pages/feed.xml.ts

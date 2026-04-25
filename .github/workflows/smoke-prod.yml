@@ -1,0 +1,211 @@
+# SMI-4459 — post-deploy smoke harness.
+# Triggers AFTER edge-function deploys finish (workflow_run completion) and
+# after Vercel deploys (repository_dispatch from the Vercel deploy hook).
+# See docs/internal/implementation/smi-4459-smoke-prod-harness.md for the
+# full plan and .claude/development/smoke-prod-guide.md for the operator
+# runbook.
+#
+# Two-job split for secret scoping:
+#   - smoke: SUPABASE_URL + SUPABASE_ANON_KEY only (read-only).
+#   - alert: SUPABASE_SERVICE_ROLE_KEY only (alert-notify POST). Runs on
+#            failure of smoke and only sees the report artifact, not the
+#            harness internals.
+#
+# Phase 1 (week 1, starting on merge): warning-only — no commit-status
+# post; just open a Linear issue + email on failure. Phase 2 wires the
+# commit status. Phase 3 splits a staging variant (separate SMI).
+name: Smoke Prod
+
+on:
+  workflow_run:
+    workflows: ['Deploy Edge Functions', 'CI']
+    types: [completed]
+    branches: [main]
+  repository_dispatch:
+    types: [vercel-prod-deployed]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'SHA to smoke (default: latest main)'
+        required: false
+        type: string
+      surface:
+        description: 'Run a single surface only (default: all matched)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: smoke-prod-${{ github.event.workflow_run.head_sha || github.event.client_payload.sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Skip if the upstream workflow_run failed (no point smoking a broken
+    # deploy). repository_dispatch and workflow_dispatch always run.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'repository_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    outputs:
+      passed: ${{ steps.run.outputs.passed }}
+      report_path: ${{ steps.run.outputs.report_path }}
+    steps:
+      - name: Determine target SHA
+        id: sha
+        env:
+          WF_SHA: ${{ github.event.workflow_run.head_sha }}
+          DISPATCH_SHA: ${{ github.event.client_payload.sha }}
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          TARGET_SHA="${INPUT_SHA:-${DISPATCH_SHA:-${WF_SHA:-}}}"
+          if [ -z "$TARGET_SHA" ]; then TARGET_SHA="${{ github.sha }}"; fi
+          echo "sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+          echo "Target SHA: $TARGET_SHA"
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ steps.sha.outputs.sha }}
+          fetch-depth: 2
+
+      - name: Detect [skip-smoke] marker
+        id: skip
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ steps.sha.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # Check the merge commit message + any associated PR body.
+          if git log -1 --pretty=%B "$TARGET_SHA" | grep -q '\[skip-smoke\]'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Found [skip-smoke] in commit message"
+            exit 0
+          fi
+          PR_NUM=$(gh pr list --search "$TARGET_SHA" --state merged --json number --jq '.[0].number // empty' || true)
+          if [ -n "$PR_NUM" ]; then
+            BODY=$(gh pr view "$PR_NUM" --json body --jq '.body // ""' || true)
+            if printf '%s' "$BODY" | grep -q '\[skip-smoke\]'; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "Found [skip-smoke] in PR #$PR_NUM body"
+              exit 0
+            fi
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Run smoke harness
+        id: run
+        if: steps.skip.outputs.skip != 'true'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          REPORT="$RUNNER_TEMP/smoke-report.json"
+          ARGS=(--since=HEAD~1 --json --report="$REPORT")
+          if [ -n "${{ inputs.surface }}" ]; then
+            ARGS+=(--surface="${{ inputs.surface }}")
+          fi
+          set +e
+          ./scripts/smoke-prod.sh "${ARGS[@]}"
+          RC=$?
+          set -e
+          echo "report_path=$REPORT" >> "$GITHUB_OUTPUT"
+          if [ "$RC" = "0" ]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          elif [ "$RC" = "2" ]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::No surfaces matched (exit 2) — skipping"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Upload report artifact
+        if: always() && steps.skip.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-report
+          path: ${{ runner.temp }}/smoke-report.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  alert:
+    name: Alert on Failure
+    needs: smoke
+    if: failure() && needs.smoke.result == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Download smoke report
+        uses: actions/download-artifact@v4
+        with:
+          name: smoke-report
+          path: ${{ runner.temp }}/
+
+      - name: Post alert + open/update Linear-tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          REPORT="$RUNNER_TEMP/smoke-report.json"
+          if [ ! -f "$REPORT" ]; then
+            echo "::error::report missing — cannot alert"
+            exit 1
+          fi
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          SHORT_SHA="${SHA:0:8}"
+
+          # Idempotency: one issue per merge SHA. Adopts the
+          # post-merge-verify.yml lines 70-95 pattern (find-existing,
+          # comment-or-create) so workflow re-runs don't fan-out duplicate
+          # issues. See SMI-4459 plan § Wave 4 idempotency.
+          TITLE="Smoke-prod failure on $SHORT_SHA"
+          BODY="$(cat <<EOF
+          Smoke-prod failed on \`$SHORT_SHA\`.
+
+          - Run: $RUN_URL
+          - Triggered by: ${{ github.event.workflow_run.name || github.event_name }}
+          - Report artifact: smoke-report (download from the run)
+
+          See \`.claude/development/smoke-prod-guide.md\` for triage steps.
+          EOF
+          )"
+          EXISTING=$(gh issue list \
+            --label smoke-failure \
+            --state open \
+            --search "$TITLE in:title" \
+            --json number \
+            --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "Commenting on existing issue #$EXISTING"
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            echo "Filing new auto-issue"
+            gh issue create \
+              --title "$TITLE ($RUN_URL)" \
+              --body "$BODY" \
+              --label ci-failure,smoke-failure
+          fi
+
+          # Email via alert-notify (uses service-role key, scoped to this job).
+          ./scripts/smoke-prod/alert.sh \
+            --report "$REPORT" \
+            --run-url "$RUN_URL" \
+            --sha "$SHORT_SHA" || echo "::warning::alert.sh failed; issue still filed"

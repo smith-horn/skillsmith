@@ -1,9 +1,10 @@
 /**
- * Tests for SMI-4456 / SMI-4457 / SMI-4458 audit-standards backstops.
+ * Tests for SMI-4456 / SMI-4457 / SMI-4458 / SMI-4459 audit-standards backstops.
  *
  * R-1: extractCliCommandNames + findCliHintCommandRefs (SMI-4456)
  * R-2: findRelativeFunctionsV1Urls (SMI-4457)
  * R-3: findReturningTableAmbiguity (SMI-4458)
+ * R-4: findUncoveredSurfacePaths (SMI-4459)
  *
  * Lives in its own file (not audit-standards.test.ts) to keep both files
  * under the 500-line pre-commit gate. Same dynamic-ESM-import convention
@@ -31,6 +32,11 @@ const helpers = (await import('../audit-standards-helpers.mjs')) as {
     col: string
     snippet: string
   }>
+  findUncoveredSurfacePaths: (
+    candidatePaths: string[],
+    surfaceGlobs: string[],
+    allowlistGlobs: string[]
+  ) => string[]
 }
 
 const {
@@ -38,6 +44,7 @@ const {
   findCliHintCommandRefs,
   findRelativeFunctionsV1Urls,
   findReturningTableAmbiguity,
+  findUncoveredSurfacePaths,
 } = helpers
 
 describe('extractCliCommandNames (R-1, SMI-4456)', () => {
@@ -340,5 +347,65 @@ describe('findReturningTableAmbiguity (R-3, SMI-4458)', () => {
     `
     const violations = findReturningTableAmbiguity({ '081_foo.sql': migration })
     expect(violations).toHaveLength(0)
+  })
+})
+
+describe('findUncoveredSurfacePaths (R-4, SMI-4459)', () => {
+  it('flags an edge function with no surface entry and no allowlist', () => {
+    const candidates = ['supabase/functions/new-fn/index.ts']
+    const surfaceGlobs = ['supabase/functions/auth-device-code/**']
+    const allowlist: string[] = []
+    expect(findUncoveredSurfacePaths(candidates, surfaceGlobs, allowlist)).toEqual([
+      'supabase/functions/new-fn/index.ts',
+    ])
+  })
+
+  it('passes a covered surface (prefix/** glob)', () => {
+    const candidates = ['supabase/functions/auth-device-code/index.ts']
+    const surfaceGlobs = ['supabase/functions/auth-device-code/**']
+    expect(findUncoveredSurfacePaths(candidates, surfaceGlobs, [])).toEqual([])
+  })
+
+  it('passes an allowlisted surface', () => {
+    const candidates = ['supabase/functions/indexer/index.ts']
+    const surfaceGlobs: string[] = []
+    const allowlist = ['supabase/functions/indexer/**']
+    expect(findUncoveredSurfacePaths(candidates, surfaceGlobs, allowlist)).toEqual([])
+  })
+
+  it('passes an exact-path allowlist entry', () => {
+    const candidates = ['packages/website/src/pages/index.astro']
+    const allowlist = ['packages/website/src/pages/index.astro']
+    expect(findUncoveredSurfacePaths(candidates, [], allowlist)).toEqual([])
+  })
+
+  it('flags a website page not in surfaces or allowlist (SMI-4459 use case)', () => {
+    const candidates = [
+      'packages/website/src/pages/device.astro',
+      'packages/website/src/pages/checkout-new.astro',
+    ]
+    const surfaceGlobs = ['packages/website/src/pages/device.astro']
+    const allowlist: string[] = []
+    expect(findUncoveredSurfacePaths(candidates, surfaceGlobs, allowlist)).toEqual([
+      'packages/website/src/pages/checkout-new.astro',
+    ])
+  })
+
+  it('prefix/* matches files at depth-1 only, not deeper', () => {
+    const candidates = [
+      'packages/website/src/pages/foo.astro',
+      'packages/website/src/pages/blog/post.astro',
+    ]
+    const allowlist = ['packages/website/src/pages/*']
+    // foo.astro is depth-1 (allowlisted); blog/post.astro is depth-2 (not).
+    expect(findUncoveredSurfacePaths(candidates, [], allowlist)).toEqual([
+      'packages/website/src/pages/blog/post.astro',
+    ])
+  })
+
+  it('mirrors the orchestrator glob semantics for prefix/** equality', () => {
+    // surfaces.json uses `path/**` globs. A file at exactly `path` (no
+    // trailing slash) should match. Edge case for completeness.
+    expect(findUncoveredSurfacePaths(['a/b'], ['a/b/**'], [])).toEqual([])
   })
 })

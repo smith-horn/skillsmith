@@ -52,6 +52,12 @@ description = "Vercel Token"
 regex = '''["\']?[a-zA-Z0-9]{24}["\']?'''
 tags = ["api", "vercel"]
 keywords = ["VERCEL_TOKEN", "vercel"]
+[[rules.allowlists]]
+description = "Allow SHA-pinned GitHub Actions `uses: org/action@<40-hex>` references; SMI-4459 fix"
+regexTarget = "line"
+regexes = [
+  '''uses:\s+[a-zA-Z0-9._/-]+@[a-f0-9]{40}''',
+]
 
 [[rules]]
 id = "clerk-secret"
@@ -103,6 +109,7 @@ regexes = [
   # False positive: handleCorsPreflightRequest function name contains 24+ alphanumeric
   # substring that matches the broad vercel-token rule regex [a-zA-Z0-9]{24}
   '''handleCorsPreflight''',
+
 ]
 
 # Allow specific files that contain examples or tests

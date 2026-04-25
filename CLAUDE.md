@@ -16,6 +16,8 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 | [subagent-tool-permissions-guide.md](.claude/development/subagent-tool-permissions-guide.md) | Subagent tool access by type, foreground/background behavior, skill author checklist |
 | [supabase-migration-safety.md](.claude/development/supabase-migration-safety.md) | Pre/post-apply query catalog, ACCESS EXCLUSIVE lock discipline, rollback convention, pooler rules. Invoke via `supabase-migration-reviewer` skill for automated review. |
 | [ruvector-dev-tooling.md](.claude/development/ruvector-dev-tooling.md) | `skillsmith-doc-retrieval` MCP — local semantic doc search (SMI-4417). Setup, tool surface, privacy boundary, post-commit hook, token-delta gate. |
+| [smoke-prod-guide.md](.claude/development/smoke-prod-guide.md) | Post-deploy smoke harness (SMI-4459). Surface manifest, adding new surfaces, failure triage, phase rollout. |
+| [vercel-deploy-hook.md](.claude/development/vercel-deploy-hook.md) | One-time Vercel→GitHub `repository_dispatch` setup that triggers `smoke-prod.yml` after a website deploy. |
 
 **Implementation plan template**: [.claude/templates/implementation-plan.md](.claude/templates/implementation-plan.md) — use this structure for all plans in `docs/internal/implementation/`.
 
@@ -61,6 +63,8 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 **New source files must be under 500 lines.** Split into companion files (e.g., `foo.helpers.ts`, `foo.types.ts`) if approaching the limit. The `audit:standards` script enforces this.
 
 **When CI fails**: Don't merge. Check logs. Run `docker exec skillsmith-dev-1 npm run preflight` locally. Create Linear issue if non-trivial.
+
+**Post-deploy smoke (SMI-4459)**: `.github/workflows/smoke-prod.yml` runs `scripts/smoke-prod.sh` against real prod after every merge. Each surface in `scripts/smoke-prod/surfaces.json` whose `trigger_globs` match changed files is exercised end-to-end. Failure → Linear issue + email. Skip via `[skip-smoke]` in PR body. Full guide: [smoke-prod-guide.md](.claude/development/smoke-prod-guide.md).
 
 **npm overrides** (transitive vulnerability fixes in root `package.json`):
 
