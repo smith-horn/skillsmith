@@ -63,6 +63,7 @@ SERVICE_ROLE_FUNCTIONS=(
   "expire-complimentary"
   "skills-outreach"
   "advance-notice-email"
+  "quota-monitor"
 )
 
 echo ""
