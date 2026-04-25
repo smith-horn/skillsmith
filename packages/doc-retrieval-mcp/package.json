@@ -23,6 +23,7 @@
     "@ruvector/core": "0.1.30",
     "@skillsmith/core": "^0.5.4",
     "glob": "11.1.0",
+    "minimatch": "^3.1.2",
     "zod": "3.25.76"
   },
   "devDependencies": {
