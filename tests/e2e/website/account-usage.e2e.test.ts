@@ -38,6 +38,8 @@ import {
   getUsageRow,
   stagingFunctionUrl,
   stagingCredentialsAbsent,
+  getStagingAnonKey,
+  waitForCounterIncrement,
   type ProvisionedUser,
 } from '../fixtures/usage-counter-fixture.js'
 
@@ -66,7 +68,7 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter Website auth surface → usag
         // and packages/website/src/pages/skills/index.astro before they hit the
         // edge function.
         Authorization: `Bearer ${user.jwt}`,
-        apikey: process.env['STAGING_SUPABASE_ANON_KEY'] ?? '',
+        apikey: getStagingAnonKey(),
         Accept: 'application/json',
       },
     })
@@ -89,7 +91,7 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter Website auth surface → usag
     const res = await fetch(url, {
       headers: {
         // Anon key required by the function gateway, but no user identity.
-        apikey: process.env['STAGING_SUPABASE_ANON_KEY'] ?? '',
+        apikey: getStagingAnonKey(),
         Accept: 'application/json',
       },
     })
@@ -106,17 +108,3 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter Website auth surface → usag
     expect(after.recommend_count).toBe(before.recommend_count)
   }, 30_000)
 })
-
-async function waitForCounterIncrement(
-  userId: string,
-  column: 'search_count' | 'get_count' | 'recommend_count',
-  target: number,
-  timeoutMs = 5_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const row = await getUsageRow(userId)
-    if (row[column] >= target) return
-    await new Promise((resolve) => setTimeout(resolve, 250))
-  }
-}

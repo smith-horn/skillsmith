@@ -31,6 +31,7 @@ import {
   cleanupTestUser,
   getUsageRow,
   stagingCredentialsAbsent,
+  waitForCounterIncrement,
   type ProvisionedUser,
 } from '../fixtures/usage-counter-fixture.js'
 
@@ -108,17 +109,3 @@ describe.skipIf(skipSuite)('@e2e-usage-counter MCP stdio → usage counter', () 
     expect(after.get_count).toBe(before.get_count + 1)
   }, 45_000)
 })
-
-async function waitForCounterIncrement(
-  userId: string,
-  column: 'search_count' | 'get_count' | 'recommend_count',
-  target: number,
-  timeoutMs = 5_000
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const row = await getUsageRow(userId)
-    if (row[column] >= target) return
-    await new Promise((resolve) => setTimeout(resolve, 250))
-  }
-}
