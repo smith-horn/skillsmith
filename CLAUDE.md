@@ -442,6 +442,12 @@ varlock run -- sh -c 'npx @vscode/vsce publish --no-dependencies --pat "$VSCE_SK
 
 ---
 
+## Session Priming (SMI-4451)
+
+A `SessionStart` hook (`scripts/session-start-priming.sh`) writes a transient priming index to `/tmp/session-priming-${SESSION_ID}.md` and pipes the same content into initial context as `additionalContext`. Fires only on `source=startup` and `smi-*`/`wave-*` branches; otherwise no-op. The transient file is mode 0600 and swept after 24h. Disable with `SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING=1`. The underlying retrieval index lives in `packages/doc-retrieval-mcp/`.
+
+---
+
 ## Troubleshooting
 
 | Problem | Fix |
