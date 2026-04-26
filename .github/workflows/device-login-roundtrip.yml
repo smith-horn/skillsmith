@@ -190,7 +190,10 @@ jobs:
           echo $! > "$GITHUB_WORKSPACE/test-results/preview.pid"
 
       - name: Wait for preview server
-        run: npx --yes wait-on http://localhost:4321/ -t 60000
+        # Use 127.0.0.1 to match the --host flag the preview server binds to.
+        # wait-on against `localhost` hits IPv6 (::1) first on GH-hosted
+        # runners and times out because astro preview only listens on IPv4.
+        run: npx --yes wait-on http://127.0.0.1:4321/ -t 60000
 
       - name: Run round-trip spec
         run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/device-login-roundtrip.spec.ts --reporter=list
