@@ -128,8 +128,10 @@ describe('checkSchemaCompatibility', () => {
 
   it('should return compatible + upgrade when schema is older', () => {
     const db = createTestDb()
-    // Manually downgrade schema version
-    db.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION - 1)
+    // SMI-4486: schema_version now tracks every applied migration as a row;
+    // getSchemaVersion reads MAX(version). Drop higher-numbered rows to simulate
+    // an older DB rather than UPDATE-ing the column (which collides on PK).
+    db.prepare('DELETE FROM schema_version WHERE version > ?').run(SCHEMA_VERSION - 1)
 
     const result = checkSchemaCompatibility(db)
     expect(result.isCompatible).toBe(true)
@@ -140,8 +142,8 @@ describe('checkSchemaCompatibility', () => {
 
   it('should return downgrade_warning when schema is newer (no breaking changes)', () => {
     const db = createTestDb()
-    // Manually bump schema version beyond current
-    db.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION + 1)
+    // SMI-4486: append a future-version row instead of UPDATE-ing the column
+    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION + 1)
 
     const result = checkSchemaCompatibility(db)
     expect(result.currentVersion).toBe(SCHEMA_VERSION + 1)
@@ -163,8 +165,8 @@ describe('ensureSchemaCompatibility', () => {
 
   it('should throw for incompatible schema', () => {
     const db = createTestDb()
-    // Set to a very high version that likely has breaking migrations
-    db.prepare('UPDATE schema_version SET version = ?').run(9999)
+    // SMI-4486: append a future-version row to bump MAX(version)
+    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(9999)
 
     // This may or may not throw depending on migration content
     // At minimum, it should not crash
