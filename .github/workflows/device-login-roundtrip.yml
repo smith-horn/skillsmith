@@ -134,11 +134,13 @@ jobs:
             echo "::error::Could not derive project ref from STAGING_SUPABASE_URL"; exit 1
           fi
           # Use the transaction pooler (port 6543) like scripts/pooler-psql.sh.
+          # Region must match the staging project's hosting region — verified
+          # against scripts/pooler-psql.sh which is the canonical entry point.
           BODY="$(echo "\\df+ public.claim_device_token" | psql \
-            "host=aws-0-us-west-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
+            "host=aws-1-us-east-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
             -P pager=off -At 2>&1 || true)"
           if ! echo "$BODY" | grep -q 'dc.user_id'; then
-            echo "::error::staging missing migration 083 (claim_device_token still has B2 ambiguity) — deploy migrations first"
+            echo "::error::staging migration drift OR pooler connection failed (claim_device_token body lacks dc.user_id) — see body output below"
             echo "--- df+ output (first 500 chars) ---"
             echo "$BODY" | head -c 500
             exit 1
@@ -213,7 +215,7 @@ jobs:
           set -eu
           REF="$(printf '%s' "$STAGING_SUPABASE_URL" | sed -E 's#^https?://([^.]+)\..*#\1#')"
           echo "DELETE FROM device_codes WHERE user_id = '${E2E_TEST_USER_ID}'::uuid AND consumed_at IS NULL;" | psql \
-            "host=aws-0-us-west-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
+            "host=aws-1-us-east-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
             -P pager=off -At || true
 
   negative-control-assertion:
