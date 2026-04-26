@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/cli` are documented here.
 
+## v0.5.11
+
+- **Fix**: SMI-4486 call initializeSchema after createDatabaseAsync in sync + audit (#791)
+
 ## v0.5.10
 
 - **Fix**: SMI-4474 auto-load JWT so logged-in CLI commands count toward quota (#786)
