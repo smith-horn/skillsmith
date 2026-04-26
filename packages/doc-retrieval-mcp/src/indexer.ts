@@ -182,6 +182,7 @@ function buildStoredMetadata(
   const lifetime = chunk.lifetime ?? adapter.lifetime
   if (lifetime) blob.lifetime = lifetime
   if (chunk.tags && Object.keys(chunk.tags).length > 0) blob.tags = chunk.tags
+  if (chunk.class && chunk.class.length > 0) blob.class = chunk.class
   return blob
 }
 

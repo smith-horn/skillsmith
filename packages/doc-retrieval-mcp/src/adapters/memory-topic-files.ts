@@ -130,10 +130,26 @@ async function chunk(file: AdapterFile, ctx: AdapterContext): Promise<ChunkMetad
   // construction sites above — both `wholeFileChunk` and the
   // chunkBlocks map — so the mapper here only merges tags.
   const baseTags = file.tags ?? {}
+  const cls = classifyByFilename(fileBasename)
   return chunks.map((c) => ({
     ...c,
     tags: { ...baseTags, ...(c.tags ?? {}) },
+    ...(cls ? { class: cls } : {}),
   }))
+}
+
+/**
+ * Map auto-memory filename prefixes to the `class` array consumed by
+ * `rerank.ts` per-class boost (SMI-4485 / SMI-4468). Filename convention
+ * is set by the auto-memory system in CLAUDE.md: `feedback_*.md`,
+ * `project_*.md`, `template_*.md`, plus topic-shape names. Only the
+ * unambiguous prefixes get classified here; everything else stays
+ * unclassified (boost factor 1.0).
+ */
+export function classifyByFilename(fileBasename: string): string[] | null {
+  if (fileBasename.startsWith('feedback_')) return ['feedback']
+  if (fileBasename.startsWith('project_')) return ['project']
+  return null
 }
 
 function wholeFileChunk(

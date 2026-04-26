@@ -21,6 +21,15 @@ export interface ChunkMetadata {
    * verbatim inside the VectorDb metadata JSON blob (no schema change).
    */
   tags?: Record<string, string | number | null>
+  /**
+   * Adapter-emittable classification array (SMI-4485). Persisted into
+   * `ChunkStoredMetadata.class` and consumed by `rerank.ts` for the
+   * SMI-4468 per-class boost (`feedback`/`project` → 1.5x;
+   * `wave-spec`/`plans-review` → 0.85x). Adapters set this when the
+   * source's intent is unambiguous (e.g. `feedback_*.md` filename
+   * prefix → `['feedback']`); leave undefined otherwise.
+   */
+  class?: string[]
 }
 
 export interface ChunkWithVector extends ChunkMetadata {
