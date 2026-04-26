@@ -13,6 +13,7 @@ import {
   initializeSchema,
   SkillRepository,
   createApiClient,
+  loadStoredAccessToken,
 } from '@skillsmith/core'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
@@ -70,7 +71,9 @@ export function createInfoCommand(): Command {
         // Try API for content if not available locally
         if (!content) {
           try {
-            const apiClient = createApiClient()
+            // SMI-4474: auto-load JWT so logged-in users count toward quota.
+            const jwtToken = await loadStoredAccessToken()
+            const apiClient = createApiClient(jwtToken ? { jwtToken } : {})
             if (!apiClient.isOffline()) {
               const apiResponse = await apiClient.getSkill(skillId, { includeContent: true })
               content = apiResponse.data.content || undefined

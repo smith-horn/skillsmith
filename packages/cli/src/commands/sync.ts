@@ -21,6 +21,7 @@ import {
   createDatabaseAsync,
   SkillRepository,
   createApiClient,
+  loadStoredAccessToken,
   SyncConfigRepository,
   SyncHistoryRepository,
   SyncEngine,
@@ -53,7 +54,10 @@ async function runSync(options: {
       const syncConfigRepo = new SyncConfigRepository(db)
       const syncHistoryRepo = new SyncHistoryRepository(db)
       const skillVersionRepo = new SkillVersionRepository(db)
-      const apiClient = createApiClient()
+      // SMI-4474: auto-load JWT from ~/.skillsmith/config.json so logged-in
+      // users count toward their quota instead of going anonymous.
+      const jwtToken = await loadStoredAccessToken()
+      const apiClient = createApiClient(jwtToken ? { jwtToken } : {})
 
       const syncEngine = new SyncEngine(
         apiClient,
