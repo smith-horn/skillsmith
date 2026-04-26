@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/core` are documented here.
 
+## v0.5.6
+
+- Version bump
+
 ## v0.5.5
 
 - Version bump

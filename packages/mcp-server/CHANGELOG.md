@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/mcp-server` are documented here.
 
+## v0.4.13
+
+- Version bump
+
 ## v0.4.12
 
 - **Fix**: team-workspace uses service-role client post-license-resolution (SMI-4312) (#650)
