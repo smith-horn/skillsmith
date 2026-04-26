@@ -8,7 +8,13 @@
 import { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
-import { CodebaseAnalyzer, createApiClient, type SkillRole, SKILL_ROLES } from '@skillsmith/core'
+import {
+  CodebaseAnalyzer,
+  createApiClient,
+  loadStoredAccessToken,
+  type SkillRole,
+  SKILL_ROLES,
+} from '@skillsmith/core'
 import { sanitizeError } from '../utils/sanitize.js'
 
 // Re-export types for public API
@@ -68,7 +74,9 @@ async function runRecommend(targetPath: string, options: RecommendOptions): Prom
     }
 
     // Step 3: Call recommendation API
-    const apiClient = createApiClient()
+    // SMI-4474: auto-load JWT so logged-in users count toward quota.
+    const jwtToken = await loadStoredAccessToken()
+    const apiClient = createApiClient(jwtToken ? { jwtToken } : {})
 
     const apiResponse = await apiClient.getRecommendations({
       stack: stack.slice(0, 10),
