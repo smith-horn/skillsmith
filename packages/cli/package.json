@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/cli",
-  "version": "0.5.12",
+  "version": "0.5.11",
   "description": "CLI tools for Skillsmith skill discovery and authentication",
   "type": "module",
   "bin": {
@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@inquirer/prompts": "7.10.1",
-    "@skillsmith/core": "^0.5.6",
+    "@skillsmith/core": "^0.5.5",
     "chalk": "5.6.2",
     "cli-table3": "0.6.5",
     "commander": "14.0.3",
