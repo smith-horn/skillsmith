@@ -115,7 +115,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Set up Node ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v6
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -134,13 +134,19 @@ jobs:
             echo "::error::Could not derive project ref from STAGING_SUPABASE_URL"; exit 1
           fi
           # Use the transaction pooler (port 6543) like scripts/pooler-psql.sh.
-          BODY="$(echo "\\df+ public.claim_device_token" | psql \
-            "host=aws-0-us-west-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
+          # Region must match the staging project's hosting region — verified
+          # against scripts/pooler-psql.sh which is the canonical entry point.
+          # Query pg_proc.prosrc directly rather than \df+ — the meta-command's
+          # output format varies across psql versions (the GH-hosted runner's
+          # psql truncates the source column for \df+ -At, which silently broke
+          # this gate). prosrc returns the raw function body deterministically.
+          BODY="$(printf '%s' "SELECT prosrc FROM pg_proc WHERE proname = 'claim_device_token' AND pronamespace = 'public'::regnamespace;" | psql \
+            "host=aws-1-us-east-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
             -P pager=off -At 2>&1 || true)"
           if ! echo "$BODY" | grep -q 'dc.user_id'; then
-            echo "::error::staging missing migration 083 (claim_device_token still has B2 ambiguity) — deploy migrations first"
-            echo "--- df+ output (first 500 chars) ---"
-            echo "$BODY" | head -c 500
+            echo "::error::staging migration drift OR pooler connection failed (claim_device_token body lacks dc.user_id) — see body output below"
+            echo "--- prosrc output (first 800 chars) ---"
+            echo "$BODY" | head -c 800
             exit 1
           fi
           echo "Migration drift preflight clean (post-083 body confirmed)."
@@ -213,7 +219,7 @@ jobs:
           set -eu
           REF="$(printf '%s' "$STAGING_SUPABASE_URL" | sed -E 's#^https?://([^.]+)\..*#\1#')"
           echo "DELETE FROM device_codes WHERE user_id = '${E2E_TEST_USER_ID}'::uuid AND consumed_at IS NULL;" | psql \
-            "host=aws-0-us-west-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
+            "host=aws-1-us-east-1.pooler.supabase.com port=6543 dbname=postgres user=postgres.${REF} sslmode=require" \
             -P pager=off -At || true
 
   negative-control-assertion:
