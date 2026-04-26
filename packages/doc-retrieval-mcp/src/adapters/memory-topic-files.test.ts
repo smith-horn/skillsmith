@@ -225,6 +225,50 @@ describe('memory-topic-files — wholeFileChunk self-sufficiency (SMI-4450 M3)',
   })
 })
 
+describe('memory-topic-files — class stamping (SMI-4485)', () => {
+  it('stamps class:["feedback"] for feedback_*.md files', async () => {
+    writeFileSync(
+      join(memoryDir, 'feedback_audit.md'),
+      '# Feedback\n\nSome lesson body that fits under targetTokens.\n'
+    )
+    const adapter = createMemoryTopicFilesAdapter()
+    const ctx = makeCtx('full')
+    const files = await adapter.listFiles(ctx)
+    const chunks = await adapter.chunk(files[0], ctx)
+    for (const c of chunks) {
+      expect(c.class).toEqual(['feedback'])
+    }
+  })
+
+  it('stamps class:["project"] for project_*.md files', async () => {
+    writeFileSync(
+      join(memoryDir, 'project_smi_4485.md'),
+      '# Project\n\nSome project context body that fits under targetTokens.\n'
+    )
+    const adapter = createMemoryTopicFilesAdapter()
+    const ctx = makeCtx('full')
+    const files = await adapter.listFiles(ctx)
+    const chunks = await adapter.chunk(files[0], ctx)
+    for (const c of chunks) {
+      expect(c.class).toEqual(['project'])
+    }
+  })
+
+  it('leaves class undefined for memory files without feedback_/project_ prefix', async () => {
+    writeFileSync(
+      join(memoryDir, 'template_author_outreach.md'),
+      '# Template\n\nNot a feedback or project file.\n'
+    )
+    const adapter = createMemoryTopicFilesAdapter()
+    const ctx = makeCtx('full')
+    const files = await adapter.listFiles(ctx)
+    const chunks = await adapter.chunk(files[0], ctx)
+    for (const c of chunks) {
+      expect(c.class).toBeUndefined()
+    }
+  })
+})
+
 describe('memory-topic-files adapter — listDeletedPaths', () => {
   it('returns [] (no delete oracle in Wave 1 per SPARC §S2a edge case c)', async () => {
     const adapter = createMemoryTopicFilesAdapter()
