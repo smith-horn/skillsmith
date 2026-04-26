@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/cli",
-  "version": "0.5.9",
+  "version": "0.5.10",
   "description": "CLI tools for Skillsmith skill discovery and authentication",
   "type": "module",
   "bin": {
