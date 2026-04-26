@@ -2,6 +2,11 @@
 
 All notable changes to `@skillsmith/cli` are documented here.
 
+## v0.5.10
+
+- **Fix**: SMI-4474 auto-load JWT so logged-in CLI commands count toward quota (#786)
+- **Fix**: SMI-4454 post-login hint — 'skills list' → 'search mcp' (cli 0.5.9) (#759)
+
 ## v0.5.9
 
 - Version bump
