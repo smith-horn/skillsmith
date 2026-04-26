@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/cli` are documented here.
 
+## v0.5.12
+
+- **Bump**: requires `@skillsmith/core` ≥ 0.5.6 to pick up the SMI-4486 schema-init fix that finally lets fresh installs run `skillsmith sync` without missing-table errors (#795).
+
 ## v0.5.11
 
 - **Fix**: SMI-4486 call initializeSchema after createDatabaseAsync in sync + audit (#791)
