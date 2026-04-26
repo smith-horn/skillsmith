@@ -31,8 +31,8 @@ export {
 } from './migration-runner.js'
 export type { Migration } from './migration-runner.js'
 
-// Re-import for use within this file (openDatabase, openDatabaseAsync)
-import { runMigrationsSafe } from './migration-runner.js'
+// Re-import for use within this file (openDatabase, openDatabaseAsync, initializeSchema)
+import { runMigrations, runMigrationsSafe } from './migration-runner.js'
 
 export type DatabaseType = Database
 
@@ -42,14 +42,19 @@ export type DatabaseType = Database
 export const SCHEMA_VERSION = 13
 
 /**
- * Initialize the database with the complete schema
+ * Initialize the database with the complete schema.
+ *
+ * SCHEMA_SQL only contains the v1 base tables; subsequent versions (skill_versions,
+ * skill_advisories, etc.) are added by migrations. SMI-4486: previously this
+ * recorded SCHEMA_VERSION (=current) directly, which caused runMigrations to
+ * see the DB as already-current and skip every migration — leaving fresh DBs
+ * stuck at v1 schema. Now we mark v1 (idempotent via OR IGNORE) and run
+ * migrations to reach the current version.
  */
 export function initializeSchema(db: DatabaseType): void {
   db.exec(SCHEMA_SQL)
-
-  // Record the schema version
-  const stmt = db.prepare('INSERT OR REPLACE INTO schema_version (version) VALUES (?)')
-  stmt.run(SCHEMA_VERSION)
+  db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (1)').run()
+  runMigrations(db)
 }
 
 /** @deprecated Use createDatabaseAsync() — requires better-sqlite3 native module. */
