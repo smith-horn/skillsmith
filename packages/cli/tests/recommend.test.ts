@@ -1,20 +1,17 @@
 /**
- * SMI-1353: CLI recommend command tests with real behavior assertions
+ * SMI-1353: CLI recommend command — registration + analyzer + API + output.
  *
- * Tests follow London School TDD with mocked dependencies to verify
- * interactions between the recommend command and its collaborators.
+ * Split from the original 1012-line file into three sibling files (this one,
+ * recommend.errors.test.ts, recommend.filters.test.ts) so each stays under
+ * the 500-line standard. Shared mocks/fixtures live in recommend.test-helpers.
  *
  * Parent issue: SMI-1299 (CLI recommend command)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
+import { createMockCodebaseContext, createMockApiResponse } from './recommend.test-helpers.js'
 
-// ============================================================================
-// Mock Setup - Must be before imports
-// ============================================================================
-
-// Create a mocks container that survives hoisting
 const mocks = vi.hoisted(() => ({
   analyze: vi.fn(),
   getRecommendations: vi.fn(),
@@ -37,7 +34,10 @@ vi.mock('@skillsmith/core', () => ({
   createApiClient: () => ({
     getRecommendations: (...args: unknown[]) => mocks.getRecommendations(...args),
   }),
-  // SMI-1631: Add SKILL_ROLES export for role-based filtering
+  // SMI-4474: command imports loadStoredAccessToken for JWT auto-load. Tests
+  // don't exercise the JWT path, so a stub returning null is sufficient — the
+  // command falls through to the createApiClient mock above.
+  loadStoredAccessToken: () => Promise.resolve(null),
   SKILL_ROLES: [
     'code-quality',
     'testing',
@@ -47,128 +47,24 @@ vi.mock('@skillsmith/core', () => ({
     'development-partner',
   ] as const,
 }))
+vi.mock('ora', () => ({ default: () => mocks.spinner }))
 
-vi.mock('ora', () => ({
-  default: () => mocks.spinner,
-}))
-
-// Convenience aliases
 const mockAnalyze = mocks.analyze
 const mockGetRecommendations = mocks.getRecommendations
 const mockSpinner = mocks.spinner
 
-// Mock console.log/error for output verification
 const originalConsoleLog = console.log
 const originalConsoleError = console.error
 const mockConsoleLog = vi.fn()
 const mockConsoleError = vi.fn()
 
-// Mock process.exit
-const mockExit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
-
-// ============================================================================
-// Test Fixtures
-// ============================================================================
-
-/**
- * Creates a mock CodebaseContext for testing
- */
-function createMockCodebaseContext(overrides = {}) {
-  return {
-    rootPath: '/test/project',
-    imports: [],
-    exports: [],
-    functions: [],
-    frameworks: [
-      { name: 'React', confidence: 0.95, source: 'dep', detectedFrom: [] },
-      { name: 'TypeScript', confidence: 0.9, source: 'dep', detectedFrom: [] },
-    ],
-    dependencies: [
-      { name: 'react', version: '^18.0.0', isDev: false },
-      { name: 'typescript', version: '^5.0.0', isDev: true },
-      { name: 'jest', version: '^29.0.0', isDev: true },
-    ],
-    stats: {
-      totalFiles: 42,
-      filesByExtension: { '.ts': 30, '.tsx': 12 },
-      totalLines: 5000,
-    },
-    metadata: {
-      durationMs: 150,
-      version: '1.0.0',
-    },
-    ...overrides,
-  }
-}
-
-/**
- * Skill data type for mock responses
- */
-interface MockSkillData {
-  id: string
-  name: string
-  description: string
-  author: string
-  repo_url: string | null
-  quality_score: number
-  trust_tier: string
-  tags: string[]
-  stars: number
-  created_at: string
-  updated_at: string
-}
-
-/**
- * Creates a mock API response for recommendations
- */
-function createMockApiResponse(skills: MockSkillData[] = []) {
-  return {
-    data:
-      skills.length > 0
-        ? skills
-        : [
-            {
-              id: 'anthropic/jest-helper',
-              name: 'Jest Helper',
-              description: 'Jest testing utilities',
-              author: 'anthropic',
-              repo_url: 'https://github.com/anthropic/jest-helper',
-              quality_score: 0.85,
-              trust_tier: 'verified',
-              tags: ['testing', 'jest'],
-              stars: 150,
-              created_at: '2024-01-01',
-              updated_at: '2024-01-15',
-            },
-            {
-              id: 'community/react-tools',
-              name: 'React Tools',
-              description: 'React development utilities',
-              author: 'community',
-              repo_url: 'https://github.com/community/react-tools',
-              quality_score: 0.72,
-              trust_tier: 'community',
-              tags: ['react', 'development'],
-              stars: 89,
-              created_at: '2024-02-01',
-              updated_at: '2024-02-10',
-            },
-          ],
-    meta: {},
-  }
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
+vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
 
 describe('SMI-1353: CLI recommend command', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     console.log = mockConsoleLog
     console.error = mockConsoleError
-
-    // Default successful mock implementations
     mockAnalyze.mockResolvedValue(createMockCodebaseContext())
     mockGetRecommendations.mockResolvedValue(createMockApiResponse())
   })
@@ -176,7 +72,6 @@ describe('SMI-1353: CLI recommend command', () => {
   afterEach(() => {
     console.log = originalConsoleLog
     console.error = originalConsoleError
-    // Note: Don't use vi.restoreAllMocks() as it removes the process.exit mock
   })
 
   // ==========================================================================
@@ -305,9 +200,6 @@ describe('SMI-1353: CLI recommend command', () => {
 
       await cmd.parseAsync(['node', 'test', '.', '-m', '500'])
 
-      // Note: The implementation uses opts['max-files'] but Commander converts to camelCase.
-      // This test verifies the -m short option works and analyzer is called.
-      // The actual maxFiles value depends on implementation's option parsing.
       expect(mockAnalyze).toHaveBeenCalledWith(
         '.',
         expect.objectContaining({
@@ -534,479 +426,6 @@ describe('SMI-1353: CLI recommend command', () => {
 
       const output = mockConsoleLog.mock.calls.map((c) => c[0]).join('\n')
       expect(output).toContain('anthropic/jest-helper')
-    })
-  })
-
-  // ==========================================================================
-  // Error Handling Tests
-  // ==========================================================================
-
-  describe('error handling', () => {
-    it('should handle CodebaseAnalyzer errors gracefully', async () => {
-      mockAnalyze.mockRejectedValue(new Error('Cannot read directory'))
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '/nonexistent'])
-
-      expect(mockSpinner.fail).toHaveBeenCalledWith('Recommendation failed')
-      expect(mockExit).toHaveBeenCalledWith(1)
-    })
-
-    it('should handle API errors gracefully', async () => {
-      mockGetRecommendations.mockRejectedValue(new Error('API unavailable'))
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.'])
-
-      expect(mockSpinner.fail).toHaveBeenCalledWith('Recommendation failed')
-      expect(mockExit).toHaveBeenCalledWith(1)
-    })
-
-    it('should output error as JSON with --json flag on failure', async () => {
-      mockAnalyze.mockRejectedValue(new Error('Analysis failed'))
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.', '--json'])
-
-      const errorOutput = mockConsoleError.mock.calls[0]![0]
-      const parsed = JSON.parse(errorOutput)
-      expect(parsed).toHaveProperty('error')
-    })
-
-    it('should sanitize error messages (remove user paths)', async () => {
-      mockAnalyze.mockRejectedValue(new Error('Error at /Users/secret/project'))
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.'])
-
-      const errorCalls = mockConsoleError.mock.calls
-      // Error should be sanitized - exact behavior depends on sanitizeError
-      expect(errorCalls.length).toBeGreaterThan(0)
-    })
-
-    it('should handle network errors with offline fallback', async () => {
-      const context = createMockCodebaseContext()
-      mockAnalyze.mockResolvedValue(context)
-      const networkError = new Error('fetch failed')
-      mockGetRecommendations.mockRejectedValue(networkError)
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.'])
-
-      // Should show warning and analysis-only results
-      expect(mockSpinner.warn).toHaveBeenCalledWith(expect.stringContaining('Unable to reach API'))
-      const output = mockConsoleLog.mock.calls.map((c) => c[0]).join('\n')
-      expect(output).toContain('Codebase Analysis')
-    })
-
-    it('should show offline JSON output on network error with --json', async () => {
-      mockAnalyze.mockResolvedValue(createMockCodebaseContext())
-      mockGetRecommendations.mockRejectedValue(new Error('fetch failed'))
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.', '--json'])
-
-      const output = mockConsoleLog.mock.calls[0]![0]
-      const parsed = JSON.parse(output)
-      expect(parsed.offline).toBe(true)
-      expect(parsed.analysis).toBeDefined()
-    })
-  })
-
-  // ==========================================================================
-  // Limit Validation Tests
-  // ==========================================================================
-
-  describe('limit option validation', () => {
-    it('should default to limit 5 when not specified', async () => {
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.'])
-
-      expect(mockGetRecommendations).toHaveBeenCalledWith(
-        expect.objectContaining({
-          limit: 5,
-        })
-      )
-    })
-
-    it('should clamp limit to minimum of 1', async () => {
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.', '--limit', '0'])
-
-      expect(mockGetRecommendations).toHaveBeenCalledWith(
-        expect.objectContaining({
-          limit: 1,
-        })
-      )
-    })
-
-    it('should clamp limit to maximum of 50', async () => {
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.', '--limit', '100'])
-
-      expect(mockGetRecommendations).toHaveBeenCalledWith(
-        expect.objectContaining({
-          limit: 50,
-        })
-      )
-    })
-
-    it('should handle non-numeric limit gracefully', async () => {
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.', '--limit', 'invalid'])
-
-      // Should fall back to default of 5
-      expect(mockGetRecommendations).toHaveBeenCalledWith(
-        expect.objectContaining({
-          limit: 5,
-        })
-      )
-    })
-  })
-
-  // ==========================================================================
-  // Trust Tier Handling Tests
-  // ==========================================================================
-
-  describe('trust tier handling', () => {
-    it('should display VERIFIED badge for verified skills', async () => {
-      mockGetRecommendations.mockResolvedValue(
-        createMockApiResponse([
-          {
-            id: 'test/skill',
-            name: 'Verified Skill',
-            description: 'A verified skill',
-            author: 'test',
-            repo_url: null,
-            quality_score: 0.9,
-            trust_tier: 'verified',
-            tags: [],
-            stars: 100,
-            created_at: '2024-01-01',
-            updated_at: '2024-01-01',
-          },
-        ])
-      )
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.'])
-
-      const output = mockConsoleLog.mock.calls.map((c) => c[0]).join('\n')
-      expect(output).toContain('VERIFIED')
-    })
-
-    it('should display COMMUNITY badge for community skills', async () => {
-      mockGetRecommendations.mockResolvedValue(
-        createMockApiResponse([
-          {
-            id: 'test/skill',
-            name: 'Community Skill',
-            description: 'A community skill',
-            author: 'test',
-            repo_url: null,
-            quality_score: 0.7,
-            trust_tier: 'community',
-            tags: [],
-            stars: 50,
-            created_at: '2024-01-01',
-            updated_at: '2024-01-01',
-          },
-        ])
-      )
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.'])
-
-      const output = mockConsoleLog.mock.calls.map((c) => c[0]).join('\n')
-      expect(output).toContain('COMMUNITY')
-    })
-
-    it('should handle unknown trust tier gracefully', async () => {
-      mockGetRecommendations.mockResolvedValue(
-        createMockApiResponse([
-          {
-            id: 'test/skill',
-            name: 'Unknown Tier Skill',
-            description: 'A skill with invalid tier',
-            author: 'test',
-            repo_url: null,
-            quality_score: 0.5,
-            trust_tier: 'invalid_tier', // Simulate malformed API response
-            tags: [],
-            stars: 10,
-            created_at: '2024-01-01',
-            updated_at: '2024-01-01',
-          },
-        ])
-      )
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.'])
-
-      const output = mockConsoleLog.mock.calls.map((c) => c[0]).join('\n')
-      expect(output).toContain('UNKNOWN')
-    })
-  })
-
-  // ==========================================================================
-  // Stack Building Tests
-  // ==========================================================================
-
-  describe('stack building from analysis', () => {
-    it('should include framework names in stack (lowercase)', async () => {
-      mockAnalyze.mockResolvedValue(
-        createMockCodebaseContext({
-          frameworks: [
-            { name: 'Next.js', confidence: 0.9, source: 'dep', detectedFrom: [] },
-            { name: 'TailwindCSS', confidence: 0.85, source: 'dep', detectedFrom: [] },
-          ],
-          dependencies: [{ name: 'next', version: '^14.0.0', isDev: false }],
-        })
-      )
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.'])
-
-      expect(mockGetRecommendations).toHaveBeenCalledWith(
-        expect.objectContaining({
-          stack: expect.arrayContaining(['next.js', 'tailwindcss']),
-        })
-      )
-    })
-
-    it('should include non-dev dependencies in stack', async () => {
-      mockAnalyze.mockResolvedValue(
-        createMockCodebaseContext({
-          frameworks: [{ name: 'Express', confidence: 0.9, source: 'dep', detectedFrom: [] }],
-          dependencies: [
-            { name: 'express', version: '^4.0.0', isDev: false },
-            { name: 'mongoose', version: '^7.0.0', isDev: false },
-          ],
-        })
-      )
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.'])
-
-      expect(mockGetRecommendations).toHaveBeenCalledWith(
-        expect.objectContaining({
-          stack: expect.arrayContaining(['express', 'mongoose']),
-        })
-      )
-    })
-
-    it('should exclude dev dependencies from stack', async () => {
-      // Include one prod dependency to ensure stack is not empty
-      mockAnalyze.mockResolvedValue(
-        createMockCodebaseContext({
-          frameworks: [{ name: 'React', confidence: 0.9, source: 'dep', detectedFrom: [] }],
-          dependencies: [
-            { name: 'react', version: '^18.0.0', isDev: false },
-            { name: 'jest', version: '^29.0.0', isDev: true },
-            { name: 'eslint', version: '^8.0.0', isDev: true },
-          ],
-        })
-      )
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.'])
-
-      const call = mockGetRecommendations.mock.calls[0]![0]
-      expect(call.stack).not.toContain('jest')
-      expect(call.stack).not.toContain('eslint')
-      expect(call.stack).toContain('react') // prod dep should be included
-    })
-
-    it('should limit stack to 10 items', async () => {
-      mockAnalyze.mockResolvedValue(
-        createMockCodebaseContext({
-          frameworks: Array.from({ length: 6 }, (_, i) => ({
-            name: `Framework${i}`,
-            confidence: 0.9,
-            source: 'dep',
-            detectedFrom: [],
-          })),
-          dependencies: Array.from({ length: 12 }, (_, i) => ({
-            name: `dep${i}`,
-            version: '^1.0.0',
-            isDev: false,
-          })),
-        })
-      )
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.'])
-
-      const call = mockGetRecommendations.mock.calls[0]![0]
-      expect(call.stack.length).toBeLessThanOrEqual(10)
-    })
-
-    it('should deduplicate stack items', async () => {
-      mockAnalyze.mockResolvedValue(
-        createMockCodebaseContext({
-          frameworks: [{ name: 'React', confidence: 0.9, source: 'dep', detectedFrom: [] }],
-          dependencies: [{ name: 'react', version: '^18.0.0', isDev: false }],
-        })
-      )
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.'])
-
-      const call = mockGetRecommendations.mock.calls[0]![0]
-      const reactCount = call.stack.filter((s: string) => s === 'react').length
-      expect(reactCount).toBe(1)
-    })
-  })
-
-  // ==========================================================================
-  // SMI-1631: Role-Based Filtering Tests
-  // ==========================================================================
-
-  describe('role-based filtering', () => {
-    it('should apply role filtering locally', async () => {
-      // Mock a response with skills that have roles inferred from tags
-      mockGetRecommendations.mockResolvedValue(
-        createMockApiResponse([
-          {
-            id: 'test/test-helper',
-            name: 'Test Helper',
-            description: 'Testing utilities',
-            author: 'test',
-            repo_url: null,
-            quality_score: 0.8,
-            trust_tier: 'verified',
-            tags: ['testing', 'jest', 'unit-test'],
-            stars: 100,
-            created_at: '2024-01-01',
-            updated_at: '2024-01-01',
-          },
-        ])
-      )
-
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.', '--role', 'testing', '--json'])
-
-      const output = mockConsoleLog.mock.calls[0]![0]
-      const parsed = JSON.parse(output)
-      // Role filter should be recorded in meta
-      expect(parsed.meta.role_filter).toBe('testing')
-    })
-
-    it('should not set role filter for invalid role', async () => {
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.', '--role', 'invalid-role', '--json'])
-
-      const output = mockConsoleLog.mock.calls[0]![0]
-      const parsed = JSON.parse(output)
-      // Invalid role should not be set
-      expect(parsed.meta.role_filter).toBeNull()
-    })
-
-    it('should warn user about invalid role', async () => {
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.', '--role', 'not-a-role'])
-
-      const errorOutput = mockConsoleError.mock.calls.map((c) => c[0]).join('\n')
-      expect(errorOutput).toContain('Invalid role')
-      expect(errorOutput).toContain('not-a-role')
-    })
-
-    it('should accept all valid role values', async () => {
-      const validRoles = [
-        'code-quality',
-        'testing',
-        'documentation',
-        'workflow',
-        'security',
-        'development-partner',
-      ]
-
-      for (const role of validRoles) {
-        vi.clearAllMocks()
-        mockAnalyze.mockResolvedValue(createMockCodebaseContext())
-        mockGetRecommendations.mockResolvedValue(createMockApiResponse())
-
-        const { createRecommendCommand } = await import('../src/commands/recommend.js')
-        const cmd = createRecommendCommand()
-
-        await cmd.parseAsync(['node', 'test', '.', '-r', role, '--json'])
-
-        const output = mockConsoleLog.mock.calls[0]![0]
-        const parsed = JSON.parse(output)
-        // Role filter should be recorded in meta for valid roles
-        expect(parsed.meta.role_filter).toBe(role)
-      }
-    })
-
-    it('should include role_filter in JSON output when specified', async () => {
-      const { createRecommendCommand } = await import('../src/commands/recommend.js')
-      const cmd = createRecommendCommand()
-
-      await cmd.parseAsync(['node', 'test', '.', '--role', 'security', '--json'])
-
-      const output = mockConsoleLog.mock.calls[0]![0]
-      const parsed = JSON.parse(output)
-      expect(parsed.meta.role_filter).toBe('security')
-    })
-  })
-
-  // ==========================================================================
-  // Export Tests
-  // ==========================================================================
-
-  describe('module exports', () => {
-    it('should export createRecommendCommand from commands/index', async () => {
-      const indexExports = await import('../src/commands/index.js')
-      expect(indexExports.createRecommendCommand).toBeDefined()
-      expect(typeof indexExports.createRecommendCommand).toBe('function')
-    })
-
-    it('should export createRecommendCommand as default', async () => {
-      const mod = await import('../src/commands/recommend.js')
-      expect(mod.default).toBeDefined()
-      expect(typeof mod.default).toBe('function')
     })
   })
 })
