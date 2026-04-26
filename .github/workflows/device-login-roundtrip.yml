@@ -189,6 +189,39 @@ jobs:
           nohup npm run preview -- --host 127.0.0.1 --port 4321 > "$GITHUB_WORKSPACE/test-results/preview.log" 2>&1 &
           echo $! > "$GITHUB_WORKSPACE/test-results/preview.pid"
 
+      - name: SMI-4494 diagnostic — probe preview server before wait-on
+        # SMI-4494 hypothesis: vercel adapter + output:'static' makes
+        # `astro preview` bind 4321 (TCP connect succeeds) but `/` never
+        # returns 200 because the adapter expects .vercel/output/ routing,
+        # not the static dist/ that astro preview's built-in server expects.
+        # Capture actual HTTP responses so we know whether to swap to
+        # `npx http-server packages/website/dist` (lightest fix) or escalate
+        # to `vercel dev`. Non-blocking — the existing wait-on timeout
+        # remains the source of truth for the gate.
+        run: |
+          set -u
+          echo "::group::Sleep 5s for preview server boot"
+          sleep 5
+          echo "::endgroup::"
+          echo "::group::TCP port check (port-bind vs HTTP-200 distinction)"
+          (echo > /dev/tcp/127.0.0.1/4321) 2>&1 && echo "TCP 127.0.0.1:4321 OPEN" || echo "TCP 127.0.0.1:4321 CLOSED"
+          echo "::endgroup::"
+          echo "::group::curl /  (verbose, max 10s)"
+          curl -v --max-time 10 http://127.0.0.1:4321/ 2>&1 | head -200 || true
+          echo "::endgroup::"
+          echo "::group::curl /device  (the spec's actual entry page)"
+          curl -v --max-time 10 http://127.0.0.1:4321/device 2>&1 | head -200 || true
+          echo "::endgroup::"
+          echo "::group::curl /index.html  (test if static asset path works)"
+          curl -sS -o /dev/null -w "HTTP %{http_code} size=%{size_download} time=%{time_total}\n" --max-time 10 http://127.0.0.1:4321/index.html || true
+          echo "::endgroup::"
+          echo "::group::dist/ contents (does the static build exist on disk?)"
+          ls -la "$GITHUB_WORKSPACE/packages/website/dist/" 2>&1 | head -30 || echo "dist/ MISSING"
+          echo "::endgroup::"
+          echo "::group::preview.log (server-side view)"
+          cat "$GITHUB_WORKSPACE/test-results/preview.log" 2>&1 | head -50 || true
+          echo "::endgroup::"
+
       - name: Wait for preview server
         # Use 127.0.0.1 to match the --host flag the preview server binds to.
         # wait-on against `localhost` hits IPv6 (::1) first on GH-hosted
