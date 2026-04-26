@@ -181,6 +181,10 @@ jobs:
       - name: Start website preview server
         run: |
           set -eu
+          # SMI-4493: test-results/ is gitignored, so it never exists in the
+          # runner's checkout. Without mkdir, both redirects below fail and
+          # `set -eu` aborts the step before the preview server can start.
+          mkdir -p "$GITHUB_WORKSPACE/test-results"
           cd packages/website
           nohup npm run preview -- --host 127.0.0.1 --port 4321 > "$GITHUB_WORKSPACE/test-results/preview.log" 2>&1 &
           echo $! > "$GITHUB_WORKSPACE/test-results/preview.pid"
