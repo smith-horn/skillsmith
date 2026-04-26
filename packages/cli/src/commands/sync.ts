@@ -19,6 +19,7 @@ import ora from 'ora'
 import Table from 'cli-table3'
 import {
   createDatabaseAsync,
+  initializeSchema,
   SkillRepository,
   createApiClient,
   loadStoredAccessToken,
@@ -48,6 +49,9 @@ async function runSync(options: {
   try {
     spinner.start('Opening database...')
     const db = await createDatabaseAsync(options.dbPath)
+    // SMI-4486: createDatabaseAsync returns a connected DB but doesn't create
+    // tables — fresh installs would otherwise hit "no such table: skills".
+    initializeSchema(db)
 
     try {
       const skillRepo = new SkillRepository(db)
@@ -145,6 +149,7 @@ async function runSync(options: {
 async function showStatus(options: { dbPath: string; json: boolean }): Promise<void> {
   try {
     const db = await createDatabaseAsync(options.dbPath)
+    initializeSchema(db) // SMI-4486
 
     try {
       const syncConfigRepo = new SyncConfigRepository(db)
@@ -252,6 +257,7 @@ async function showHistory(options: {
 }): Promise<void> {
   try {
     const db = await createDatabaseAsync(options.dbPath)
+    initializeSchema(db) // SMI-4486
 
     try {
       const syncHistoryRepo = new SyncHistoryRepository(db)
@@ -332,6 +338,7 @@ async function configureSync(options: {
 }): Promise<void> {
   try {
     const db = await createDatabaseAsync(options.dbPath)
+    initializeSchema(db) // SMI-4486
 
     try {
       const syncConfigRepo = new SyncConfigRepository(db)

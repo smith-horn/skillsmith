@@ -13,7 +13,12 @@
 
 import { Command } from 'commander'
 import chalk from 'chalk'
-import { createDatabaseAsync, AdvisoryRepository, type SkillAdvisory } from '@skillsmith/core'
+import {
+  createDatabaseAsync,
+  initializeSchema,
+  AdvisoryRepository,
+  type SkillAdvisory,
+} from '@skillsmith/core'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { requireTier } from '../utils/require-tier.js'
@@ -86,6 +91,7 @@ async function runAudit(options: { db: string; fix: boolean }): Promise<void> {
   await requireTier('team')
 
   const db = await createDatabaseAsync(options.db)
+  initializeSchema(db) // SMI-4486
 
   try {
     const advisoryRepo = new AdvisoryRepository(db)
