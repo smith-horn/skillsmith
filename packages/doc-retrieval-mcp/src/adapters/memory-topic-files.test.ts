@@ -69,30 +69,6 @@ describe('resolveMemoryDir', () => {
     const dir = resolveMemoryDir(FAKE_CWD)
     expect(dir).toBe(memoryDir)
   })
-
-  it('SKILLSMITH_MEMORY_DIR_OVERRIDE bypasses home/encoded-cwd derivation (SMI-4473)', () => {
-    const orig = process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
-    try {
-      process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE = '/staged/host/memory'
-      expect(resolveMemoryDir('/anything')).toBe('/staged/host/memory')
-      expect(resolveMemoryDir('')).toBe('/staged/host/memory') // override wins even when cwd missing
-    } finally {
-      if (orig === undefined) delete process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
-      else process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE = orig
-    }
-  })
-
-  it('rejects relative override (must be absolute path)', () => {
-    const orig = process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
-    try {
-      process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE = 'relative/dir'
-      // Falls through to normal derivation when override is non-absolute.
-      expect(resolveMemoryDir(FAKE_CWD)).toBe(memoryDir)
-    } finally {
-      if (orig === undefined) delete process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
-      else process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE = orig
-    }
-  })
 })
 
 describe('memory-topic-files adapter — listFiles', () => {

@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Node.js floor bumped to >=22.22.0** (SMI-4489): root + every workspace
+  now require Node 22.22.0+. The host install previously failed with
+  EBADENGINE on Node 22.0–22.21 because `posthog-node@5.29.2` (transitive
+  via `@skillsmith/core`) requires `>=22.22.0`. Tightening our own
+  `engines` makes the constraint visible at our package boundary instead
+  of at the deeper transitive resolution. Node 22 stays in Maintenance LTS
+  until 2027-04-30; SMI-4491 tracks the eventual Node-24 evaluation.
+  `.npmrc` (which contains `engine-strict=true`) is excluded from all
+  published tarballs, so consumer EBADENGINE remains a warning rather
+  than a hard install failure.
+- **Removed `SKILLSMITH_MEMORY_DIR_OVERRIDE` doc-retrieval workaround**
+  (SMI-4451 Followup-4): with the host Node bump, `homedir()` derivation
+  resolves correctly and the `.tmp/host-memory/` staging path shipped in
+  SMI-4473 is no longer needed.
+- **Bumped `actions/setup-node` to v6 SHA in two more workflows**
+  (`e2e-usage-counter.yml`, `deploy-edge-functions.yml`) to match the
+  rest of the repo. SMI-4488's `device-login-roundtrip.yml` was bumped
+  separately in PR #793.
+
+### Added (SMI-4489)
+
+- **`scripts/audit-standards.mjs` rule 37**: asserts every
+  `actions/setup-node` step's `node-version` either references
+  `${{ env.NODE_VERSION }}` or matches the workflow-local env declaration.
+  Prevents future drift like the kind that motivated SMI-4488 + SMI-4489.
+
 ### Added
 
 - **Team Tier-Gate** (2026-04-20, SMI-4321): Server-side tier-gate on

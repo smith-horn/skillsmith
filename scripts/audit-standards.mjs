@@ -2442,6 +2442,75 @@ console.log(`\n${BOLD}36. Smoke Surface Coverage (R-4, SMI-4459)${RESET}`)
   }
 }
 
+// 37. Workflow setup-node node-version consistency (SMI-4489)
+// Every `actions/setup-node` step's `node-version:` MUST either reference
+// `${{ env.NODE_VERSION }}` (preferred) OR match the workflow-local `env.NODE_VERSION`
+// declaration. Prevents future drift like the kind that motivated SMI-4488 + SMI-4489.
+console.log(`\n${BOLD}37. Workflow setup-node node-version drift (SMI-4489)${RESET}`)
+{
+  const workflowDir = '.github/workflows'
+  if (!existsSync(workflowDir)) {
+    pass('Skipped (no .github/workflows/ directory)')
+  } else {
+    const violations = []
+    const workflowFiles = readdirSync(workflowDir).filter(
+      (f) => f.endsWith('.yml') || f.endsWith('.yaml')
+    )
+    for (const file of workflowFiles) {
+      const fullPath = join(workflowDir, file)
+      const content = readFileSync(fullPath, 'utf8')
+      const lines = content.split('\n')
+      // Find workflow-level env.NODE_VERSION (first match wins; matches `  NODE_VERSION: '22'`)
+      let workflowNodeVersion = null
+      for (const line of lines) {
+        const m = line.match(/^\s+NODE_VERSION:\s*['"]?([^'"\s#]+)['"]?/)
+        if (m) {
+          workflowNodeVersion = m[1]
+          break
+        }
+      }
+      // Find each setup-node step and look ahead up to 6 lines for node-version:
+      for (let i = 0; i < lines.length; i++) {
+        if (!/actions\/setup-node@/.test(lines[i])) continue
+        for (let j = i + 1; j < Math.min(i + 8, lines.length); j++) {
+          const m = lines[j].match(/^\s+node-version:\s*(.+?)\s*(?:#.*)?$/)
+          if (!m) continue
+          const raw = m[1].trim()
+          // Strip surrounding quotes
+          const value = raw.replace(/^['"]|['"]$/g, '')
+          const usesEnvRef = /\$\{\{\s*env\.NODE_VERSION\s*\}\}/.test(value)
+          if (usesEnvRef) break
+          if (workflowNodeVersion !== null && value === workflowNodeVersion) break
+          violations.push({
+            file: fullPath,
+            line: j + 1,
+            value,
+            workflowEnv: workflowNodeVersion,
+          })
+          break
+        }
+      }
+    }
+    if (violations.length === 0) {
+      pass(
+        'All setup-node node-version values reference ${{ env.NODE_VERSION }} or match workflow env'
+      )
+    } else {
+      const formatted = violations
+        .map(
+          (v) =>
+            `  ${v.file}:${v.line} — node-version: '${v.value}' (workflow env.NODE_VERSION: ${
+              v.workflowEnv ?? 'undeclared'
+            })`
+        )
+        .join('\n')
+      warn(
+        `${violations.length} setup-node step(s) with drifted node-version:\n${formatted}\n  Fix: replace literal with \${{ env.NODE_VERSION }} or align value with workflow-level env.NODE_VERSION declaration.`
+      )
+    }
+  }
+}
+
 // npm override drift check: @modelcontextprotocol/sdk override "." must match mcp-server range
 console.log(`\n${BOLD}Override Drift: @modelcontextprotocol/sdk${RESET}`)
 try {

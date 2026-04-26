@@ -11,7 +11,7 @@ uphold it. Report unacceptable behavior to `support@skillsmith.app`.
 ### Prerequisites
 
 - Docker Desktop running
-- Node.js 20+ (for local tooling)
+- Node.js >=22.22.0 (matches Docker dev container `node:22-slim`)
 - `LINEAR_API_KEY` in environment (maintainers only - not required for contributors)
 
 ### Getting Started
