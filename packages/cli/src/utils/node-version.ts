@@ -13,18 +13,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 /**
  * Reads the minimum Node.js version from package.json engines field.
- * Falls back to '22.0.0' if not found.
+ * Falls back to '22.22.0' if not found (SMI-4489 floor).
  */
 function loadMinNodeVersion(): string {
   try {
     const packageJsonPath = join(__dirname, '..', '..', 'package.json')
     const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'))
-    const engineConstraint = packageJson.engines?.node ?? '>=22.0.0'
-    // Extract version number from constraint (e.g., ">=22.0.0" -> "22.0.0")
+    const engineConstraint = packageJson.engines?.node ?? '>=22.22.0'
+    // Extract version number from constraint (e.g., ">=22.22.0" -> "22.22.0")
     return engineConstraint.replace(/[>=<^~\s]/g, '')
   } catch {
     // Fallback if package.json can't be read
-    return '22.0.0'
+    return '22.22.0'
   }
 }
 

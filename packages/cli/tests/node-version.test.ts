@@ -22,10 +22,10 @@ describe('SMI-1629: Node version detection', () => {
   })
 
   describe('getMinNodeVersion', () => {
-    it('returns 22.0.0 as minimum version', async () => {
+    it('returns 22.22.0 as minimum version (SMI-4489 floor)', async () => {
       const { getMinNodeVersion } = await import('../src/utils/node-version.js')
 
-      expect(getMinNodeVersion()).toBe('22.0.0')
+      expect(getMinNodeVersion()).toBe('22.22.0')
     })
   })
 
@@ -61,7 +61,7 @@ describe('SMI-1629: Node version detection', () => {
   describe('checkNodeVersion', () => {
     it('returns null when version meets requirement', async () => {
       Object.defineProperty(process, 'version', {
-        value: 'v22.0.0',
+        value: 'v22.22.0',
         writable: true,
         configurable: true,
       })
@@ -76,7 +76,7 @@ describe('SMI-1629: Node version detection', () => {
 
     it('returns null when version exceeds requirement', async () => {
       Object.defineProperty(process, 'version', {
-        value: 'v22.5.1',
+        value: 'v22.30.1',
         writable: true,
         configurable: true,
       })
@@ -147,7 +147,7 @@ describe('SMI-1629: Node version detection', () => {
 
       const result = checkNodeVersion()
 
-      expect(result).toContain('22.0.0')
+      expect(result).toContain('22.22.0')
     })
 
     it('includes upgrade instructions in error message', async () => {
