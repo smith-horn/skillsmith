@@ -67,7 +67,7 @@
     "publish:all": "npm publish --workspaces --access public"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.22.0"
   },
   "packageManager": "npm@11.9.0",
   "author": "Smith Horn Group Ltd",

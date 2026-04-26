@@ -29,6 +29,9 @@ concurrency:
   group: release-cadence
   cancel-in-progress: false
 
+env:
+  NODE_VERSION: '22'
+
 jobs:
   cadence:
     name: Weekly cadence check
@@ -45,7 +48,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Check [Unreleased] entry count
         id: check

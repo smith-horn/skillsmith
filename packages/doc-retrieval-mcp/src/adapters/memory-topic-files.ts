@@ -191,17 +191,8 @@ function isIndexable(name: string): boolean {
  * the indexer's per-adapter try-free loop and a throw would abort the
  * full ingest run. The SPARC note's "throw on encoding drift" intent is
  * preserved via the roundtrip unit test instead.
- *
- * `SKILLSMITH_MEMORY_DIR_OVERRIDE` env (SMI-4473): when set to an absolute
- * directory path, bypasses the home/encoded-cwd derivation entirely. This
- * unblocks Docker workflows where `homedir()` returns `/root` and the
- * host's `~/.claude/projects/<encoded>/memory/` is not bind-mounted —
- * caller stages the memory files into a path Docker can already read
- * (e.g., a tmpdir inside the `/app` bind-mount) and points the env at it.
  */
 export function resolveMemoryDir(cwd: string): string | null {
-  const override = process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
-  if (override && override[0] === '/') return override
   if (!cwd || cwd[0] !== '/') return null
   const encoded = '-' + cwd.slice(1).replace(/\//g, '-')
   const home = homedir()

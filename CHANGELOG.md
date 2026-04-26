@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Indexer now indexes addyosmani/agent-skills as high-trust source (SMI-4122, PR #499).
 - **Skill pack audit trigger-quality + namespace checks** (SMI-4124, PR #505): `skill_pack_audit` MCP tool now detects low-quality trigger phrases and namespace collisions in installed skill packs. Surfaces actionable findings before publish.
 - **VS Code extension MCP feature parity Wave 1** (SMI-4194, PR #562): `skillsmith.uninstallSkill` command (palette + tree-view context menu, modal confirmation, symlink-escape protection via `assertInsideRoot`, MCP-first with `fs.rm` fallback); `skillsmith.createSkill` 4-step wizard (delegates to `@skillsmith/cli`, actionable error if CLI absent); anonymous usage telemetry with 3-gate opt-out (`vscode.env.isTelemetryEnabled`, `skillsmith.telemetry.enabled`, no hardcoded endpoint); non-blocking MCP server min-version check with copy-to-clipboard action; Get Started walkthrough (Discover / Install / Author steps); `audit:standards` Checks 27 (skillNameValidation codegen drift) and 28 (command–test pairing) added to CI. `events` edge function `ALLOWED_EVENTS` allowlist and `sanitizeMetadata` extended for VS Code telemetry keys.
+- **`scripts/audit-standards.mjs` rule 37** (SMI-4489): asserts every
+  `actions/setup-node` step's `node-version` either references
+  `${{ env.NODE_VERSION }}` or matches the workflow-local env declaration.
+  Prevents future drift like the kind that motivated SMI-4488 + SMI-4489.
 
 ### Fixed
 
@@ -68,6 +72,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Node.js floor bumped to >=22.22.0** (SMI-4489): root + every workspace
+  now require Node 22.22.0+. The host install previously failed with
+  EBADENGINE on Node 22.0–22.21 because `posthog-node@5.29.2` (transitive
+  via `@skillsmith/core`) requires `>=22.22.0`. Tightening our own
+  `engines` makes the constraint visible at our package boundary instead
+  of at the deeper transitive resolution. Node 22 stays in Maintenance LTS
+  until 2027-04-30; SMI-4491 tracks the eventual Node-24 evaluation.
+  `.npmrc` (which contains `engine-strict=true`) is excluded from all
+  published tarballs, so consumer EBADENGINE remains a warning rather
+  than a hard install failure.
+- **Removed `SKILLSMITH_MEMORY_DIR_OVERRIDE` doc-retrieval workaround**
+  (SMI-4451 Followup-4): with the host Node bump, `homedir()` derivation
+  resolves correctly and the `.tmp/host-memory/` staging path shipped in
+  SMI-4473 is no longer needed.
+- **Bumped `actions/setup-node` to v6 SHA in two more workflows**
+  (`e2e-usage-counter.yml`, `deploy-edge-functions.yml`) to match the
+  rest of the repo. SMI-4488's `device-login-roundtrip.yml` was bumped
+  separately in PR #793.
 - Rate limits now apply based on your authenticated session tier, not just API key.
 - Improved circuit breaker resilience for authentication service.
 - Vitest globals removed for better test isolation (#453).

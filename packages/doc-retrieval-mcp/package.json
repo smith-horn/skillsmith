@@ -24,6 +24,7 @@
     "@skillsmith/core": "^0.5.4",
     "better-sqlite3": "11.10.0",
     "glob": "11.1.0",
+    "minimatch": "10.2.5",
     "zod": "3.25.76"
   },
   "devDependencies": {
@@ -31,5 +32,8 @@
     "tsx": "4.21.0",
     "vitest": "4.1.2"
   },
-  "license": "Elastic-2.0"
+  "license": "Elastic-2.0",
+  "engines": {
+    "node": ">=22.22.0"
+  }
 }

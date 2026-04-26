@@ -15,7 +15,7 @@
 # -----------------------------------------------------------------------------
 # Stage 1: Base - Common settings for all stages
 # -----------------------------------------------------------------------------
-# Using node:22-slim (Debian-based) for glibc compatibility with onnxruntime-node
+# Using node:22-slim (Debian-based) for glibc compatibility with onnxruntime-node (>=22.22 minimum, matches engines)
 # Alpine would be smaller but lacks glibc required by native modules
 FROM node:22-slim AS base
 
