@@ -228,13 +228,30 @@ describe.skipIf(REAL_MODE)('Step 8 — runner gate (mocked)', () => {
 // Real-mode gate. Skipped unless RETRO_REVERSAL_PAIRS_REAL=1 is set so CI
 // (no native binding, no populated index) does not break.
 describe.runIf(REAL_MODE)('Step 8 — runner gate (REAL index)', () => {
-  it('training set passes ≥ 5/6 against the real RuVector index', async () => {
+  // Per `rerank.ts` header contract and SPARC §S6 plan-review H3, the
+  // production retrieval flow is: search(k=20, preRerank=true) → rerank →
+  // minScore filter → truncate to k=5. SMI-4468 surfaced that the original
+  // gate harness called search(k=5) directly, bypassing rerank entirely —
+  // so absorption penalties, BM25/MMR fallback, and per-class boost were
+  // all dead code at the gate. This wrapper exercises the documented flow.
+  const POOL_SIZE = 20
+  const TOP_K = 5
+  const MIN_SCORE = 0.35
+
+  async function gateSearch(query: string): Promise<SearchHit[]> {
     const { search } = await import('../../packages/doc-retrieval-mcp/src/search.js')
+    const { rerank } = await import('../../packages/doc-retrieval-mcp/src/rerank.js')
+    const pool = await search({ query, k: POOL_SIZE, preRerank: true })
+    const reranked = rerank(pool, query)
+    return reranked.filter((h) => h.score >= MIN_SCORE).slice(0, TOP_K)
+  }
+
+  it('training set passes ≥ 5/6 against the real RuVector index', async () => {
     const pairs = loadPairs(TRAINING_PATH)
     let passed = 0
     const failures: string[] = []
     for (const p of pairs) {
-      const hits = await search({ query: p.query, k: 5, minScore: 0.35 })
+      const hits = await gateSearch(p.query)
       if (pairPasses(p, hits)) {
         passed++
       } else {
@@ -260,10 +277,9 @@ describe.runIf(REAL_MODE)('Step 8 — runner gate (REAL index)', () => {
       // Pre-soak window — held-out empty by design. Skip.
       return
     }
-    const { search } = await import('../../packages/doc-retrieval-mcp/src/search.js')
     let passed = 0
     for (const p of heldOut) {
-      const hits = await search({ query: p.query, k: 5, minScore: 0.35 })
+      const hits = await gateSearch(p.query)
       if (pairPasses(p, hits)) passed++
     }
     // Held-out gate per §S7: pass at >= same rate as training (5/6 ≈ 0.833).
