@@ -31,6 +31,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Page } from '@playwright/test'
 import { getConfig } from './device-login-roundtrip.config'
 
+import { withTimeout, STAGING_CALL_TIMEOUT_MS } from './device-login-roundtrip.timeout'
+
 // ─── Process management ───────────────────────────────────────────────────
 
 export interface CliExitResult {
@@ -47,6 +49,12 @@ export interface CliHandle {
   exited: boolean
   /** Resolves when the child exits (or when timeoutMs elapses → SIGTERM). */
   waitForExit(opts: { timeoutMs: number }): Promise<CliExitResult>
+  /**
+   * Snapshot the buffered stdout/stderr without waiting for exit. Lets
+   * `afterEach` dump CLI output when the test hung BEFORE `waitForExit()`
+   * was called — the case where SMI-4506 lost evidence.
+   */
+  snapshot(): { stdout: string; stderr: string }
   /** SIGTERM, then SIGKILL after 5s. Idempotent. */
   kill(): Promise<void>
 }
@@ -91,6 +99,12 @@ export function spawnCli(opts: SpawnCliOpts): CliHandle {
     stderr: child.stderr,
     get exited() {
       return exitedFlag
+    },
+    snapshot() {
+      return {
+        stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+        stderr: Buffer.concat(stderrChunks).toString('utf8'),
+      }
     },
     async waitForExit({ timeoutMs }) {
       const timeout = new Promise<{ code: number | null }>((resolve) => {
@@ -276,10 +290,14 @@ export async function signInTestUser(
   const admin = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
-  const { data, error } = await admin.auth.signInWithPassword({
-    email: opts.email,
-    password: opts.password,
-  })
+  const { data, error } = await withTimeout(
+    admin.auth.signInWithPassword({
+      email: opts.email,
+      password: opts.password,
+    }),
+    STAGING_CALL_TIMEOUT_MS,
+    'signInTestUser/signInWithPassword'
+  )
   if (error || !data.session) {
     throw new Error(`[SMI-4460] signInTestUser failed: ${error?.message ?? 'no session'}`)
   }
@@ -335,18 +353,26 @@ export interface DeviceCodeRow {
 }
 
 export async function queryDeviceCode(opts: { userCode: string }): Promise<DeviceCodeRow | null> {
-  const { data, error } = await admin()
-    .from('device_codes')
-    .select('device_code,user_code,user_id,approved_at,consumed_at,expires_at,client_type')
-    // CLI strips dash + uppercases; DB stores raw; normalise both sides.
-    .eq('user_code', opts.userCode.replace(/-/g, '').toUpperCase())
-    .maybeSingle()
+  const { data, error } = await withTimeout(
+    admin()
+      .from('device_codes')
+      .select('device_code,user_code,user_id,approved_at,consumed_at,expires_at,client_type')
+      // CLI strips dash + uppercases; DB stores raw; normalise both sides.
+      .eq('user_code', opts.userCode.replace(/-/g, '').toUpperCase())
+      .maybeSingle(),
+    STAGING_CALL_TIMEOUT_MS,
+    'queryDeviceCode'
+  )
   if (error) throw new Error(`[SMI-4460] queryDeviceCode: ${error.message}`)
   return (data as DeviceCodeRow | null) ?? null
 }
 
 export async function cleanupDeviceCode(deviceCode: string): Promise<void> {
-  const { error } = await admin().from('device_codes').delete().eq('device_code', deviceCode)
+  const { error } = await withTimeout(
+    admin().from('device_codes').delete().eq('device_code', deviceCode),
+    STAGING_CALL_TIMEOUT_MS,
+    'cleanupDeviceCode'
+  )
   if (error) throw new Error(`[SMI-4460] cleanupDeviceCode: ${error.message}`)
 }
 
@@ -370,14 +396,18 @@ export async function queryAuditLogConsumed(opts: {
   sinceMs: number
 }): Promise<AuditLogRow | null> {
   const since = new Date(Date.now() - opts.sinceMs).toISOString()
-  const { data, error } = await admin()
-    .from('audit_logs')
-    .select('id,event_type,metadata,created_at')
-    .eq('event_type', 'auth:device_code:consumed')
-    .contains('metadata', { user_id: opts.userId })
-    .gte('created_at', since)
-    .order('created_at', { ascending: false })
-    .limit(1)
+  const { data, error } = await withTimeout(
+    admin()
+      .from('audit_logs')
+      .select('id,event_type,metadata,created_at')
+      .eq('event_type', 'auth:device_code:consumed')
+      .contains('metadata', { user_id: opts.userId })
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(1),
+    STAGING_CALL_TIMEOUT_MS,
+    'queryAuditLogConsumed'
+  )
   if (error) throw new Error(`[SMI-4460] queryAuditLogConsumed: ${error.message}`)
   return ((data?.[0] as AuditLogRow | undefined) ?? null) as AuditLogRow | null
 }
@@ -412,11 +442,20 @@ export function cleanupAllTmpdirs(): void {
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
 
 /**
- * Write captured stdout/stderr from a CliExitResult to test-results so
- * uploaded artifacts include them on failure. Workflow's artifact
- * upload step globs `test-results/cli-*.log`.
+ * Write captured stdout/stderr to test-results so uploaded artifacts include
+ * them on failure. Workflow's artifact upload step globs
+ * `test-results/cli-*.log`.
+ *
+ * SMI-4506: accepts either a completed `CliExitResult` (preferred — includes
+ * exit code) OR a `{ stdout, stderr }` snapshot from `cli.snapshot()` for
+ * the case where the test hung BEFORE `waitForExit()` ran. The
+ * `inFlight` flag in the dump output makes the difference visible to the
+ * reader.
  */
-export function dumpCliLogs(testId: string, result: CliExitResult): void {
+export function dumpCliLogs(
+  testId: string,
+  source: CliExitResult | { stdout: string; stderr: string }
+): void {
   const dir = 'test-results'
   if (!existsSync(dir)) {
     try {
@@ -425,10 +464,14 @@ export function dumpCliLogs(testId: string, result: CliExitResult): void {
       return
     }
   }
+  const isExitResult = 'code' in source
+  const header = isExitResult
+    ? `--- exit ${(source as CliExitResult).code} ---`
+    : `--- in-flight snapshot (waitForExit not reached — likely SMI-4506 hang) ---`
   try {
     writeFileSync(
       join(dir, `cli-${testId}.log`),
-      `--- exit ${result.code} ---\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}\n`
+      `${header}\n--- stdout ---\n${source.stdout}\n--- stderr ---\n${source.stderr}\n`
     )
   } catch {
     /* swallow */

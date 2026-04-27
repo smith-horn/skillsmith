@@ -61,7 +61,12 @@ test.describe('SMI-4460 — Device-code login round-trip (staging)', () => {
   })
 
   test.afterEach(async ({}, testInfo) => {
+    // SMI-4506: dump CLI logs unconditionally. Previously this only ran
+    // when `result` was set (i.e. waitForExit completed), which meant a
+    // hang BEFORE the polling phase produced no CLI evidence at all —
+    // exactly when we need it most. Snapshot the buffered streams instead.
     if (result) dumpCliLogs(testInfo.testId, result)
+    else if (cli) dumpCliLogs(testInfo.testId, cli.snapshot())
     if (deviceCode) {
       try {
         await cleanupDeviceCode(deviceCode)
