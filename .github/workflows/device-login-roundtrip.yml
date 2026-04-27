@@ -231,6 +231,13 @@ jobs:
           # SMI-4508: vercel dev serves /device (SSR) and /api/* via the same
           # edge runtime as prod. SMI-4493 IPv4 family lesson still applies —
           # bind explicitly to 127.0.0.1.
+          # PATH augmentation: vercel auto-detects Astro and runs `astro dev
+          # --port $PORT`, but spawns it in a sub-shell that doesn't inherit
+          # npm's .bin lookup — confirmed via run 24976672344 preview.log:
+          # "sh: 1: astro: not found". Prepend the workspace + root .bin so
+          # both `astro` (workspace) and any tool the dev command shells out
+          # to (root) resolve.
+          export PATH="$GITHUB_WORKSPACE/packages/website/node_modules/.bin:$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
           nohup vercel dev --token "$VERCEL_TOKEN" --listen 127.0.0.1:4321 \
             > "$GITHUB_WORKSPACE/test-results/preview.log" 2>&1 &
           echo $! > "$GITHUB_WORKSPACE/test-results/preview.pid"
