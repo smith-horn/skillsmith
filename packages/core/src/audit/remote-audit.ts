@@ -32,11 +32,9 @@ const REQUEST_TIMEOUT_MS = 2000
 const TELEMETRY_ACTOR_KEY = 'skillsmith-telemetry-actor:v1'
 
 function hashForActor(apiKey: string): string {
-  // lgtm[js/insufficient-password-hash] This is deterministic correlation-ID
+  // codeql[js/insufficient-password-hash] Deterministic telemetry actor-ID
   // derivation via HMAC-SHA-256 — not password storage. See TELEMETRY_ACTOR_KEY
-  // doc-comment above for full rationale (false positive in CodeQL's taint
-  // tracking which flags any flow from an API-key-like source into a crypto
-  // function, regardless of construction).
+  // doc-comment above for full rationale.
   return createHmac('sha256', TELEMETRY_ACTOR_KEY).update(apiKey).digest('hex')
 }
 

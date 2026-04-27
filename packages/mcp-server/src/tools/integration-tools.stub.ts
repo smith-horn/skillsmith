@@ -8,6 +8,7 @@
  * Provides in-memory stub implementations for webhook and API key management.
  */
 
+import { randomBytes } from 'node:crypto'
 import type {
   IntegrationService,
   Webhook,
@@ -21,16 +22,11 @@ import type {
 // ============================================================================
 
 function generateStubSecret(): string {
-  const chars = 'abcdef0123456789'
-  return Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
+  return randomBytes(16).toString('hex')
 }
 
 function generateStubKey(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-  return (
-    'sk_int_' +
-    Array.from({ length: 40 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
-  )
+  return 'sk_int_' + randomBytes(30).toString('base64url')
 }
 
 function computeExpiry(expiresIn?: string): string | null {
