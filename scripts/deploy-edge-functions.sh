@@ -93,6 +93,7 @@ NO_VERIFY_JWT_FUNCTIONS=(
   generate-license
   health
   list-invoices
+  quota-monitor
   regenerate-license
   skills-get
   skills-outreach-preferences

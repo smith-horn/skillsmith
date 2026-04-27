@@ -274,6 +274,7 @@ When verifying a prod edge function via `curl`, always use `$SUPABASE_URL` (unde
 | `indexer`, `skills-refresh-metadata`, `ops-report`, `alert-notify` | Service Role | No |
 | `process-pending-subscription` | Service Role | No |
 | `expire-complimentary` | Service Role (daily 3 AM UTC cron) | No |
+| `quota-monitor` | Service Role (every 30 min cron) | Yes |
 | `skills-outreach` | Service Role | No |
 | `advance-notice-email` | Service Role | Yes |
 | `auth-device-code` | Anonymous (RFC 8628 device auth) | Yes |
@@ -306,6 +307,7 @@ npx supabase functions deploy admin-grant-subscription --no-verify-jwt
 npx supabase functions deploy advance-notice-email --no-verify-jwt
 npx supabase functions deploy auth-device-code --no-verify-jwt
 npx supabase functions deploy auth-device-token --no-verify-jwt
+npx supabase functions deploy quota-monitor --no-verify-jwt
 ```
 
 **Gateway-verified auth** (SMI-4291 — relies on `auth.uid()` for RLS; no `--no-verify-jwt`):
@@ -331,6 +333,7 @@ npx supabase functions deploy auth-device-preview
 | Ops Report | Monday 9 AM UTC | `ops-report` |
 | Quality Outreach | Manual (beta) | `skills-outreach` |
 | Expire Complimentary | Daily 3 AM UTC | GitHub Actions (`expire-complimentary.yml`) |
+| Quota Monitor | Every 30 min | GitHub Actions (`quota-monitor.yml`) |
 | Weekly Analytics | Monday 9 AM UTC | GitHub Actions (`analytics-report.yml`) |
 | Billing Monitor | Monday 9 AM UTC | GitHub Actions |
 | Edge Function Deploy | On merge to main | GitHub Actions (`deploy-edge-functions.yml`) |
