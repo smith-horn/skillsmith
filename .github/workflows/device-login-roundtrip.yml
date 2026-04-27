@@ -191,7 +191,7 @@ jobs:
           echo "auth-device-code warmed."
 
       - name: Cache Vercel build cache
-        uses: actions/cache@v4
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
         with:
           path: ~/.vercel/cache
           key: vercel-cache-${{ runner.os }}-${{ hashFiles('packages/website/**/*.ts', 'packages/website/**/*.tsx', 'packages/website/**/*.astro', 'packages/website/**/*.mjs', 'packages/website/**/*.json', 'packages/website/vercel.json') }}
