@@ -5,7 +5,7 @@
  * All tests mock the Supabase client — no real database needed.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest'
 import { createHmac } from 'node:crypto'
 import {
   createRealIntegrationService,
@@ -13,6 +13,21 @@ import {
   computeHmacSignature,
   type SupabaseClient,
 } from './integration-tools.service.js'
+
+// SMI-4503: hashApiKey reads SKILLSMITH_API_KEY_HMAC_SECRET from env. All tests
+// in this file must run with the secret set; the per-describe block below
+// covers the env-var-missing failure mode in isolation.
+const TEST_HMAC_SECRET = 'test-hmac-secret-for-vitest-only-32chars-minimum-padding-padding-padding'
+const ORIGINAL_HMAC_SECRET = process.env.SKILLSMITH_API_KEY_HMAC_SECRET
+
+beforeAll(() => {
+  process.env.SKILLSMITH_API_KEY_HMAC_SECRET = TEST_HMAC_SECRET
+})
+
+afterAll(() => {
+  if (ORIGINAL_HMAC_SECRET === undefined) delete process.env.SKILLSMITH_API_KEY_HMAC_SECRET
+  else process.env.SKILLSMITH_API_KEY_HMAC_SECRET = ORIGINAL_HMAC_SECRET
+})
 
 // ============================================================================
 // Supabase mock factory
@@ -55,23 +70,9 @@ const TEAM_ID = 'team-001'
 
 // ============================================================================
 // Crypto helper tests
+// hashApiKey + env-var boot-validation tests live in
+// integration-tools.service.hash.test.ts (SMI-2162 file-length companion).
 // ============================================================================
-
-describe('hashApiKey', () => {
-  it('should produce a deterministic SHA-256 HMAC hex hash', () => {
-    const key = 'sk_int_testkey123'
-    const hash = hashApiKey(key)
-
-    // Verify it matches raw crypto
-    const expected = createHmac('sha256', 'skillsmith-api-key').update(key).digest('hex')
-    expect(hash).toBe(expected)
-    expect(hash).toHaveLength(64)
-  })
-
-  it('should produce different hashes for different keys', () => {
-    expect(hashApiKey('key-a')).not.toBe(hashApiKey('key-b'))
-  })
-})
 
 describe('computeHmacSignature', () => {
   it('should produce correct HMAC-SHA256 signature', () => {
