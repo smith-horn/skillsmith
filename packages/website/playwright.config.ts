@@ -54,12 +54,18 @@ export default defineConfig({
     },
   ],
 
-  /* Start the Astro preview server automatically.
-   * Requires the site to be built first (`npm run build`). */
+  /* Start the preview server automatically when no server is already
+   * listening on the port. The device-login round-trip CI workflow
+   * (`.github/workflows/device-login-roundtrip.yml`) starts http-server
+   * against `dist/client` before invoking playwright (SMI-4494: the
+   * vercel adapter makes `astro preview` 404 every request, so the
+   * workflow can't rely on Playwright spinning up `npm run preview`).
+   * `reuseExistingServer: true` lets Playwright detect the externally-
+   * started server and skip its own webServer command entirely. */
   webServer: {
     command: 'npm run preview',
     port: 4321,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: true,
     timeout: 30_000,
   },
 })

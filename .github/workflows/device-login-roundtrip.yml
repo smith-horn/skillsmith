@@ -178,21 +178,35 @@ jobs:
             -o /dev/null
           echo "auth-device-code warmed."
 
-      - name: Start website preview server
+      - name: Start website preview server (http-server on dist/client)
         run: |
           set -eu
           # SMI-4493: test-results/ is gitignored, so it never exists in the
           # runner's checkout. Without mkdir, both redirects below fail and
           # `set -eu` aborts the step before the preview server can start.
           mkdir -p "$GITHUB_WORKSPACE/test-results"
-          cd packages/website
-          nohup npm run preview -- --host 127.0.0.1 --port 4321 > "$GITHUB_WORKSPACE/test-results/preview.log" 2>&1 &
+          # SMI-4494: do NOT use `astro preview` here. The website's
+          # astro.config.mjs sets `adapter: vercel()` alongside
+          # `output: 'static'`. With the vercel adapter loaded, the preview
+          # server expects routing through `.vercel/output/` and 404s every
+          # request when given the static `dist/` layout. Build output is
+          # split into `dist/client/` (static) + `dist/server/` (skipped
+          # because output:'static'), so the static site lives one level
+          # down. Diagnostic evidence: PR #799 run 24969528005.
+          # http-server is a single-purpose static server — exactly what the
+          # round-trip needs (it talks to live staging edge fns, not the
+          # website backend), and it sidesteps the adapter incompatibility.
+          # Bind 127.0.0.1 explicitly so wait-on's IPv4 probe matches.
+          nohup npx --yes http-server packages/website/dist/client \
+            -p 4321 -a 127.0.0.1 -s \
+            > "$GITHUB_WORKSPACE/test-results/preview.log" 2>&1 &
           echo $! > "$GITHUB_WORKSPACE/test-results/preview.pid"
 
       - name: Wait for preview server
-        # Use 127.0.0.1 to match the --host flag the preview server binds to.
+        # Use 127.0.0.1 to match the -a flag the static server binds to.
         # wait-on against `localhost` hits IPv6 (::1) first on GH-hosted
-        # runners and times out because astro preview only listens on IPv4.
+        # runners and times out because http-server only listens on IPv4
+        # when -a 127.0.0.1 is passed.
         run: npx --yes wait-on http://127.0.0.1:4321/ -t 60000
 
       - name: Run round-trip spec
