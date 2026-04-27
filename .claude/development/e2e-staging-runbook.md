@@ -29,9 +29,9 @@ All scoped to the `e2e-staging` environment. Other workflows cannot read them.
 | `STAGING_DB_PASSWORD` | Supabase project Database settings (staging) | `psql` for migration drift preflight + defensive cleanup |
 | `E2E_TEST_USER_PASSWORD` | Generate via `openssl rand -base64 32` | Sign-in for the dedicated test user |
 | `E2E_TEST_USER_ID` | Output of `seed-e2e-device-login-user.ts --emit-id` | Asserted by spec to confirm correct user claimed the code |
-| `VERCEL_TOKEN` | <https://vercel.com/account/tokens> ("skillsmith-e2e-staging") | `vercel link` + `vercel build` + `vercel dev` auth (SMI-4508) |
-| `VERCEL_ORG_ID` | `team_ClhT43du6FnDx4SUW4JB7lcS` (`packages/website/.vercel/project.json`) | Tells `vercel link` which team to scope to |
-| `VERCEL_PROJECT_ID` | `prj_NJbrm61yTXjo4IJPXDHqAg7XFCCd` (`packages/website/.vercel/project.json`) | Tells `vercel link` which project to bind |
+| `VERCEL_TOKEN` | <https://vercel.com/account/tokens> ("skillsmith-e2e-staging") | `vercel pull` + `vercel build` + `vercel dev` auth (SMI-4508) |
+| `VERCEL_ORG_ID` | `team_ClhT43du6FnDx4SUW4JB7lcS` (`packages/website/.vercel/project.json`) | Tells `vercel pull` which team to scope to |
+| `VERCEL_PROJECT_ID` | `prj_NJbrm61yTXjo4IJPXDHqAg7XFCCd` (`packages/website/.vercel/project.json`) | Tells `vercel pull` which project to bind |
 
 ## One-time setup
 
@@ -172,7 +172,7 @@ is intentionally not cached — it's small (~50 MB) and pinning to
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `Error: Vercel CLI v… requires authentication` | `VERCEL_TOKEN` missing or expired | Re-add or rotate the token (see above) |
-| `Project not linked` after `vercel link --yes` | `VERCEL_ORG_ID` or `VERCEL_PROJECT_ID` mismatch | Verify against `packages/website/.vercel/project.json` locally; update the env-secret |
+| `No Project Settings found locally` after `vercel pull` | `VERCEL_ORG_ID` or `VERCEL_PROJECT_ID` mismatch, or token doesn't have access to the team | Verify env vars against `packages/website/.vercel/project.json` locally; ensure the token's account is a member of the team |
 | `vercel build` exits with `module not found` for an Astro integration | Astro deps drift between `package.json` and Vercel's expected version | Run `npm install` in `packages/website/` locally and commit the lockfile delta |
 | `wait-on http://127.0.0.1:4321/ -t 90000` timeout | `vercel dev` cold-start exceeded 90s | Check `test-results/preview.log` artifact for `Ready! Available at …`; if startup is consistently > 90s, raise the timeout |
 | `Content-Security-Policy` blocks `connect-src` to staging Supabase | `vercel.json` CSP regression | `grep connect-src packages/website/vercel.json` should include `*.supabase.co`; if missing, restore it (P-1 surface check) |

@@ -201,7 +201,7 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
-      - name: Vercel link + build website
+      - name: Vercel pull + build website
         working-directory: packages/website
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -209,9 +209,13 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
           set -eu
-          # SMI-4508: vercel dev needs `.vercel/project.json` to know what to serve.
-          # `vercel link --yes` writes it from the env-vars without prompting.
-          vercel link --yes --token "$VERCEL_TOKEN"
+          # SMI-4508: `vercel pull` is the canonical CI primitive for retrieving
+          # project settings non-interactively. It uses VERCEL_ORG_ID +
+          # VERCEL_PROJECT_ID to write `.vercel/project.json` (which `vercel build`
+          # and `vercel dev` need) and pulls preview-environment variables.
+          # `vercel link --yes` requires interactive selection even with env vars
+          # set — confirmed via run 24976302807: "No Project Settings found locally."
+          vercel pull --yes --environment=preview --token "$VERCEL_TOKEN"
           # vercel build produces .vercel/output/ which `vercel dev` serves from.
           # PUBLIC_* envs flow through to the Astro bundle so /device talks to
           # staging Supabase.
