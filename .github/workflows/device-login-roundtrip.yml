@@ -109,7 +109,13 @@ jobs:
       STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
       E2E_TEST_USER_PASSWORD: ${{ secrets.E2E_TEST_USER_PASSWORD }}
       E2E_TEST_USER_ID: ${{ secrets.E2E_TEST_USER_ID }}
-      WEBSITE_BASE_URL: 'http://localhost:4321'
+      # SMI-4496: bind to 127.0.0.1 to match the http-server `-a 127.0.0.1`
+      # flag in the preview-server step. `localhost` resolves to ::1 (IPv6)
+      # first on GH-hosted runners via /etc/hosts, and Chromium's page.goto
+      # against an IPv6 URL hangs indefinitely when http-server only listens
+      # on IPv4 → spec eats its full 2-min budget. Same IPv4-family lesson
+      # as SMI-4493 (wait-on).
+      WEBSITE_BASE_URL: 'http://127.0.0.1:4321'
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -161,7 +167,16 @@ jobs:
           npm run build -w @skillsmith/core
           npm run build -w @skillsmith/cli
           npm run build -w @skillsmith/website
-          echo "CLI_PATH=$GITHUB_WORKSPACE/packages/cli/dist/index.js" >> "$GITHUB_ENV"
+          # SMI-4507: CLI tsc emits to dist/src/index.js (matches the
+          # `bin` field in packages/cli/package.json:
+          #   "bin": { "skillsmith": "dist/src/index.js", ... }).
+          # Earlier iterations of this workflow hardcoded dist/index.js,
+          # which made every CLI invocation crash with MODULE_NOT_FOUND.
+          # Symptom was the round-trip's 2-min Playwright timeout, with
+          # parseUserCode silently swallowing stream-close before its
+          # own 30s timer could fire — diagnosed via the cli.snapshot()
+          # log captured by SMI-4506.
+          echo "CLI_PATH=$GITHUB_WORKSPACE/packages/cli/dist/src/index.js" >> "$GITHUB_ENV"
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
@@ -219,6 +234,7 @@ jobs:
           name: device-login-roundtrip-${{ github.run_id }}
           path: |
             packages/website/playwright-report/
+            packages/website/test-results/
             test-results/cli-*.log
             test-results/preview.log
           retention-days: 7
