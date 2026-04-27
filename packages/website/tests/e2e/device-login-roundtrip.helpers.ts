@@ -151,33 +151,47 @@ export function spawnCli(opts: SpawnCliOpts): CliHandle {
 
 const CODE_RE = /│\s*([A-Z0-9]{4})-?([A-Z0-9]{4})\s*│/
 
-/**
- * Drain `stdout` line-by-line until the boxed user_code appears, or
- * timeoutMs elapses.
- */
+// SMI-4507: parseUserCode rejects on stream-close-without-a-code. When the
+// CLI subprocess crashes immediately, stdout closes with no boxed code line.
+// Previous version cleared the 30s timer inside `rl.on('close')` then never
+// settled — eating the full 2-min Playwright budget instead of failing fast.
 export async function parseUserCode(
   stdout: Readable,
   opts: { timeoutMs: number }
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const rl = createInterface({ input: stdout })
-    const timer = setTimeout(() => {
+    let settled = false
+    const settle = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
       rl.removeAllListeners('line')
       rl.close()
-      reject(new Error(`[SMI-4460] parseUserCode timed out after ${opts.timeoutMs}ms`))
-    }, opts.timeoutMs)
-
+      fn()
+    }
+    const timer = setTimeout(
+      () =>
+        settle(() =>
+          reject(new Error(`[SMI-4460] parseUserCode timed out after ${opts.timeoutMs}ms`))
+        ),
+      opts.timeoutMs
+    )
     rl.on('line', (raw) => {
       const line = stripAnsi(raw)
       const m = line.match(CODE_RE)
-      if (m) {
-        clearTimeout(timer)
-        rl.removeAllListeners('line')
-        rl.close()
-        resolve(`${m[1]}${m[2]}`)
-      }
+      if (m) settle(() => resolve(`${m[1]}${m[2]}`))
     })
-    rl.on('close', () => clearTimeout(timer))
+    rl.on('close', () =>
+      settle(() =>
+        reject(
+          new Error(
+            '[SMI-4460] parseUserCode: stdout closed before user_code appeared ' +
+              '(CLI subprocess likely crashed — check cli-*.log for stderr)'
+          )
+        )
+      )
+    )
   })
 }
 

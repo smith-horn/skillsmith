@@ -167,7 +167,16 @@ jobs:
           npm run build -w @skillsmith/core
           npm run build -w @skillsmith/cli
           npm run build -w @skillsmith/website
-          echo "CLI_PATH=$GITHUB_WORKSPACE/packages/cli/dist/index.js" >> "$GITHUB_ENV"
+          # SMI-4507: CLI tsc emits to dist/src/index.js (matches the
+          # `bin` field in packages/cli/package.json:
+          #   "bin": { "skillsmith": "dist/src/index.js", ... }).
+          # Earlier iterations of this workflow hardcoded dist/index.js,
+          # which made every CLI invocation crash with MODULE_NOT_FOUND.
+          # Symptom was the round-trip's 2-min Playwright timeout, with
+          # parseUserCode silently swallowing stream-close before its
+          # own 30s timer could fire — diagnosed via the cli.snapshot()
+          # log captured by SMI-4506.
+          echo "CLI_PATH=$GITHUB_WORKSPACE/packages/cli/dist/src/index.js" >> "$GITHUB_ENV"
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
