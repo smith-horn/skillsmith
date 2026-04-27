@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/core` are documented here.
 
+## v0.5.6
+
+- **Fix**: SMI-4486 `initializeSchema()` now runs migrations after creating base tables; previously recorded SCHEMA_VERSION up front, causing `runMigrations` to skip every migration and leave fresh DBs missing v5+ tables (skill_versions, skill_advisories, etc.) (#795)
+
 ## v0.5.5
 
 - Version bump
