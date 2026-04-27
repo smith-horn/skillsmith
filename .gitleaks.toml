@@ -59,6 +59,14 @@ regexes = [
   '''uses:\s+[a-zA-Z0-9._/-]+@[a-f0-9]{40}''',
 ]
 
+[[rules.allowlists]]
+description = "SMI-4508: Vercel team/project IDs are public identifiers (visible in packages/website/.vercel/project.json), not secrets. The vercel-token rule's [a-zA-Z0-9]{24} regex matches the 24-char body of the IDs (without the team_/prj_ prefix). Only VERCEL_TOKEN itself is sensitive."
+regexTarget = "match"
+regexes = [
+  '''ClhT43du6FnDx4SUW4JB7lcS''',
+  '''NJbrm61yTXjo4IJPXDHqAg7X''',
+]
+
 [[rules]]
 id = "clerk-secret"
 description = "Clerk Secret Key"
