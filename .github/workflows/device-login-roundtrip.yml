@@ -109,7 +109,13 @@ jobs:
       STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
       E2E_TEST_USER_PASSWORD: ${{ secrets.E2E_TEST_USER_PASSWORD }}
       E2E_TEST_USER_ID: ${{ secrets.E2E_TEST_USER_ID }}
-      WEBSITE_BASE_URL: 'http://localhost:4321'
+      # SMI-4496: bind to 127.0.0.1 to match the http-server `-a 127.0.0.1`
+      # flag in the preview-server step. `localhost` resolves to ::1 (IPv6)
+      # first on GH-hosted runners via /etc/hosts, and Chromium's page.goto
+      # against an IPv6 URL hangs indefinitely when http-server only listens
+      # on IPv4 → spec eats its full 2-min budget. Same IPv4-family lesson
+      # as SMI-4493 (wait-on).
+      WEBSITE_BASE_URL: 'http://127.0.0.1:4321'
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -219,6 +225,7 @@ jobs:
           name: device-login-roundtrip-${{ github.run_id }}
           path: |
             packages/website/playwright-report/
+            packages/website/test-results/
             test-results/cli-*.log
             test-results/preview.log
           retention-days: 7

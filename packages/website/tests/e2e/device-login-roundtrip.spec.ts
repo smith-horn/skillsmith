@@ -49,6 +49,17 @@ test.describe('SMI-4460 — Device-code login round-trip (staging)', () => {
   let cli: CliHandle | undefined
   let result: CliExitResult | undefined
 
+  // SMI-4495: CLI flow test — iPhone viewport (mobile, WebKit) provides no
+  // additional coverage and the CI runner only installs Chromium
+  // (`npx playwright install chromium`), so mobile fails immediately with
+  // `webkit-2272/pw_run.sh: Executable doesn't exist`. Scope to desktop only.
+  test.beforeEach(async ({}, testInfo) => {
+    test.skip(
+      testInfo.project.name !== 'desktop',
+      'SMI-4495: CLI login flow runs on desktop project only'
+    )
+  })
+
   test.afterEach(async ({}, testInfo) => {
     if (result) dumpCliLogs(testInfo.testId, result)
     if (deviceCode) {
