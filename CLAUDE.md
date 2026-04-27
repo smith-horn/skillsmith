@@ -455,6 +455,8 @@ A `SessionStart` hook (`scripts/session-start-priming.sh`) writes a transient pr
 
 **Per-class rank boost (SMI-4468)**: `rerank.ts` multiplies similarity by 1.5x for `class: feedback`/`project` chunks and 0.85x for `class: wave-spec`/`plans-review` chunks before applying absorption/supersession penalties. Tunable via `SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY` and `SKILLSMITH_DOC_RETRIEVAL_DAMPEN_PROCESS` (clamped to [0.1, 5.0]).
 
+**Retrieval-first directive (SMI-4451 Step 7c)**: Before `Read`-ing files under `docs/internal/**`, `.claude/development/**`, or matching `feedback_*` / `project_*` memory patterns, call `mcp__skillsmith-doc-retrieval__skill_docs_search` first. Read the full file only when retrieval misses the answer or when you need precise line-level citation. The SessionStart hook front-loads this for `smi-*`/`wave-*` branches; this directive extends the same discipline to ad-hoc sessions and to mid-session reads where the priming file has aged out.
+
 ---
 
 ## Troubleshooting
