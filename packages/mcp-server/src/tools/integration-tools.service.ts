@@ -49,7 +49,6 @@ interface SupabaseListResult {
 // Constants
 // ============================================================================
 
-const KEY_HMAC_SECRET = 'skillsmith-api-key'
 const TEST_RATE_LIMIT_MS = 60_000
 const TEST_DELIVERY_TIMEOUT_MS = 10_000
 const API_KEY_PREFIX_LENGTH = 15 // "sk_int_" (7) + 8 chars
@@ -57,6 +56,30 @@ const API_KEY_PREFIX_LENGTH = 15 // "sk_int_" (7) + 8 chars
 // ============================================================================
 // Crypto helpers
 // ============================================================================
+
+/**
+ * HMAC key for hashing integration API keys. Read from
+ * `SKILLSMITH_API_KEY_HMAC_SECRET` at first use (lazy so process.env writes from
+ * the test harness or boot-time loaders apply). Replaces a previously
+ * hardcoded constant (CodeQL js/insufficient-password-hash, CWE-916) — a known
+ * static key meant a leaked api_keys table could be reverse-cracked offline.
+ *
+ * Must be the same value across every MCP host that creates or verifies
+ * integration API keys; threat model + distribution channel matches
+ * SUPABASE_SERVICE_ROLE_KEY (only Team+ admins touching the integrations
+ * surface need it).
+ */
+function getKeyHmacSecret(): string {
+  const secret = process.env.SKILLSMITH_API_KEY_HMAC_SECRET
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      'SKILLSMITH_API_KEY_HMAC_SECRET must be set to a 32+ character random ' +
+        'secret before integration tools can be used. ' +
+        'Generate one via: openssl rand -base64 48'
+    )
+  }
+  return secret
+}
 
 function generateSigningSecret(): string {
   return 'whsec_' + randomBytes(32).toString('hex')
@@ -68,7 +91,7 @@ function generateApiKey(): string {
 
 /** Hash an API key for storage (one-way) */
 export function hashApiKey(key: string): string {
-  return createHmac('sha256', KEY_HMAC_SECRET).update(key).digest('hex')
+  return createHmac('sha256', getKeyHmacSecret()).update(key).digest('hex')
 }
 
 /** Compute HMAC-SHA256 signature for webhook delivery */
