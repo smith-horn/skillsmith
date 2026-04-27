@@ -29,6 +29,9 @@ All scoped to the `e2e-staging` environment. Other workflows cannot read them.
 | `STAGING_DB_PASSWORD` | Supabase project Database settings (staging) | `psql` for migration drift preflight + defensive cleanup |
 | `E2E_TEST_USER_PASSWORD` | Generate via `openssl rand -base64 32` | Sign-in for the dedicated test user |
 | `E2E_TEST_USER_ID` | Output of `seed-e2e-device-login-user.ts --emit-id` | Asserted by spec to confirm correct user claimed the code |
+| `VERCEL_TOKEN` | <https://vercel.com/account/tokens> ("skillsmith-e2e-staging") | `vercel pull` + `vercel build` + `vercel dev` auth (SMI-4508) |
+| `VERCEL_ORG_ID` | `team_ClhT43du6FnDx4SUW4JB7lcS` (`packages/website/.vercel/project.json`) | Tells `vercel pull` which team to scope to |
+| `VERCEL_PROJECT_ID` | `prj_NJbrm61yTXjo4IJPXDHqAg7XFCCd` (`packages/website/.vercel/project.json`) | Tells `vercel pull` which project to bind |
 
 ## One-time setup
 
@@ -109,3 +112,70 @@ migrate into Docker.
 `device-login-roundtrip-cleanup.yml` runs Sundays 04:00 UTC and deletes
 `audit_logs` rows older than 7 days for the test user. Without it, the
 test user dominates the staging audit-event distribution after ~6 months.
+
+## Vercel runtime (SMI-4508)
+
+The workflow runs `vercel build` + `vercel dev` instead of a static
+`http-server` so SSR-only pages (`device.astro`, `login.astro`,
+`signup.astro`, `complete-profile.astro`, `pricing.astro`,
+`return-to-cli.astro`, `check-email.astro`) render correctly. http-server
+returned 404 for `/device` (SSR handler emitted to `dist/server/`, not
+`dist/client/`), causing the round-trip to fail with a 15s
+`#state-preview` locator timeout — even though every other layer of the
+test was healthy. See plan: SMI-4508 (Vercel CLI runtime).
+
+### Why not `astro preview`
+
+`packages/website/astro.config.mjs` sets `adapter: vercel()`. Astro's
+preview server expects routing through `.vercel/output/`; with the
+default `output: 'static'` layout the build splits into
+`dist/client/` (static) + `dist/server/` (SSR handler), and `astro
+preview` 404s every request. PR #799 run 24969528005 captured the
+diagnostic. `vercel dev` reads from `.vercel/output/` directly and
+runs the same edge runtime as prod, giving us prod-parity SSR locally.
+
+### Required secrets
+
+`VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` (see table above).
+The token must be scoped read + deploy for the
+`team_ClhT43du6FnDx4SUW4JB7lcS` team — narrower scopes (read-only,
+project-only) reject `vercel build`'s upload phase.
+
+### Token rotation cadence
+
+90 days, aligned with the `VSCE_PAT` / fine-grained-PAT pattern.
+Rotate by:
+
+1. Visit <https://vercel.com/account/tokens>, generate a fresh token
+   named `skillsmith-e2e-staging-YYYYMM`.
+2. Update `VERCEL_TOKEN` in the `e2e-staging` GitHub Environment.
+3. Trigger the workflow:
+   `gh workflow run device-login-roundtrip.yml`. Confirm the
+   "Vercel link + build website" step exits 0.
+4. Revoke the prior token in the Vercel UI.
+
+`VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` are not secret in the
+cryptographic sense (visible in `packages/website/.vercel/project.json`
+locally) but kept in the environment for parity with `VERCEL_TOKEN`.
+They only rotate if the team or project ID changes.
+
+### Cache strategy
+
+The workflow caches `~/.vercel/cache/` keyed on the website source
+hash + `vercel.json`. Warm hits save ~20s/run on `vercel build`. The
+global `vercel` binary (installed via `npm install -g vercel@latest`)
+is intentionally not cached — it's small (~50 MB) and pinning to
+`@latest` keeps us aligned with current edge runtime fixes.
+
+### Failure-mode runbook
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `Error: Vercel CLI v… requires authentication` | `VERCEL_TOKEN` missing or expired | Re-add or rotate the token (see above) |
+| `No Project Settings found locally` after `vercel pull` | `VERCEL_ORG_ID` or `VERCEL_PROJECT_ID` mismatch, or token doesn't have access to the team | Verify env vars against `packages/website/.vercel/project.json` locally; ensure the token's account is a member of the team |
+| `vercel build` exits with `module not found` for an Astro integration | Astro deps drift between `package.json` and Vercel's expected version | Run `npm install` in `packages/website/` locally and commit the lockfile delta |
+| `wait-on http://127.0.0.1:4321/ -t 90000` timeout, preview.log shows `sh: 1: astro: not found` | `vercel dev` auto-detected dev command spawns sub-shell without npm's .bin in PATH | Step already prepends `packages/website/node_modules/.bin` and root `node_modules/.bin` to `PATH`. If a different binary is missing, add its containing `.bin` dir |
+| `wait-on http://127.0.0.1:4321/ -t 90000` timeout, preview.log shows `Ready! Available at …` | Astro started but bound to wrong interface | Confirm `--listen 127.0.0.1:4321`; check Astro didn't pick a different port |
+| `wait-on http://127.0.0.1:4321/ -t 90000` timeout, preview.log empty/short | `vercel dev` cold-start exceeded 90s before producing output | Raise the wait-on timeout to 120000; check whether Vercel CLI install or first-build is dominating cold-start |
+| `Content-Security-Policy` blocks `connect-src` to staging Supabase | `vercel.json` CSP regression | `grep connect-src packages/website/vercel.json` should include `*.supabase.co`; if missing, restore it (P-1 surface check) |
+| 4xx/5xx from `/device?user_code=…` in `preview.log` | Staging supabase down or migration drift | Check `audit_logs` via pooler-psql; verify `claim_device_token` body (drift preflight should have already failed) |

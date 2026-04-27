@@ -161,22 +161,19 @@ jobs:
         if: env.NEGATIVE_CONTROL != 'none'
         run: ./scripts/e2e-negative-control.sh "$NEGATIVE_CONTROL"
 
-      - name: Build CLI + website
+      - name: Build CLI
         run: |
           set -eu
           npm run build -w @skillsmith/core
           npm run build -w @skillsmith/cli
-          npm run build -w @skillsmith/website
-          # SMI-4507: CLI tsc emits to dist/src/index.js (matches the
-          # `bin` field in packages/cli/package.json:
-          #   "bin": { "skillsmith": "dist/src/index.js", ... }).
-          # Earlier iterations of this workflow hardcoded dist/index.js,
-          # which made every CLI invocation crash with MODULE_NOT_FOUND.
-          # Symptom was the round-trip's 2-min Playwright timeout, with
-          # parseUserCode silently swallowing stream-close before its
-          # own 30s timer could fire — diagnosed via the cli.snapshot()
-          # log captured by SMI-4506.
-          echo "CLI_PATH=$GITHUB_WORKSPACE/packages/cli/dist/src/index.js" >> "$GITHUB_ENV"
+          # SMI-4511: derive CLI path from package.json `bin` field rather
+          # than hardcoding. Earlier iterations of this workflow hardcoded
+          # dist/index.js (MODULE_NOT_FOUND) and later dist/src/index.js
+          # (works today, but silently breaks if the CLI build output path
+          # ever shifts). The `bin` field is the single source of truth:
+          #   "bin": { "skillsmith": "dist/src/index.js", ... }.
+          CLI_REL=$(node -p "require('./packages/cli/package.json').bin.skillsmith")
+          echo "CLI_PATH=$GITHUB_WORKSPACE/packages/cli/$CLI_REL" >> "$GITHUB_ENV"
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
@@ -193,36 +190,62 @@ jobs:
             -o /dev/null
           echo "auth-device-code warmed."
 
-      - name: Start website preview server (http-server on dist/client)
+      - name: Cache Vercel build cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.vercel/cache
+          key: vercel-cache-${{ runner.os }}-${{ hashFiles('packages/website/**/*.ts', 'packages/website/**/*.tsx', 'packages/website/**/*.astro', 'packages/website/**/*.mjs', 'packages/website/**/*.json', 'packages/website/vercel.json') }}
+          restore-keys: |
+            vercel-cache-${{ runner.os }}-
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Vercel pull + build website
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
           set -eu
-          # SMI-4493: test-results/ is gitignored, so it never exists in the
-          # runner's checkout. Without mkdir, both redirects below fail and
-          # `set -eu` aborts the step before the preview server can start.
+          # SMI-4508: `vercel pull` is the canonical CI primitive for retrieving
+          # project settings non-interactively. It uses VERCEL_ORG_ID +
+          # VERCEL_PROJECT_ID to write `.vercel/project.json` (which `vercel build`
+          # and `vercel dev` need) and pulls preview-environment variables.
+          # `vercel link --yes` requires interactive selection even with env vars
+          # set — confirmed via run 24976302807: "No Project Settings found locally."
+          vercel pull --yes --environment=preview --token "$VERCEL_TOKEN"
+          # vercel build produces .vercel/output/ which `vercel dev` serves from.
+          # PUBLIC_* envs flow through to the Astro bundle so /device talks to
+          # staging Supabase.
+          vercel build --token "$VERCEL_TOKEN"
+
+      - name: Start vercel dev (Astro SSR + edge functions)
+        working-directory: packages/website
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -eu
           mkdir -p "$GITHUB_WORKSPACE/test-results"
-          # SMI-4494: do NOT use `astro preview` here. The website's
-          # astro.config.mjs sets `adapter: vercel()` alongside
-          # `output: 'static'`. With the vercel adapter loaded, the preview
-          # server expects routing through `.vercel/output/` and 404s every
-          # request when given the static `dist/` layout. Build output is
-          # split into `dist/client/` (static) + `dist/server/` (skipped
-          # because output:'static'), so the static site lives one level
-          # down. Diagnostic evidence: PR #799 run 24969528005.
-          # http-server is a single-purpose static server — exactly what the
-          # round-trip needs (it talks to live staging edge fns, not the
-          # website backend), and it sidesteps the adapter incompatibility.
-          # Bind 127.0.0.1 explicitly so wait-on's IPv4 probe matches.
-          nohup npx --yes http-server packages/website/dist/client \
-            -p 4321 -a 127.0.0.1 -s \
+          # SMI-4508: vercel dev serves /device (SSR) and /api/* via the same
+          # edge runtime as prod. SMI-4493 IPv4 family lesson still applies —
+          # bind explicitly to 127.0.0.1.
+          # PATH augmentation: vercel auto-detects Astro and runs `astro dev
+          # --port $PORT`, but spawns it in a sub-shell that doesn't inherit
+          # npm's .bin lookup — confirmed via run 24976672344 preview.log:
+          # "sh: 1: astro: not found". Prepend the workspace + root .bin so
+          # both `astro` (workspace) and any tool the dev command shells out
+          # to (root) resolve.
+          export PATH="$GITHUB_WORKSPACE/packages/website/node_modules/.bin:$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
+          nohup vercel dev --token "$VERCEL_TOKEN" --listen 127.0.0.1:4321 \
             > "$GITHUB_WORKSPACE/test-results/preview.log" 2>&1 &
           echo $! > "$GITHUB_WORKSPACE/test-results/preview.pid"
 
       - name: Wait for preview server
-        # Use 127.0.0.1 to match the -a flag the static server binds to.
-        # wait-on against `localhost` hits IPv6 (::1) first on GH-hosted
-        # runners and times out because http-server only listens on IPv4
-        # when -a 127.0.0.1 is passed.
-        run: npx --yes wait-on http://127.0.0.1:4321/ -t 60000
+        # IPv4 to match `vercel dev --listen 127.0.0.1` and SMI-4493 wait-on lesson.
+        # 90s (vs prior 60s for http-server) — vercel dev cold-start is ~20-30s.
+        run: npx --yes wait-on http://127.0.0.1:4321/ -t 90000
 
       - name: Run round-trip spec
         run: npx playwright test --config=packages/website/playwright.config.ts packages/website/tests/e2e/device-login-roundtrip.spec.ts --reporter=list
