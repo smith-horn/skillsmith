@@ -352,6 +352,50 @@ Index local skills from `~/.claude/skills/` directory.
 | `SKILLSMITH_TELEMETRY_ENABLED` | Enable anonymous telemetry | `false` |
 | `SKILLSMITH_USE_WASM` | Force WASM SQLite driver (sql.js) | `false` |
 | `POSTHOG_API_KEY` | PostHog API key (required if telemetry enabled) | - |
+| `SKILLSMITH_API_KEY_HMAC_SECRET` | HMAC secret for hashing Custom Integration API keys before DB storage. Required if you invoke `webhook_configure` or `api_key_manage`. See setup below. | - |
+
+### Custom Integration Setup (Team+ admins)
+
+The `webhook_configure` and `api_key_manage` tools hash secrets server-side via HMAC-SHA-256 before persisting to the shared `api_keys` table. The HMAC key lives in `SKILLSMITH_API_KEY_HMAC_SECRET` rather than as a hardcoded constant — defense-in-depth so a leaked DB cannot be reverse-cracked offline.
+
+**Distribution model**: identical to `SUPABASE_SERVICE_ROLE_KEY`. The same secret value must be set on every MCP host that creates or verifies Custom Integration API keys, otherwise hashes computed on host A won't match hashes verified on host B.
+
+If the variable is missing or shorter than 32 characters when these tools are invoked, the call fails fast with:
+
+```
+SKILLSMITH_API_KEY_HMAC_SECRET must be set to a 32+ character random secret
+before integration tools can be used. Generate one via: openssl rand -base64 48
+```
+
+**First-time provisioning** (Skillsmith admin, once per organization):
+
+```bash
+openssl rand -base64 48
+```
+
+Distribute that value through the same secure channel used for `SUPABASE_SERVICE_ROLE_KEY` (e.g., 1Password vault, encrypted onboarding email). Each Team-tier admin sets it on their own MCP host alongside their other secrets:
+
+```jsonc
+// ~/.claude/settings.json
+{
+  "mcpServers": {
+    "skillsmith": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_your_personal_key",
+        "SKILLSMITH_LICENSE_KEY": "sklic_your_team_license",
+        "SUPABASE_SERVICE_ROLE_KEY": "eyJ...your_service_role_jwt",
+        "SKILLSMITH_API_KEY_HMAC_SECRET": "<the shared 32+ char secret>"
+      }
+    }
+  }
+}
+```
+
+**Rotation**: replace the secret on every host in lockstep. Existing rows in the `api_keys` table become unverifiable after rotation, so coordinate with affected admins or invalidate keys explicitly. As of 2026-04-26 the table has zero rows, so the first rotation post-launch is free.
+
+If you only use Community/Individual tools (search, install, recommend, etc.), this variable is not needed.
 
 ### WASM Fallback (v0.3.18+)
 
