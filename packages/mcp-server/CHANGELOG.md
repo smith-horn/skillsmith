@@ -2,6 +2,12 @@
 
 All notable changes to `@skillsmith/mcp-server` are documented here.
 
+## v0.4.13
+
+- **Fix**: map curated trust tier through MCP surface (SMI-4520) (#822)
+- **Fix**: batch close 4 GitHub security alerts (SMI-4499/4501/4502/4504) (#805)
+- **Fix**: rotate KEY_HMAC_SECRET to env var (SMI-4503, CodeQL #81) (#807)
+
 ## v0.4.12
 
 - **Fix**: team-workspace uses service-role client post-license-resolution (SMI-4312) (#650)
