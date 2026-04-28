@@ -82,8 +82,9 @@ export function parseSkillId(id: string): { source?: string; author: string; nam
 /**
  * Map MCP trust tier to database trust tier.
  *
- * Types are now unified: verified, community, experimental, unknown, local
+ * Types are now unified: verified, community, experimental, curated, unknown, local
  * SMI-1809: Added 'local' for local skills from ~/.claude/skills/
+ * SMI-2381 / SMI-4520: Added 'curated' for third-party publishers
  *
  * @param mcpTier - MCP trust tier
  * @returns Database trust tier
@@ -96,6 +97,8 @@ export function mapTrustTierToDb(mcpTier: MCPTrustTier): DBTrustTier {
       return 'community'
     case 'experimental':
       return 'experimental'
+    case 'curated':
+      return 'curated'
     case 'local':
       return 'local'
     case 'unknown':
@@ -107,8 +110,9 @@ export function mapTrustTierToDb(mcpTier: MCPTrustTier): DBTrustTier {
  * Map database trust tier to MCP trust tier.
  *
  * Accepts string input and validates, returning 'unknown' for invalid values.
- * Types are unified: verified, community, experimental, unknown, local
+ * Types are unified: verified, community, experimental, curated, unknown, local
  * SMI-1809: Added 'local' for local skills from ~/.claude/skills/
+ * SMI-2381 / SMI-4520: Added 'curated' for third-party publishers
  *
  * @param dbTier - Database trust tier (string or typed)
  * @returns MCP trust tier
@@ -121,6 +125,8 @@ export function mapTrustTierFromDb(dbTier: DBTrustTier | string): MCPTrustTier {
       return 'community'
     case 'experimental':
       return 'experimental'
+    case 'curated':
+      return 'curated'
     case 'local':
       return 'local'
     case 'unknown':
@@ -254,6 +260,7 @@ export function getTrustBadge(tier: MCPTrustTier): string {
     verified: '[VERIFIED]',
     community: '[COMMUNITY]',
     experimental: '[EXPERIMENTAL]',
+    curated: '[CURATED]',
     unknown: '[UNKNOWN]',
     local: '[LOCAL]',
   }

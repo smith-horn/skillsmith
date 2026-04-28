@@ -268,6 +268,19 @@ describe('Search Tool branch coverage', () => {
       expect(result.filters.trustTier).toBe('verified')
     })
 
+    it('should allow search with curated trust_tier filter (SMI-4520)', async () => {
+      // Pre-fix this threw VALIDATION_INVALID_TYPE; post-fix curated must pass through.
+      const result = await executeSearch(
+        {
+          trust_tier: 'curated',
+        },
+        branchContext
+      )
+
+      expect(result.results).toBeDefined()
+      expect(result.filters.trustTier).toBe('curated')
+    })
+
     it('should allow search with only min_score filter', async () => {
       const result = await executeSearch(
         {
