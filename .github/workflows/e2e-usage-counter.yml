@@ -36,6 +36,8 @@ jobs:
     name: Usage Counter E2E
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # SMI-4521: STAGING_SUPABASE_* secrets are scoped to this environment.
+    environment: e2e-staging
     # Only run after a successful edge-function deploy.
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
 
