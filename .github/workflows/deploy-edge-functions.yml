@@ -1,5 +1,12 @@
 # SMI-4256: Auto-deploy edge functions on merge to main
-# Prevents SMI-4252-class failures (function merged but never deployed)
+# SMI-4528: Fan out to BOTH prod and staging in parallel.
+#
+# Topology: detect → { deploy-prod, deploy-staging } running in parallel.
+# Either deploy job can fail independently of the other (no cross `needs:`).
+# `detect` runs without git-crypt unlock — classify-deploy-mode.sh uses
+# `git diff --name-only` only, which never invokes the smudge filter
+# (audited 2026-04-28; see docs/internal/implementation/smi-4528-staging-edge-function-deploy-gap.md
+# Wave 1 Step 0b).
 name: Deploy Edge Functions
 
 on:
@@ -14,14 +21,20 @@ on:
         required: false
         type: string
       deploy_all:
-        description: 'Deploy ALL 25 functions (ignores function_name)'
+        description: 'Deploy ALL 31 functions (ignores function_name)'
         required: false
         type: boolean
         default: false
 
+# Single workflow-level concurrency group is intentional. A new push waits
+# for the entire prior workflow run (detect + both deploys) before starting,
+# even if prod finished first. This trades prod-deploy latency for atomic-pair
+# semantics — prod and staging never lap each other for the same source SHA.
+# Acceptable at current scale; revisit if staging deploys regularly exceed 5min
+# and prod-deploy queue depth becomes a problem (SMI-4528 plan-review M-1).
 concurrency:
   group: deploy-edge-functions
-  cancel-in-progress: false # Never cancel a deploy mid-flight
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -30,15 +43,51 @@ env:
   NODE_VERSION: '22'
 
 jobs:
-  deploy:
-    name: Deploy Edge Functions
+  detect:
+    name: Detect deploy scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.detect.outputs.mode }}
+      functions: ${{ steps.detect.outputs.functions }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 2 # Need parent commit for diff (assumes squash-merge)
+
+      - name: Determine functions to deploy
+        id: detect
+        env:
+          INPUT_DEPLOY_ALL: ${{ inputs.deploy_all }}
+          INPUT_FUNCTION_NAME: ${{ inputs.function_name }}
+        run: |
+          if [ "$INPUT_DEPLOY_ALL" = "true" ]; then
+            echo "mode=all" >> "$GITHUB_OUTPUT"
+            echo "functions=" >> "$GITHUB_OUTPUT"
+            echo "Deploying ALL functions (manual override)"
+          elif [ -n "$INPUT_FUNCTION_NAME" ]; then
+            echo "mode=specific" >> "$GITHUB_OUTPUT"
+            echo "functions=$INPUT_FUNCTION_NAME" >> "$GITHUB_OUTPUT"
+            echo "Deploying specific function: $INPUT_FUNCTION_NAME"
+          else
+            # push-triggered auto-deploy: delegate to the classifier script so
+            # the detection logic is unit-testable (scripts/tests/deploy-detection.test.sh).
+            # Priority: _shared/ → all, specific fns → changed, else → none.
+            ./scripts/classify-deploy-mode.sh >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy-prod:
+    name: Deploy edge functions (prod)
+    needs: detect
+    if: needs.detect.outputs.mode != 'none'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
     steps:
-      - name: Validate secrets
+      # Strictly per-job validation — must NOT reference STAGING_* secrets here.
+      - name: Validate secrets (prod)
         run: |
           if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
             echo "::error::SUPABASE_ACCESS_TOKEN secret is not set"
@@ -48,11 +97,11 @@ jobs:
             echo "::error::SUPABASE_PROJECT_REF secret is not set"
             exit 1
           fi
-          echo "Secrets validated"
+          echo "Prod secrets validated"
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
-          fetch-depth: 2 # Need parent commit for diff (assumes squash-merge)
+          fetch-depth: 2
 
       # REQUIRED — supabase/functions/** is encrypted. Without unlock,
       # deploy pushes encrypted binary blobs. Hard fail if key is missing.
@@ -80,41 +129,16 @@ jobs:
         with:
           version: latest
 
-      - name: Determine functions to deploy
-        id: detect
-        env:
-          INPUT_DEPLOY_ALL: ${{ inputs.deploy_all }}
-          INPUT_FUNCTION_NAME: ${{ inputs.function_name }}
-        run: |
-          if [ "$INPUT_DEPLOY_ALL" = "true" ]; then
-            echo "mode=all" >> "$GITHUB_OUTPUT"
-            echo "functions=" >> "$GITHUB_OUTPUT"
-            echo "Deploying ALL functions (manual override)"
-          elif [ -n "$INPUT_FUNCTION_NAME" ]; then
-            echo "mode=specific" >> "$GITHUB_OUTPUT"
-            echo "functions=$INPUT_FUNCTION_NAME" >> "$GITHUB_OUTPUT"
-            echo "Deploying specific function: $INPUT_FUNCTION_NAME"
-          else
-            # push-triggered auto-deploy: delegate to the classifier script so
-            # the detection logic is unit-testable (scripts/tests/deploy-detection.test.sh).
-            # Priority: _shared/ → all, specific fns → changed, else → none.
-            # The _shared/ branch MUST fire first so mixed-scope PRs fan out to every
-            # caller — a specific fn plus _shared/ is not a partial deploy.
-            ./scripts/classify-deploy-mode.sh >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Deploy
-        if: steps.detect.outputs.mode != 'none'
         run: |
           ARGS=(--project-ref "$SUPABASE_PROJECT_REF")
-          FUNCTIONS="${{ steps.detect.outputs.functions }}"
+          FUNCTIONS="${{ needs.detect.outputs.functions }}"
           if [ -n "$FUNCTIONS" ]; then
             ARGS+=(--functions "$FUNCTIONS")
           fi
           ./scripts/deploy-edge-functions.sh "${ARGS[@]}"
 
       - name: Verify deployment
-        if: steps.detect.outputs.mode != 'none'
         run: |
           echo "Verifying deployed functions..."
           ./scripts/validate-edge-functions.sh --check-deployment
@@ -122,13 +146,15 @@ jobs:
       - name: Generate deploy summary
         if: always()
         run: |
-          echo "## Edge Function Deploy" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Status**: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Trigger**: ${{ github.event_name }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Mode**: ${{ steps.detect.outputs.mode }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Functions**: ${{ steps.detect.outputs.functions || 'all' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Commit**: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Edge Function Deploy — prod"
+            echo ""
+            echo "- **Status**: ${{ job.status }}"
+            echo "- **Trigger**: ${{ github.event_name }}"
+            echo "- **Mode**: ${{ needs.detect.outputs.mode }}"
+            echo "- **Functions**: ${{ needs.detect.outputs.functions || 'all' }}"
+            echo "- **Commit**: ${{ github.sha }}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Alert on failure
         if: failure() && github.event_name == 'push'
@@ -140,10 +166,112 @@ jobs:
             --arg type "edge_function_deploy_failure" \
             --arg source "github-actions" \
             --arg workflow "deploy-edge-functions" \
+            --arg target "prod" \
             --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --arg functions "${{ steps.detect.outputs.functions || 'all' }}" \
+            --arg functions "${{ needs.detect.outputs.functions || 'all' }}" \
             --arg commit "${{ github.sha }}" \
-            '{type: $type, source: $source, details: {workflow: $workflow, run_url: $run_url, functions: $functions, commit: $commit}}' \
+            '{type: $type, source: $source, details: {workflow: $workflow, target: $target, run_url: $run_url, functions: $functions, commit: $commit}}' \
+          | curl -s -X POST "$SUPABASE_URL/functions/v1/alert-notify" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d @- || true
+
+  deploy-staging:
+    name: Deploy edge functions (staging)
+    needs: detect
+    if: needs.detect.outputs.mode != 'none'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # SMI-4528: gates STAGING_SUPABASE_PROJECT_REF on the e2e-staging environment
+    # (same env that scopes STAGING_SUPABASE_URL etc. for e2e-usage-counter).
+    environment: e2e-staging
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ secrets.STAGING_SUPABASE_PROJECT_REF }}
+    steps:
+      # Strictly per-job validation — must NOT reference repo-level prod ref here.
+      - name: Validate secrets (staging)
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::error::SUPABASE_ACCESS_TOKEN secret is not set"
+            exit 1
+          fi
+          if [ -z "$SUPABASE_PROJECT_REF" ]; then
+            echo "::error::STAGING_SUPABASE_PROJECT_REF is not set in the e2e-staging environment"
+            exit 1
+          fi
+          echo "Staging secrets validated"
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 2
+
+      - name: Unlock git-crypt
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          if [ -z "$GIT_CRYPT_KEY" ]; then
+            echo "::error::GIT_CRYPT_KEY secret is not set — cannot deploy encrypted edge functions"
+            exit 1
+          fi
+          sudo apt-get update && sudo apt-get install -y git-crypt
+          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+          echo "git-crypt unlocked"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@b60b5899c73b63a2d2d651b1e90db8d4c9392f51 # v1.6.0
+        with:
+          version: latest
+
+      - name: Deploy
+        run: |
+          ARGS=(--project-ref "$SUPABASE_PROJECT_REF")
+          FUNCTIONS="${{ needs.detect.outputs.functions }}"
+          if [ -n "$FUNCTIONS" ]; then
+            ARGS+=(--functions "$FUNCTIONS")
+          fi
+          ./scripts/deploy-edge-functions.sh "${ARGS[@]}"
+
+      - name: Verify deployment
+        run: |
+          echo "Verifying deployed functions..."
+          ./scripts/validate-edge-functions.sh --check-deployment
+
+      - name: Generate deploy summary
+        if: always()
+        run: |
+          {
+            echo "## Edge Function Deploy — staging"
+            echo ""
+            echo "- **Status**: ${{ job.status }}"
+            echo "- **Trigger**: ${{ github.event_name }}"
+            echo "- **Mode**: ${{ needs.detect.outputs.mode }}"
+            echo "- **Functions**: ${{ needs.detect.outputs.functions || 'all' }}"
+            echo "- **Commit**: ${{ github.sha }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Alert on failure
+        if: failure() && github.event_name == 'push'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          jq -n \
+            --arg type "edge_function_deploy_failure" \
+            --arg source "github-actions" \
+            --arg workflow "deploy-edge-functions" \
+            --arg target "staging" \
+            --arg run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg functions "${{ needs.detect.outputs.functions || 'all' }}" \
+            --arg commit "${{ github.sha }}" \
+            '{type: $type, source: $source, details: {workflow: $workflow, target: $target, run_url: $run_url, functions: $functions, commit: $commit}}' \
           | curl -s -X POST "$SUPABASE_URL/functions/v1/alert-notify" \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
