@@ -31,6 +31,9 @@ import {
   formatChangelogSection,
   type PackageSpec,
 } from './lib/version-utils.js'
+// SMI-4530: shared with scripts/check-publish-collision.mjs. Drift between the
+// two reserved-range definitions was the root cause of PR #824's stuck publish.
+import { RESERVED_RANGES, filterReservedVersions, isReserved } from './lib/reserved-ranges.mjs'
 
 // --- Types ---
 
@@ -317,21 +320,22 @@ export function checkVersionCollision(
 }
 
 /**
- * Reserved / deprecated version ranges per package.
+ * Re-export the shared `RESERVED_RANGES` map for downstream consumers and tests
+ * that previously imported it from this module.
  *
- * SMI-4207 / ADR-115: `@skillsmith/core@2.0.0`–`2.1.2` were self-published in January 2026
- * during an aborted version-strategy experiment and rolled back to the 0.4.x line. The full
- * `>=2.0.0 <3.0.0` range is now deprecated on npm and permanently reserved — the next major
- * for `@skillsmith/core` jumps from 0.x straight to 3.0.0.
+ * MUST stay in sync with scripts/check-publish-collision.mjs (the publish.yml
+ * workflow guard). Both now consume `scripts/lib/reserved-ranges.mjs` as the
+ * single source of truth — drift between the two collision implementations was
+ * the SMI-4530 failure mode and must not return. See SMI-4531 for the full
+ * unification follow-up (Rules 1/2/3 still duplicated by design — the shim
+ * avoids pulling tsx into GitHub Actions).
  *
- * Used by TWO guards:
- *   1. `checkReservedVersionRanges` — refuses proposing new versions in the range.
- *   2. `resolveNpmLookups` — filters the range out of `allVersions`/`latest` so normal
- *      patch bumps on the live 0.5.x line aren't blocked by orphaned 2.x entries.
+ * SMI-4207 / ADR-115 background: `@skillsmith/core@2.0.0`–`2.1.2` were
+ * self-published in January 2026 during an aborted version-strategy experiment
+ * and rolled back. The `>=2.0.0 <3.0.0` range is permanently deprecated; the
+ * next major for `@skillsmith/core` jumps from 0.x straight to 3.0.0.
  */
-export const RESERVED_RANGES: Record<string, string> = {
-  '@skillsmith/core': '>=2.0.0 <3.0.0',
-}
+export { RESERVED_RANGES }
 
 /**
  * Refuse proposed versions that fall inside reserved/orphaned ranges.
@@ -348,8 +352,7 @@ export function checkReservedVersionRanges(plans: BumpPlan[]): CollisionCheckRes
 
   for (const plan of plans) {
     const { spec, newVersion } = plan
-    const reservedRange = RESERVED_RANGES[spec.name]
-    if (reservedRange && semver.satisfies(newVersion, reservedRange)) {
+    if (isReserved(spec.name, newVersion, semver)) {
       errors.push(
         `${spec.name}: proposed ${newVersion} falls inside the reserved 2.x range ` +
           `(>=2.0.0 <3.0.0). This range is permanently deprecated on npm — the next major ` +
@@ -379,10 +382,11 @@ export async function resolveNpmLookups(plans: BumpPlan[]): Promise<Map<string, 
       // `latest`. Deprecated orphaned versions must not block normal bumps on the live line.
       // `allVersions` retains the full list — Rule 3's isPublished check still catches
       // attempts to republish any existing semver, reserved or not.
-      const reservedRange = RESERVED_RANGES[plan.spec.name]
-      const valid = allVersions
-        .filter((v) => semver.valid(v))
-        .filter((v) => !reservedRange || !semver.satisfies(v, reservedRange))
+      const valid = filterReservedVersions(
+        plan.spec.name,
+        allVersions.filter((v) => semver.valid(v)),
+        semver
+      )
       latest = valid.length === 0 ? null : (semver.rsort([...valid])[0] ?? null)
     }
     lookups.set(plan.spec.name, { latest, allVersions })

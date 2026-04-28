@@ -55,6 +55,11 @@ jobs:
       pull-requests: read
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      # SMI-4530: gate `verify-publish-deps.mjs --ci` to release/version-bump
+      # PRs (Option 4 hybrid). Non-version-bump PRs run the same script
+      # advisory-mode so workspace-dep drift is still surfaced as a warning,
+      # but a stuck npm publish can't blast-radius into N blocked PRs.
+      version_files: ${{ steps.filter.outputs.version_files }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -88,12 +93,17 @@ jobs:
               - '!LICENSE'
               - '!.github/ISSUE_TEMPLATE/**'
               - '!.github/CODEOWNERS'
+            version_files:
+              - 'packages/*/package.json'
+              - 'package-lock.json'
 
       # SMI-3997 Finding #2: Observability — log the resolved output so the first
       # few carrier runs can be inspected in job logs without cross-referencing
       # the GitHub Checks API.
       - name: Log detection result
-        run: echo "Detected code=${{ steps.filter.outputs.code }}"
+        run: |
+          echo "Detected code=${{ steps.filter.outputs.code }}"
+          echo "Detected version_files=${{ steps.filter.outputs.version_files }}"
 
   # Secret scanning with gitleaks - runs first, fast, no dependencies
   # Uses CLI directly (free) instead of gitleaks-action (requires paid license for orgs)
@@ -316,8 +326,27 @@ jobs:
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
-      - name: Audit workspace dependency versions
+
+      # SMI-4530: Hybrid scoping (Option 4). The `--ci` flag makes Check 3
+      # ("workspace pin must already exist on npm") a hard fail. That check
+      # is load-bearing on release/version-bump PRs, where shipping an
+      # unpublished workspace pin would tank the release. On non-version-bump
+      # PRs the same check turned a single stuck `publish.yml` run into a
+      # cascade that blocked every open code PR (see PR #824 / SMI-4530).
+      # Hybrid: required when version files changed, advisory otherwise. The
+      # advisory branch still runs the script (warnings printed, exit 0) so
+      # genuine drift surfaces without blast radius.
+      - name: Audit workspace dependency versions (strict — version-bump PR)
+        if: needs.detect-changes.outputs.version_files == 'true'
         run: node scripts/verify-publish-deps.mjs --ci
+
+      - name: Audit workspace dependency versions (advisory — non-version-bump PR)
+        if: needs.detect-changes.outputs.version_files != 'true'
+        continue-on-error: true
+        run: |
+          echo "::notice::SMI-4530 hybrid mode — running verify-publish-deps without --ci."
+          echo "::notice::Findings here are advisory. They become required on PRs that touch packages/*/package.json."
+          node scripts/verify-publish-deps.mjs || echo "::warning::verify-publish-deps reported issues (advisory on non-version-bump PRs)"
 
   # SMI-3985: Supply-chain pin drift guard for the three Wave 1 hardening
   # surfaces that are NOT covered by `Standards Compliance` (audit-standards
