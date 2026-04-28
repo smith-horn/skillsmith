@@ -6,6 +6,25 @@ This project and everyone participating in it is governed by the
 [Skillsmith Code of Conduct](CODE_OF_CONDUCT.md). By participating, you agree to
 uphold it. Report unacceptable behavior to `support@skillsmith.app`.
 
+## Contribution Scope
+
+Community contributions are welcome in these packages:
+
+| Package | Description |
+|---------|-------------|
+| `packages/core` | Database, repositories, services (`@skillsmith/core`) |
+| `packages/mcp-server` | MCP tools — search, install, recommend, etc. (`@skillsmith/mcp-server`) |
+| `packages/cli` | Command-line interface (`@skillsmith/cli`) |
+| `packages/website` | Public marketing and docs site |
+
+`packages/enterprise` is maintained internally and not open for external PRs.
+
+Some directories are encrypted with [git-crypt](https://github.com/AGWA/git-crypt) and are only accessible to Smith Horn org members: `.claude/skills/`, `.claude/plans/`, `.claude/hive-mind/`, `supabase/functions/`, and `supabase/migrations/`. If you open one of these files and see binary content, that's expected — not a corruption issue. For bugs or suggestions in those areas, file a GitHub issue rather than a PR.
+
+Not sure if your contribution fits? Open a [GitHub Discussion](https://github.com/smith-horn/skillsmith/discussions) before building — maintainers are happy to advise.
+
+---
+
 ## Development Workflow
 
 ### Prerequisites
@@ -155,24 +174,20 @@ link is read-only reference.
 
 ## Parallel Development with Worktrees
 
-For working on multiple features simultaneously, use git worktrees:
+To work on multiple features simultaneously, use [git worktrees](https://git-scm.com/docs/git-worktree):
 
 ```bash
-# Create worktree for a feature
-cd /path/to/skillsmith
-./.claude/skills/worktree-manager/scripts/worktree-create.sh my-feature SMI-XXX
+# Create a worktree for a feature branch
+git worktree add ../skillsmith-my-feature -b feature/smi-xxx-description
 
-# Check status of all worktrees
-./.claude/skills/worktree-manager/scripts/worktree-status.sh
+# List active worktrees
+git worktree list
 
-# Sync all worktrees with main
-./.claude/skills/worktree-manager/scripts/worktree-sync.sh
-
-# Clean up after merge
-./.claude/skills/worktree-manager/scripts/worktree-cleanup.sh my-feature
+# Remove a worktree after merging
+git worktree remove ../skillsmith-my-feature
 ```
 
-See `.claude/skills/worktree-manager/SKILL.md` for detailed documentation.
+Each worktree shares the same git history but has an independent working directory and checkout.
 
 ## Git Hooks
 
@@ -197,8 +212,6 @@ Runs before pushing to remote:
 
 ### Pre-rebase Hook
 
-**New:** Warns about unmerged feature branches before rebasing to prevent accidental work loss.
-
 ```text
 # Example output
 ⚠️  WARNING: Found unmerged feature branches
@@ -216,7 +229,7 @@ Options:
   • Skip this check: git rebase --no-verify
 ```
 
-This hook was added after the [docs 404 incident](docs/internal/retros/2025-01-22-docs-404-recovery.md) where completed work was lost during a rebase because feature branches were never merged.
+This hook warns about unmerged feature branches before rebasing to prevent accidental work loss.
 
 ## Code Quality
 
@@ -234,7 +247,7 @@ Pre-commit hooks will automatically run linting and formatting.
 
 ## Releases
 
-Skillsmith publishes four public packages to npm (`@skillsmith/core`, `@skillsmith/mcp-server`, `@skillsmith/cli`, `skillsmith-vscode`) and one private package to GitHub Packages (`@smith-horn/enterprise`). See [ADR-114](docs/internal/adr/114-release-cadence-and-gh-release-alignment.md) for the full decision record.
+Skillsmith publishes four public packages to npm (`@skillsmith/core`, `@skillsmith/mcp-server`, `@skillsmith/cli`, `skillsmith-vscode`) and one private package to GitHub Packages (`@smith-horn/enterprise`).
 
 ### Cadence
 
@@ -278,6 +291,6 @@ git submodule update --init          # Init submodule (authorized users only)
 
 ## Questions?
 
-- Check [docs/internal/architecture/](docs/internal/architecture/) for design decisions (requires submodule init)
-- Review [docs/internal/adr/](docs/internal/adr/) for architecture decision records (requires submodule init)
-- See [docs/internal/retros/](docs/internal/retros/) for phase retrospectives (requires submodule init)
+- **Ask in [GitHub Discussions](https://github.com/smith-horn/skillsmith/discussions)** — the best place for design questions, contributor help, and general discussion. Maintainers respond there.
+- **Browse the public docs** at [skillsmith.app/docs](https://skillsmith.app/docs) for architecture overviews and usage guides.
+- **File a Documentation Issue** via the GitHub issue form if something in the public docs is missing or wrong.
