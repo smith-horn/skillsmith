@@ -19,7 +19,7 @@ Community contributions are welcome in these packages:
 
 `packages/enterprise` is maintained internally and not open for external PRs.
 
-Some directories are encrypted with [git-crypt](https://github.com/AGWA/git-crypt) and are only accessible to Smith Horn org members: `.claude/skills/`, `supabase/functions/`, and `supabase/migrations/`. If you open one of these files and see binary content, that's expected — not a corruption issue. For bugs or suggestions in those areas, file a GitHub issue rather than a PR.
+Some directories are encrypted with [git-crypt](https://github.com/AGWA/git-crypt) and are only accessible to Smith Horn org members: `.claude/skills/`, `.claude/plans/`, `.claude/hive-mind/`, `supabase/functions/`, and `supabase/migrations/`. If you open one of these files and see binary content, that's expected — not a corruption issue. For bugs or suggestions in those areas, file a GitHub issue rather than a PR.
 
 Not sure if your contribution fits? Open a [GitHub Discussion](https://github.com/smith-horn/skillsmith/discussions) before building — maintainers are happy to advise.
 
