@@ -7,7 +7,7 @@
  * Provides skill search functionality with support for:
  * - Full-text search across skill names, descriptions, and authors
  * - Category filtering (development, testing, devops, etc.)
- * - Trust tier filtering (verified, community, experimental, unknown)
+ * - Trust tier filtering (verified, curated, community, experimental, unknown)
  * - Minimum quality score filtering
  *
  * @example
@@ -95,8 +95,9 @@ export const searchToolSchema = {
       },
       trust_tier: {
         type: 'string',
-        description: 'Filter by trust tier level',
-        enum: ['verified', 'community', 'experimental', 'unknown'],
+        description:
+          'Filter by trust tier level (verified, curated, community, experimental, unknown)',
+        enum: ['verified', 'curated', 'community', 'experimental', 'unknown'],
       },
       min_score: {
         type: 'number',
@@ -215,7 +216,7 @@ export async function executeSearch(
   }
 
   // Apply trust tier filter with runtime validation
-  const VALID_TRUST_TIERS = ['verified', 'community', 'experimental', 'unknown'] as const
+  const VALID_TRUST_TIERS = ['verified', 'curated', 'community', 'experimental', 'unknown'] as const
   if (input.trust_tier) {
     if (!VALID_TRUST_TIERS.includes(input.trust_tier as (typeof VALID_TRUST_TIERS)[number])) {
       throw new SkillsmithError(

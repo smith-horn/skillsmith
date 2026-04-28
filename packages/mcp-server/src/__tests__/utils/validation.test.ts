@@ -49,6 +49,10 @@ describe('Validation Utilities', () => {
       expect(mapTrustTierToDb('experimental')).toBe('experimental')
     })
 
+    it('should map curated tier (SMI-4520)', () => {
+      expect(mapTrustTierToDb('curated')).toBe('curated')
+    })
+
     it('should map unknown tier', () => {
       expect(mapTrustTierToDb('unknown')).toBe('unknown')
     })
@@ -65,6 +69,11 @@ describe('Validation Utilities', () => {
 
     it('should map experimental tier', () => {
       expect(mapTrustTierFromDb('experimental')).toBe('experimental')
+    })
+
+    it('should map curated tier (SMI-4520)', () => {
+      // Pre-fix this returned 'unknown'; post-fix it must round-trip.
+      expect(mapTrustTierFromDb('curated')).toBe('curated')
     })
 
     it('should map unknown tier', () => {
