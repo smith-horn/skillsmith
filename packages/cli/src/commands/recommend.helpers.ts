@@ -58,6 +58,7 @@ export function isNetworkError(error: unknown): boolean {
 
 /**
  * Get trust badge for display (SMI-1357)
+ * SMI-2381 / SMI-4520: Added 'curated' tier
  */
 export function getTrustBadge(tier: TrustTier): string {
   switch (tier) {
@@ -65,6 +66,8 @@ export function getTrustBadge(tier: TrustTier): string {
       return chalk.green('[VERIFIED]')
     case 'community':
       return chalk.blue('[COMMUNITY]')
+    case 'curated':
+      return chalk.cyan('[CURATED]')
     case 'experimental':
       return chalk.yellow('[EXPERIMENTAL]')
     case 'unknown':
