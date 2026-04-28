@@ -5,7 +5,7 @@
 #   ./scripts/deploy-edge-functions.sh --project-ref <ref> [--functions <name1,name2,...>]
 #
 # Validates the provided ref against known refs in .env before deploying.
-# When --functions is omitted, deploys all 30 functions.
+# When --functions is omitted, deploys all 31 functions.
 # When --functions is provided, deploys only the listed functions.
 
 set -euo pipefail
@@ -29,7 +29,7 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: $0 --project-ref <ref> [--functions <name1,name2,...>]"
       echo ""
       echo "Deploys Supabase Edge Functions to the specified project."
-      echo "When --functions is omitted, deploys all 30 functions."
+      echo "When --functions is omitted, deploys all 31 functions."
       echo "When --functions is provided, deploys only the listed functions."
       echo ""
       echo "Options:"

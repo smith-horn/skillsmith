@@ -65,7 +65,7 @@ Edge functions are automatically deployed when changes to `supabase/functions/**
 # Deploy a specific function
 gh workflow run deploy-edge-functions.yml -f function_name=health
 
-# Deploy all 25 functions
+# Deploy all 31 functions
 gh workflow run deploy-edge-functions.yml -f deploy_all=true
 ```
 
