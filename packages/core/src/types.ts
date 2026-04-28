@@ -6,11 +6,13 @@
  * Trust tier levels for skill quality assessment
  * NOTE: Database tiers must match database schema (packages/core/src/database/schema.ts)
  * SMI-1809: Added 'local' for local skills from ~/.claude/skills/
+ * SMI-2381: Added 'curated' for third-party publishers opted into the registry
  */
 export type TrustTier =
   | 'verified' // Manually reviewed and verified
   | 'community' // High community ratings
   | 'experimental' // New or beta skills
+  | 'curated' // SMI-2381: Third-party publisher, manually opted in
   | 'unknown' // Not yet assessed
   | 'local' // SMI-1809: Local skills from ~/.claude/skills/
 
@@ -21,6 +23,7 @@ export const TrustTierDescriptions: Record<TrustTier, string> = {
   verified: 'Manually reviewed by the Skillsmith team. High quality and safe to use.',
   community: 'Highly rated by the community. Generally reliable.',
   experimental: 'New or beta skill. Use with caution.',
+  curated: 'Third-party publisher. Manually opted into the registry.',
   unknown: 'Not yet assessed. Review carefully before using.',
   local: 'Local skill from your ~/.claude/skills/ directory. You control this skill.',
 }
