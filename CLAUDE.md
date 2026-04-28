@@ -357,6 +357,8 @@ Required for hive mind and agent spawning. Auto-configured via `.mcp.json`. Manu
 
 Published as `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/). Auto-published via CI. **Version sync required**: update both `packages/mcp-server/package.json` and `packages/mcp-server/server.json`. Full guide: [mcp-registry.md](.claude/development/mcp-registry.md).
 
+**Auth (SMI-4534)**: GitHub Actions OIDC (`mcp-publisher login github-oidc`); no manual `MCP_REGISTRY_TOKEN` rotation needed. If the registry publish step fails, see `.github/workflows/publish.yml` step "Login to MCP Registry" and the `v1.x.y` mcp-publisher pin in the install step — bump intentionally per SMI-4537. Registry-publish failures are isolated from npm publish (`continue-on-error: true`); a loud-fail step files a GitHub issue automatically.
+
 ---
 
 ## Publishing Packages
