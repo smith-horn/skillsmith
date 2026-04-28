@@ -342,7 +342,7 @@ jobs:
 
       - name: Audit workspace dependency versions (advisory — non-version-bump PR)
         if: needs.detect-changes.outputs.version_files != 'true'
-        continue-on-error: true
+        continue-on-error: true # audit:allow-continue-on-error — SMI-4530 hybrid: advisory branch on non-version-bump PRs is intentionally non-blocking; warnings surface in logs but don't block merge.
         run: |
           echo "::notice::SMI-4530 hybrid mode — running verify-publish-deps without --ci."
           echo "::notice::Findings here are advisory. They become required on PRs that touch packages/*/package.json."
