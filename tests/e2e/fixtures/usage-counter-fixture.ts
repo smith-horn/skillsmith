@@ -116,25 +116,42 @@ async function readJsonOrText(res: Response): Promise<unknown> {
 /**
  * Service-role wrapper around the Supabase Auth Admin API.
  * https://supabase.com/docs/reference/api/admin-create-user
+ *
+ * Retries once on 5xx with a 2s backoff. The signup endpoint surfaces
+ * password-validation as a clean 400, but admin/users masks pre-validation
+ * failures (e.g. bcrypt's 72-char input limit) as a generic 500
+ * unexpected_failure (SMI-4525). A single retry keeps the suite resilient
+ * to genuinely transient GoTrue 5xx without papering over deterministic
+ * client-side bugs.
  */
 async function adminCreateUser(
   env: ResolvedEnv,
   body: Record<string, unknown>
 ): Promise<{ id: string }> {
-  const res = await fetch(`${env.url}/auth/v1/admin/users`, {
-    method: 'POST',
-    headers: {
-      apikey: env.serviceRoleKey,
-      Authorization: `Bearer ${env.serviceRoleKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  })
-  const data = (await readJsonOrText(res)) as { id?: string; msg?: string; error?: string }
-  if (!res.ok || !data || typeof data !== 'object' || !data.id) {
-    throw new Error(`adminCreateUser failed (${res.status}): ${JSON.stringify(data ?? '<empty>')}`)
+  const MAX_ATTEMPTS = 2
+  let lastStatus = 0
+  let lastBody: unknown = '<no response>'
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const res = await fetch(`${env.url}/auth/v1/admin/users`, {
+      method: 'POST',
+      headers: {
+        apikey: env.serviceRoleKey,
+        Authorization: `Bearer ${env.serviceRoleKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+    const data = (await readJsonOrText(res)) as { id?: string; msg?: string; error?: string }
+    if (res.ok && data && typeof data === 'object' && data.id) {
+      return { id: data.id }
+    }
+    lastStatus = res.status
+    lastBody = data ?? '<empty>'
+    const isRetriable = res.status >= 500 && res.status < 600
+    if (!isRetriable || attempt === MAX_ATTEMPTS) break
+    await new Promise((resolve) => setTimeout(resolve, 2000))
   }
-  return { id: data.id }
+  throw new Error(`adminCreateUser failed (${lastStatus}): ${JSON.stringify(lastBody)}`)
 }
 
 async function adminDeleteUser(env: ResolvedEnv, userId: string): Promise<void> {
@@ -254,7 +271,11 @@ export async function provisionTestUser(options: ProvisionOptions = {}): Promise
 
   const suffix = randomUUID()
   const email = `e2e-usage-counter+${suffix}@skillsmith.test`
-  const password = `${randomUUID()}-${randomUUID()}`
+  // bcrypt's input cap is 72 bytes — Supabase Auth rejects longer passwords.
+  // The previous `${randomUUID()}-${randomUUID()}` was 73 chars and made
+  // /auth/v1/admin/users return a generic 500 unexpected_failure (SMI-4525).
+  // 32 hex × 2 = 64 chars, 256 bits of entropy, well under the limit.
+  const password = `${randomUUID().replace(/-/g, '')}${randomUUID().replace(/-/g, '')}`
 
   // 1. Create auth user with confirmed email (skip verification).
   const created = await adminCreateUser(env, {
