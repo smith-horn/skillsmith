@@ -109,7 +109,7 @@ Before publishing, verify all of the following:
 
 - [ ] Version bumped in all three locations above
 - [ ] `SECURITY.md` supported versions table reflects current minor versions
-- [ ] `RELEASE_NOTES.md` updated with changes
+- [ ] Root `CHANGELOG.md` and `packages/mcp-server/CHANGELOG.md` updated with changes
 - [ ] All CI checks pass (`npm run preflight`)
 - [ ] Enterprise `@skillsmith/core` dependency is current (not stale)
 
