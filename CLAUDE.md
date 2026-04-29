@@ -385,36 +385,23 @@ gh run watch <run-id> --exit-status              # Monitor progress
 
 Uses `SKILLSMITH_NPM_TOKEN` secret. Publishes in dependency order (core → mcp-server, cli, enterprise) with validation, smoke tests, and MCP Registry publish. Always try this first.
 
-**Local fallback** (when CI fails due to unrelated build issues): Uses `SKILLSMITH_NPM_TOKEN` from `.env` (granular access token with bypass 2FA). See [publishing-guide.md](.claude/development/publishing-guide.md) for full checklist and the working publish command.
+**Local fallback**: **Deprecated (SMI-4533)**: local fallback is forbidden. CI is the only publish path. If CI fails, fix CI; for genuine emergencies see [`docs/internal/runbooks/publish-ci-recovery.md`](docs/internal/runbooks/publish-ci-recovery.md) and the `SKILLSMITH_PUBLISH_OVERRIDE` break-glass in [.claude/development/publishing-guide.md](.claude/development/publishing-guide.md#break-glass).
 
 **Publish order** (dependencies before consumers):
 
 1. `@skillsmith/core`
 2. `@skillsmith/mcp-server` and `@skillsmith/cli` (both depend on core)
 
-**Pre-publish checklist** (manual publishes — only if CI workflow fails):
+**Pre-publish checklist** (CI publish — the only supported path):
 
 1. Build in Docker: `docker exec skillsmith-dev-1 npm run build`
 2. Run preflight: `docker exec skillsmith-dev-1 npm run preflight`
 3. Verify dependency versions are committed and pushed
-4. Check dependency is published:
+4. Trigger CI: `gh workflow run publish.yml -f dry_run=false`
+5. Watch the run: `gh run watch <run-id> --exit-status`
+6. Post-publish (CI smoke-tests automatically; manual fallback): `npx tsx scripts/smoke-test-published.ts @skillsmith/<pkg> <version>`
 
-   ```bash
-   VERSION=$(node -e "console.log(require('./packages/core/package.json').version)")
-   npm view @skillsmith/core@$VERSION version   # must return the version
-   ```
-
-5. If dependency not published: publish it first with `./scripts/publish-packages.sh core`
-6. Run `npm pack --dry-run` in the package dir to inspect tarball contents
-7. Publish (from repo root — workspace `.npmrc` is ignored by npm):
-
-   ```bash
-   source .env && printf '%s\n' "//registry.npmjs.org/:_authToken=$SKILLSMITH_NPM_TOKEN" >> ~/.npmrc
-   npm publish --ignore-scripts -w packages/<pkg>
-   sed -i '' '/registry.npmjs.org/d' ~/.npmrc
-   ```
-
-8. Post-publish: `npx tsx scripts/smoke-test-published.ts @skillsmith/<pkg> <version>`
+If CI fails, do NOT reach for a local publish. Fix the underlying issue. Genuine break-glass: see [publishing-guide.md § Break-Glass](.claude/development/publishing-guide.md#break-glass) (requires `SKILLSMITH_PUBLISH_OVERRIDE=SMI-NNNN <rationale>` and a Linear retro within 24h).
 
 **Never** publish a consumer before its dependency. **Never** publish with an exact-pinned workspace dep (use `^` prefix). Workspace resolution masks version-pin errors locally — only fresh `npm install` from the registry reveals mismatches. See [retro: mcp-server@0.4.5](docs/internal/retros/2026-03-19-mcp-server-0.4.5-hotfix.md).
 

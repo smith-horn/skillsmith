@@ -8,7 +8,7 @@
     "sklx": "dist/src/index.js"
   },
   "scripts": {
-    "prepublishOnly": "npm run build && npm run test",
+    "prepublishOnly": "node ../../scripts/lib/forbid-local-publish.mjs && npm run build && npm run test",
     "build": "tsc",
     "dev": "tsc --watch",
     "import": "node dist/import.js",

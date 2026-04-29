@@ -33,7 +33,14 @@ import {
 } from './lib/version-utils.js'
 // SMI-4530: shared with scripts/check-publish-collision.mjs. Drift between the
 // two reserved-range definitions was the root cause of PR #824's stuck publish.
-import { RESERVED_RANGES, filterReservedVersions, isReserved } from './lib/reserved-ranges.mjs'
+import { RESERVED_RANGES, filterReservedVersions } from './lib/reserved-ranges.mjs'
+// SMI-4531: full collision-rule unification. Both prepare-release.ts and
+// check-publish-collision.mjs now consume the same per-rule evaluators.
+import {
+  evaluateReservedRange,
+  evaluateAlreadyPublished,
+  evaluateLiveMax,
+} from './lib/collision-rules.mjs'
 
 // --- Types ---
 
@@ -248,13 +255,21 @@ export interface NpmLookup {
  * Evaluate the collision rules for a planned bump against the npm registry state.
  * Pure function — does NOT perform network I/O. Callers must supply lookups.
  *
- * Rule 1 — proposed > npm latest        → proceed.
- * Rule 2 — proposed <= npm latest,
- *          proposed NOT in published list → refuse unless --allow-downgrade.
- * Rule 3 — proposed === npm latest OR
- *          proposed in published list   → refuse UNCONDITIONALLY.
- *                                         --allow-downgrade does NOT override.
- *                                         Error must not mention any flag.
+ * SMI-4531: Rules 3 and 2 are now delegated to the shared
+ * `scripts/lib/collision-rules.mjs` module — same evaluators
+ * `check-publish-collision.mjs` consumes. Rule 1 (reserved-range) lives in
+ * `checkReservedVersionRanges` for legacy ordering reasons (it runs in a
+ * separate pass before this function in `main()`); the wrapper below also
+ * checks Rule 1 defensively so callers that invoke `checkVersionCollision`
+ * alone still get correct precedence.
+ *
+ * Rule 1 — reserved range                → refuse UNCONDITIONALLY (no override).
+ * Rule 3 — proposed in published list    → refuse UNCONDITIONALLY (no override).
+ *                                          Error must not mention any flag.
+ * Rule 2 — proposed <= live max,
+ *          not in published list         → refuse unless --allow-downgrade.
+ *
+ * Multi-package contract: errors accumulate across plans; never short-circuit.
  */
 export function checkVersionCollision(
   plans: BumpPlan[],
@@ -274,46 +289,54 @@ export function checkVersionCollision(
     const { latest, allVersions } = lookup
 
     // New package on npm (E404) — proceed silently.
-    if (latest === null) {
+    if (allVersions === null) {
       report.push(`  ${spec.name}: new on npm (proposed ${newVersion}) → proceed`)
       continue
     }
 
-    const isPublished = (allVersions ?? []).includes(newVersion)
-    const equalsLatest = newVersion === latest
+    // Rule 1 — reserved range (defensive; main() runs checkReservedVersionRanges first).
+    const r1 = evaluateReservedRange(spec.name, newVersion)
+    if (!r1.ok) {
+      errors.push(r1.message)
+      continue
+    }
 
-    // Rule 3: equals-published (or equals-latest) — unconditional refuse.
-    if (isPublished || equalsLatest) {
-      errors.push(
-        `${spec.name}: proposed ${newVersion} is already published on npm (highest published: ${latest}). ` +
-          `Different content under the same version is the failure mode this guard exists to prevent. ` +
-          `See scripts/prepare-release.ts and the release runbook: revert to release, do not override.`
+    // Rule 3 — exact-equal-published (no override).
+    const r3 = evaluateAlreadyPublished(spec.name, newVersion, allVersions)
+    if (!r3.ok) {
+      errors.push(r3.message)
+      continue
+    }
+
+    // Rule 2 — live-max <= refuse (overridable via --allow-downgrade).
+    const live = filterReservedVersions(spec.name, allVersions, semver)
+    if (!live.length) {
+      // No live anchor (every entry is reserved). Proceed — Rule 3 already
+      // covered the "republish any existing version" case.
+      report.push(
+        `  ${spec.name}: proposed ${newVersion} (no live versions published yet, all reserved) → proceed`
       )
       continue
     }
 
-    const cmp = semver.compare(newVersion, latest)
-    if (cmp > 0) {
-      report.push(`  ${spec.name}: proposed ${newVersion} > highest published ${latest} → proceed`)
+    const r2 = evaluateLiveMax(spec.name, newVersion, live, { allowDowngrade: opts.allowDowngrade })
+    if (!r2.ok) {
+      errors.push(r2.message)
       continue
     }
 
-    // Rule 2: proposed < npm latest, not published — refuse unless --allow-downgrade.
-    const suggested = semver.inc(latest, 'patch') ?? latest
-    if (!opts.allowDowngrade) {
-      errors.push(
-        `${spec.name}: proposed ${newVersion} <= highest published ${latest} (package: ${spec.name}, ` +
-          `proposed: ${newVersion}, highest published: ${latest}). ` +
-          `Note: "highest published" spans all dist-tags — not just "latest" — because npm refuses to republish any existing semver. ` +
-          `Suggested next-available target: ${suggested}. ` +
-          `To override: pass --allow-downgrade (rare; only when intentionally reusing a ` +
-          `reserved-but-unpublished semver).`
+    const liveMax = live.reduce((a, b) => (semver.gt(a, b) ? a : b))
+    if (semver.gt(newVersion, liveMax)) {
+      report.push(`  ${spec.name}: proposed ${newVersion} > highest published ${liveMax} → proceed`)
+    } else {
+      // r2.ok was true → either allowDowngrade=true or live was empty.
+      report.push(
+        `  ${spec.name}: proposed ${newVersion} <= highest published ${liveMax} (--allow-downgrade set) → proceed`
       )
-      continue
     }
-    report.push(
-      `  ${spec.name}: proposed ${newVersion} <= highest published ${latest} (--allow-downgrade set) → proceed`
-    )
+    // Suppress unused-variable lint for `latest` — kept on the type for now to
+    // preserve the public NpmLookup shape; downstream consumers may still read it.
+    void latest
   }
 
   return { ok: errors.length === 0, errors, report }
@@ -344,6 +367,10 @@ export { RESERVED_RANGES }
  * catch `@skillsmith/core@2.1.3` indirectly, but this rule states the skip explicitly and
  * refuses unconditionally — no `--allow-downgrade` override. Error message points at ADR-115.
  *
+ * SMI-4531: Thin wrapper around `evaluateReservedRange` from the shared
+ * `scripts/lib/collision-rules.mjs` module. Multi-package contract preserved
+ * — errors accumulate per-plan; never short-circuit.
+ *
  * Pure function — no network I/O.
  */
 export function checkReservedVersionRanges(plans: BumpPlan[]): CollisionCheckResult {
@@ -352,14 +379,9 @@ export function checkReservedVersionRanges(plans: BumpPlan[]): CollisionCheckRes
 
   for (const plan of plans) {
     const { spec, newVersion } = plan
-    if (isReserved(spec.name, newVersion, semver)) {
-      errors.push(
-        `${spec.name}: proposed ${newVersion} falls inside the reserved 2.x range ` +
-          `(>=2.0.0 <3.0.0). This range is permanently deprecated on npm — the next major ` +
-          `must jump to 3.0.0 or later. No override flag applies. ` +
-          `See ADR-115 (docs/internal/adr/115-skillsmith-core-version-namespace-reconciliation.md) ` +
-          `and scripts/prepare-release.ts.`
-      )
+    const result = evaluateReservedRange(spec.name, newVersion)
+    if (!result.ok) {
+      errors.push(result.message)
       continue
     }
     report.push(`  ${spec.name}: proposed ${newVersion} outside reserved ranges → proceed`)

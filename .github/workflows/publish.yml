@@ -464,6 +464,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [pre-publish-check, validate]
+    # SMI-4533: id-token: write enables npm trusted-publisher OIDC. Token-based
+    # publish remains the active path (via SKILLSMITH_NPM_TOKEN); SMI-4539 will
+    # flip this to OIDC-exclusive after the token path stabilizes for one
+    # release cycle. SMI-4540 retires the token entirely. Keeping this
+    # job-scoped (not workflow-scoped) for least privilege.
+    permissions:
+      contents: read
+      id-token: write
     if: |
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.core-exists != 'true'
@@ -690,6 +698,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [pre-publish-check, validate, publish-core]
+    # SMI-4533: id-token: write enables npm trusted-publisher OIDC. SMI-4539
+    # will flip this to OIDC-exclusive; token path remains active until then.
+    permissions:
+      contents: read
+      id-token: write
     if: |
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.cli-exists != 'true' &&
@@ -763,6 +776,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [pre-publish-check, validate, publish-core]
+    # SMI-4533: id-token: write enables npm trusted-publisher OIDC. SMI-4539
+    # will flip this to OIDC-exclusive; token path remains active until then.
+    # (Enterprise publishes to GitHub Packages, not npmjs.com; OIDC support
+    # there mirrors npm's trusted-publisher pattern via GITHUB_TOKEN.)
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
     if: |
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.enterprise-exists != 'true' &&

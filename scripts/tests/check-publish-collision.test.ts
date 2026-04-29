@@ -57,8 +57,11 @@ describe('evaluateCollision', () => {
     const res = evaluateCollision('@skillsmith/core', '0.5.2', { exec })
     expect(res.code).toBe(1)
     expect(res.message).toContain('already published')
-    // Diagnostic MUST NOT reference any override / bypass flag.
-    expect(res.message).not.toMatch(/override|--allow|--force|bypass|flag/i)
+    // SMI-4531: canonical Rule 3 message reads "do not override" — instruction,
+    // not an offered escape hatch. Diagnostic MUST NOT name any concrete
+    // override / bypass flag the operator could pass.
+    expect(res.message).not.toMatch(/--allow|--force|--bypass/i)
+    expect(res.message).toContain('Revert to release, do not override')
   })
 
   describe('gating path: proposed < latest AND not exact-equal (plan §2 Step 3 issue #1)', () => {

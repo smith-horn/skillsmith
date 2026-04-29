@@ -14,7 +14,7 @@ docker exec skillsmith-dev-1 npx tsx scripts/prepare-release.ts --dry-run --all=
 
 The script updates all 6 version locations (package.json, VERSION constants, server.json), generates changelog entries, and creates a commit. See `docs/internal/implementation/release-automation.md` for details.
 
-## CI Workflow (Preferred)
+## CI Workflow (the only supported publish path)
 
 ```bash
 git push
@@ -22,49 +22,56 @@ gh workflow run publish.yml -f dry_run=false
 gh run watch <run-id> --exit-status              # Monitor progress
 ```
 
-Uses `SKILLSMITH_NPM_TOKEN` secret. Publishes in dependency order (core → mcp-server, cli, enterprise) with validation, smoke tests, and MCP Registry publish. Always try this first.
+Uses `SKILLSMITH_NPM_TOKEN` secret today; SMI-4539 will flip to npm trusted-publisher OIDC (the `id-token: write` permission is already in place per SMI-4533). Publishes in dependency order (core → mcp-server, cli, enterprise) with validation, smoke tests, and MCP Registry publish.
 
-**Known limitation**: The Validate job builds ALL packages. If an unrelated package (e.g., enterprise) has a build failure, the entire workflow fails. Use the local fallback to publish just the package you need.
+If CI fails, fix CI. Do not reach for a local publish — see [`publish-ci-recovery.md`](../../docs/internal/runbooks/publish-ci-recovery.md) for triage.
 
-## Local Fallback
+## Local Publish — Forbidden (SMI-4533)
 
-When CI fails due to unrelated build issues, publish manually using the `SKILLSMITH_NPM_TOKEN` from `.env`.
+The previous "local fallback" recipe (`source .env && npm publish`) is **gone**. Every publishable package's `prepublishOnly` chains `node ../../scripts/lib/forbid-local-publish.mjs` before build/test, and the script refuses unless invoked from a canonical-repo GitHub Actions runner.
 
-### Token Setup (One-Time)
+Why: every "we couldn't get CI to publish so we did it locally" commit in the changelog mapped to a regression that CI's guards would have caught. Closing this loophole forces the only path that carries our published-version history.
 
-1. Create a **Granular Access Token** at npmjs.com → Access Tokens
-2. Scope: `@skillsmith` organization, read and write
-3. **Enable "Bypass two-factor authentication"** — npm passkey auth does not support OTP via CLI
-4. Save as `SKILLSMITH_NPM_TOKEN` in `.env` (secured via Varlock, annotated in `.env.schema`)
+`npm publish --ignore-scripts` skips `prepublishOnly`. The binding gate is npm trusted-publisher OIDC (SMI-4539 flips it on; SMI-4540 retires the token). Until then, the host-side guard plus token-scoped 2FA and CI-only secret access are the layers in place.
 
-### Publish Command
+## Break-Glass
 
-**Must run from the repo root** — npm ignores `.npmrc` in workspace package directories.
+For genuine emergencies (registry-level outage, multi-hour CI breakage during an active prod incident), the `prepublishOnly` guard accepts an override:
 
 ```bash
-# 1. Inject token into ~/.npmrc (zsh: use printf, not echo — // is interpreted as a path)
-source .env
-printf '%s\n' "//registry.npmjs.org/:_authToken=$SKILLSMITH_NPM_TOKEN" >> ~/.npmrc
+export SKILLSMITH_PUBLISH_OVERRIDE="SMI-NNNN <rationale, ≥20 chars total>"
+# Example:
+export SKILLSMITH_PUBLISH_OVERRIDE="SMI-4499 emergency hotfix for prod incident; CI down 30+ min"
 
-# 2. Publish specific package
-npm publish --ignore-scripts -w packages/<pkg>
-
-# 3. Clean up token immediately
-sed -i '' '/registry.npmjs.org/d' ~/.npmrc
+npm publish -w packages/<pkg> --access public
 ```
 
-### Gotchas
+### Format requirements
 
-| Issue | Cause | Fix |
-|-------|-------|-----|
-| `EOTP` (OTP required) | Token doesn't have bypass 2FA, or npm is using cached login session | `npm logout` first, verify token has bypass enabled on npmjs.com |
-| `ENEEDAUTH` | `.npmrc` in wrong location | Must be `~/.npmrc`, not `packages/<pkg>/.npmrc` (workspaces ignore package-level `.npmrc`) |
-| `zsh: no such file or directory: //registry...` | zsh interprets `//` as path | Use `printf '%s\n' "//..."` instead of `echo "//..."` |
-| `E404 Not Found` on PUT | Not authenticated to `@skillsmith` scope | Check `npm whoami` and token scope |
+- MUST start with `SMI-` followed by digits (the Linear issue tracking the override).
+- MUST include a free-form rationale separated from the issue ref by whitespace.
+- Total length MUST be ≥ 20 characters. Shorter values are refused with `format invalid`.
 
-### Script Fallback
+`OVERRIDE=1` does not work and never will. The format is intentionally awkward to write — every override should be deliberate.
 
-`./scripts/publish-packages.sh` — publishes in dependency order with pre-publish tarball verification. Requires the same token setup above.
+### Audit trail
+
+Every accepted override appends a tab-separated row to `~/.skillsmith-publish-overrides.log`:
+
+```text
+2026-04-29T16:42:00.000Z<TAB>SMI-4499 emergency hotfix for prod incident; CI down 30+ min<TAB>local
+```
+
+SMI-4538 tracks the eventual write-through to Supabase `audit_logs` (one place to review, alert on, and grep).
+
+### Process
+
+1. **File the SMI issue first.** Document why CI is unusable, what the operator tried, and the expected impact of publishing without the CI guard chain. Tag with `incident` and the affected package.
+2. **Run the publish with the override set.** The audit log line lands in `~/.skillsmith-publish-overrides.log` automatically.
+3. **Open a Linear retro within 24h.** Title: `Retro: SMI-NNNN local-publish override`. Owner: the operator who ran the publish. Sections: what failed, what was published, what guard the operator skipped, what the post-publish smoke confirmed, and the action item to make this not happen again.
+4. **Update CI.** The retro's first concrete output is a CI fix or a runbook update — never just an incident note.
+
+If the override gets used twice in the same calendar quarter without a permanent CI fix landing in between, escalate; the recovery runbook is no longer load-bearing.
 
 ## Publish Order
 
@@ -72,29 +79,11 @@ Dependencies before consumers:
 
 1. `@skillsmith/core`
 2. `@skillsmith/mcp-server` and `@skillsmith/cli` (both depend on core)
-
-## Pre-Publish Checklist (Manual Publishes Only)
-
-Only needed if the CI workflow fails:
-
-1. Build in Docker: `docker exec skillsmith-dev-1 npm run build`
-2. Run preflight: `docker exec skillsmith-dev-1 npm run preflight`
-3. Verify dependency versions are committed and pushed
-4. Check dependency is published:
-
-   ```bash
-   VERSION=$(node -e "console.log(require('./packages/core/package.json').version)")
-   npm view @skillsmith/core@$VERSION version   # must return the version
-   ```
-
-5. If dependency not published: publish it first with `./scripts/publish-packages.sh core`
-6. Run `npm pack --dry-run` in the package dir to inspect tarball contents
-7. Publish using the command above (Local Fallback section)
-8. Post-publish: `npx tsx scripts/smoke-test-published.ts @skillsmith/<pkg> <version>`
+3. `@smith-horn/enterprise` (private, GitHub Packages)
 
 ## Critical Rules
 
-**Never** publish a consumer before its dependency. **Never** publish with an exact-pinned workspace dep (use `^` prefix). Workspace resolution masks version-pin errors locally — only fresh `npm install` from the registry reveals mismatches. See [retro: mcp-server@0.4.5](../docs/internal/retros/2026-03-19-mcp-server-0.4.5-hotfix.md).
+**Never** publish a consumer before its dependency. **Never** publish with an exact-pinned workspace dep (use `^` prefix). Workspace resolution masks version-pin errors locally — only fresh `npm install` from the registry reveals mismatches. See [retro: mcp-server@0.4.5](../../docs/internal/retros/2026-03-19-mcp-server-0.4.5-hotfix.md).
 
 **Verify dependency floors when adding cross-package imports.** If `mcp-server` starts importing a new export from `core`, bump the dep floor in `mcp-server/package.json` to the core version that introduced that export. The workspace resolves the latest local version, masking floor mismatches — only fresh `npm install` from the registry catches this. See [SMI-3668](https://linear.app/smith-horn-group/issue/SMI-3668).
 

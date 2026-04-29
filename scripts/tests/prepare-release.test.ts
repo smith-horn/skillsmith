@@ -259,9 +259,9 @@ describe('checkVersionCollision — rule matrix', () => {
     // Must NOT mention any override flag name
     expect(msg).not.toMatch(/--allow-downgrade/)
     expect(msg).not.toMatch(/--force-version/)
-    // Must point operator at the script and rollback guidance
-    expect(msg).toContain('scripts/prepare-release.ts')
-    expect(msg).toContain('revert to release, do not override')
+    // SMI-4531: canonical Rule 3 message — points operator at rollback, not at the script path.
+    expect(msg).toContain('Revert to release, do not override')
+    expect(msg).toContain('failure mode this guard exists to prevent')
   })
 
   it('Case 4b: proposed is a previously-published (but not latest) version → refuses unconditionally', () => {
@@ -272,7 +272,8 @@ describe('checkVersionCollision — rule matrix', () => {
     expect(result.ok).toBe(false)
     const msg = result.errors[0]!
     expect(msg).not.toMatch(/--allow-downgrade/)
-    expect(msg).toContain('revert to release, do not override')
+    // SMI-4531: canonical Rule 3 message — capitalized "Revert".
+    expect(msg).toContain('Revert to release, do not override')
   })
 
   // Case 6: New package (npm returns E404) → proceeds
@@ -306,7 +307,9 @@ describe('checkReservedVersionRanges — @skillsmith/core 2.x skip rule (SMI-420
     expect(msg).toContain('2.x')
     expect(msg).toContain('3.0.0')
     expect(msg).toContain('ADR-115')
-    expect(msg).toContain('scripts/prepare-release.ts')
+    // SMI-4531: canonical Rule 1 message no longer includes the script path —
+    // the ADR pointer is the durable artifact.
+    expect(msg).toContain('permanently deprecated on npm')
     // Must not mention any override flag — this rule is unconditional.
     expect(msg).not.toMatch(/--allow-downgrade/)
     expect(msg).not.toMatch(/--force/)
@@ -459,7 +462,12 @@ describe('checkVersionCollision × reserved range — integration (SMI-4207)', (
     ])
     const result = checkVersionCollision([plan('2.1.2')], lookups, { allowDowngrade: true })
     expect(result.ok).toBe(false)
-    expect(result.errors[0]).toContain('revert to release, do not override')
+    // SMI-4531: canonical Rule 3 message — capitalized "Revert". With Rule 1
+    // also firing for 2.1.2 (it's reserved), checkVersionCollision's defensive
+    // Rule 1 check wins; either message is acceptable. Assert on the
+    // unconditional-refuse signal that's present in BOTH canonical messages.
+    expect(result.errors[0]).not.toMatch(/--allow-downgrade/)
+    expect(result.errors[0]).toMatch(/reserved 2\.x range|Revert to release/)
   })
 })
 
