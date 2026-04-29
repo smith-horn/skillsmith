@@ -173,8 +173,13 @@ link_worktree_node_modules() {
     local worktree_path="$1"
     local repo_root="$2"
 
+    # SMI-4381: relative symlink so it resolves both on host (where target is
+    # /<repo>/node_modules) and inside Docker (where target is /app/node_modules).
+    # An absolute host path symlink is dangling inside the container.
+    local rel_target="../../node_modules"
+
     if [[ -L "$worktree_path/node_modules" ]]; then
-        ln -sfn "$repo_root/node_modules" "$worktree_path/node_modules"
+        ln -sfn "$rel_target" "$worktree_path/node_modules"
         return 0
     fi
 
@@ -183,7 +188,7 @@ link_worktree_node_modules() {
         return 1
     fi
 
-    ln -sfn "$repo_root/node_modules" "$worktree_path/node_modules"
+    ln -sfn "$rel_target" "$worktree_path/node_modules"
     return 0
 }
 
@@ -209,11 +214,20 @@ repair_worktrees_node_modules() {
 
         wt_count=$((wt_count + 1))
 
-        if [[ -L "$wt_path/node_modules" ]] || [[ -d "$wt_path/node_modules" ]]; then
+        # SMI-4381: relative target works on host AND inside Docker bind-mount.
+        local rel_target="../../node_modules"
+
+        if [[ -L "$wt_path/node_modules" ]]; then
+            # Refresh in case existing symlink is the absolute host-path form
+            # (pre-SMI-4381). Idempotent.
+            ln -sfn "$rel_target" "$wt_path/node_modules"
+            continue
+        fi
+        if [[ -d "$wt_path/node_modules" ]]; then
             continue
         fi
 
-        ln -sfn "$repo_root/node_modules" "$wt_path/node_modules"
+        ln -sfn "$rel_target" "$wt_path/node_modules"
         info "  Repaired: $wt_path"
         repaired=$((repaired + 1))
     done < <(git -C "$repo_root" worktree list --porcelain | awk '/^worktree / { print $2 }')
@@ -222,5 +236,83 @@ repair_worktrees_node_modules() {
         success "  Repaired $repaired of $wt_count worktree(s)"
     elif [[ $wt_count -gt 0 ]]; then
         success "  All $wt_count worktree(s) already have node_modules"
+    fi
+}
+
+#######################################
+# Symlink per-package node_modules from main repo into a worktree (SMI-4381).
+#
+# Why: workspace-pinned deps live under packages/<pkg>/node_modules in the
+# main repo. Without per-package symlinks, Node module resolution from the
+# worktree's package walks up to the hoisted root node_modules, which can
+# carry a DIFFERENT version (e.g. zod@4.x at root vs zod@3.25.76 in
+# packages/mcp-server). The wrong version surfaces as type errors when
+# pre-commit Phase 2 (typecheck) runs from the worktree.
+#
+# Idempotent: refreshes an existing symlink, skips a real directory.
+# Iterates packages/* discovered in the main repo.
+#
+# Arguments:
+#   $1 - Worktree path
+#   $2 - Repository root path (symlink target base)
+#######################################
+link_worktree_package_node_modules() {
+    local worktree_path="$1"
+    local repo_root="$2"
+    local pkg_dir pkg_name
+
+    [[ ! -d "$repo_root/packages" ]] && return 0
+
+    # SMI-4381: relative symlink resolves on host AND inside Docker.
+    # From <wt>/packages/<pkg>/node_modules → ../../../../packages/<pkg>/node_modules
+    # (4 ups: node_modules-parent → packages → wt-name → .worktrees → repo-root)
+    for pkg_dir in "$repo_root"/packages/*/; do
+        [[ -d "$pkg_dir" ]] || continue
+        pkg_name="$(basename "$pkg_dir")"
+        local main_target="$pkg_dir/node_modules"
+        local link="$worktree_path/packages/$pkg_name/node_modules"
+        local rel_target="../../../../packages/$pkg_name/node_modules"
+
+        # Target must exist in main repo for the symlink to be useful.
+        [[ -d "$main_target" ]] || continue
+        # Worktree may not have this package directory (e.g. branch predates it).
+        [[ -d "$worktree_path/packages/$pkg_name" ]] || continue
+
+        if [[ -L "$link" ]]; then
+            ln -sfn "$rel_target" "$link"
+            continue
+        fi
+        if [[ -e "$link" ]]; then
+            # Real dir at worktree — leave it; user's responsibility.
+            continue
+        fi
+        ln -sfn "$rel_target" "$link"
+    done
+}
+
+#######################################
+# Idempotent backfill of per-package node_modules across all worktrees (SMI-4381).
+#
+# Companion to repair_worktrees_node_modules. Iterates `git worktree list`,
+# skips the main repo, applies link_worktree_package_node_modules to each.
+#
+# Arguments:
+#   $1 - Repository root path
+#######################################
+repair_worktrees_package_node_modules() {
+    local repo_root="$1"
+    local wt_count=0
+
+    while IFS= read -r wt_path; do
+        [[ -z "$wt_path" ]] && continue
+        [[ "$wt_path" == "$repo_root" ]] && continue
+        [[ ! -d "$wt_path" ]] && continue
+
+        wt_count=$((wt_count + 1))
+        link_worktree_package_node_modules "$wt_path" "$repo_root"
+    done < <(git -C "$repo_root" worktree list --porcelain | awk '/^worktree / { print $2 }')
+
+    if [[ $wt_count -gt 0 ]]; then
+        success "  Per-package node_modules synced across $wt_count worktree(s)"
     fi
 }

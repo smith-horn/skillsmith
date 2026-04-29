@@ -413,11 +413,17 @@ create_worktree() {
     # Step 4d: Symlink node_modules so host-side pre-commit hooks resolve
     # lint-staged, eslint, prettier, and check-file-length.mjs (SMI-4377).
     # Hook discovery (Layer 1) is handled by the committed .husky/_/ tree.
-    info "Step 4d: Symlinking node_modules from main repo (SMI-4377)..."
+    # SMI-4381 also symlinks per-package node_modules so workspace-pinned
+    # deps (e.g. zod@3.25.76 in packages/mcp-server) resolve correctly when
+    # tsc runs from the worktree path inside Docker — without these, Node
+    # walks up to the hoisted root node_modules and finds the wrong version.
+    info "Step 4d: Symlinking node_modules from main repo (SMI-4377 + SMI-4381)..."
     assert_host_node_modules "$REPO_ROOT"
     if link_worktree_node_modules "$worktree_path" "$REPO_ROOT"; then
         success "  node_modules → $REPO_ROOT/node_modules"
     fi
+    link_worktree_package_node_modules "$worktree_path" "$REPO_ROOT"
+    success "  per-package node_modules → $REPO_ROOT/packages/*/node_modules"
 
     # Step 5: Generate Docker override file (if docker-compose.yml exists)
     if [[ -f "$worktree_path/docker-compose.yml" ]]; then
@@ -510,10 +516,12 @@ Run '$(basename "$0") --help' for usage information."
     create_worktree "$WORKTREE_PATH" "$BRANCH_NAME" "$BASE_BRANCH"
 
     # Idempotent backfill: ensure all existing worktrees have node_modules
-    # symlinks (SMI-4377). The newly-created worktree is a no-op pass.
+    # symlinks (SMI-4377 root) + per-package symlinks (SMI-4381). The
+    # newly-created worktree is a no-op for these.
     echo ""
-    info "Step 7: Backfilling node_modules symlinks on existing worktrees (SMI-4377)..."
+    info "Step 7: Backfilling node_modules symlinks on existing worktrees (SMI-4377 + SMI-4381)..."
     repair_worktrees_node_modules "$REPO_ROOT"
+    repair_worktrees_package_node_modules "$REPO_ROOT"
 }
 
 # Run main function

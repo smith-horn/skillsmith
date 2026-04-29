@@ -35,5 +35,8 @@ fi
 
 assert_host_node_modules "$REPO_ROOT"
 
-info "Repairing worktrees missing node_modules symlink..."
+info "Repairing worktrees missing node_modules symlink (SMI-4377)..."
 repair_worktrees_node_modules "$REPO_ROOT"
+
+info "Backfilling per-package node_modules symlinks (SMI-4381)..."
+repair_worktrees_package_node_modules "$REPO_ROOT"
