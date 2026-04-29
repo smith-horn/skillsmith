@@ -81,7 +81,7 @@ describe('assertCiPublishContext (SMI-4533)', () => {
 
   // --- Override path ---
 
-  it('accepts a valid override (SMI-NNNN + ≥20 chars total) and appends to the audit log', () => {
+  it('accepts a valid override (SMI-NNNN + ≥20 chars after prefix) and appends to the audit log', () => {
     expect(() =>
       assertCiPublishContext({
         SKILLSMITH_PUBLISH_OVERRIDE: 'SMI-4499 emergency hotfix for prod incident',
@@ -122,7 +122,7 @@ describe('assertCiPublishContext (SMI-4533)', () => {
     expect(mockedAppend).not.toHaveBeenCalled()
   })
 
-  it('refuses an override that is too short (under 20 chars total)', () => {
+  it('refuses an override that is too short (rationale under 20 chars after the SMI prefix)', () => {
     expect(() =>
       assertCiPublishContext({
         SKILLSMITH_PUBLISH_OVERRIDE: 'SMI-1 short',

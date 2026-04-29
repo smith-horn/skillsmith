@@ -274,7 +274,7 @@ export async function provisionTestUser(options: ProvisionOptions = {}): Promise
   // bcrypt's input cap is 72 bytes — Supabase Auth rejects longer passwords.
   // The previous `${randomUUID()}-${randomUUID()}` was 73 chars and made
   // /auth/v1/admin/users return a generic 500 unexpected_failure (SMI-4525).
-  // 32 hex × 2 = 64 chars, 256 bits of entropy, well under the limit.
+  // 32 hex × 2 = 64 chars, 244 bits of entropy (2 × 122-bit UUID v4), well under the limit.
   const password = `${randomUUID().replace(/-/g, '')}${randomUUID().replace(/-/g, '')}`
 
   // 1. Create auth user with confirmed email (skip verification).

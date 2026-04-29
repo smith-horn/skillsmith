@@ -1,0 +1,19 @@
+# CODEOWNERS — review requirements for sensitive paths
+# https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Last in wins. Empty file = no required reviewers (default GitHub behavior).
+# Adding entries here ADDS review requirements; it does not remove existing
+# branch protection rules.
+
+# Release pipeline canonical messages (SMI-4531) — verbatim canonical strings
+# in scripts/lib/collision-rules.mjs are stable contracts. Changes require
+# release-eng sign-off so the messages can't drift between callers without
+# intentional sign-off. SMI-4541.
+scripts/lib/collision-rules.mjs        @wrsmith108
+scripts/lib/forbid-local-publish.mjs   @wrsmith108
+scripts/lib/reserved-ranges.mjs        @wrsmith108
+
+# Publish pipeline (SMI-4530, SMI-4534) — collision guard + OIDC auth
+scripts/check-publish-collision.mjs    @wrsmith108
+scripts/prepare-release.ts             @wrsmith108
+.github/workflows/publish.yml          @wrsmith108

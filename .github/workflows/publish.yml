@@ -627,13 +627,17 @@ jobs:
       - name: Install mcp-publisher
         id: install-mcp-publisher
         if: steps.version-check.outputs.exists != 'true'
+        # audit:allow-continue-on-error — SMI-4534: install failure (e.g. curl/network) must
+        # still reach the loud-fail Annotate step; job must not hard-fail here or the GitHub
+        # issue is never filed and the outage is silent.
+        continue-on-error: true
         run: |
           curl -L "https://github.com/modelcontextprotocol/registry/releases/download/v1.7.3/mcp-publisher_linux_amd64.tar.gz" | tar xz
           chmod +x mcp-publisher
 
       - name: Login to MCP Registry (github-oidc)
         id: registry-login
-        if: steps.version-check.outputs.exists != 'true'
+        if: steps.version-check.outputs.exists != 'true' && steps.install-mcp-publisher.outcome == 'success'
         # audit:allow-continue-on-error — SMI-4534: registry publish is non-load-bearing;
         # npm publish is the binding artifact. Manual recovery: `mcp-publisher login
         # github-oidc` + `mcp-publisher publish` from a maintainer machine. Loud-fail
@@ -653,7 +657,7 @@ jobs:
       - name: Annotate registry publish failure
         if: |
           steps.version-check.outputs.exists != 'true' &&
-          (steps.registry-login.outcome == 'failure' || steps.registry-publish.outcome == 'failure' || steps.registry-publish.conclusion == 'skipped')
+          (steps.install-mcp-publisher.outcome == 'failure' || steps.registry-login.outcome == 'failure' || steps.registry-publish.outcome == 'failure' || steps.registry-publish.conclusion == 'skipped')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGE_VERSION: ${{ steps.version-check.outputs.package_version }}
