@@ -151,8 +151,8 @@ if [[ -n "$FILTER_FUNCTIONS" ]]; then
   TOTAL=$((${#NO_VERIFY_JWT_FUNCTIONS[@]} + ${#VERIFY_JWT_FUNCTIONS[@]}))
   echo "Deploying $TOTAL edge function(s) to project: $PROJECT_REF"
 else
-  TOTAL=30
-  echo "Deploying all 30 edge functions to project: $PROJECT_REF"
+  TOTAL=31
+  echo "Deploying all 31 edge functions to project: $PROJECT_REF"
 fi
 
 echo "=================================================="
