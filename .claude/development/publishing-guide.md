@@ -58,7 +58,7 @@ npm publish -w packages/<pkg> --access public
 
 Every accepted override appends a tab-separated row to `~/.skillsmith-publish-overrides.log`:
 
-```
+```text
 2026-04-29T16:42:00.000Z<TAB>SMI-4499 emergency hotfix for prod incident; CI down 30+ min<TAB>local
 ```
 
