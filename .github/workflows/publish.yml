@@ -538,6 +538,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [pre-publish-check, validate, publish-core]
+    # SMI-4534: id-token: write enables `mcp-publisher login github-oidc` for the MCP
+    # Registry publish step. Job-scoped (not workflow-scoped) for least privilege —
+    # sibling publish-* jobs do not need OIDC. contents: read overrides the workflow
+    # default of contents: write since this job does not push tags or releases.
+    permissions:
+      contents: read
+      id-token: write
     if: |
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.mcp-exists != 'true' &&
@@ -604,20 +611,78 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.SKILLSMITH_NPM_TOKEN }}
 
-      # SMI-2158: Publish to MCP Registry after npm publish
+      # SMI-2158: Publish to MCP Registry after npm publish.
+      # SMI-4534: pinned to a specific tag (not releases/latest) — mcp-publisher v1.6.0
+      # silently broke the env-var auth flow. Bump intentionally; SMI-4537 tracks drift
+      # detection. Auth via GitHub Actions OIDC (`mcp-publisher login github-oidc`);
+      # MCP_REGISTRY_TOKEN is no longer used.
       - name: Install mcp-publisher
+        id: install-mcp-publisher
         if: steps.version-check.outputs.exists != 'true'
         run: |
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/download/v1.7.3/mcp-publisher_linux_amd64.tar.gz" | tar xz
           chmod +x mcp-publisher
 
-      - name: Publish to MCP Registry
+      - name: Login to MCP Registry (github-oidc)
+        id: registry-login
         if: steps.version-check.outputs.exists != 'true'
+        # audit:allow-continue-on-error — SMI-4534: registry publish is non-load-bearing;
+        # npm publish is the binding artifact. Manual recovery: `mcp-publisher login
+        # github-oidc` + `mcp-publisher publish` from a maintainer machine. Loud-fail
+        # step below files a GitHub issue automatically.
+        continue-on-error: true
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry
+        id: registry-publish
+        if: steps.version-check.outputs.exists != 'true' && steps.registry-login.outcome == 'success'
+        # audit:allow-continue-on-error — SMI-4534: see Login step above.
+        continue-on-error: true
         run: |
           cd packages/mcp-server
           ../../mcp-publisher publish
+
+      - name: Annotate registry publish failure
+        if: |
+          steps.version-check.outputs.exists != 'true' &&
+          (steps.registry-login.outcome == 'failure' || steps.registry-publish.outcome == 'failure' || steps.registry-publish.conclusion == 'skipped')
         env:
-          MCP_REGISTRY_TOKEN: ${{ secrets.MCP_REGISTRY_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE_VERSION: ${{ steps.version-check.outputs.package_version }}
+          LOGIN_OUTCOME: ${{ steps.registry-login.outcome }}
+          PUBLISH_OUTCOME: ${{ steps.registry-publish.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## ⚠️ MCP Registry publish failed"
+            echo ""
+            echo "npm publish succeeded for \`@skillsmith/mcp-server@${PACKAGE_VERSION}\`; registry registration did not."
+            echo ""
+            echo "**Login outcome:** ${LOGIN_OUTCOME}"
+            echo "**Publish outcome:** ${PUBLISH_OUTCOME}"
+            echo ""
+            echo "Triage: re-run \`mcp-publisher login github-oidc\` + \`mcp-publisher publish\` from a maintainer machine, or see <https://registry.modelcontextprotocol.io/>."
+          } >> "$GITHUB_STEP_SUMMARY"
+          BODY_FILE=$(mktemp)
+          {
+            echo "Run: ${RUN_URL}"
+            echo ""
+            echo "Login outcome: ${LOGIN_OUTCOME}"
+            echo "Publish outcome: ${PUBLISH_OUTCOME}"
+            echo ""
+            echo "See SMI-4534 for context. Manual recovery:"
+            echo '```bash'
+            echo "mcp-publisher login github-oidc"
+            echo "cd packages/mcp-server && mcp-publisher publish"
+            echo '```'
+          } > "${BODY_FILE}"
+          gh issue create \
+            --title "MCP Registry publish failed for @skillsmith/mcp-server@${PACKAGE_VERSION}" \
+            --label "ci-failure" \
+            --body-file "${BODY_FILE}" \
+            || echo "::warning::gh issue create failed; check Actions log"
+          rm -f "${BODY_FILE}"
 
   # SMI-1319: Use pre-publish-check outputs to skip already-published packages
   publish-cli:

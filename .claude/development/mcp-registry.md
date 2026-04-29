@@ -70,8 +70,11 @@ The `mcpName` field in `packages/mcp-server/package.json` links the npm package 
 The `publish.yml` workflow automatically publishes to MCP Registry after successful npm publish:
 
 1. npm publish succeeds for `@skillsmith/mcp-server`
-2. CI downloads `mcp-publisher` CLI
-3. CI publishes to registry using `MCP_REGISTRY_TOKEN` secret
+2. CI downloads `mcp-publisher` CLI (pinned to `v1.7.3`; SMI-4537 tracks drift)
+3. CI authenticates via GitHub Actions OIDC (`mcp-publisher login github-oidc`); no static secret needed
+4. CI publishes to registry
+
+**Failure isolation (SMI-4534)**: Registry login + publish steps are marked `continue-on-error: true`; npm publish remains the binding artifact. A loud-fail step files a GitHub issue automatically when the registry path fails.
 
 ### Manual
 
@@ -125,28 +128,19 @@ jq ".version = \"$VERSION\" | .packages[0].version = \"$VERSION\"" server.json >
 
 ## CI Setup
 
-### Required Secrets
+### Required Permissions (SMI-4534)
 
-| Secret | Description | How to Generate |
-|--------|-------------|-----------------|
-| `MCP_REGISTRY_TOKEN` | JWT token for registry auth | See below |
+CI auth uses GitHub Actions OIDC — no static secret. The `publish-mcp-server` job in `publish.yml` declares:
 
-### Generating MCP_REGISTRY_TOKEN
-
-```bash
-# 1. Login (generates tokens locally)
-mcp-publisher login github
-
-# 2. Copy the registry token
-cat ~/.mcpregistry_registry_token
-
-# 3. Add to GitHub Secrets
-# Settings → Secrets and variables → Actions → New repository secret
-# Name: MCP_REGISTRY_TOKEN
-# Value: <paste token>
+```yaml
+permissions:
+  contents: read
+  id-token: write
 ```
 
-**Note**: Tokens expire. If CI fails with 401, regenerate the token.
+`id-token: write` is scoped to this single job (least privilege). The `mcp-publisher login github-oidc` step exchanges the OIDC token for a registry JWT at runtime.
+
+**Pre-2026-04-28**: A static `MCP_REGISTRY_TOKEN` secret was used. mcp-publisher v1.6.0 (2026-04-15) moved token storage to `~/.config/mcp-publisher/` and broke env-var auth. SMI-4534 migrated to OIDC.
 
 ### GitHub Organization Membership
 
@@ -168,10 +162,11 @@ The `mcp-publisher` CLI uses GitHub namespace verification. To publish under `io
 - Ensure npm package has `mcpName` field in package.json
 - Publish to npm **before** publishing to registry
 
-### "Invalid or expired Registry JWT token"
+### CI registry publish failed (loud-fail issue auto-filed)
 
-- Re-run `mcp-publisher login github`
-- Update `MCP_REGISTRY_TOKEN` secret in GitHub
+- Check the `Annotate registry publish failure` step output in the failed run
+- Manual recovery from a maintainer machine: `mcp-publisher login github` + `cd packages/mcp-server && mcp-publisher publish`
+- If recurring, check whether the pinned `mcp-publisher` version (in `publish.yml`) needs a bump (SMI-4537)
 
 ### Token files
 
