@@ -37,7 +37,7 @@ export function assertCiPublishContext(env = process.env) {
     if (!OVERRIDE_FORMAT.test(override)) {
       console.error(
         'SMI-4533: SKILLSMITH_PUBLISH_OVERRIDE format invalid.\n' +
-          '  Required: SMI-NNNN <rationale, ≥20 chars total>\n' +
+          '  Required: SMI-NNNN <rationale, ≥20 chars after the SMI-NNNN prefix>\n' +
           '  Example: SMI-4499 emergency hotfix for prod incident; CI down 30+ min'
       )
       process.exit(1)
