@@ -10,7 +10,7 @@
     "skillsmith-mcp": "./dist/src/index.js"
   },
   "scripts": {
-    "prepublishOnly": "npm run build && npm run test && chmod +x dist/src/index.js",
+    "prepublishOnly": "node ../../scripts/lib/forbid-local-publish.mjs && npm run build && npm run test && chmod +x dist/src/index.js",
     "build": "tsc",
     "postbuild": "chmod +x dist/src/index.js || true",
     "dev": "tsx watch src/index.ts",

@@ -1,8 +1,7 @@
-// Single source of truth for npm reserved/deprecated version ranges. MUST stay
-// imported by both prepare-release.ts AND check-publish-collision.mjs — drift
-// between the two collision implementations is the failure mode this module
-// exists to prevent. See SMI-4531 for full unification (Rules 1/2/3 still
-// duplicated; only RESERVED_RANGES is shared today).
+// Single source of truth for npm reserved/deprecated version ranges. Consumed
+// by `scripts/lib/collision-rules.mjs` (the unified rule pipeline shared by
+// prepare-release.ts AND check-publish-collision.mjs). Drift between the two
+// collision implementations is the failure mode this module exists to prevent.
 //
 // SMI-4207 / ADR-115: `@skillsmith/core@2.0.0`–`2.1.2` were self-published in
 // January 2026 during an aborted version-strategy experiment and rolled back to
