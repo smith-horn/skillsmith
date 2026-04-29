@@ -99,15 +99,17 @@ mkdir -p "$FAKE_WT1"
 link_worktree_node_modules "$FAKE_WT1" "$FAKE_MAIN" >/dev/null
 assert_true "link_worktree_node_modules: creates symlink" \
   "[ -L '$FAKE_WT1/node_modules' ]"
-assert_eq "link_worktree_node_modules: symlink target" \
-  "$FAKE_MAIN/node_modules" "$(readlink "$FAKE_WT1/node_modules")"
+# SMI-4381: symlink target is now relative ("../../node_modules") so it works
+# both on host (where parent is the repo root) and inside Docker bind-mount.
+assert_eq "link_worktree_node_modules: symlink target (relative)" \
+  "../../node_modules" "$(readlink "$FAKE_WT1/node_modules")"
 
 # -----------------------------------------------------------------------
 # Scenario 4: _lib.sh — link_worktree_node_modules idempotent
 # -----------------------------------------------------------------------
 link_worktree_node_modules "$FAKE_WT1" "$FAKE_MAIN" >/dev/null
 assert_true "link_worktree_node_modules: idempotent repeat" \
-  "[ -L '$FAKE_WT1/node_modules' ] && [ '$(readlink "$FAKE_WT1/node_modules")' = '$FAKE_MAIN/node_modules' ]"
+  "[ -L '$FAKE_WT1/node_modules' ] && [ '$(readlink "$FAKE_WT1/node_modules")' = '../../node_modules' ]"
 
 # -----------------------------------------------------------------------
 # Scenario 5: _lib.sh — link_worktree_node_modules skips real directory
@@ -134,8 +136,9 @@ assert_true "link_worktree_node_modules: did not clobber real dir" \
 repair_worktrees_node_modules "$FAKE_MAIN" >/dev/null 2>&1
 assert_true "repair_worktrees: backfilled missing symlink on wt-a" \
   "[ -L '$TMPROOT/wt-a/node_modules' ]"
-assert_eq "repair_worktrees: wt-a symlink target" \
-  "$FAKE_MAIN/node_modules" "$(readlink "$TMPROOT/wt-a/node_modules")"
+# SMI-4381: target is relative.
+assert_eq "repair_worktrees: wt-a symlink target (relative)" \
+  "../../node_modules" "$(readlink "$TMPROOT/wt-a/node_modules")"
 assert_true "repair_worktrees: skipped existing symlink on wt-b" \
   "[ -L '$TMPROOT/wt-b/node_modules' ]"
 
@@ -165,17 +168,20 @@ assert_true ".husky/_/pre-commit stub exists" \
   "[ -f '$REPO_ROOT/.husky/_/pre-commit' ]"
 
 # -----------------------------------------------------------------------
-# Scenario 9: structural guard — .husky/pre-commit contains Change 6 fallback
-# Prevents accidental deletion of the Docker worktree fallback. If this
-# guard fails, typecheck from worktrees will regress to false-green.
+# Scenario 9: structural guard — .husky/pre-commit contains SMI-4381 fallback
+# Prevents accidental deletion of the macOS-Darwin host fallback. If this
+# guard fails, typecheck from worktrees on macOS will regress to wrong-zod
+# false-positive errors (Docker Desktop virtiofs cannot traverse relative
+# symlinks for per-package node_modules).
 # -----------------------------------------------------------------------
 if grep -q 'IS_WORKTREE=1' "$REPO_ROOT/.husky/pre-commit" && \
    grep -q 'USE_DOCKER=0' "$REPO_ROOT/.husky/pre-commit" && \
-   grep -q 'SMI-4377' "$REPO_ROOT/.husky/pre-commit"; then
-  echo "PASS pre-commit: Change 6 worktree-fallback block present"
+   grep -q 'SMI-4381' "$REPO_ROOT/.husky/pre-commit" && \
+   grep -q 'compute_container_wd' "$REPO_ROOT/.husky/pre-commit"; then
+  echo "PASS pre-commit: SMI-4381 path-translation + macOS-fallback block present"
   pass=$((pass + 1))
 else
-  echo "FAIL pre-commit: Change 6 worktree-fallback block missing or altered"
+  echo "FAIL pre-commit: SMI-4381 fallback block missing or altered"
   fail=$((fail + 1))
 fi
 
