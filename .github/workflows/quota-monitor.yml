@@ -1,0 +1,47 @@
+# SMI-4463: Send 80% / 100% quota warning emails to users crossing thresholds
+# in their tier-aware billing period.
+#
+# Decoupled from the request hot path so per-request latency is unaffected.
+# Email dedup is enforced by the quota_warning_log table at the DB layer.
+# Each run scans the last 7 days so a paused workflow does not lose alerts.
+
+name: Quota Monitor
+
+on:
+  schedule:
+    # Every 30 minutes
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    name: Send quota threshold warnings
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call quota-monitor edge function
+        run: |
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "${{ secrets.SUPABASE_URL }}/functions/v1/quota-monitor" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "Content-Type: application/json")
+
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -n -1)
+
+          echo "HTTP Status: $http_code"
+          echo "Response: $body"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "::error::quota-monitor failed with HTTP $http_code"
+            exit 1
+          fi
+
+          scanned=$(echo "$body" | jq -r '.scanned // 0')
+          warned80=$(echo "$body" | jq -r '.warned80 // 0')
+          warned100=$(echo "$body" | jq -r '.warned100 // 0')
+          dedup=$(echo "$body" | jq -r '.dedupSkipped // 0')
+          failed=$(echo "$body" | jq -r '.emailFailed // 0')
+          echo "Scanned $scanned users; warned80=$warned80 warned100=$warned100 dedupSkipped=$dedup emailFailed=$failed"

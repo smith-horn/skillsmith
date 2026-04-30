@@ -187,6 +187,36 @@ export class SkillsmithApiClient {
             }
           }
 
+          // SMI-4463: Distinguish monthly-quota 429 from per-minute rate-limit 429.
+          // Body field `error: 'monthly_quota_exceeded'` is the canonical
+          // disambiguator (status code is shared). Per-minute 429s remain
+          // retryable below; monthly-quota 429s are NOT retryable within the
+          // billing period — fail fast so the user sees the upgrade prompt.
+          if (response.status === 429 && errorBody.error === 'monthly_quota_exceeded') {
+            const quotaInfo = errorBody as ApiErrorResponse & {
+              limit?: number | null
+              used?: number
+              resetsAt?: string
+              tier?: string
+            }
+            const used = quotaInfo.used ?? 0
+            const limit = quotaInfo.limit ?? 0
+            const tier = quotaInfo.tier ?? 'community'
+            const resetsAt = quotaInfo.resetsAt
+            const days = resetsAt
+              ? Math.max(0, Math.ceil((new Date(resetsAt).getTime() - Date.now()) / 86400000))
+              : 0
+            const message =
+              `Monthly quota reached (${used}/${limit} ${tier} tier).\n` +
+              (resetsAt
+                ? `Resets in ${days} day(s) on ${new Date(resetsAt).toUTCString().replace('GMT', 'UTC')}.\n`
+                : '') +
+              'Upgrade: https://skillsmith.app/pricing'
+            throw new SkillsmithError(ErrorCodes.NETWORK_QUOTA_EXCEEDED, message, {
+              details: { used, limit, tier, resetsAt },
+            })
+          }
+
           // Don't retry on client errors (4xx) - not retryable
           if (response.status >= 400 && response.status < 500) {
             throw new ApiClientError(
@@ -259,6 +289,16 @@ export class SkillsmithApiClient {
         if (
           lastError instanceof SkillsmithError &&
           lastError.code === ErrorCodes.NETWORK_INVALID_RESPONSE
+        ) {
+          throw lastError
+        }
+
+        // SMI-4463: Don't retry on monthly-quota-exceeded — the quota is
+        // already gone for this billing period; retrying just delays the
+        // upgrade prompt the caller needs to surface.
+        if (
+          lastError instanceof SkillsmithError &&
+          lastError.code === ErrorCodes.NETWORK_QUOTA_EXCEEDED
         ) {
           throw lastError
         }
