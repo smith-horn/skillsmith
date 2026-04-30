@@ -7,7 +7,8 @@
 # Reads JSON event on stdin (Claude Code SessionStart format):
 #   { "session_id": "uuid", "source": "startup"|"resume"|"compact",
 #     "cwd": "/abs/path", "transcript_path": "..." }
-# Writes JSON to stdout: { "hookSpecificOutput": { "additionalContext": "..." } }
+# Writes JSON to stdout: { "hookSpecificOutput": { "hookEventName": "SessionStart", "additionalContext": "..." } }
+# (hookEventName required by Claude Code harness validator — see spec §S2.)
 #
 # Always exits 0 (best-effort). Gates 1/2/3 fall through to empty context.
 # Gate 4 (query) delegates to scripts/session-priming-query.ts via tsx with a
