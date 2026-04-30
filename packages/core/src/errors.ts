@@ -35,11 +35,7 @@ export const ErrorCodes = {
   NETWORK_UNREACHABLE: 'NETWORK_UNREACHABLE',
   NETWORK_TIMEOUT: 'NETWORK_TIMEOUT',
   NETWORK_RATE_LIMITED: 'NETWORK_RATE_LIMITED',
-  // SMI-4463: distinct from NETWORK_RATE_LIMITED — that's the per-minute
-  // burst limit (recoverable in seconds); MONTHLY_QUOTA_EXCEEDED is the
-  // billing-period quota (recoverable on next period_end). The disambiguator
-  // on the wire is the response body's `error: 'monthly_quota_exceeded'`,
-  // not the status code (both surface as 429).
+  // Distinct from NETWORK_RATE_LIMITED (per-minute burst); this is the billing-period quota. Wire disambiguator: body field, not 429 status.
   NETWORK_QUOTA_EXCEEDED: 'NETWORK_QUOTA_EXCEEDED',
   NETWORK_INVALID_RESPONSE: 'NETWORK_INVALID_RESPONSE',
 

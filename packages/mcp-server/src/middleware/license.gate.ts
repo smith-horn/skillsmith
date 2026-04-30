@@ -11,28 +11,10 @@ import { createLicenseErrorResponse } from './license.js'
 
 const COMPLETE_PROFILE_URL = 'https://skillsmith.app/complete-profile'
 
-/**
- * SMI-4463: JSON-RPC error code for monthly_quota_exceeded.
- *
- * Lives in the mid-range of the JSON-RPC reserved server-error band
- * (-32000 / -32099). -32099 was at the edge and risks colliding with
- * future spec assignments; -32050 gives us comfortable headroom.
- *
- * Disambiguator from per-minute rate-limit errors is the response
- * `error: 'monthly_quota_exceeded'` body field — never the status code
- * alone (both surface as 429 on the wire).
- *
- * Documented in CODES.md alongside other Skillsmith-canonical codes.
- */
+// -32050: mid-range of JSON-RPC server-error band (-32000/-32099); avoids future spec collisions at -32099 edge.
 export const MCP_MONTHLY_QUOTA_EXCEEDED_CODE = -32050
 
-/**
- * SMI-4463: Build the user-facing MCP error response for a monthly quota
- * exhaustion. The structured `data.quotaInfo` payload lets MCP clients
- * render rich UI (countdown, upgrade button) without re-parsing the
- * message. The plain-text message is suitable for any client that
- * just stringifies content[0].text.
- */
+// Structured data.quotaInfo so MCP clients can render quota UI without re-parsing the message string.
 function createMonthlyQuotaExceededResponse(err: SkillsmithError): {
   content: Array<{ type: 'text'; text: string }>
   isError: true
@@ -141,9 +123,6 @@ export async function withLicenseAndQuota<T>(
     ) {
       return errResponse(createProfileIncompleteResponse())
     }
-    // SMI-4463: monthly_quota_exceeded translates to JSON-RPC -32050 with
-    // structured quotaInfo. Disambiguates from per-minute rate-limit by
-    // the `error: 'monthly_quota_exceeded'` body field, not status code.
     if (err instanceof SkillsmithError && err.code === ErrorCodes.NETWORK_QUOTA_EXCEEDED) {
       return errResponse(createMonthlyQuotaExceededResponse(err))
     }

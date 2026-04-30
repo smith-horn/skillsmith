@@ -187,11 +187,7 @@ export class SkillsmithApiClient {
             }
           }
 
-          // SMI-4463: Distinguish monthly-quota 429 from per-minute rate-limit 429.
-          // Body field `error: 'monthly_quota_exceeded'` is the canonical
-          // disambiguator (status code is shared). Per-minute 429s remain
-          // retryable below; monthly-quota 429s are NOT retryable within the
-          // billing period — fail fast so the user sees the upgrade prompt.
+          // Monthly-quota 429 shares status with per-minute rate-limit; body field is the disambiguator. Non-retryable.
           if (response.status === 429 && errorBody.error === 'monthly_quota_exceeded') {
             const quotaInfo = errorBody as ApiErrorResponse & {
               limit?: number | null
@@ -293,9 +289,7 @@ export class SkillsmithApiClient {
           throw lastError
         }
 
-        // SMI-4463: Don't retry on monthly-quota-exceeded — the quota is
-        // already gone for this billing period; retrying just delays the
-        // upgrade prompt the caller needs to surface.
+        // Don't retry: quota is gone for the billing period; retrying delays the upgrade prompt.
         if (
           lastError instanceof SkillsmithError &&
           lastError.code === ErrorCodes.NETWORK_QUOTA_EXCEEDED

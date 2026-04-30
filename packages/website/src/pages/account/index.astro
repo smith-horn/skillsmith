@@ -48,9 +48,7 @@ const supabaseConfig = getSupabaseConfig()
     <Nav activePath="/account" />
 
     <main class="dashboard-container">
-      <!-- SMI-4463: Quota banner — populated client-side after the
-           tier-aware billing-period RPC resolves. Hidden until then.
-           Placed above the page heading per WCAG landmark conventions. -->
+      <!-- Hidden until tier-aware billing-period RPC resolves; above heading per WCAG landmark convention. -->
       <div id="quota-banner-container" aria-live="polite" style="display: none;"></div>
 
       <!-- Loading State -->
@@ -892,13 +890,7 @@ const supabaseConfig = getSupabaseConfig()
       const keyCountEl = document.getElementById('key-count')
       if (keyCountEl) keyCountEl.textContent = `${activeKeys.length} / ${maxKeys}`
 
-      // SMI-4463: API usage now reads from get_user_usage_for_billing_period
-      // (migration 084) which returns a tier-aware window — calendar month
-      // for community/null, Stripe subscription period for paid tiers — so a
-      // mid-month upgrade buys 30 days, not "until the 1st".
-      // SMI-4461 originally pointed this at get_user_usage_summary; that
-      // helper still exists for backwards compat but the dashboard prefers
-      // the billing-period-aware variant.
+      // Billing-period-aware: calendar month for community, Stripe period for paid (mid-month upgrade → 30 days, not calendar reset).
       const { data: usageSummary } = await supabase.rpc('get_user_usage_for_billing_period', {
         p_user_id: user.id,
       })
