@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 const HOOK = join(__dirname, '..', 'session-start-priming.sh')
 
 interface HookOutput {
-  hookSpecificOutput: { additionalContext: string }
+  hookSpecificOutput: { hookEventName: 'SessionStart'; additionalContext: string }
 }
 
 function runHook(event: object, env: NodeJS.ProcessEnv = {}): HookOutput {
@@ -114,6 +114,22 @@ describe('session-start-priming.sh — gate behavior', () => {
     expect(out).toHaveProperty('hookSpecificOutput')
     expect(out.hookSpecificOutput).toHaveProperty('additionalContext')
     expect(typeof out.hookSpecificOutput.additionalContext).toBe('string')
+  })
+
+  it('emits hookEventName: "SessionStart" on every gate path (validator contract)', () => {
+    // SMI-4451 fix eeb12c64: Claude Code harness validator drops the payload
+    // ("hookSpecificOutput is missing required field hookEventName") if this
+    // field is absent, silently nullifying priming. Cover all four gate paths.
+    const paths = [
+      { source: 'resume', session_id: 'evt-1', cwd: tmpRepo }, // gate 1
+      { source: 'startup', session_id: 'evt-2', cwd: '' }, // gate 1b
+      { source: 'startup', session_id: 'evt-3', cwd: tmpRepo }, // gate 2 (no branch set)
+      { source: 'unknown', session_id: 'evt-4', cwd: tmpRepo }, // malformed source
+    ]
+    for (const evt of paths) {
+      const out = runHook(evt)
+      expect(out.hookSpecificOutput.hookEventName).toBe('SessionStart')
+    }
   })
 })
 
