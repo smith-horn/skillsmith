@@ -1,6 +1,6 @@
 {
   "name": "@skillsmith/core",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "description": "Core types and utilities for Skillsmith",
   "type": "module",
   "main": "./dist/src/index.js",
@@ -81,6 +81,9 @@
     "typescript": "5.9.3",
     "web-tree-sitter": "0.26.8",
     "zod": "4.2.1"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "11.10.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",

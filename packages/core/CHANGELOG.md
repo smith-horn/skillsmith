@@ -2,6 +2,12 @@
 
 All notable changes to `@skillsmith/core` are documented here.
 
+## v0.5.8
+
+- **Fix**: SMI-4563 native SQLite driver now installs automatically via npm `optionalDependencies` (was: silent WASM fallback on every fresh `npx` consumer). `better-sqlite3@11.10.0` is now declared optional so npm attempts native install on supported platforms; the WASM path remains a true fallback for hosts without a C toolchain.
+- **Feature**: SMI-4463 monthly quota enforcement (community 100% behind ENFORCE_COMMUNITY_QUOTA flag) (#773)
+- **Fix**: SMI-4531+4533 unify collision rules + forbid local-fallback npm publish (#828)
+
 ## v0.5.7
 
 - **Fix**: map curated trust tier through MCP surface (SMI-4520) (#822)
