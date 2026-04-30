@@ -36,7 +36,7 @@ except Exception:
 emit_json() {
   python3 -c "
 import json, sys
-print(json.dumps({'hookSpecificOutput': {'additionalContext': sys.argv[1] if len(sys.argv) > 1 else ''}}))
+print(json.dumps({'hookSpecificOutput': {'hookEventName': 'SessionStart', 'additionalContext': sys.argv[1] if len(sys.argv) > 1 else ''}}))
 " "$1"
 }
 
