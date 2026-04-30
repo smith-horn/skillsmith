@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/cli` are documented here.
 
+## [Unreleased]
+
+- **Bump**: `@skillsmith/core` dep range to `^0.5.8` — pulls in SMI-4563 native SQLite driver auto-install via `optionalDependencies`. cli's own version unchanged; fresh installs of `@skillsmith/cli@0.5.12` will now resolve `core@0.5.8` and get native better-sqlite3 by default.
+
 ## v0.5.12
 
 - **Bump**: requires `@skillsmith/core` ≥ 0.5.6 to pick up the SMI-4486 schema-init fix that finally lets fresh installs run `skillsmith sync` without missing-table errors (#795).
