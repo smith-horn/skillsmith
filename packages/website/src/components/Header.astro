@@ -6,11 +6,11 @@ interface Props {
 const { currentPath = '/' } = Astro.props
 
 const navLinks = [
-  { href: '/', label: 'Home' },
   { href: '/skills', label: 'Skills' },
-  { href: '/pricing', label: 'Pricing' },
+  { href: '/product', label: 'Product' },
   { href: '/blog', label: 'Blog' },
   { href: '/docs', label: 'Docs' },
+  { href: '/pricing', label: 'Pricing' },
 ]
 
 const isActive = (href: string) => {

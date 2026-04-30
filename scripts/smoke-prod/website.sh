@@ -239,3 +239,35 @@ check_blog_local_db_renders() {
   report_pass "blog-local-skill-database" "check_blog_local_db_renders" "$url" "$ms"
   return 0
 }
+
+# ---- check_product_page_renders ---------------------------------------
+# Verifies the /product comparison page renders. Uses the hero H1 text as
+# a stable fingerprint — the H1 is part of the page source (not a
+# Cloudinary asset), so a missing H1 means the page either failed to
+# build or has been replaced. Also asserts the comparison table
+# fingerprint so a render that loses the table doesn't pass.
+check_product_page_renders() {
+  local url="${SMOKE_WEBSITE_URL}/product"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+
+  if [ "$status" != "200" ]; then
+    report_fail "website-product-page" "check_product_page_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'MCP for Claude. CLI for terminals.' "product-hero"; then
+    report_fail "website-product-page" "check_product_page_renders" "$url" "hero-fingerprint" "missing" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'Capability comparison' "product-matrix"; then
+    report_fail "website-product-page" "check_product_page_renders" "$url" "matrix-fingerprint" "missing" "$ms"
+    return 1
+  fi
+  report_pass "website-product-page" "check_product_page_renders" "$url" "$ms"
+  return 0
+}
