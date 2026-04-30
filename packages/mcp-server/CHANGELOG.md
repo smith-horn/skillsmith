@@ -23,6 +23,7 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+- **Bump**: `@skillsmith/core` dep range to `^0.5.8` — pulls in SMI-4563 native SQLite driver auto-install via `optionalDependencies`. mcp-server's own version unchanged; consumers picking up `core@0.5.8` will get the native driver on `npx` install instead of silently falling back to WASM.
 - **Feature**: SMI-4124 `skill_pack_audit` trigger-quality + namespace collision checks (PR #505).
 
 ## v0.4.9
