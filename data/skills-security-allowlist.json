@@ -38,6 +38,15 @@
       "reviewedBy": "ryansmith108",
       "reviewedAt": "2026-04-21",
       "expiresAt": "2026-07-21"
+    },
+    {
+      "skillId": "github/RobinGase/skill-protocol-rs",
+      "findingType": "sensitive_path",
+      "messagePattern": "\\.env",
+      "reason": "Rust crate providing reusable building blocks for Claude Code skill CLIs — its repo description literally advertises a `.env` loader as a feature. The bare-keyword sensitive_path regex flags any documented '.env' string. Repo has no SKILL.md (it's a library FOR skill authors, not a skill itself). Triaged 2026-04-30 under SMI-4558 — Wave 2 sensitive_path tightening (require assignment/path context) will eliminate this class of false positive. Closes GH #702 + #789.",
+      "reviewedBy": "ryansmith108",
+      "reviewedAt": "2026-04-30",
+      "expiresAt": "2026-07-30"
     }
   ]
 }
