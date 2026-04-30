@@ -231,6 +231,10 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 
 **Common mistakes**: `scripts/__tests__/` (use `scripts/tests/`), `packages/core/test/` (use `tests/` plural), `src/foo.test.ts` (must be inside a package). Reference: `vitest.config.ts`.
 
+**SMI-3502 split rationale**: colocated `packages/*/src/**/*.test.ts` tests run only in `vitest.config.root-tests.ts` (post-merge-verify). Per-package configs use `tests/**/*.test.ts` only — including `src/**` everywhere previously caused CI OOM at 147 files (vs 120 with memory benchmarks excluded).
+
+**SMI-4557 carve-out**: `packages/core/src/analysis/tree-sitter/**/*.test.ts` is included in `packages/core/vitest.config.ts` so PR matrix catches dependabot bumps to `web-tree-sitter` / `tree-sitter-*` deps before merge. Subtree is small (~4 files) and well below SMI-3502's 147-file OOM threshold. Driven by SMI-4556 — 0.26.x bump merged green and broke `post-merge-verify` for ~14 commits before detection.
+
 ---
 
 ## Skillsmith MCP Tools
