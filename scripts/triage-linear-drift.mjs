@@ -51,17 +51,40 @@ const ESCALATION_THRESHOLD = 5
 // Title-keyword heuristics for external-repo classification.
 // Order matters — checked first-to-last; first match wins.
 const EXTERNAL_REPO_PATTERNS = [
-  { pattern: /AsanaPlayground|Asana(?:[ -])?(?:module|API|Workshop)|AIPM-Asana|aipm-asana/i, repo: 'AsanaPlayground' },
+  {
+    pattern: /AsanaPlayground|Asana(?:[ -])?(?:module|API|Workshop)|AIPM-Asana|aipm-asana/i,
+    repo: 'AsanaPlayground',
+  },
   // MAUI prototype — covers all named services + spec / scaffold / boundary work
-  { pattern: /MAUI|\.NET 8|PdfWorkspace|PdfJsViewer|AnnotationSet|XFDF|sidecar annotation|RefreshPolicyService|DocumentSessionService|annotation workflow|annotation set per PDF|app boundaries in the scaffold|viewer and session architecture|prototype specification|sidecar annotation file model|harness UI/i, repo: 'MAUI prototype' },
+  {
+    pattern:
+      /MAUI|\.NET 8|PdfWorkspace|PdfJsViewer|AnnotationSet|XFDF|sidecar annotation|RefreshPolicyService|DocumentSessionService|annotation workflow|annotation set per PDF|app boundaries in the scaffold|viewer and session architecture|prototype specification|sidecar annotation file model|harness UI/i,
+    repo: 'MAUI prototype',
+  },
   // lin-cli — separate npm package
-  { pattern: /lin[ -]cli|tryLin|lin CLI|checkLin(ear)?Cli|execLin<|detectLin(ear)?Cli|checkLinCli|list-initiatives|Add list-issues command|Add search command|Rename check.*Cli|Update help command/i, repo: 'lin-cli' },
+  {
+    pattern:
+      /lin[ -]cli|tryLin|lin CLI|checkLin(ear)?Cli|execLin<|detectLin(ear)?Cli|checkLinCli|list-initiatives|Add list-issues command|Add search command|Rename check.*Cli|Update help command/i,
+    repo: 'lin-cli',
+  },
   // minimax / gateway / LLM routing project (Python codebase, separate repo)
-  { pattern: /MiniMax|qwen3-coder|gemma3-12b|minimax-M2|GATEWAY_MASTER|gateway routing|coding_benchmark|Phase \d+: (Setup|Live Model|Live Tests|Gate Check)|Gate Check —|Stage \d+: (JSONL|Supabase llm_usage)|crawler\/(crawl|crawl_log|dedup)\.py|agent\/interview\.py|llm_usage\.py|LLMBackend|GatewayBackend|AnthropicBackend|chat_with_usage|record_usage|token-report\.py/i, repo: 'minimax / gateway' },
+  {
+    pattern:
+      /MiniMax|qwen3-coder|gemma3-12b|minimax-M2|GATEWAY_MASTER|gateway routing|coding_benchmark|Phase \d+: (Setup|Live Model|Live Tests|Gate Check)|Gate Check —|Stage \d+: (JSONL|Supabase llm_usage)|crawler\/(crawl|crawl_log|dedup)\.py|agent\/interview\.py|llm_usage\.py|LLMBackend|GatewayBackend|AnthropicBackend|chat_with_usage|record_usage|token-report\.py/i,
+    repo: 'minimax / gateway',
+  },
   // Wave-numbered Python work in the minimax/crawler repo
-  { pattern: /Wave \d+ · .*\.py|Wave \d+ · (Migration|Surface new counter|Split crawl_log|TDD Red|Dedupe script|app-side recovery)/i, repo: 'minimax / crawler' },
+  {
+    pattern:
+      /Wave \d+ · .*\.py|Wave \d+ · (Migration|Surface new counter|Split crawl_log|TDD Red|Dedupe script|app-side recovery)/i,
+    repo: 'minimax / crawler',
+  },
   // 021.School cohort docs + Track A/B/C work + workshop-specific scripts
-  { pattern: /021\.School|Module \d+ Step|live-session-setup|environment-setup\.md|agent-skill-distinction|composing-and-anti-patterns|context-window-economics|delegation-architecture|exercise-(build-a-skill|ship-it|publish-skill|multi-agent)|\[Track [ABC]\]|introduction\.md|lessons-next-steps|appendix-troubleshooting|writing-skills-that-work|daisy-chain-pattern|anatomy-of-a-skill|workshop-config|workshop-fork|register-workshop|Asana playground|David Gratton|attendee-management|Module \d+:|Agentic Skills April 2026|send-workshop-invites|enrollment email sends|workshop_instructors|instructor (badge|chips)|^PR2:/i, repo: '021.School cohort docs' },
+  {
+    pattern:
+      /021\.School|Module \d+ Step|live-session-setup|environment-setup\.md|agent-skill-distinction|composing-and-anti-patterns|context-window-economics|delegation-architecture|exercise-(build-a-skill|ship-it|publish-skill|multi-agent)|\[Track [ABC]\]|introduction\.md|lessons-next-steps|appendix-troubleshooting|writing-skills-that-work|daisy-chain-pattern|anatomy-of-a-skill|workshop-config|workshop-fork|register-workshop|Asana playground|David Gratton|attendee-management|Module \d+:|Agentic Skills April 2026|send-workshop-invites|enrollment email sends|workshop_instructors|instructor (badge|chips)|^PR2:/i,
+    repo: '021.School cohort docs',
+  },
   { pattern: /EvoSkill|evoskill-harness/i, repo: 'EvoSkill' },
   { pattern: /minimax-compatibility/i, repo: 'minimax compatibility tests' },
   // Ideon / Acme Corp workshop forks
@@ -350,7 +373,9 @@ function main() {
   if (linearKey && !process.env.TRIAGE_NO_LINEAR) {
     console.error('  Linear project lookup: ENABLED')
   } else {
-    console.error('  Linear project lookup: disabled (set LINEAR_API_KEY or unset TRIAGE_NO_LINEAR)')
+    console.error(
+      '  Linear project lookup: disabled (set LINEAR_API_KEY or unset TRIAGE_NO_LINEAR)'
+    )
   }
 
   const buckets = {
@@ -385,7 +410,9 @@ function main() {
 
   if (buckets['genuine-drift'].length > ESCALATION_THRESHOLD) {
     console.log('')
-    console.log(`⚠ Escalation: ${buckets['genuine-drift'].length} genuine-drift entries exceed threshold ${ESCALATION_THRESHOLD}.`)
+    console.log(
+      `⚠ Escalation: ${buckets['genuine-drift'].length} genuine-drift entries exceed threshold ${ESCALATION_THRESHOLD}.`
+    )
     console.log('Re-bucket or revisit triage rules before opening the allowlist PR.')
     process.exit(2)
   }
