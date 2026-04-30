@@ -40,3 +40,10 @@ repair_worktrees_node_modules "$REPO_ROOT"
 
 info "Backfilling per-package node_modules symlinks (SMI-4381)..."
 repair_worktrees_package_node_modules "$REPO_ROOT"
+
+# SMI-4549: rebuild host-side native bindings skipped by `npm install
+# --ignore-scripts`. Cheap (sub-second `[skip]`) on a healthy host; rebuilds
+# better-sqlite3 from source if the binding is missing or the require()
+# fails to instantiate. Single-source-of-truth host-setup pass.
+info "Verifying host native bindings (SMI-4549)..."
+"$SCRIPT_DIR/repair-host-native-deps.sh"

@@ -46,6 +46,44 @@ emit_empty() {
   exit 0
 }
 
+# SMI-4549: Walk up from $1 until a directory is found that contains `.git`
+# as a directory (not a file — worktrees have `.git` as a file pointing to
+# the main repo's gitdir). Mirrors `findMainRepoRoot` in
+# packages/doc-retrieval-mcp/src/retrieval-log/writer.ts:75-93 so the hook's
+# .log file co-locates with the writer's retrieval-logs.db inside the same
+# encoded-project directory under ~/.claude/projects/. Without this, the
+# .log file ends up under the worktree-encoded dir while the DB lives under
+# the main-repo-encoded dir — debug hazard for SMI-4549-like investigations.
+#
+# Hardened per plan-review:
+#   - [[ ]] not [ ] for space-safe path comparisons
+#   - 64-iter max-depth cap (matches writer.ts safety cap)
+#   - explicit set +e around the loop body so unrelated probes don't trip
+#     the script's outer set -euo pipefail
+# Echoes the resolved path on stdout, exits non-zero if nothing found.
+resolve_main_repo_root() {
+  local current depth parent
+  current="$1"
+  depth=0
+  set +e
+  while (( depth < 64 )); do
+    if [[ -d "$current/.git" ]]; then
+      printf '%s\n' "$current"
+      set -e
+      return 0
+    fi
+    parent="$(dirname "$current")"
+    if [[ "$parent" == "$current" ]]; then
+      set -e
+      return 1
+    fi
+    current="$parent"
+    depth=$(( depth + 1 ))
+  done
+  set -e
+  return 1
+}
+
 SOURCE=$(json_get source unknown)
 SESSION_ID=$(json_get session_id unknown)
 CWD=$(json_get cwd "")
@@ -94,7 +132,11 @@ if [ -f "$TRANSIENT" ]; then
 fi
 
 # Gate 4: build query and search.
-LOG_DIR="$HOME/.claude/projects/$(echo "$REPO_ROOT" | sed 's|^/|-|;s|/|-|g')"
+# SMI-4549: encode the *main repo root* (not the worktree path) so .log file
+# co-locates with retrieval-logs.db. From a worktree, $REPO_ROOT is the
+# worktree path; resolve_main_repo_root walks up to the .git-as-directory.
+MAIN_REPO_ROOT="$(resolve_main_repo_root "$REPO_ROOT" 2>/dev/null || echo "$REPO_ROOT")"
+LOG_DIR="$HOME/.claude/projects/$(echo "$MAIN_REPO_ROOT" | sed 's|^/|-|;s|/|-|g')"
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 LOG="$LOG_DIR/session-priming.log"
 
