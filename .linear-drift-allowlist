@@ -54,3 +54,288 @@ SMI-3272
 SMI-3273
 SMI-3274
 SMI-3275
+
+# === 2026-04-30 batch (SMI-4559 — drain-linear-drift-backlog) ===
+# Triaged 270 drift entries via scripts/triage-linear-drift.mjs.
+# 249 allowlisted below. 21 genuine-drift candidates remain for
+# individual review (filed as follow-up).
+#
+# Bucketing signal:
+#   - linear-initiative: issue belongs to a non-Skillsmith initiative
+#     (021.School, lin-cli, MAUI, minimax, etc.) — separate codebase.
+#   - title-keyword: external repo identified via title pattern.
+#   - wave-subtask: scoped conventional-commit / Wave N / W?.M
+#     subtask shipped under a parent PR. Common Linear convention
+#     where the parent SMI is referenced but children are not.
+#   - manual-op: one-time deploy / migrate / runbook / audit grep.
+#   - docs-only: pure documentation / runbook update.
+
+# External repos (out-of-tree work — separate codebases) (166)
+#   — 021.School cohort docs (45)
+SMI-3744
+SMI-3745
+SMI-3746
+SMI-3750
+SMI-3751
+SMI-3753
+SMI-3754
+SMI-3934
+SMI-3938
+SMI-3950
+SMI-3953
+SMI-3988
+SMI-4002
+SMI-4003
+SMI-4004
+SMI-4222
+SMI-4223
+SMI-4224
+SMI-4225
+SMI-4226
+SMI-4227
+SMI-4228
+SMI-4260
+SMI-4261
+SMI-4262
+SMI-4263
+SMI-4264
+SMI-4265
+SMI-4266
+SMI-4267
+SMI-4268
+SMI-4269
+SMI-4270
+SMI-4271
+SMI-4272
+SMI-4273
+SMI-4274
+SMI-4275
+SMI-4276
+SMI-4277
+SMI-4278
+SMI-4279
+SMI-4280
+SMI-4281
+SMI-4283
+#   — minimax / gateway (28)
+SMI-4089
+SMI-4090
+SMI-4091
+SMI-4092
+SMI-4093
+SMI-4094
+SMI-4095
+SMI-4096
+SMI-4097
+SMI-4098
+SMI-4099
+SMI-4100
+SMI-4101
+SMI-4102
+SMI-4103
+SMI-4104
+SMI-4105
+SMI-4106
+SMI-4107
+SMI-4108
+SMI-4109
+SMI-4110
+SMI-4111
+SMI-4112
+SMI-4113
+SMI-4117
+SMI-4132
+SMI-4179
+#   — Linear Skill (25)
+SMI-3777
+SMI-3778
+SMI-3779
+SMI-3780
+SMI-3781
+SMI-3782
+SMI-3786
+SMI-3787
+SMI-3788
+SMI-3789
+SMI-3929
+SMI-3930
+SMI-3931
+SMI-3932
+SMI-3933
+SMI-4063
+SMI-4064
+SMI-4068
+SMI-4084
+SMI-4324
+SMI-4325
+SMI-4326
+SMI-4327
+SMI-4344
+SMI-4346
+#   — lin-cli (21)
+SMI-4060
+SMI-4061
+SMI-4062
+SMI-4065
+SMI-4066
+SMI-4067
+SMI-4069
+SMI-4070
+SMI-4071
+SMI-4072
+SMI-4073
+SMI-4074
+SMI-4075
+SMI-4076
+SMI-4077
+SMI-4078
+SMI-4079
+SMI-4080
+SMI-4081
+SMI-4082
+SMI-4083
+#   — MAUI prototype (14)
+SMI-4328
+SMI-4329
+SMI-4330
+SMI-4331
+SMI-4332
+SMI-4333
+SMI-4334
+SMI-4335
+SMI-4336
+SMI-4337
+SMI-4338
+SMI-4339
+SMI-4340
+SMI-4341
+#   — 021.School (14)
+SMI-3691
+SMI-3889
+SMI-3890
+SMI-3891
+SMI-3892
+SMI-3893
+SMI-3989
+SMI-3990
+SMI-3992
+SMI-3993
+SMI-3994
+SMI-3995
+SMI-3996
+SMI-3998
+#   — minimax / crawler (6)
+SMI-4173
+SMI-4174
+SMI-4175
+SMI-4177
+SMI-4178
+SMI-4180
+#   — Huddle (6)
+SMI-3111
+SMI-3112
+SMI-3114
+SMI-3116
+SMI-4114
+SMI-4134
+#   — Aprio-Test (2)
+SMI-4342
+SMI-4343
+#   — AsanaPlayground (2)
+SMI-3743
+SMI-3756
+#   — AsanaTest (2)
+SMI-3752
+SMI-3755
+#   — 021.School workshop forks (1)
+SMI-3955
+
+# Wave / phase / scoped-conventional-commit subtasks (parent-shipped) (70)
+SMI-3669
+SMI-3677
+SMI-3678
+SMI-3679
+SMI-3680
+SMI-3683
+SMI-3684
+SMI-3685
+SMI-3686
+SMI-3690
+SMI-3720
+SMI-3721
+SMI-3739
+SMI-3741
+SMI-3742
+SMI-3757
+SMI-3758
+SMI-3759
+SMI-3760
+SMI-3761
+SMI-3763
+SMI-3764
+SMI-3765
+SMI-3766
+SMI-3767
+SMI-3768
+SMI-3769
+SMI-3770
+SMI-3771
+SMI-3774
+SMI-3790
+SMI-3791
+SMI-3792
+SMI-3793
+SMI-3794
+SMI-3795
+SMI-3796
+SMI-3797
+SMI-3798
+SMI-3799
+SMI-3800
+SMI-3809
+SMI-3815
+SMI-3828
+SMI-3844
+SMI-3845
+SMI-3846
+SMI-3847
+SMI-3848
+SMI-3849
+SMI-3850
+SMI-3851
+SMI-3852
+SMI-3853
+SMI-3854
+SMI-3855
+SMI-3856
+SMI-3858
+SMI-3859
+SMI-3860
+SMI-3861
+SMI-3862
+SMI-3865
+SMI-3869
+SMI-3872
+SMI-3904
+SMI-3905
+SMI-3983
+SMI-4235
+SMI-4436
+
+# One-time manual operations (no source commit expected) (10)
+SMI-3839
+SMI-3841
+SMI-3843
+SMI-3878
+SMI-4282
+SMI-4299
+SMI-4300
+SMI-4302
+SMI-4395
+SMI-4568
+
+# Documentation-only updates (3)
+SMI-3956
+SMI-4236
+SMI-4492
+
