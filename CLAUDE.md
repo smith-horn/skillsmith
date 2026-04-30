@@ -123,7 +123,18 @@ git submodule update --init                           # Init internal docs (auth
 
 **Worktrees**: Unlock main repo first, then `./scripts/create-worktree.sh`. Remove with `./scripts/remove-worktree.sh --prune`.
 
-**Hooks in worktrees (SMI-4377 + SMI-4381)**: Pre-commit hooks work inside worktrees via three mechanisms: (1) `.husky/_/` is tracked in git (husky's dispatch stubs) so hook discovery inherits through checkout; (2) `scripts/create-worktree.sh` symlinks the root `node_modules` from the main repo (relative path); (3) **per-package `node_modules` are also symlinked** (relative paths) so workspace-pinned deps (e.g. `zod@3.25.76` in `mcp-server`) resolve correctly without falling through to the hoisted root (which carries `zod@4.x`). **One-time host setup required** (after fresh clone): `npm install --ignore-scripts` to populate `$REPO_ROOT/node_modules` — Docker named-volume installs don't populate the host path. Caveats: (a) do not run `npm install` in the main repo while a pre-commit is active in a worktree — re-run the commit if it aborts; (b) on **macOS Docker Desktop**, worktree pre-commits fall back to host execution because virtiofs cannot traverse relative symlinks (per-package `node_modules` resolution fails inside the container). The host fallback works correctly thanks to the SMI-4381 per-package symlinks. Linux Docker hosts use the in-container path via `compute_container_wd`. (c) repair existing worktrees with `./scripts/repair-worktrees.sh` (idempotent; backfills both root and per-package symlinks).
+**Hooks in worktrees (SMI-4377 + SMI-4381 + SMI-4549)**: Pre-commit hooks work inside worktrees via three mechanisms: (1) `.husky/_/` is tracked in git (husky's dispatch stubs) so hook discovery inherits through checkout; (2) `scripts/create-worktree.sh` symlinks the root `node_modules` from the main repo (relative path); (3) **per-package `node_modules` are also symlinked** (relative paths) so workspace-pinned deps (e.g. `zod@3.25.76` in `mcp-server`) resolve correctly without falling through to the hoisted root (which carries `zod@4.x`). **One-time host setup required** (after fresh clone):
+
+```bash
+npm install --ignore-scripts             # populate $REPO_ROOT/node_modules (Docker volumes don't)
+./scripts/repair-host-native-deps.sh     # SMI-4549: rebuild better-sqlite3 binding (--ignore-scripts skipped it)
+```
+
+The repair script is idempotent — sub-second `[skip]` exit when the binding already loads. Skipping it leaves the host's retrieval-logs writer (`packages/doc-retrieval-mcp/src/retrieval-log/writer.ts`) silently no-op-ing, which the SMI-4549 retro caught after a 7-day soak window passed with zero captured rows.
+
+**`IS_DOCKER` trap (SMI-4549)**: The retrieval-logs writer no-ops when `process.env.IS_DOCKER === 'true'` because Docker has its own writer path. If you `export IS_DOCKER=true` in a host shell (e.g. sourced from `.env.docker`), the writer will refuse to write on the host too — matching the same zero-rows symptom as a missing native binding. Verify with `printenv IS_DOCKER` (must be empty on host) before debugging instrumentation.
+
+Caveats: (a) do not run `npm install` in the main repo while a pre-commit is active in a worktree — re-run the commit if it aborts; (b) on **macOS Docker Desktop**, worktree pre-commits fall back to host execution because virtiofs cannot traverse relative symlinks (per-package `node_modules` resolution fails inside the container). The host fallback works correctly thanks to the SMI-4381 per-package symlinks. Linux Docker hosts use the in-container path via `compute_container_wd`. (c) repair existing worktrees with `./scripts/repair-worktrees.sh` (idempotent; backfills both root and per-package symlinks AND host native bindings via the SMI-4549 script).
 
 **Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Use `--dry-run` to preview. Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
 
@@ -453,7 +464,7 @@ A `SessionStart` hook (`scripts/session-start-priming.sh`) writes a transient pr
 | Container won't start | `docker compose --profile dev down && docker volume rm skillsmith_node_modules && docker compose --profile dev up -d` |
 | Native module errors | `docker exec skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node` |
 | Platform mismatch (SIGKILL 137) | `rm -rf packages/*/node_modules/better-sqlite3 packages/*/node_modules/onnxruntime-node` then rebuild |
-| Node ABI mismatch (after Node upgrade) | WASM fallback auto-activates since core 0.4.10. To restore native: `docker exec skillsmith-dev-1 npm rebuild better-sqlite3` |
+| Node ABI mismatch (after Node upgrade) | WASM fallback auto-activates since core 0.4.10. To restore native: `docker exec skillsmith-dev-1 npm rebuild better-sqlite3` (Docker side); `./scripts/repair-host-native-deps.sh` (host side, SMI-4549) |
 | Docker DNS failure | `docker network prune -f` then restart container |
 | Stale CJS artifacts | `docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f -delete'` |
 | Orphaned agents | `./scripts/cleanup-orphans.sh` (`--dry-run` to preview) |
