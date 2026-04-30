@@ -18,6 +18,13 @@ updates:
       - 'npm'
     reviewers:
       - 'ryansmith108'
+    ignore:
+      # SMI-4556: web-tree-sitter ≥ 0.26 fails to load Python grammar from
+      # tree-sitter-wasms (getDylinkMetadata throws — ABI/loader incompatibility).
+      # tree-sitter-wasms@0.1.13 is the latest and has not been rebuilt against
+      # tree-sitter 0.26.x. Re-evaluate when tree-sitter-wasms ≥ 0.2 ships.
+      - dependency-name: 'web-tree-sitter'
+        versions: ['>=0.26.0']
 
   - package-ecosystem: 'github-actions'
     directory: '/'

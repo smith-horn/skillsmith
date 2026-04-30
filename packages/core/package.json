@@ -79,7 +79,7 @@
     "stripe": "20.3.0",
     "tree-sitter-wasms": "0.1.13",
     "typescript": "5.9.3",
-    "web-tree-sitter": "0.26.8",
+    "web-tree-sitter": "0.25.10",
     "zod": "4.2.1"
   },
   "optionalDependencies": {
