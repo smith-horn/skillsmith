@@ -18,6 +18,8 @@ Discover, search, and install Claude Code skills directly in VS Code.
 | MCP Integration | Live data from the Skillsmith API via Model Context Protocol |
 | Offline Fallback | Works offline with cached local skill data |
 
+**Local-first by design.** Skillsmith caches the registry in a local SQLite database at `~/.skillsmith/skills.db`, shared across the MCP server, the CLI, and the VS Code extension. Search is FTS5 by default; semantic search is opt-in (`SKILLSMITH_USE_HNSW=true`) and runs over local ONNX embeddings. [Inside the Local Skill Database](https://skillsmith.app/blog/inside-the-local-skill-database) walks through the schema, the FTS5 / HNSW search paths, and how `sync` keeps the cache fresh.
+
 ## Getting Started
 
 1. Install Skillsmith from the VS Code Marketplace.

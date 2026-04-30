@@ -22,6 +22,8 @@ Command-line interface for Skillsmith - discover, manage, and author agent skill
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
 
+**Local-first by design.** Skillsmith caches the registry in a local SQLite database at `~/.skillsmith/skills.db`, shared across the MCP server, the CLI, and the VS Code extension. Search is FTS5 by default; semantic search is opt-in (`SKILLSMITH_USE_HNSW=true`) and runs over local ONNX embeddings. [Inside the Local Skill Database](https://skillsmith.app/blog/inside-the-local-skill-database) walks through the schema, the FTS5 / HNSW search paths, and how `sync` keeps the cache fresh.
+
 ## Installation
 
 ```bash
