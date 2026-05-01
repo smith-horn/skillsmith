@@ -170,12 +170,15 @@ export class EmbeddingBenchmark {
       },
     })
 
-    // Find similar (full workflow)
+    // Find similar (full workflow). SMI-4577: findSimilar is async (HNSW
+    // backend) — use the brute-force sibling so this bench keeps measuring
+    // the same path it always has. Pair-bench coverage for HNSW vs brute-force
+    // lives in tests/embeddings/hnsw-vs-brute-force.bench.ts.
     runner.add({
       name: 'find_similar_top10',
       fn: () => {
         const queryEmbedding = this.testEmbeddings[0]
-        this.embeddingService!.findSimilar(queryEmbedding, 10)
+        this.embeddingService!.findSimilarBruteForce(queryEmbedding, 10)
       },
     })
 

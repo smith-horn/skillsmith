@@ -110,6 +110,9 @@ blob-report/
 packages/*/data/
 packages/*/output/
 
+# SMI-4577: HNSW bench fixtures (regenerated via `npm run bench:hnsw:seed`)
+packages/core/tests/embeddings/fixtures/
+
 # Phase 4 working documents (not finalized)
 docs/phase4/
 docs/phase4-research/

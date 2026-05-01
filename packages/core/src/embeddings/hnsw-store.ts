@@ -1,10 +1,16 @@
 /**
  * SMI-1519: HNSW Embedding Store
+ * SMI-4577: Production HNSW path now lives in `embeddings/hnsw-search.ts` and is
+ *           wired into `EmbeddingService.findSimilar`. This class retains its
+ *           historical API for callers that want a self-contained store without
+ *           the full `EmbeddingService` surface, but no longer references the
+ *           V3 VectorDB (decommissioned after the claude-flow → ruflo rename).
  *
- * High-performance vector storage using HNSW index for fast ANN search.
- * Uses brute-force search (V3 VectorDB unavailable after claude-flow rename).
+ * High-performance vector storage with SQLite-backed metadata. `findSimilar`
+ * uses brute-force search; consumers wanting the HNSW backend should use
+ * `EmbeddingService` instead, which lazy-loads `hnswlib-node` from the
+ * shared search module.
  *
- * Enable via: SKILLSMITH_USE_HNSW=true
  * @see ADR-009: Embedding Service Fallback Strategy
  */
 
@@ -399,8 +405,11 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
   }
 
   private async initHNSWIndex(): Promise<void> {
-    // V3 VectorDB unavailable after claude-flow → ruflo rename (SMI-3600)
-    // @claude-flow/cli restricts subpath imports; always use brute-force search
+    // SMI-4577: V3 VectorDB was decommissioned with the claude-flow → ruflo rename
+    // (SMI-3600). The replacement HNSW backend lives in `embeddings/hnsw-search.ts`
+    // and is exposed through `EmbeddingService.findSimilar`. This store retains
+    // its public API but always uses the brute-force code path; callers wanting
+    // HNSW should switch to `EmbeddingService` directly.
     this.vectorDB = null
   }
 
