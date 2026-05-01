@@ -396,16 +396,21 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
         'github/straygizmo/mdium',
       ].sort()
     )
-    // Each entry must expire exactly 90 days after its reviewedAt date — the
-    // policy that drove the original snapshot assertion. This survives future
-    // additions instead of breaking on every new entry.
-    const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000
+    // Each entry must expire on the same day-of-month, exactly 3 calendar
+    // months after its reviewedAt date — the actual policy (89-92 days
+    // depending on which months span). This survives future additions
+    // without snapshotting any specific cohort's date.
     for (const entry of parsed.allowlist) {
-      const reviewed = new Date(`${entry.reviewedAt}T00:00:00Z`).getTime()
-      const expires = new Date(`${entry.expiresAt}T00:00:00Z`).getTime()
-      expect(expires - reviewed, `${entry.skillId}: expiresAt must be 90d after reviewedAt`).toBe(
-        NINETY_DAYS_MS
+      const reviewed = new Date(`${entry.reviewedAt}T00:00:00Z`)
+      const expectedExpires = new Date(
+        Date.UTC(reviewed.getUTCFullYear(), reviewed.getUTCMonth() + 3, reviewed.getUTCDate())
       )
+        .toISOString()
+        .slice(0, 10)
+      expect(
+        entry.expiresAt,
+        `${entry.skillId}: expiresAt must be 3 calendar months after reviewedAt (${entry.reviewedAt})`
+      ).toBe(expectedExpires)
     }
   })
 })
