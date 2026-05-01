@@ -94,6 +94,92 @@ check_auth_device_code_reachable() {
   esac
 }
 
+# ---- check_website_homepage_renders -----------------------------------
+# SMI-4592 — homepage 200 + <title> contains "Skillsmith". Catches broken
+# Vercel build output / adapter mismatches that the SMI-4592 fix addressed.
+check_website_homepage_renders() {
+  local url="${SMOKE_WEBSITE_URL}/"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+
+  if [ "$status" != "200" ]; then
+    report_fail "website-homepage" "check_website_homepage_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" "<title>" "homepage-title-tag"; then
+    report_fail "website-homepage" "check_website_homepage_renders" "$url" "<title>...</title>" "missing-title" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" "Skillsmith" "homepage-title-content"; then
+    report_fail "website-homepage" "check_website_homepage_renders" "$url" "Skillsmith in <title>" "missing-brand" "$ms"
+    return 1
+  fi
+  report_pass "website-homepage" "check_website_homepage_renders" "$url" "$ms"
+  return 0
+}
+
+# ---- check_website_pricing_renders ------------------------------------
+check_website_pricing_renders() {
+  local url="${SMOKE_WEBSITE_URL}/pricing"
+  local t0 t1 ms status
+  t0=$(now_ms)
+  status=$(with_retry http_status GET "$url")
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  if [ "$status" = "200" ]; then
+    report_pass "website-homepage" "check_website_pricing_renders" "$url" "$ms"
+    return 0
+  fi
+  report_fail "website-homepage" "check_website_pricing_renders" "$url" "200" "$status" "$ms"
+  return 1
+}
+
+# ---- check_website_docs_quickstart_renders ----------------------------
+check_website_docs_quickstart_renders() {
+  local url="${SMOKE_WEBSITE_URL}/docs/quickstart"
+  local t0 t1 ms status
+  t0=$(now_ms)
+  status=$(with_retry http_status GET "$url")
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  if [ "$status" = "200" ]; then
+    report_pass "website-homepage" "check_website_docs_quickstart_renders" "$url" "$ms"
+    return 0
+  fi
+  report_fail "website-homepage" "check_website_docs_quickstart_renders" "$url" "200" "$status" "$ms"
+  return 1
+}
+
+# ---- check_website_sitemap_index --------------------------------------
+# SMI-4184 lastmod must be present for GSC crawl prioritization. Sitemap
+# regression would silently degrade Discovered-not-indexed metrics.
+check_website_sitemap_index() {
+  local url="${SMOKE_WEBSITE_URL}/sitemap-index.xml"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+
+  if [ "$status" != "200" ]; then
+    report_fail "website-homepage" "check_website_sitemap_index" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" "<sitemap>" "sitemap-element"; then
+    report_fail "website-homepage" "check_website_sitemap_index" "$url" "<sitemap>" "missing-sitemap-element" "$ms"
+    return 1
+  fi
+  report_pass "website-homepage" "check_website_sitemap_index" "$url" "$ms"
+  return 0
+}
+
 # ---- check_auth_device_preview_requires_jwt ---------------------------
 # GET without auth. Gateway-verified function → 401 with no JWT. 200 means
 # JWT verification is broken (dangerous; the cousins-of-B1 class).
