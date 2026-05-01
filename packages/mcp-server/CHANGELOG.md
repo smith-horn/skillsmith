@@ -25,6 +25,7 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 - **Bump**: `@skillsmith/core` dep range to `^0.5.8` — pulls in SMI-4563 native SQLite driver auto-install via `optionalDependencies`. mcp-server's own version unchanged; consumers picking up `core@0.5.8` will get the native driver on `npx` install instead of silently falling back to WASM.
 - **Feature**: SMI-4124 `skill_pack_audit` trigger-quality + namespace collision checks (PR #505).
+- **Feature**: SMI-4587 Wave 1 PR #1 — local-inventory scanner across 4 sources (skills/commands/agents/CLAUDE.md), ULID-based audit-history writer at `~/.skillsmith/audit-history/`, and exact-name collision detector. Adds `ulid@3.0.1` dependency. Internal scaffolding for the consumer namespace audit; no user-visible MCP tool changes yet (gated on Wave 1 completion).
 
 ## v0.4.9
 
