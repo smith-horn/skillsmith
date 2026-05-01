@@ -10,7 +10,7 @@ export const README_MD_TEMPLATE = `# {{name}}
 
 ## Overview
 
-This is a Claude Code skill that provides [describe functionality].
+This is an agent skill (SKILL.md format, MCP-compatible) that provides [describe functionality].
 
 ## Installation
 
@@ -32,7 +32,7 @@ cp -r {{name}} ~/.claude/skills/
 ## Quick Start
 
 1. Install the skill
-2. Start Claude Code
+2. Start your MCP-compatible agent (Claude Code, Cursor, Copilot, Codex, Windsurf, etc.)
 3. Use the skill by [describe how to trigger]
 
 ## Documentation

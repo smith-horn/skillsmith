@@ -59,10 +59,13 @@
     "skillsmith",
     "ai",
     "skills",
+    "agent-skills",
     "mcp",
     "llm",
     "cli",
     "claude-code",
+    "cursor",
+    "copilot",
     "skill-discovery",
     "skill-management"
   ],

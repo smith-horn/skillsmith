@@ -1,7 +1,7 @@
 /**
  * SMI-3083: skillsmith create command
  *
- * Scaffolds a new Claude Code skill into ~/.claude/skills/<name>/ with
+ * Scaffolds a new agent skill into ~/.claude/skills/<name>/ with
  * SKILL.md, README.md, CHANGELOG.md, .gitignore, resources/, and an optional
  * scripts/ directory.
  *
@@ -124,7 +124,7 @@ export interface CreateOptions {
 }
 
 /**
- * Scaffold a new Claude Code skill at ~/.claude/skills/<name>/ (or --output).
+ * Scaffold a new agent skill at ~/.claude/skills/<name>/ (or --output).
  */
 export async function createSkill(
   name: string | undefined,
@@ -149,7 +149,7 @@ export async function createSkill(
     options.description ??
     (await input({
       message: 'Description:',
-      default: `A Claude Code skill for ${skillName}`,
+      default: `An agent skill for ${skillName}`,
       validate: (v: string) => (v.trim() ? true : 'Description is required'),
     }))
 
@@ -356,7 +356,7 @@ export async function createSkill(
     chalk.dim(`  2. Complete README.md — problem statement, usage examples, requirements`)
   )
   console.log(chalk.dim(`  3. Update CHANGELOG.md — confirm the [1.0.0] entry is accurate`))
-  console.log(chalk.dim('  4. Test your skill locally with Claude Code'))
+  console.log(chalk.dim('  4. Test your skill locally with your MCP-compatible agent'))
   console.log(chalk.dim('  5. Publish to GitHub:'))
   console.log(chalk.cyan(`       gh repo create ${skillName} --public`))
   console.log(
@@ -379,7 +379,7 @@ export async function createSkill(
 
 /**
  * Create the `skillsmith create` command.
- * SMI-3083: Scaffold new Claude Code skills without a separate skill install.
+ * SMI-3083: Scaffold new agent skills without a separate skill install.
  *
  * See also: `skillsmith author init` — scaffolds into the CWD for in-project
  * skill authoring (no CHANGELOG.md or Behavioral Classification section).
@@ -387,7 +387,7 @@ export async function createSkill(
 export function createCreateCommand(): Command {
   return new Command('create')
     .description(
-      'Scaffold a new Claude Code skill at ~/.claude/skills/<name>/ (see also: skillsmith author init)'
+      'Scaffold a new agent skill at ~/.claude/skills/<name>/ (see also: skillsmith author init)'
     )
     .argument('[name]', 'Skill name (lowercase, hyphens only)')
     .option('-o, --output <dir>', 'Output directory (default: ~/.claude/skills)')

@@ -75,7 +75,7 @@ function buildValidationError(message: string): InstallResult {
 }
 
 /**
- * Install a skill from GitHub to the local Claude Code skills directory.
+ * Install a skill from GitHub to the local agent skills directory (~/.claude/skills/).
  *
  * Delegates core logic to SkillInstallationService from @skillsmith/core.
  * Adds MCP-specific conflict resolution (three-way merge, backup).

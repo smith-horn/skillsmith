@@ -1,5 +1,5 @@
 /**
- * @fileoverview MCP Search Tool for Claude Code skill discovery
+ * @fileoverview MCP Search Tool for agent skill discovery
  * @module @skillsmith/mcp-server/tools/search
  * @see {@link https://github.com/wrsmith108/skillsmith|Skillsmith Repository}
  * @see SMI-789: Wire search tool to SearchService
@@ -69,7 +69,7 @@ function filterByCompatibility(
  */
 export const searchToolSchema = {
   name: 'search',
-  description: 'Search for Claude Code skills by query with optional filters',
+  description: 'Search for agent skills (SKILL.md format) by query with optional filters',
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -160,7 +160,7 @@ export interface SearchInput {
 }
 
 /**
- * Execute a search for Claude Code skills with optional filters.
+ * Execute a search for agent skills with optional filters.
  *
  * SMI-1183: Uses API as primary source with local DB fallback.
  * - Tries live API first (api.skillsmith.app)

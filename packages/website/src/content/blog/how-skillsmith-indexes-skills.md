@@ -1,9 +1,9 @@
 ---
 title: "From GitHub to Search Results: How Skillsmith Indexes and Curates Skills"
-description: "A behind-the-scenes look at how Skillsmith discovers, scores, and indexes Claude Code skills—and how to optimize your skills for discovery"
+description: "A behind-the-scenes look at how Skillsmith discovers, scores, and indexes agent skills—and how to optimize your skills for discovery"
 author: "Skillsmith Team"
 date: 2026-02-02
-updated: 2026-02-02
+updated: 2026-05-01
 category: "Engineering"
 tags: ["indexer", "search", "embeddings", "github", "scoring", "developers"]
 featured: true
@@ -12,7 +12,7 @@ ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200
 
 ![From GitHub to Search Results](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/indexer/indexer-pipeline-hero)
 
-You've built a Claude Code skill. It works great locally. But how does it get discovered by the thousands of developers searching for skills like yours?
+You've built an agent skill (a SKILL.md-format file that works with any MCP-compatible agent — Claude Code, Cursor, Copilot, Codex, Windsurf, and others). It works great locally. But how does it get discovered by the thousands of developers searching for skills like yours?
 
 This guide walks you through Skillsmith's indexing pipeline—from the moment we discover your skill on GitHub to when it appears in search results. Understanding this process helps you optimize your skills for discovery and explains why some skills rank higher than others.
 

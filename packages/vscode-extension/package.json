@@ -13,9 +13,12 @@
   ],
   "keywords": [
     "skills",
+    "agent-skills",
     "ai",
     "mcp",
     "claude",
+    "cursor",
+    "copilot",
     "developer-tools",
     "productivity"
   ],
@@ -115,7 +118,7 @@
       {
         "id": "skillsmith.getStarted",
         "title": "Get Started with Skillsmith",
-        "description": "Discover, install, and author Claude Code skills without leaving VS Code.",
+        "description": "Discover, install, and author agent skills without leaving VS Code.",
         "steps": [
           {
             "id": "skillsmith.walkthrough.discover",

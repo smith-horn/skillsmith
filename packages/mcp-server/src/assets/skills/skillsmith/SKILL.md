@@ -1,11 +1,11 @@
 ---
 name: "Skillsmith"
-description: "Discover, install, compare, and manage Claude Code skills. Use when searching for skills, evaluating quality, understanding trust tiers, checking quotas, or creating custom skills. Triggers: 'find skill', 'search skills', 'install skill', 'trust tier', 'create skill', 'skill quality', 'skill quota'."
+description: "Discover, install, compare, and manage agent skills. Use when searching for skills, evaluating quality, understanding trust tiers, checking quotas, or creating custom skills. Triggers: 'find skill', 'search skills', 'install skill', 'trust tier', 'create skill', 'skill quality', 'skill quota'."
 ---
 
 # Skillsmith
 
-Skillsmith is your skill discovery and management system for Claude Code. It provides access to 500+ community skills with trust verification, quality scoring, and security scanning.
+Skillsmith is your skill discovery and management system for any MCP-compatible agent (Claude Code, Cursor, Copilot, Codex, Windsurf, and others). It provides access to 500+ community skills with trust verification, quality scoring, and security scanning.
 
 ## Quick Reference: MCP Tools
 
