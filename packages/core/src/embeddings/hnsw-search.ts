@@ -55,11 +55,7 @@ export interface HnswHandle {
   idToLabel: Map<string, number>
   /** Next label to assign for new points. */
   nextLabel: number
-  /** Vector dimensionality. */
-  dim: number
-  /** Model identifier the index was built for. */
-  modelName: string
-  /** Filesystem paths the index will read/write. */
+  /** Filesystem paths the index will read/write. Exposed for diagnostics/tests. */
   paths: HnswCachePaths
   /** Schedule a debounced persist (5s). Safe to call repeatedly. */
   schedulePersist: () => void
@@ -96,9 +92,12 @@ let cachedCtor: HierarchicalNSWConstructor | null | 'unavailable' = null
  * Dynamically load `hnswlib-node`. Returns the constructor or `null` when the
  * optional dependency is not installed (Vercel build, restricted hosts).
  *
- * Uses a `Function` constructor wrapper to evade TypeScript's
- * `--moduleResolution` from rewriting the import — the same pattern the
- * existing `loadHNSWLib()` helper uses.
+ * Uses a literal dynamic `import()` (not the `Function('return import(...)')()`
+ * pattern that lives in `hnsw-store.helpers.ts`); vitest's vm-mode ESM rejects
+ * the latter with "A dynamic import callback was not specified." A native
+ * dynamic import is safe here because `hnswlib-node` is a CJS module that's
+ * not type-imported anywhere — only TS will error on resolution failure, but
+ * we catch that in the `catch` block below.
  */
 async function loadHnswCtor(): Promise<HierarchicalNSWConstructor | null> {
   if (cachedCtor === 'unavailable') return null
@@ -242,7 +241,8 @@ export async function loadOrBuildHnsw(args: {
       idToLabel = new Map(labels!.map(([label, id]) => [id, label]))
       nextLabel = labels!.reduce((max, [label]) => Math.max(max, label), -1) + 1
     } catch (err) {
-      // Corrupt cache — wipe and fall through to fresh build.
+      // Corrupt cache — wipe and recurse for a fresh build. The retry will
+      // hit `reusable === false` because we just removed the artefacts.
       try {
         if (existsSync(paths.bin)) unlinkSync(paths.bin)
         if (existsSync(paths.meta)) unlinkSync(paths.meta)
@@ -250,15 +250,14 @@ export async function loadOrBuildHnsw(args: {
       } catch {
         /* best-effort cleanup */
       }
-      return loadOrBuildHnsw(args)
-        .then((status) => {
-          if (status.kind === 'temporarily-unavailable') return status
-          return status
-        })
-        .catch((retryErr) => ({
-          kind: 'temporarily-unavailable' as const,
+      try {
+        return await loadOrBuildHnsw(args)
+      } catch (retryErr) {
+        return {
+          kind: 'temporarily-unavailable',
           reason: `cache rebuild failed after corrupt-load: ${String(retryErr)} (initial: ${String(err)})`,
-        }))
+        }
+      }
     }
   } else {
     index = new Ctor('cosine', args.dim)
@@ -266,7 +265,6 @@ export async function loadOrBuildHnsw(args: {
     index.setEf(efSearch)
     labelToId = new Map()
     idToLabel = new Map()
-    nextLabel = 0
     let nextLabelLocal = 0
     for (const [skillId, vec] of args.embeddings) {
       // hnswlib-node@3 expects a plain Array<number> for addPoint, not a
@@ -365,8 +363,11 @@ function createHandle(args: {
       } catch (err) {
         // Persist failures are non-fatal — the in-memory index stays valid;
         // a future rebuild will recover from the cached embeddings map.
-
-        console.warn('[hnsw-search] debounced persist failed:', err)
+        // Log the cache path so a user can spot a read-only cache dir.
+        console.warn(
+          `[hnsw-search] debounced persist failed (path=${args.paths.bin}):`,
+          err instanceof Error ? err.message : err
+        )
       }
     }, 5000)
     // Don't keep the event loop alive just for this timer.
@@ -388,12 +389,6 @@ function createHandle(args: {
     },
     set nextLabel(v: number) {
       state.nextLabel = v
-    },
-    get dim() {
-      return args.dim
-    },
-    get modelName() {
-      return args.modelName
     },
     get paths() {
       return args.paths

@@ -349,8 +349,11 @@ export class EmbeddingService {
       const handle = await this.loadOrBuildHNSW()
       if (handle) {
         try {
-          const result = findSimilarHnsw(handle, queryEmbedding, topK)
-          if (result.length > 0) return result
+          // HNSW is the source of truth when loaded; an empty result means
+          // there are no live neighbours (e.g. all points marked-deleted),
+          // which the brute-force scan would also surface as `[]`. Don't
+          // fall through to brute-force on empty — that hides the answer.
+          return findSimilarHnsw(handle, queryEmbedding, topK)
         } catch (err) {
           console.warn('[EmbeddingService] HNSW search failed, falling back to brute force:', err)
           this.hnswHandle = null
