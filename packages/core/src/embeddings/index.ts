@@ -32,6 +32,15 @@ import {
   getTransformersLoadError,
 } from './embedding-utils.js'
 
+// SMI-4577: HNSW backend for findSimilar — see docs/internal/adr/009-embedding-service-fallback.md
+import {
+  loadOrBuildHnsw,
+  findSimilarHnsw,
+  upsertPoint,
+  removePoint,
+  type HnswHandle,
+} from './hnsw-search.js'
+
 // Re-export test utilities
 export const testUtils = {
   /** Generate a deterministic mock embedding (for testing) */
@@ -48,6 +57,12 @@ export class EmbeddingService {
   private readonly modelName = 'Xenova/all-MiniLM-L6-v2'
   private readonly embeddingDim = 384
   private readonly useFallback: boolean
+
+  // SMI-4577: HNSW backend state.
+  private hnswHandle: HnswHandle | null = null
+  private hnswLoadPromise: Promise<HnswHandle | null> | null = null
+  /** Set to true when `hnswlib-node` is structurally absent (MODULE_NOT_FOUND). Permanent. */
+  private hnswPermanentlyUnavailable = false
 
   /**
    * Create an EmbeddingService instance.
@@ -216,7 +231,7 @@ export class EmbeddingService {
     return results
   }
 
-  /** Store embedding in SQLite cache */
+  /** Store embedding in SQLite cache (and incrementally update HNSW if loaded) */
   storeEmbedding(skillId: string, embedding: Float32Array, text: string): void {
     if (!this.db) return
     const buffer = Buffer.from(embedding.buffer)
@@ -225,6 +240,45 @@ export class EmbeddingService {
       VALUES (?, ?, ?, unixepoch())
     `)
     stmt.run(skillId, buffer, text)
+    // SMI-4577: keep HNSW graph aligned with the SQLite source-of-truth.
+    // Only updates if the index is already loaded; cold starts rebuild from
+    // SQLite on the next `loadOrBuildHNSW` call.
+    if (this.hnswHandle) {
+      try {
+        upsertPoint(this.hnswHandle, skillId, embedding)
+      } catch (err) {
+        // Non-fatal: brute-force fallback still answers correctly.
+
+        console.warn('[EmbeddingService] HNSW upsert failed, will rebuild on next query:', err)
+        this.hnswHandle = null
+      }
+    }
+  }
+
+  /**
+   * Remove an embedding from both the SQLite cache and the in-memory HNSW
+   * graph (if loaded). Returns true when at least one row was removed.
+   *
+   * SMI-4577: added so `EmbeddingService` can keep HNSW state consistent
+   * during skill uninstall / re-index workflows. Previously embeddings
+   * accumulated forever; this is a tiny surface tax for the new backend
+   * but matches `HNSWEmbeddingStore.removeEmbedding`.
+   */
+  removeEmbedding(skillId: string): boolean {
+    let removed = false
+    if (this.db) {
+      const stmt = this.db.prepare('DELETE FROM skill_embeddings WHERE skill_id = ?')
+      removed = stmt.run(skillId).changes > 0
+    }
+    if (this.hnswHandle && removed) {
+      try {
+        removePoint(this.hnswHandle, skillId)
+      } catch (err) {
+        console.warn('[EmbeddingService] HNSW remove failed, dropping handle:', err)
+        this.hnswHandle = null
+      }
+    }
+    return removed
   }
 
   /** Retrieve cached embedding */
@@ -274,8 +328,47 @@ export class EmbeddingService {
     return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB))
   }
 
-  /** Find most similar skills to a query embedding */
-  findSimilar(
+  /**
+   * Find most similar skills to a query embedding.
+   *
+   * SMI-4577: now async so we can lazy-load the HNSW backend on first call.
+   * - HNSW path (default): O(log n) approximate nearest-neighbour search
+   *   using `hnswlib-node`. Cache lives at `~/.skillsmith/cache/hnsw-*.bin`.
+   * - Brute-force fallback: O(n) cosine over the full embedding map.
+   *   Triggered when (a) `SKILLSMITH_USE_HNSW=false`, (b) `hnswlib-node`
+   *   is not installed (optional dependency), or (c) the HNSW index fails
+   *   to load/build for any reason.
+   *
+   * @see ADR-009 (2026-05 amendment)
+   */
+  async findSimilar(
+    queryEmbedding: Float32Array,
+    topK: number = 10
+  ): Promise<Array<{ skillId: string; score: number }>> {
+    if (process.env.SKILLSMITH_USE_HNSW !== 'false') {
+      const handle = await this.loadOrBuildHNSW()
+      if (handle) {
+        try {
+          const result = findSimilarHnsw(handle, queryEmbedding, topK)
+          if (result.length > 0) return result
+        } catch (err) {
+          console.warn('[EmbeddingService] HNSW search failed, falling back to brute force:', err)
+          this.hnswHandle = null
+        }
+      }
+    }
+    return this.findSimilarBruteForce(queryEmbedding, topK)
+  }
+
+  /**
+   * Brute-force cosine similarity over the full embedding map. Exposed as a
+   * named fallback so callers (and tests) can opt out of HNSW deterministically.
+   *
+   * SMI-4577: kept synchronous so legacy bench code and embedded use-cases
+   * that can't await still have a working path; the async `findSimilar`
+   * delegates here when HNSW is unavailable.
+   */
+  findSimilarBruteForce(
     queryEmbedding: Float32Array,
     topK: number = 10
   ): Array<{ skillId: string; score: number }> {
@@ -287,6 +380,47 @@ export class EmbeddingService {
     }
     results.sort((a, b) => b.score - a.score)
     return results.slice(0, topK)
+  }
+
+  /**
+   * Lazy-load (or build) the HNSW backend. Returns null when permanently
+   * unavailable (optional dep missing) or when the build/load failed
+   * transiently — the caller falls back to brute-force search.
+   *
+   * SMI-4577. Concurrent calls share a single in-flight promise.
+   */
+  private async loadOrBuildHNSW(): Promise<HnswHandle | null> {
+    if (this.hnswPermanentlyUnavailable) return null
+    if (this.hnswHandle) return this.hnswHandle
+    if (this.hnswLoadPromise) return this.hnswLoadPromise
+
+    this.hnswLoadPromise = (async () => {
+      const embeddings = this.getAllEmbeddings()
+      if (embeddings.size === 0) return null
+      const status = await loadOrBuildHnsw({
+        embeddings,
+        modelName: this.modelName,
+        dim: this.embeddingDim,
+      })
+      if (status.kind === 'permanently-unavailable') {
+        this.hnswPermanentlyUnavailable = true
+
+        console.info(
+          `[EmbeddingService] HNSW disabled — using brute-force search (${status.reason})`
+        )
+        return null
+      }
+      if (status.kind === 'temporarily-unavailable') {
+        console.warn(`[EmbeddingService] HNSW temporarily unavailable: ${status.reason}`)
+        return null
+      }
+      this.hnswHandle = status.handle
+      return status.handle
+    })().finally(() => {
+      this.hnswLoadPromise = null
+    })
+
+    return this.hnswLoadPromise
   }
 
   /** Pre-compute embeddings for all skills in database */
@@ -305,8 +439,18 @@ export class EmbeddingService {
     return count
   }
 
-  /** Close database connection */
+  /** Close database connection (and flush HNSW persist) */
   close(): void {
+    // SMI-4577: flush any pending HNSW persist before tearing down so the
+    // on-disk cache reflects the final state.
+    if (this.hnswHandle) {
+      try {
+        this.hnswHandle.persistNow()
+      } catch (err) {
+        console.warn('[EmbeddingService] HNSW persistNow on close failed:', err)
+      }
+      this.hnswHandle = null
+    }
     if (this.db) {
       this.db.close()
       this.db = null

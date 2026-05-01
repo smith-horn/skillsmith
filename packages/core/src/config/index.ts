@@ -65,6 +65,9 @@ const CONFIG_DIR = '.skillsmith'
 /** Default config file name */
 const CONFIG_FILE = 'config.json'
 
+/** Default cache subdirectory name (sibling to config; SMI-4577) */
+const CACHE_SUBDIR = 'cache'
+
 // ============================================================================
 // Keyring integration (SMI-2714)
 // @isaacs/keytar is optional — gracefully absent in Docker/CI environments.
@@ -140,6 +143,26 @@ export function ensureConfigDir(): void {
   if (!existsSync(configDir)) {
     mkdirSync(configDir, { recursive: true, mode: 0o700 })
   }
+}
+
+/**
+ * Get the cache directory path (~/.skillsmith/cache).
+ *
+ * SMI-4577: First-class artifact directory for cached HNSW indexes,
+ * model metadata, and similar machine-generated state. mkdir-on-first-call
+ * mirrors the pattern used by `getConfigDir()`/`ensureConfigDir()`.
+ *
+ * The pathValidation allow-list (`packages/core/src/security/pathValidation.ts`)
+ * already covers `~/.skillsmith` and therefore transitively allows this subtree.
+ *
+ * @returns Absolute path to ~/.skillsmith/cache/
+ */
+export function getCacheDir(): string {
+  const cacheDir = join(homedir(), CONFIG_DIR, CACHE_SUBDIR)
+  if (!existsSync(cacheDir)) {
+    mkdirSync(cacheDir, { recursive: true, mode: 0o700 })
+  }
+  return cacheDir
 }
 
 /**

@@ -42,7 +42,12 @@ export interface PathValidationResult {
 }
 
 /**
- * Default allowed directories for database storage
+ * Default allowed directories for database storage.
+ *
+ * Note (SMI-4577): `~/.skillsmith` covers cache artifacts at
+ * `~/.skillsmith/cache/` (HNSW indexes, model metadata) via prefix match —
+ * the explicit subtree is intentionally NOT a separate entry to avoid
+ * duplicate matches in the prefix loop below.
  */
 export const DEFAULT_ALLOWED_DIRS = [
   resolve(homedir(), '.skillsmith'),
