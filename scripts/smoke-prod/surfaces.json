@@ -21,6 +21,23 @@
       "checks": ["check_device_page_renders"]
     },
     {
+      "id": "website-homepage",
+      "owner": "website",
+      "trigger_globs": [
+        "packages/website/vercel.json",
+        "packages/website/astro.config.mjs",
+        "packages/website/package.json",
+        "packages/website/src/pages/index.astro"
+      ],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": [
+        "check_website_homepage_renders",
+        "check_website_pricing_renders",
+        "check_website_docs_quickstart_renders",
+        "check_website_sitemap_index"
+      ]
+    },
+    {
       "id": "edge-fn-auth-device",
       "owner": "edge-functions",
       "trigger_globs": [
