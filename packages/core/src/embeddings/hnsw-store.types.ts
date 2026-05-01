@@ -9,14 +9,25 @@
 
 /**
  * Type definitions for hnswlib-node (not published on DefinitelyTyped)
+ *
+ * SMI-4577: corrected to match hnswlib-node@^3.0.0's actual native bindings.
+ * The previous shape (`loadIndex`/`saveIndex`/`setEfSearch`) was speculative
+ * — the C++ binding exposes `readIndex`/`writeIndex`/`setEf`/`getEf`. The
+ * old names never ran in production because `HNSWEmbeddingStore` always fell
+ * through to the brute-force path (V3 VectorDB was decommissioned).
+ *
  * @see https://github.com/yoshoku/hnswlib-node
  */
 export interface HierarchicalNSW {
   initIndex(maxElements: number, m?: number, efConstruction?: number): void
-  loadIndex(path: string, allowReplaceDeleted?: boolean): void
-  saveIndex(path: string): void
+  readIndex(path: string, allowReplaceDeleted?: boolean): void
+  readIndexSync(path: string, allowReplaceDeleted?: boolean): void
+  writeIndex(path: string): void
+  writeIndexSync(path: string): void
+  resizeIndex(newMaxElements: number): void
   addPoint(point: number[] | Float32Array, label: number, replaceDeleted?: boolean): void
   markDelete(label: number): void
+  unmarkDelete(label: number): void
   searchKnn(
     query: number[] | Float32Array,
     k: number,
@@ -24,8 +35,10 @@ export interface HierarchicalNSW {
   ): HNSWSearchResult
   getMaxElements(): number
   getCurrentCount(): number
-  getEfSearch(): number
-  setEfSearch(ef: number): void
+  getNumDimensions(): number
+  getPoint(label: number): number[]
+  getEf(): number
+  setEf(ef: number): void
   getIdsList(): number[]
 }
 

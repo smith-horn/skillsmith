@@ -4,6 +4,7 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Feature**: SMI-4577 restore HNSW (Hierarchical Navigable Small World) index for `EmbeddingService.findSimilar()` — the production semantic-search hot path that was running brute-force `O(n)` on 14k skills. `hnswlib-node@^3.0.0` promoted from a transitive (claude-flow) optional dep to a first-class `optionalDependency` on `@skillsmith/core`. Brute-force preserved as `findSimilarBruteForce()` and as automatic fallback when the optional dep is absent (Vercel build, restricted hosts). New `~/.skillsmith/cache/` artifact dir (with `pathValidation` allow-list extension) for persisted indices; atomic-rename on a 5s debounce keeps concurrent writers safe. Bench: >190x p99 speedup at 14k vectors with `recall@10 = 1.000`. Opt-out: `SKILLSMITH_USE_HNSW=false`. (#858)
 - **Fix**: pin `web-tree-sitter` to 0.25.10 (revert dependabot bump #682). 0.26.x's WASM loader rejects the Python grammar binary published by `tree-sitter-wasms@0.1.13` — `getDylinkMetadata` throws inside `Language.load()`. Upstream `tree-sitter-wasms` has not been rebuilt against tree-sitter 0.26.x yet. (SMI-4556, closes #821)
 - **Test**: cover `src/analysis/tree-sitter/**/*.test.ts` in `packages/core/vitest.config.ts` so PR matrix catches future tree-sitter dep-bump regressions before merge — small carve-out from the SMI-3502 split (SMI-4557)
 

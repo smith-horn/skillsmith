@@ -205,8 +205,8 @@ export class HybridSearch {
       // Generate embedding for query
       const queryEmbedding = await this.embeddings.embed(query)
 
-      // Find similar skills
-      const similar = this.embeddings.findSimilar(queryEmbedding, limit * 2)
+      // Find similar skills (HNSW-backed when available; brute-force fallback)
+      const similar = await this.embeddings.findSimilar(queryEmbedding, limit * 2)
 
       for (const { skillId, score } of similar) {
         results.set(skillId, score)

@@ -256,7 +256,7 @@ describe('EmbeddingService', () => {
 
       // Query for git-related
       const queryEmbedding = await service.embed('git version control')
-      const similar = service.findSimilar(queryEmbedding, 2)
+      const similar = await service.findSimilar(queryEmbedding, 2)
 
       expect(similar.length).toBe(2)
       // Git-related skills should have higher scores

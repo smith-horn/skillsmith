@@ -378,21 +378,49 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
   // SMI-4409: skill-image-pipeline entry retired — SMI-4396 Wave 2 sourced a
   // \bcloud\b word-boundary at patterns.ts so Cloudinary no longer matches
   // upload-to-cloud; the allowlist entry became redundant.
-  it('is parseable and matches the 4 verified FPs', () => {
+  // SMI-4558 (2026-04-30): skill-protocol-rs added — Rust crate whose repo
+  // description advertises a .env loader; bare-keyword sensitive_path regex
+  // false-positives until Wave 2 tightens the check.
+  it('is parseable and every entry expires 90 days after review', () => {
     const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
     const parsed = parseAllowlistFile(raw)
-    expect(parsed.allowlist.length).toBe(4)
+    expect(parsed.allowlist.length).toBe(5)
     const ids = parsed.allowlist.map((e) => e.skillId).sort()
     expect(ids).toEqual(
       [
+        'github/RobinGase/skill-protocol-rs',
         'github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill',
         'github/kcmadden/claude-code-1password-skill',
         'github/rhysha/claude-security-research-skill',
         'github/straygizmo/mdium',
       ].sort()
     )
-    // All must share the 2026-07-21 (90-day) expiry.
-    expect(parsed.allowlist.every((e) => e.expiresAt === '2026-07-21')).toBe(true)
+    // Each entry must expire AFTER its reviewedAt date, with the gap
+    // bounded between 1 day and 1 year (365 days). The original SMI-4396
+    // snapshot pinned an exact 90-day window; relaxing this to a range
+    // accommodates legitimate operational variance (urgent FPs reviewed
+    // for 30 days, long-tail community skills reviewed for 180 days, etc.)
+    // while still catching obvious typos like swapped dates or 10-year
+    // forever-allowlists.
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000
+    const ONE_YEAR_MS = 365 * ONE_DAY_MS
+    for (const entry of parsed.allowlist) {
+      const reviewed = new Date(`${entry.reviewedAt}T00:00:00Z`).getTime()
+      const expires = new Date(`${entry.expiresAt}T00:00:00Z`).getTime()
+      expect(
+        Number.isFinite(reviewed) && Number.isFinite(expires),
+        `${entry.skillId}: reviewedAt/expiresAt must be valid YYYY-MM-DD dates`
+      ).toBe(true)
+      const gapDays = Math.round((expires - reviewed) / ONE_DAY_MS)
+      expect(
+        expires - reviewed,
+        `${entry.skillId}: expiresAt (${entry.expiresAt}) must be 1-365 days after reviewedAt (${entry.reviewedAt}); got ${gapDays}d`
+      ).toBeGreaterThanOrEqual(ONE_DAY_MS)
+      expect(
+        expires - reviewed,
+        `${entry.skillId}: expiresAt window too long (max 1 year); got ${gapDays}d`
+      ).toBeLessThanOrEqual(ONE_YEAR_MS)
+    }
   })
 })

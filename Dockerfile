@@ -66,9 +66,11 @@ RUN npm ci --include=dev --ignore-scripts
 # Rebuild native modules that need compilation
 # Skip sharp - @xenova/transformers only needs it for image preprocessing
 # Skillsmith uses text embeddings only, so sharp is not required
-# Rebuild better-sqlite3 (database), onnxruntime-node (embeddings), and esbuild (vscode-extension bundler)
+# Rebuild better-sqlite3 (database), onnxruntime-node (embeddings), esbuild (vscode-extension bundler),
+# and hnswlib-node (SMI-4577 — vector index for EmbeddingService.findSimilar; optionalDep so
+# CI must explicitly rebuild after `--ignore-scripts` install or it falls back to brute-force).
 # esbuild needs platform-specific binaries (@esbuild/linux-x64) which --ignore-scripts skips
-RUN npm rebuild better-sqlite3 onnxruntime-node esbuild || true
+RUN npm rebuild better-sqlite3 onnxruntime-node esbuild hnswlib-node || true
 
 # -----------------------------------------------------------------------------
 # Stage 3: Builder - Compile TypeScript and build all packages

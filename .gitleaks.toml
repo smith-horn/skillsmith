@@ -118,6 +118,14 @@ regexes = [
   # substring that matches the broad vercel-token rule regex [a-zA-Z0-9]{24}
   '''handleCorsPreflight''',
 
+  # False positive (SMI-4577): identifiers in hnsw-search.ts that match the
+  # 24-char vercel-token regex. `HierarchicalNSWConstruct` is the truncated
+  # 24-char body of `HierarchicalNSWConstructor` (the type imported from
+  # hnsw-store.types.ts). `resetCachedHnswCtorForTe` is the truncated body
+  # of `__resetCachedHnswCtorForTests`, the test-only reset hook.
+  '''HierarchicalNSWConstruct''',
+  '''resetCachedHnswCtorForTe''',
+
 ]
 
 # Allow specific files that contain examples or tests
