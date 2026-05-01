@@ -1,0 +1,212 @@
+[
+    {
+        "case_id": "case-01",
+        "template_kind": "add_domain_qualifier",
+        "actionability": 4,
+        "preservation": 5,
+        "note": "This gives a concrete new name to apply and cleanly preserves the eBird MCP server's intent while distinguishing its source."
+    },
+    {
+        "case_id": "case-01",
+        "template_kind": "narrow_scope",
+        "actionability": 2,
+        "preservation": 1,
+        "note": "It signals that the description should be narrowed, but the supplied examples are unrelated to eBird and would distort the skill's meaning."
+    },
+    {
+        "case_id": "case-01",
+        "template_kind": "reword_trigger_verb",
+        "actionability": 2,
+        "preservation": 2,
+        "note": "The edit is explicit, but turning \"A\" into \"a-specific\" creates broken English and an unusable description."
+    },
+    {
+        "case_id": "case-02",
+        "template_kind": "add_domain_qualifier",
+        "actionability": 4,
+        "preservation": 5,
+        "note": "This is a clear rename that a user can apply directly without changing the eBird-focused intent."
+    },
+    {
+        "case_id": "case-02",
+        "template_kind": "narrow_scope",
+        "actionability": 2,
+        "preservation": 1,
+        "note": "It tells the user to narrow the wording, but the concrete examples are unrelated to the birding domain and break the original meaning."
+    },
+    {
+        "case_id": "case-02",
+        "template_kind": "reword_trigger_verb",
+        "actionability": 2,
+        "preservation": 2,
+        "note": "The replacement is mechanically specific, yet \"a-specific MCP server\" is ungrammatical and not suitable for real use."
+    },
+    {
+        "case_id": "case-03",
+        "template_kind": "add_domain_qualifier",
+        "actionability": 4,
+        "preservation": 5,
+        "note": "The rename is straightforward and preserves the original eBird server intent while adding a strong differentiator."
+    },
+    {
+        "case_id": "case-03",
+        "template_kind": "narrow_scope",
+        "actionability": 2,
+        "preservation": 1,
+        "note": "The instruction is only loosely actionable and the suggested artifacts are unrelated to the skill's eBird integration purpose."
+    },
+    {
+        "case_id": "case-03",
+        "template_kind": "reword_trigger_verb",
+        "actionability": 2,
+        "preservation": 2,
+        "note": "It specifies an exact word swap, but the resulting phrase is broken English and not a viable description."
+    },
+    {
+        "case_id": "case-04",
+        "template_kind": "add_domain_qualifier",
+        "actionability": 4,
+        "preservation": 5,
+        "note": "This is a specific rename that cleanly differentiates the Xcode MCP skill without altering what it does."
+    },
+    {
+        "case_id": "case-04",
+        "template_kind": "narrow_scope",
+        "actionability": 2,
+        "preservation": 1,
+        "note": "The user gets only a vague directive, and the example additions are unrelated to Xcode tooling so they would change the meaning."
+    },
+    {
+        "case_id": "case-04",
+        "template_kind": "reword_trigger_verb",
+        "actionability": 2,
+        "preservation": 2,
+        "note": "Although the replacement is explicit, \"a-specific Model Context Protocol server\" is unnatural and not realistically usable."
+    },
+    {
+        "case_id": "case-05",
+        "template_kind": "add_domain_qualifier",
+        "actionability": 3,
+        "preservation": 4,
+        "note": "The rename direction is clear, but the inserted organization label is clunky enough that the final name is less confidently copy-ready."
+    },
+    {
+        "case_id": "case-05",
+        "template_kind": "narrow_scope",
+        "actionability": 2,
+        "preservation": 2,
+        "note": "It vaguely suggests making the workflow more specific, but the provided artifact examples arbitrarily narrow the skill and introduce drift."
+    },
+    {
+        "case_id": "case-05",
+        "template_kind": "reword_trigger_verb",
+        "actionability": 2,
+        "preservation": 3,
+        "note": "The exact swap is easy to identify, yet \"systematic-specific\" is awkward jargon that preserves only the rough idea, not a usable phrasing."
+    },
+    {
+        "case_id": "case-06",
+        "template_kind": "add_domain_qualifier",
+        "actionability": 3,
+        "preservation": 4,
+        "note": "The proposed rename is understandable, but the human-readable org prefix makes the final skill name awkward rather than cleanly polished."
+    },
+    {
+        "case_id": "case-06",
+        "template_kind": "narrow_scope",
+        "actionability": 2,
+        "preservation": 2,
+        "note": "It gives a general direction to narrow scope, but the examples are arbitrary and would materially reshape the Cloudflare agents description."
+    },
+    {
+        "case_id": "case-06",
+        "template_kind": "reword_trigger_verb",
+        "actionability": 4,
+        "preservation": 2,
+        "note": "This is a precise word-level edit, but changing \"Build\" to \"compile\" shifts the meaning and sounds wrong for AI agent creation."
+    },
+    {
+        "case_id": "case-07",
+        "template_kind": "add_domain_qualifier",
+        "actionability": 3,
+        "preservation": 4,
+        "note": "The rename is mostly clear, though the added organization phrase is awkward enough to reduce how cleanly it could be applied."
+    },
+    {
+        "case_id": "case-07",
+        "template_kind": "narrow_scope",
+        "actionability": 2,
+        "preservation": 2,
+        "note": "The instruction indicates a narrower rewrite, but its example artifacts are not grounded in the skill's actual Cloudflare-agents domain."
+    },
+    {
+        "case_id": "case-07",
+        "template_kind": "reword_trigger_verb",
+        "actionability": 4,
+        "preservation": 2,
+        "note": "The edit is explicit and easy to perform, but \"compile AI agents\" changes the sense of the original and reads unnaturally."
+    },
+    {
+        "case_id": "case-08",
+        "template_kind": "add_domain_qualifier",
+        "actionability": 4,
+        "preservation": 5,
+        "note": "This is a concrete rename that preserves the Azure DevOps Boards MCP server intent while making the source unmistakable."
+    },
+    {
+        "case_id": "case-08",
+        "template_kind": "narrow_scope",
+        "actionability": 2,
+        "preservation": 1,
+        "note": "It only loosely tells the user what kind of rewrite to make, and the sample additions are unrelated to Azure DevOps Boards."
+    },
+    {
+        "case_id": "case-08",
+        "template_kind": "reword_trigger_verb",
+        "actionability": 2,
+        "preservation": 2,
+        "note": "The word replacement is explicit, but \"a-specific\" yields broken phrasing and is not a sound edit to apply."
+    },
+    {
+        "case_id": "case-09",
+        "template_kind": "add_domain_qualifier",
+        "actionability": 4,
+        "preservation": 5,
+        "note": "This is a clear, directly usable rename that keeps the original demo-project identity intact while differentiating ownership."
+    },
+    {
+        "case_id": "case-09",
+        "template_kind": "narrow_scope",
+        "actionability": 2,
+        "preservation": 1,
+        "note": "The user is told to add specificity, but the only examples are unrelated artifacts that would hijack the original demo-project meaning."
+    },
+    {
+        "case_id": "case-09",
+        "template_kind": "reword_trigger_verb",
+        "actionability": 2,
+        "preservation": 3,
+        "note": "It points to an exact rewrite, yet \"demo-specific build project\" is awkward English even though the original idea remains loosely recognizable."
+    },
+    {
+        "case_id": "case-10",
+        "template_kind": "add_domain_qualifier",
+        "actionability": 3,
+        "preservation": 4,
+        "note": "The rename is understandable, but the spaced organization name makes the resulting title feel awkward rather than naturally adoptable."
+    },
+    {
+        "case_id": "case-10",
+        "template_kind": "narrow_scope",
+        "actionability": 2,
+        "preservation": 2,
+        "note": "It suggests narrowing the workflow description, but the exemplar add-ons are generic artifacts that materially redirect the skill's intent."
+    },
+    {
+        "case_id": "case-10",
+        "template_kind": "reword_trigger_verb",
+        "actionability": 2,
+        "preservation": 3,
+        "note": "The exact substitution is easy to see, but \"comprehensive-specific\" is malformed wording that preserves only the broad intent."
+    }
+]
