@@ -339,3 +339,40 @@ SMI-3956
 SMI-4236
 SMI-4492
 
+
+# === 2026-05-01 follow-up batch (SMI-4574 — residual genuine-drift triage) ===
+# Case-by-case classification of 21 entries that didn't fit SMI-4559 heuristics.
+# Each entry annotated with disposition + evidence.
+
+# commit-without-token: shipped under parent PR (squash-merge commit lacked SMI token)
+SMI-4532  # PR #825 — fix(infra): SMI-4530 share RESERVED_RANGES + scope verify-publish-deps
+SMI-3908  # Skillsmith Phase 6 Website project; pricing.astro / PricingRoadmap.astro shipped
+SMI-3874  # PR #455 — feat(security): PII detection, quality scoring (Wave 3 of SMI-3865)
+SMI-3871  # PR #455 — Wave 2: Config Schema Validation + Dependency Quarantine
+SMI-3868  # PR #455 — Wave 1: PII Detection + Quality Score + Risk History
+SMI-3867  # PR #455 — Wave 1: computeQualityScore() canonical function
+SMI-3840  # PR #448 — feat(infra): Supabase staging environment + deploy scripts
+SMI-3838  # PR #448 — Supabase staging project + migrations
+SMI-3837  # PR #437 — fix(supply-chain): pin all external dependency versions
+
+# external-repo: Workshop Factory (021.School workshop-fork skill)
+SMI-3954  # Workshop Factory project; .claude/skills/workshop-fork/references/
+SMI-3952  # Workshop Factory project; fork-skill creative adaptation
+SMI-3951  # Workshop Factory project; fork-skill mechanical substitution
+SMI-3937  # Workshop Factory project; seed-production.mjs verification
+SMI-3936  # Workshop Factory project; workshopTitles map removal
+SMI-3935  # Workshop Factory project; VALID_WORKSHOP_SLUGS derivation
+
+# external-repo: lin-cli (separate npm package, ~/.claude/skills/linear/)
+SMI-4085  # linear-ops.ts is in lin-cli, not this repo
+
+# external-repo: caching / external website (no codebase match for ETag 304 work)
+SMI-4171  # ETag 304 short-circuit; no matching code in this repo
+
+# won't-fix / superseded: Node 22.22 floor (SMI-4489) replaced the matrix proposal
+SMI-4087  # Add Node 20+22 matrix — superseded; CI uses single NODE_VERSION env var
+SMI-4086  # Upgrade Node 20→24 — superseded by SMI-4489 (Node 22.22 floor)
+
+# manual-op: investigation / version-drift report / content publishing (no commit expected)
+SMI-4172  # Version drift core@0.5.0 vs git main — investigation task
+SMI-2691  # Publish State of Claude Skills Security blog post (content, no commit)
