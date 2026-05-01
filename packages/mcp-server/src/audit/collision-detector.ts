@@ -1,7 +1,7 @@
 /**
  * @fileoverview Three-pass collision detector for the consumer namespace
- *               audit. Wave 1 PR1 (this file) ships the exact-name pass
- *               only; generic + semantic passes land in subsequent PRs.
+ *               audit. Wave 1 PR1+PR2 ship the exact + generic passes;
+ *               semantic lands in a subsequent PR.
  * @module @skillsmith/mcp-server/audit/collision-detector
  * @see SMI-4587
  *
@@ -11,7 +11,7 @@
 
 import type { InventoryEntry } from '../utils/local-inventory.types.js'
 import type { InventoryAuditResult } from './collision-detector.types.js'
-import { detectExactCollisions } from './collision-detector.helpers.js'
+import { detectExactCollisions, detectGenericTokenFlags } from './collision-detector.helpers.js'
 import { newAuditId } from './audit-history.js'
 
 export interface DetectCollisionsOptions {
@@ -24,12 +24,12 @@ export interface DetectCollisionsOptions {
 }
 
 /**
- * Run the (currently exact-only) collision-detection passes over an
+ * Run the exact + generic-token collision-detection passes over an
  * inventory snapshot.
  *
- * Generic-token + semantic passes return empty arrays in this PR — the
- * surface is stable, so Wave 2/3/4 can consume it now while Steps 5–6
- * land in subsequent PRs.
+ * Semantic-overlap pass returns an empty array in this PR — the surface
+ * is stable, so Wave 2/3/4 can consume it now while Step 6 lands in a
+ * subsequent PR.
  */
 export async function detectCollisions(
   inventory: ReadonlyArray<InventoryEntry>,
@@ -42,8 +42,11 @@ export async function detectCollisions(
   const exactCollisions = detectExactCollisions(inventory, auditId)
   const exactDuration = nsToMs(process.hrtime.bigint() - exactStart)
 
-  // Step 5/6 placeholders — empty arrays until subsequent PRs.
-  const genericFlags: InventoryAuditResult['genericFlags'] = []
+  const genericStart = process.hrtime.bigint()
+  const genericFlags = detectGenericTokenFlags(inventory, auditId)
+  const genericDuration = nsToMs(process.hrtime.bigint() - genericStart)
+
+  // Step 6 placeholder — empty array until the semantic-pass PR lands.
   const semanticCollisions: InventoryAuditResult['semanticCollisions'] = []
 
   const totalDuration = nsToMs(process.hrtime.bigint() - startedAt)
@@ -64,7 +67,7 @@ export async function detectCollisions(
       durationMs: totalDuration,
       passDurations: {
         exact: exactDuration,
-        generic: 0,
+        generic: genericDuration,
         semantic: 0,
       },
     },
@@ -84,4 +87,4 @@ export type {
   InventoryAuditResult,
   SemanticCollisionFlag,
 } from './collision-detector.types.js'
-export { detectExactCollisions } from './collision-detector.helpers.js'
+export { detectExactCollisions, detectGenericTokenFlags } from './collision-detector.helpers.js'
