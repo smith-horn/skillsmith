@@ -33,7 +33,7 @@
     "preflight": "npx tsx scripts/preflight-check.ts && node scripts/verify-publish-deps.mjs",
     "pre-impl": "node scripts/pre-impl-check.mjs",
     "postinstall": "bash scripts/submodule-hash.sh || true",
-    "prepare": "husky 2>/dev/null || true",
+    "prepare": "husky",
     "benchmark": "npm run benchmark --workspace=@skillsmith/core",
     "benchmark:search": "npm run benchmark:search --workspace=@skillsmith/core",
     "benchmark:index": "npm run benchmark:index --workspace=@skillsmith/core",
