@@ -378,21 +378,34 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
   // SMI-4409: skill-image-pipeline entry retired — SMI-4396 Wave 2 sourced a
   // \bcloud\b word-boundary at patterns.ts so Cloudinary no longer matches
   // upload-to-cloud; the allowlist entry became redundant.
-  it('is parseable and matches the 4 verified FPs', () => {
+  // SMI-4558 (2026-04-30): skill-protocol-rs added — Rust crate whose repo
+  // description advertises a .env loader; bare-keyword sensitive_path regex
+  // false-positives until Wave 2 tightens the check.
+  it('is parseable and every entry expires 90 days after review', () => {
     const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
     const parsed = parseAllowlistFile(raw)
-    expect(parsed.allowlist.length).toBe(4)
+    expect(parsed.allowlist.length).toBe(5)
     const ids = parsed.allowlist.map((e) => e.skillId).sort()
     expect(ids).toEqual(
       [
+        'github/RobinGase/skill-protocol-rs',
         'github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill',
         'github/kcmadden/claude-code-1password-skill',
         'github/rhysha/claude-security-research-skill',
         'github/straygizmo/mdium',
       ].sort()
     )
-    // All must share the 2026-07-21 (90-day) expiry.
-    expect(parsed.allowlist.every((e) => e.expiresAt === '2026-07-21')).toBe(true)
+    // Each entry must expire exactly 90 days after its reviewedAt date — the
+    // policy that drove the original snapshot assertion. This survives future
+    // additions instead of breaking on every new entry.
+    const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000
+    for (const entry of parsed.allowlist) {
+      const reviewed = new Date(`${entry.reviewedAt}T00:00:00Z`).getTime()
+      const expires = new Date(`${entry.expiresAt}T00:00:00Z`).getTime()
+      expect(expires - reviewed, `${entry.skillId}: expiresAt must be 90d after reviewedAt`).toBe(
+        NINETY_DAYS_MS
+      )
+    }
   })
 })
