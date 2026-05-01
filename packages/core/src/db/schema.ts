@@ -104,9 +104,16 @@ export function openDatabase(path: string): DatabaseType {
 }
 
 /**
- * Close the database connection safely
+ * Close the database connection safely.
+ *
+ * SMI-4640: Tolerate `undefined` so a failed `beforeEach` (e.g. native-module
+ * load error in `createTestDatabase`) is reported as the original error instead
+ * of being shadowed by a `Cannot read properties of undefined (reading 'close')`
+ * cascade in `afterEach`. The underlying create-side error already carries the
+ * actionable diagnostic (see `createDatabaseSync`).
  */
-export function closeDatabase(db: DatabaseType): void {
+export function closeDatabase(db: DatabaseType | undefined | null): void {
+  if (db === undefined || db === null) return
   db.close()
 }
 
