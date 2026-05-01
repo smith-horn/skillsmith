@@ -29,7 +29,8 @@
     "sharp": "0.34.5",
     "tailwindcss": "4.2.2",
     "turndown": "7.2.4",
-    "turndown-plugin-gfm": "1.0.2"
+    "turndown-plugin-gfm": "1.0.2",
+    "web-vitals": "5.2.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.11.1",
@@ -48,8 +49,7 @@
     "strip-literal": "3.1.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.59.1",
-    "vitest": "4.1.2",
-    "web-vitals": "5.2.0"
+    "vitest": "4.1.2"
   },
   "engines": {
     "node": ">=22.22.0"
