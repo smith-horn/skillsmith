@@ -247,6 +247,16 @@ export { safeWriteFile, SymlinkError, HardlinkError } from './utils/safe-fs.js'
 export { GENERIC_TRIGGERS } from './data/generic-triggers.js'
 export type { GenericTriggersStoplist } from './data/generic-triggers.js'
 
+// SMI-4587: Audit-mode resolver (consumer namespace audit)
+export {
+  resolveAuditMode,
+  tierDefault,
+  isAuditMode,
+  type AuditMode,
+  type Tier as AuditModeTier,
+  type ResolveAuditModeOptions,
+} from './config/audit-mode.js'
+
 // ============================================================================
 // LIVE SERVICES WORKTREE STUBS (Phase 0 - Conflict Prevention)
 // ============================================================================
