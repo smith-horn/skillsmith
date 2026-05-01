@@ -2514,6 +2514,28 @@ console.log(`\n${BOLD}37. Workflow setup-node node-version drift (SMI-4489)${RES
   }
 }
 
+// SMI-4592: vercel.json sync — root vercel.json (used by git-integrated
+// preview/staging deploys when project rootDirectory=null) and
+// packages/website/vercel.json (used by `vercel --prod` from packages/website/)
+// must stay byte-identical. Drift would mean preview/staging and prod ship
+// different redirects/headers/CSP, and post-deploy smoke can only catch that
+// after the fact. This audit catches it pre-merge.
+console.log(`\n${BOLD}38. vercel.json sync (SMI-4592)${RESET}`)
+try {
+  const rootVercel = readFileSync('vercel.json', 'utf8').trim()
+  const websiteVercel = readFileSync('packages/website/vercel.json', 'utf8').trim()
+  if (rootVercel !== websiteVercel) {
+    fail(
+      'vercel.json drift between repo root and packages/website/',
+      'Run: cp packages/website/vercel.json vercel.json (or vice versa). The git-integrated deploy reads root vercel.json (rootDirectory=null on the Vercel project); `vercel --prod` from packages/website/ reads the website-local copy. They must match or staging and prod ship different redirects/headers.'
+    )
+  } else {
+    pass('vercel.json byte-identical between repo root and packages/website/')
+  }
+} catch (e) {
+  warn('Could not check vercel.json sync: ' + e.message)
+}
+
 // npm override drift check: @modelcontextprotocol/sdk override "." must match mcp-server range
 console.log(`\n${BOLD}Override Drift: @modelcontextprotocol/sdk${RESET}`)
 try {
