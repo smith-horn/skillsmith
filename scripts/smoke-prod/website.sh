@@ -260,7 +260,7 @@ check_product_page_renders() {
     report_fail "website-product-page" "check_product_page_renders" "$url" "200" "$status" "$ms"
     return 1
   fi
-  if ! assert_contains "$body" 'MCP for Claude. CLI for terminals.' "product-hero"; then
+  if ! assert_contains "$body" 'MCP for any agent. CLI for the terminal.' "product-hero"; then
     report_fail "website-product-page" "check_product_page_renders" "$url" "hero-fingerprint" "missing" "$ms"
     return 1
   fi

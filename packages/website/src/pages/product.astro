@@ -18,7 +18,7 @@ const surfaces = [
     id: 'mcp',
     title: 'MCP server',
     pkg: '@skillsmith/mcp-server',
-    pickIf: 'Working in Claude Code or another MCP-compatible agent',
+    pickIf: 'Working in any MCP-compatible agent (Claude Code, Cursor, Copilot, Codex, Windsurf)',
     cta: 'Read the docs',
     href: '/docs/mcp-server',
   },
@@ -68,7 +68,7 @@ const matrix: CapabilityRow[] = [
     vscode: 'via MCP',
   },
   {
-    capability: 'Inline install during a Claude chat',
+    capability: 'Inline install during an agent chat session',
     mcp: 'yes',
     cli: 'no',
     vscode: 'no',
@@ -151,15 +151,19 @@ function cellClass(value: string): string {
 
 <BaseLayout
   title="Product | Skillsmith"
-  description="MCP for Claude. CLI for terminals. VS Code for editors. One Skillsmith registry under all three — pick the surface that fits your workflow."
+  description="MCP for any agent. CLI for the terminal. VS Code for the editor. One Skillsmith registry under all three — pick the surface that fits your workflow."
   activePath="/product"
 >
   <section class="product-hero">
     <p class="product-eyebrow">Three ways to reach the same registry</p>
-    <h1>MCP for Claude. CLI for terminals. VS Code for editors.</h1>
+    <h1>MCP for any agent. CLI for the terminal. VS Code for the editor.</h1>
     <p class="product-subtitle">
       One local skill database. One API key. Three surfaces designed for different workflows. Pick
-      the one that fits where you already work — or use all three.
+      the one that fits where you already work — or use all three. (Throughout this page, <em
+        >MCP</em
+      >
+      means the Model Context Protocol — the standard agents like Claude Code, Cursor, Copilot, Codex,
+      and Windsurf use to talk to external tools.)
     </p>
     <div class="product-hero-ctas">
       {
@@ -220,7 +224,9 @@ function cellClass(value: string): string {
       </table>
     </div>
     <p class="product-matrix-decision">
-      Working in Claude Code? <a href="#mcp">Use the MCP server.</a>
+      Working in an MCP-compatible agent (Claude Code, Cursor, Copilot, Codex, Windsurf)? <a
+        href="#mcp">Use the MCP server.</a
+      >
       Scripting, CI, or authoring? <a href="#cli">Use the CLI.</a>
       Living in VS Code? <a href="#vscode">Use the extension.</a>
     </p>
@@ -253,9 +259,10 @@ function cellClass(value: string): string {
     <blockquote>
       <p>
         All three surfaces read the same local SQLite database at
-        <code>~/.skillsmith/skills.db</code>. Search runs against an FTS5 full-text index by
-        default; semantic search is opt-in and uses local ONNX embeddings — your queries never leave
-        your machine.
+        <code>~/.skillsmith/skills.db</code>. Search runs against an FTS5 full-text index (SQLite's
+        built-in keyword search) by default; semantic search is opt-in and uses local ONNX
+        embeddings (an open ML model format that runs on CPU, no API call) — your queries never
+        leave your machine.
       </p>
     </blockquote>
     <a href="/blog/inside-the-local-skill-database" class="product-deep-dive-cta">
