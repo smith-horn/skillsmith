@@ -115,8 +115,13 @@ check_website_homepage_renders() {
     report_fail "website-homepage" "check_website_homepage_renders" "$url" "<title>...</title>" "missing-title" "$ms"
     return 1
   fi
-  if ! assert_contains "$body" "Skillsmith" "homepage-title-content"; then
-    report_fail "website-homepage" "check_website_homepage_renders" "$url" "Skillsmith in <title>" "missing-brand" "$ms"
+  # Extract the first <title>...</title> and assert "Skillsmith" inside it.
+  # Avoids false-positive matches on "Skillsmith" appearing anywhere in body
+  # (e.g. footer copyright) while the title itself is broken/empty.
+  local title
+  title=$(printf '%s' "$body" | tr -d '\n' | sed -n 's/.*<title[^>]*>\(.*\)<\/title>.*/\1/p' | head -c 500)
+  if ! assert_contains "$title" "Skillsmith" "homepage-title-content"; then
+    report_fail "website-homepage" "check_website_homepage_renders" "$url" "Skillsmith in <title>" "title='${title}'" "$ms"
     return 1
   fi
   report_pass "website-homepage" "check_website_homepage_renders" "$url" "$ms"
@@ -172,8 +177,16 @@ check_website_sitemap_index() {
     report_fail "website-homepage" "check_website_sitemap_index" "$url" "200" "$status" "$ms"
     return 1
   fi
-  if ! assert_contains "$body" "<sitemap>" "sitemap-element"; then
-    report_fail "website-homepage" "check_website_sitemap_index" "$url" "<sitemap>" "missing-sitemap-element" "$ms"
+  # Require the <sitemapindex> root element (proves we got a real sitemap
+  # index, not an HTML 200 from a misconfigured rewrite/SPA fallback) AND
+  # at least one <sitemap> child entry (an empty index would silently
+  # degrade GSC crawl prioritization per SMI-4184).
+  if ! assert_contains "$body" "<sitemapindex" "sitemap-root-element"; then
+    report_fail "website-homepage" "check_website_sitemap_index" "$url" "<sitemapindex" "missing-sitemap-root" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" "<sitemap>" "sitemap-child-element"; then
+    report_fail "website-homepage" "check_website_sitemap_index" "$url" "<sitemap>" "empty-sitemap-index" "$ms"
     return 1
   fi
   report_pass "website-homepage" "check_website_sitemap_index" "$url" "$ms"
