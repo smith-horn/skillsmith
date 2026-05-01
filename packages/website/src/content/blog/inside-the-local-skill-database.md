@@ -17,6 +17,8 @@ ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200
 
 When you run a Skillsmith search through the MCP server, the CLI, or the VS Code extension, the query never leaves your machine. Skillsmith caches the registry locally in a single SQLite database at `~/.skillsmith/skills.db`. By default, search runs against an FTS5 full-text index over that cache. There is no vector virtual table in the default schema — semantic search is opt-in (`SKILLSMITH_USE_HNSW=true`) and uses an in-memory vector index over local ONNX embeddings. `skillsmith sync` keeps the cache fresh by pulling only the rows that changed since the last sync. This post walks through what's stored, what isn't, and why we made each choice.
 
+A quick orientation before we go deep: **MCP** (Model Context Protocol) is the standard agents use to talk to external tools — Claude Code, Cursor, Copilot, Codex, Windsurf and others all speak it. **FTS5** is SQLite's built-in full-text search module: tokenize text, build an inverted index, rank results, all inside the database file with no external service. **HNSW** (hierarchical navigable small world) is a graph index that makes vector search fast by checking only a small fraction of the dataset per query. **ONNX** (Open Neural Network Exchange) is a portable ML model format with a runtime that runs inference on CPU — no GPU, no API call. We'll explain the rest as they come up.
+
 Jump to: [Where the DB lives](#where-the-db-lives) · [Schema tour](#schema-tour) · [FTS5 default](#fts5-the-default-search-path) · [Semantic search](#semantic-search-opt-in-with-a-footnote) · [`sync`](#sync-the-diff-algorithm) · [`import`](#import-the-other-direction) · [Tradeoffs](#tradeoffs)
 
 ## Two posts, two halves
@@ -58,7 +60,7 @@ Notably absent: there is no `vec_*` or `vss_*` virtual table in the default sche
 
 ## FTS5 — the default search path
 
-When you search Skillsmith, the default path runs in three steps: tokenize your query, hand it to the FTS5 virtual table, and join the BM25-ranked rowids back to `skills` for the full row. That's it. No HTTP, no embedding model, no graph traversal — just SQLite's built-in full-text engine.
+When you search Skillsmith, the default path runs in three steps: tokenize your query, hand it to the FTS5 virtual table, and join the BM25-ranked rowids back to `skills` for the full row. (BM25 is a standard relevance algorithm — it weighs how often a term appears against how common it is, so an exact match on a skill's name beats a paragraph that mentions the word once.) That's it. No HTTP, no embedding model, no graph traversal — just SQLite's built-in full-text engine.
 
 <!-- IMAGE_PROMPT id="fts5-vs-hnsw" purpose="search path comparison": "Side-by-side flow diagram. Left rail: query → FTS5 BM25 ranking → ranked skills rows (annotated 'default'). Right rail: query → ONNX embedding → in-memory vector index (annotated 'HNSW when available, brute-force fallback') → cosine ranking → ranked skills rows (annotated 'opt-in'). Brand-coral accents on near-black background, flat illustration style, 1200x800." -->
 
@@ -76,10 +78,10 @@ FTS5 is great for keyword queries. It's not great when you ask "I want a skill t
 
 Skillsmith ships semantic search as **opt-in** behind `SKILLSMITH_USE_HNSW=true`. When enabled:
 
-- Skills are embedded with `Xenova/all-MiniLM-L6-v2` via ONNX Runtime — a small (q8-quantized, ~25 MB on disk) sentence-transformer that produces 384-dim vectors. The model runs locally on CPU; no API call.
+- Skills are embedded with `Xenova/all-MiniLM-L6-v2` via ONNX Runtime — a small sentence-transformer model (22M parameters, produces 384-dim vectors, q8-quantized to ~25 MB on disk; the q8 part means weights are stored as 8-bit integers — about a quarter the size of full precision with negligible accuracy loss for sentence embeddings). The model runs locally on CPU; no API call.
 - For testing or development, you can swap the real model for a deterministic mock via `SKILLSMITH_USE_MOCK_EMBEDDINGS=true`. The mock is sub-millisecond and produces stable vectors — useful for test fixtures.
 - Embeddings are cached in a `skill_embeddings` BLOB column inside SQLite, so we don't re-embed the entire registry on every cold start.
-- Search itself happens in process: queries are embedded the same way, then compared against cached vectors with cosine similarity. SQLite is not the query target — it's just a durable cache for the blobs.
+- Search itself happens in process: queries are embedded the same way, then compared against cached vectors with **cosine similarity** (a measure of how aligned two vectors point in space — equivalent to a dot product after normalization, and the standard metric for comparing sentence embeddings). SQLite is not the query target — it's just a durable cache for the blobs.
 
 Now the honest footnote. The vector index implementation is currently in a brute-force fallback path. The file header at `packages/core/src/embeddings/hnsw-store.ts:5` states:
 
@@ -89,7 +91,7 @@ High-performance vector storage using HNSW index for fast ANN search.
 Uses brute-force search (V3 VectorDB unavailable after claude-flow rename).
 ```
 
-Translation: the HNSW graph is wired and will re-engage when the upstream V3 VectorDB module is restored, but as of writing, when you flip the opt-in flag you get an in-process linear scan over cached vectors rather than an HNSW-accelerated approximate nearest-neighbor search. For the size of registry most users carry (thousands, not millions of skills), this is still fine — the user-visible difference is "search takes a few hundred ms on a cold cache" instead of "search takes a few tens of ms." We chose to ship the contract ("in-memory vector index") rather than block on the fastest possible implementation, and we'd rather tell you about the fallback than have you discover it from a benchmark.
+Translation: the HNSW graph is wired and will re-engage when the upstream V3 VectorDB module is restored, but as of writing, when you flip the opt-in flag you get **brute-force search** (a linear scan that compares the query vector against every cached vector — slower than HNSW but simple, deterministic, and fine for thousands-of-rows registries). For the size of registry most users carry (thousands, not millions of skills), this is still fine — the user-visible difference is "search takes a few hundred ms on a cold cache" instead of "search takes a few tens of ms." We chose to ship the contract ("in-memory vector index") rather than block on the fastest possible implementation, and we'd rather tell you about the fallback than have you discover it from a benchmark.
 
 ## `sync` — the diff algorithm
 
@@ -117,7 +119,7 @@ Typical incremental run is on the order of tens of seconds, dominated by registr
 
 ## `import` — the other direction
 
-`sync` flows registry → cache. `import` flows the other way: it walks `~/.claude/skills/` (or any directory you point it at), parses each `SKILL.md`, and writes the result into the same `skills` table. The implementation lives in `packages/cli/src/import.ts`.
+`sync` flows registry → cache. `import` flows the other way: it walks `~/.claude/skills/` (or any directory you point it at), parses each `SKILL.md` (the markdown-with-frontmatter file format that defines an agent skill — name, description, trigger phrases, and the prompt body), and writes the result into the same `skills` table. The implementation lives in `packages/cli/src/import.ts`.
 
 This matters for two cases. First, hand-installed skills — skills you copied into `~/.claude/skills/` from a teammate's repo or your own scratch — show up in search after `import` even if they were never published to the registry. Second, locally authored skills under active development; `import` lets you `search` for your own work-in-progress alongside everything else.
 
