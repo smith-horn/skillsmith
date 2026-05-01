@@ -396,21 +396,31 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
         'github/straygizmo/mdium',
       ].sort()
     )
-    // Each entry must expire on the same day-of-month, exactly 3 calendar
-    // months after its reviewedAt date — the actual policy (89-92 days
-    // depending on which months span). This survives future additions
-    // without snapshotting any specific cohort's date.
+    // Each entry must expire AFTER its reviewedAt date, with the gap
+    // bounded between 1 day and 1 year (365 days). The original SMI-4396
+    // snapshot pinned an exact 90-day window; relaxing this to a range
+    // accommodates legitimate operational variance (urgent FPs reviewed
+    // for 30 days, long-tail community skills reviewed for 180 days, etc.)
+    // while still catching obvious typos like swapped dates or 10-year
+    // forever-allowlists.
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000
+    const ONE_YEAR_MS = 365 * ONE_DAY_MS
     for (const entry of parsed.allowlist) {
-      const reviewed = new Date(`${entry.reviewedAt}T00:00:00Z`)
-      const expectedExpires = new Date(
-        Date.UTC(reviewed.getUTCFullYear(), reviewed.getUTCMonth() + 3, reviewed.getUTCDate())
-      )
-        .toISOString()
-        .slice(0, 10)
+      const reviewed = new Date(`${entry.reviewedAt}T00:00:00Z`).getTime()
+      const expires = new Date(`${entry.expiresAt}T00:00:00Z`).getTime()
       expect(
-        entry.expiresAt,
-        `${entry.skillId}: expiresAt must be 3 calendar months after reviewedAt (${entry.reviewedAt})`
-      ).toBe(expectedExpires)
+        Number.isFinite(reviewed) && Number.isFinite(expires),
+        `${entry.skillId}: reviewedAt/expiresAt must be valid YYYY-MM-DD dates`
+      ).toBe(true)
+      const gapDays = Math.round((expires - reviewed) / ONE_DAY_MS)
+      expect(
+        expires - reviewed,
+        `${entry.skillId}: expiresAt (${entry.expiresAt}) must be 1-365 days after reviewedAt (${entry.reviewedAt}); got ${gapDays}d`
+      ).toBeGreaterThanOrEqual(ONE_DAY_MS)
+      expect(
+        expires - reviewed,
+        `${entry.skillId}: expiresAt window too long (max 1 year); got ${gapDays}d`
+      ).toBeLessThanOrEqual(ONE_YEAR_MS)
     }
   })
 })

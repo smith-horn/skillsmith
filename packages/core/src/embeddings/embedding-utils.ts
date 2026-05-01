@@ -132,3 +132,48 @@ export async function checkTransformersAvailability(): Promise<boolean> {
 export function getTransformersLoadError(): Error | null {
   return pipelineLoadError
 }
+
+/**
+ * Cosine similarity between two vectors of equal length.
+ *
+ * SMI-4577: extracted from `EmbeddingService.cosineSimilarity` so the brute-
+ * force fallback in this module can call it directly without a class
+ * instance, and to keep `index.ts` under the 500-line cap.
+ *
+ * @throws if vectors have different lengths
+ * @returns 0 when either vector has zero magnitude
+ */
+export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  if (a.length !== b.length) throw new Error('Embeddings must have same dimension')
+  let dotProduct = 0,
+    normA = 0,
+    normB = 0
+  for (let i = 0; i < a.length; i++) {
+    dotProduct += a[i] * b[i]
+    normA += a[i] * a[i]
+    normB += b[i] * b[i]
+  }
+  if (normA === 0 || normB === 0) return 0
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB))
+}
+
+/**
+ * Brute-force top-K nearest-neighbour search over an embedding map. Used as
+ * the deterministic fallback when HNSW is unavailable or explicitly disabled.
+ *
+ * SMI-4577: extracted from `EmbeddingService.findSimilarBruteForce` so the
+ * pure search algorithm doesn't need a class instance. The wrapper method on
+ * `EmbeddingService` still exists for backwards compatibility.
+ */
+export function findSimilarBruteForceFromMap(
+  embeddings: Map<string, Float32Array>,
+  queryEmbedding: Float32Array,
+  topK: number
+): Array<{ skillId: string; score: number }> {
+  const results: Array<{ skillId: string; score: number }> = []
+  for (const [skillId, embedding] of embeddings) {
+    results.push({ skillId, score: cosineSimilarity(queryEmbedding, embedding) })
+  }
+  results.sort((a, b) => b.score - a.score)
+  return results.slice(0, topK)
+}

@@ -30,6 +30,8 @@ import {
   isTransformersAvailable,
   checkTransformersAvailability,
   getTransformersLoadError,
+  cosineSimilarity,
+  findSimilarBruteForceFromMap,
 } from './embedding-utils.js'
 
 // SMI-4577: HNSW backend for findSimilar — see docs/internal/adr/009-embedding-service-fallback.md
@@ -315,17 +317,7 @@ export class EmbeddingService {
 
   /** Compute cosine similarity between two embeddings */
   cosineSimilarity(a: Float32Array, b: Float32Array): number {
-    if (a.length !== b.length) throw new Error('Embeddings must have same dimension')
-    let dotProduct = 0,
-      normA = 0,
-      normB = 0
-    for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i]
-      normA += a[i] * a[i]
-      normB += b[i] * b[i]
-    }
-    if (normA === 0 || normB === 0) return 0
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB))
+    return cosineSimilarity(a, b)
   }
 
   /**
@@ -375,14 +367,7 @@ export class EmbeddingService {
     queryEmbedding: Float32Array,
     topK: number = 10
   ): Array<{ skillId: string; score: number }> {
-    const allEmbeddings = this.getAllEmbeddings()
-    const results: Array<{ skillId: string; score: number }> = []
-    for (const [skillId, embedding] of allEmbeddings) {
-      const score = this.cosineSimilarity(queryEmbedding, embedding)
-      results.push({ skillId, score })
-    }
-    results.sort((a, b) => b.score - a.score)
-    return results.slice(0, topK)
+    return findSimilarBruteForceFromMap(this.getAllEmbeddings(), queryEmbedding, topK)
   }
 
   /**
@@ -415,6 +400,29 @@ export class EmbeddingService {
       }
       if (status.kind === 'temporarily-unavailable') {
         console.warn(`[EmbeddingService] HNSW temporarily unavailable: ${status.reason}`)
+        return null
+      }
+      // SMI-4577: catch storeEmbedding/removeEmbedding writes that landed
+      // during the load — they couldn't update the handle (it didn't exist
+      // yet), so reconcile against the current SQLite state. Cheap on the
+      // happy path (no writes during load = empty diff).
+      const current = this.getAllEmbeddings()
+      // Snapshot handle ids before mutation; removePoint mutates idToLabel
+      // and we don't want to iterate-and-mutate.
+      const handleIds = Array.from(status.handle.idToLabel.keys())
+      try {
+        for (const [skillId, vec] of current) {
+          if (!status.handle.idToLabel.has(skillId)) {
+            upsertPoint(status.handle, skillId, vec)
+          }
+        }
+        for (const skillId of handleIds) {
+          if (!current.has(skillId)) {
+            removePoint(status.handle, skillId)
+          }
+        }
+      } catch (err) {
+        console.warn('[EmbeddingService] HNSW post-load reconcile failed, dropping handle:', err)
         return null
       }
       this.hnswHandle = status.handle
