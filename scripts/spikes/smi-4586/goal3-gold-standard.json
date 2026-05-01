@@ -1,0 +1,50 @@
+{
+  "_comment": "Hand-labeled gold standard for SMI-4586 Goal #3 — CLAUDE.md regex recall. Trigger phrases are bullet items under Trigger phrases / Use when / Skills sections, or under MCP-tools-style explicit invocation lists.",
+  "_normalized_form": "lowercase, trim trailing punctuation, collapse internal whitespace",
+  "files": {
+    "skillsmith-CLAUDE.md": {
+      "notes": "Operational/standards CLAUDE.md — no Trigger phrases / Use when sections. The Skillsmith MCP Tools table lists tool names (search, get_skill, install_skill, etc.) but those are tool identifiers, not natural-language trigger phrases. Gold = empty.",
+      "gold_phrases": []
+    },
+    "anthropic-cookbook.md": {
+      "notes": "Has Slash Commands section listing /notebook-review, /model-check, /link-review. These are command identifiers exposed in CC and CI. Counted as gold.",
+      "gold_phrases": [
+        "/notebook-review",
+        "/model-check",
+        "/link-review"
+      ]
+    },
+    "anthropic-quickstarts.md": {
+      "notes": "Lists shell commands (./setup.sh, ruff check, npm run dev) but these are not trigger phrases — they're CLI invocations. No Use when / Trigger phrases sections. Gold = empty.",
+      "gold_phrases": []
+    },
+    "synthetic-typescript-monorepo.md": {
+      "notes": "Has explicit Trigger phrases section (6 quoted phrases) and Use when section (3 bullets).",
+      "gold_phrases": [
+        "ship a release",
+        "add a package",
+        "create a migration",
+        "run preflight",
+        "deploy to staging",
+        "rollback the last deploy",
+        "use when the user asks to bump versions across all packages",
+        "use when the user wants to test a single package in isolation",
+        "use when the user reports a flaky ci run"
+      ]
+    },
+    "synthetic-saas-app.md": {
+      "notes": "Has Trigger phrases section (6 phrases) and Use when section (3 bullets).",
+      "gold_phrases": [
+        "review my checkout flow",
+        "add oauth provider",
+        "create a welcome email",
+        "build the dashboard widget",
+        "deploy preview",
+        "test the webhook locally",
+        "use when the user asks to add a new pricing tier",
+        "use when the user reports a 401 from a webhook",
+        "use when the user wants to a/b-test an email subject line"
+      ]
+    }
+  }
+}
