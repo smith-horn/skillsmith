@@ -24,7 +24,9 @@
       "id": "website-homepage",
       "owner": "website",
       "trigger_globs": [
+        "vercel.json",
         "packages/website/vercel.json",
+        "packages/website/turbo.json",
         "packages/website/astro.config.mjs",
         "packages/website/package.json",
         "packages/website/src/pages/index.astro"
