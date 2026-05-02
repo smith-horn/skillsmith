@@ -20,6 +20,7 @@ import {
   type RegistryLookup,
   type RegistrySkillInfo,
 } from '@skillsmith/core'
+import { addLink, getInstallPath, resolveClientPath } from '@skillsmith/core/install'
 import type { ToolContext } from '../context.js'
 import { getToolContext } from '../context.js'
 import { installInputSchema, type InstallResult } from './install.types.js'
@@ -102,6 +103,12 @@ export async function installSkill(input: unknown, _context?: ToolContext): Prom
 
   const context = _context ?? getToolContext()
 
+  // SMI-4578: resolve target install directory. Explicit `client` arg
+  // wins; otherwise fall back to SKILLSMITH_CLIENT env (or claude-code).
+  const effectiveSkillsDir = validInput.client
+    ? getInstallPath(validInput.client)
+    : resolveClientPath()
+
   // SMI-3483: Create core service instance with MCP context wiring
   // SMI-3873: aiDefenceFeedback omitted -- MCP server cannot call Ruflo tools.
   const service = new SkillInstallationService({
@@ -111,6 +118,7 @@ export async function installSkill(input: unknown, _context?: ToolContext): Prom
     registryLookup: new McpRegistryLookup(context),
     coInstallRecorder: context.coInstallRepository,
     sessionInstalledSkillIds: context.sessionInstalledSkillIds,
+    skillsDir: effectiveSkillsDir,
   })
 
   // SMI-1867: Pre-flight conflict check for reinstall with force
@@ -157,6 +165,32 @@ export async function installSkill(input: unknown, _context?: ToolContext): Prom
     success: result.success,
     durationMs: Date.now() - installStart,
   })
+
+  // SMI-4578: fan-out to additional clients after primary install. Failures
+  // are logged but do NOT mark the overall install as failed — canonical
+  // install at `client` is already complete.
+  if (result.success && validInput.alsoLink.length > 0) {
+    const fromClient = validInput.client ?? 'claude-code'
+    const skillName = extractSkillName(validInput.skillId)
+    for (const target of validInput.alsoLink) {
+      if (target === fromClient) continue
+      try {
+        await addLink({
+          skillId: skillName,
+          fromClient,
+          toClient: target,
+          preferSymlink: validInput.symlink,
+          force: validInput.force,
+        })
+      } catch (linkErr) {
+        // Best-effort fan-out — log but don't fail the install
+        console.error(
+          `[install] alsoLink to ${target} failed:`,
+          linkErr instanceof Error ? linkErr.message : String(linkErr)
+        )
+      }
+    }
+  }
 
   return result
 }

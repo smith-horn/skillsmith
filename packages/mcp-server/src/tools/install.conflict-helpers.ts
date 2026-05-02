@@ -8,20 +8,23 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import * as os from 'os'
 import { createHash } from 'crypto'
 import { safeWriteFile } from '@skillsmith/core'
+import { getCanonicalInstallPath } from '@skillsmith/core/install'
 
 // ============================================================================
 // Conflict Resolution Helpers (SMI-1865)
 // ============================================================================
 
 /**
- * SMI-1865: Get base directory for skill backups
- * Uses a function instead of constant to support HOME overrides in tests
+ * SMI-1865: Get base directory for skill backups.
+ *
+ * Uses a function instead of constant to support HOME overrides in tests.
+ * SMI-4578: routes through canonical install path so default-client
+ * backup directory follows the central path table.
  */
 export function getBackupsDir(): string {
-  return path.join(os.homedir(), '.claude', 'skills', '.backups')
+  return path.join(getCanonicalInstallPath(), '.backups')
 }
 
 /**

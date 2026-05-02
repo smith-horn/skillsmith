@@ -13,12 +13,14 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import * as os from 'node:os'
+import { resolveClientPath } from '@skillsmith/core/install'
 
 /**
- * Default skills directory path
+ * Resolve the active skills directory from the `SKILLSMITH_CLIENT` env
+ * var (defaults to `claude-code` when unset). SMI-4578: computed at call
+ * time so a runtime override is picked up.
  */
-const DEFAULT_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
+const getDefaultSkillsDir = (): string => resolveClientPath()
 
 /**
  * Result from parsing a SKILL.md file
@@ -141,7 +143,7 @@ export function getSkillIdFromDir(skillDir: string, dirName: string): string {
  * const skills = await getInstalledSkills('/path/to/custom/skills');
  */
 export async function getInstalledSkills(skillsDir?: string): Promise<string[]> {
-  const dir = skillsDir || DEFAULT_SKILLS_DIR
+  const dir = skillsDir || getDefaultSkillsDir()
 
   // Check if directory exists
   if (!fs.existsSync(dir)) {
@@ -181,7 +183,7 @@ export async function getInstalledSkills(skillsDir?: string): Promise<string[]> 
  * @returns Array of skill IDs
  */
 export function getInstalledSkillsSync(skillsDir?: string): string[] {
-  const dir = skillsDir || DEFAULT_SKILLS_DIR
+  const dir = skillsDir || getDefaultSkillsDir()
 
   // Check if directory exists
   if (!fs.existsSync(dir)) {
@@ -238,7 +240,7 @@ export interface InstalledSkillInfo {
 export async function getInstalledSkillsDetailed(
   skillsDir?: string
 ): Promise<InstalledSkillInfo[]> {
-  const dir = skillsDir || DEFAULT_SKILLS_DIR
+  const dir = skillsDir || getDefaultSkillsDir()
 
   // Check if directory exists
   if (!fs.existsSync(dir)) {

@@ -333,6 +333,33 @@ describe('SMI-1436: MCP Server Template Generation', () => {
       expect(readme).toContain('~/.claude/settings.json')
     })
 
+    it('SMI-4580: includes per-client snippets for every supported agent', () => {
+      const files = renderMcpServerTemplates(basicTemplateData)
+      const readme = files.get('README.md') || ''
+
+      // All five clients + cross-agent + Codex labels appear
+      expect(readme).toContain('Claude Code')
+      expect(readme).toContain('Cursor')
+      expect(readme).toContain('GitHub Copilot (VS Code)')
+      expect(readme).toContain('Windsurf')
+      expect(readme).toContain('Codex CLI')
+      expect(readme).toContain('Cross-agent (open standard)')
+
+      // Per-client config-file paths
+      expect(readme).toContain('~/.cursor/mcp.json')
+      expect(readme).toContain('~/.codeium/windsurf/mcp_config.json')
+      expect(readme).toContain('~/.codex/config.toml')
+
+      // Codex snippet uses TOML, not JSON
+      expect(readme).toContain('[mcp_servers.test-mcp-server]')
+
+      // Package name is interpolated into each snippet
+      expect(readme).toContain('"test-mcp-server"')
+
+      // SKILLSMITH_API_KEY env-var pattern is documented
+      expect(readme).toContain('SKILLSMITH_API_KEY')
+    })
+
     it('includes development instructions', () => {
       const files = renderMcpServerTemplates(basicTemplateData)
       const readme = files.get('README.md') || ''

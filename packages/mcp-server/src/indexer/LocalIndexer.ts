@@ -14,8 +14,8 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import * as os from 'node:os'
 import { indexLocalSkill } from '@skillsmith/core'
+import { getCanonicalInstallPath } from '@skillsmith/core/install'
 import { parseFrontmatter, type SkillFrontmatter } from './FrontmatterParser.js'
 
 /**
@@ -78,7 +78,10 @@ export class LocalIndexer {
    * @param cacheTtl - Cache TTL in milliseconds (defaults to 60000 = 1 minute)
    */
   constructor(skillsDir?: string, cacheTtl: number = 60000) {
-    this.skillsDir = skillsDir || path.join(os.homedir(), '.claude', 'skills')
+    // SMI-4578: routes through canonical install path so default-client
+    // directory is defined in exactly one place. Per-client scanning is
+    // handled by the cross-client `getInstalledSkills` (Step 4.5).
+    this.skillsDir = skillsDir || getCanonicalInstallPath()
     this.cacheTtl = cacheTtl
   }
 

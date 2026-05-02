@@ -41,6 +41,11 @@
       "import": "./dist/tests/testkit.js",
       "default": "./dist/tests/testkit.js"
     },
+    "./install": {
+      "types": "./dist/src/install/index.d.ts",
+      "import": "./dist/src/install/index.js",
+      "default": "./dist/src/install/index.js"
+    },
     "./services/skill-installation-helpers": {
       "types": "./dist/src/services/skill-installation.helpers.d.ts",
       "import": "./dist/src/services/skill-installation.helpers.js",

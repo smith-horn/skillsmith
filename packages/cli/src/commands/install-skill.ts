@@ -10,8 +10,8 @@ import chalk from 'chalk'
 import ora from 'ora'
 import { mkdir, copyFile, stat, readdir } from 'fs/promises'
 import { join, dirname } from 'path'
-import { homedir } from 'os'
 import { fileURLToPath } from 'url'
+import { getCanonicalInstallPath } from '@skillsmith/core/install'
 import { sanitizeError } from '../utils/sanitize.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -25,10 +25,13 @@ function getAssetsPath(): string {
 }
 
 /**
- * Get the target installation path
+ * Get the target installation path.
+ *
+ * SMI-4578: routes through `@skillsmith/core/install` so the canonical
+ * Claude Code directory is defined in exactly one place.
  */
 function getTargetPath(): string {
-  return join(homedir(), '.claude', 'skills', 'skillsmith')
+  return join(getCanonicalInstallPath(), 'skillsmith')
 }
 
 /**

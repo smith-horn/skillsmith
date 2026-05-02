@@ -52,20 +52,129 @@ Skillsmith uses the Model Context Protocol (MCP):
 
 ### Quick Setup (MCP)
 
-Copy this MCP configuration snippet:
+Skillsmith is **MCP-compatible** — pick the snippet for your agent.
+SMI-4580: snippets sourced from [`packages/cli/src/templates/mcp-server.template.snippets.ts`](packages/cli/src/templates/mcp-server.template.snippets.ts) so this README and the website docs cannot drift.
 
-```text
-Add this MCP server to my settings.json:
+<details>
+<summary><strong>Claude Code</strong> — <code>~/.claude/settings.json</code></summary>
 
+```json
 {
   "mcpServers": {
-    "skillsmith": {
+    "@skillsmith/mcp-server": {
       "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"]
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_..."
+      }
     }
   }
 }
 ```
+
+Restart Claude Code after editing settings.json.
+
+</details>
+
+<details>
+<summary><strong>Cursor</strong> — <code>~/.cursor/mcp.json</code></summary>
+
+```json
+{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_..."
+      }
+    }
+  }
+}
+```
+
+Cursor 2.4+ required. Reload the window after saving.
+
+</details>
+
+<details>
+<summary><strong>GitHub Copilot (VS Code)</strong> — <code>.vscode/mcp.json</code> (workspace)</summary>
+
+```json
+{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_..."
+      }
+    }
+  }
+}
+```
+
+VS Code 1.108+ required. Workspace-scoped (commit to repo if team-shared, or use user `settings.json` instead).
+
+</details>
+
+<details>
+<summary><strong>Windsurf</strong> — <code>~/.codeium/windsurf/mcp_config.json</code></summary>
+
+```json
+{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "${env:SKILLSMITH_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+Supports `${env:VAR}` interpolation; export `SKILLSMITH_API_KEY` in your shell instead of inlining the secret.
+
+</details>
+
+<details>
+<summary><strong>Codex CLI</strong> — <code>~/.codex/config.toml</code> (TOML, not JSON)</summary>
+
+```toml
+[mcp_servers.@skillsmith/mcp-server]
+command = "npx"
+args = ["-y", "@skillsmith/mcp-server"]
+
+[mcp_servers.@skillsmith/mcp-server.env]
+SKILLSMITH_API_KEY = "sk_live_..."
+```
+
+Codex reads `~/.agents/skills`. When installing via CLI, pass `--client agents`.
+
+</details>
+
+<details>
+<summary><strong>Cross-agent (open standard)</strong> — <code>~/.agents/mcp.json</code></summary>
+
+```json
+{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_..."
+      }
+    }
+  }
+}
+```
+
+Read by any agent honouring the cross-agent skill convention.
+
+</details>
 
 After adding to your MCP client settings and restarting, you can search for skills immediately.
 
@@ -84,19 +193,7 @@ This opens [skillsmith.app/account/cli-token](https://skillsmith.app/account/cli
 
 **MCP server config — add the key to your settings:**
 
-```json
-{
-  "mcpServers": {
-    "skillsmith": {
-      "command": "npx",
-      "args": ["-y", "@skillsmith/mcp-server"],
-      "env": {
-        "SKILLSMITH_API_KEY": "sk_live_your_key_here"
-      }
-    }
-  }
-}
-```
+The per-client snippets above already include the `env.SKILLSMITH_API_KEY` slot — replace the `sk_live_...` placeholder with the value from `skillsmith login`.
 
 Get your API key at [skillsmith.app/account/cli-token](https://skillsmith.app/account/cli-token).
 

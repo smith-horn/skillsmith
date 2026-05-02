@@ -20,8 +20,42 @@ import {
   type RegistryLookup,
   type RegistrySkillInfo,
 } from '@skillsmith/core'
-import { DEFAULT_DB_PATH, DEFAULT_SKILLS_DIR, DEFAULT_MANIFEST_PATH } from '../config.js'
+import { addLink, assertClientId, getInstallPath, type ClientId } from '@skillsmith/core/install'
+import { DEFAULT_DB_PATH, DEFAULT_MANIFEST_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
+
+const VALID_CLIENT_HINT =
+  'Valid IDs: claude-code | cursor | copilot | windsurf | agents (Codex users pass --client agents).'
+
+/**
+ * SMI-4578: parse and validate the comma-separated `--also-link` value.
+ * Rejects empty entries, duplicates, and any client ID not in the
+ * canonical table. The default-client (`--client`) is excluded — fanning
+ * out into the same client you just installed for is a no-op.
+ */
+function parseAlsoLink(raw: string | undefined, defaultClient: ClientId): ClientId[] {
+  if (!raw || raw.trim() === '') return []
+  const ids = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '')
+  const seen = new Set<ClientId>()
+  const out: ClientId[] = []
+  for (const id of ids) {
+    assertClientId(id)
+    if (id === defaultClient) {
+      throw new Error(
+        `--also-link target '${id}' is the same as --client; pick a different client or drop it from --also-link.`
+      )
+    }
+    if (seen.has(id)) {
+      throw new Error(`--also-link target '${id}' is listed more than once`)
+    }
+    seen.add(id)
+    out.push(id)
+  }
+  return out
+}
 
 /**
  * Validate that a skill ID is in author/name format.
@@ -149,6 +183,17 @@ export function createInstallCommand(): Command {
     .option('-q, --quiet', 'Suppress advisory output')
     .option('--json', 'Output structured JSON result')
     .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
+    .option('--client <id>', `install for a specific agent (${VALID_CLIENT_HINT})`, 'claude-code')
+    .option(
+      '--also-link <ids>',
+      'comma-separated additional clients to fan-out into (default: copy; pair with --symlink for POSIX symlinks)',
+      ''
+    )
+    .option(
+      '--symlink',
+      'use relative symlinks instead of file copies for --also-link (POSIX only; falls back to copy on Windows EPERM)',
+      false
+    )
     .action(
       async (
         skillId: string,
@@ -159,12 +204,28 @@ export function createInstallCommand(): Command {
           quiet?: boolean
           json?: boolean
           db?: string
+          client?: string
+          alsoLink?: string
+          symlink?: boolean
         }
       ) => {
         const quiet = opts.quiet ?? false
         const jsonOutput = opts.json ?? false
 
         try {
+          // SMI-4578: validate --client and parse --also-link before any
+          // I/O so a bad flag fails fast with a friendly hint.
+          const rawClient = opts.client ?? 'claude-code'
+          if (rawClient.includes(',')) {
+            throw new Error(
+              `--client takes a single value (got '${rawClient}'). Pass --also-link <ids> to fan-out into additional clients.`
+            )
+          }
+          assertClientId(rawClient)
+          const client: ClientId = rawClient
+          const alsoLinkClients = parseAlsoLink(opts.alsoLink, client)
+          const skillsDir = getInstallPath(client)
+
           // Validate skill ID format
           if (!isValidSkillId(skillId)) {
             const errorMsg =
@@ -196,7 +257,7 @@ export function createInstallCommand(): Command {
               db,
               skillRepo,
               skillDependencyRepo,
-              skillsDir: DEFAULT_SKILLS_DIR,
+              skillsDir,
               manifestPath: DEFAULT_MANIFEST_PATH,
               registryLookup: createDbRegistryLookup(skillRepo),
               onProgress: (_stage: string, detail: string) => {
@@ -229,6 +290,38 @@ export function createInstallCommand(): Command {
               success: result.success,
               durationMs: Date.now() - installStart,
             })
+
+            // SMI-4578: fan-out to --also-link clients only after the
+            // primary install succeeds. Any fan-out failure is reported as
+            // a warning but does NOT mark the overall install as failed —
+            // the canonical install at `client` is already complete.
+            if (result.success && alsoLinkClients.length > 0) {
+              for (const target of alsoLinkClients) {
+                try {
+                  const linked = await addLink({
+                    skillId,
+                    fromClient: client,
+                    toClient: target,
+                    preferSymlink: opts.symlink ?? false,
+                    force: opts.force ?? false,
+                  })
+                  if (!quiet && !jsonOutput) {
+                    const note = linked.fellBackToCopy ? ' (fell back to copy)' : ''
+                    console.log(
+                      chalk.dim(`  Linked into ${target} as ${linked.record.kind}${note}`)
+                    )
+                  }
+                } catch (linkErr) {
+                  if (!jsonOutput) {
+                    console.warn(
+                      chalk.yellow(
+                        `  Warning: could not link to ${target}: ${sanitizeError(linkErr)}`
+                      )
+                    )
+                  }
+                }
+              }
+            }
 
             if (spinner) {
               if (result.success) {

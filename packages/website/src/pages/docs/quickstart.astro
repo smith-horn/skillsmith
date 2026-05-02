@@ -258,24 +258,89 @@ curl -fsSL https://claude.ai/install.sh | sh`}</code></pre>
   <h3 id="step-a2">Step 2: Add Skillsmith MCP Server</h3>
 
   <p>
-    Add this configuration to your MCP client settings (e.g., <code>~/.claude/settings.json</code>):
+    Pick the snippet for your MCP client. SMI-4580: snippets are sourced from
+    <code>@skillsmith/cli/templates/mcp-server.template.snippets.ts</code> so this
+    page can't drift from the scaffolded README or root README.
   </p>
 
-  <pre><code>{`Add this MCP server to my settings.json:
-
-{
+  <details open>
+    <summary><strong>Claude Code</strong> — <code>~/.claude/settings.json</code></summary>
+    <pre><code>{`{
   "mcpServers": {
-    "skillsmith": {
+    "@skillsmith/mcp-server": {
       "command": "npx",
       "args": ["-y", "@skillsmith/mcp-server"]
     }
   }
 }`}</code></pre>
+  </details>
+
+  <details>
+    <summary><strong>Cursor</strong> — <code>~/.cursor/mcp.json</code></summary>
+    <pre><code>{`{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"]
+    }
+  }
+}`}</code></pre>
+    <p>Cursor 2.4+ required.</p>
+  </details>
+
+  <details>
+    <summary><strong>GitHub Copilot (VS Code)</strong> — <code>.vscode/mcp.json</code> (workspace)</summary>
+    <pre><code>{`{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"]
+    }
+  }
+}`}</code></pre>
+    <p>VS Code 1.108+ required.</p>
+  </details>
+
+  <details>
+    <summary><strong>Windsurf</strong> — <code>~/.codeium/windsurf/mcp_config.json</code></summary>
+    <pre><code>{`{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"]
+    }
+  }
+}`}</code></pre>
+  </details>
+
+  <details>
+    <summary><strong>Codex CLI</strong> — <code>~/.codex/config.toml</code> (TOML, not JSON)</summary>
+    <pre><code>{`[mcp_servers.@skillsmith/mcp-server]
+command = "npx"
+args = ["-y", "@skillsmith/mcp-server"]`}</code></pre>
+    <p>
+      Codex reads <code>~/.agents/skills</code>. When installing via Skillsmith CLI, pass
+      <code>--client agents</code>.
+    </p>
+  </details>
+
+  <details>
+    <summary><strong>Cross-agent (open standard)</strong> — <code>~/.agents/mcp.json</code></summary>
+    <pre><code>{`{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"]
+    }
+  }
+}`}</code></pre>
+  </details>
 
   <div class="callout">
     <p class="callout-heading">Tip</p>
     <p>
-      You can also paste this snippet directly into your AI assistant's chat, and it can update your <code>settings.json</code> for you.
+      You can also paste any snippet directly into your AI assistant's chat, and it can
+      update the relevant config file for you.
     </p>
   </div>
 

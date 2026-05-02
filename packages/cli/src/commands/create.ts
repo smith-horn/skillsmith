@@ -20,7 +20,7 @@ import chalk from 'chalk'
 import ora from 'ora'
 import { mkdir, writeFile, stat } from 'fs/promises'
 import { join } from 'path'
-import { homedir } from 'os'
+import { getCanonicalInstallPath } from '@skillsmith/core/install'
 
 import { sanitizeError } from '../utils/sanitize.js'
 import { validateSkillName } from '../utils/skill-name.js'
@@ -247,8 +247,10 @@ export async function createSkill(
       default: false,
     }))
 
-  // 8. Resolve output directory — lazy (never baked in at module load time)
-  const outputDir = options.output ?? join(homedir(), '.claude', 'skills')
+  // 8. Resolve output directory — lazy (never baked in at module load time).
+  //    SMI-4578: routes through canonical install path so default-client
+  //    directory is defined in exactly one place.
+  const outputDir = options.output ?? getCanonicalInstallPath()
   const skillDir = join(outputDir, skillName)
 
   // 9. Overwrite check — after all prompts so user knows what they committed to

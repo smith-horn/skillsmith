@@ -5,9 +5,9 @@
 
 import chalk from 'chalk'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { TrustTier, CodebaseContext, FrameworkInfo, DependencyInfo } from '@skillsmith/core'
+import { getCanonicalInstallPath } from '@skillsmith/core/install'
 import type { RecommendResponse, InstalledSkill } from './recommend.types.js'
 import { VALID_TRUST_TIERS } from './recommend.types.js'
 
@@ -296,10 +296,13 @@ export function buildStackFromAnalysis(context: CodebaseContext): string[] {
 // ============================================================================
 
 /**
- * Read installed skills from ~/.claude/skills/ directory (SMI-1358)
+ * Read installed skills from the canonical install directory (SMI-1358).
+ *
+ * SMI-4578: routes through `@skillsmith/core/install` so the default-client
+ * path is defined in exactly one place.
  */
 export function getInstalledSkills(): InstalledSkill[] {
-  const skillsDir = join(homedir(), '.claude', 'skills')
+  const skillsDir = getCanonicalInstallPath()
 
   if (!existsSync(skillsDir)) {
     return []

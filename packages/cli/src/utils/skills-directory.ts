@@ -3,10 +3,9 @@
  * from the global and local ~/.claude/skills directories.
  */
 
-import { readdir, readFile, stat } from 'fs/promises'
+import { readdir, readFile, realpath, stat } from 'fs/promises'
 import { createHash } from 'crypto'
 import { join } from 'path'
-import { homedir } from 'os'
 import {
   SkillParser,
   createDatabaseAsync,
@@ -15,6 +14,12 @@ import {
   type Database,
   type TrustTier,
 } from '@skillsmith/core'
+import {
+  CANONICAL_CLIENT,
+  CLIENT_IDS,
+  CLIENT_NATIVE_PATHS,
+  type ClientId,
+} from '@skillsmith/core/install'
 import { DEFAULT_DB_PATH } from '../config.js'
 
 export interface InstalledSkill {
@@ -24,17 +29,20 @@ export interface InstalledSkill {
   trustTier: TrustTier
   installDate: string
   hasUpdates: boolean
+  /**
+   * SMI-4578: which client's directory this skill was discovered under.
+   * `'local'` = repo-local `./.claude/skills`. Other values are
+   * `ClientId` from the multi-client install table.
+   */
+  installedVia: ClientId | 'local'
 }
 
 /**
- * SMI-1630: Search both global and local skill directories
- *
- * Global: ~/.claude/skills/
- * Local: ${process.cwd()}/.claude/skills/
- *
- * Local skills take precedence over global skills with the same name.
+ * SMI-1630 + SMI-4578: discovery scans every client directory
+ * (`CLIENT_NATIVE_PATHS`) plus repo-local `./.claude/skills`. Local
+ * skills take precedence over global; canonical (`claude-code`) takes
+ * precedence over secondary clients. See `getInstalledSkills` below.
  */
-const GLOBAL_SKILLS_DIR = join(homedir(), '.claude', 'skills')
 
 /**
  * Returns the local skills directory path.
@@ -51,12 +59,16 @@ function getLocalSkillsDir(): string {
  * whether a newer content hash has been recorded since the skill was installed.
  * Falls back to hasUpdates: false when the database is unavailable.
  *
- * @param skillsDir Directory to scan for installed skills
- * @param dbPath    Optional path to the Skillsmith SQLite database
+ * @param skillsDir   Directory to scan for installed skills
+ * @param dbPath      Optional path to the Skillsmith SQLite database
+ * @param installedVia SMI-4578: which client (or `'local'`) this directory
+ *                    represents — propagated onto each returned skill so
+ *                    callers can render "installed via Cursor" badges.
  */
 export async function getSkillsFromDirectory(
   skillsDir: string,
-  dbPath?: string
+  dbPath?: string,
+  installedVia: ClientId | 'local' = CANONICAL_CLIENT
 ): Promise<InstalledSkill[]> {
   const skills: InstalledSkill[] = []
 
@@ -123,6 +135,7 @@ export async function getSkillsFromDirectory(
             trustTier: parsed ? parser.inferTrustTier(parsed) : 'unknown',
             installDate: skillMdStat.mtime.toISOString().split('T')[0] || 'Unknown',
             hasUpdates,
+            installedVia,
           })
         } catch (error) {
           // Only treat ENOENT (file not found) as "no SKILL.md"
@@ -141,6 +154,7 @@ export async function getSkillsFromDirectory(
             trustTier: 'unknown',
             installDate: dirStat.mtime.toISOString().split('T')[0] || 'Unknown',
             hasUpdates: false,
+            installedVia,
           })
         }
       }
@@ -157,33 +171,74 @@ export async function getSkillsFromDirectory(
 }
 
 /**
- * Get list of installed skills from both global (~/.claude/skills) and
- * local (.claude/skills) directories.
+ * Resolve a path through `realpath` defensively. Returns the resolved
+ * path on success, or the input path unchanged if the path is missing
+ * or unreadable — dedup keying still works either way (we just won't
+ * collapse symlinked aliases when the link is broken).
+ */
+async function safeRealpath(p: string): Promise<string> {
+  try {
+    return await realpath(p)
+  } catch {
+    return p
+  }
+}
+
+/**
+ * Get list of installed skills across every client directory.
  *
- * SMI-1630: Local skills take precedence over global skills with the same name.
+ * SMI-4578: scans the union of `CLIENT_NATIVE_PATHS` (claude-code,
+ * cursor, copilot, windsurf, agents) plus repo-local
+ * `./.claude/skills`. Results are deduplicated by `realpath` so a
+ * symlinked `~/.agents/skills/foo` pointing at `~/.claude/skills/foo`
+ * is reported once. Each entry carries `installedVia` so the caller
+ * can render "installed via Cursor" badges.
  *
- * @param dbPath Optional path to the Skillsmith SQLite database for update detection
+ * Precedence (first wins after dedup): local (repo) > claude-code >
+ * cursor > copilot > windsurf > agents. This keeps the SMI-1630
+ * promise that repo-local overrides global.
+ *
+ * @param dbPath Optional path to the Skillsmith SQLite database for
+ *               update detection.
  */
 export async function getInstalledSkills(dbPath?: string): Promise<InstalledSkill[]> {
   const resolvedDbPath = dbPath ?? DEFAULT_DB_PATH
-  // Get skills from both directories
-  const [globalSkills, localSkills] = await Promise.all([
-    getSkillsFromDirectory(GLOBAL_SKILLS_DIR, resolvedDbPath),
-    getSkillsFromDirectory(getLocalSkillsDir(), resolvedDbPath),
-  ])
 
-  // Create a map for deduplication, local skills take precedence
-  const skillMap = new Map<string, InstalledSkill>()
+  const localScan = getSkillsFromDirectory(getLocalSkillsDir(), resolvedDbPath, 'local')
+  const clientScans = CLIENT_IDS.map((client) =>
+    getSkillsFromDirectory(CLIENT_NATIVE_PATHS[client], resolvedDbPath, client)
+  )
 
-  // Add global skills first
-  for (const skill of globalSkills) {
-    skillMap.set(skill.name, skill)
+  const [localSkills, ...clientSkillsLists] = await Promise.all([localScan, ...clientScans])
+
+  // Precedence order: local first, then canonical, then the rest.
+  const ordered: InstalledSkill[] = [...localSkills]
+  const canonicalIdx = CLIENT_IDS.indexOf(CANONICAL_CLIENT)
+  if (canonicalIdx >= 0 && clientSkillsLists[canonicalIdx]) {
+    ordered.push(...clientSkillsLists[canonicalIdx])
+  }
+  for (let i = 0; i < CLIENT_IDS.length; i++) {
+    if (i === canonicalIdx) continue
+    const list = clientSkillsLists[i]
+    if (list) ordered.push(...list)
   }
 
-  // Add local skills (overwrites global skills with same name)
-  for (const skill of localSkills) {
-    skillMap.set(skill.name, skill)
+  // Dedup by both skill name AND resolved path. Name-keying enforces the
+  // precedence rule (local > canonical > others) when two clients carry
+  // independently-installed copies of the same skill. Realpath-keying
+  // collapses symlinked aliases (e.g. `~/.agents/skills` → `~/.claude/skills`)
+  // so the symlinked entry doesn't appear twice when the second hop has a
+  // different `installedVia` label.
+  const seenNames = new Set<string>()
+  const seenPaths = new Set<string>()
+  const out: InstalledSkill[] = []
+  for (const skill of ordered) {
+    if (seenNames.has(skill.name)) continue
+    const realPath = await safeRealpath(skill.path)
+    if (seenPaths.has(realPath)) continue
+    seenNames.add(skill.name)
+    seenPaths.add(realPath)
+    out.push(skill)
   }
-
-  return Array.from(skillMap.values())
+  return out
 }
