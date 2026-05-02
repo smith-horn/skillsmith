@@ -1,0 +1,511 @@
+---
+/**
+ * Product / Surface Comparison Page
+ *
+ * SMI-4571: Public comparison of MCP server, CLI, and VS Code extension —
+ * the three end-user surfaces that all share the same local skill database.
+ * Wave 2 of SMI-4569 (parent epic).
+ *
+ * Marketing route. Uses BaseLayout to match /pricing, /index.
+ */
+
+export const prerender = false
+
+import BaseLayout from '../layouts/BaseLayout.astro'
+
+const surfaces = [
+  {
+    id: 'mcp',
+    title: 'MCP server',
+    pkg: '@skillsmith/mcp-server',
+    pickIf: 'Working in any MCP-compatible agent (Claude Code, Cursor, Copilot, Codex, Windsurf)',
+    cta: 'Read the docs',
+    href: '/docs/mcp-server',
+  },
+  {
+    id: 'cli',
+    title: 'CLI',
+    pkg: '@skillsmith/cli',
+    pickIf: 'Scripting, CI, or authoring your own skills',
+    cta: 'Read the docs',
+    href: '/docs/cli',
+  },
+  {
+    id: 'vscode',
+    title: 'VS Code extension',
+    pkg: 'skillsmith-vscode',
+    pickIf: 'You live in VS Code and want point-and-click discovery',
+    cta: 'Get on the Marketplace',
+    href: 'https://marketplace.visualstudio.com/items?itemName=skillsmith.skillsmith-vscode',
+    external: true,
+  },
+]
+
+interface CapabilityRow {
+  capability: string
+  mcp: 'yes' | 'no' | 'partial' | string
+  cli: 'yes' | 'no' | 'partial' | string
+  vscode: 'yes' | 'no' | 'partial' | string
+}
+
+const matrix: CapabilityRow[] = [
+  {
+    capability: 'Search / get / install / uninstall',
+    mcp: 'yes',
+    cli: 'yes',
+    vscode: 'via MCP',
+  },
+  {
+    capability: 'In-session contextual recommendation (skill_suggest)',
+    mcp: 'yes',
+    cli: 'no',
+    vscode: 'via MCP',
+  },
+  {
+    capability: 'Side-by-side compare with LLM-readable rationale',
+    mcp: 'yes',
+    cli: 'no',
+    vscode: 'via MCP',
+  },
+  {
+    capability: 'Inline install during an agent chat session',
+    mcp: 'yes',
+    cli: 'no',
+    vscode: 'no',
+  },
+  {
+    capability: 'Sidebar tree, quick-pick UI, rendered detail panel',
+    mcp: 'no',
+    cli: 'no',
+    vscode: 'yes',
+  },
+  {
+    capability: 'SKILL.md frontmatter intellisense + diagnostics',
+    mcp: 'no',
+    cli: 'no',
+    vscode: 'yes',
+  },
+  {
+    capability: 'Create-skill wizard (4-step, GUI)',
+    mcp: 'no',
+    cli: 'partial',
+    vscode: 'yes',
+  },
+  {
+    capability: 'Skill authoring (init / validate / subagent / transform / mcp-init)',
+    mcp: 'no',
+    cli: 'yes',
+    vscode: 'no',
+  },
+  {
+    capability: 'Publish to registry (author publish)',
+    mcp: 'no',
+    cli: 'yes',
+    vscode: 'no',
+  },
+  {
+    capability: 'CI-safe exit codes + JSON output',
+    mcp: 'no',
+    cli: 'yes',
+    vscode: 'no',
+  },
+  {
+    capability: 'Offline local search after sync',
+    mcp: 'no',
+    cli: 'yes',
+    vscode: 'no',
+  },
+  {
+    capability: 'Device-code login (RFC 8628)',
+    mcp: 'no',
+    cli: 'yes',
+    vscode: 'no',
+  },
+  {
+    capability: 'Team workspaces / audit export / SIEM / RBAC',
+    mcp: 'yes',
+    cli: 'no',
+    vscode: 'via MCP',
+  },
+  {
+    capability: 'Single API key works across all three',
+    mcp: 'yes',
+    cli: 'yes',
+    vscode: 'yes',
+  },
+]
+
+function cellLabel(value: string): string {
+  if (value === 'yes') return '✓'
+  if (value === 'no') return ''
+  return value
+}
+
+function cellClass(value: string): string {
+  if (value === 'yes') return 'cell-yes'
+  if (value === 'no') return 'cell-no'
+  if (value === 'partial') return 'cell-partial'
+  return 'cell-conditional'
+}
+---
+
+<BaseLayout
+  title="Product | Skillsmith"
+  description="MCP for any agent. CLI for the terminal. VS Code for the editor. One Skillsmith registry under all three — pick the surface that fits your workflow."
+  activePath="/product"
+>
+  <section class="product-hero">
+    <p class="product-eyebrow">Three ways to reach the same registry</p>
+    <h1>MCP for any agent. CLI for the terminal. VS Code for the editor.</h1>
+    <p class="product-subtitle">
+      One local skill database. One API key. Three surfaces designed for different workflows. Pick
+      the one that fits where you already work — or use all three. (Throughout this page, <em
+        >MCP</em
+      >
+      means the Model Context Protocol — the standard agents like Claude Code, Cursor, Copilot, Codex,
+      and Windsurf use to talk to external tools.)
+    </p>
+    <div class="product-hero-ctas">
+      {
+        surfaces.map((s) => (
+          <a href={`#${s.id}`} class="product-hero-cta">
+            {s.title}
+          </a>
+        ))
+      }
+    </div>
+  </section>
+
+  <section class="product-matrix">
+    <h2>Capability comparison</h2>
+    <p class="product-matrix-caption">
+      Capabilities marked <em>via MCP</em> for VS Code mean the extension exposes them by spawning the
+      MCP server in the background.
+    </p>
+    <div class="product-matrix-scroll">
+      <table class="product-matrix-table">
+        <thead>
+          <tr>
+            <th scope="col" class="capability-col">Capability</th>
+            <th scope="col">MCP</th>
+            <th scope="col">CLI</th>
+            <th scope="col">VS Code</th>
+          </tr>
+        </thead>
+        <tbody>
+          {
+            matrix.map((row) => (
+              <tr>
+                <th scope="row" class="capability-col">
+                  {row.capability}
+                </th>
+                <td class={cellClass(row.mcp)}>
+                  <span class="visually-hidden">
+                    {row.mcp === 'no' ? 'Not supported' : row.mcp}
+                  </span>
+                  <span aria-hidden="true">{cellLabel(row.mcp)}</span>
+                </td>
+                <td class={cellClass(row.cli)}>
+                  <span class="visually-hidden">
+                    {row.cli === 'no' ? 'Not supported' : row.cli}
+                  </span>
+                  <span aria-hidden="true">{cellLabel(row.cli)}</span>
+                </td>
+                <td class={cellClass(row.vscode)}>
+                  <span class="visually-hidden">
+                    {row.vscode === 'no' ? 'Not supported' : row.vscode}
+                  </span>
+                  <span aria-hidden="true">{cellLabel(row.vscode)}</span>
+                </td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+    <p class="product-matrix-decision">
+      Working in an MCP-compatible agent (Claude Code, Cursor, Copilot, Codex, Windsurf)? <a
+        href="#mcp">Use the MCP server.</a
+      >
+      Scripting, CI, or authoring? <a href="#cli">Use the CLI.</a>
+      Living in VS Code? <a href="#vscode">Use the extension.</a>
+    </p>
+  </section>
+
+  <section class="product-cards">
+    {
+      surfaces.map((s) => (
+        <article id={s.id} class="product-card">
+          <h3 class="product-card-title">{s.title}</h3>
+          <p class="product-card-pkg">
+            <code>{s.pkg}</code>
+          </p>
+          <p class="product-card-pickif">
+            <strong>Pick this if:</strong> {s.pickIf}.
+          </p>
+          <a
+            href={s.href}
+            class="product-card-cta"
+            {...(s.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+          >
+            {s.cta} →
+          </a>
+        </article>
+      ))
+    }
+  </section>
+
+  <section class="product-deep-dive">
+    <blockquote>
+      <p>
+        All three surfaces read the same local SQLite database at
+        <code>~/.skillsmith/skills.db</code>. Search runs against an FTS5 full-text index (SQLite's
+        built-in keyword search) by default; semantic search is opt-in and uses local ONNX
+        embeddings (an open ML model format that runs on CPU, no API call) — your queries never
+        leave your machine.
+      </p>
+    </blockquote>
+    <a href="/blog/inside-the-local-skill-database" class="product-deep-dive-cta">
+      Read the deep dive →
+    </a>
+  </section>
+
+  <section class="product-faq-teaser">
+    <p>
+      More questions about which surface to use, what gets cached locally, or how
+      <code>sync</code> works? See the
+      <a href="/docs/faq#technical">Technical FAQ</a>.
+    </p>
+  </section>
+</BaseLayout>
+
+<style>
+  .product-hero {
+    text-align: center;
+    padding: 4rem 1.5rem 3rem;
+    max-width: 56rem;
+    margin: 0 auto;
+  }
+  .product-eyebrow {
+    color: var(--color-coral, #ff6b5b);
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+  }
+  .product-hero h1 {
+    font-size: clamp(1.75rem, 5vw, 2.75rem);
+    line-height: 1.15;
+    margin-bottom: 1.25rem;
+  }
+  .product-subtitle {
+    font-size: 1.1rem;
+    line-height: 1.65;
+    color: var(--color-text-muted, #b8bcc8);
+    margin-bottom: 2rem;
+  }
+  .product-hero-ctas {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem;
+  }
+  .product-hero-cta {
+    display: inline-block;
+    padding: 0.65rem 1.4rem;
+    border-radius: 0.5rem;
+    background: var(--color-coral, #ff6b5b);
+    color: #0d0d0f;
+    font-weight: 600;
+    text-decoration: none;
+    transition: transform 0.15s ease;
+  }
+  .product-hero-cta:hover {
+    transform: translateY(-2px);
+  }
+
+  .product-matrix {
+    max-width: 64rem;
+    margin: 3rem auto;
+    padding: 0 1.5rem;
+  }
+  .product-matrix h2 {
+    text-align: center;
+    margin-bottom: 0.5rem;
+  }
+  .product-matrix-caption {
+    text-align: center;
+    color: var(--color-text-muted, #b8bcc8);
+    margin-bottom: 1.5rem;
+    font-size: 0.95rem;
+  }
+  .product-matrix-scroll {
+    overflow-x: auto;
+    border-radius: 0.5rem;
+    border: 1px solid var(--color-border, #2a2c33);
+  }
+  .product-matrix-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 36rem;
+  }
+  .product-matrix-table thead {
+    background: var(--color-surface-elevated, #1a1c22);
+  }
+  .product-matrix-table th,
+  .product-matrix-table td {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--color-border, #2a2c33);
+  }
+  .product-matrix-table th[scope='col'] {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted, #b8bcc8);
+  }
+  .product-matrix-table tbody tr:last-child th,
+  .product-matrix-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .product-matrix-table .capability-col {
+    text-align: left;
+    font-weight: 500;
+  }
+  .product-matrix-table td {
+    text-align: center;
+    font-weight: 600;
+  }
+  .product-matrix-table .cell-yes {
+    color: var(--color-coral, #ff6b5b);
+    font-size: 1.1rem;
+  }
+  .product-matrix-table .cell-no {
+    color: var(--color-text-muted, #6c7080);
+  }
+  .product-matrix-table .cell-partial,
+  .product-matrix-table .cell-conditional {
+    color: var(--color-text-muted, #b8bcc8);
+    font-size: 0.85rem;
+    font-weight: 500;
+    font-style: italic;
+  }
+  .product-matrix-decision {
+    text-align: center;
+    margin-top: 1.5rem;
+    font-size: 1rem;
+    color: var(--color-text-muted, #b8bcc8);
+  }
+  .product-matrix-decision a {
+    color: var(--color-coral, #ff6b5b);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .product-matrix-decision a:hover {
+    text-decoration: underline;
+  }
+
+  .product-cards {
+    max-width: 64rem;
+    margin: 3rem auto;
+    padding: 0 1.5rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+    gap: 1.5rem;
+  }
+  .product-card {
+    background: var(--color-surface-elevated, #1a1c22);
+    border: 1px solid var(--color-border, #2a2c33);
+    border-radius: 0.75rem;
+    padding: 1.75rem;
+    scroll-margin-top: 5rem;
+  }
+  .product-card-title {
+    margin: 0 0 0.5rem;
+    font-size: 1.35rem;
+  }
+  .product-card-pkg {
+    color: var(--color-text-muted, #b8bcc8);
+    font-size: 0.9rem;
+    margin: 0 0 1rem;
+  }
+  .product-card-pkg code {
+    background: var(--color-surface, #0d0d0f);
+    padding: 0.15rem 0.45rem;
+    border-radius: 0.25rem;
+    font-size: 0.85rem;
+  }
+  .product-card-pickif {
+    margin: 0 0 1.5rem;
+    line-height: 1.55;
+  }
+  .product-card-cta {
+    color: var(--color-coral, #ff6b5b);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .product-card-cta:hover {
+    text-decoration: underline;
+  }
+
+  .product-deep-dive {
+    max-width: 56rem;
+    margin: 4rem auto 2rem;
+    padding: 2rem 1.5rem;
+    text-align: center;
+  }
+  .product-deep-dive blockquote {
+    margin: 0 0 1.5rem;
+    border-left: 3px solid var(--color-coral, #ff6b5b);
+    padding-left: 1.5rem;
+    text-align: left;
+    font-size: 1.05rem;
+    line-height: 1.65;
+    color: var(--color-text-muted, #b8bcc8);
+  }
+  .product-deep-dive blockquote code {
+    background: var(--color-surface-elevated, #1a1c22);
+    padding: 0.1rem 0.4rem;
+    border-radius: 0.25rem;
+    font-size: 0.9em;
+  }
+  .product-deep-dive-cta {
+    display: inline-block;
+    color: var(--color-coral, #ff6b5b);
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 1.05rem;
+  }
+  .product-deep-dive-cta:hover {
+    text-decoration: underline;
+  }
+
+  .product-faq-teaser {
+    max-width: 56rem;
+    margin: 0 auto 4rem;
+    padding: 1.5rem 1.5rem;
+    text-align: center;
+    color: var(--color-text-muted, #b8bcc8);
+  }
+  .product-faq-teaser a {
+    color: var(--color-coral, #ff6b5b);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .product-faq-teaser a:hover {
+    text-decoration: underline;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+</style>
