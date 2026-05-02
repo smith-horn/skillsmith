@@ -59,3 +59,14 @@ export function resolveClientId(raw: string | undefined): ClientId {
   assertClientId(raw)
   return raw
 }
+
+/**
+ * Resolve the active client from `SKILLSMITH_CLIENT` (or any explicit
+ * override). Returns the matching install path. Computed at call time so
+ * a process that mutates `SKILLSMITH_CLIENT` at runtime sees the new
+ * value — used by the MCP server to pick `~/.cursor/skills/` etc.
+ */
+export function resolveClientPath(override?: string | undefined): string {
+  const raw = override !== undefined ? override : process.env['SKILLSMITH_CLIENT']
+  return getInstallPath(resolveClientId(raw))
+}

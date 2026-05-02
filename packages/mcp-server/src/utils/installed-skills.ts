@@ -13,17 +13,14 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { getCanonicalInstallPath } from '@skillsmith/core/install'
+import { resolveClientPath } from '@skillsmith/core/install'
 
 /**
- * Default skills directory path.
- *
- * SMI-4578: routes through `@skillsmith/core/install` so the canonical
- * Claude Code directory is defined in exactly one place. Per-client paths
- * (Cursor, Copilot, Windsurf, agents) flow through `getInstallPath(client)`
- * once Step 5 wires `SKILLSMITH_CLIENT` env-var resolution into callers.
+ * Resolve the active skills directory from the `SKILLSMITH_CLIENT` env
+ * var (defaults to `claude-code` when unset). SMI-4578: computed at call
+ * time so a runtime override is picked up.
  */
-const DEFAULT_SKILLS_DIR = getCanonicalInstallPath()
+const getDefaultSkillsDir = (): string => resolveClientPath()
 
 /**
  * Result from parsing a SKILL.md file
@@ -146,7 +143,7 @@ export function getSkillIdFromDir(skillDir: string, dirName: string): string {
  * const skills = await getInstalledSkills('/path/to/custom/skills');
  */
 export async function getInstalledSkills(skillsDir?: string): Promise<string[]> {
-  const dir = skillsDir || DEFAULT_SKILLS_DIR
+  const dir = skillsDir || getDefaultSkillsDir()
 
   // Check if directory exists
   if (!fs.existsSync(dir)) {
@@ -186,7 +183,7 @@ export async function getInstalledSkills(skillsDir?: string): Promise<string[]> 
  * @returns Array of skill IDs
  */
 export function getInstalledSkillsSync(skillsDir?: string): string[] {
-  const dir = skillsDir || DEFAULT_SKILLS_DIR
+  const dir = skillsDir || getDefaultSkillsDir()
 
   // Check if directory exists
   if (!fs.existsSync(dir)) {
@@ -243,7 +240,7 @@ export interface InstalledSkillInfo {
 export async function getInstalledSkillsDetailed(
   skillsDir?: string
 ): Promise<InstalledSkillInfo[]> {
-  const dir = skillsDir || DEFAULT_SKILLS_DIR
+  const dir = skillsDir || getDefaultSkillsDir()
 
   // Check if directory exists
   if (!fs.existsSync(dir)) {

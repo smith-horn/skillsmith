@@ -9,7 +9,7 @@ import { existsSync, cpSync, mkdirSync, readdirSync } from 'fs'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
 import { fileURLToPath } from 'url'
-import { getCanonicalInstallPath } from '@skillsmith/core/install'
+import { resolveClientPath } from '@skillsmith/core/install'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -45,10 +45,10 @@ function getAssetsDir(): string {
 }
 
 const ASSETS_DIR = getAssetsDir()
-// SMI-4578: routes through canonical install path so default-client
-// directory is defined in exactly one place. Bundled-asset install always
-// targets Claude Code; per-client fan-out is opt-in via `--also-link`.
-const CLAUDE_SKILLS_DIR = getCanonicalInstallPath()
+// SMI-4578: bundled-asset install honours `SKILLSMITH_CLIENT` so a user
+// who set the env var to e.g. `cursor` gets the bundled skillsmith skill
+// at `~/.cursor/skills/skillsmith/` instead of `~/.claude/skills/`.
+// Resolved at call time inside `installBundledSkills`.
 const SKILLSMITH_DOCS_DIR = join(homedir(), '.skillsmith', 'docs')
 
 /**
@@ -67,9 +67,11 @@ export function installBundledSkills(): string[] {
     return installed
   }
 
-  // Ensure ~/.claude/skills exists
-  if (!existsSync(CLAUDE_SKILLS_DIR)) {
-    mkdirSync(CLAUDE_SKILLS_DIR, { recursive: true })
+  // SMI-4578: target directory honours SKILLSMITH_CLIENT — resolved at
+  // call time so a runtime env-var change is picked up.
+  const targetSkillsDir = resolveClientPath()
+  if (!existsSync(targetSkillsDir)) {
+    mkdirSync(targetSkillsDir, { recursive: true })
   }
 
   // Get all skill directories
@@ -86,7 +88,7 @@ export function installBundledSkills(): string[] {
   // Install each skill
   for (const skillName of skillDirs) {
     const source = join(skillsDir, skillName)
-    const dest = join(CLAUDE_SKILLS_DIR, skillName)
+    const dest = join(targetSkillsDir, skillName)
 
     // Skip if already installed
     if (existsSync(dest)) {

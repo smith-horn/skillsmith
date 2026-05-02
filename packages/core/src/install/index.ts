@@ -17,6 +17,7 @@ export {
   getCanonicalInstallPath,
   getInstallPath,
   resolveClientId,
+  resolveClientPath,
 } from './paths.js'
 export type { ClientId } from './paths.js'
 

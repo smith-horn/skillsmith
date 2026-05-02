@@ -172,6 +172,21 @@ export const installInputSchema = z.object({
     .describe(
       'Confirm install despite security warnings (required for experimental/unknown tiers)'
     ),
+  /** SMI-4578: target client (defaults to SKILLSMITH_CLIENT env or claude-code) */
+  client: z
+    .enum(['claude-code', 'cursor', 'copilot', 'windsurf', 'agents'])
+    .optional()
+    .describe('Target agent (defaults to SKILLSMITH_CLIENT env or claude-code)'),
+  /** SMI-4578: additional clients to fan-out into via copy (or symlink with --symlink) */
+  alsoLink: z
+    .array(z.enum(['claude-code', 'cursor', 'copilot', 'windsurf', 'agents']))
+    .default([])
+    .describe('Additional clients to fan-out into (default: copy)'),
+  /** SMI-4578: use symlinks instead of copies for alsoLink targets */
+  symlink: z
+    .boolean()
+    .default(false)
+    .describe('Use relative symlinks instead of copies for alsoLink (POSIX only)'),
 })
 
 export type InstallInput = z.infer<typeof installInputSchema>

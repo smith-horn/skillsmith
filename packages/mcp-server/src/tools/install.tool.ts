@@ -44,6 +44,27 @@ export const installTool = {
         description:
           'Confirm install despite security warnings (required for experimental/unknown tier skills)',
       },
+      // SMI-4578: multi-client install
+      client: {
+        type: 'string',
+        enum: ['claude-code', 'cursor', 'copilot', 'windsurf', 'agents'],
+        description:
+          'Target agent (default: SKILLSMITH_CLIENT env or claude-code). Codex users pass agents.',
+      },
+      alsoLink: {
+        type: 'array',
+        items: {
+          type: 'string',
+          enum: ['claude-code', 'cursor', 'copilot', 'windsurf', 'agents'],
+        },
+        description:
+          'Additional clients to fan-out into (default: copy; pair with symlink for POSIX symlinks)',
+      },
+      symlink: {
+        type: 'boolean',
+        description:
+          'Use relative symlinks instead of file copies for alsoLink targets (POSIX only; falls back to copy on Windows EPERM)',
+      },
     },
     required: ['skillId'],
   },

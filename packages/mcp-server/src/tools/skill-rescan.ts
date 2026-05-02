@@ -13,7 +13,7 @@ import { z } from 'zod'
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import { SecurityScanner } from '@skillsmith/core'
-import { getCanonicalInstallPath } from '@skillsmith/core/install'
+import { resolveClientPath } from '@skillsmith/core/install'
 
 // ============================================================================
 // Input / Output types
@@ -192,7 +192,9 @@ export async function executeSkillRescan(
   input: SkillRescanInput,
   overrideDir?: string
 ): Promise<SkillRescanResponse> {
-  const skillsDir = overrideDir ?? getCanonicalInstallPath()
+  // SMI-4578: defaults to SKILLSMITH_CLIENT-resolved directory; override
+  // wins for ad-hoc rescan of an arbitrary path.
+  const skillsDir = overrideDir ?? resolveClientPath()
   const scanner = new SecurityScanner()
 
   // Discover installed skills

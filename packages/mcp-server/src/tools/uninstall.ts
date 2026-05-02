@@ -16,6 +16,7 @@
 
 import { z } from 'zod'
 import { SkillInstallationService } from '@skillsmith/core'
+import { removeLinks } from '@skillsmith/core/install'
 import type { ToolContext } from '../context.js'
 import { getToolContext } from '../context.js'
 
@@ -52,7 +53,21 @@ export async function uninstallSkill(
     skillDependencyRepo: context.skillDependencyRepository,
   })
 
-  return service.uninstall(input.skillName, { force: input.force })
+  const result = await service.uninstall(input.skillName, { force: input.force })
+
+  // SMI-4578: tear down any --also-link fan-out destinations recorded
+  // for this skill. Best-effort — uninstall must succeed even if the
+  // manifest is missing or a destination was already cleaned up. Match
+  // the CLI's parity behavior in `manage.ts:createRemoveCommand`.
+  if (result.success) {
+    try {
+      await removeLinks(input.skillName)
+    } catch {
+      // Manifest read/write failure should never fail the uninstall.
+    }
+  }
+
+  return result
 }
 
 /**
