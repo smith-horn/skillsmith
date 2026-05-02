@@ -121,7 +121,7 @@ git submodule update --init                           # Init internal docs (auth
 
 **Not encrypted** (always readable): `.claude/settings.json`, `supabase/config.toml`, `.claude/development/`, `.claude/templates/`.
 
-**Worktrees**: Unlock main repo first, then `./scripts/create-worktree.sh`. Remove with `./scripts/remove-worktree.sh --prune`.
+**Worktrees**: Unlock main repo first, then `./scripts/create-worktree.sh`. Remove with `./scripts/remove-worktree.sh --prune`. By default removal also deletes the per-worktree Docker image (`<dir>-dev`) and `_node_modules` volume — pass `--keep-docker` to preserve them.
 
 **Hooks in worktrees (SMI-4377 + SMI-4381 + SMI-4549)**: Pre-commit hooks work inside worktrees via three mechanisms: (1) `.husky/_/` is tracked in git (husky's dispatch stubs) so hook discovery inherits through checkout; (2) `scripts/create-worktree.sh` symlinks the root `node_modules` from the main repo (relative path); (3) **per-package `node_modules` are also symlinked** (relative paths) so workspace-pinned deps (e.g. `zod@3.25.76` in `mcp-server`) resolve correctly without falling through to the hoisted root (which carries `zod@4.x`). **One-time host setup required** (after fresh clone):
 
