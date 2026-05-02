@@ -21,6 +21,7 @@ import {
   type TrustTier,
 } from '@skillsmith/core'
 import { DEFAULT_DB_PATH, DEFAULT_SKILLS_DIR, DEFAULT_MANIFEST_PATH } from '../config.js'
+import { removeLinks } from '@skillsmith/core/install'
 import { sanitizeError } from '../utils/sanitize.js'
 import { getInstalledSkills, type InstalledSkill } from '../utils/skills-directory.js'
 
@@ -274,6 +275,22 @@ async function removeSkill(skillName: string, force: boolean, dbPath: string): P
     const result = await service.uninstall(skillName, { force })
 
     if (result.success) {
+      // SMI-4578: tear down any --also-link fan-out destinations recorded
+      // for this skill. Best-effort — uninstall must succeed even if the
+      // manifest is missing or a destination was already cleaned up.
+      try {
+        const linkCount = await removeLinks(skillName)
+        if (linkCount > 0) {
+          spinner.text = `Removed ${linkCount} cross-client link${linkCount > 1 ? 's' : ''}`
+        }
+      } catch (linkErr) {
+        console.log(
+          chalk.yellow(
+            `  Warning: could not clean up cross-client links: ${sanitizeError(linkErr)}`
+          )
+        )
+      }
+
       spinner.succeed(`Successfully removed ${skillName}`)
       if (result.warning) {
         console.log(chalk.yellow(`  Warning: ${result.warning}`))

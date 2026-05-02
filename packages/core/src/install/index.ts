@@ -19,3 +19,20 @@ export {
   resolveClientId,
 } from './paths.js'
 export type { ClientId } from './paths.js'
+
+export {
+  addLink,
+  getDefaultFromClient,
+  getLinkManifestPath,
+  listLinks,
+  loadManifest,
+  removeLinks,
+  saveManifest,
+} from './fan-out.js'
+export type {
+  AddLinkOptions,
+  AddLinkResult,
+  LinkKind,
+  LinkManifest,
+  LinkRecord,
+} from './fan-out.js'
