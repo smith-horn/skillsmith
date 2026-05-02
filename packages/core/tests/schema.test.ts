@@ -233,4 +233,19 @@ describe('Database Schema', () => {
       expect(indexNames).toContain('idx_skills_quality_score')
     })
   })
+
+  describe('closeDatabase (SMI-4640)', () => {
+    it('tolerates undefined without throwing', () => {
+      expect(() => closeDatabase(undefined as unknown as Database)).not.toThrow()
+    })
+
+    it('tolerates null without throwing', () => {
+      expect(() => closeDatabase(null as unknown as Database)).not.toThrow()
+    })
+
+    it('still closes a real database', () => {
+      const realDb = createDatabase(':memory:')
+      expect(() => closeDatabase(realDb)).not.toThrow()
+    })
+  })
 })
