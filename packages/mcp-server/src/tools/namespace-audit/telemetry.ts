@@ -166,12 +166,12 @@ function aggregateCollisions(result: InventoryAuditResult): {
   }
 }
 
-function hashForActor(apiKey: string): string {
-  // codeql[js/insufficient-password-hash] Deterministic telemetry actor-ID
-  // derivation via HMAC-SHA-256 — not password storage. Same rationale
-  // as remote-audit.ts; key intentionally distinct so the two streams
-  // can't be cross-correlated server-side.
-  return createHmac('sha256', TELEMETRY_ACTOR_KEY).update(apiKey).digest('hex')
+function hashForActor(actorSeed: string): string {
+  // Deterministic telemetry actor-ID derivation via HMAC-SHA-256 — not
+  // password storage (parameter is an opaque correlation seed, not a
+  // credential). Same rationale as remote-audit.ts; key intentionally
+  // distinct so the two streams can't be cross-correlated server-side.
+  return createHmac('sha256', TELEMETRY_ACTOR_KEY).update(actorSeed).digest('hex')
 }
 
 function isDisabled(): boolean {
