@@ -72,6 +72,22 @@ vi.mock('./install.conflict.js', () => ({
   checkForConflicts: mockCheckForConflicts,
 }))
 
+// SMI-4588 Wave 2 PR #3 added a pre-flight namespace gate (`runNamespaceGate`)
+// to the install hot path. Without mocking it, the gate scans the test
+// runner's real `~/.claude` and may surface false-positive collisions that
+// block the install in `preventative` mode (the `community`-tier default).
+// Mock it to a deterministic `proceed` decision so this test stays focused
+// on the Zod boundary guard. PR #4 adds this mock to repair the
+// post-merge-verify regression introduced by PR #3 (install.test.ts left
+// without a gate stub when install.ts gained the runNamespaceGate call).
+const { mockRunNamespaceGate } = vi.hoisted(() => ({
+  mockRunNamespaceGate: vi.fn(),
+}))
+
+vi.mock('./install.namespace-gate.js', () => ({
+  runNamespaceGate: mockRunNamespaceGate,
+}))
+
 import { installSkill } from './install.js'
 import type { InstallResult } from './install.types.js'
 
@@ -88,10 +104,20 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
     mockLoadManifest.mockReset()
     mockLookupSkillFromRegistry.mockReset()
     mockCheckForConflicts.mockReset()
+    mockRunNamespaceGate.mockReset()
     mockInstall.mockResolvedValue(HAPPY_RESULT)
     // By default no conflict preflight interception.
     mockLoadManifest.mockResolvedValue({ version: '1', installedSkills: {} })
     mockCheckForConflicts.mockResolvedValue({ shouldProceed: true })
+    // SMI-4588 Wave 2 PR #3: default the namespace gate to `proceed` with
+    // no warnings/pending so the Zod boundary tests remain focused on
+    // validation behavior. Tests that need the blocking path can override.
+    mockRunNamespaceGate.mockResolvedValue({
+      decision: 'proceed',
+      candidate: { identifier: 'test', projectedSourcePath: '/tmp/test' },
+      preflight: { warnings: [], pendingCollision: null, auditId: 'mock-audit-id' },
+      resultPatch: { installComplete: true },
+    })
   })
 
   afterEach(() => {
