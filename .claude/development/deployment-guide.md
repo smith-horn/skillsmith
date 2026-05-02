@@ -108,6 +108,25 @@ npx supabase secrets set CORS_ALLOWED_ORIGINS="https://custom.example.com"
 cd packages/website && vercel --prod
 ```
 
+### `vercel.json` ownership (SMI-4641)
+
+Two `vercel.json` files coexist by design — they target different cwd contexts:
+
+| File | Read by | `buildCommand` shape | `outputDirectory` |
+|------|---------|----------------------|-------------------|
+| `vercel.json` (repo root) | Vercel's git-integrated deploy (project `rootDirectory=null`); `<projectRoot>` resolves to repo root | `npm run build && rm -rf .vercel/output && mkdir -p .vercel && cp -r packages/website/.vercel/output .vercel/output` — postbuild copy required because the @astrojs/vercel adapter writes to `packages/website/.vercel/output/` but `vercel build` reads from `<projectRoot>/.vercel/output/` | unset (preferred — buildCommand materializes BOA) |
+| `packages/website/vercel.json` | Manual `cd packages/website && vercel --prod`; `<projectRoot>` resolves to `packages/website/` | `npm run build` — local CLI's `vercel build` runs with cwd=packages/website/, BOA path matches | unset (CLI auto-detects) |
+
+**Invariants** (enforced by `audit-standards.mjs` §38, see `scripts/audit-vercel-sync-helpers.mjs`):
+
+- `framework`, `installCommand`, `redirects`, `headers` MUST be byte-identical across the two files (else preview/staging and prod ship divergent CSP/redirects).
+- `buildCommand` and `outputDirectory` are ALLOWED to differ (different cwd contexts).
+- If set, `outputDirectory` must be a non-empty relative POSIX path with no `..` segments and no backslashes.
+
+**Why the postbuild copy?** Vercel's git-integrated path wraps `buildCommand` inside its own `vercel build`, which always reads BOA from `<projectRoot>/.vercel/output/`. The `outputDirectory` field is silently ignored when `vercel build` produces its own BOA artifact. Pre-SMI-4641, this manifested as 0-byte deployments going green (`builds: []`, `routes: []`) and Vercel's auto-promote replacing a working deployment with an empty one. See `docs/internal/retros/2026-05-01-smi-4641-www-404-fallout.md`.
+
+**Always-on smoke canary** (SMI-4641): `scripts/smoke-prod/surfaces.json#website-homepage-canary` fires on every push to main with `always_run: true` and `trigger_globs: []`. The trigger-glob-gated `website-homepage` surface is retained for richer assertions when website source paths actually change.
+
 Public docs at [skillsmith.app/docs](https://skillsmith.app/docs):
 
 | Page | Path |
