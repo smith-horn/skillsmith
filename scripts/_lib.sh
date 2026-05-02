@@ -128,6 +128,73 @@ is_git_crypt_encrypted() {
 }
 
 #######################################
+# Compute relative symlink target for a worktree node_modules link (SMI-4654).
+#
+# Replaces hardcoded "../../node_modules" / "../../../../packages/<pkg>/..." strings.
+# Depth is derived from where the symlink lives relative to repo_root, so BOTH
+# layouts work:
+#
+#   <repo>/.worktrees/<name>/node_modules                  -> ../../node_modules
+#   <repo>/<name>/node_modules                             -> ../node_modules
+#   <repo>/.worktrees/<name>/packages/<pkg>/node_modules   -> ../../../../packages/<pkg>/node_modules
+#   <repo>/<name>/packages/<pkg>/node_modules              -> ../../../packages/<pkg>/node_modules
+#
+# Caller must pass canonical absolute paths (no `..` segments). `git worktree
+# list --porcelain` returns canonical paths, so production callers are safe.
+#
+# Arguments:
+#   $1 - symlink_dir   directory that will contain the symlink (the symlink's parent)
+#   $2 - target_path   absolute path the symlink should point to (under repo_root)
+#   $3 - repo_root     absolute path to main repo root
+#
+# Outputs:
+#   stdout - relative path string
+# Returns:
+#   0 on success; 1 (with stderr message) if symlink_dir or target_path is
+#   not under repo_root. Caller is responsible for handling the failure;
+#   the link/repair helpers warn-and-skip rather than aborting the batch.
+#######################################
+compute_relative_target() {
+    local symlink_dir="$1"
+    local target_path="$2"
+    local repo_root="$3"
+
+    # Normalize: strip trailing slash from repo_root.
+    repo_root="${repo_root%/}"
+
+    # Quoted-prefix strip per ShellCheck SC2295. If the strip is a no-op,
+    # symlink_dir does not start with "$repo_root/" — i.e. it's not under
+    # the repo. Same check for target_path.
+    local rel_link_dir="${symlink_dir#"$repo_root/"}"
+    if [[ "$rel_link_dir" == "$symlink_dir" ]]; then
+        echo "compute_relative_target: '$symlink_dir' is not under repo root '$repo_root'" >&2
+        return 1
+    fi
+
+    local rel_target="${target_path#"$repo_root/"}"
+    if [[ "$rel_target" == "$target_path" ]]; then
+        echo "compute_relative_target: '$target_path' is not under repo root '$repo_root'" >&2
+        return 1
+    fi
+
+    # Slash count in rel_link_dir = depth - 1; ups needed = depth = slashes + 1.
+    # Examples:
+    #   "wt"                       -> 0 slashes -> 1 up
+    #   ".worktrees/wt"            -> 1 slash   -> 2 ups
+    #   "wt/packages/foo"          -> 2 slashes -> 3 ups
+    #   ".worktrees/wt/packages/x" -> 3 slashes -> 4 ups
+    local slashes_only="${rel_link_dir//[!\/]/}"
+    local ups=$(( ${#slashes_only} + 1 ))
+
+    local prefix="" i
+    for (( i=0; i<ups; i++ )); do
+        prefix+="../"
+    done
+
+    printf '%s%s\n' "$prefix" "$rel_target"
+}
+
+#######################################
 # Assert host-visible node_modules resolves lint-staged (SMI-4377)
 #
 # Pre-commit hooks run lint-staged on host (not Docker; see SMI-2604),
@@ -176,7 +243,13 @@ link_worktree_node_modules() {
     # SMI-4381: relative symlink so it resolves both on host (where target is
     # /<repo>/node_modules) and inside Docker (where target is /app/node_modules).
     # An absolute host path symlink is dangling inside the container.
-    local rel_target="../../node_modules"
+    # SMI-4654: depth computed dynamically; supports both `<repo>/.worktrees/<name>/`
+    # (2 ups: ../../node_modules) and nested `<repo>/<name>/` (1 up: ../node_modules).
+    local rel_target
+    if ! rel_target="$(compute_relative_target "$worktree_path" "$repo_root/node_modules" "$repo_root")"; then
+        warn "  Skipping $worktree_path: not under repo root $repo_root"
+        return 1
+    fi
 
     if [[ -L "$worktree_path/node_modules" ]]; then
         ln -sfn "$rel_target" "$worktree_path/node_modules"
@@ -215,11 +288,17 @@ repair_worktrees_node_modules() {
         wt_count=$((wt_count + 1))
 
         # SMI-4381: relative target works on host AND inside Docker bind-mount.
-        local rel_target="../../node_modules"
+        # SMI-4654: depth computed dynamically; supports both `<repo>/.worktrees/<name>/`
+        # (2 ups) and nested `<repo>/<name>/` (1 up).
+        local rel_target
+        if ! rel_target="$(compute_relative_target "$wt_path" "$repo_root/node_modules" "$repo_root")"; then
+            warn "  Skipping $wt_path (not under repo root)"
+            continue
+        fi
 
         if [[ -L "$wt_path/node_modules" ]]; then
             # Refresh in case existing symlink is the absolute host-path form
-            # (pre-SMI-4381). Idempotent.
+            # (pre-SMI-4381) or the wrong-depth form (pre-SMI-4654). Idempotent.
             ln -sfn "$rel_target" "$wt_path/node_modules"
             continue
         fi
@@ -264,19 +343,27 @@ link_worktree_package_node_modules() {
     [[ ! -d "$repo_root/packages" ]] && return 0
 
     # SMI-4381: relative symlink resolves on host AND inside Docker.
-    # From <wt>/packages/<pkg>/node_modules → ../../../../packages/<pkg>/node_modules
-    # (4 ups: node_modules-parent → packages → wt-name → .worktrees → repo-root)
+    # SMI-4654: depth computed dynamically; supports both layouts.
+    #   e.g. `.worktrees/<name>/packages/<pkg>` → 4 ups (../../../../packages/<pkg>/node_modules)
+    #        nested  `<name>/packages/<pkg>`    → 3 ups (../../../packages/<pkg>/node_modules)
     for pkg_dir in "$repo_root"/packages/*/; do
         [[ -d "$pkg_dir" ]] || continue
         pkg_name="$(basename "$pkg_dir")"
-        local main_target="$pkg_dir/node_modules"
-        local link="$worktree_path/packages/$pkg_name/node_modules"
-        local rel_target="../../../../packages/$pkg_name/node_modules"
+        # Canonical (no trailing/double slashes) for the symlink-target string.
+        local main_target="$repo_root/packages/$pkg_name/node_modules"
+        local link_parent="$worktree_path/packages/$pkg_name"
+        local link="$link_parent/node_modules"
 
         # Target must exist in main repo for the symlink to be useful.
         [[ -d "$main_target" ]] || continue
         # Worktree may not have this package directory (e.g. branch predates it).
-        [[ -d "$worktree_path/packages/$pkg_name" ]] || continue
+        [[ -d "$link_parent" ]] || continue
+
+        local rel_target
+        if ! rel_target="$(compute_relative_target "$link_parent" "$main_target" "$repo_root")"; then
+            warn "  Skipping per-package link for $link_parent (not under repo root)"
+            continue
+        fi
 
         if [[ -L "$link" ]]; then
             ln -sfn "$rel_target" "$link"

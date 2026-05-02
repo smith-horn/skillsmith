@@ -60,6 +60,10 @@ trap 'rm -rf "$TMPROOT"' EXIT
 
 FAKE_MAIN="$TMPROOT/main"
 mkdir -p "$FAKE_MAIN/node_modules/.bin"
+# Canonicalize FAKE_MAIN to avoid macOS /var → /private/var mismatch:
+# `git worktree list` returns /private/var/... but $TMPROOT is /var/...,
+# breaking the repo-root prefix check in compute_relative_target.
+FAKE_MAIN=$(cd "$FAKE_MAIN" && pwd -P)
 touch "$FAKE_MAIN/node_modules/.bin/lint-staged"
 chmod +x "$FAKE_MAIN/node_modules/.bin/lint-staged"
 
@@ -94,15 +98,19 @@ assert_eq "assert_host_node_modules: fails when lint-staged missing" "1" "$rc"
 # -----------------------------------------------------------------------
 # Scenario 3: _lib.sh — link_worktree_node_modules creates symlink
 # -----------------------------------------------------------------------
-FAKE_WT1="$TMPROOT/wt1"
+# SMI-4654: worktree must live under repo root for the dynamic depth
+# computation. Conventional layout puts wt under $FAKE_MAIN/.worktrees/.
+FAKE_WT1="$FAKE_MAIN/.worktrees/wt1"
 mkdir -p "$FAKE_WT1"
 link_worktree_node_modules "$FAKE_WT1" "$FAKE_MAIN" >/dev/null
-assert_true "link_worktree_node_modules: creates symlink" \
+assert_true "link_worktree_node_modules: creates symlink (.worktrees/ layout)" \
   "[ -L '$FAKE_WT1/node_modules' ]"
-# SMI-4381: symlink target is now relative ("../../node_modules") so it works
-# both on host (where parent is the repo root) and inside Docker bind-mount.
-assert_eq "link_worktree_node_modules: symlink target (relative)" \
+# SMI-4381: relative target. SMI-4654: depth=2 for .worktrees/<name>/ layout.
+assert_eq "link_worktree_node_modules: symlink target (.worktrees/ layout)" \
   "../../node_modules" "$(readlink "$FAKE_WT1/node_modules")"
+# Verify symlink resolves to a real directory containing the fake lint-staged.
+assert_true "link_worktree_node_modules: .worktrees/ symlink resolves" \
+  "[ -x '$FAKE_WT1/node_modules/.bin/lint-staged' ]"
 
 # -----------------------------------------------------------------------
 # Scenario 4: _lib.sh — link_worktree_node_modules idempotent
@@ -114,7 +122,7 @@ assert_true "link_worktree_node_modules: idempotent repeat" \
 # -----------------------------------------------------------------------
 # Scenario 5: _lib.sh — link_worktree_node_modules skips real directory
 # -----------------------------------------------------------------------
-FAKE_WT2="$TMPROOT/wt2"
+FAKE_WT2="$FAKE_MAIN/.worktrees/wt2"
 mkdir -p "$FAKE_WT2/node_modules"
 set +e
 link_worktree_node_modules "$FAKE_WT2" "$FAKE_MAIN" >/dev/null 2>&1; rc=$?
@@ -124,23 +132,149 @@ assert_true "link_worktree_node_modules: did not clobber real dir" \
   "[ -d '$FAKE_WT2/node_modules' ] && [ ! -L '$FAKE_WT2/node_modules' ]"
 
 # -----------------------------------------------------------------------
+# Scenario 5b (SMI-4654): nested layout — link_worktree_node_modules with
+# worktree directly under repo root produces depth=1 symlink that resolves.
+# -----------------------------------------------------------------------
+FAKE_WT_NESTED="$FAKE_MAIN/wt-nested"
+mkdir -p "$FAKE_WT_NESTED"
+link_worktree_node_modules "$FAKE_WT_NESTED" "$FAKE_MAIN" >/dev/null
+assert_true "link_worktree_node_modules: creates symlink (nested layout)" \
+  "[ -L '$FAKE_WT_NESTED/node_modules' ]"
+assert_eq "link_worktree_node_modules: symlink target (nested layout)" \
+  "../node_modules" "$(readlink "$FAKE_WT_NESTED/node_modules")"
+assert_true "link_worktree_node_modules: nested symlink resolves" \
+  "[ -x '$FAKE_WT_NESTED/node_modules/.bin/lint-staged' ]"
+
+# -----------------------------------------------------------------------
+# Scenario 5c (SMI-4654): worktree outside repo_root → return 1, no link
+# -----------------------------------------------------------------------
+FAKE_WT_OUTSIDE="$TMPROOT/wt-outside"
+mkdir -p "$FAKE_WT_OUTSIDE"
+set +e
+link_worktree_node_modules "$FAKE_WT_OUTSIDE" "$FAKE_MAIN" >/dev/null 2>&1; rc=$?
+set -e
+assert_eq "link_worktree_node_modules: rejects worktree outside repo_root" "1" "$rc"
+assert_true "link_worktree_node_modules: outside-repo wt has no symlink" \
+  "[ ! -e '$FAKE_WT_OUTSIDE/node_modules' ]"
+
+# -----------------------------------------------------------------------
 # Scenario 6: _lib.sh — repair_worktrees_node_modules backfills missing, skips present
 # -----------------------------------------------------------------------
 (
   cd "$FAKE_MAIN"
-  git worktree add -q -b wt-a "$TMPROOT/wt-a" main
-  git worktree add -q -b wt-b "$TMPROOT/wt-b" main
+  # SMI-4654: place worktrees under repo root (.worktrees/ convention).
+  git worktree add -q -b wt-a "$FAKE_MAIN/.worktrees/wt-a" main
+  git worktree add -q -b wt-b "$FAKE_MAIN/.worktrees/wt-b" main
   # wt-a has no node_modules; wt-b already has a symlink
-  ln -sfn "$FAKE_MAIN/node_modules" "$TMPROOT/wt-b/node_modules"
+  ln -sfn "$FAKE_MAIN/node_modules" "$FAKE_MAIN/.worktrees/wt-b/node_modules"
 ) >/dev/null 2>&1
 repair_worktrees_node_modules "$FAKE_MAIN" >/dev/null 2>&1
 assert_true "repair_worktrees: backfilled missing symlink on wt-a" \
-  "[ -L '$TMPROOT/wt-a/node_modules' ]"
-# SMI-4381: target is relative.
-assert_eq "repair_worktrees: wt-a symlink target (relative)" \
-  "../../node_modules" "$(readlink "$TMPROOT/wt-a/node_modules")"
+  "[ -L '$FAKE_MAIN/.worktrees/wt-a/node_modules' ]"
+# SMI-4381: target is relative. SMI-4654: depth dynamically computed (still 2 here).
+assert_eq "repair_worktrees: wt-a symlink target (.worktrees/ layout, depth=2)" \
+  "../../node_modules" "$(readlink "$FAKE_MAIN/.worktrees/wt-a/node_modules")"
 assert_true "repair_worktrees: skipped existing symlink on wt-b" \
-  "[ -L '$TMPROOT/wt-b/node_modules' ]"
+  "[ -L '$FAKE_MAIN/.worktrees/wt-b/node_modules' ]"
+# After refresh, wt-b's symlink should be the relative form (idempotent rewrite).
+assert_eq "repair_worktrees: wt-b symlink refreshed to relative form" \
+  "../../node_modules" "$(readlink "$FAKE_MAIN/.worktrees/wt-b/node_modules")"
+
+# -----------------------------------------------------------------------
+# Scenario 6b (SMI-4654): repair_worktrees on a nested worktree produces depth=1.
+# -----------------------------------------------------------------------
+(
+  cd "$FAKE_MAIN"
+  git worktree add -q -b wt-nested-repair "$FAKE_MAIN/wt-nested-repair" main
+) >/dev/null 2>&1
+repair_worktrees_node_modules "$FAKE_MAIN" >/dev/null 2>&1
+assert_true "repair_worktrees: backfilled symlink on nested layout" \
+  "[ -L '$FAKE_MAIN/wt-nested-repair/node_modules' ]"
+assert_eq "repair_worktrees: nested wt symlink target (depth=1)" \
+  "../node_modules" "$(readlink "$FAKE_MAIN/wt-nested-repair/node_modules")"
+# Verify the symlink actually resolves — this is the regression guard for the
+# original SMI-4654 bug where nested worktrees got depth=2 symlinks pointing
+# outside the repo and silently breaking pre-commit typecheck.
+assert_true "repair_worktrees: nested symlink resolves to real node_modules" \
+  "[ -x '$FAKE_MAIN/wt-nested-repair/node_modules/.bin/lint-staged' ]"
+
+# -----------------------------------------------------------------------
+# Scenario 6c (SMI-4654): per-package symlink on .worktrees/ layout — depth=4.
+# -----------------------------------------------------------------------
+mkdir -p "$FAKE_MAIN/packages/foo/node_modules"
+mkdir -p "$FAKE_MAIN/.worktrees/wt-pkg/packages/foo"
+link_worktree_package_node_modules "$FAKE_MAIN/.worktrees/wt-pkg" "$FAKE_MAIN" >/dev/null
+assert_true "link_worktree_package: creates per-pkg symlink (.worktrees/ layout)" \
+  "[ -L '$FAKE_MAIN/.worktrees/wt-pkg/packages/foo/node_modules' ]"
+assert_eq "link_worktree_package: per-pkg target (.worktrees/ layout, depth=4)" \
+  "../../../../packages/foo/node_modules" \
+  "$(readlink "$FAKE_MAIN/.worktrees/wt-pkg/packages/foo/node_modules")"
+
+# -----------------------------------------------------------------------
+# Scenario 6d (SMI-4654): per-package symlink on nested layout — depth=3.
+# This is the core regression-guard for the bug. Pre-fix this would have
+# emitted depth=4, dangling outside the repo and surfacing zod3-vs-4 in pre-commit.
+# -----------------------------------------------------------------------
+mkdir -p "$FAKE_MAIN/wt-pkg-nested/packages/foo"
+link_worktree_package_node_modules "$FAKE_MAIN/wt-pkg-nested" "$FAKE_MAIN" >/dev/null
+assert_true "link_worktree_package: creates per-pkg symlink (nested layout)" \
+  "[ -L '$FAKE_MAIN/wt-pkg-nested/packages/foo/node_modules' ]"
+assert_eq "link_worktree_package: per-pkg target (nested layout, depth=3)" \
+  "../../../packages/foo/node_modules" \
+  "$(readlink "$FAKE_MAIN/wt-pkg-nested/packages/foo/node_modules")"
+# Verify resolution — regression guard for the original bug.
+assert_true "link_worktree_package: nested per-pkg symlink resolves" \
+  "[ -d '$FAKE_MAIN/wt-pkg-nested/packages/foo/node_modules' ]"
+
+# -----------------------------------------------------------------------
+# Scenario 6e (SMI-4654): direct unit tests for compute_relative_target.
+# -----------------------------------------------------------------------
+assert_eq "compute_relative_target: nested wt root (depth=1)" \
+  "../node_modules" \
+  "$(compute_relative_target /tmp/repo/wt /tmp/repo/node_modules /tmp/repo)"
+
+assert_eq "compute_relative_target: nested wt per-pkg (depth=3)" \
+  "../../../packages/foo/node_modules" \
+  "$(compute_relative_target /tmp/repo/wt/packages/foo /tmp/repo/packages/foo/node_modules /tmp/repo)"
+
+assert_eq "compute_relative_target: .worktrees/ wt root (depth=2)" \
+  "../../node_modules" \
+  "$(compute_relative_target /tmp/repo/.worktrees/wt /tmp/repo/node_modules /tmp/repo)"
+
+assert_eq "compute_relative_target: .worktrees/ wt per-pkg (depth=4)" \
+  "../../../../packages/foo/node_modules" \
+  "$(compute_relative_target /tmp/repo/.worktrees/wt/packages/foo /tmp/repo/packages/foo/node_modules /tmp/repo)"
+
+# Trailing-slash repo_root normalization.
+assert_eq "compute_relative_target: trailing-slash repo_root normalizes" \
+  "../node_modules" \
+  "$(compute_relative_target /tmp/repo/wt /tmp/repo/node_modules /tmp/repo/)"
+
+# Outside-repo error contract: returns 1, exact stderr message.
+set +e
+out=$(compute_relative_target /other/wt /tmp/repo/node_modules /tmp/repo 2>&1 >/dev/null); rc=$?
+set -e
+assert_eq "compute_relative_target: outside-repo returns 1" "1" "$rc"
+case "$out" in
+  *"is not under repo root '/tmp/repo'"*)
+    echo "PASS compute_relative_target: outside-repo error mentions repo root"
+    pass=$((pass + 1))
+    ;;
+  *)
+    echo "FAIL compute_relative_target: outside-repo error mentions repo root: out='$out'"
+    fail=$((fail + 1))
+    ;;
+esac
+
+# Space-in-path: variable expansions must be quoted.
+assert_eq "compute_relative_target: space in repo_root" \
+  "../node_modules" \
+  "$(compute_relative_target "/tmp/test repo/wt" "/tmp/test repo/node_modules" "/tmp/test repo")"
+
+# Multi-level nesting (defensive — depth=3 from 2 slashes in `a/b/wt`).
+assert_eq "compute_relative_target: multi-level nesting (depth=3)" \
+  "../../../node_modules" \
+  "$(compute_relative_target /tmp/repo/a/b/wt /tmp/repo/node_modules /tmp/repo)"
 
 # -----------------------------------------------------------------------
 # Scenario 7: .husky/pre-commit worktree detection (mirrors IS_WORKTREE logic)
@@ -154,7 +288,7 @@ detect_worktree() {
   fi
 }
 assert_eq "worktree detection: main repo returns 0" "0" "$(detect_worktree "$FAKE_MAIN")"
-assert_eq "worktree detection: worktree returns 1" "1" "$(detect_worktree "$TMPROOT/wt-a")"
+assert_eq "worktree detection: worktree returns 1" "1" "$(detect_worktree "$FAKE_MAIN/.worktrees/wt-a")"
 
 # -----------------------------------------------------------------------
 # Scenario 8: .husky/_/ dispatch files committed (Layer 1 fix)
