@@ -211,3 +211,31 @@ check_auth_device_preview_requires_jwt() {
   report_fail "edge-fn-auth-device" "check_auth_device_preview_requires_jwt" "$url" "401" "$status" "$ms"
   return 1
 }
+
+# ---- check_blog_local_db_renders --------------------------------------
+# Verifies the /blog/inside-the-local-skill-database post renders. Uses
+# the page title text as a stable fingerprint — the title is part of the
+# blog frontmatter (canonical content), so a missing/changed title means
+# either the post was unpublished or the slug changed (both are
+# regressions worth catching).
+check_blog_local_db_renders() {
+  local url="${SMOKE_WEBSITE_URL}/blog/inside-the-local-skill-database"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+
+  if [ "$status" != "200" ]; then
+    report_fail "blog-local-skill-database" "check_blog_local_db_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'Inside the Local Skill Database' "blog-title"; then
+    report_fail "blog-local-skill-database" "check_blog_local_db_renders" "$url" "title-fingerprint" "missing" "$ms"
+    return 1
+  fi
+  report_pass "blog-local-skill-database" "check_blog_local_db_renders" "$url" "$ms"
+  return 0
+}

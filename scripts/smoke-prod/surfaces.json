@@ -72,6 +72,13 @@
       "trigger_globs": ["packages/mcp-server/**"],
       "script": "scripts/smoke-prod/mcp-server.sh",
       "checks": ["check_mcp_server_version_exits_zero"]
+    },
+    {
+      "id": "blog-local-skill-database",
+      "owner": "website",
+      "trigger_globs": ["packages/website/src/content/blog/inside-the-local-skill-database.md"],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_blog_local_db_renders"]
     }
   ]
 }
