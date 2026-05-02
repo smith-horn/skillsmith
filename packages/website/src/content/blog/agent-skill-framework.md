@@ -419,7 +419,7 @@ As you accumulate skills, create a personal "core" package:
 {
   "name": "@yourhandle/claude-skills-core",
   "version": "1.0.0",
-  "description": "My standard Claude Code skill set",
+  "description": "My standard agent skill set",
   "dependencies": {},
   "skills": [
     "linear",

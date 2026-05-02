@@ -33,7 +33,7 @@ import type { CoreUninstallResult } from '@skillsmith/core'
 export type UninstallResult = CoreUninstallResult
 
 /**
- * Uninstall a skill from the local Claude Code skills directory.
+ * Uninstall a skill from the local agent skills directory (~/.claude/skills/).
  *
  * Delegates to SkillInstallationService from @skillsmith/core.
  *
@@ -101,7 +101,7 @@ export async function listInstalledSkills(): Promise<string[]> {
  */
 export const uninstallTool = {
   name: 'uninstall_skill',
-  description: 'Uninstall a Claude Code skill from ~/.claude/skills/',
+  description: 'Uninstall an agent skill from ~/.claude/skills/',
   inputSchema: {
     type: 'object' as const,
     properties: {

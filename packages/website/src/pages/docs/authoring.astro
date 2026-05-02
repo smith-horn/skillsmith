@@ -2,13 +2,13 @@
 import DocsLayout from '../../layouts/DocsLayout.astro';
 ---
 
-<DocsLayout title="Skill Authoring" description="Create, validate, and publish Claude Code skills with the Skillsmith CLI">
+<DocsLayout title="Skill Authoring" description="Create, validate, and publish agent skills with the Skillsmith CLI">
   <script is:inline type="application/ld+json" slot="head">
   {
     "@context": "https://schema.org",
     "@type": "HowTo",
-    "name": "How to Create and Publish a Claude Code Skill",
-    "description": "Use the Skillsmith CLI to scaffold, validate, and publish reusable Claude Code skills",
+    "name": "How to Create and Publish an Agent Skill",
+    "description": "Use the Skillsmith CLI to scaffold, validate, and publish reusable agent skills (SKILL.md format, MCP-compatible)",
     "totalTime": "PT10M",
     "tool": [
       { "@type": "HowToTool", "name": "Skillsmith CLI" },
@@ -45,7 +45,9 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
   <h1>Skill Authoring</h1>
 
   <p class="lead">
-    Create, validate, and publish reusable Claude Code skills with the Skillsmith CLI.
+    Create, validate, and publish reusable agent skills with the Skillsmith CLI.
+    Skills are SKILL.md-format files that work with any MCP-compatible agent
+    (Claude Code, Cursor, Copilot, Codex, Windsurf, and others).
   </p>
 
   <h2>Overview</h2>

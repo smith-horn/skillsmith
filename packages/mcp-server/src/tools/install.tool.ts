@@ -13,7 +13,7 @@
 export const installTool = {
   name: 'install_skill',
   description:
-    'Install a Claude Code skill from GitHub. Performs security scan and Skillsmith optimization before installation.',
+    'Install an agent skill (SKILL.md format) from GitHub. Performs security scan and Skillsmith optimization before installation.',
   inputSchema: {
     type: 'object' as const,
     properties: {

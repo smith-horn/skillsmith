@@ -182,7 +182,7 @@ Every tool makes tradeoffs. Here are the ones that matter.
 
 **Catalog size vs. curation.** A curated registry with security scanning will always be smaller than a GitHub aggregator. If you want the largest catalog and are comfortable evaluating safety yourself, SkillsMP is the right tool. If you want every skill scanned before you see it, Skillsmith is.
 
-**Agent breadth vs. depth.** Skills.sh supports 17+ agents -- Claude Code, Codex, Cursor, Gemini, GitHub Copilot, Windsurf, and others. Skillsmith is purpose-built for Claude Code. If you work across multiple AI coding tools, breadth matters. If you're building with Claude Code and want MCP-native tooling, depth matters more.
+**Catalog scope.** Skills.sh aggregates skills across 17+ agents -- Claude Code, Codex, Cursor, Gemini, GitHub Copilot, Windsurf, and others. Skillsmith curates skills in the SKILL.md format that any MCP-compatible agent can use, with deeper integration via the MCP server, CLI, and VS Code extension. If you want the broadest aggregator, Skills.sh wins on breadth. If you want a curated registry with security scanning and MCP-native tooling that works across all those clients, Skillsmith goes deeper.
 
 **Simplicity vs. workflow.** `npx skills add author/skill` is a one-liner. Skillsmith's recommendation pipeline requires an MCP server connection. The one-liner is faster when you know exactly what you want. The pipeline is better when you're not sure what you need.
 
@@ -208,7 +208,7 @@ The ecosystem is young. The registries that survive will be the ones that solve 
 
 ---
 
-*Skillsmith is an MCP server for Claude Code skill discovery, security scanning, and management. Get started by adding to your Claude settings:*
+*Skillsmith is an MCP server for agent skill discovery, security scanning, and management — works with any MCP-compatible agent (Claude Code, Cursor, Copilot, Codex, Windsurf, and others). Get started by adding to your agent client's MCP settings (e.g. Claude Code's `~/.claude/settings.json`):*
 
 ```json
 {

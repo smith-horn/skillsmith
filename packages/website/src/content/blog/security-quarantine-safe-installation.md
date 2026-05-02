@@ -12,7 +12,7 @@ ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200
 
 ![Security Shield Hero](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/security/security-shield-hero)
 
-Installing third-party code into your development environment requires trust. When you install a Claude Code skill, you're giving it access to your projects, your files, and Claude's capabilities.
+Installing third-party code into your development environment requires trust. When you install an agent skill, you're giving it access to your projects, your files, and your agent's capabilities.
 
 We take that responsibility seriously.
 

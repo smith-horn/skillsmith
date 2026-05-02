@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Skillsmith CLI - Claude Skill Discovery Tools
+ * Skillsmith CLI - Agent Skill Discovery Tools
  *
  * Commands:
  * - import: Import skills from GitHub (SMI-580)
@@ -75,7 +75,7 @@ const commandName = process.argv[1]?.endsWith('sklx') ? 'sklx' : 'skillsmith'
 
 program
   .name(commandName)
-  .description('Claude Skill Discovery and Management CLI (alias: sklx)')
+  .description('Agent Skill Discovery and Management CLI (alias: sklx)')
   .version(CLI_VERSION)
 
 // Display startup header with license status before parsing commands.

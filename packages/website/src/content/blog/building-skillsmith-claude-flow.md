@@ -285,7 +285,7 @@ At two levels. First, `MEMORY.md` — a hand-curated file loaded into every sess
 
 ### How is Skillsmith built using its own skills?
 
-Skillsmith uses six project-level Claude Code skills for its own development: `launchpad` orchestrates every feature end-to-end, `plan-review` gates implementation with VP-perspective review, `worktree-manager` handles parallel branch management across waves, `governance` enforces engineering standards on every PR, `hive-mind-execution` runs wave YAML configs, and `git-crypt` manages encrypted skill access in git worktrees. Every pattern shipped to Skillsmith users is validated against the development team's own daily workflow first.
+Skillsmith uses six project-level agent skills for its own development: `launchpad` orchestrates every feature end-to-end, `plan-review` gates implementation with VP-perspective review, `worktree-manager` handles parallel branch management across waves, `governance` enforces engineering standards on every PR, `hive-mind-execution` runs wave YAML configs, and `git-crypt` manages encrypted skill access in git worktrees. Every pattern shipped to Skillsmith users is validated against the development team's own daily workflow first.
 
 ---
 
