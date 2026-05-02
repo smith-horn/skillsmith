@@ -56,3 +56,31 @@ export type {
   InventoryAuditResult,
   SemanticCollisionFlag,
 } from './collision-detector.types.js'
+
+// SMI-4588 Wave 2 PR #1 — namespace-overrides ledger surface.
+export {
+  appendOverride,
+  findOverride,
+  readLedger,
+  readLedgerResult,
+  writeLedger,
+} from './namespace-overrides.js'
+
+export type { LedgerPathOptions } from './namespace-overrides.js'
+
+export { CURRENT_VERSION as NAMESPACE_OVERRIDES_CURRENT_VERSION } from './namespace-overrides.types.js'
+
+export type {
+  LedgerVersion,
+  LedgerVersionUnsupportedError,
+  OverrideRecord,
+  OverridesLedger,
+  ReadLedgerResult,
+} from './namespace-overrides.types.js'
+
+// SMI-4588 Wave 2 PR #1 — shared namespace-audit types (PRs #3/#4 consumers).
+export type {
+  NamespaceWarning,
+  PendingCollision,
+  RenameSuggestionRef,
+} from './namespace-audit.types.js'
