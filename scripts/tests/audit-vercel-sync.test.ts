@@ -18,12 +18,15 @@ const helpers = (await import('../audit-vercel-sync-helpers.mjs')) as {
   validateVercelJsonSync: (
     root: Record<string, unknown>,
     website: Record<string, unknown>
-  ) => { ok: true } | { ok: false; kind: 'drift'; drifted: string[] } | {
-    ok: false
-    kind: 'shape'
-    side: 'root' | 'website'
-    value: unknown
-  }
+  ) =>
+    | { ok: true }
+    | { ok: false; kind: 'drift'; drifted: string[] }
+    | {
+        ok: false
+        kind: 'shape'
+        side: 'root' | 'website'
+        value: unknown
+      }
 }
 
 const { VERCEL_JSON_SHARED_FIELDS, isValidOutputDirectory, validateVercelJsonSync } = helpers

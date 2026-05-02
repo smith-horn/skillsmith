@@ -25,10 +25,7 @@ import {
   findReturningTableAmbiguity,
   findUncoveredSurfacePaths,
 } from './audit-standards-helpers.mjs'
-import {
-  VERCEL_JSON_SHARED_FIELDS,
-  validateVercelJsonSync,
-} from './audit-vercel-sync-helpers.mjs'
+import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 
 const RED = '\x1b[31m'
 const GREEN = '\x1b[32m'
