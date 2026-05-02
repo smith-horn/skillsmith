@@ -296,6 +296,23 @@ if (existsSync('docker-compose.yml')) {
     } else {
       fail('Volume mount not configured', 'Add ".:/app" to volumes')
     }
+
+    // SMI-4653: assert no service has an explicit `image:` field. Load-bearing
+    // for `remove-worktree.sh`'s `docker compose down --rmi local` cleanup —
+    // adding an `image:` field would silently turn `--rmi local` into a no-op
+    // and orphan worktree images would accumulate again.
+    // Match `^[ \t]*image:` at the start of a line (allowing 2-6 leading spaces),
+    // anywhere in the file. Comments (`# image:`) and substring matches in
+    // values are excluded by anchoring on whitespace-only indent.
+    const imageFieldRegex = /^[ \t]{2,6}image:\s/m
+    if (imageFieldRegex.test(dockerCompose)) {
+      fail(
+        'docker-compose.yml has an explicit `image:` field on a service (SMI-4653)',
+        'Remove the `image:` field; rely on `build:` so `docker compose down --rmi local` in remove-worktree.sh can clean up the per-worktree image. If an `image:` field is genuinely required, update remove-worktree.sh to remove the image by tag explicitly and document the new contract.'
+      )
+    } else {
+      pass('docker-compose.yml has no explicit `image:` fields (SMI-4653 cleanup contract)')
+    }
   } catch (e) {
     fail(`Error reading docker-compose.yml: ${e.message}`)
   }
