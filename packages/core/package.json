@@ -45,6 +45,11 @@
       "types": "./dist/src/services/skill-installation.helpers.d.ts",
       "import": "./dist/src/services/skill-installation.helpers.js",
       "default": "./dist/src/services/skill-installation.helpers.js"
+    },
+    "./config/audit-mode": {
+      "types": "./dist/src/config/audit-mode.d.ts",
+      "import": "./dist/src/config/audit-mode.js",
+      "default": "./dist/src/config/audit-mode.js"
     }
   },
   "scripts": {

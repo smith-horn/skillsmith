@@ -1,9 +1,8 @@
 /**
  * Unit tests for SMI-4587 Wave 1 Steps 4–5 — exact-name + generic-token
- * collision detector passes.
- *
- * The semantic pass (Step 6) lands in a subsequent PR; its tests in the
- * plan's §Tests block are wrapped as `.skip` here with a comment.
+ * collision detector passes. Wave 1 PR #3's semantic-overlap pass,
+ * audit-mode dispatch, and bootstrap tests live in the sibling file
+ * `collision-detector.semantic.test.ts` (split for the 500-LOC limit).
  */
 
 import { describe, expect, it } from 'vitest'
@@ -285,13 +284,5 @@ describe('detectGenericTokenFlags (generic-token pass)', () => {
   it('returns empty for an empty inventory', () => {
     const auditId = newAuditId()
     expect(detectGenericTokenFlags([], auditId)).toEqual([])
-  })
-})
-
-// Semantic-pass tests are deferred to a subsequent PR.
-// See plan §Tests / `collision-detector.test.ts` case 12.
-describe.skip('semantic pass (subsequent PR)', () => {
-  it.skip('Step 6: semantic via OverlapDetector (next PR)', () => {
-    /* implemented in a follow-up PR */
   })
 })
