@@ -167,6 +167,14 @@ export { AuditLogger, MIN_RETENTION_DAYS, MAX_RETENTION_DAYS } from './security/
 export { emitInstallEvent } from './audit/remote-audit.js'
 export type { InstallEventPayload } from './audit/remote-audit.js'
 
+// Local skill indexing helper (SMI-4587 Wave 1 PR #4 / NEW-E-2)
+export { indexLocalSkill } from './skills/index-local.js'
+export type {
+  IndexLocalSkillFrontmatter,
+  IndexLocalSkillOptions,
+  IndexLocalSkillResult,
+} from './skills/index-local.js'
+
 // Source Adapters (SMI-589)
 export {
   BaseSourceAdapter,
@@ -246,6 +254,16 @@ export { safeWriteFile, SymlinkError, HardlinkError } from './utils/safe-fs.js'
 // SMI-4124: Curated stoplists for skill_pack_audit trigger-quality checks
 export { GENERIC_TRIGGERS } from './data/generic-triggers.js'
 export type { GenericTriggersStoplist } from './data/generic-triggers.js'
+
+// SMI-4587: Audit-mode resolver (consumer namespace audit)
+export {
+  resolveAuditMode,
+  tierDefault,
+  isAuditMode,
+  type AuditMode,
+  type Tier as AuditModeTier,
+  type ResolveAuditModeOptions,
+} from './config/audit-mode.js'
 
 // ============================================================================
 // LIVE SERVICES WORKTREE STUBS (Phase 0 - Conflict Prevention)
