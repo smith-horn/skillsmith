@@ -213,6 +213,28 @@ export interface InstallResult {
   backupPath?: string
   /** SMI-3137: Dependency intelligence extracted during install */
   depIntel?: import('./install.dep-helpers.js').DepIntelResult
+  /**
+   * SMI-4588 Wave 2 (PR #3, decision #2): Whether the install actually
+   * completed. Defaults to mirroring `success` for backwards-compat. Set
+   * to `false` when `audit_mode: 'preventative'` blocked the install on a
+   * pre-flight namespace collision; the agent must call
+   * `apply_namespace_rename` then re-invoke `install_skill`.
+   */
+  installComplete?: boolean
+  /**
+   * SMI-4588 Wave 2 (PR #3, decision #2): Blocking-mode envelope. Populated
+   * when `audit_mode: 'preventative'` detected a pre-flight namespace
+   * collision; carries the auditId, suggestion chain, and remediation hint
+   * the agent uses to apply the rename inline.
+   */
+  pendingCollision?: import('../audit/namespace-audit.types.js').PendingCollision
+  /**
+   * SMI-4588 Wave 2 (PR #3): Non-blocking namespace warnings. Populated in
+   * `power_user` and `governance` modes when a pre-flight collision is
+   * detected; the install still proceeds. Pre-flight scanner failure is
+   * treated as a clean pass (`warnings: undefined`).
+   */
+  warnings?: import('../audit/namespace-audit.types.js').NamespaceWarning[]
 }
 
 /** Optimization info included in install result */
