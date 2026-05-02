@@ -347,15 +347,7 @@ export async function runInstallPreflight(
   //     edit surface MUST NOT brick the install pre-flight.
   //   - Non-semantic warnings (`exact`, `generic`) never carry a
   //     recommendedEdit — the suggester only runs over semanticCollisions.
-  let editsByCollisionId = new Map<string, RecommendedEdit>()
-  try {
-    const recommendedEdits = await runEditSuggester(result)
-    editsByCollisionId = new Map(recommendedEdits.map((e) => [e.collisionId, e]))
-  } catch (err) {
-    console.warn(
-      `[install-preflight] edit-suggester failed (${(err as Error).message}); proceeding without prose edits`
-    )
-  }
+  const editsByCollisionId = await collectRecommendedEdits(result)
 
   // Build a NamespaceWarning + suggestion-chain for each candidate-related
   // flag. We surface the first flag's chain in `pendingCollision` (the
@@ -416,6 +408,25 @@ function buildWarningMessage(
 ): string {
   const reason = buildReason(flag, candidate.projectedSourcePath)
   return `Namespace ${flag.kind} collision installing "${candidate.identifier}": ${reason}. Suggested rename: "${suggested}".`
+}
+
+/**
+ * SMI-4589 Wave 3: collect recommended edits indexed by collisionId.
+ * Edit-suggester failure degrades silently to an empty map — the
+ * non-blocking install contract from Wave 2 Edit 2 extends here.
+ */
+async function collectRecommendedEdits(
+  result: InventoryAuditResult
+): Promise<Map<string, RecommendedEdit>> {
+  try {
+    const recommendedEdits = await runEditSuggester(result)
+    return new Map(recommendedEdits.map((e) => [e.collisionId as string, e]))
+  } catch (err) {
+    console.warn(
+      `[install-preflight] edit-suggester failed (${(err as Error).message}); proceeding without prose edits`
+    )
+    return new Map()
+  }
 }
 
 /**

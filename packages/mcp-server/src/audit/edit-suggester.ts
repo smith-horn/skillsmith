@@ -209,9 +209,9 @@ export async function runEditSuggester(
     let edit: RecommendedEdit | null = null
     for (const content of candidates) {
       if (!content) continue
-      const result = template.generate(flag, { fileContent: content })
-      if (result) {
-        edit = result
+      const generated = template.generate(flag, { fileContent: content })
+      if (generated) {
+        edit = generated
         break
       }
     }

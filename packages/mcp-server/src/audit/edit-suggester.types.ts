@@ -14,8 +14,7 @@
  * Plan: docs/internal/implementation/smi-4589-edit-suggester.md §1.
  */
 
-import type { CollisionId } from './collision-detector.types.js'
-import type { SemanticCollisionFlag } from './collision-detector.types.js'
+import type { CollisionId, SemanticCollisionFlag } from './collision-detector.types.js'
 
 /**
  * Which class of prose collision a `RecommendedEdit` addresses.
