@@ -19,7 +19,7 @@ When you run a Skillsmith search through the MCP server, the CLI, or the VS Code
 
 A quick orientation before we go deep: **MCP** (Model Context Protocol) is the standard agents use to talk to external tools — Claude Code, Cursor, Copilot, Codex, Windsurf and others all speak it. **FTS5** is SQLite's built-in full-text search module: tokenize text, build an inverted index, rank results, all inside the database file with no external service. **HNSW** (hierarchical navigable small world) is a graph index that makes vector search fast by checking only a small fraction of the dataset per query. **ONNX** (Open Neural Network Exchange) is a portable ML model format with a runtime that runs inference on CPU — no GPU, no API call. We'll explain the rest as they come up.
 
-Jump to: [Where the DB lives](#where-the-db-lives) · [Schema tour](#schema-tour) · [FTS5 default](#fts5-the-default-search-path) · [Semantic search](#semantic-search-opt-in-with-a-footnote) · [`sync`](#sync-the-diff-algorithm) · [`import`](#import-the-other-direction) · [Tradeoffs](#tradeoffs)
+Jump to: [Where the DB lives](#where-the-db-lives) · [Schema tour](#schema-tour) · [FTS5 default](#fts5-the-default-search-path) · [Semantic search](#semantic-search-opt-in) · [`sync`](#sync-the-diff-algorithm) · [`import`](#import-the-other-direction) · [Tradeoffs](#tradeoffs)
 
 ## Two posts, two halves
 
@@ -72,7 +72,7 @@ A nice side effect of doing search locally: it's basically free latency-wise. Ty
 
 There's a small footnote: native `better-sqlite3` is the default driver, but if its prebuilt binary fails to load (Node ABI mismatch after a Node upgrade is the usual cause), Skillsmith automatically falls back to a WASM SQLite build via `fts5-sql-bundle`. The user-visible behavior is identical; the only difference is a small startup cost the first time the WASM module loads. The fallback policy is documented in [ADR-009](https://github.com/smith-horn/skillsmith/blob/main/docs/internal/adr/009-embedding-service-fallback.md).
 
-## Semantic search — opt-in, with a footnote
+## Semantic search — opt-in
 
 FTS5 is great for keyword queries. It's not great when you ask "I want a skill that helps me write tests for React components" and the best match is named `vitest-component-harness` with no exact-keyword overlap. For that, you want semantic search.
 
@@ -81,17 +81,9 @@ Skillsmith ships semantic search as **opt-in** behind `SKILLSMITH_USE_HNSW=true`
 - Skills are embedded with `Xenova/all-MiniLM-L6-v2` via ONNX Runtime — a small sentence-transformer model (22M parameters, produces 384-dim vectors, q8-quantized to ~25 MB on disk; the q8 part means weights are stored as 8-bit integers — about a quarter the size of full precision with negligible accuracy loss for sentence embeddings). The model runs locally on CPU; no API call.
 - For testing or development, you can swap the real model for a deterministic mock via `SKILLSMITH_USE_MOCK_EMBEDDINGS=true`. The mock is sub-millisecond and produces stable vectors — useful for test fixtures.
 - Embeddings are cached in a `skill_embeddings` BLOB column inside SQLite, so we don't re-embed the entire registry on every cold start.
-- Search itself happens in process: queries are embedded the same way, then compared against cached vectors with **cosine similarity** (a measure of how aligned two vectors point in space — equivalent to a dot product after normalization, and the standard metric for comparing sentence embeddings). SQLite is not the query target — it's just a durable cache for the blobs.
+- Search itself happens in process: queries are embedded the same way, then compared against cached vectors. The fast path uses an **HNSW** index (hierarchical navigable small world graph — `hnswlib-node`) that returns the top-k matches in `O(log n)` per query; persisted to `~/.skillsmith/cache/hnsw-*.bin` and rebuilt incrementally as the registry changes. The ranking metric is **cosine similarity** (how aligned two vectors point in space — equivalent to a dot product after normalization, and the standard metric for sentence embeddings). SQLite is not the query target — it's just a durable cache for the blobs.
 
-Now the honest footnote. The vector index implementation is currently in a brute-force fallback path. The file header at `packages/core/src/embeddings/hnsw-store.ts:5` states:
-
-```text
-SMI-1519: HNSW Embedding Store
-High-performance vector storage using HNSW index for fast ANN search.
-Uses brute-force search (V3 VectorDB unavailable after claude-flow rename).
-```
-
-Translation: the HNSW graph is wired and will re-engage when the upstream V3 VectorDB module is restored, but as of writing, when you flip the opt-in flag you get **brute-force search** (a linear scan that compares the query vector against every cached vector — slower than HNSW but simple, deterministic, and fine for thousands-of-rows registries). For the size of registry most users carry (thousands, not millions of skills), this is still fine — the user-visible difference is "search takes a few hundred ms on a cold cache" instead of "search takes a few tens of ms." We chose to ship the contract ("in-memory vector index") rather than block on the fastest possible implementation, and we'd rather tell you about the fallback than have you discover it from a benchmark.
+`hnswlib-node` is declared as an `optionalDependency`, so on hosts where the prebuilt binary can't install (Vercel build sandboxes, restricted runtimes), Skillsmith automatically falls back to a brute-force linear scan. The brute-force path is slower at scale but simple, deterministic, and identical in result quality — for the thousands-of-rows registry most users carry, you won't notice the difference. Force the fallback for debugging with `SKILLSMITH_USE_HNSW=false`.
 
 ## `sync` — the diff algorithm
 
