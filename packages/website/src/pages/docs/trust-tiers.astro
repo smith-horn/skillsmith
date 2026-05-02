@@ -2,11 +2,11 @@
 import DocsLayout from '../../layouts/DocsLayout.astro';
 ---
 
-<DocsLayout title="Trust Tiers" description="Understand Skillsmith's four-tier trust system for evaluating skill safety and quality">
+<DocsLayout title="Trust Tiers" description="Understand Skillsmith's five-tier trust system for evaluating skill safety and quality">
   <h1>Trust Tiers</h1>
 
   <p class="lead">
-    Skillsmith uses a four-tier trust system to help you evaluate skill safety before installation.
+    Skillsmith uses a five-tier trust system to help you evaluate skill safety before installation.
     Each tier represents a different level of verification and review.
   </p>
 
@@ -35,6 +35,20 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
         <span>Verified</span>
       </div>
       <p>Publisher verified, quality checked</p>
+      <ul>
+        <li>Auto-install: Yes</li>
+        <li>Review required: No</li>
+      </ul>
+    </div>
+
+    <div class="tier-card tier-curated">
+      <div class="tier-badge">
+        <svg class="tier-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M5 13l4 4L19 7" />
+        </svg>
+        <span>Curated</span>
+      </div>
+      <p>GitHub-verified vendor orgs and curated publishers</p>
       <ul>
         <li>Auto-install: Yes</li>
         <li>Review required: No</li>
@@ -131,6 +145,37 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
     <p>
       <strong>Generally safe.</strong> The publisher is accountable for the skill.
       Suitable for production use in most cases.
+    </p>
+  </div>
+
+  <h2>Curated Tier</h2>
+
+  <div class="tier-detail">
+    <h3>What It Means</h3>
+    <p>
+      GitHub-verified vendor organizations (e.g., Zapier, Stripe, Notion) and manually-curated
+      third-party publishers. Auto-detected via GitHub's organization verification flag, with an
+      editorial confidence floor of 0.80 quality score.
+    </p>
+
+    <h3>Requirements</h3>
+    <ul>
+      <li>Published under a GitHub-verified organization, OR manually curated by Skillsmith editors</li>
+      <li>Quality score >= 0.80</li>
+      <li>Has valid LICENSE file</li>
+      <li>Complete README and SKILL.md</li>
+    </ul>
+
+    <h3>Examples</h3>
+    <p>
+      <code>zapier/</code>, <code>stripe/</code>, <code>notion/</code> namespaces and other vendor
+      orgs that publish first-party skills.
+    </p>
+
+    <h3>When to Install</h3>
+    <p>
+      <strong>Generally safe.</strong> Curated skills come from accountable vendor publishers and
+      are suitable for most production use cases.
     </p>
   </div>
 
@@ -385,6 +430,14 @@ skillsmith search git --tier community,verified,official`}</code></pre>
     color: rgb(59, 130, 246);
   }
 
+  .tier-curated {
+    border-color: rgba(20, 184, 166, 0.3);
+  }
+
+  .tier-curated .tier-badge {
+    color: rgb(45, 212, 191);
+  }
+
   .tier-community {
     border-color: rgba(234, 179, 8, 0.3);
   }
@@ -436,6 +489,11 @@ skillsmith search git --tier community,verified,official`}</code></pre>
   .tier-badge-inline.tier-verified {
     background: rgba(59, 130, 246, 0.2);
     color: rgb(96, 165, 250);
+  }
+
+  .tier-badge-inline.tier-curated {
+    background: rgba(20, 184, 166, 0.2);
+    color: rgb(45, 212, 191);
   }
 
   .tier-badge-inline.tier-community {

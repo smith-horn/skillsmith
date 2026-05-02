@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Vendor-Org Trust Tier** (2026-05-02, SMI-4651): GitHub-verified vendor
+  organizations (Stripe, Notion, Atlassian, Figma, Canva, Zapier, Cloudflare,
+  and any future verified org) are now auto-promoted to the `curated` trust
+  tier on first index, instead of falling through to `community`. New
+  `org-verification.ts` helper calls `GET /orgs/{org}` per unique owner per
+  indexer run (cached, lowercase-keyed, transient-failure-tolerant) and
+  promotes verified-org skills to `curated` with a `quality_score` floor of
+  0.80. Website now plumbs the `curated` tier end-to-end (Badge, types,
+  terminology, listing filter, docs/trust-tiers card, API + MCP-server
+  reference samples). Existing `community`-tier rows for the 7 launch-partner
+  orgs reclassify on the next scheduled indexer run (00/06/12/18 UTC).
 - **Team Tier-Gate** (2026-04-20, SMI-4321): Server-side tier-gate on
   `/account/team/**` pages. Downgraded or expired Team users are now
   redirected to `/account/subscription` with a contextual banner rather
