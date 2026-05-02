@@ -53,7 +53,10 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          sudo apt-get update && sudo apt-get install -y git-crypt
+          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
@@ -91,33 +94,35 @@ jobs:
           target: dev
 
       # SMI-2240: Save image with current SHA tag for downstream jobs
+      # SMI-4646: zstd -T0 -3 (parallel, level 3) is ~3x faster than gzip with similar ratio
       - name: Save Docker image
         run: |
-          docker save skillsmith-e2e:${{ github.sha }} | gzip > /tmp/skillsmith-e2e.tar.gz
+          docker save skillsmith-e2e:${{ github.sha }} | zstd -T0 -3 > /tmp/skillsmith-e2e.tar.zst
           echo "✓ Saved image with tag: ${{ github.sha }}"
 
       - name: Upload Docker image artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
           name: docker-image-e2e
-          path: /tmp/skillsmith-e2e.tar.gz
+          path: /tmp/skillsmith-e2e.tar.zst
           retention-days: 1
 
-      # SMI-969: Extract pre-compiled node_modules from Docker image
-      # This eliminates the need for npm ci in each job (saves ~30-60s per job)
+      # SMI-969 + SMI-4646: Single extract-all container replaces extract-deps split.
       # SMI-2159: Also extract nested workspace node_modules (for non-hoisted deps like @aws-sdk)
       - name: Extract node_modules from Docker image
         run: |
-          # Create a container (not running) and copy out node_modules
-          docker create --name extract-deps skillsmith-e2e:${{ github.sha }}
+          docker rm -f extract-all 2>/dev/null || true
+
+          # Create a single container (not running) and copy out node_modules
+          docker create --name extract-all skillsmith-e2e:${{ github.sha }}
 
           # Copy root node_modules
-          docker cp extract-deps:/app/node_modules /tmp/node_modules
+          docker cp extract-all:/app/node_modules /tmp/node_modules
 
           # Copy nested workspace node_modules (for non-hoisted dependencies)
           for pkg in core mcp-server cli enterprise vscode-extension website doc-retrieval-mcp; do
             mkdir -p /tmp/packages/$pkg
-            if docker cp extract-deps:/app/packages/$pkg/node_modules /tmp/packages/$pkg/ 2>/dev/null; then
+            if docker cp extract-all:/app/packages/$pkg/node_modules /tmp/packages/$pkg/ 2>/dev/null; then
               echo "✓ Copied packages/$pkg/node_modules"
               ls /tmp/packages/$pkg/node_modules/ 2>/dev/null | head -5 || true
             else
@@ -125,22 +130,21 @@ jobs:
             fi
           done
 
-          docker rm extract-deps
+          docker rm extract-all
 
-          # Compress for faster artifact transfer (include packages dir)
-          tar -czf /tmp/node_modules.tar.gz -C /tmp node_modules packages
+          # SMI-4646: zstd -T0 -1 (parallel, fastest level) is ~3-4x faster than gzip with similar ratio
+          tar -cf - -C /tmp node_modules packages | zstd -T0 -1 > /tmp/node_modules.tar.zst
 
-          # Show tar contents for debugging
           echo "=== Tar contents (packages only) ==="
-          tar -tzf /tmp/node_modules.tar.gz | grep "^packages/" | head -20
+          zstd -d --stdout /tmp/node_modules.tar.zst | tar -tf - | grep "^packages/" | head -20
 
       - name: Upload node_modules artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
           name: node-modules-e2e
-          path: /tmp/node_modules.tar.gz
+          path: /tmp/node_modules.tar.zst
           retention-days: 1
-          compression-level: 1 # Already compressed with tar
+          compression-level: 1 # Content already zstd-compressed
   # Phase A: CLI E2E Tests
   # SMI-969: Uses pre-built Docker image and node_modules from docker-build job
   cli-e2e-tests:
@@ -159,7 +163,10 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          sudo apt-get update && sudo apt-get install -y git-crypt
+          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
@@ -179,7 +186,7 @@ jobs:
       # SMI-2240: Re-tag if loaded tag differs from expected
       - name: Load Docker image
         run: |
-          gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+          zstd -d --stdout /tmp/skillsmith-e2e.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-e2e --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
@@ -192,7 +199,7 @@ jobs:
           fi
 
       - name: Extract node_modules
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       - name: Build packages in Docker
         run: |
@@ -241,7 +248,10 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          sudo apt-get update && sudo apt-get install -y git-crypt
+          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
@@ -261,7 +271,7 @@ jobs:
       # SMI-2240: Re-tag if loaded tag differs from expected
       - name: Load Docker image
         run: |
-          gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+          zstd -d --stdout /tmp/skillsmith-e2e.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-e2e --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
@@ -274,7 +284,7 @@ jobs:
           fi
 
       - name: Extract node_modules
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       - name: Build packages in Docker
         run: |
@@ -321,7 +331,10 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          sudo apt-get update && sudo apt-get install -y git-crypt
+          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
@@ -341,7 +354,7 @@ jobs:
       # SMI-2240: Re-tag if loaded tag differs from expected
       - name: Load Docker image
         run: |
-          gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+          zstd -d --stdout /tmp/skillsmith-e2e.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-e2e --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
@@ -354,7 +367,7 @@ jobs:
           fi
 
       - name: Extract node_modules
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       - name: Download CLI results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -447,7 +460,10 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          sudo apt-get update && sudo apt-get install -y git-crypt
+          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
@@ -467,7 +483,7 @@ jobs:
       # SMI-2240: Re-tag if loaded tag differs from expected
       - name: Load Docker image
         run: |
-          gunzip -c /tmp/skillsmith-e2e.tar.gz | docker load
+          zstd -d --stdout /tmp/skillsmith-e2e.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-e2e --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
@@ -480,7 +496,7 @@ jobs:
           fi
 
       - name: Extract node_modules
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       - name: Download all results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8

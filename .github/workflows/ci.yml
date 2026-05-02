@@ -388,7 +388,10 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          sudo apt-get update && sudo apt-get install -y git-crypt
+          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
@@ -652,8 +655,10 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          # Install git-crypt
-          sudo apt-get update && sudo apt-get install -y git-crypt
+          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
           # Decode and write key file
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
           # Unlock repository
@@ -670,22 +675,25 @@ jobs:
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
         with:
           path: /tmp/docker-cache
-          key: docker-image-${{ hashFiles('Dockerfile', 'package-lock.json', '.dockerignore', '.nvmrc') }}-v${{ env.NODE_VERSION }}
+          # SMI-4646: cache key suffixed with -zstd to invalidate previous gzip-based cache entries.
+          # One-time cache-miss on first push to main after merge; auto-recovered next push (SMI-3653 main-only write rule).
+          key: docker-image-${{ hashFiles('Dockerfile', 'package-lock.json', '.dockerignore', '.nvmrc') }}-v${{ env.NODE_VERSION }}-zstd
 
       # SMI-2194: Load cached Docker image if available
+      # SMI-4646: zstd-compressed tarball (.tar.zst) for ~50% faster load vs gzip on cache-hit path
       - name: Load cached Docker image
         id: load-cached-image
         if: steps.docker-image-cache.outputs.cache-hit == 'true'
         run: |
           echo "Loading Docker image from cache..."
-          if [ -f /tmp/docker-cache/skillsmith-ci.tar.gz ]; then
-            gunzip -c /tmp/docker-cache/skillsmith-ci.tar.gz | docker load
+          if [ -f /tmp/docker-cache/skillsmith-ci.tar.zst ]; then
+            zstd -d --stdout /tmp/docker-cache/skillsmith-ci.tar.zst | docker load
             # Re-tag with current SHA for downstream jobs
             CACHED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
             if [ -n "$CACHED_TAG" ] && [ "$CACHED_TAG" != "${{ github.sha }}" ]; then
               docker tag skillsmith-ci:$CACHED_TAG skillsmith-ci:${{ github.sha }}
             fi
-            echo "✓ Docker image loaded from cache"
+            echo "✓ Docker image loaded from cache (zstd)"
             echo "loaded=true" >> $GITHUB_OUTPUT
           else
             echo "Cache hit but no image file found, will rebuild"
@@ -729,26 +737,35 @@ jobs:
           target: dev
 
       # SMI-2194: Save image to cache directory for future runs
+      # SMI-4646: zstd -T0 -3 (parallel, level 3) is ~3x faster than gzip with similar ratio
       - name: Save Docker image to cache
         if: steps.docker-image-cache.outputs.cache-hit != 'true' || steps.load-cached-image.outputs.loaded != 'true'
         run: |
           mkdir -p /tmp/docker-cache
-          docker save skillsmith-ci:${{ github.sha }} | gzip > /tmp/docker-cache/skillsmith-ci.tar.gz
-          echo "✓ Docker image saved to cache"
+          docker save skillsmith-ci:${{ github.sha }} | zstd -T0 -3 > /tmp/docker-cache/skillsmith-ci.tar.zst
+          echo "✓ Docker image saved to cache (zstd)"
 
       # SMI-2240: Always save the re-tagged image from memory, not the cached tarball
       # The cached tarball contains the OLD commit SHA tag, causing downstream jobs to fail
       # with "pull access denied" when they try to run with the current SHA
+      # SMI-4646: on cache-hit + load-success, copy from cache (no re-save). Otherwise save fresh.
+      # Critical: gate on `loaded == 'true'`, not just `cache-hit` — `cache-hit` true with `loaded` false
+      # means the tarball file was missing or load failed; in that case we must re-save fresh.
       - name: Save Docker image for artifact
         run: |
-          docker save skillsmith-ci:${{ github.sha }} | gzip > /tmp/skillsmith-ci.tar.gz
-          echo "✓ Saved image with tag: ${{ github.sha }}"
+          if [ "${{ steps.load-cached-image.outputs.loaded }}" = "true" ]; then
+            cp /tmp/docker-cache/skillsmith-ci.tar.zst /tmp/skillsmith-ci.tar.zst
+            echo "✓ Reused cached image tarball (no re-save needed)"
+          else
+            docker save skillsmith-ci:${{ github.sha }} | zstd -T0 -3 > /tmp/skillsmith-ci.tar.zst
+            echo "✓ Saved image with tag: ${{ github.sha }}"
+          fi
 
       - name: Upload Docker image artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
           name: docker-image
-          path: /tmp/skillsmith-ci.tar.gz
+          path: /tmp/skillsmith-ci.tar.zst
           retention-days: 1
 
       # SMI-3539: Surface cache status to PR authors via Step Summary
@@ -764,50 +781,81 @@ jobs:
             echo "This is expected after lockfile, Dockerfile, or .nvmrc changes." >> $GITHUB_STEP_SUMMARY
           fi
 
-      # SMI-708: Extract pre-compiled node_modules from Docker image
-      # This eliminates the need for npm ci in each job (saves ~30-60s per job)
-      # SMI-2159: Also extract nested workspace node_modules (for non-hoisted deps like @aws-sdk)
-      - name: Extract node_modules from Docker image
+      # SMI-708 + SMI-2193 + SMI-4646: Single extract container ("extract-all") replaces the
+      # previous extract-deps + extract-builds split. One `docker create` + `docker rm` saves
+      # ~10-15s on each cache-hit run vs spinning up two containers. Extracts:
+      #   - root + per-package node_modules (was extract-deps)
+      #   - per-package dist/ + website .astro + .turbo caches (was extract-builds)
+      # SMI-2159: nested workspace node_modules required for non-hoisted deps like @aws-sdk
+      - name: Extract artifacts from Docker image
         run: |
           # Cleanup any leftover containers from previous failed runs
-          docker rm -f extract-deps 2>/dev/null || true
+          docker rm -f extract-all 2>/dev/null || true
 
-          # Create a container (not running) and copy out node_modules
-          docker create --name extract-deps skillsmith-ci:${{ github.sha }}
+          # Create a single container (not running) for all docker cp operations
+          docker create --name extract-all skillsmith-ci:${{ github.sha }}
 
-          # Copy root node_modules
-          docker cp extract-deps:/app/node_modules /tmp/node_modules
+          # === node_modules (root + per-package) ===
+          docker cp extract-all:/app/node_modules /tmp/node_modules
 
-          # Copy nested workspace node_modules (for non-hoisted dependencies)
-          # docker cp works on stopped containers - no need for docker exec
-          # NOTE: Package list must stay consistent with extract-builds step below
           for pkg in core mcp-server cli enterprise vscode-extension website doc-retrieval-mcp; do
             mkdir -p /tmp/packages/$pkg
-            if docker cp extract-deps:/app/packages/$pkg/node_modules /tmp/packages/$pkg/ 2>/dev/null; then
+            if docker cp extract-all:/app/packages/$pkg/node_modules /tmp/packages/$pkg/ 2>/dev/null; then
               echo "✓ Copied packages/$pkg/node_modules"
-              # Show first few items for verification
               ls /tmp/packages/$pkg/node_modules/ 2>/dev/null | head -5 || true
             else
               echo "- No node_modules in packages/$pkg (hoisted or doesn't exist)"
             fi
           done
 
-          docker rm extract-deps
+          # === dist/ directories (per-package) + website .astro ===
+          for pkg in core mcp-server cli enterprise vscode-extension website doc-retrieval-mcp; do
+            mkdir -p packages/$pkg
+            if docker cp extract-all:/app/packages/$pkg/dist packages/$pkg/ 2>/dev/null; then
+              echo "✓ Extracted packages/$pkg/dist"
+              ls packages/$pkg/dist/ 2>/dev/null | head -3 || true
+            else
+              echo "- No dist in packages/$pkg"
+            fi
+          done
 
-          # Compress for faster artifact transfer (include packages dir)
-          tar -czf /tmp/node_modules.tar.gz -C /tmp node_modules packages
+          mkdir -p packages/website
+          if docker cp extract-all:/app/packages/website/.astro packages/website/ 2>/dev/null; then
+            echo "✓ Extracted packages/website/.astro"
+          else
+            echo "- No .astro cache in packages/website"
+          fi
 
-          # Show tar contents for debugging
+          # === SMI-2198: Turbo caches (root + per-package) ===
+          if docker cp extract-all:/app/.turbo ./ 2>/dev/null; then
+            echo "✓ Extracted root .turbo cache"
+          fi
+          for pkg in core mcp-server cli enterprise vscode-extension website doc-retrieval-mcp; do
+            if docker cp extract-all:/app/packages/$pkg/.turbo packages/$pkg/ 2>/dev/null; then
+              echo "✓ Extracted packages/$pkg/.turbo"
+            fi
+          done
+
+          docker rm extract-all
+
+          # SMI-4646: zstd -T0 -1 (parallel, fastest level) is ~3-4x faster than gzip with similar ratio
+          tar -cf - -C /tmp node_modules packages | zstd -T0 -1 > /tmp/node_modules.tar.zst
+
           echo "=== Tar contents (packages only) ==="
-          tar -tzf /tmp/node_modules.tar.gz | grep "^packages/" | head -20
+          zstd -d --stdout /tmp/node_modules.tar.zst | tar -tf - | grep "^packages/" | head -20
+
+          echo "=== Extracted package builds ==="
+          du -sh packages/*/dist 2>/dev/null || true
+          echo "=== Turbo cache ==="
+          du -sh .turbo packages/*/.turbo 2>/dev/null || echo "No turbo cache yet"
 
       - name: Upload node_modules artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
           name: node-modules
-          path: /tmp/node_modules.tar.gz
+          path: /tmp/node_modules.tar.zst
           retention-days: 1
-          compression-level: 1 # Minimal - content already gzipped
+          compression-level: 1 # Minimal - content already zstd-compressed
 
       # SMI-2193: Cache package build outputs (dist/ directories)
       # SMI-2198: Also cache Turbo's .turbo directory for faster hash computation
@@ -830,55 +878,9 @@ jobs:
           restore-keys: |
             pkg-builds-turbo-
 
-      # SMI-2193: Extract dist/ directories from Docker image and save to cache
-      # SMI-2198: Also extract Turbo cache for faster subsequent builds
-      - name: Extract package builds from Docker image
-        run: |
-          # Cleanup any leftover containers from previous failed runs
-          docker rm -f extract-builds 2>/dev/null || true
-
-          # Create a container to extract dist directories
-          docker create --name extract-builds skillsmith-ci:${{ github.sha }}
-
-          # Extract dist/ from each package (consistent list with node_modules extraction)
-          for pkg in core mcp-server cli enterprise vscode-extension website doc-retrieval-mcp; do
-            mkdir -p packages/$pkg
-            if docker cp extract-builds:/app/packages/$pkg/dist packages/$pkg/ 2>/dev/null; then
-              echo "✓ Extracted packages/$pkg/dist"
-              ls packages/$pkg/dist/ 2>/dev/null | head -3 || true
-            else
-              echo "- No dist in packages/$pkg"
-            fi
-          done
-
-          # Extract website .astro cache if exists
-          mkdir -p packages/website
-          if docker cp extract-builds:/app/packages/website/.astro packages/website/ 2>/dev/null; then
-            echo "✓ Extracted packages/website/.astro"
-          else
-            echo "- No .astro cache in packages/website"
-          fi
-
-          # SMI-2198: Extract Turbo cache directories
-          if docker cp extract-builds:/app/.turbo ./ 2>/dev/null; then
-            echo "✓ Extracted root .turbo cache"
-          fi
-          for pkg in core mcp-server cli enterprise vscode-extension website doc-retrieval-mcp; do
-            if docker cp extract-builds:/app/packages/$pkg/.turbo packages/$pkg/ 2>/dev/null; then
-              echo "✓ Extracted packages/$pkg/.turbo"
-            fi
-          done
-
-          docker rm extract-builds
-
-          # Show summary
-          echo "=== Extracted package builds ==="
-          du -sh packages/*/dist 2>/dev/null || true
-          echo "=== Turbo cache ==="
-          du -sh .turbo packages/*/.turbo 2>/dev/null || echo "No turbo cache yet"
-
-      # NOTE: Package builds are cached (line 392) for future runs, not uploaded as artifact
-      # The cache provides cross-run benefits without the per-run upload overhead (~30-60s)
+      # NOTE: Package builds are cached via the "Cache package builds and Turbo" step above
+      # for future runs, not uploaded as artifact. The cache provides cross-run benefits
+      # without the per-run upload overhead (~30-60s).
 
   # Parallel quality checks using Docker container
   # SMI-708: All jobs now use pre-extracted node_modules instead of npm ci
@@ -904,7 +906,10 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          sudo apt-get update && sudo apt-get install -y git-crypt
+          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
@@ -931,7 +936,7 @@ jobs:
         if: steps.download-docker.outcome == 'success'
         continue-on-error: true
         run: |
-          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
@@ -957,7 +962,7 @@ jobs:
 
       - name: Extract node_modules
         if: steps.load-image.outcome == 'success'
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       - name: Run ESLint (Docker)
         if: steps.load-image.outcome == 'success'
@@ -1006,7 +1011,10 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          sudo apt-get update && sudo apt-get install -y git-crypt
+          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
@@ -1033,7 +1041,7 @@ jobs:
         if: steps.download-docker.outcome == 'success'
         continue-on-error: true
         run: |
-          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
@@ -1061,7 +1069,7 @@ jobs:
         if: steps.load-image.outcome == 'success'
         run: |
           # Extract to workspace - tar will merge with existing packages/ directory
-          tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+          zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
           # Verify AWS SDK was extracted for enterprise package (required for typecheck)
           echo "=== Verifying nested node_modules extraction ==="
@@ -1073,7 +1081,7 @@ jobs:
             echo "Contents of packages/enterprise/:"
             ls -la ${{ github.workspace }}/packages/enterprise/ || true
             echo "Checking tar contents:"
-            tar -tzf /tmp/node_modules.tar.gz | grep "enterprise" | head -10 || echo "No enterprise in tar"
+            zstd -d --stdout /tmp/node_modules.tar.zst | tar -tf - | grep "enterprise" | head -10 || echo "No enterprise in tar"
           fi
 
       - name: Run TypeScript type check (Docker)
@@ -1116,7 +1124,10 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          sudo apt-get update && sudo apt-get install -y git-crypt
+          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
@@ -1143,7 +1154,7 @@ jobs:
         if: steps.download-docker.outcome == 'success'
         continue-on-error: true
         run: |
-          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
@@ -1171,7 +1182,7 @@ jobs:
         if: steps.load-image.outcome == 'success'
         run: |
           # Extract to workspace - tar will merge with existing packages/ directory
-          tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+          zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
           # Verify AWS SDK was extracted for enterprise package
           echo "=== Verifying nested node_modules extraction ==="
@@ -1259,7 +1270,10 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          sudo apt-get update && sudo apt-get install -y git-crypt
+          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
@@ -1281,7 +1295,7 @@ jobs:
       # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
         run: |
-          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
@@ -1294,7 +1308,7 @@ jobs:
           fi
 
       - name: Extract node_modules
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       - name: Build project
         run: |
@@ -1334,7 +1348,10 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          sudo apt-get update && sudo apt-get install -y git-crypt
+          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
@@ -1356,7 +1373,7 @@ jobs:
       # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
         run: |
-          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
@@ -1369,7 +1386,7 @@ jobs:
           fi
 
       - name: Extract node_modules
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       - name: Run dependency audit in Docker
         # Fail on high/critical vulnerabilities in production deps only
@@ -1431,7 +1448,10 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          sudo apt-get update && sudo apt-get install -y git-crypt
+          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
@@ -1453,7 +1473,7 @@ jobs:
       # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
         run: |
-          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
@@ -1466,7 +1486,7 @@ jobs:
           fi
 
       - name: Extract node_modules
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       - name: Run standards audit in Docker
         run: |
@@ -1505,7 +1525,10 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          sudo apt-get update && sudo apt-get install -y git-crypt
+          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
           echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
@@ -1531,7 +1554,7 @@ jobs:
       - name: Load Docker image
         if: steps.changes.outputs.website == 'true'
         run: |
-          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
@@ -1544,7 +1567,7 @@ jobs:
 
       - name: Extract node_modules
         if: steps.changes.outputs.website == 'true'
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       - name: Build website in Docker
         if: steps.changes.outputs.website == 'true'
@@ -1639,7 +1662,7 @@ jobs:
       # SMI-2247: Non-critical job - warn on re-tag failure instead of failing
       - name: Load Docker image
         run: |
-          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
@@ -1651,7 +1674,7 @@ jobs:
           fi
 
       - name: Extract node_modules
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       - name: Run automated code review
         id: code-review
@@ -1743,7 +1766,7 @@ jobs:
         if: steps.download-docker.outcome == 'success'
         continue-on-error: true
         run: |
-          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
@@ -1769,7 +1792,7 @@ jobs:
 
       - name: Extract node_modules
         if: steps.load-image.outcome == 'success'
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       # SMI-970: This build is intentional, not a duplicate
       # The Test job builds for test execution, but that output is discarded
@@ -1843,7 +1866,7 @@ jobs:
       # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       - name: Load Docker image
         run: |
-          gunzip -c /tmp/skillsmith-ci.tar.gz | docker load
+          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
           LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
           if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
@@ -1856,7 +1879,7 @@ jobs:
           fi
 
       - name: Extract node_modules
-        run: tar -xzf /tmp/node_modules.tar.gz -C ${{ github.workspace }}
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       - name: Build packages in Docker
         run: |
