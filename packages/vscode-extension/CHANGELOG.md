@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+- Marketplace keywords: add `agent-skills`, `cursor`, `copilot` so the extension surfaces beyond the Claude Code search.
+- Welcome view: clarify that Skillsmith works with any agent client that supports skills, not just Claude Code.
+
 ## [0.2.1] - 2026-04-17
 
 ### Fixed

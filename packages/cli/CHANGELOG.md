@@ -4,6 +4,7 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+- **Chore**: SMI-4575 npm keywords add `agent-skills`, `cursor`, `copilot` — unblocks discovery beyond the `claude-code` keyword as the rebrand sweep generalises to multi-client. No CLI behaviour change.
 - **Bump**: `@skillsmith/core` dep range to `^0.5.8` — pulls in SMI-4563 native SQLite driver auto-install via `optionalDependencies`. cli's own version unchanged; fresh installs of `@skillsmith/cli@0.5.12` will now resolve `core@0.5.8` and get native better-sqlite3 by default.
 
 ## v0.5.12
