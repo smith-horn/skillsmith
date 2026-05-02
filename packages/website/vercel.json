@@ -3,7 +3,6 @@
   "framework": "astro",
   "installCommand": "npm install",
   "buildCommand": "npm run build",
-  "outputDirectory": "packages/website/.vercel/output/static",
   "redirects": [
     {
       "source": "/:path*",

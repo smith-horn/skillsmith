@@ -25,6 +25,10 @@ import {
   findReturningTableAmbiguity,
   findUncoveredSurfacePaths,
 } from './audit-standards-helpers.mjs'
+import {
+  VERCEL_JSON_SHARED_FIELDS,
+  validateVercelJsonSync,
+} from './audit-vercel-sync-helpers.mjs'
 
 const RED = '\x1b[31m'
 const GREEN = '\x1b[32m'
@@ -2514,23 +2518,42 @@ console.log(`\n${BOLD}37. Workflow setup-node node-version drift (SMI-4489)${RES
   }
 }
 
-// SMI-4592: vercel.json sync — root vercel.json (used by git-integrated
-// preview/staging deploys when project rootDirectory=null) and
-// packages/website/vercel.json (used by `vercel --prod` from packages/website/)
-// must stay byte-identical. Drift would mean preview/staging and prod ship
-// different redirects/headers/CSP, and post-deploy smoke can only catch that
-// after the fact. This audit catches it pre-merge.
-console.log(`\n${BOLD}38. vercel.json sync (SMI-4592)${RESET}`)
+// SMI-4641 (was SMI-4592 byte-identity): vercel.json structural sync.
+// Two vercel.json files exist by design — they target different deploy paths:
+//   • root vercel.json: read by Vercel's git-integrated deploy (rootDirectory=null
+//     on the project). `buildCommand` here must materialize BOA at REPO-ROOT
+//     `.vercel/output/`, hence the `cp -r packages/website/.vercel/output …` postbuild
+//     step. The @astrojs/vercel adapter writes to `packages/website/.vercel/output/`,
+//     but `vercel build` reads from `<projectRoot>/.vercel/output/`.
+//   • packages/website/vercel.json: read by `cd packages/website && vercel --prod`.
+//     The local CLI's `vercel build` runs with cwd=packages/website/, so BOA is
+//     written and read at `packages/website/.vercel/output/` — no postbuild copy needed.
+//
+// What MUST match across both files (else preview/staging and prod ship divergent UX):
+//   • framework, installCommand, redirects, headers
+// What is ALLOWED to differ:
+//   • buildCommand (root needs the BOA postbuild copy; website-local does not)
+//   • outputDirectory (today not set in either — the cp-step makes it unnecessary;
+//     if reintroduced, validate as a relative POSIX path with no `..` segments)
+console.log(`\n${BOLD}38. vercel.json structural sync (SMI-4641)${RESET}`)
 try {
-  const rootVercel = readFileSync('vercel.json', 'utf8').trim()
-  const websiteVercel = readFileSync('packages/website/vercel.json', 'utf8').trim()
-  if (rootVercel !== websiteVercel) {
+  const root = JSON.parse(readFileSync('vercel.json', 'utf8'))
+  const website = JSON.parse(readFileSync('packages/website/vercel.json', 'utf8'))
+  const result = validateVercelJsonSync(root, website)
+  if (!result.ok && result.kind === 'drift') {
     fail(
-      'vercel.json drift between repo root and packages/website/',
-      'Run: cp packages/website/vercel.json vercel.json (or vice versa). The git-integrated deploy reads root vercel.json (rootDirectory=null on the Vercel project); `vercel --prod` from packages/website/ reads the website-local copy. They must match or staging and prod ship different redirects/headers.'
+      `vercel.json drift on ${result.drifted.join(', ')} between repo root and packages/website/`,
+      `Sync the listed fields. Both files ship redirects/headers/CSP to end users; divergence means preview/staging and prod render differently. \`buildCommand\` and \`outputDirectory\` are allowed to differ because the two files target different cwd contexts (repo root vs packages/website/).`
+    )
+  } else if (!result.ok && result.kind === 'shape') {
+    fail(
+      `vercel.json#outputDirectory has an invalid path shape on ${result.side} (value: ${JSON.stringify(result.value)})`,
+      'outputDirectory must be a non-empty relative POSIX path: no leading "/", no ".." segments, no backslashes. If unset (preferred — let the buildCommand materialize BOA), drop the field.'
     )
   } else {
-    pass('vercel.json byte-identical between repo root and packages/website/')
+    pass(
+      `vercel.json structural sync OK (${VERCEL_JSON_SHARED_FIELDS.join('/')} match; buildCommand/outputDirectory may differ by design)`
+    )
   }
 } catch (e) {
   warn('Could not check vercel.json sync: ' + e.message)

@@ -21,6 +21,14 @@
       "checks": ["check_device_page_renders"]
     },
     {
+      "id": "website-homepage-canary",
+      "owner": "always-on-canary",
+      "trigger_globs": [],
+      "always_run": true,
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_website_homepage_renders"]
+    },
+    {
       "id": "website-homepage",
       "owner": "website",
       "trigger_globs": [

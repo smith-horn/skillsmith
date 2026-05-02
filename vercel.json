@@ -2,8 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "astro",
   "installCommand": "npm install",
-  "buildCommand": "npm run build",
-  "outputDirectory": "packages/website/.vercel/output/static",
+  "buildCommand": "npm run build && rm -rf .vercel/output && mkdir -p .vercel && cp -r packages/website/.vercel/output .vercel/output",
   "redirects": [
     {
       "source": "/:path*",
