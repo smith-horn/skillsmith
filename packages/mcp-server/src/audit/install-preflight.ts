@@ -205,7 +205,7 @@ function buildCandidateSuggestion(args: {
   const firstFree = chain.candidates.find((c) => !lowercaseInventory.has(c.toLowerCase()))
   const suggested = firstFree ?? chain.candidates[0] ?? args.candidate.identifier
 
-  const reason = buildReason(args.flag)
+  const reason = buildReason(args.flag, args.candidate.projectedSourcePath)
 
   return {
     suggestion: {
@@ -221,15 +221,57 @@ function buildCandidateSuggestion(args: {
   }
 }
 
-function buildReason(flag: ExactCollisionFlag | GenericTokenFlag | SemanticCollisionFlag): string {
+function buildReason(
+  flag: ExactCollisionFlag | GenericTokenFlag | SemanticCollisionFlag,
+  candidatePath?: string
+): string {
   if (flag.kind === 'exact') {
-    const others = flag.entries.map((e) => `${e.kind}:${e.identifier}`).join(', ')
+    // Exclude the candidate from the rendered list so the message reads
+    // as "X collides with the existing entries", not "X collides with X
+    // and the existing entries".
+    const others = flag.entries
+      .filter((e) => e.source_path !== candidatePath)
+      .map((e) => `${e.kind}:${e.identifier}`)
+      .join(', ')
     return `exact collision with ${others}`
   }
   if (flag.kind === 'generic') {
     return `generic-token flag (${flag.matchedTokens.join(', ')})`
   }
   return `semantic overlap (cosine ${flag.cosineScore.toFixed(2)}) with ${flag.entryB.identifier}`
+}
+
+/**
+ * Filter out the candidate skill's own prior on-disk presence from the
+ * inventory snapshot.
+ *
+ * On reinstall (`force: true`), `scanLocalInventory` returns an entry for
+ * the already-installed skill at `<projectedSourcePath>/SKILL.md`. If we
+ * left it in `existingInventory`, the augmented inventory would contain
+ * both the prior entry AND the synthesized candidate with the same
+ * `identifier`, and `detectExactCollisions` would surface a false-positive
+ * "namespace collision" that blocks reinstall in `preventative` mode.
+ *
+ * The reinstall flow is owned by `install.conflict.ts` (three-way merge,
+ * backup, force semantics). Pre-flight is for *new* namespace conflicts
+ * with *other* skills, not for the candidate's own prior copy.
+ */
+function excludeSelfReinstall(
+  existing: ReadonlyArray<InventoryEntry>,
+  candidate: CandidateSkill
+): InventoryEntry[] {
+  const candidateDir = candidate.projectedSourcePath
+  const candidateIdentifier = candidate.identifier.toLowerCase()
+  return existing.filter((entry) => {
+    if (entry.kind !== 'skill') return true
+    if (entry.identifier.toLowerCase() !== candidateIdentifier) return true
+    // Skill entries' source_path is `<dir>/SKILL.md`; match by parent dir.
+    // Also accept exact-equality for forward-compat with future synthesis
+    // shapes that may use the directory path directly.
+    if (entry.source_path === candidateDir) return false
+    if (entry.source_path.startsWith(`${candidateDir}/`)) return false
+    return true
+  })
 }
 
 /**
@@ -250,11 +292,15 @@ export async function runInstallPreflight(
   // ULID even when the inner detector throws before producing a result.
   const auditId = newAuditId()
 
+  let inventoryWithoutSelf: InventoryEntry[]
   let augmentedInventory: InventoryEntry[]
   let result: InventoryAuditResult
   try {
+    // Exclude the candidate's own prior on-disk copy (reinstall) so the
+    // detector doesn't surface it as a namespace collision against itself.
+    inventoryWithoutSelf = excludeSelfReinstall(existingInventory, candidate)
     const candidateEntry = synthesizeCandidateEntry(candidate)
-    augmentedInventory = [...existingInventory, candidateEntry]
+    augmentedInventory = [...inventoryWithoutSelf, candidateEntry]
     result = await detectCollisions(augmentedInventory, {
       auditId,
       tier,
@@ -262,6 +308,9 @@ export async function runInstallPreflight(
     })
   } catch (err) {
     // Edit 2: pre-flight failure is always non-blocking. Log + degrade.
+    // The catch covers `excludeSelfReinstall` (rejects non-iterable
+    // inputs), `synthesizeCandidateEntry`, the spread, AND
+    // `detectCollisions`. Any pre-flight failure → install proceeds.
     console.warn(
       `[install-preflight] detector failed (${(err as Error).message}); degrading to non-blocking pass`
     )
@@ -302,7 +351,11 @@ export async function runInstallPreflight(
       flag,
       candidate,
       candidateEntry,
-      existingInventory,
+      // Pass the self-excluded snapshot so the chain doesn't treat the
+      // candidate's own prior install (during a force-reinstall) as a
+      // colliding entry — that would force `chainExhausted: true` on
+      // every reinstall.
+      existingInventory: inventoryWithoutSelf,
     })
 
     warnings.push({
@@ -337,7 +390,7 @@ function buildWarningMessage(
   candidate: CandidateSkill,
   suggested: string
 ): string {
-  const reason = buildReason(flag)
+  const reason = buildReason(flag, candidate.projectedSourcePath)
   return `Namespace ${flag.kind} collision installing "${candidate.identifier}": ${reason}. Suggested rename: "${suggested}".`
 }
 

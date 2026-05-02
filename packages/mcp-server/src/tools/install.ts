@@ -99,8 +99,10 @@ export async function installSkill(input: unknown, _context?: ToolContext): Prom
   if (!parsed.success) {
     const message = parsed.error.issues
       .map((issue) => {
-        const path = issue.path.length > 0 ? issue.path.join('.') : '<root>'
-        return `${path}: ${issue.message}`
+        // Renamed from `path` to `issuePath` to avoid shadowing the
+        // module-level `path` import (no-shadow hygiene).
+        const issuePath = issue.path.length > 0 ? issue.path.join('.') : '<root>'
+        return `${issuePath}: ${issue.message}`
       })
       .join('; ')
     return buildValidationError(message)

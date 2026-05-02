@@ -31,6 +31,7 @@ import {
   type CandidateSkill,
   type RunInstallPreflightResult,
 } from '../audit/install-preflight.js'
+import { newAuditId } from '../audit/audit-history.js'
 import { readLedger } from '../audit/namespace-overrides.js'
 import { applyLedgerReplay } from './install.ledger-replay.js'
 import { scanLocalInventory } from '../utils/local-inventory.js'
@@ -159,6 +160,10 @@ export async function runNamespaceGate(input: NamespaceGateInput): Promise<Names
 /**
  * Degraded-proceed shape used when ledger read, inventory scan, or
  * pre-flight throws. Caller continues the install with no warnings.
+ *
+ * `auditId` is allocated via `newAuditId()` even on the degraded path so
+ * the `AuditId` brand invariant holds for any defensive consumer that
+ * reads `preflight.auditId` without checking `decision` first.
  */
 function degradedProceed(candidate: CandidateSkill): NamespaceGateOutcome {
   return {
@@ -167,8 +172,7 @@ function degradedProceed(candidate: CandidateSkill): NamespaceGateOutcome {
     preflight: {
       warnings: [],
       pendingCollision: null,
-      // The cast is safe — caller ignores `auditId` on the degraded path.
-      auditId: '' as RunInstallPreflightResult['auditId'],
+      auditId: newAuditId(),
     },
     resultPatch: {
       installComplete: true,

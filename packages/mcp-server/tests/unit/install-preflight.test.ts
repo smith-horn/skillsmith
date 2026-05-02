@@ -244,6 +244,30 @@ describe('runInstallPreflight', () => {
     expect(result.pendingCollision?.chainExhausted).toBe(true)
   })
 
+  it('does NOT flag a reinstall as a self-collision (governance-fix regression)', async () => {
+    // Reinstall scenario: the candidate skill is already installed at the
+    // projected location. `scanLocalInventory` returns an entry for it; the
+    // pre-flight must EXCLUDE that prior copy from the augmented inventory
+    // so `detectExactCollisions` doesn't surface a self-collision and
+    // block reinstall in `preventative` mode.
+    const c = candidate({ identifier: 'code-helper' })
+    const priorInstall = entry({
+      kind: 'skill',
+      identifier: 'code-helper',
+      // Mirrors the scanner shape: <projectedDir>/SKILL.md
+      source_path: path.join(c.projectedSourcePath, 'SKILL.md'),
+    })
+    const result = await runInstallPreflight({
+      existingInventory: [priorInstall],
+      candidate: c,
+      mode: 'preventative',
+      tier: 'community',
+    })
+
+    expect(result.warnings).toEqual([])
+    expect(result.pendingCollision).toBeNull()
+  })
+
   it('continues non-blocking when writeAuditHistory fails (case 8)', async () => {
     // Edit 2 — pre-flight is non-blocking. A failed audit-history write
     // (e.g. permissions-denied on `~/.skillsmith/audits/`) must not surface
