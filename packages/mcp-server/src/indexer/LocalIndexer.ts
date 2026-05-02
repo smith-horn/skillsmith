@@ -15,6 +15,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
+import { indexLocalSkill } from '@skillsmith/core'
 import { parseFrontmatter, type SkillFrontmatter } from './FrontmatterParser.js'
 
 /**
@@ -137,60 +138,34 @@ export class LocalIndexer {
   /**
    * Index a single skill directory.
    *
+   * SMI-4587 PR #4 / NEW-E-2: delegates the per-skill metadata extraction
+   * to the new `indexLocalSkill` core helper. This keeps the LocalIndexer
+   * focused on directory traversal + caching, and lets the namespace-audit
+   * `bootstrapUnmanagedSkills` callback share the same code path. The
+   * MCP-side `parseFrontmatter` (richer than the core fallback) is injected
+   * so behaviour stays identical to pre-refactor.
+   *
    * @param skillDir - Path to the skill directory
    * @param dirName - Name of the directory
    * @returns LocalSkill object or null if directory should be skipped
    */
-  indexSkillDir(skillDir: string, dirName: string): LocalSkill | null {
-    const skillMdPath = path.join(skillDir, 'SKILL.md')
-    let hasSkillMd = false
-    let content = ''
-    let lastModified: string | null = null
-
+  indexSkillDir(skillDir: string, _dirName: string): LocalSkill | null {
     try {
-      // Get directory stats
-      const stats = fs.statSync(skillDir)
-      lastModified = stats.mtime.toISOString()
-
-      // Try to read SKILL.md
-      if (fs.existsSync(skillMdPath)) {
-        hasSkillMd = true
-        content = fs.readFileSync(skillMdPath, 'utf-8')
-      }
+      // The core helper derives `name` from `frontmatter.name || basename`,
+      // which matches the pre-refactor `frontmatter.name || dirName`
+      // contract because `dirName === path.basename(skillDir)` for every
+      // call site in this class.
+      return indexLocalSkill(skillDir, {
+        parseFrontmatter: parseFrontmatterAdapter,
+      })
     } catch (error) {
-      // If we can't read the directory, skip it
+      // If we can't read the directory, skip it (parity with pre-refactor).
       console.warn(
         '[LocalIndexer] Failed to read skill directory:',
         skillDir,
         error instanceof Error ? error.message : String(error)
       )
       return null
-    }
-
-    // Parse frontmatter (using imported function from FrontmatterParser)
-    const frontmatter = parseFrontmatter(content)
-
-    // Determine skill name
-    const name = frontmatter.name || dirName
-
-    // Calculate quality score
-    const qualityScore = this.calculateQualityScore(frontmatter, hasSkillMd)
-
-    return {
-      id: `local/${name}`,
-      name,
-      description: frontmatter.description,
-      author: frontmatter.author || 'local',
-      tags: frontmatter.tags,
-      qualityScore,
-      trustTier: 'local',
-      source: 'local',
-      path: skillDir,
-      hasSkillMd,
-      lastModified,
-      repository: frontmatter.repository,
-      // SMI-2760: Compatibility tags from frontmatter
-      compatibility: frontmatter.compatibility.length > 0 ? frontmatter.compatibility : undefined,
     }
   }
 
@@ -327,6 +302,36 @@ export class LocalIndexer {
 
       return false
     })
+  }
+}
+
+/**
+ * Adapter that bridges the MCP-side richer `parseFrontmatter` (returns
+ * `SkillFrontmatter` with `triggers`/`homepage`/`version`) to the narrower
+ * `IndexLocalSkillFrontmatter` shape consumed by the core helper. The two
+ * shapes share fields by name; the adapter just narrows the surface so the
+ * indexer's behaviour stays bit-identical to pre-refactor.
+ */
+function parseFrontmatterAdapter(content: string): {
+  name: string | null
+  description: string | null
+  author: string | null
+  tags: string[]
+  version: string | null
+  repository: string | null
+  homepage: string | null
+  compatibility: string[]
+} {
+  const fm: SkillFrontmatter = parseFrontmatter(content)
+  return {
+    name: fm.name,
+    description: fm.description,
+    author: fm.author,
+    tags: fm.tags,
+    version: fm.version,
+    repository: fm.repository,
+    homepage: fm.homepage,
+    compatibility: fm.compatibility,
   }
 }
 
