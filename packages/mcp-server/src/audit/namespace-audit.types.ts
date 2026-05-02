@@ -12,34 +12,17 @@
  * Wave 2 plan §4 + Edit 3 — placed in Step 1 so PRs #3/#4 import without
  * rework.
  *
- * Forward-declaration note: `RenameSuggestion` lands in
- * `./rename-engine.types.ts` in PR #2 of the Wave 2 stack. PR #1 ships only
- * the ledger reader/writer, which does not reference `NamespaceWarning` or
- * `PendingCollision`. To avoid a phantom dependency on a not-yet-shipped
- * file, the suggestion field is typed structurally below using
- * `RenameSuggestionRef` — a minimal shape pinned to the spec in plan §1.
- * PR #2 replaces the ref with `import type { RenameSuggestion } from
- * './rename-engine.types.js'`; both shapes are structurally compatible.
+ * `RenameSuggestion` is imported from `./rename-engine.types.js` (PR #2). The
+ * PR #1 forward-declaration shim has been retired now that the canonical
+ * type ships alongside the rename engine.
  */
 
 import type { CollisionId } from './collision-detector.types.js'
+import type { RenameSuggestion } from './rename-engine.types.js'
 
-/**
- * Forward-declaration shim for `RenameSuggestion` (defined in
- * `./rename-engine.types.ts` as of Wave 2 PR #2). The shape mirrors the spec
- * in `docs/internal/implementation/smi-4588-rename-engine-ledger-install.md`
- * §1 verbatim. PR #2 widens this into the full canonical type and replaces
- * the alias below with a direct import.
- */
-export interface RenameSuggestionRef {
-  collisionId: CollisionId
-  /** `'rename_command_file' | 'rename_agent_file' | 'rename_skill_dir_and_frontmatter'`. */
-  applyAction: string
-  currentName: string
-  /** First non-colliding candidate from `generateSuggestionChain`. */
-  suggested: string
-  reason: string
-}
+// `CollisionId` is referenced by `NamespaceWarning.collisionId`; do not remove.
+// `RenameSuggestion` is referenced by `NamespaceWarning.suggestion` and
+// `PendingCollision.suggestedRename`; PR #2 swap-in.
 
 /**
  * A non-blocking namespace collision surfaced by the install pre-flight
@@ -62,7 +45,7 @@ export interface NamespaceWarning {
    * chain is the agent's job — `suggestion` is the first non-colliding
    * candidate.
    */
-  suggestion: RenameSuggestionRef
+  suggestion: RenameSuggestion
   /**
    * FK to the audit history written by `runInstallPreflight` (PR #3). Lets
    * a later `apply_namespace_rename` call (Wave 4) re-read the original
@@ -90,7 +73,7 @@ export interface PendingCollision {
    * First non-colliding candidate from `generateSuggestionChain`. The agent
    * surfaces this to the user as the recommended rename.
    */
-  suggestedRename: RenameSuggestionRef
+  suggestedRename: RenameSuggestion
   /**
    * Up to 3 candidates from `generateSuggestionChain` (decision #11). The
    * agent has the full chain so it can present alternatives without
