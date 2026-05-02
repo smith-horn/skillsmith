@@ -45,6 +45,8 @@ import type { AuditMode, Tier } from '@skillsmith/core/config/audit-mode'
 
 import { generateSuggestionChain } from './suggestion-chain.js'
 import type { RenameAction, RenameSuggestion } from './rename-engine.types.js'
+import { runEditSuggester } from './edit-suggester.js'
+import type { RecommendedEdit } from './edit-suggester.types.js'
 
 /**
  * One synthesized candidate skill being considered for install. The
@@ -336,6 +338,25 @@ export async function runInstallPreflight(
     return { warnings: [], pendingCollision: null, auditId }
   }
 
+  // SMI-4589 Wave 3: run the edit-suggester over the audit result (which
+  // already contains the candidate-augmented inventory). We attach the
+  // matching edit to each semantic NamespaceWarning by collisionId. Edge
+  // cases:
+  //   - Edit-suggester throws → log + degrade to no edits (preserves the
+  //     non-blocking install contract per Wave 2 Edit 2). Failure of the
+  //     edit surface MUST NOT brick the install pre-flight.
+  //   - Non-semantic warnings (`exact`, `generic`) never carry a
+  //     recommendedEdit — the suggester only runs over semanticCollisions.
+  let editsByCollisionId = new Map<string, RecommendedEdit>()
+  try {
+    const recommendedEdits = await runEditSuggester(result)
+    editsByCollisionId = new Map(recommendedEdits.map((e) => [e.collisionId, e]))
+  } catch (err) {
+    console.warn(
+      `[install-preflight] edit-suggester failed (${(err as Error).message}); proceeding without prose edits`
+    )
+  }
+
   // Build a NamespaceWarning + suggestion-chain for each candidate-related
   // flag. We surface the first flag's chain in `pendingCollision` (the
   // dominant collision); all flags surface in `warnings[]`.
@@ -358,6 +379,8 @@ export async function runInstallPreflight(
       existingInventory: inventoryWithoutSelf,
     })
 
+    const recommendedEdit = editsByCollisionId.get(flag.collisionId as string)
+
     warnings.push({
       collisionId: flag.collisionId as CollisionId,
       kind: flag.kind,
@@ -365,6 +388,7 @@ export async function runInstallPreflight(
       message: buildWarningMessage(flag, candidate, built.suggestion.suggested),
       suggestion: built.suggestion,
       auditId,
+      recommendedEdit,
     })
 
     // First candidate-flag becomes the pendingCollision envelope.
