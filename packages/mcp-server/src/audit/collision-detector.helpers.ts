@@ -1,16 +1,30 @@
 /**
  * @fileoverview Pure pass functions for the collision detector
- *               (SMI-4587 Wave 1 Step 4).
+ *               (SMI-4587 Wave 1 Steps 4–5).
  * @module @skillsmith/mcp-server/audit/collision-detector.helpers
  *
  * Each pass is a pure function over `InventoryEntry[]`. The orchestrator
- * (`collision-detector.ts`) wires them together. Generic + semantic
- * passes land in subsequent PRs; this PR ships the exact pass only.
+ * (`collision-detector.ts`) wires them together. Wave 1 PR1 shipped the
+ * exact-name pass; this file now also exposes the generic-token pass
+ * (Step 5). Semantic pass lands in a subsequent PR.
  */
 
+import { GENERIC_TRIGGERS } from '@skillsmith/core'
+
 import type { InventoryEntry } from '../utils/local-inventory.types.js'
-import type { ExactCollisionFlag } from './collision-detector.types.js'
+import type { AuditId, ExactCollisionFlag, GenericTokenFlag } from './collision-detector.types.js'
 import { deriveCollisionId } from './audit-history.js'
+import { derivePackDomain, detectGenericTriggerWords } from '../tools/skill-pack-audit.helpers.js'
+
+/**
+ * Stable pack-name input passed to {@link derivePackDomain} when running
+ * the generic-token pass over the user's local inventory. The user's
+ * `~/.claude/` install has no single pack name — using a non-suffixed
+ * sentinel forces `derivePackDomain` to fall through Strategy 1 (which
+ * keys off `-skills` suffixes) and rely on Strategy 2 (mode of per-entry
+ * tags). Centralized here so plan + tests share the same constant.
+ */
+export const LOCAL_INVENTORY_PACK_NAME = 'local-inventory'
 
 /**
  * Normalize an identifier for case-insensitive equality. Mirrors the
@@ -90,4 +104,60 @@ function describeCollision(entries: ReadonlyArray<InventoryEntry>): string {
   }
   const kindList = [...kinds].sort().join(' / ')
   return `${entries.length} entries (${kindList}) share the same identifier "${entries[0]?.identifier ?? ''}"`
+}
+
+/**
+ * Detect generic-trigger-word flags across the local inventory.
+ *
+ * Wraps {@link detectGenericTriggerWords} (the existing skill-pack-audit
+ * helper) and adapts the per-skill flag shape to this audit's
+ * {@link GenericTokenFlag}. Severity is always `warning` here — even
+ * skill-name hits, which the pack helper raises as `error`, are demoted
+ * to `warning` because the inventory audit is detection-only and the
+ * user's existing local install is grandfathered in (rename is opt-in
+ * via Wave 2's apply path).
+ *
+ * `packDomain` is computed once over the entire inventory using
+ * {@link derivePackDomain} with a stable sentinel pack name; Strategy 2
+ * (mode-of-tags) is the load-bearing branch since the user's inventory
+ * has no single pack name. The same `packDomain` is then passed into
+ * every per-entry call, so suggestions like `${packDomain}-${token}`
+ * are consistent across the report.
+ */
+export function detectGenericTokenFlags(
+  inventory: ReadonlyArray<InventoryEntry>,
+  auditId: AuditId
+): GenericTokenFlag[] {
+  const stoplist = GENERIC_TRIGGERS
+  const tagBag = inventory.map((e) => ({ tags: e.meta?.tags }))
+  const packDomain = derivePackDomain(LOCAL_INVENTORY_PACK_NAME, tagBag, stoplist)
+
+  const flags: GenericTokenFlag[] = []
+  for (const entry of inventory) {
+    const wordFlags = detectGenericTriggerWords(
+      entry.meta?.description,
+      entry.identifier,
+      packDomain,
+      stoplist
+    )
+    for (const wf of wordFlags) {
+      flags.push({
+        kind: 'generic',
+        collisionId: deriveCollisionId(auditId, [entry]),
+        identifier: entry.identifier,
+        entry,
+        matchedTokens: [wf.token],
+        severity: 'warning',
+        reason: wf.reason,
+      })
+    }
+  }
+
+  // Stable ordering for downstream consumers: identifier asc, then token asc.
+  flags.sort((a, b) => {
+    const byId = a.identifier.localeCompare(b.identifier)
+    if (byId !== 0) return byId
+    return (a.matchedTokens[0] ?? '').localeCompare(b.matchedTokens[0] ?? '')
+  })
+  return flags
 }

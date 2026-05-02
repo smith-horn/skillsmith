@@ -1,14 +1,18 @@
 /**
- * Unit tests for SMI-4587 Wave 1 Step 4 — exact-name collision detector.
+ * Unit tests for SMI-4587 Wave 1 Steps 4–5 — exact-name + generic-token
+ * collision detector passes.
  *
- * Generic + semantic passes (Steps 5-6) land in subsequent PRs; their
- * tests in the plan's §Tests block are wrapped as `.skip` here with a
- * comment referencing the next PR.
+ * The semantic pass (Step 6) lands in a subsequent PR; its tests in the
+ * plan's §Tests block are wrapped as `.skip` here with a comment.
  */
 
 import { describe, expect, it } from 'vitest'
 
-import { detectCollisions, detectExactCollisions } from '../../src/audit/collision-detector.js'
+import {
+  detectCollisions,
+  detectExactCollisions,
+  detectGenericTokenFlags,
+} from '../../src/audit/collision-detector.js'
 import { newAuditId } from '../../src/audit/audit-history.js'
 import type { InventoryEntry } from '../../src/utils/local-inventory.types.js'
 
@@ -133,12 +137,43 @@ describe('detectCollisions (orchestrator)', () => {
     expect(result.summary.totalFlags).toBe(1)
   })
 
-  it('genericFlags + semanticCollisions are empty placeholders in this PR', async () => {
+  it('semanticCollisions remains an empty placeholder until the semantic-pass PR lands', async () => {
     const result = await detectCollisions([entry({ identifier: 'x' })])
-    expect(result.genericFlags).toEqual([])
     expect(result.semanticCollisions).toEqual([])
-    expect(result.summary.passDurations.generic).toBe(0)
     expect(result.summary.passDurations.semantic).toBe(0)
+  })
+
+  it('genericFlags is populated when entries carry generic-trigger names', async () => {
+    const result = await detectCollisions([
+      entry({ identifier: 'ship', source_path: '/skills/ship/SKILL.md' }),
+    ])
+    expect(result.genericFlags.length).toBeGreaterThan(0)
+    expect(result.genericFlags[0]?.kind).toBe('generic')
+    expect(result.summary.warningCount).toBe(result.genericFlags.length)
+  })
+
+  it('genericFlags is empty for non-generic identifiers + descriptions', async () => {
+    const result = await detectCollisions([
+      entry({
+        identifier: 'kubernetes-helm-release',
+        meta: { description: 'Manage Helm release rollouts on Kubernetes clusters.' },
+      }),
+      entry({
+        identifier: 'terraform-stack',
+        meta: { description: 'Provision Terraform stacks across cloud accounts.' },
+      }),
+    ])
+    expect(result.genericFlags).toEqual([])
+  })
+
+  it('records generic-pass duration in passDurations.generic when flags are produced', async () => {
+    const result = await detectCollisions([
+      entry({ identifier: 'ship', source_path: '/a' }),
+      entry({ identifier: 'review', source_path: '/b' }),
+    ])
+    expect(result.genericFlags.length).toBeGreaterThan(0)
+    expect(result.summary.passDurations.generic).toBeGreaterThanOrEqual(0)
+    expect(result.summary.durationMs).toBeGreaterThanOrEqual(result.summary.passDurations.generic)
   })
 
   it('empty inventory produces empty result', async () => {
@@ -158,13 +193,105 @@ describe('detectCollisions (orchestrator)', () => {
   })
 })
 
-// Generic + semantic pass tests are deferred to subsequent PRs.
-// See plan §Tests / `collision-detector.test.ts` cases 3-8, 10, 12.
-describe.skip('generic-token + semantic passes (subsequent PRs)', () => {
-  it.skip('Step 5: generic-token via detectGenericTriggerWords (next PR)', () => {
-    /* implemented in SMI-4587 Wave 1 PR2 */
+describe('detectGenericTokenFlags (generic-token pass)', () => {
+  it('flags a stoplist token used as a skill name with severity=warning', () => {
+    const auditId = newAuditId()
+    const inv = [entry({ identifier: 'ship', source_path: '/skills/ship/SKILL.md' })]
+    const flags = detectGenericTokenFlags(inv, auditId)
+    expect(flags).toHaveLength(1)
+    const flag = flags[0]!
+    expect(flag.kind).toBe('generic')
+    expect(flag.identifier).toBe('ship')
+    expect(flag.matchedTokens).toEqual(['ship'])
+    expect(flag.severity).toBe('warning')
+    expect(flag.collisionId).toMatch(/^[0-9a-f]{16}$/)
+    expect(flag.entry.source_path).toBe('/skills/ship/SKILL.md')
   })
+
+  it('flags generic tokens that appear in the description', () => {
+    const auditId = newAuditId()
+    const inv = [
+      entry({
+        identifier: 'kubernetes-helm-release',
+        source_path: '/skills/k8s-helm/SKILL.md',
+        meta: { description: 'Use this skill to ship rollouts to clusters.' },
+      }),
+    ]
+    const flags = detectGenericTokenFlags(inv, auditId)
+    // At least one flag for the description hit "ship"; pack helper may also
+    // surface other generic tokens like "use" depending on the curated list.
+    expect(flags.length).toBeGreaterThan(0)
+    expect(flags.every((f) => f.kind === 'generic')).toBe(true)
+    expect(flags.some((f) => f.matchedTokens.includes('ship'))).toBe(true)
+  })
+
+  it('returns empty when no entries hit the stoplist', () => {
+    const auditId = newAuditId()
+    const inv = [
+      entry({
+        identifier: 'kubernetes-helm-release',
+        meta: {
+          description: 'Manage Helm release rollouts across Kubernetes clusters.',
+        },
+      }),
+      entry({
+        identifier: 'terraform-stack-apply',
+        meta: { description: 'Apply Terraform stack changes for cloud infrastructure.' },
+      }),
+    ]
+    expect(detectGenericTokenFlags(inv, auditId)).toEqual([])
+  })
+
+  it('uses derivePackDomain so the suggested rename reflects mode-of-tags', () => {
+    const auditId = newAuditId()
+    const inv = [
+      entry({
+        identifier: 'plan-roadmap',
+        source_path: '/a',
+        meta: { tags: ['planning'] },
+      }),
+      entry({
+        identifier: 'plan-okrs',
+        source_path: '/b',
+        meta: { tags: ['planning'] },
+      }),
+      entry({
+        identifier: 'misc-helper',
+        source_path: '/c',
+        meta: { tags: ['misc'] },
+      }),
+      // Generic-name skill — should pick up "planning-ship" as the suggestion
+      // because the inferred packDomain is "planning".
+      entry({ identifier: 'ship', source_path: '/d', meta: { tags: ['planning'] } }),
+    ]
+    const flags = detectGenericTokenFlags(inv, auditId)
+    const shipFlag = flags.find((f) => f.identifier === 'ship')
+    expect(shipFlag).toBeDefined()
+    expect(shipFlag?.reason).toContain('planning-ship')
+  })
+
+  it('produces deterministic ordering by identifier then matched token', () => {
+    const auditId = newAuditId()
+    const inv = [
+      entry({ identifier: 'ship', source_path: '/a' }),
+      entry({ identifier: 'review', source_path: '/b' }),
+    ]
+    const flags = detectGenericTokenFlags(inv, auditId)
+    const ids = flags.map((f) => f.identifier)
+    const sorted = [...ids].sort()
+    expect(ids).toEqual(sorted)
+  })
+
+  it('returns empty for an empty inventory', () => {
+    const auditId = newAuditId()
+    expect(detectGenericTokenFlags([], auditId)).toEqual([])
+  })
+})
+
+// Semantic-pass tests are deferred to a subsequent PR.
+// See plan §Tests / `collision-detector.test.ts` case 12.
+describe.skip('semantic pass (subsequent PR)', () => {
   it.skip('Step 6: semantic via OverlapDetector (next PR)', () => {
-    /* implemented in SMI-4587 Wave 1 PR2 */
+    /* implemented in a follow-up PR */
   })
 })
