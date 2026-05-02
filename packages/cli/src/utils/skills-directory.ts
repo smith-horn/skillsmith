@@ -6,7 +6,6 @@
 import { readdir, readFile, stat } from 'fs/promises'
 import { createHash } from 'crypto'
 import { join } from 'path'
-import { homedir } from 'os'
 import {
   SkillParser,
   createDatabaseAsync,
@@ -15,6 +14,7 @@ import {
   type Database,
   type TrustTier,
 } from '@skillsmith/core'
+import { getCanonicalInstallPath } from '@skillsmith/core/install'
 import { DEFAULT_DB_PATH } from '../config.js'
 
 export interface InstalledSkill {
@@ -29,12 +29,14 @@ export interface InstalledSkill {
 /**
  * SMI-1630: Search both global and local skill directories
  *
- * Global: ~/.claude/skills/
+ * Global: canonical install path (SMI-4578: routes through
+ *         `@skillsmith/core/install` so the default-client directory is
+ *         defined in exactly one place)
  * Local: ${process.cwd()}/.claude/skills/
  *
  * Local skills take precedence over global skills with the same name.
  */
-const GLOBAL_SKILLS_DIR = join(homedir(), '.claude', 'skills')
+const GLOBAL_SKILLS_DIR = getCanonicalInstallPath()
 
 /**
  * Returns the local skills directory path.

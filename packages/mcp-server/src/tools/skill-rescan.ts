@@ -12,8 +12,8 @@
 import { z } from 'zod'
 import { promises as fs } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
 import { SecurityScanner } from '@skillsmith/core'
+import { getCanonicalInstallPath } from '@skillsmith/core/install'
 
 // ============================================================================
 // Input / Output types
@@ -192,7 +192,7 @@ export async function executeSkillRescan(
   input: SkillRescanInput,
   overrideDir?: string
 ): Promise<SkillRescanResponse> {
-  const skillsDir = overrideDir ?? join(homedir(), '.claude', 'skills')
+  const skillsDir = overrideDir ?? getCanonicalInstallPath()
   const scanner = new SecurityScanner()
 
   // Discover installed skills

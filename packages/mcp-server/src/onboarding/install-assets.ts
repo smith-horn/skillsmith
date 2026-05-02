@@ -9,6 +9,7 @@ import { existsSync, cpSync, mkdirSync, readdirSync } from 'fs'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
 import { fileURLToPath } from 'url'
+import { getCanonicalInstallPath } from '@skillsmith/core/install'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -44,7 +45,10 @@ function getAssetsDir(): string {
 }
 
 const ASSETS_DIR = getAssetsDir()
-const CLAUDE_SKILLS_DIR = join(homedir(), '.claude', 'skills')
+// SMI-4578: routes through canonical install path so default-client
+// directory is defined in exactly one place. Bundled-asset install always
+// targets Claude Code; per-client fan-out is opt-in via `--also-link`.
+const CLAUDE_SKILLS_DIR = getCanonicalInstallPath()
 const SKILLSMITH_DOCS_DIR = join(homedir(), '.skillsmith', 'docs')
 
 /**

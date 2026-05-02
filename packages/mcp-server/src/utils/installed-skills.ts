@@ -13,12 +13,17 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import * as os from 'node:os'
+import { getCanonicalInstallPath } from '@skillsmith/core/install'
 
 /**
- * Default skills directory path
+ * Default skills directory path.
+ *
+ * SMI-4578: routes through `@skillsmith/core/install` so the canonical
+ * Claude Code directory is defined in exactly one place. Per-client paths
+ * (Cursor, Copilot, Windsurf, agents) flow through `getInstallPath(client)`
+ * once Step 5 wires `SKILLSMITH_CLIENT` env-var resolution into callers.
  */
-const DEFAULT_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
+const DEFAULT_SKILLS_DIR = getCanonicalInstallPath()
 
 /**
  * Result from parsing a SKILL.md file

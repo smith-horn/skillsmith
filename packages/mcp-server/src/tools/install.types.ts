@@ -6,6 +6,7 @@
 import { z } from 'zod'
 import type { ScanReport, ScannerOptions } from '@skillsmith/core'
 import type { TrustTier } from '@skillsmith/core'
+import { getCanonicalInstallPath } from '@skillsmith/core/install'
 import * as path from 'path'
 import * as os from 'os'
 
@@ -221,7 +222,9 @@ export interface OptimizationInfo {
 // Paths
 // ============================================================================
 
-export const CLAUDE_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
+// SMI-4578: routes through canonical install path so default-client
+// directory is defined in exactly one place.
+export const CLAUDE_SKILLS_DIR = getCanonicalInstallPath()
 export const SKILLSMITH_DIR = path.join(os.homedir(), '.skillsmith')
 export const MANIFEST_PATH = path.join(SKILLSMITH_DIR, 'manifest.json')
 

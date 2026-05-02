@@ -6,6 +6,7 @@
 
 import { join } from 'path'
 import { homedir } from 'os'
+import { getCanonicalInstallPath } from '@skillsmith/core/install'
 
 /**
  * Default database path: ~/.skillsmith/skills.db
@@ -14,9 +15,14 @@ import { homedir } from 'os'
 export const DEFAULT_DB_PATH = join(homedir(), '.skillsmith', 'skills.db')
 
 /**
- * Default skills installation directory: ~/.claude/skills
+ * Default skills installation directory.
+ *
+ * SMI-4578: routes through the canonical multi-client path table so the
+ * default-client (Claude Code) directory is defined in exactly one place.
+ * Callers that need a non-default client should call `getInstallPath(client)`
+ * from `@skillsmith/core/install` instead of overriding this constant.
  */
-export const DEFAULT_SKILLS_DIR = join(homedir(), '.claude', 'skills')
+export const DEFAULT_SKILLS_DIR = getCanonicalInstallPath()
 
 /**
  * Default manifest path: ~/.skillsmith/manifest.json

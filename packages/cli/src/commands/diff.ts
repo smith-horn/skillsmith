@@ -14,8 +14,8 @@ import { Command } from 'commander'
 import chalk from 'chalk'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
-import { homedir } from 'os'
 import { classifyChange } from '@skillsmith/core'
+import { getCanonicalInstallPath } from '@skillsmith/core/install'
 import { requireTier } from '../utils/require-tier.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { loadManifest } from '../utils/manifest.js'
@@ -94,7 +94,7 @@ function diffSections(oldContent: string, newContent: string): SectionDiff {
 // ============================================================================
 
 async function readInstalledSkillContent(skillName: string): Promise<string | null> {
-  const skillPath = join(homedir(), '.claude', 'skills', skillName, 'SKILL.md')
+  const skillPath = join(getCanonicalInstallPath(), skillName, 'SKILL.md')
   try {
     return await readFile(skillPath, 'utf-8')
   } catch {
