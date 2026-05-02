@@ -23,12 +23,14 @@ import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 
 import type {
+  AuditId,
   ExactCollisionFlag,
   GenericTokenFlag,
   InventoryAuditResult,
   SemanticCollisionFlag,
 } from './collision-detector.types.js'
 import type { InventoryEntry } from '../utils/local-inventory.types.js'
+import type { RenameSuggestion } from './rename-engine.types.js'
 
 export interface AuditReportRenderOptions {
   /**
@@ -37,6 +39,20 @@ export interface AuditReportRenderOptions {
    * deterministic; production callers pass nothing.
    */
   generatedAt?: Date
+  /**
+   * Per-collision rename suggestions to render in the "Recommended edits"
+   * section (SMI-4588 Wave 2 PR #4 / Step 8). When provided AND non-empty,
+   * the writer replaces the Wave 1 placeholder with a table of
+   * `currentName → suggested` pairs plus a copy-paste-ready CLI
+   * invocation per row. Pass nothing (or an empty array) to keep the
+   * Wave 1 placeholder behavior — backward-compatible with existing
+   * audit-report consumers.
+   *
+   * Wave 4 wires this from `runInstallPreflight` /
+   * `generateRenameSuggestions` outputs; Wave 2 ships only the
+   * rendering surface.
+   */
+  renameSuggestions?: ReadonlyArray<RenameSuggestion>
 }
 
 export interface AuditReportWriteOptions extends AuditReportRenderOptions {
@@ -81,7 +97,7 @@ export function renderAuditReport(
     sections.push(renderSemanticCollisions(result.semanticCollisions))
   }
 
-  sections.push(renderRecommendedEdits())
+  sections.push(renderRecommendedEdits(opts.renameSuggestions, result.auditId))
 
   // Single trailing newline; sections already terminate with `\n`.
   return sections.join('\n').replace(/\n+$/, '\n')
@@ -99,7 +115,10 @@ export async function writeAuditReport(
   const reportPath = path.join(opts.auditDir, 'report.md')
   const tmpPath = `${reportPath}.tmp`
   await fs.mkdir(opts.auditDir, { recursive: true })
-  const body = renderAuditReport(result, { generatedAt: opts.generatedAt })
+  const body = renderAuditReport(result, {
+    generatedAt: opts.generatedAt,
+    renameSuggestions: opts.renameSuggestions,
+  })
   await fs.writeFile(tmpPath, body, 'utf-8')
   await fs.rename(tmpPath, reportPath)
   return { reportPath }
@@ -196,12 +215,42 @@ function renderSemanticCollisions(flags: ReadonlyArray<SemanticCollisionFlag>): 
   return lines.join('\n')
 }
 
-function renderRecommendedEdits(): string {
+function renderRecommendedEdits(
+  suggestions: ReadonlyArray<RenameSuggestion> | undefined,
+  auditId: AuditId
+): string {
   const lines: string[] = []
   lines.push('## Recommended edits')
   lines.push('')
-  lines.push('_No automated edits suggested in Wave 1._')
+
+  if (!suggestions || suggestions.length === 0) {
+    // Wave 1 placeholder preserved for backward compatibility — no
+    // suggestion data was passed in.
+    lines.push('_No automated edits suggested in Wave 1._')
+    lines.push('')
+    return lines.join('\n')
+  }
+
+  // Wave 2 PR #4 (Step 8): render a markdown table of rename suggestions
+  // with copy-paste-ready CLI invocations. Wave 4 wires the actual CLI;
+  // this writer just renders the suggestion text.
+  lines.push('| Current name | Suggested rename | Apply action | Apply command |')
+  lines.push('|---|---|---|---|')
+  for (const suggestion of suggestions) {
+    const cmd = `\`sklx audit collisions apply ${auditId} ${suggestion.collisionId}\``
+    lines.push(
+      `| \`${suggestion.currentName}\` | \`${suggestion.suggested}\` | ${suggestion.applyAction} | ${cmd} |`
+    )
+  }
   lines.push('')
+  for (const suggestion of suggestions) {
+    lines.push(`### \`${suggestion.currentName}\` → \`${suggestion.suggested}\``)
+    lines.push('')
+    lines.push(`- Collision id: \`${suggestion.collisionId}\``)
+    lines.push(`- Reason: ${suggestion.reason}`)
+    lines.push(`- Source: ${suggestion.entry.source_path}`)
+    lines.push('')
+  }
   return lines.join('\n')
 }
 

@@ -102,3 +102,10 @@ export type {
   RunInstallPreflightInput,
   RunInstallPreflightResult,
 } from './install-preflight.js'
+
+// SMI-4588 Wave 2 PR #4 — backup garbage collector. Re-exported via the
+// audit barrel so Wave 4's session-start audit hook can import the
+// helper without reaching into `tools/`.
+export { runBackupGC } from '../tools/install.backup-gc.js'
+
+export type { RunBackupGCOptions, RunBackupGCResult } from '../tools/install.backup-gc.js'
