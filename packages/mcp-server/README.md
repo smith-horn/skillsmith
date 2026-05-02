@@ -24,6 +24,8 @@ Restart your MCP client to use the latest version.
 
 To disable update checks, set `SKILLSMITH_AUTO_UPDATE_CHECK=false` in your environment.
 
+**Local-first by design.** Skillsmith caches the registry in a local SQLite database at `~/.skillsmith/skills.db`, shared across the MCP server, the CLI, and the VS Code extension. Search is FTS5 (SQLite's built-in keyword search) by default; semantic search is opt-in (`SKILLSMITH_USE_HNSW=true`) and runs over local ONNX embeddings (an open ML model format that runs on CPU — no API call). [Inside the Local Skill Database](https://skillsmith.app/blog/inside-the-local-skill-database) walks through the schema, the FTS5 / HNSW search paths, and how `sync` keeps the cache fresh.
+
 ## Installation
 
 ```bash

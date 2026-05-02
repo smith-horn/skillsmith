@@ -15,12 +15,14 @@ Command-line interface for Skillsmith - discover, manage, and author agent skill
 
 ## What's New in v0.5.0
 
-- **`skillsmith create` command**: Scaffold a new Claude Code skill directly into `~/.claude/skills/<name>/` — interactive prompts or non-interactive flags (`--description`, `--author`, `--type`, `--dry-run`, `--yes`)
+- **`skillsmith create` command**: Scaffold a new agent skill directly into `~/.claude/skills/<name>/` — interactive prompts or non-interactive flags (`--description`, `--author`, `--type`, `--dry-run`, `--yes`)
 - **Stricter name validation**: `author init` and `create` share registry-safe validation (lowercase + hyphens only)
 
 > v0.5.1 is a version-bump-only release fixing an npm registry regression. No source changes.
 
 See [CHANGELOG.md](./CHANGELOG.md) for previous releases.
+
+**Local-first by design.** Skillsmith caches the registry in a local SQLite database at `~/.skillsmith/skills.db`, shared across the MCP server, the CLI, and the VS Code extension. Search is FTS5 (SQLite's built-in keyword search) by default; semantic search is opt-in (`SKILLSMITH_USE_HNSW=true`) and runs over local ONNX embeddings (an open ML model format that runs on CPU — no API call). [Inside the Local Skill Database](https://skillsmith.app/blog/inside-the-local-skill-database) walks through the schema, the FTS5 / HNSW search paths, and how `sync` keeps the cache fresh.
 
 ## Installation
 
@@ -161,7 +163,7 @@ skillsmith init my-skill --path ./skills/my-skill
 
 ### create
 
-Scaffold a new Claude Code skill at `~/.claude/skills/<name>/`.
+Scaffold a new agent skill at `~/.claude/skills/<name>/`.
 
 ```bash
 # Interactive mode

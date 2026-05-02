@@ -1,6 +1,6 @@
 # Skillsmith
 
-Discover, search, and install Claude Code skills directly in VS Code.
+Discover, search, and install agent skills directly in VS Code. Works with any MCP-compatible agent — Claude Code, Cursor, Copilot, Codex, Windsurf.
 
 ## Why Skillsmith?
 
@@ -17,6 +17,8 @@ Discover, search, and install Claude Code skills directly in VS Code.
 | Detail Panel | Rich skill detail view with rendered SKILL.md content, score breakdown, and metadata |
 | MCP Integration | Live data from the Skillsmith API via Model Context Protocol |
 | Offline Fallback | Works offline with cached local skill data |
+
+**Local-first by design.** Skillsmith caches the registry in a local SQLite database at `~/.skillsmith/skills.db`, shared across the MCP server, the CLI, and the VS Code extension. Search is FTS5 (SQLite's built-in keyword search) by default; semantic search is opt-in (`SKILLSMITH_USE_HNSW=true`) and runs over local ONNX embeddings (an open ML model format that runs on CPU — no API call). [Inside the Local Skill Database](https://skillsmith.app/blog/inside-the-local-skill-database) walks through the schema, the FTS5 / HNSW search paths, and how `sync` keeps the cache fresh.
 
 ## Getting Started
 
