@@ -116,11 +116,19 @@ EOF`}</code></pre>
 
   <p><strong>Option 3: MCP Client Settings</strong> (MCP server only)</p>
 
-  <p>Add the API key directly to your <code>~/.claude/settings.json</code>:</p>
+  <p>
+    Skillsmith is MCP-compatible — pick the snippet for your agent. SMI-4580: every
+    snippet uses the same shape; the only differences are the config-file path and
+    (for Codex) the format. Snippets are sourced from
+    <code>@skillsmith/cli/templates/mcp-server.template.snippets.ts</code> so this
+    page can't drift from the scaffolded README.
+  </p>
 
-  <pre><code>{`{
+  <details>
+    <summary><strong>Claude Code</strong> — <code>~/.claude/settings.json</code></summary>
+    <pre><code>{`{
   "mcpServers": {
-    "skillsmith": {
+    "@skillsmith/mcp-server": {
       "command": "npx",
       "args": ["-y", "@skillsmith/mcp-server"],
       "env": {
@@ -129,6 +137,83 @@ EOF`}</code></pre>
     }
   }
 }`}</code></pre>
+    <p>Restart Claude Code after editing settings.json.</p>
+  </details>
+
+  <details>
+    <summary><strong>Cursor</strong> — <code>~/.cursor/mcp.json</code></summary>
+    <pre><code>{`{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_your_key_here"
+      }
+    }
+  }
+}`}</code></pre>
+    <p>Cursor 2.4+ required. Reload the window after saving.</p>
+  </details>
+
+  <details>
+    <summary><strong>GitHub Copilot (VS Code)</strong> — <code>.vscode/mcp.json</code> (workspace)</summary>
+    <pre><code>{`{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_your_key_here"
+      }
+    }
+  }
+}`}</code></pre>
+    <p>VS Code 1.108+ required. Workspace-scoped (commit to repo if team-shared, or use user settings.json).</p>
+  </details>
+
+  <details>
+    <summary><strong>Windsurf</strong> — <code>~/.codeium/windsurf/mcp_config.json</code></summary>
+    <pre><code>{`{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "\${env:SKILLSMITH_API_KEY}"
+      }
+    }
+  }
+}`}</code></pre>
+    <p>Supports <code>${`\${env:VAR}`}</code> interpolation; export <code>SKILLSMITH_API_KEY</code> in your shell.</p>
+  </details>
+
+  <details>
+    <summary><strong>Codex CLI</strong> — <code>~/.codex/config.toml</code> (TOML, not JSON)</summary>
+    <pre><code>{`[mcp_servers.@skillsmith/mcp-server]
+command = "npx"
+args = ["-y", "@skillsmith/mcp-server"]
+
+[mcp_servers.@skillsmith/mcp-server.env]
+SKILLSMITH_API_KEY = "sk_live_your_key_here"`}</code></pre>
+    <p>Codex reads <code>~/.agents/skills</code>. When installing via Skillsmith CLI, pass <code>--client agents</code>.</p>
+  </details>
+
+  <details>
+    <summary><strong>Cross-agent (open standard)</strong> — <code>~/.agents/mcp.json</code></summary>
+    <pre><code>{`{
+  "mcpServers": {
+    "@skillsmith/mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@skillsmith/mcp-server"],
+      "env": {
+        "SKILLSMITH_API_KEY": "sk_live_your_key_here"
+      }
+    }
+  }
+}`}</code></pre>
+    <p>Read by any agent honouring the cross-agent skill convention.</p>
+  </details>
 
   <div class="callout callout-warning">
     <p class="callout-heading">Shell Exports Don't Work</p>
