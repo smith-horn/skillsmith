@@ -26,7 +26,9 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 
 ## Docker-First Development
 
-**All code execution MUST happen in Docker.** Native modules require glibc. See [ADR-002](docs/internal/adr/002-docker-glibc-requirement.md).
+**All code execution MUST happen in Docker** for any path that loads native modules (`better-sqlite3`, `onnxruntime-node`, etc.). Native modules require glibc — see [ADR-002](docs/internal/adr/002-docker-glibc-requirement.md), whose scope is narrowly the choice of `node:22-slim` over Alpine, *not* a project-wide mandate that every CI job run in Docker.
+
+**CI carve-out (SMI-4647)**: four pure-JS jobs run on the host runner via `actions/setup-node@v6` + `npm ci --ignore-scripts` + direct execution: `lint`, `typecheck` (Type Check), `compliance` (Standards Compliance), and `code-review` (Code Review). They are exempt because their import closures contain zero native bindings (verified: ESLint, Prettier, `tsc`, `audit-standards.mjs`, `ci-code-review.sh`). The carve-out lets these jobs start at T+0 instead of waiting ~5 min on `Build Docker Image`. All other jobs (`test`, `test-root`, `security`, `build`, `website-build`, `fresh-install-test`) remain Docker-bound. New jobs default to Docker; opting into the carve-out requires a `# audit:carveout-pure-js` marker comment, which `audit:standards` Check 38 enforces. Plan: [smi-4647-pure-js-carveout-and-drift-check.md](docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md).
 
 ```bash
 docker compose --profile dev up -d                    # Start container (REQUIRED first)

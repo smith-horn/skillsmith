@@ -886,12 +886,10 @@ jobs:
   # SMI-708: All jobs now use pre-extracted node_modules instead of npm ci
   lint:
     name: Lint
+    # audit:carveout-pure-js — see docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [docker-build, classify, detect-changes]
-    # SMI-3999: Explicit detect-changes gate for clarity. Chain-skip would also work
-    # (docker-build skips -> lint skips) but explicit gate makes intent reviewable.
-    # Skip lint if classifier determines no code changes
+    needs: [classify, detect-changes]
     if: |
       needs.detect-changes.outputs.code == 'true' &&
       needs.classify.outputs.skip_tests != 'true'
@@ -906,7 +904,6 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
           if ! command -v git-crypt &>/dev/null; then
             sudo apt-get update && sudo apt-get install -y git-crypt
           fi
@@ -914,89 +911,27 @@ jobs:
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
 
-      - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        id: download-docker
-        continue-on-error: true
-        with:
-          name: docker-image
-          path: /tmp
-
-      - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        id: download-modules
-        continue-on-error: true # audit:allow-continue-on-error — best-effort cache; falls back to npm install
-        with:
-          name: node-modules
-          path: /tmp
-
-      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
-      - name: Load Docker image
-        id: load-image
-        if: steps.download-docker.outcome == 'success'
-        continue-on-error: true
-        run: |
-          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
-          # LOADED_TAG will be empty if no images exist (handled by -n check below)
-          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
-          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
-            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
-            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
-              echo "::error::Failed to re-tag Docker image"
-              exit 1
-            fi
-          fi
-
-      # SMI-2240: Fallback to native npm ci when Docker unavailable
-      - name: Setup Node.js (fallback)
-        if: steps.load-image.outcome != 'success'
+      - name: Setup Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
-      - name: Install dependencies (fallback)
-        if: steps.load-image.outcome != 'success'
+      - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Extract node_modules
-        if: steps.load-image.outcome == 'success'
-        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
-
-      - name: Run ESLint (Docker)
-        if: steps.load-image.outcome == 'success'
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/app \
-            -w /app \
-            skillsmith-ci:${{ github.sha }} \
-            npm run lint
-
-      - name: Run ESLint (fallback)
-        if: steps.load-image.outcome != 'success'
+      - name: Run ESLint
         run: npm run lint
 
-      - name: Check formatting (Docker)
-        if: steps.load-image.outcome == 'success'
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/app \
-            -w /app \
-            skillsmith-ci:${{ github.sha }} \
-            npm run format:check
-
-      - name: Check formatting (fallback)
-        if: steps.load-image.outcome != 'success'
+      - name: Check formatting
         run: npm run format:check
 
   typecheck:
     name: Type Check
+    # audit:carveout-pure-js — see docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [docker-build, classify, detect-changes]
-    # SMI-3999: Explicit detect-changes gate for clarity.
-    # Skip typecheck if classifier determines no code changes
+    needs: [classify, detect-changes]
     if: |
       needs.detect-changes.outputs.code == 'true' &&
       needs.classify.outputs.skip_tests != 'true'
@@ -1011,7 +946,6 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
           if ! command -v git-crypt &>/dev/null; then
             sudo apt-get update && sudo apt-get install -y git-crypt
           fi
@@ -1019,82 +953,16 @@ jobs:
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
 
-      - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        id: download-docker
-        continue-on-error: true
-        with:
-          name: docker-image
-          path: /tmp
-
-      - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        id: download-modules
-        continue-on-error: true # audit:allow-continue-on-error — best-effort cache; falls back to npm install
-        with:
-          name: node-modules
-          path: /tmp
-
-      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
-      - name: Load Docker image
-        id: load-image
-        if: steps.download-docker.outcome == 'success'
-        continue-on-error: true
-        run: |
-          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
-          # LOADED_TAG will be empty if no images exist (handled by -n check below)
-          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
-          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
-            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
-            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
-              echo "::error::Failed to re-tag Docker image"
-              exit 1
-            fi
-          fi
-
-      # SMI-2240: Fallback to native npm ci when Docker unavailable
-      - name: Setup Node.js (fallback)
-        if: steps.load-image.outcome != 'success'
+      - name: Setup Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
-      - name: Install dependencies (fallback)
-        if: steps.load-image.outcome != 'success'
+      - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Extract node_modules
-        if: steps.load-image.outcome == 'success'
-        run: |
-          # Extract to workspace - tar will merge with existing packages/ directory
-          zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
-
-          # Verify AWS SDK was extracted for enterprise package (required for typecheck)
-          echo "=== Verifying nested node_modules extraction ==="
-          if [ -d "${{ github.workspace }}/packages/enterprise/node_modules/@aws-sdk" ]; then
-            echo "✓ AWS SDK found in packages/enterprise/node_modules"
-            ls ${{ github.workspace }}/packages/enterprise/node_modules/@aws-sdk/ | head -5
-          else
-            echo "✗ AWS SDK NOT found - checking what happened"
-            echo "Contents of packages/enterprise/:"
-            ls -la ${{ github.workspace }}/packages/enterprise/ || true
-            echo "Checking tar contents:"
-            zstd -d --stdout /tmp/node_modules.tar.zst | tar -tf - | grep "enterprise" | head -10 || echo "No enterprise in tar"
-          fi
-
-      - name: Run TypeScript type check (Docker)
-        if: steps.load-image.outcome == 'success'
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/app \
-            -w /app \
-            skillsmith-ci:${{ github.sha }} \
-            npm run typecheck
-
-      - name: Run TypeScript type check (fallback)
-        if: steps.load-image.outcome != 'success'
+      - name: Run TypeScript type check
         run: npm run typecheck
 
   # SMI-2192: Matrix-based test execution for affected packages
@@ -1567,10 +1435,10 @@ jobs:
 
   compliance:
     name: Standards Compliance
+    # audit:carveout-pure-js — see docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [docker-build, detect-changes]
-    # SMI-3999: Explicit detect-changes gate.
+    needs: [detect-changes]
     if: needs.detect-changes.outputs.code == 'true'
 
     steps:
@@ -1583,7 +1451,6 @@ jobs:
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
-          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
           if ! command -v git-crypt &>/dev/null; then
             sudo apt-get update && sudo apt-get install -y git-crypt
           fi
@@ -1591,45 +1458,17 @@ jobs:
           git-crypt unlock /tmp/git-crypt-key
           rm -f /tmp/git-crypt-key
 
-      # Note: No npm ci fallback for compliance - standards audit requires Docker
-      # for consistent tooling versions
-      - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
-          name: docker-image
-          path: /tmp
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
 
-      - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: node-modules
-          path: /tmp
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
 
-      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
-      - name: Load Docker image
-        run: |
-          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
-          # LOADED_TAG will be empty if no images exist (handled by -n check below)
-          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
-          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
-            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
-            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
-              echo "::error::Failed to re-tag Docker image"
-              exit 1
-            fi
-          fi
-
-      - name: Extract node_modules
-        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
-
-      - name: Run standards audit in Docker
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/app \
-            -w /app \
-            skillsmith-ci:${{ github.sha }} \
-            npm run audit:standards
+      - name: Run standards audit
+        run: npm run audit:standards
 
   # SMI-2116: Website Build Verification
   # Ensures website builds successfully when website files change
@@ -1767,6 +1606,7 @@ jobs:
   # SMI-2195: Skip code review for non-code changes (docs, config)
   code-review:
     name: Code Review
+    # audit:carveout-pure-js — see docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [lint, test, classify]
@@ -1779,46 +1619,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      # Note: No npm ci fallback for code-review - already has continue-on-error: true
-      # so failures are non-blocking anyway
-      - name: Download Docker image
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
-          name: docker-image
-          path: /tmp
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
 
-      - name: Download node_modules
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: node-modules
-          path: /tmp
-
-      # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
-      # SMI-2247: Non-critical job - warn on re-tag failure instead of failing
-      - name: Load Docker image
-        run: |
-          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
-          # LOADED_TAG will be empty if no images exist (handled by -n check below)
-          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
-          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
-            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
-            docker images skillsmith-ci --format 'table {{.Tag}}\t{{.ID}}\t{{.CreatedAt}}' || true
-            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
-              echo "::warning::Re-tag failed, job will continue with degraded functionality"
-            fi
-          fi
-
-      - name: Extract node_modules
-        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
 
       - name: Run automated code review
         id: code-review
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/app \
-            -w /app \
-            skillsmith-ci:${{ github.sha }} \
-            bash scripts/ci-code-review.sh audit-report.json
+        run: bash scripts/ci-code-review.sh audit-report.json
 
       - name: Upload audit report
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7

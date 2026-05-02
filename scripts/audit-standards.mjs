@@ -24,6 +24,8 @@ import {
   findRelativeFunctionsV1Urls,
   findReturningTableAmbiguity,
   findUncoveredSurfacePaths,
+  parseCiYmlJobs,
+  checkCarveOutInvariants,
 } from './audit-standards-helpers.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
 
@@ -2528,6 +2530,55 @@ console.log(`\n${BOLD}37. Workflow setup-node node-version drift (SMI-4489)${RES
       warn(
         `${violations.length} setup-node step(s) with drifted node-version:\n${formatted}\n  Fix: replace literal with \${{ env.NODE_VERSION }} or align value with workflow-level env.NODE_VERSION declaration.`
       )
+    }
+  }
+}
+
+// 38. Pure-JS carve-out drift prevention (SMI-4647 + SMI-4648)
+// Two invariants on .github/workflows/ci.yml:
+//   A) Every job with `needs: docker-build` either invokes `docker run skillsmith-ci:`
+//      OR carries the `# audit:carveout-pure-js` marker comment in its header.
+//   B) Every job carrying the carve-out marker that invokes `npm run audit:standards`
+//      must NOT pass `--only <flag>` for any flag in the native-loading deny-list.
+// Catches both directions of drift: re-coupling pure-JS jobs to Docker AND adding
+// native-loading audit-standards flags to a carved-out job.
+console.log(`\n${BOLD}38. CI pure-JS carve-out drift (SMI-4647 + SMI-4648)${RESET}`)
+{
+  const ciYml = '.github/workflows/ci.yml'
+  if (!existsSync(ciYml)) {
+    pass('Skipped (.github/workflows/ci.yml not present)')
+  } else {
+    // Deny-list: --only flags whose closure lazy-loads native bindings.
+    // Update when a new flag adds an import of better-sqlite3 / onnxruntime-node.
+    const NATIVE_LOADING_AUDIT_FLAGS = ['retro-frontmatter']
+    const jobs = parseCiYmlJobs(readFileSync(ciYml, 'utf8'))
+    const { violationsA, violationsB } = checkCarveOutInvariants(jobs, NATIVE_LOADING_AUDIT_FLAGS)
+    if (violationsA.length === 0 && violationsB.length === 0) {
+      pass(
+        `Carve-out invariants hold (${jobs.length} jobs scanned; deny-list: ${NATIVE_LOADING_AUDIT_FLAGS.join(', ')})`
+      )
+    } else {
+      const aMsgs = violationsA
+        .map((v) => `  ${ciYml}:${v.line} — job '${v.name}': ${v.reason}`)
+        .join('\n')
+      const bMsgs = violationsB
+        .map(
+          (v) =>
+            `  ${ciYml}:${v.line} — job '${v.name}' is carved out but invokes 'audit:standards --only ${v.flag}' (native-loading flag)`
+        )
+        .join('\n')
+      const parts = []
+      if (violationsA.length) {
+        parts.push(
+          `Invariant A — needs: docker-build without Docker invocation:\n${aMsgs}\n  Fix: add 'docker run skillsmith-ci:...' OR add '# audit:carveout-pure-js — see <plan>' marker on the job's header.`
+        )
+      }
+      if (violationsB.length) {
+        parts.push(
+          `Invariant B — carved-out job uses native-loading audit flag:\n${bMsgs}\n  Fix: remove the '--only ${NATIVE_LOADING_AUDIT_FLAGS.join('/')}' flag, OR remove the carve-out marker (job will then run in Docker).`
+        )
+      }
+      fail(parts.join('\n\n'))
     }
   }
 }

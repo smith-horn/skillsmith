@@ -517,3 +517,97 @@ export const findUncoveredSurfacePaths = (candidatePaths, surfaceGlobs, allowlis
   }
   return uncovered
 }
+
+// ----- SMI-4647 + SMI-4648: pure-JS carve-out drift -----
+
+/**
+ * Parse a GitHub Actions workflow YAML into a list of jobs.
+ * Each job: { name, line (1-indexed), body (string of full job block) }.
+ *
+ * Only jobs nested under the top-level `jobs:` key are returned — other
+ * 2-space-indented identifiers (e.g. `on.push`) are skipped.
+ *
+ * @param {string} ciYmlContent — full text of `.github/workflows/<file>.yml`.
+ * @returns {Array<{name: string, line: number, body: string}>}
+ */
+export const parseCiYmlJobs = (ciYmlContent) => {
+  const lines = ciYmlContent.split('\n')
+  // Find the `jobs:` top-level key (column 0).
+  let jobsStart = -1
+  for (let i = 0; i < lines.length; i++) {
+    if (/^jobs:\s*$/.test(lines[i])) {
+      jobsStart = i + 1
+      break
+    }
+  }
+  if (jobsStart === -1) return []
+  // Find where the `jobs:` block ends — first line after jobsStart at column 0
+  // that starts a new top-level key (or EOF).
+  let jobsEnd = lines.length
+  for (let i = jobsStart; i < lines.length; i++) {
+    if (/^[a-zA-Z_][a-zA-Z0-9_-]*:/.test(lines[i])) {
+      jobsEnd = i
+      break
+    }
+  }
+  // Within [jobsStart, jobsEnd), match 2-space-indented job headers.
+  const jobs = []
+  for (let i = jobsStart; i < jobsEnd; i++) {
+    const m = lines[i].match(/^  ([a-z][a-z0-9-]*):\s*$/)
+    if (!m) continue
+    const jobName = m[1]
+    let end = jobsEnd
+    for (let j = i + 1; j < jobsEnd; j++) {
+      if (/^  [a-z][a-z0-9-]*:\s*$/.test(lines[j])) {
+        end = j
+        break
+      }
+    }
+    jobs.push({ name: jobName, line: i + 1, body: lines.slice(i, end).join('\n') })
+  }
+  return jobs
+}
+
+/**
+ * Check pure-JS carve-out invariants on a parsed job list.
+ *
+ * Invariant A: every job with `needs:` containing `docker-build` must either
+ *   invoke `docker run skillsmith-ci:` OR carry the `# audit:carveout-pure-js`
+ *   marker comment in its header.
+ * Invariant B: every job carrying the carve-out marker must NOT pass
+ *   `--only <flag>` (to `npm run audit:standards`) where flag is in the
+ *   native-loading deny-list.
+ *
+ * @param {Array<{name: string, line: number, body: string}>} jobs — output of parseCiYmlJobs.
+ * @param {string[]} denyList — native-loading audit-standards --only flags.
+ * @returns {{ violationsA: Array, violationsB: Array }}
+ */
+export const checkCarveOutInvariants = (jobs, denyList) => {
+  const violationsA = []
+  const violationsB = []
+  for (const job of jobs) {
+    const needsDockerBuild = /^\s+needs:.*\bdocker-build\b/m.test(job.body)
+    const hasCarveOutMarker = /#\s*audit:carveout-pure-js\b/.test(job.body)
+    const usesDockerRun = /docker run\s+(?:--rm\s+)?(?:.*\\\s*\n\s*)*[^\\\n]*skillsmith-ci:/m.test(
+      job.body
+    )
+    if (needsDockerBuild && !usesDockerRun && !hasCarveOutMarker) {
+      violationsA.push({
+        name: job.name,
+        line: job.line,
+        reason:
+          'needs: docker-build but no `docker run skillsmith-ci:` invocation and no carve-out marker',
+      })
+    }
+    if (hasCarveOutMarker) {
+      for (const flag of denyList) {
+        const escapedFlag = flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const re = new RegExp(`audit:standards.*--only\\s+${escapedFlag}\\b`)
+        if (re.test(job.body)) {
+          violationsB.push({ name: job.name, line: job.line, flag })
+        }
+      }
+    }
+  }
+  return { violationsA, violationsB }
+}

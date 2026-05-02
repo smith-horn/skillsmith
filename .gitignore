@@ -173,6 +173,11 @@ agentdb.rvf.lock
 docs/irap/
 .worktrees/
 
+# SMI-4649: scripts/create-worktree.sh auto-generates this with worktree-specific
+# container_name + ports per worktree. Never to be committed — `git add -A` from
+# any worktree could accidentally check it in and break sibling contributors.
+docker-compose.override.yml
+
 # MCP Registry tokens
 .mcpregistry_*
 
