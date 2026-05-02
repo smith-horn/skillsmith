@@ -21,13 +21,19 @@ import {
   type RegistrySkillInfo,
 } from '@skillsmith/core'
 import { addLink, getInstallPath, resolveClientPath } from '@skillsmith/core/install'
+import { resolveAuditMode, isAuditMode, type Tier } from '@skillsmith/core/config/audit-mode'
 import type { ToolContext } from '../context.js'
 import { getToolContext } from '../context.js'
-import { installInputSchema, type InstallResult } from './install.types.js'
+import { CLAUDE_SKILLS_DIR, installInputSchema, type InstallResult } from './install.types.js'
 import { loadManifest, lookupSkillFromRegistry } from './install.helpers.js'
 
 // SMI-1867: Conflict resolution logic (extracted per governance review)
 import { checkForConflicts } from './install.conflict.js'
+
+// SMI-4588 Wave 2 PR #3: namespace pre-flight + ledger replay + mode gate.
+import { runNamespaceGate } from './install.namespace-gate.js'
+import type { CandidateSkill } from '../audit/install-preflight.js'
+import * as path from 'path'
 
 // SMI-2741: MCP tool definition extracted to companion file
 export { installTool } from './install.tool.js'
@@ -100,6 +106,31 @@ export async function installSkill(input: unknown, _context?: ToolContext): Prom
     return buildValidationError(message)
   }
   const validInput = parsed.data
+
+  // SMI-4588 Wave 2 PR #3: namespace pre-flight + mode gate. Runs BEFORE
+  // service construction so a `preventative`-mode collision short-circuits
+  // the install with no side effects. Pre-flight failure is non-blocking
+  // (Edit 2) — `runNamespaceGate` swallows internal throws and returns
+  // `decision: 'proceed'`.
+  const candidate = buildPreflightCandidate(validInput.skillId)
+  const tier = resolveCallerTier()
+  const auditMode = resolveAuditMode({
+    tier,
+    override: readAuditModeOverride(),
+  })
+  const gate = await runNamespaceGate({ candidate, mode: auditMode, tier })
+  if (gate.decision === 'block') {
+    // Decision #2: preventative mode blocks; agent must call
+    // `apply_namespace_rename` then re-invoke install. The skill is NOT
+    // touched on disk.
+    return {
+      success: false,
+      skillId: validInput.skillId,
+      installPath: '',
+      error: 'Namespace collision detected; install blocked in preventative audit mode.',
+      ...gate.resultPatch,
+    }
+  }
 
   const context = _context ?? getToolContext()
 
@@ -192,7 +223,64 @@ export async function installSkill(input: unknown, _context?: ToolContext): Prom
     }
   }
 
+  // SMI-4588 Wave 2 PR #3: surface non-blocking namespace warnings (and
+  // installComplete=true marker) on `power_user` / `governance` paths.
+  // `pendingCollision` is intentionally not merged here — it is exclusive
+  // to the blocking-mode early return above.
+  if (gate.resultPatch.warnings && gate.resultPatch.warnings.length > 0) {
+    return {
+      ...result,
+      installComplete: gate.resultPatch.installComplete,
+      warnings: gate.resultPatch.warnings,
+    }
+  }
+
   return result
+}
+
+/**
+ * Build the `CandidateSkill` shape consumed by `runNamespaceGate`. The
+ * pre-flight runs before any disk write, so the path is projected.
+ *
+ * `extractSkillName` mirrors the manifest-key derivation used elsewhere in
+ * this file; the `skillId` is propagated when the input is a registry id
+ * (`<author>/<name>`) so ledger lookups key on the canonical form.
+ */
+function buildPreflightCandidate(skillId: string): CandidateSkill {
+  const skillName = extractSkillName(skillId)
+  const isRegistryId = skillId.includes('/') && !skillId.startsWith('https://')
+  const author = isRegistryId ? skillId.split('/')[0] : null
+  return {
+    identifier: skillName,
+    projectedSourcePath: path.join(CLAUDE_SKILLS_DIR, skillName),
+    skillId: isRegistryId ? skillId : null,
+    author,
+  }
+}
+
+/**
+ * Resolve the caller's subscription tier for the audit-mode resolver.
+ * Reads `SKILLSMITH_TIER` env var; falls through to `'community'` (the
+ * resolver's fail-safe default) when unset or invalid. The MCP subprocess
+ * has no JWT context, so env var is the only signal available without
+ * cross-cutting changes (Wave 4 will revisit if richer tier resolution
+ * becomes load-bearing).
+ */
+function resolveCallerTier(): Tier {
+  const raw = process.env['SKILLSMITH_TIER']
+  if (raw === 'community' || raw === 'individual' || raw === 'team' || raw === 'enterprise') {
+    return raw
+  }
+  return 'community'
+}
+
+/**
+ * Read the optional `SKILLSMITH_AUDIT_MODE` override. Invalid values fall
+ * through to `null` so the resolver applies the tier default.
+ */
+function readAuditModeOverride() {
+  const raw = process.env['SKILLSMITH_AUDIT_MODE']
+  return isAuditMode(raw) ? raw : null
 }
 
 /**

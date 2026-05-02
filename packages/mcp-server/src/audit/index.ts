@@ -93,3 +93,12 @@ export type {
   RenameSuggestion,
   SuggestionChain,
 } from './rename-engine.types.js'
+
+// SMI-4588 Wave 2 PR #3 — install pre-flight.
+export { runInstallPreflight } from './install-preflight.js'
+
+export type {
+  CandidateSkill,
+  RunInstallPreflightInput,
+  RunInstallPreflightResult,
+} from './install-preflight.js'
