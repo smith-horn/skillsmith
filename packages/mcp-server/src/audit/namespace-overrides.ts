@@ -39,7 +39,17 @@ import {
   type ReadLedgerResult,
 } from './namespace-overrides.types.js'
 
-const DEFAULT_LEDGER_PATH = path.join(os.homedir(), '.skillsmith', 'namespace-overrides.json')
+/**
+ * Default ledger path resolver. Re-evaluates `os.homedir()` on every call so
+ * test harnesses that toggle `process.env.HOME` (mirroring `getBackupsDir`'s
+ * pattern in `tools/install.conflict-helpers.ts`) see the updated location.
+ * A captured-at-module-load constant would freeze the path to the spawning
+ * process's home directory and silently route all writes there — observed
+ * regression during PR #2 test authoring (SMI-4588 Wave 2).
+ */
+function defaultLedgerPath(): string {
+  return path.join(os.homedir(), '.skillsmith', 'namespace-overrides.json')
+}
 
 const ULID_PREFIX = 'ovr_'
 
@@ -66,7 +76,7 @@ function emptyLedger(): OverridesLedger {
  * `readLedger()` (below) which collapses the discriminator.
  */
 export async function readLedgerResult(opts: LedgerPathOptions = {}): Promise<ReadLedgerResult> {
-  const ledgerPath = opts.ledgerPath ?? DEFAULT_LEDGER_PATH
+  const ledgerPath = opts.ledgerPath ?? defaultLedgerPath()
 
   let raw: string
   try {
@@ -173,7 +183,7 @@ export async function writeLedger(
   ledger: OverridesLedger,
   opts: LedgerPathOptions = {}
 ): Promise<void> {
-  const ledgerPath = opts.ledgerPath ?? DEFAULT_LEDGER_PATH
+  const ledgerPath = opts.ledgerPath ?? defaultLedgerPath()
   // Per-call unique tmp path: two concurrent writers must not clobber
   // each other's staging file (a fixed `<path>.tmp` would race on the
   // writeFile + rename interleaving and surface as ENOENT on rename).

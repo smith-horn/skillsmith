@@ -79,8 +79,17 @@ export type {
 } from './namespace-overrides.types.js'
 
 // SMI-4588 Wave 2 PR #1 — shared namespace-audit types (PRs #3/#4 consumers).
+export type { NamespaceWarning, PendingCollision } from './namespace-audit.types.js'
+
+// SMI-4588 Wave 2 PR #2 — rename engine + suggestion chain.
+export { applyRename, generateSuggestionChain, REVERT_SUMMARY_PREFIX } from './rename-engine.js'
+
 export type {
-  NamespaceWarning,
-  PendingCollision,
-  RenameSuggestionRef,
-} from './namespace-audit.types.js'
+  ApplyRenameRequest,
+  ApplyRenameResult,
+  RenameAction,
+  RenameActionRequest,
+  RenameError,
+  RenameSuggestion,
+  SuggestionChain,
+} from './rename-engine.types.js'
