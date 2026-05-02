@@ -5,7 +5,7 @@
  * `collision-detector.semantic.test.ts` (split for the 500-LOC limit).
  */
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   detectCollisions,
@@ -14,6 +14,17 @@ import {
 } from '../../src/audit/collision-detector.js'
 import { newAuditId } from '../../src/audit/audit-history.js'
 import type { InventoryEntry } from '../../src/utils/local-inventory.types.js'
+
+// Step 8a (SMI-4587 PR #4): `detectCollisions` fires aggregate-only
+// telemetry via global `fetch`. Stub it so unit tests never make network
+// calls. Telemetry-shape assertions live in `namespace-audit-telemetry.test.ts`.
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })))
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 function entry(overrides: Partial<InventoryEntry>): InventoryEntry {
   return {

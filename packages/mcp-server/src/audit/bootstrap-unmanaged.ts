@@ -8,18 +8,20 @@
  * the audit run can complete even when individual bootstrap calls fail
  * (decision #12 in plan).
  *
- * Wave 1 PR #3 ships this as a thin plumb that delegates to a caller-
- * supplied `bootstrapFn`. PR #4 (Step 8 / NEW-E-2) extracts a real
- * `indexLocalSkill(absPath)` helper into `@skillsmith/core` and wires
- * it as the default `bootstrapFn`. Until then, callers pass a no-op
- * (or a real adapter) explicitly.
+ * Wave 1 PR #4 (Step 8 / NEW-E-2) wires the real `indexLocalSkill` core
+ * helper as the default `bootstrapFn` — replacing PR #3's no-op stub. The
+ * MCP-side `parseFrontmatter` is injected so behaviour matches the
+ * existing `LocalIndexer` path bit-for-bit.
  *
  * "Unmanaged" = `kind: 'skill'` AND `meta.author` is undefined (i.e.,
  * the skill is not registered in `~/.skillsmith/manifest.json`).
  */
 
+import { indexLocalSkill } from '@skillsmith/core'
+
 import type { InventoryEntry, ScanWarning } from '../utils/local-inventory.types.js'
 import { WARNING_CODES } from '../utils/local-inventory.helpers.js'
+import { parseFrontmatter } from '../indexer/FrontmatterParser.js'
 
 /**
  * Per-entry bootstrap callback. Implementations register the skill with
@@ -31,13 +33,10 @@ export type BootstrapFn = (entry: InventoryEntry) => Promise<void>
 
 export interface BootstrapUnmanagedOptions {
   /**
-   * Bootstrap callback. Defaults to a no-op so callers that don't wire
-   * `index_local` yet (e.g. Wave 1 PR #3 callers) can still invoke this
-   * helper without side effects. PR #4 (Step 8) will replace the default
-   * with the real `indexLocalSkill` core helper.
-   *
-   * TODO(SMI-4587 PR #4): replace the default with the extracted
-   * `indexLocalSkill` core helper — see plan Step 8 / NEW-E-2.
+   * Bootstrap callback. Defaults to {@link defaultIndexLocalSkillBootstrap}
+   * (PR #4 / NEW-E-2 wiring) which delegates to the real `indexLocalSkill`
+   * core helper. Tests can substitute a vi.fn() to assert call counts and
+   * exercise the failure-warning path.
    */
   bootstrapFn?: BootstrapFn
   /** Optional logger sink for non-fatal diagnostics (debug-level). */
@@ -77,7 +76,7 @@ export async function bootstrapUnmanagedSkills(
   inventory: ReadonlyArray<InventoryEntry>,
   opts: BootstrapUnmanagedOptions = {}
 ): Promise<BootstrapUnmanagedResult> {
-  const bootstrapFn = opts.bootstrapFn ?? noopBootstrap
+  const bootstrapFn = opts.bootstrapFn ?? defaultIndexLocalSkillBootstrap
   const warnings: ScanWarning[] = []
   let attempted = 0
   let succeeded = 0
@@ -110,10 +109,22 @@ export async function bootstrapUnmanagedSkills(
 }
 
 /**
- * Default no-op bootstrap. Replaced in PR #4 (Step 8) by the extracted
- * `indexLocalSkill` core helper.
+ * Default bootstrap implementation (SMI-4587 Wave 1 PR #4 / NEW-E-2).
+ *
+ * Delegates to `indexLocalSkill` from `@skillsmith/core/skills/index-local`
+ * with the MCP-side `parseFrontmatter` injected so we keep parity with the
+ * existing `LocalIndexer` path. Synchronous filesystem reads inside the
+ * core helper are wrapped in `Promise.resolve()` so the audit pipeline can
+ * await uniformly.
+ *
+ * Errors propagate upward — `bootstrapUnmanagedSkills` converts them into
+ * typed `ScanWarning` entries with code
+ * `namespace.inventory.bootstrap_failed`.
  */
-async function noopBootstrap(_entry: InventoryEntry): Promise<void> {
-  // TODO(SMI-4587 PR #4): delegate to indexLocalSkill once extracted.
-  return undefined
+async function defaultIndexLocalSkillBootstrap(entry: InventoryEntry): Promise<void> {
+  await Promise.resolve(
+    indexLocalSkill(entry.source_path, {
+      parseFrontmatter,
+    })
+  )
 }

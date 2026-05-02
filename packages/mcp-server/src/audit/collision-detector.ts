@@ -29,6 +29,7 @@ import { detectExactCollisions, detectGenericTokenFlags } from './collision-dete
 import { newAuditId } from './audit-history.js'
 import { bootstrapUnmanagedSkills, type BootstrapFn } from './bootstrap-unmanaged.js'
 import { detectSemanticCollisions } from './collision-detector.semantic.helpers.js'
+import { emitAuditCompleteEvent } from '../tools/namespace-audit/telemetry.js'
 
 export interface DetectCollisionsOptions {
   /**
@@ -138,7 +139,7 @@ export async function detectCollisions(
   // result shape ahead of Step 8.
   lastBootstrapWarnings = bootstrapWarnings
 
-  return {
+  const result: InventoryAuditResult = {
     auditId,
     inventory: [...inventory],
     exactCollisions,
@@ -157,6 +158,22 @@ export async function detectCollisions(
       },
     },
   }
+
+  // Step 8a: aggregate-only server telemetry (decision #7). Never emits
+  // when audit_mode is 'off' (handled by both the short-circuit above and
+  // a defense-in-depth check inside `emitAuditCompleteEvent`). Wave 1
+  // ships zeroed resolution counters; Wave 2's rename engine wires real
+  // values when the apply path lands.
+  void emitAuditCompleteEvent(result, {
+    tier: opts.tier ?? 'community',
+    audit_mode: auditMode,
+    resolved_auto: 0,
+    resolved_manual: 0,
+    resolved_skipped: 0,
+    user_id: null,
+  })
+
+  return result
 }
 
 /**
