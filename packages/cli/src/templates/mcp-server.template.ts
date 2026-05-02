@@ -319,18 +319,11 @@ npx {{name}}
 
 ## Configuration
 
-Add to your Claude configuration (\`~/.claude/settings.json\`):
+This server is MCP-compatible — pick the snippet that matches your agent.
+SMI-4580: snippets are sourced from \`@skillsmith/cli/templates/mcp-server.template.snippets\`
+so docs and scaffolded READMEs can't drift.
 
-\`\`\`json
-{
-  "mcpServers": {
-    "{{name}}": {
-      "command": "npx",
-      "args": ["-y", "{{name}}"]
-    }
-  }
-}
-\`\`\`
+{{clientSnippets}}
 
 ## Available Tools
 
@@ -388,6 +381,9 @@ npm-debug.log*
 # Test coverage
 coverage/
 `
+
+// SMI-4580: per-client config snippet matrix
+import { renderAllSnippetsAsMarkdown } from './mcp-server.template.snippets.js'
 
 // ============================================================================
 // Main Render Function
@@ -469,11 +465,16 @@ export function renderMcpServerTemplates(data: McpServerTemplateData): Map<strin
   }
 
   // README.md
+  // SMI-4580: interpolate per-client snippets so the scaffolded README
+  // covers every supported agent (Claude Code, Cursor, Copilot,
+  // Windsurf, Codex, cross-agent) — same source as the website docs.
+  const clientSnippets = renderAllSnippetsAsMarkdown(data.name)
   files.set(
     'README.md',
     MCP_README_TEMPLATE.replace(/\{\{name\}\}/g, data.name)
       .replace(/\{\{description\}\}/g, data.description)
       .replace(/\{\{toolDocs\}\}/g, toolDocs)
+      .replace(/\{\{clientSnippets\}\}/g, clientSnippets)
   )
 
   // .gitignore
