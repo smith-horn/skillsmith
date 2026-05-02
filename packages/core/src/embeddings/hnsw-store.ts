@@ -343,12 +343,17 @@ export class HNSWEmbeddingStore implements IEmbeddingStore {
 
   saveIndex(): void {
     if (!this.indexPath) throw new Error('Cannot save index: indexPath not configured')
-    console.log('[HNSWEmbeddingStore] Index persistence managed by V3 VectorDB backend')
+    // SMI-4577: persistence now handled by EmbeddingService HNSW backend; this store is a no-op shim.
+    console.log(
+      '[HNSWEmbeddingStore] saveIndex() is a no-op; use EmbeddingService for HNSW persistence'
+    )
   }
 
   loadIndex(): void {
     if (!this.indexPath) throw new Error('Cannot load index: indexPath not configured')
-    console.log('[HNSWEmbeddingStore] Index persistence managed by V3 VectorDB backend')
+    console.log(
+      '[HNSWEmbeddingStore] loadIndex() is a no-op; use EmbeddingService for HNSW persistence'
+    )
   }
 
   async rebuildIndex(newConfig?: Partial<HNSWConfig>): Promise<void> {
