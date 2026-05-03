@@ -1,0 +1,187 @@
+# SMI-4670: Weekly esm.sh staleness sweep.
+#
+# Walks supabase/functions/**/*.ts, extracts every esm.sh pin, and emits two
+# signals via scripts/ci/esm-sh-staleness-sweep.mjs:
+#
+#   1. Advisory check (PRIMARY) — npm audit --json against synthesized package
+#      set; any high+ severity advisory files a P1 (Urgent) Linear issue under
+#      the "Supply Chain Hardening" project.
+#   2. Staleness check (SECONDARY) — pins > 90 days old emit a P3 (Normal)
+#      Linear issue. Advisory only; not a fail signal.
+#
+# Why: Dependabot does not scan Deno-style esm.sh imports; npm audit does not
+# see them either. Without this sweep, CVEs in stripe / @supabase/supabase-js /
+# etc. would accumulate silently on the 7+ billing-critical edge functions.
+#
+# Negative-case smoke (H2): scripts/tests/fixtures/esm-sh-staleness-sweep/
+# stale-pin.ts pins stripe@10.0.0 (>2 years old, has advisories). The
+# `smoke-fixture` job runs the script against that fixture and asserts that
+# both signals fire. Without this, an indefinite "no issues filed" run could
+# mean either healthy or silently broken (per SMI-4454 P-4).
+
+name: esm.sh staleness sweep
+
+on:
+  schedule:
+    # Sunday 06:00 UTC — staggered off the 09:00 UTC analytics slot.
+    - cron: '0 6 * * 0'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  sweep:
+    name: Run sweep against supabase/functions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Run sweep
+        id: sweep
+        continue-on-error: true
+        run: |
+          node scripts/ci/esm-sh-staleness-sweep.mjs > /tmp/sweep.json 2> /tmp/sweep.log
+          cat /tmp/sweep.log
+          echo '---'
+          echo "ADVISORY_COUNT=$(jq -r '.advisory.advisories | length' /tmp/sweep.json)" >> "$GITHUB_OUTPUT"
+          echo "STALE_COUNT=$(jq -r '.staleness.stale_pins | length' /tmp/sweep.json)" >> "$GITHUB_OUTPUT"
+          echo "ADVISORY_SKIPPED=$(jq -r '.advisory.skipped' /tmp/sweep.json)" >> "$GITHUB_OUTPUT"
+          echo "PINS_UNIQUE=$(jq -r '.pins_unique' /tmp/sweep.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload sweep artifact
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: esm-sh-sweep-${{ github.run_id }}
+          path: |
+            /tmp/sweep.json
+            /tmp/sweep.log
+          retention-days: 30
+
+      - name: Summary
+        run: |
+          {
+            echo '## esm.sh staleness sweep'
+            echo ''
+            echo "- Unique pins scanned: ${{ steps.sweep.outputs.PINS_UNIQUE }}"
+            echo "- Advisory check skipped: ${{ steps.sweep.outputs.ADVISORY_SKIPPED }}"
+            echo "- High+ advisories: ${{ steps.sweep.outputs.ADVISORY_COUNT }}"
+            echo "- Stale (> 90 day) pins: ${{ steps.sweep.outputs.STALE_COUNT }}"
+            echo ''
+            echo '<details><summary>Full JSON</summary>'
+            echo ''
+            echo '```json'
+            cat /tmp/sweep.json
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: File Linear issues for advisories (P1)
+        if: steps.sweep.outputs.ADVISORY_COUNT != '0'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          # Each advisory becomes one Linear issue under "Supply Chain Hardening".
+          # Title is deduped by including pkg+severity so re-runs don't multiply.
+          jq -c '.advisory.advisories[]' /tmp/sweep.json | while read -r adv; do
+            PKG=$(echo "$adv" | jq -r '.pkg')
+            SEVERITY=$(echo "$adv" | jq -r '.severity')
+            RANGE=$(echo "$adv" | jq -r '.range // "unknown"')
+            VIA=$(echo "$adv" | jq -r '.via | join(", ")')
+            TITLE="esm.sh advisory: $PKG ($SEVERITY) — sweep ${{ github.run_id }}"
+            BODY=$(cat <<EOF
+          Detected by SMI-4670 weekly esm.sh staleness sweep on $(date -u +%Y-%m-%dT%H:%M:%SZ).
+
+          - Package: \`$PKG\`
+          - Severity: $SEVERITY
+          - Affected range: $RANGE
+          - Source advisories: $VIA
+          - Workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          Action: bump the pinned esm.sh version in \`supabase/functions/**/*.ts\` to a release outside the affected range. Verify via \`npm view $PKG versions --json\` and update the import URL to a fresh semver pin.
+          EOF
+          )
+            node scripts/linear-api.mjs create-issue \
+              --title "$TITLE" \
+              --description "$BODY" \
+              --priority 1 \
+              --labels "Security,ci"
+          done
+
+      - name: File Linear issues for stale pins (P3)
+        if: steps.sweep.outputs.STALE_COUNT != '0'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          jq -c '.staleness.stale_pins[]' /tmp/sweep.json | while read -r stale; do
+            PKG=$(echo "$stale" | jq -r '.pkg')
+            PINNED=$(echo "$stale" | jq -r '.pinned')
+            LATEST=$(echo "$stale" | jq -r '.latest // "unknown"')
+            AGE_DAYS=$(echo "$stale" | jq -r '.ageDays')
+            TITLE="esm.sh staleness: $PKG@$PINNED ($AGE_DAYS days old) — sweep ${{ github.run_id }}"
+            BODY=$(cat <<EOF
+          Detected by SMI-4670 weekly esm.sh staleness sweep on $(date -u +%Y-%m-%dT%H:%M:%SZ).
+
+          - Package: \`$PKG\`
+          - Pinned version: \`$PINNED\` (released $AGE_DAYS days ago)
+          - Latest available: \`$LATEST\`
+          - Workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          This is an advisory signal only — staleness alone is NOT a CVE. Consider bumping if the diff is small and there is no behavior change. The advisory check (separate Linear issues) is the load-bearing supply-chain signal.
+          EOF
+          )
+            node scripts/linear-api.mjs create-issue \
+              --title "$TITLE" \
+              --description "$BODY" \
+              --priority 3 \
+              --labels "ci"
+          done
+
+  smoke-fixture:
+    name: Negative-case smoke (H2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Only run on workflow_dispatch — we don't want to file fixture-driven
+    # Linear issues every Sunday. Manual trigger is the verification path.
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Run sweep against fixture
+        id: smoke
+        run: |
+          node scripts/ci/esm-sh-staleness-sweep.mjs \
+            --scan-path scripts/tests/fixtures/esm-sh-staleness-sweep \
+            > /tmp/smoke.json 2> /tmp/smoke.log
+          cat /tmp/smoke.log
+          ADV=$(jq -r '.advisory.advisories | length' /tmp/smoke.json)
+          STALE=$(jq -r '.staleness.stale_pins | length' /tmp/smoke.json)
+          echo "ADVISORY_COUNT=$ADV"
+          echo "STALE_COUNT=$STALE"
+          if [ "$ADV" = "0" ] && [ "$STALE" = "0" ]; then
+            echo "::error::Negative-case fixture produced ZERO findings — sweep is silently no-op'ing"
+            exit 1
+          fi
+          echo "Smoke OK: fixture surfaced $ADV advisory(ies) and $STALE staleness flag(s)"
