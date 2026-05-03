@@ -21,7 +21,7 @@
   "dependencies": {
     "@astrojs/check": "0.9.8",
     "@astrojs/rss": "4.0.18",
-    "@astrojs/sitemap": "3.7.0",
+    "@astrojs/sitemap": "3.7.2",
     "@astrojs/vercel": "10.0.4",
     "@supabase/supabase-js": "2.105.0",
     "@tailwindcss/vite": "4.1.18",
