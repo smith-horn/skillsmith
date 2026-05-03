@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 /**
  * SMI-580: GitHub Skill Import Script
+ * SMI-4665: Moved into `commands/` and wrapped in a `createImportCommand`
+ * factory so the verb is registered via `program.addCommand(...)` like every
+ * other CLI command. The new sibling `skillsmith import-local` walks the
+ * local filesystem instead of GitHub topics.
  *
  * Discovers and imports Claude skills from GitHub:
  * - Searches for repos with topic:claude-skill
@@ -9,8 +13,10 @@
  * - Supports batch import of 1000+ skills
  */
 
+import { Command } from 'commander'
 import { createDatabaseAsync, SkillRepository, type SkillCreateInput } from '@skillsmith/core'
-import { DEFAULT_DB_PATH } from './config.js'
+import { DEFAULT_DB_PATH } from '../config.js'
+import { sanitizeError } from '../utils/sanitize.js'
 
 interface GitHubSearchResult {
   total_count: number
@@ -346,7 +352,35 @@ export async function importSkills(options: ImportOptions = {}): Promise<ImportR
   return result
 }
 
-// CLI entry point
+/**
+ * SMI-4665: Build the `skillsmith import` Commander subcommand. Pulled out of
+ * `index.ts` (where it was inline) so registration uses the same `addCommand`
+ * pattern as every other verb.
+ */
+export function createImportCommand(): Command {
+  return new Command('import')
+    .description('Import skills from GitHub')
+    .option('-t, --topic <topic>', 'GitHub topic to search', 'claude-skill')
+    .option('-m, --max <number>', 'Maximum skills to import', '1000')
+    .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
+    .option('-v, --verbose', 'Verbose output')
+    .action(async (options: { topic: string; max: string; db: string; verbose?: boolean }) => {
+      try {
+        await importSkills({
+          topic: options.topic,
+          maxSkills: parseInt(options.max),
+          dbPath: options.db,
+          ...(options.verbose !== undefined && { verbose: options.verbose }),
+        })
+      } catch (error) {
+        console.error('Import failed:', sanitizeError(error))
+        process.exit(1)
+      }
+    })
+}
+
+// CLI entry point — preserved so `node packages/cli/dist/src/commands/import.js`
+// still works for ad-hoc batch runs invoked outside the main `skillsmith` shell.
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2)
   const verbose = args.includes('--verbose') || args.includes('-v')

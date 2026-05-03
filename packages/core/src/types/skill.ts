@@ -6,11 +6,12 @@ import type { DependencyDeclaration } from './dependencies.js'
 
 /**
  * SMI-1809: Added 'local' for local skills from ~/.claude/skills/
+ * SMI-4665: 'local' is now a first-class DB-backed tier — the skills.trust_tier
+ *   CHECK constraint allows 'local' (migration v16) so filesystem-imported skills
+ *   surface distinctly in search rather than being conflated with 'unknown'.
  *
- * NOTE: 'local' is a client-only tier for skills discovered on disk.
- * It is NOT stored in the database — the skills table CHECK constraint
- * only allows: verified, curated, community, experimental, unknown.
- * Never pass 'local' to database upsert operations.
+ * Note: 'curated' is reserved on the type but not yet in the DB CHECK
+ * (separate roadmap item — promotes high-quality community skills).
  */
 export type TrustTier = 'verified' | 'curated' | 'community' | 'experimental' | 'unknown' | 'local'
 
@@ -38,6 +39,13 @@ export const SKILL_ROLES: readonly SkillRole[] = [
   'development-partner',
 ] as const
 
+/**
+ * SMI-4665: Provenance marker for a skill row.
+ * - `'registry'` — synced from the live Skillsmith registry (default for existing rows).
+ * - `'local'` — imported from disk via `skillsmith import-local`. Sync ignores these.
+ */
+export type SkillSource = 'registry' | 'local'
+
 export interface Skill {
   id: string
   name: string
@@ -59,6 +67,12 @@ export interface Skill {
   compatibility?: string[]
   /** SMI-3135: Structured dependency declaration */
   dependencies?: DependencyDeclaration
+  /**
+   * SMI-4665: Provenance — `'registry'` (default) or `'local'` (filesystem import).
+   * Optional on the type because many fixture/builder call sites predate the column;
+   * `SkillRepository.rowToSkill()` always populates it from the DB.
+   */
+  source?: SkillSource
   createdAt: string
   updatedAt: string
   // SMI-skill-version-tracking Wave 1: version tracking fields
@@ -87,6 +101,8 @@ export interface SkillCreateInput {
   securityPassed?: boolean | null
   /** SMI-2760: Flat array of compatible IDE/LLM/platform slugs */
   compatibility?: string[]
+  /** SMI-4665: Provenance — defaults to `'registry'` when omitted. */
+  source?: SkillSource
 }
 
 export interface SkillUpdateInput {

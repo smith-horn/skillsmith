@@ -39,7 +39,9 @@ export type DatabaseType = Database
 // v11: SMI-3510 content hash verification column
 // v12: SMI-3864 risk score history for trend detection
 // v13: SMI-3896 visibility and team_id for private skills
-export const SCHEMA_VERSION = 13
+// v14, v15: reserved (RBAC, integrations)
+// v16: SMI-4665 source column + extend trust_tier CHECK to allow 'local'
+export const SCHEMA_VERSION = 16
 
 /**
  * Initialize the database with the complete schema.

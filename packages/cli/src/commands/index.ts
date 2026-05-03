@@ -58,3 +58,9 @@ export { createCreateCommand, createSkill, validateSkillName } from './create.js
 
 // SMI-3672: Skill info with SKILL.md content
 export { createInfoCommand } from './info.js'
+
+// SMI-580: GitHub topic walker (refactored from inline registration in index.ts)
+export { createImportCommand, importSkills } from './import.js'
+
+// SMI-4665: Filesystem-walking SKILL.md importer
+export { createImportLocalCommand, runImportLocal } from './import-local.js'

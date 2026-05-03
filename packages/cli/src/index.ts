@@ -20,7 +20,6 @@
  */
 
 import { Command } from 'commander'
-import { importSkills } from './import.js'
 import {
   createSearchCommand,
   createListCommand,
@@ -46,9 +45,9 @@ import {
   createAuditCommand,
   createCreateCommand,
   createInfoCommand,
+  createImportCommand,
+  createImportLocalCommand,
 } from './commands/index.js'
-import { DEFAULT_DB_PATH } from './config.js'
-import { sanitizeError } from './utils/sanitize.js'
 import { displayStartupHeader } from './utils/license.js'
 import { checkNodeVersion } from './utils/node-version.js'
 import { readFileSync } from 'fs'
@@ -87,27 +86,12 @@ program.hook('preAction', async (_thisCommand, actionCommand) => {
   await displayStartupHeader(CLI_VERSION)
 })
 
-// SMI-580: Import command
-program
-  .command('import')
-  .description('Import skills from GitHub')
-  .option('-t, --topic <topic>', 'GitHub topic to search', 'claude-skill')
-  .option('-m, --max <number>', 'Maximum skills to import', '1000')
-  .option('-d, --db <path>', 'Database file path', DEFAULT_DB_PATH)
-  .option('-v, --verbose', 'Verbose output')
-  .action(async (options: { topic: string; max: string; db: string; verbose?: boolean }) => {
-    try {
-      await importSkills({
-        topic: options.topic,
-        maxSkills: parseInt(options.max),
-        dbPath: options.db,
-        ...(options.verbose !== undefined && { verbose: options.verbose }),
-      })
-    } catch (error) {
-      console.error('Import failed:', sanitizeError(error))
-      process.exit(1)
-    }
-  })
+// SMI-580: Import command (GitHub topic walker)
+// SMI-4665: refactored from inline registration to addCommand pattern
+program.addCommand(createImportCommand())
+
+// SMI-4665: Filesystem-walking SKILL.md importer
+program.addCommand(createImportLocalCommand())
 
 // SMI-744: Search command with interactive mode
 program.addCommand(createSearchCommand())
