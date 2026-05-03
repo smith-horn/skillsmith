@@ -205,7 +205,20 @@ export async function executeSkillPackAudit(
     )
   }
 
+  // SMI-4688: response field uses unrealpath form (preserves caller's view); the
+  // separate `packPathReal` is realpath-resolved so the per-file
+  // `startsWith(packPathReal + sep)` check at ~line 250 matches `fs.realpath`'s
+  // output on macOS (`/var/folders` → `/private/var/folders`). Without the
+  // realpath, every SKILL.md is silently skipped on macOS host post-SMI-4681
+  // host fallback; Docker `/tmp/...` has no symlink prefix so the bug stayed
+  // hidden under in-container pre-push.
   const packPath = resolve(input.pack_path)
+  let packPathReal: string
+  try {
+    packPathReal = await fs.realpath(packPath)
+  } catch {
+    packPathReal = packPath
+  }
   const skillsDir = join(packPath, 'skills')
   const packName = basename(packPath)
   const checkTriggerQuality = input.check_trigger_quality !== false
@@ -244,7 +257,7 @@ export async function executeSkillPackAudit(
     } catch {
       continue
     }
-    if (!resolvedMdPath.startsWith(packPath + sep)) continue
+    if (!resolvedMdPath.startsWith(packPathReal + sep)) continue
 
     let content: string
     try {
