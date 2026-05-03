@@ -1406,11 +1406,17 @@ jobs:
 
       - name: Run colocated package tests
         run: |
+          # SMI-4652: --maxWorkers=2 caps vitest's worker-pool. Default
+          # auto-detection spawns >10 workers on the ubuntu-latest runner;
+          # each registers a SIGTERM/SIGINT handler on the parent, tripping
+          # node's MaxListenersExceededWarning (limit 10) and triggering a
+          # cascade signal that exits 1. Tests themselves pass cleanly when
+          # parallelism is bounded.
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npx vitest run --config vitest.config.colocated.ts --passWithNoTests
+            npx vitest run --config vitest.config.colocated.ts --maxWorkers=2 --passWithNoTests
 
   # Security audit always runs regardless of change classification.
   # Rationale: Security vulnerabilities can be introduced by any change type,

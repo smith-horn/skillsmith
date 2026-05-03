@@ -24,16 +24,12 @@ export default defineConfig({
       'packages/website/**',
       // VS Code integration tests require the `vscode` module — run via @vscode/test-electron
       'packages/vscode-extension/src/__tests__/integration/**',
-      // SMI-4667 (filed): vscode-extension SkillService.test.ts accumulates >10
-      // SIGTERM listeners across mocked MCP error-handler setups, tripping
-      // node's MaxListenersExceededWarning and exiting 1 in the PR-matrix runner.
-      // Pre-push and post-merge-verify use vitest.config.root-tests.ts (combined)
-      // and tolerate this in their environments. Excluding here keeps the
-      // PR-matrix coverage gap closed for mcp-server / core / cli colocated
-      // tests (the original SMI-4652 motivation: install.test.ts mock drift on
-      // 2026-05-02 → hotfix #883). Re-include after SMI-4667 fixes the leak.
-      'packages/vscode-extension/src/**/*.test.ts',
-      'packages/vscode-extension/src/**/*.spec.ts',
+      // (SMI-4667 was a misdiagnosis — vscode-extension was not the cause.
+      // The real culprit is vitest's default worker auto-detection spawning
+      // >10 workers on the ubuntu-latest runner, each registering signal
+      // handlers on the parent. The fix is `--maxWorkers=2` in the
+      // ci.yml `Test (root colocated)` invocation. vscode-extension src
+      // tests now run normally in PR-matrix.)
     ],
   },
 })
