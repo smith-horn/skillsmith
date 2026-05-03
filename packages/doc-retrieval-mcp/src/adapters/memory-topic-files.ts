@@ -183,16 +183,35 @@ function isIndexable(name: string): boolean {
 }
 
 /**
- * Derive `~/.claude/projects/<encoded-cwd>/memory/` from the indexer's
- * `repoRoot`. Encoding per Claude Code harness: replace `/` with `-`,
- * drop the leading `-`. Documented in SPARC §S2a L2 — if the directory
- * derives cleanly but doesn't exist on disk, return `null` (soft skip);
- * we do NOT throw on encoding-drift here because the adapter runs inside
- * the indexer's per-adapter try-free loop and a throw would abort the
- * full ingest run. The SPARC note's "throw on encoding drift" intent is
- * preserved via the roundtrip unit test instead.
+ * Resolve the memory directory the adapter should index.
+ *
+ * SMI-4677 contract change: two paths.
+ *
+ * 1. **Override path** — if `process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE` is
+ *    set and non-empty, return it verbatim. No encoding, no fallback. This
+ *    is how Docker-bound contributors point the adapter at the host's
+ *    user-scope memory dir (the container's `homedir()` is `/root`, which
+ *    has no `.claude/projects/` and no encoded match for the host path).
+ *    Empty/whitespace value falls through to the derivation path so a
+ *    contributor explicitly clearing the var doesn't accidentally bypass
+ *    the encoded fallback.
+ * 2. **Derivation path** — derive `~/.claude/projects/<encoded-cwd>/memory/`
+ *    from `cwd`. Encoding per Claude Code harness: replace `/` with `-`,
+ *    drop the leading `-`. Documented in SPARC §S2a L2 — if the directory
+ *    derives cleanly but doesn't exist on disk, return `null` (soft skip);
+ *    we do NOT throw on encoding-drift here because the adapter runs inside
+ *    the indexer's per-adapter try-free loop and a throw would abort the
+ *    full ingest run. The SPARC note's "throw on encoding drift" intent is
+ *    preserved via the roundtrip unit test instead.
  */
 export function resolveMemoryDir(cwd: string): string | null {
+  // SMI-4677 §S0 override path. Explicit length check (not truthiness) per
+  // plan-review E3: a contributor who exports an empty SKILLSMITH_MEMORY_DIR_OVERRIDE
+  // should fall through to the derivation path, not get null-routed early.
+  const override = process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
+  if (typeof override === 'string' && override.length > 0) {
+    return override
+  }
   if (!cwd || cwd[0] !== '/') return null
   const encoded = '-' + cwd.slice(1).replace(/\//g, '-')
   const home = homedir()

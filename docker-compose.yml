@@ -10,9 +10,22 @@ services:
     volumes:
       - .:/app
       - node_modules:/app/node_modules
+      # SMI-4677: bind host Claude Code memory dir read-only for the
+      # doc-retrieval-mcp memory-topic-files adapter. Source path uses
+      # ${HOME} (resolved host-side at compose-parse time) +
+      # ${SKILLSMITH_PROJECT_DIR_ENCODED} (per-contributor; see .env.schema).
+      # Bind always succeeds; if the source dir doesn't exist, Docker creates
+      # an empty mount and the adapter's existsSync guard skips it gracefully.
+      # Test profile and orchestrator omit this bind by design (CI runners
+      # have no host memory dir; orchestrator does not index).
+      - ${HOME}/.claude/projects/${SKILLSMITH_PROJECT_DIR_ENCODED}/memory:/skillsmith-memory:ro
     environment:
       - NODE_ENV=development
       - GITHUB_TOKEN=${GITHUB_TOKEN}
+      # SMI-4677: tells doc-retrieval-mcp memory-topic-files adapter to
+      # bypass its homedir()-derived path resolution and read from the
+      # bind-mounted dir above instead.
+      - SKILLSMITH_MEMORY_DIR_OVERRIDE=/skillsmith-memory
     entrypoint: ['/app/docker-entrypoint.sh']
     command: tail -f /dev/null
     healthcheck:

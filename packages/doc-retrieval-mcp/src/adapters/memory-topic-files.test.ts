@@ -71,6 +71,51 @@ describe('resolveMemoryDir', () => {
   })
 })
 
+describe('resolveMemoryDir — SKILLSMITH_MEMORY_DIR_OVERRIDE (SMI-4677)', () => {
+  let origOverride: string | undefined
+
+  beforeEach(() => {
+    origOverride = process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
+  })
+
+  afterEach(() => {
+    if (origOverride === undefined) delete process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
+    else process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE = origOverride
+  })
+
+  it('returns the override path verbatim when set, regardless of cwd', () => {
+    process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE = '/skillsmith-memory'
+    expect(resolveMemoryDir('/some/other/cwd')).toBe('/skillsmith-memory')
+    expect(resolveMemoryDir(FAKE_CWD)).toBe('/skillsmith-memory')
+  })
+
+  it('does NOT apply the cwd encoding to the override path', () => {
+    // The override is a literal mount path inside the container, not a host
+    // project root, so encoding rules do not apply.
+    process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE = '/literal/has/slashes/and/dashes'
+    expect(resolveMemoryDir('/anything')).toBe('/literal/has/slashes/and/dashes')
+  })
+
+  it('falls through to derivation when override is empty string', () => {
+    // Plan-review E3: explicit length > 0 check, not truthiness. An
+    // empty-string override (e.g., an unintentional `export VAR=`) must not
+    // null-route the adapter — derivation path takes over.
+    process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE = ''
+    expect(resolveMemoryDir(FAKE_CWD)).toBe(memoryDir)
+  })
+
+  it('falls through to derivation when override is unset', () => {
+    delete process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
+    expect(resolveMemoryDir(FAKE_CWD)).toBe(memoryDir)
+  })
+
+  it('still returns null on bad cwd even when override is unset', () => {
+    delete process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
+    expect(resolveMemoryDir('')).toBe(null)
+    expect(resolveMemoryDir('relative')).toBe(null)
+  })
+})
+
 describe('memory-topic-files adapter — listFiles', () => {
   it('returns [] when the derived memory directory does not exist', async () => {
     rmSync(memoryDir, { recursive: true })
