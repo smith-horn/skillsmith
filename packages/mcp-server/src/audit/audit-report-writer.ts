@@ -31,6 +31,7 @@ import type {
 } from './collision-detector.types.js'
 import type { InventoryEntry } from '../utils/local-inventory.types.js'
 import type { RenameSuggestion } from './rename-engine.types.js'
+import type { RecommendedEdit } from './edit-suggester.types.js'
 
 export interface AuditReportRenderOptions {
   /**
@@ -53,6 +54,19 @@ export interface AuditReportRenderOptions {
    * rendering surface.
    */
   renameSuggestions?: ReadonlyArray<RenameSuggestion>
+  /**
+   * Recommended prose edits to render in the "Recommended Edits"
+   * section (SMI-4589 Wave 3). When provided AND non-empty, the writer
+   * renders each edit as a `diff` fenced markdown block per plan §2.
+   * Pass nothing (or an empty array) to omit the section entirely.
+   *
+   * Wave 4 wires this from `runEditSuggester` outputs; Wave 3 ships
+   * only the rendering surface here. Per the per-template gate
+   * ratified 2026-05-01, only `add_domain_qualifier`-pattern edits
+   * surface in v1; failing-template edits are absent from
+   * `runEditSuggester`'s output entirely.
+   */
+  recommendedEdits?: ReadonlyArray<RecommendedEdit>
 }
 
 export interface AuditReportWriteOptions extends AuditReportRenderOptions {
@@ -99,6 +113,14 @@ export function renderAuditReport(
 
   sections.push(renderRecommendedEdits(opts.renameSuggestions, result.auditId))
 
+  // SMI-4589 Wave 3: prose-edit suggestions render in their own section
+  // immediately after the Wave 2 rename-suggestion section. Empty input
+  // omits the section entirely (no placeholder text — keeps the report
+  // tight when no semantic collisions fired).
+  if (opts.recommendedEdits && opts.recommendedEdits.length > 0) {
+    sections.push(renderRecommendedEditsSection(opts.recommendedEdits))
+  }
+
   // Single trailing newline; sections already terminate with `\n`.
   return sections.join('\n').replace(/\n+$/, '\n')
 }
@@ -118,6 +140,7 @@ export async function writeAuditReport(
   const body = renderAuditReport(result, {
     generatedAt: opts.generatedAt,
     renameSuggestions: opts.renameSuggestions,
+    recommendedEdits: opts.recommendedEdits,
   })
   await fs.writeFile(tmpPath, body, 'utf-8')
   await fs.rename(tmpPath, reportPath)
@@ -249,6 +272,42 @@ function renderRecommendedEdits(
     lines.push(`- Collision id: \`${suggestion.collisionId}\``)
     lines.push(`- Reason: ${suggestion.reason}`)
     lines.push(`- Source: ${suggestion.entry.source_path}`)
+    lines.push('')
+  }
+  return lines.join('\n')
+}
+
+/**
+ * SMI-4589 Wave 3: render the prose-edit suggestions section. Each edit
+ * becomes a markdown block with file/lineRange metadata and a `diff`
+ * fenced code block showing the before/after pair with `-`/`+` line
+ * prefixes — renders with syntax highlighting in GitHub / VSCode.
+ *
+ * Plan §2 mandates the diff block format over separate before/after
+ * plain-text blocks because the unified-diff form gives free
+ * highlighting and a familiar review surface.
+ */
+function renderRecommendedEditsSection(edits: ReadonlyArray<RecommendedEdit>): string {
+  const lines: string[] = []
+  lines.push('## Recommended Edits')
+  lines.push('')
+  for (const edit of edits) {
+    lines.push(`### Recommended edit: differentiate from \`${edit.otherEntry.identifier}\``)
+    lines.push('')
+    lines.push(`**File**: \`${edit.filePath}\``)
+    lines.push(`**Lines**: ${edit.lineRange.start}-${edit.lineRange.end}`)
+    lines.push(`**Pattern**: \`${edit.pattern}\` (${edit.applyMode})`)
+    lines.push('')
+    lines.push('```diff')
+    for (const beforeLine of edit.before.split('\n')) {
+      lines.push(`-${beforeLine}`)
+    }
+    for (const afterLine of edit.after.split('\n')) {
+      lines.push(`+${afterLine}`)
+    }
+    lines.push('```')
+    lines.push('')
+    lines.push(`**Why**: ${edit.rationale}`)
     lines.push('')
   }
   return lines.join('\n')

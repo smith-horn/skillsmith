@@ -122,6 +122,42 @@ export async function createSkillBackup(
 }
 
 /**
+ * SMI-4589 Wave 3: Create a timestamped backup of a single prose file before
+ * an edit-applier mutation (CLAUDE.md or SKILL.md). Reuses `getBackupsDir()`
+ * for path resolution to keep prose backups co-located with skill backups
+ * and inside the canonical install root — `audit-history.ts`'s 30-day GC
+ * sweep covers this directory tree without further configuration.
+ *
+ * Path shape (decision #10): `<getBackupsDir()>/<basename(filePath)>/<timestamp>_<reason>/<basename(filePath)>`.
+ * The leading `<basename>` segment groups all prose backups for the same
+ * file alongside whichever skill or CLAUDE.md the file lives in; the inner
+ * `<basename>` mirrors `createSkillBackup`'s shape so `cleanupOldBackups`
+ * walks both surfaces uniformly.
+ *
+ * Failure mode: throws `Error` on any I/O failure. The caller
+ * (`applyRecommendedEdit`) maps the throw to `error: 'edit.backup_failed'`
+ * so the file-mutation step never runs without a valid backup.
+ *
+ * @param filePath - Absolute path to the prose file (e.g. SKILL.md, CLAUDE.md)
+ * @param reason - Reason for the backup (canonical: `'prose-edit'`)
+ * @returns `{ backupPath }` — absolute path to the created backup directory
+ */
+export async function createProseBackup(
+  filePath: string,
+  reason: string
+): Promise<{ backupPath: string }> {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const baseName = path.basename(filePath)
+  const backupDir = path.join(getBackupsDir(), baseName, `${timestamp}_${reason}`)
+
+  await fs.mkdir(backupDir, { recursive: true })
+  // Single-file copy — preserves byte-for-byte content for revert.
+  await fs.copyFile(filePath, path.join(backupDir, baseName))
+
+  return { backupPath: backupDir }
+}
+
+/**
  * SMI-1865: Recursively copy a directory
  */
 async function copyDirectory(src: string, dest: string): Promise<void> {

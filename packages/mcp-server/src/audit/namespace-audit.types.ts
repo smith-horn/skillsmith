@@ -19,6 +19,7 @@
 
 import type { CollisionId } from './collision-detector.types.js'
 import type { RenameSuggestion } from './rename-engine.types.js'
+import type { RecommendedEdit } from './edit-suggester.types.js'
 
 // `CollisionId` is referenced by `NamespaceWarning.collisionId`; do not remove.
 // `RenameSuggestion` is referenced by `NamespaceWarning.suggestion` and
@@ -52,6 +53,18 @@ export interface NamespaceWarning {
    * suggestion without re-running detection.
    */
   auditId: string
+  /**
+   * SMI-4589 Wave 3: optional prose-edit recommendation surfaced for
+   * `description_overlap` semantic collisions. The agent surfaces the
+   * `RecommendedEdit` alongside the rename suggestion; rename may not
+   * be the right remediation when descriptions semantically overlap.
+   *
+   * Per the per-template gate ratified 2026-05-01, only
+   * `add_domain_qualifier`-pattern edits populate this field in v1.
+   * `kind: 'exact'` and `kind: 'generic'` warnings never carry a
+   * recommended edit (they're text-identifier collisions, not prose).
+   */
+  recommendedEdit?: RecommendedEdit
 }
 
 /**
