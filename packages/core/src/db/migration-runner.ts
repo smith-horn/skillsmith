@@ -25,18 +25,26 @@ import { MIGRATION_V8_SQL } from './migrations/v8-co-installs.js'
 import { MIGRATION_V10_SQL } from './migrations/v10-dependencies.js'
 import { MIGRATION_V12_SQL } from './migrations/v12-risk-score-history.js'
 import { MIGRATION_V13_SQL } from './migrations/v13-team-tables.js'
+import { applyMigrationV16 } from './migrations/v16-skill-source.js'
 import { SCHEMA_SQL, FTS5_MIGRATION_SQL } from './schema-sql.js'
 
 /**
- * Migration definition for schema upgrades
+ * Migration definition for schema upgrades.
+ *
+ * A migration carries either a literal `sql` string OR an imperative `apply`
+ * function for cases where the change cannot be expressed as a single
+ * idempotent SQL blob (e.g. SMI-4665 v16 — SQLite cannot ALTER an existing
+ * CHECK constraint, so the table must be recreated, but only when the column
+ * is actually missing).
  */
 export interface Migration {
   version: number
   description: string
-  sql: string
+  sql?: string
+  apply?: (db: Database) => void
 }
 
-// Reserved: v14 (RBAC), v15 (integrations)
+// Reserved: v14 (RBAC), v15 (integrations), v16 → SMI-4665
 
 export const MIGRATIONS: Migration[] = [
   {
@@ -104,6 +112,11 @@ export const MIGRATIONS: Migration[] = [
     description: 'SMI-3896: visibility and team_id columns for private skills',
     sql: MIGRATION_V13_SQL,
   },
+  {
+    version: 16,
+    description: "SMI-4665: source column + extend trust_tier CHECK to allow 'local'",
+    apply: applyMigrationV16,
+  },
 ]
 
 /**
@@ -134,7 +147,7 @@ export function runMigrations(db: Database): number {
   for (const migration of MIGRATIONS) {
     if (migration.version > currentVersion) {
       try {
-        db.exec(migration.sql)
+        applyMigration(db, migration)
       } catch (error) {
         // Ignore "duplicate column" errors - column already exists from initial schema
         const msg = error instanceof Error ? error.message : String(error)
@@ -151,6 +164,24 @@ export function runMigrations(db: Database): number {
 }
 
 /**
+ * Apply a single migration — either by executing its SQL or by calling its
+ * imperative `apply` function. SMI-4665: certain migrations (e.g. v16 CHECK
+ * constraint extension via table recreation) need imperative logic to remain
+ * idempotent, so the runner accepts either form.
+ */
+function applyMigration(db: Database, migration: Migration): void {
+  if (migration.apply) {
+    migration.apply(db)
+    return
+  }
+  if (migration.sql !== undefined) {
+    db.exec(migration.sql)
+    return
+  }
+  throw new Error(`Migration v${migration.version} has neither sql nor apply — invalid definition`)
+}
+
+/**
  * SMI-974: Run migrations with error handling for existing columns.
  *
  * Like runMigrations but wraps each migration in try/catch so a single
@@ -164,7 +195,7 @@ export function runMigrationsSafe(db: Database): number {
     if (migration.version > currentVersion) {
       try {
         try {
-          db.exec(migration.sql)
+          applyMigration(db, migration)
         } catch (error) {
           // Ignore "duplicate column" errors - column already exists
           const msg = error instanceof Error ? error.message : String(error)
@@ -172,6 +203,10 @@ export function runMigrationsSafe(db: Database): number {
             throw error
           }
         }
+        // SMI-4665: only stamp schema_version after a successful apply. If
+        // applyMigration threw a non-duplicate-column error we DO NOT advance
+        // the version — the next run will retry. Guards against a v16 SQL
+        // failure being silently masked.
         db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(migration.version)
         migrationsRun++
       } catch (error) {
