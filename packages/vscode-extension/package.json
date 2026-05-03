@@ -131,7 +131,7 @@
           {
             "id": "skillsmith.walkthrough.install",
             "title": "Install a skill",
-            "description": "Install any skill to `~/.claude/skills` with one click from the Search Results view.\n[Open Skillsmith Sidebar](command:workbench.view.extension.skillsmith)",
+            "description": "Install any skill with one click from the Search Results view.\n[Open Skillsmith Sidebar](command:workbench.view.extension.skillsmith)",
             "media": {
               "markdown": "resources/walkthrough/install.md"
             }
