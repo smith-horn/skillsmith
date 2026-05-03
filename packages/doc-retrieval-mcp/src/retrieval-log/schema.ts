@@ -63,6 +63,23 @@ export interface RetrievalEvent {
 }
 
 /**
+ * SMI-4549 Wave 2 — outage marker payload (`<projectDir>/retrieval-log.outage.json`).
+ *
+ * Written by `writer.ts` openDb() when the writer enters a no-op branch that
+ * the user is expected to remediate (binding load failure, owner mismatch).
+ * NOT written for the Docker no-op branch — Docker is the documented "I don't
+ * write" mode, not an outage. Cleared on the next successful open. The probe
+ * (`probe.ts`) reads this without ever importing better-sqlite3 so a host
+ * with a broken binding still surfaces a banner.
+ */
+export interface RetrievalLogOutageMarker {
+  ts: string // ISO-8601 UTC of the failed open attempt
+  reason: 'binding_unavailable' | 'owner_mismatch'
+  error: string // truncated stringified error (≤500 chars)
+  hint: string // remediation pointer surfaced in the priming banner
+}
+
+/**
  * Shape of a single `frontmatter_lint_events` row when inserted by the writer.
  */
 export interface FrontmatterLintEvent {

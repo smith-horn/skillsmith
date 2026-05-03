@@ -13,7 +13,7 @@
  * module" contract. Tests call `closeRetrievalLog()` between cases.
  */
 
-import { existsSync, mkdirSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir, userInfo } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -25,6 +25,7 @@ import {
   SCHEMA_SQL,
   type FrontmatterLintEvent,
   type RetrievalEvent,
+  type RetrievalLogOutageMarker,
 } from './schema.js'
 
 // ESM-compatible require for native module (matches search.ts pattern for
@@ -125,6 +126,59 @@ function resolveDbPath(): { dir: string; dbPath: string } {
 }
 
 /**
+ * SMI-4549 Wave 2 — outage marker path. Same encoded project dir as the DB.
+ */
+function resolveOutageMarkerPath(): string {
+  return join(resolveDbPath().dir, 'retrieval-log.outage.json')
+}
+
+/**
+ * SMI-4549 Wave 2 — public resolver used by `probe.ts` and the standalone
+ * CLI probe so they read from the same canonical location as the writer
+ * without re-deriving the encoding.
+ */
+export function resolveRetrievalLogPaths(): { dbPath: string; outageMarkerPath: string } {
+  const { dbPath } = resolveDbPath()
+  return { dbPath, outageMarkerPath: resolveOutageMarkerPath() }
+}
+
+/**
+ * Write the outage marker atomically (`.tmp` + rename) so partial reads can
+ * never observe truncated JSON. Mode 0600 — same posture as the DB itself.
+ * Best-effort: if the write fails (e.g. dir does not exist yet because
+ * `mkdirSync` itself was the failure cause) we swallow the error so the
+ * caller's no-op contract is preserved.
+ */
+export function writeOutageMarker(marker: RetrievalLogOutageMarker): void {
+  try {
+    const path = resolveOutageMarkerPath()
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    const tmp = `${path}.tmp`
+    writeFileSync(tmp, JSON.stringify(marker, null, 2), { mode: 0o600 })
+    renameSync(tmp, path)
+  } catch {
+    // best-effort — silent no-op on marker write failure
+  }
+}
+
+/**
+ * Remove the outage marker. Called on every successful `openDb()` so a
+ * transient outage clears itself on the next healthy run.
+ */
+export function clearOutageMarker(): void {
+  try {
+    rmSync(resolveOutageMarkerPath(), { force: true })
+  } catch {
+    // best-effort
+  }
+}
+
+function truncateError(value: unknown): string {
+  const text = value instanceof Error ? value.message : String(value)
+  return text.length > 500 ? `${text.slice(0, 500)}…` : text
+}
+
+/**
  * Returns true if the caller is running inside the Skillsmith Docker dev
  * container. SPARC §S4 requires the writer to no-op in that case.
  */
@@ -194,14 +248,27 @@ function openDb(): BetterSqlite3.Database | null {
         } catch {
           // ignore close errors
         }
+        writeOutageMarker({
+          ts: new Date().toISOString(),
+          reason: 'owner_mismatch',
+          error: `stamped owner_user=${stampedOwner} differs from current user=${currentUser}`,
+          hint: 'rotate retrieval-logs.db (back up + delete) to re-stamp under current $USER',
+        })
         return null
       }
     }
 
     cachedDb = db
+    clearOutageMarker()
     return db
   } catch (err) {
     console.warn('[retrieval-logs] failed to open DB; writes will be skipped:', err)
+    writeOutageMarker({
+      ts: new Date().toISOString(),
+      reason: 'binding_unavailable',
+      error: truncateError(err),
+      hint: 'run ./scripts/repair-host-native-deps.sh',
+    })
     return null
   }
 }
