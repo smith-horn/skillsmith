@@ -22,6 +22,7 @@ const MODEL_NAME_SAFE = 'Xenova__all-MiniLM-L6-v2'
 describe('HNSW + EmbeddingService integration (SMI-4577)', () => {
   let tmpHome: string
   let originalHome: string | undefined
+  let originalCacheOverride: string | undefined
   let service: EmbeddingService
   let dbPath: string
 
@@ -33,6 +34,10 @@ describe('HNSW + EmbeddingService integration (SMI-4577)', () => {
     mkdirSync(tmpHome, { recursive: true })
     originalHome = process.env.HOME
     process.env.HOME = tmpHome
+    // SMI-4691: HOME stub is ignored by os.homedir() on macOS (getpwuid path).
+    // Pin getCacheDir() to the temp tree explicitly via the override env.
+    originalCacheOverride = process.env.SKILLSMITH_CACHE_DIR_OVERRIDE
+    process.env.SKILLSMITH_CACHE_DIR_OVERRIDE = join(tmpHome, '.skillsmith', 'cache')
     process.env.SKILLSMITH_USE_MOCK_EMBEDDINGS = 'true'
     delete process.env.SKILLSMITH_USE_HNSW
 
@@ -56,6 +61,11 @@ describe('HNSW + EmbeddingService integration (SMI-4577)', () => {
       process.env.HOME = originalHome
     } else {
       delete process.env.HOME
+    }
+    if (originalCacheOverride !== undefined) {
+      process.env.SKILLSMITH_CACHE_DIR_OVERRIDE = originalCacheOverride
+    } else {
+      delete process.env.SKILLSMITH_CACHE_DIR_OVERRIDE
     }
     if (existsSync(tmpHome)) {
       try {
