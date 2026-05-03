@@ -67,8 +67,13 @@ echo -e "${GREEN}[entrypoint] dist/ outputs ready.${NC}"
 
 echo -e "${YELLOW}[entrypoint] Validating native modules...${NC}"
 
-# List of native modules to validate
-NATIVE_MODULES=("better-sqlite3")
+# List of native modules to validate.
+# Must match Dockerfile:73 `npm rebuild` list. With .npmrc ignore-scripts=true
+# (SMI-4672), this loop is the only runtime rebuild path on cache miss / ABI
+# mismatch — missing a module silently fails open (mock embedding fallback per
+# ADR-009, brute-force vector search per SMI-4577, esbuild platform-binary
+# breakage). Keep this array in sync with Dockerfile:73.
+NATIVE_MODULES=("better-sqlite3" "onnxruntime-node" "esbuild" "hnswlib-node")
 
 # Track validation status
 VALIDATION_FAILED=0

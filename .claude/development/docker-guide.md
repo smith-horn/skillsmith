@@ -10,6 +10,30 @@ docker compose --profile dev down       # Stop container
 docker logs skillsmith-dev-1            # View logs
 ```
 
+## Host-side install workflow (SMI-4672)
+
+`.npmrc` sets `ignore-scripts=true` (Wave 3a, SMI-4672). All `npm install` invocations — host or container — skip lifecycle scripts (`preinstall`, `install`, `postinstall`, `prepare`). The container path is fully covered: `Dockerfile:73` rebuilds the four native modules at image build, and `docker-entrypoint.sh` re-validates and rebuilds them at every container start.
+
+The host path needs three follow-ups after a fresh `npm install`:
+
+```bash
+# 1. Compile better-sqlite3 binding for the host-side retrieval-logs writer
+#    (SMI-4549). Idempotent — sub-second [skip] on subsequent runs.
+./scripts/repair-host-native-deps.sh
+
+# 2. If you edit packages/enterprise/ source locally without committing,
+#    refresh the Turborepo cache-invalidation sentinel before `npm run build`.
+npm run postinstall
+
+# 3. If git hooks don't fire on a fresh clone of the main repo (worktrees
+#    inherit hooksPath from create-worktree.sh), set it once OR run husky:
+git config core.hooksPath .husky/_
+# OR
+npm run prepare
+```
+
+`onnxruntime-node` (embeddings) and `hnswlib-node` (vector index) are not in the host repair scope — they only run inside Docker. The entrypoint rebuild loop covers all four native modules (better-sqlite3, onnxruntime-node, esbuild, hnswlib-node) per the SMI-4672 C1 fix.
+
 ## Worktree First Start
 
 When starting a Docker container in a **fresh git worktree** for the first time, `docker-entrypoint.sh` automatically runs `npm run build` before validating native modules.

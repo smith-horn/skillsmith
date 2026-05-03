@@ -50,6 +50,28 @@ docker exec skillsmith-dev-1 npm install
 docker exec skillsmith-dev-1 npm test
 ```
 
+### Host-side install (SMI-4672)
+
+`.npmrc` sets `ignore-scripts=true`, which skips lifecycle scripts (`preinstall`, `install`, `postinstall`, `prepare`) on every `npm install` — host or container. The Docker `Dockerfile` explicitly rebuilds native modules and the entrypoint validates them at startup, so the container path is fully covered. The host path needs three follow-ups after a fresh `npm install`:
+
+```bash
+# Compile better-sqlite3 binding for the host-side retrieval-logs writer (SMI-4549).
+# Idempotent — sub-second [skip] on subsequent runs.
+./scripts/repair-host-native-deps.sh
+
+# If you edit `packages/enterprise/` source locally without committing, refresh
+# the Turborepo cache-invalidation sentinel before invoking `npm run build`:
+npm run postinstall
+
+# If git hooks don't fire on a fresh clone (worktrees inherit hooksPath from
+# create-worktree.sh; main-repo fresh clones may not), set it once:
+git config core.hooksPath .husky/_
+# OR run husky's setup explicitly:
+npm run prepare
+```
+
+The doc-retrieval-mcp writer no-ops without `better-sqlite3`'s native binding loaded; SessionStart instrumentation silently disappears for days if you skip the repair script (full retro: SMI-4549). Embeddings and the vector index only run inside Docker, so `onnxruntime-node` and `hnswlib-node` are not part of the host repair scope.
+
 ## Linear Integration
 
 Skillsmith uses [Linear](https://linear.app) for issue tracking. Issue IDs follow the pattern `SMI-XXX`.
