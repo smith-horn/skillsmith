@@ -23,8 +23,7 @@ import { indexLocalInputSchema, executeIndexLocal } from './tools/index-local.js
 import { publishInputSchema, executePublish } from './tools/publish.js'
 import { skillUpdatesInputSchema, executeSkillUpdates } from './tools/skill-updates.js'
 import { skillDiffInputSchema, executeSkillDiff } from './tools/skill-diff.js'
-import { skillAuditInputSchema, executeSkillAudit } from './tools/skill-audit.js'
-import { skillPackAuditInputSchema, executeSkillPackAudit } from './tools/skill-pack-audit.js'
+import { dispatchAuditTool } from './audit-tool-dispatch.js'
 import { outdatedInputSchema, executeOutdated } from './tools/outdated.js'
 import { skillRescanInputSchema, executeSkillRescan } from './tools/skill-rescan.js'
 import {
@@ -206,26 +205,12 @@ export async function dispatchToolCall(
       )
 
     case 'skill_audit':
-      return withLicenseAndQuota(
-        'skill_audit',
-        args,
-        skillAuditInputSchema,
-        executeSkillAudit,
-        toolContext,
-        licenseMiddleware,
-        quotaMiddleware
-      )
-
     case 'skill_pack_audit':
-      return withLicenseAndQuota(
-        'skill_pack_audit',
-        args,
-        skillPackAuditInputSchema,
-        executeSkillPackAudit,
-        toolContext,
-        licenseMiddleware,
-        quotaMiddleware
-      )
+      // SMI-4590 Step 0b: audit-family tools live in `audit-tool-dispatch.ts`
+      // to keep this file under the 500-LOC gate. Wave 4 PRs 3–4 add three
+      // more audit tools (`skill_inventory_audit`, `apply_namespace_rename`,
+      // `apply_recommended_edit`) to that module without growing this one.
+      return dispatchAuditTool(name, args, toolContext, licenseMiddleware, quotaMiddleware)
 
     case 'skill_rescan': {
       const parsed = safeParseOrError(skillRescanInputSchema, args, 'skill_rescan')
