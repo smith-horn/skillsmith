@@ -13,11 +13,25 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { existsSync, mkdirSync, rmSync, unlinkSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { EmbeddingService } from '../../src/embeddings/index.js'
 
 const MODEL_NAME_SAFE = 'Xenova__all-MiniLM-L6-v2'
+
+// SMI-4691: hnswlib-node is an optionalDependency. When the native binding is
+// unavailable (e.g. macOS host without the postinstall step), EmbeddingService
+// silently falls through to brute-force and never persists a cache file. The
+// cache-write assertion is only meaningful when HNSW is actually loaded.
+const HNSW_AVAILABLE = (() => {
+  try {
+    createRequire(import.meta.url)('hnswlib-node')
+    return true
+  } catch {
+    return false
+  }
+})()
 
 describe('HNSW + EmbeddingService integration (SMI-4577)', () => {
   let tmpHome: string
@@ -115,15 +129,18 @@ describe('HNSW + EmbeddingService integration (SMI-4577)', () => {
     expect(sum / count).toBeGreaterThanOrEqual(0.95)
   })
 
-  it('writes ~/.skillsmith/cache/hnsw-{model}.bin after first call', async () => {
-    const all = service.getAllEmbeddings()
-    const someVector = Array.from(all.values())[0]
-    await service.findSimilar(someVector, 10)
-    // Force the debounced persist.
-    service.close()
-    const cacheBin = join(tmpHome, '.skillsmith', 'cache', `hnsw-${MODEL_NAME_SAFE}.bin`)
-    expect(existsSync(cacheBin)).toBe(true)
-  })
+  it.skipIf(!HNSW_AVAILABLE)(
+    'writes ~/.skillsmith/cache/hnsw-{model}.bin after first call',
+    async () => {
+      const all = service.getAllEmbeddings()
+      const someVector = Array.from(all.values())[0]
+      await service.findSimilar(someVector, 10)
+      // Force the debounced persist.
+      service.close()
+      const cacheBin = join(tmpHome, '.skillsmith', 'cache', `hnsw-${MODEL_NAME_SAFE}.bin`)
+      expect(existsSync(cacheBin)).toBe(true)
+    }
+  )
 
   it('rebuilds index when cache is deleted (no crash)', async () => {
     const all = service.getAllEmbeddings()
