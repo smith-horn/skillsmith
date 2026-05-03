@@ -115,26 +115,88 @@ export function detectNewCliCommands(files: string[], diff: string): DocGap[] {
   return gaps
 }
 
-/** Detect package version bumps without CHANGELOG updates */
-export function detectVersionBumps(files: string[]): DocGap[] {
+/**
+ * What top-level fields changed in a package.json diff.
+ *
+ * SMI-4655: this lets `detectVersionBumps` distinguish a real version bump
+ * (X→Y differ in `"version"`) from keyword/description/scripts churn that
+ * previously fired the gate as a false positive.
+ */
+type PackageJsonChange = {
+  versionChanged: boolean
+  dependenciesChanged: boolean
+  // keywords/description/scripts/etc.: not surfaced — they don't trigger gaps
+}
+
+/**
+ * Parse the per-file hunk for `pkgJsonPath` out of a concatenated PR diff
+ * and report which top-level package.json fields changed.
+ *
+ * GitHub PR diff format: each file starts with `diff --git a/<path> b/<path>`
+ * and ends at the next `diff --git` or EOF.
+ */
+export function parsePackageJsonChange(pkgJsonPath: string, diff: string): PackageJsonChange {
+  const empty: PackageJsonChange = { versionChanged: false, dependenciesChanged: false }
+  const fileMarker = `diff --git a/${pkgJsonPath} b/${pkgJsonPath}`
+  const startIdx = diff.indexOf(fileMarker)
+  if (startIdx === -1) return empty
+  const nextFileIdx = diff.indexOf('\ndiff --git ', startIdx + fileMarker.length)
+  const fileDiff = nextFileIdx === -1 ? diff.slice(startIdx) : diff.slice(startIdx, nextFileIdx)
+
+  // SMI-4655 (B-2): pair removed + added "version" lines and require the
+  // values to differ. Matches: -  "version": "0.5.7"  and  +  "version": "0.5.8"
+  // Plain presence of either line is not enough — `git diff` re-emits the
+  // surrounding context line as `+` if any field on the same hunk changes.
+  const removedVersion = fileDiff.match(/^-\s*"version":\s*"([^"]+)"/m)?.[1]
+  const addedVersion = fileDiff.match(/^\+\s*"version":\s*"([^"]+)"/m)?.[1]
+  const versionChanged = !!(addedVersion && removedVersion && addedVersion !== removedVersion)
+
+  // Dependencies: any +/- line whose key resembles an npm package name and
+  // whose value resembles a semver range. dev/prod distinction is brittle
+  // from raw diff alone; treat both as `dependenciesChanged` (warn-only gate).
+  const depLineRe = /^[+-]\s+"[@\w][\w@/.-]*":\s*"[\^~>=<*\d]/m
+  const dependenciesChanged = depLineRe.test(fileDiff)
+
+  return { versionChanged, dependenciesChanged }
+}
+
+/**
+ * Detect per-package version bumps without CHANGELOG updates.
+ *
+ * SMI-4655: previously fired on ANY change to `packages/*\/package.json`
+ * (keyword bumps, dep-range fixes, scripts churn) — every such PR forced a
+ * noise CHANGELOG entry. Now inspects the diff and only flags real version
+ * bumps as `fail`; dep-range changes downgrade to `warn`; pure-keyword/
+ * description/scripts changes produce no gap.
+ *
+ * SMI-4655 (M-1): scoped to per-package package.json — root `package.json`
+ * version bumps map to root `CHANGELOG.md` which `detect-release-drift.ts`
+ * already covers (avoid double-fire).
+ */
+export function detectVersionBumps(files: string[], diff: string): DocGap[] {
   const gaps: DocGap[] = []
 
-  // Check each package's package.json
-  const pkgJsonFiles = files.filter(
-    (f) => f.match(/^packages\/[^/]+\/package\.json$/) || f === 'package.json'
-  )
+  const pkgJsonFiles = files.filter((f) => /^packages\/[^/]+\/package\.json$/.test(f))
 
   for (const pkgJson of pkgJsonFiles) {
-    const dir = pkgJson === 'package.json' ? '' : pkgJson.replace('/package.json', '')
-    const changelog = dir ? `${dir}/CHANGELOG.md` : 'CHANGELOG.md'
+    const changelog = pkgJson.replace('/package.json', '/CHANGELOG.md')
+    const changelogChanged = files.includes(changelog)
+    const change = parsePackageJsonChange(pkgJson, diff)
 
-    if (!files.includes(changelog)) {
+    if (change.versionChanged && !changelogChanged) {
       gaps.push({
         trigger: `Version bump in ${pkgJson}`,
         surface: changelog,
         severity: 'fail',
       })
+    } else if (change.dependenciesChanged && !changelogChanged) {
+      gaps.push({
+        trigger: `Dependency change in ${pkgJson}`,
+        surface: changelog,
+        severity: 'warn',
+      })
     }
+    // keyword/description/scripts-only changes: no gap (the SMI-4655 fix)
   }
   return gaps
 }
@@ -225,7 +287,7 @@ export function run(prData: PrData): DocDriftResult {
   const gaps: DocGap[] = [
     ...detectNewMcpTools(prData.files, prData.diff),
     ...detectNewCliCommands(prData.files, prData.diff),
-    ...detectVersionBumps(prData.files),
+    ...detectVersionBumps(prData.files, prData.diff),
     ...detectSecurityFeatures(prData.files),
     ...detectVscodeChanges(prData.files),
     ...detectMigrations(prData.files),
