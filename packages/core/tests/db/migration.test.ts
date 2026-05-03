@@ -97,7 +97,11 @@ function insertSkill(
     overrides?.tags ?? '["test"]',
     '2026-01-01T00:00:00Z',
     overrides?.updated_at ?? '2026-01-01T00:00:00Z',
-    'github',
+    // SMI-4665: `source` is now CHECK-constrained to ('registry', 'local').
+    // The legacy v2 column previously held free-form values like 'github'; it has
+    // been repurposed as the provenance marker. Tests that don't care about the
+    // value should pass 'registry' (the default for synced rows).
+    'registry',
     10
   )
 }
@@ -129,14 +133,19 @@ describe('checkSchemaCompatibility', () => {
   it('should return compatible + upgrade when schema is older', () => {
     const db = createTestDb()
     // SMI-4486: schema_version now tracks every applied migration as a row;
-    // getSchemaVersion reads MAX(version). Drop higher-numbered rows to simulate
-    // an older DB rather than UPDATE-ing the column (which collides on PK).
-    db.prepare('DELETE FROM schema_version WHERE version > ?').run(SCHEMA_VERSION - 1)
+    // getSchemaVersion reads MAX(version). Drop the latest row to simulate an
+    // older DB rather than UPDATE-ing the column (which collides on PK).
+    // SMI-4665: migration versions are no longer sequential (v14/v15 reserved,
+    // v16 introduced) so compute the second-highest applied version dynamically.
+    db.prepare('DELETE FROM schema_version WHERE version = ?').run(SCHEMA_VERSION)
+    const prior = (
+      db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number }
+    ).v
 
     const result = checkSchemaCompatibility(db)
     expect(result.isCompatible).toBe(true)
     expect(result.action).toBe('upgrade')
-    expect(result.currentVersion).toBe(SCHEMA_VERSION - 1)
+    expect(result.currentVersion).toBe(prior)
     expect(result.expectedVersion).toBe(SCHEMA_VERSION)
   })
 

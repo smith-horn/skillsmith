@@ -109,3 +109,22 @@ export type {
 export { runBackupGC } from '../tools/install.backup-gc.js'
 
 export type { RunBackupGCOptions, RunBackupGCResult } from '../tools/install.backup-gc.js'
+
+// SMI-4589 Wave 3 — edit-suggester (templated prose-edit recommendations
+// for `description_overlap` semantic collisions).
+export { runEditSuggester, V1_TEMPLATE_PATTERNS } from './edit-suggester.js'
+
+export type {
+  EditCategory,
+  EditTemplate,
+  EditTemplatePattern,
+  RecommendedEdit,
+} from './edit-suggester.types.js'
+
+// SMI-4589 Wave 3 — edit-applier (mutation path for the registered
+// `add_domain_qualifier` template, gated by APPLY_TEMPLATE_REGISTRY).
+export { APPLY_TEMPLATE_REGISTRY, applyRecommendedEdit } from './edit-applier.js'
+
+export type { ApplyRecommendedEditOptions } from './edit-applier.js'
+
+export type { EditApplyError, EditApplyResult } from './edit-applier.types.js'

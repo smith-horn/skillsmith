@@ -125,7 +125,7 @@ const matrix: CapabilityRow[] = [
     capability: 'Team workspaces / audit export / SIEM / RBAC',
     mcp: 'yes',
     cli: 'no',
-    vscode: 'via MCP',
+    vscode: 'no',
   },
   {
     capability: 'Single API key works across all three',
@@ -179,8 +179,9 @@ function cellClass(value: string): string {
   <section class="product-matrix">
     <h2>Capability comparison</h2>
     <p class="product-matrix-caption">
-      Capabilities marked <em>via MCP</em> for VS Code mean the extension exposes them by spawning the
-      MCP server in the background.
+      Capabilities marked <em>via MCP</em> for VS Code mean the extension actively spawns the MCP server
+      to deliver them — not every tool the MCP server happens to expose. Team workspaces, audit export,
+      SIEM, and RBAC are MCP-only and have no VS Code UI affordance today.
     </p>
     <div class="product-matrix-scroll">
       <table class="product-matrix-table">
