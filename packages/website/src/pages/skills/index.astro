@@ -19,6 +19,7 @@ const categories = [
 const trustTiers = [
   { value: '', label: 'All Trust Tiers' },
   { value: 'verified', label: 'Verified' },
+  { value: 'curated', label: 'Curated' },
   { value: 'community', label: 'Community' },
   { value: 'experimental', label: 'Experimental' },
 ]
@@ -475,6 +476,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       // Trust tier badge colors
       const trustBadgeClasses = {
         verified: 'bg-green-500/10 text-green-400 border-green-500/20',
+        curated: 'bg-teal-500/10 text-teal-300 border-teal-500/20',
         community: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
         experimental: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
         unknown: 'bg-dark-500/10 text-dark-400 border-dark-500/20',

@@ -39,7 +39,7 @@ export interface Skill {
   displayName: string
   description: string
   version: string
-  trustTier: 'verified' | 'community' | 'experimental' | 'unknown'
+  trustTier: 'verified' | 'curated' | 'community' | 'experimental' | 'unknown'
   category: SkillCategory
   tags: string[]
   qualityScore: number

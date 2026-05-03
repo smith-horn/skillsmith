@@ -28,6 +28,15 @@ export const TRUST_TIERS = {
     autoInstall: true,
     reviewRequired: false,
   },
+  CURATED: {
+    id: 'curated',
+    label: 'Curated',
+    description:
+      'GitHub-verified vendor orgs (e.g., Zapier, Stripe, Notion) and manually-curated third-party publishers',
+    color: 'teal',
+    autoInstall: true,
+    reviewRequired: false,
+  },
   COMMUNITY: {
     id: 'community',
     label: 'Community',
@@ -57,6 +66,7 @@ export type TrustTierId = (typeof TRUST_TIERS)[keyof typeof TRUST_TIERS]['id']
 export const TRUST_TIER_ORDER = [
   TRUST_TIERS.OFFICIAL,
   TRUST_TIERS.VERIFIED,
+  TRUST_TIERS.CURATED,
   TRUST_TIERS.COMMUNITY,
   TRUST_TIERS.UNVERIFIED,
 ] as const
