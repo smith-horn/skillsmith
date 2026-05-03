@@ -326,9 +326,11 @@ export class SkillInstallationService {
       const writtenFiles: string[] = []
       try {
         await fs.mkdir(installPath, { recursive: true })
-        // Validate directory is not a symlink escape
+        // SMI-4692: realpath both sides — macOS /var/folders symlinks to /private/var/folders.
         const realInstallPath = await fs.realpath(installPath)
-        const expectedPrefix = path.resolve(this.skillsDir)
+        const expectedPrefix = await fs
+          .realpath(this.skillsDir)
+          .catch(() => path.resolve(this.skillsDir))
         if (
           !realInstallPath.startsWith(expectedPrefix + path.sep) &&
           realInstallPath !== expectedPrefix

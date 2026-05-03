@@ -20,6 +20,7 @@ const ENCODED = '-fake-project-root'
 
 let scratch: string
 let origHome: string | undefined
+let origMemoryOverride: string | undefined
 let memoryDir: string
 
 function makeCtx(mode: 'full' | 'incremental', lastRunAt: string | null = null): AdapterContext {
@@ -44,6 +45,12 @@ beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), 'memory-adapter-'))
   origHome = process.env.HOME
   process.env.HOME = scratch
+  // SMI-4687: clear SKILLSMITH_MEMORY_DIR_OVERRIDE so the cwd-derivation tests
+  // see a clean env. Host shells sourcing .env may export it for the docker
+  // bind-mount; without this isolation those exports leak into the cases that
+  // exercise the fall-through path and skew assertions.
+  origMemoryOverride = process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
+  delete process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
   memoryDir = join(scratch, '.claude', 'projects', ENCODED, 'memory')
   mkdirSync(memoryDir, { recursive: true })
 })
@@ -51,6 +58,8 @@ beforeEach(() => {
 afterEach(() => {
   if (origHome === undefined) delete process.env.HOME
   else process.env.HOME = origHome
+  if (origMemoryOverride === undefined) delete process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
+  else process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE = origMemoryOverride
   rmSync(scratch, { recursive: true, force: true })
 })
 

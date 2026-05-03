@@ -158,7 +158,11 @@ export function ensureConfigDir(): void {
  * @returns Absolute path to ~/.skillsmith/cache/
  */
 export function getCacheDir(): string {
-  const cacheDir = join(homedir(), CONFIG_DIR, CACHE_SUBDIR)
+  // SMI-4691: SKILLSMITH_CACHE_DIR_OVERRIDE allows test isolation on macOS where
+  // os.homedir() resolves via getpwuid() and ignores process.env.HOME mutations.
+  const override = process.env.SKILLSMITH_CACHE_DIR_OVERRIDE
+  const cacheDir =
+    override && override.length > 0 ? override : join(homedir(), CONFIG_DIR, CACHE_SUBDIR)
   if (!existsSync(cacheDir)) {
     mkdirSync(cacheDir, { recursive: true, mode: 0o700 })
   }
