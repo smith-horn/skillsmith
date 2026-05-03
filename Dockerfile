@@ -17,7 +17,7 @@
 # -----------------------------------------------------------------------------
 # Using node:22-slim (Debian-based) for glibc compatibility with onnxruntime-node (>=22.22 minimum, matches engines)
 # Alpine would be smaller but lacks glibc required by native modules
-FROM node:22-slim AS base
+FROM node:25-slim AS base
 
 # Set working directory early for all subsequent commands
 WORKDIR /app
