@@ -1,0 +1,212 @@
+[
+  {
+    "case_id": "case-01",
+    "template_kind": "add_domain_qualifier",
+    "actionability": 4,
+    "preservation": 5,
+    "note": "The suggestion clearly renames the skill by prepending the author's domain, which is highly actionable and preserves the original intent perfectly."
+  },
+  {
+    "case_id": "case-01",
+    "template_kind": "narrow_scope",
+    "actionability": 2,
+    "preservation": 1,
+    "note": "Appending unrelated examples like 'a Stripe webhook' makes the suggestion nonsensical and completely breaks the original meaning of the skill."
+  },
+  {
+    "case_id": "case-01",
+    "template_kind": "reword_trigger_verb",
+    "actionability": 1,
+    "preservation": 3,
+    "note": "The suggestion to create the ungrammatical phrase 'a-specific' is not actionable and results in an awkward, unprofessional description."
+  },
+  {
+    "case_id": "case-02",
+    "template_kind": "add_domain_qualifier",
+    "actionability": 4,
+    "preservation": 5,
+    "note": "The suggestion clearly renames the skill by prepending the author's domain, which is highly actionable and preserves the original intent perfectly."
+  },
+  {
+    "case_id": "case-02",
+    "template_kind": "narrow_scope",
+    "actionability": 2,
+    "preservation": 1,
+    "note": "Appending unrelated examples like 'a Stripe webhook' makes the suggestion nonsensical and completely breaks the original meaning of the skill."
+  },
+  {
+    "case_id": "case-02",
+    "template_kind": "reword_trigger_verb",
+    "actionability": 1,
+    "preservation": 3,
+    "note": "The suggestion to create the ungrammatical phrase 'a-specific' is not actionable and results in an awkward, unprofessional description."
+  },
+  {
+    "case_id": "case-03",
+    "template_kind": "add_domain_qualifier",
+    "actionability": 4,
+    "preservation": 5,
+    "note": "The suggestion clearly renames the skill by prepending the author's domain, which is highly actionable and preserves the original intent perfectly."
+  },
+  {
+    "case_id": "case-03",
+    "template_kind": "narrow_scope",
+    "actionability": 2,
+    "preservation": 1,
+    "note": "Appending unrelated examples like 'a Stripe webhook' makes the suggestion nonsensical and completely breaks the original meaning of the skill."
+  },
+  {
+    "case_id": "case-03",
+    "template_kind": "reword_trigger_verb",
+    "actionability": 1,
+    "preservation": 3,
+    "note": "The suggestion to create the ungrammatical phrase 'a-specific' is not actionable and results in an awkward, unprofessional description."
+  },
+  {
+    "case_id": "case-04",
+    "template_kind": "add_domain_qualifier",
+    "actionability": 4,
+    "preservation": 5,
+    "note": "Prepending the author's domain is a clear, actionable change that perfectly preserves the skill's original intent while disambiguating it."
+  },
+  {
+    "case_id": "case-04",
+    "template_kind": "narrow_scope",
+    "actionability": 2,
+    "preservation": 1,
+    "note": "The suggested additions are unrelated to Xcode tools and would fundamentally break the meaning of the skill's description."
+  },
+  {
+    "case_id": "case-04",
+    "template_kind": "reword_trigger_verb",
+    "actionability": 1,
+    "preservation": 3,
+    "note": "This template produces an ungrammatical and confusing phrase, making it a poor, unactionable suggestion."
+  },
+  {
+    "case_id": "case-05",
+    "template_kind": "add_domain_qualifier",
+    "actionability": 4,
+    "preservation": 5,
+    "note": "Renaming the generic 'feature' skill with its author's domain is a highly effective and actionable way to disambiguate it."
+  },
+  {
+    "case_id": "case-05",
+    "template_kind": "narrow_scope",
+    "actionability": 2,
+    "preservation": 1,
+    "note": "Appending a generic, unrelated artifact to an already detailed description is nonsensical and breaks the original intent."
+  },
+  {
+    "case_id": "case-05",
+    "template_kind": "reword_trigger_verb",
+    "actionability": 1,
+    "preservation": 3,
+    "note": "The suggestion creates an awkward, ungrammatical phrase that a user would be unlikely to adopt."
+  },
+  {
+    "case_id": "case-06",
+    "template_kind": "add_domain_qualifier",
+    "actionability": 4,
+    "preservation": 5,
+    "note": "Adding the author's domain is a clear, actionable suggestion that preserves the original intent while providing necessary disambiguation."
+  },
+  {
+    "case_id": "case-06",
+    "template_kind": "narrow_scope",
+    "actionability": 2,
+    "preservation": 1,
+    "note": "The suggested additions are unrelated to Cloudflare agents and would fundamentally break the meaning of the skill's description."
+  },
+  {
+    "case_id": "case-06",
+    "template_kind": "reword_trigger_verb",
+    "actionability": 4,
+    "preservation": 3,
+    "note": "While actionable, swapping 'build' for 'compile' introduces a minor semantic drift, as building an agent is a broader concept."
+  },
+  {
+    "case_id": "case-07",
+    "template_kind": "add_domain_qualifier",
+    "actionability": 4,
+    "preservation": 5,
+    "note": "Adding the author's domain is a clear, actionable suggestion that preserves the original intent while providing necessary disambiguation."
+  },
+  {
+    "case_id": "case-07",
+    "template_kind": "narrow_scope",
+    "actionability": 2,
+    "preservation": 1,
+    "note": "The suggested additions are unrelated to Cloudflare agents and would fundamentally break the meaning of the skill's description."
+  },
+  {
+    "case_id": "case-07",
+    "template_kind": "reword_trigger_verb",
+    "actionability": 4,
+    "preservation": 3,
+    "note": "While actionable, swapping 'build' for 'compile' introduces a minor semantic drift, as building an agent is a broader concept."
+  },
+  {
+    "case_id": "case-08",
+    "template_kind": "add_domain_qualifier",
+    "actionability": 4,
+    "preservation": 5,
+    "note": "Prepending the author's domain is a clear, actionable change that perfectly preserves the skill's original intent while disambiguating it."
+  },
+  {
+    "case_id": "case-08",
+    "template_kind": "narrow_scope",
+    "actionability": 2,
+    "preservation": 1,
+    "note": "The suggested additions are unrelated to Azure DevOps and would fundamentally break the meaning of the skill's description."
+  },
+  {
+    "case_id": "case-08",
+    "template_kind": "reword_trigger_verb",
+    "actionability": 1,
+    "preservation": 3,
+    "note": "This template produces an ungrammatical and confusing phrase, making it a poor, unactionable suggestion."
+  },
+  {
+    "case_id": "case-09",
+    "template_kind": "add_domain_qualifier",
+    "actionability": 4,
+    "preservation": 5,
+    "note": "Prepending the author's domain is a clear, actionable change that perfectly preserves the skill's original intent while disambiguating it."
+  },
+  {
+    "case_id": "case-09",
+    "template_kind": "narrow_scope",
+    "actionability": 2,
+    "preservation": 1,
+    "note": "The suggested additions are unrelated to the demo project and would fundamentally break the meaning of the skill's description."
+  },
+  {
+    "case_id": "case-09",
+    "template_kind": "reword_trigger_verb",
+    "actionability": 1,
+    "preservation": 3,
+    "note": "The suggestion creates an awkward, ungrammatical phrase that a user would be unlikely to adopt."
+  },
+  {
+    "case_id": "case-10",
+    "template_kind": "add_domain_qualifier",
+    "actionability": 4,
+    "preservation": 5,
+    "note": "Adding the author's domain is a clear, actionable suggestion that preserves the original intent while providing necessary disambiguation."
+  },
+  {
+    "case_id": "case-10",
+    "template_kind": "narrow_scope",
+    "actionability": 2,
+    "preservation": 1,
+    "note": "The suggested additions are unrelated to spec-driven development and would fundamentally break the meaning of the skill's description."
+  },
+  {
+    "case_id": "case-10",
+    "template_kind": "reword_trigger_verb",
+    "actionability": 1,
+    "preservation": 3,
+    "note": "The suggestion creates an awkward, ungrammatical phrase that a user would be unlikely to adopt."
+  }
+]
