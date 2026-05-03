@@ -20,13 +20,20 @@
  */
 
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { promisify } from 'node:util'
-import { logRetrievalEvent } from '../packages/doc-retrieval-mcp/src/retrieval-log/writer.js'
+import {
+  assessInstrumentationHealth,
+  type ProbeResult,
+} from '../packages/doc-retrieval-mcp/src/retrieval-log/probe.js'
+import {
+  logRetrievalEvent,
+  resolveRetrievalLogPaths,
+} from '../packages/doc-retrieval-mcp/src/retrieval-log/writer.js'
 import type { SearchHit } from '../packages/doc-retrieval-mcp/src/types.js'
 
 // search() is dynamically imported inside runQuery — its module loads
@@ -58,6 +65,7 @@ const SEARCH_K = 8
 const MIN_SCORE = 0.35
 const MEMORY_FILE_MAX_READ = 100 * 1024
 const LINEAR_TIMEOUT_MS = 1800
+const PROBE_DEFAULT_STALE_HOURS = 24
 
 interface CliArgs {
   sessionId: string
@@ -202,6 +210,68 @@ function truncateBytes(s: string, maxBytes: number): string {
   return buf.slice(0, maxBytes).toString('utf8')
 }
 
+/**
+ * SMI-4549 Wave 2 — count `~/.claude/projects/<encoded>/sessions/*.jsonl`
+ * files modified in the last `staleHours`. The probe uses this as the
+ * denominator for its capture-rate gate so the threshold is session-relative
+ * rather than absolute (plan-review H3).
+ */
+function countRecentJsonlSessions(cwd: string, now: Date, staleHours: number): number {
+  try {
+    const encoded = encodeProjectPath(cwd)
+    const sessionsDir = join(homedir(), '.claude', 'projects', encoded, 'sessions')
+    if (!existsSync(sessionsDir)) return 0
+    const cutoff = now.getTime() - staleHours * 60 * 60 * 1000
+    let n = 0
+    for (const entry of readdirSync(sessionsDir)) {
+      if (!entry.endsWith('.jsonl')) continue
+      try {
+        const st = statSync(join(sessionsDir, entry))
+        if (st.mtimeMs >= cutoff) n += 1
+      } catch {
+        // ignore missing/unreadable files
+      }
+    }
+    return n
+  } catch {
+    return 0
+  }
+}
+
+function formatRelativeAge(tsIso: string, now: Date): string {
+  const ms = now.getTime() - Date.parse(tsIso)
+  if (!Number.isFinite(ms)) return 'unknown'
+  const hours = ms / (1000 * 60 * 60)
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))} minutes ago`
+  if (hours < 48) return `${Math.round(hours)} hours ago`
+  return `${Math.round(hours / 24)} days ago`
+}
+
+/**
+ * SMI-4549 Wave 2 — render the stale-instrumentation banner. Prepended to
+ * the priming markdown when `assessInstrumentationHealth` returns
+ * `stale: true`. Uses the same `**bold**` style as `renderPrimingMarkdown`
+ * because GitHub `[!WARNING]` callouts render as literal text inside the
+ * SessionStart `additionalContext` payload.
+ */
+export function renderInstrumentationBanner(probe: ProbeResult, now: Date): string {
+  const lastReal =
+    probe.lastRealSessionTs !== null
+      ? `${probe.lastRealSessionTs} (${formatRelativeAge(probe.lastRealSessionTs, now)})`
+      : 'never'
+  const markerTs = probe.outageMarker?.ts ?? 'absent'
+  const dockerLine = probe.isDockerOnHost ? 'set' : 'unset'
+  return [
+    '**Warning — SessionStart instrumentation appears stale.**',
+    '',
+    `- Last real-session retrieval_events row: ${lastReal}.`,
+    `- Outage marker: ${markerTs}. Reason: ${probe.reason}.`,
+    `- IS_DOCKER on host: ${dockerLine}.`,
+    '- Repair: `./scripts/repair-host-native-deps.sh`',
+    '',
+  ].join('\n')
+}
+
 export function renderPrimingMarkdown(query: string, hits: SearchHit[]): string {
   const head = '<!-- session-priming v1 — SMI-4451 Wave 1 Step 7 -->'
   const queryLine = `**Priming query** (truncated; full text in retrieval-logs.db):\n\n> ${truncateBytes(
@@ -223,16 +293,41 @@ export function renderPrimingMarkdown(query: string, hits: SearchHit[]): string 
 }
 
 export async function runQuery(args: CliArgs): Promise<PrimingResult> {
+  // SMI-4549 Wave 2: probe instrumentation health BEFORE the disabled
+  // short-circuit. A user who has explicitly disabled priming for a
+  // session still benefits from a banner if their writer is broken —
+  // the probe never writes to the DB, so it's safe to run regardless.
+  const now = new Date()
+  const staleHoursEnv = Number(process.env.SKILLSMITH_RETRIEVAL_PROBE_STALE_HOURS)
+  const staleHours =
+    Number.isFinite(staleHoursEnv) && staleHoursEnv > 0 ? staleHoursEnv : PROBE_DEFAULT_STALE_HOURS
+  const { dbPath, outageMarkerPath } = resolveRetrievalLogPaths()
+  let probeBanner = ''
+  try {
+    const probe = await assessInstrumentationHealth({
+      outageMarkerPath,
+      dbPath,
+      now,
+      staleHours,
+      jsonlSessionCount24h: countRecentJsonlSessions(args.cwd, now, staleHours),
+    })
+    if (probe.stale) probeBanner = renderInstrumentationBanner(probe, now)
+  } catch {
+    // Probe must never crash the priming hook. Silent degrade.
+  }
+
   if (process.env.SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING === '1') {
     logRetrievalEvent({
       sessionId: args.sessionId,
-      ts: new Date().toISOString(),
+      ts: now.toISOString(),
       trigger: 'session_start_priming',
       query: '',
       topKResults: '[]',
       hookOutcome: 'disabled',
     })
-    return { additionalContext: '' }
+    // Even when priming is disabled, surface the stale-instrumentation
+    // banner so a long-running outage doesn't go silent.
+    return { additionalContext: probeBanner }
   }
 
   const [signal1, signal2, signal3] = await Promise.all([
@@ -259,7 +354,7 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
       topKResults: '[]',
       hookOutcome: 'partial_failure',
     })
-    return { additionalContext: '' }
+    return { additionalContext: probeBanner }
   }
 
   let hits: SearchHit[]
@@ -274,7 +369,7 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
       topKResults: '[]',
       hookOutcome: 'partial_failure',
     })
-    return { additionalContext: '' }
+    return { additionalContext: probeBanner }
   }
 
   if (hits.length === 0) {
@@ -286,7 +381,7 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
       topKResults: '[]',
       hookOutcome: 'partial_failure',
     })
-    return { additionalContext: '' }
+    return { additionalContext: probeBanner }
   }
 
   logRetrievalEvent({
@@ -305,7 +400,7 @@ export async function runQuery(args: CliArgs): Promise<PrimingResult> {
     hookOutcome: 'primed',
   })
 
-  return { additionalContext: renderPrimingMarkdown(query, hits) }
+  return { additionalContext: probeBanner + renderPrimingMarkdown(query, hits) }
 }
 
 async function main(): Promise<void> {
