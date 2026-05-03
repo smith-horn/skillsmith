@@ -51,7 +51,7 @@
     "@smithy/protocol-http": "5.1.2",
     "@smithy/smithy-client": "4.12.13",
     "@smithy/types": "4.13.1",
-    "@smithy/util-retry": "4.1.2",
+    "@smithy/util-retry": "4.3.8",
     "vitest": "4.1.2"
   },
   "files": [
