@@ -63,25 +63,52 @@ if [ $SECURITY_STATUS -ne 0 ]; then
   exit 1
 fi
 
-# Phase 3: Format check (SMI-1835 follow-up)
+# Phase 3: Format check (SMI-1835 follow-up; SMI-4681 host fallback)
 # Catches Prettier issues before they hit CI - shift left approach
+# SMI-4681: source shared detection so macOS+worktree falls back to host
+# instead of testing main-repo HEAD inside the container.
 echo "🔍 Running pre-push format check..."
 
-# Check if Docker is available
-# SMI-1774: Use -w /app to support running from worktree directories
-if ! docker exec -w /app skillsmith-dev-1 echo "ok" > /dev/null 2>&1; then
+# Source shared detection helper (SMI-4681). Graceful degradation: if the
+# helper file is missing (e.g. push from a worktree on a branch that predates
+# this PR), warn and continue with today's hardcoded `-w /app` path.
+HOOK_DETECT_LIB="$(dirname "$0")/../scripts/lib/hook-docker-detect.sh"
+if [ -r "$HOOK_DETECT_LIB" ]; then
+  # shellcheck source=../scripts/lib/hook-docker-detect.sh
+  . "$HOOK_DETECT_LIB"
+else
+  echo "⚠️  scripts/lib/hook-docker-detect.sh missing — using legacy in-container path"
+  echo "   (rebase onto main to pick up SMI-4681)"
+  DOCKER_AVAILABLE=1
+  USE_DOCKER=1
+  FELL_BACK=0
+  CONTAINER_WD="/app"
+  DOCKER_CONTAINER="skillsmith-dev-1"
+  RUN_PREFIX="docker exec ${DOCKER_CONTAINER}"
+  run_cmd() {
+    docker exec -w "$CONTAINER_WD" "$DOCKER_CONTAINER" "$@"
+  }
+fi
+
+# Preserve "Docker down → skip with warning" UX for in-tree main repo only.
+# When FELL_BACK=1 we MUST run on host (worktree code is otherwise unchecked).
+if [ "$DOCKER_AVAILABLE" = "0" ] && [ "$FELL_BACK" = "0" ]; then
   echo "⚠️  Docker not running - skipping format check"
   echo "   Run: docker compose --profile dev up -d"
   exit 0  # Don't block push, just warn
 fi
 
-# Run format check
-if docker exec -w /app skillsmith-dev-1 npm run format:check > /dev/null 2>&1; then
+# Run format check via run_cmd (Docker or host, decided by helper).
+if run_cmd npm run format:check > /dev/null 2>&1; then
   echo "✅ Format check passed"
 else
   echo ""
   echo "❌ Prettier formatting issues found!"
-  echo "   Run: docker exec skillsmith-dev-1 npm run format"
+  if [ -n "$RUN_PREFIX" ]; then
+    echo "   Run: $RUN_PREFIX npm run format"
+  else
+    echo "   Run: npm run format"
+  fi
   echo "   to auto-fix, then commit and push again"
   echo ""
   echo "   Bypass: git push --no-verify"
