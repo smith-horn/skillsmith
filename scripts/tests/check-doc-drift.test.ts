@@ -79,26 +79,141 @@ describe('SMI-3882: check-doc-drift', () => {
     })
   })
 
-  describe('detectVersionBumps', () => {
-    it('should pass when version bump + CHANGELOG present (test 3: pass)', () => {
+  describe('detectVersionBumps (SMI-4655: diff-aware)', () => {
+    // Real-shape diff fixtures — mirror what `gh pr view --json files,diff` returns.
+    const versionBumpDiff = `diff --git a/packages/core/package.json b/packages/core/package.json
+index abc123..def456 100644
+--- a/packages/core/package.json
++++ b/packages/core/package.json
+@@ -2,7 +2,7 @@
+   "name": "@skillsmith/core",
+-  "version": "0.5.7",
++  "version": "0.5.8",
+   "description": "Core",
+`
+
+    const keywordOnlyDiff = `diff --git a/packages/cli/package.json b/packages/cli/package.json
+index abc123..def456 100644
+--- a/packages/cli/package.json
++++ b/packages/cli/package.json
+@@ -10,5 +10,6 @@
+   "keywords": [
+     "skills",
++    "claude-code",
+     "cli"
+   ]
+`
+
+    const depBumpDiff = `diff --git a/packages/cli/package.json b/packages/cli/package.json
+index abc123..def456 100644
+--- a/packages/cli/package.json
++++ b/packages/cli/package.json
+@@ -15,7 +15,7 @@
+   "dependencies": {
+-    "zod": "^3.25.0",
++    "zod": "^3.25.76",
+     "commander": "^12.0.0"
+   }
+`
+
+    const scriptsOnlyDiff = `diff --git a/packages/cli/package.json b/packages/cli/package.json
+index abc123..def456 100644
+--- a/packages/cli/package.json
++++ b/packages/cli/package.json
+@@ -20,7 +20,7 @@
+   "scripts": {
+-    "build": "tsc",
++    "build": "tsc --incremental",
+     "test": "vitest"
+   }
+`
+
+    const versionPlusKeywordDiff = `diff --git a/packages/core/package.json b/packages/core/package.json
+index abc123..def456 100644
+--- a/packages/core/package.json
++++ b/packages/core/package.json
+@@ -2,7 +2,7 @@
+   "name": "@skillsmith/core",
+-  "version": "0.5.7",
++  "version": "0.5.8",
+   "keywords": [
+-    "skills"
++    "skills", "claude-code"
+   ]
+`
+
+    it('passes when version bump + CHANGELOG present (test 3: pass)', () => {
       const files = ['packages/core/package.json', 'packages/core/CHANGELOG.md']
-      const gaps = detectVersionBumps(files)
+      const gaps = detectVersionBumps(files, versionBumpDiff)
       expect(gaps.length).toBe(0)
     })
 
-    it('should fail when version bump + no CHANGELOG (test 4: fail)', () => {
+    it('fails when version-only change + no CHANGELOG (test 4: fail)', () => {
       const files = ['packages/core/package.json']
-      const gaps = detectVersionBumps(files)
+      const gaps = detectVersionBumps(files, versionBumpDiff)
       expect(gaps.length).toBe(1)
       expect(gaps[0].severity).toBe('fail')
       expect(gaps[0].surface).toBe('packages/core/CHANGELOG.md')
+      expect(gaps[0].trigger).toBe('Version bump in packages/core/package.json')
     })
 
-    it('should check root package.json separately', () => {
-      const files = ['package.json']
-      const gaps = detectVersionBumps(files)
+    it('passes when keyword-only change + no CHANGELOG (SMI-4655 false positive fix)', () => {
+      const files = ['packages/cli/package.json']
+      const gaps = detectVersionBumps(files, keywordOnlyDiff)
+      expect(gaps).toEqual([])
+    })
+
+    it('warns when dependency-range change + no CHANGELOG (downgrade from fail)', () => {
+      const files = ['packages/cli/package.json']
+      const gaps = detectVersionBumps(files, depBumpDiff)
       expect(gaps.length).toBe(1)
-      expect(gaps[0].surface).toBe('CHANGELOG.md')
+      expect(gaps[0].severity).toBe('warn')
+      expect(gaps[0].surface).toBe('packages/cli/CHANGELOG.md')
+      expect(gaps[0].trigger).toBe('Dependency change in packages/cli/package.json')
+    })
+
+    it('passes when scripts-only change + no CHANGELOG', () => {
+      const files = ['packages/cli/package.json']
+      const gaps = detectVersionBumps(files, scriptsOnlyDiff)
+      expect(gaps).toEqual([])
+    })
+
+    it('fails on mixed version+keyword change (version wins)', () => {
+      const files = ['packages/core/package.json']
+      const gaps = detectVersionBumps(files, versionPlusKeywordDiff)
+      expect(gaps.length).toBe(1)
+      expect(gaps[0].severity).toBe('fail')
+    })
+
+    it('passes when CHANGELOG also changed alongside dep bump', () => {
+      const files = ['packages/cli/package.json', 'packages/cli/CHANGELOG.md']
+      const gaps = detectVersionBumps(files, depBumpDiff)
+      expect(gaps).toEqual([])
+    })
+
+    it('skips root package.json (M-1 — handled by detect-release-drift.ts)', () => {
+      // Root package.json bumps must not double-fire here; detect-release-drift
+      // owns the root CHANGELOG verdict.
+      const rootBumpDiff = `diff --git a/package.json b/package.json
+index abc..def 100644
+--- a/package.json
++++ b/package.json
+@@ -2,7 +2,7 @@
+   "name": "skillsmith",
+-  "version": "1.0.0",
++  "version": "1.0.1",
+`
+      const files = ['package.json']
+      const gaps = detectVersionBumps(files, rootBumpDiff)
+      expect(gaps).toEqual([])
+    })
+
+    it('handles missing diff hunk gracefully (file in list but no diff content)', () => {
+      // Defensive: prData.files may include the path while prData.diff is empty
+      // (e.g. early in detection pipeline or with a malformed PR fetch).
+      const files = ['packages/core/package.json']
+      const gaps = detectVersionBumps(files, '')
+      expect(gaps).toEqual([])
     })
   })
 
@@ -184,6 +299,12 @@ describe('SMI-3882: check-doc-drift', () => {
     })
 
     it('should use highest severity when multiple gaps (test 11: highest wins)', () => {
+      // SMI-4655: Version bump now requires a real -/+ "version" diff to fire as `fail`.
+      const versionBumpDiff = `diff --git a/packages/core/package.json b/packages/core/package.json
+@@ -2,7 +2,7 @@
+-  "version": "0.5.7",
++  "version": "0.5.8",
+`
       const result = run(
         prData({
           files: [
@@ -191,7 +312,7 @@ describe('SMI-3882: check-doc-drift', () => {
             'packages/vscode-extension/src/extension.ts',
             'packages/core/src/index.ts',
           ],
-          diff: '',
+          diff: versionBumpDiff,
         })
       )
       // Version bump without CHANGELOG = fail, VS Code without CHANGELOG = warn
@@ -220,10 +341,16 @@ describe('SMI-3882: check-doc-drift', () => {
     })
 
     it('should include gap details in reason when failing', () => {
+      // SMI-4655: requires a real version-line diff to flag as fail.
+      const versionBumpDiff = `diff --git a/packages/core/package.json b/packages/core/package.json
+@@ -2,7 +2,7 @@
+-  "version": "0.5.7",
++  "version": "0.5.8",
+`
       const result = run(
         prData({
           files: ['packages/core/package.json', 'packages/core/src/index.ts'],
-          diff: '',
+          diff: versionBumpDiff,
         })
       )
       expect(result.verdict).toBe('fail')
