@@ -63,9 +63,15 @@ export function checkSchemaCompatibility(db: DatabaseType): SchemaCompatibility 
   }
 
   if (currentVersion > expectedVersion) {
-    const hasBreakingChanges = MIGRATIONS.slice(expectedVersion).some(
-      (m) => m.sql.includes('DROP') || m.sql.includes('RENAME')
-    )
+    const hasBreakingChanges = MIGRATIONS.slice(expectedVersion).some((m) => {
+      // SMI-4665: migrations may carry an `apply` function instead of an `sql` string.
+      // Function-form migrations bypass this string-scan heuristic; v16 in particular
+      // performs a CREATE/DROP/RENAME table-recreation dance internally and has been
+      // verified safe by hand. If a future function-form migration is genuinely
+      // breaking, gate it here explicitly.
+      const sql = m.sql ?? ''
+      return sql.includes('DROP') || sql.includes('RENAME')
+    })
 
     if (hasBreakingChanges) {
       return {

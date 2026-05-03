@@ -19,7 +19,7 @@ When you run a Skillsmith search through the MCP server, the CLI, or the VS Code
 
 A quick orientation before we go deep: **MCP** (Model Context Protocol) is the standard agents use to talk to external tools — Claude Code, Cursor, Copilot, Codex, Windsurf and others all speak it. **FTS5** is SQLite's built-in full-text search module: tokenize text, build an inverted index, rank results, all inside the database file with no external service. **HNSW** (hierarchical navigable small world) is a graph index that makes vector search fast by checking only a small fraction of the dataset per query. **ONNX** (Open Neural Network Exchange) is a portable ML model format with a runtime that runs inference on CPU — no GPU, no API call. We'll explain the rest as they come up.
 
-Jump to: [Where the DB lives](#where-the-db-lives) · [Schema tour](#schema-tour) · [FTS5 default](#fts5-the-default-search-path) · [Semantic search](#semantic-search-opt-in) · [`sync`](#sync-the-diff-algorithm) · [Tradeoffs](#tradeoffs)
+Jump to: [Where the DB lives](#where-the-db-lives) · [Schema tour](#schema-tour) · [FTS5 default](#fts5-the-default-search-path) · [Semantic search](#semantic-search-opt-in) · [`sync`](#sync-the-diff-algorithm) · [`import-local`](#import-local-the-other-direction) · [Tradeoffs](#tradeoffs)
 
 ## Two posts, two halves
 
@@ -108,6 +108,14 @@ A few things `sync` does *not* do, by design:
 - **It does not re-run security scans.** Those are server-side artifacts; we cache the result.
 
 Typical incremental run is on the order of tens of seconds, dominated by registry API latency rather than local CPU.
+
+## `import-local` — the other direction
+
+`sync` flows registry → cache. `skillsmith import-local` flows the other way: it walks `~/.claude/skills/` (or any directory you point it at — pass `--client cursor` to walk `~/.cursor/skills/`, etc.), parses each `SKILL.md` (the markdown-with-frontmatter file format that defines an agent skill — name, description, trigger phrases, and the prompt body), and writes the result into the same `skills` table with a `source = 'local'` marker. The implementation lives in `packages/cli/src/commands/import-local.ts`.
+
+This matters for two cases. First, hand-installed skills — skills you copied into your client's skills directory from a teammate's repo or your own scratch — show up in `skillsmith search` after `import-local` even if they were never published to the registry. Second, locally authored skills under active development; pass `--watch` and the importer rebuilds the index whenever you save a `SKILL.md`, so `search` reflects your work-in-progress alongside everything else.
+
+`import-local` writes to the same table `sync` does, but the `source = 'local'` marker is load-bearing: a subsequent `skillsmith sync` (with or without `--force`) will skip rows where `source = 'local'`, so the registry never silently overwrites your unpublished WIP. Each local skill's id is a deterministic hash of its canonical path, so re-running `import-local` on the same directory upserts in place rather than duplicating.
 
 ## Tradeoffs
 
