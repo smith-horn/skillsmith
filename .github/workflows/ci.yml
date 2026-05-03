@@ -1318,27 +1318,99 @@ jobs:
             skillsmith-ci:${{ github.sha }} \
             npm run build
 
-      # SMI-4652: pass --config so PR matrix runs the SAME suite as
-      # post-merge-verify and the pre-push hook. Previously this step listed
-      # only positional globs (scripts/tests + supabase/functions) and silently
-      # skipped colocated `packages/*/src/**/*.test.ts` tests that
-      # `vitest.config.root-tests.ts` includes. SMI-4549, SMI-4640, and the
-      # 2026-05-02 install.test.ts hotfix (#883) all slipped through this gap.
-      #
-      # Reverses SMI-3502/SMI-4211 tradeoff (kept colocated tests OUT of the PR
-      # matrix to stay under the 7GB ubuntu-latest ceiling). Local measurement
-      # via `--logHeapUsage` against vitest.config.root-tests.ts: peak heap 78
-      # MB across 177 test files, total runtime ~14s — both far below the
-      # 6GB / 8min Wave 1 Step 4 thresholds. The cost of post-merge regressions
-      # (hotfix PRs, cascading rebases) now exceeds the cost of a heavier PR
-      # matrix.
+      # SMI-4652: scripts/tests + supabase/functions only (positional globs
+      # match historical behavior). Colocated `packages/*/src/**/*.test.ts`
+      # tests are covered by the parallel `Test (root colocated)` job below
+      # via `vitest.config.colocated.ts` — they were originally combined here
+      # but a process-level interaction in the runner (MaxListenersExceeded +
+      # post-test exit 1) surfaced when both ran in the same vitest invocation.
+      # Splitting them sidesteps the interaction and keeps the SMI-3502 OOM
+      # mitigation intact (each invocation stays under the 7GB ceiling on its
+      # own). See plan-review B-4 + Step 4b in the trifecta plan.
       - name: Run root-level tests
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npx vitest run --config vitest.config.root-tests.ts --passWithNoTests
+            npx vitest run scripts/tests supabase/functions --passWithNoTests
+
+  # SMI-4652: parallel job covering colocated `packages/*/src/**/*.test.ts`
+  # tests that were silently skipped by the original `Test (root)` positional
+  # globs. SMI-4549, SMI-4640, and the 2026-05-02 install.test.ts hotfix
+  # (#883) all slipped through that gap. Pre-push and post-merge-verify both
+  # ran the combined `vitest.config.root-tests.ts` and caught what PR matrix
+  # missed; this job closes the gap in PR matrix.
+  test-root-colocated:
+    name: Test (root colocated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [docker-build, classify]
+    # Match `Test (root)` gate exactly so the two jobs ungate/skip together.
+    if: |
+      needs.classify.outputs.skip_tests != 'true' &&
+      (needs.classify.outputs.tier == 'code' || needs.classify.outputs.tier == 'deps')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      # Note: colocated tests don't read git-crypt content, but unlock matches
+      # `Test (root)` so devs see consistent setup across jobs.
+      - name: Unlock git-crypt
+        if: ${{ env.GIT_CRYPT_KEY != '' }}
+        env:
+          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
+        run: |
+          if ! command -v git-crypt &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y git-crypt
+          fi
+          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
+          git-crypt unlock /tmp/git-crypt-key
+          rm -f /tmp/git-crypt-key
+
+      - name: Download Docker image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Download node_modules
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: node-modules
+          path: /tmp
+
+      - name: Load Docker image
+        run: |
+          zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
+          LOADED_TAG=$(docker images skillsmith-ci --format '{{.Tag}}' | head -1)
+          if [ -n "$LOADED_TAG" ] && [ "$LOADED_TAG" != "${{ github.sha }}" ]; then
+            echo "Re-tagging: $LOADED_TAG -> ${{ github.sha }}"
+            if ! docker tag skillsmith-ci:$LOADED_TAG skillsmith-ci:${{ github.sha }}; then
+              echo "::error::Failed to re-tag Docker image"
+              exit 1
+            fi
+          fi
+
+      - name: Extract node_modules
+        run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
+
+      - name: Build project
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npm run build
+
+      - name: Run colocated package tests
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            skillsmith-ci:${{ github.sha }} \
+            npx vitest run --config vitest.config.colocated.ts --passWithNoTests
 
   # Security audit always runs regardless of change classification.
   # Rationale: Security vulnerabilities can be introduced by any change type,
