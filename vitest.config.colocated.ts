@@ -1,3 +1,13 @@
+// SMI-4652: bump node's process-level signal-listener ceiling BEFORE vitest
+// starts registering its own SIGTERM/SIGINT handlers. Default is 10; vitest's
+// worker pool + dependency-injected test setups push past 10 in PR-matrix
+// docker-on-CI runs (5 attempts on PR #893 hit MaxListenersExceededWarning +
+// cascade SIGTERM exit 1; pre-push and post-merge-verify don't trip this).
+// Vitest evaluates this config file at startup, so this runs before workers
+// spawn. 20 is conservative — vitest's handlers count is bounded by file-pool
+// concurrency, not per-test.
+process.setMaxListeners(20)
+
 // SMI-4652 Step 4b fallback: colocated `packages/*/src/**/*.test.ts` ONLY.
 // Sibling to `vitest.config.root-tests.ts` — that config also includes
 // `scripts/tests` + `supabase/functions`, which the original `Test (root)`

@@ -1406,13 +1406,12 @@ jobs:
 
       - name: Run colocated package tests
         run: |
-          # SMI-4652: --pool=threads runs vitest workers as threads in a single
-          # parent process. Default --pool=forks spawns child processes that
-          # each register SIGTERM/SIGINT handlers on the parent — at >10 the
-          # MaxListenersExceededWarning fires and a cascade signal exits 1
-          # in the docker-on-CI runner environment (not seen in pre-push or
-          # post-merge-verify which run on host). Threads share the parent
-          # process so no per-worker handlers accumulate.
+          # SMI-4652: bump node's process.setMaxListeners ceiling before vitest
+          # starts. Earlier attempts (--maxWorkers=2, --pool=threads alone)
+          # didn't eliminate the MaxListenersExceededWarning + cascade SIGTERM
+          # in the docker-on-CI environment. The setMaxListeners call lives in
+          # `vitest.config.colocated.ts` (top of file) so it runs before vitest
+          # registers its own handlers.
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -w /app \
