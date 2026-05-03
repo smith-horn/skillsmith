@@ -464,6 +464,8 @@ A `SessionStart` hook (`scripts/session-start-priming.sh`) writes a transient pr
 
 **Per-class rank boost (SMI-4468)**: `rerank.ts` multiplies similarity by 1.5x for `class: feedback`/`project` chunks and 0.85x for `class: wave-spec`/`plans-review` chunks before applying absorption/supersession penalties. Tunable via `SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY` and `SKILLSMITH_DOC_RETRIEVAL_DAMPEN_PROCESS` (clamped to [0.1, 5.0]).
 
+**Memory adapter prerequisite (SMI-4677)**: the `memory-topic-files` adapter that ingests host-scope `~/.claude/projects/<encoded>/memory/feedback_*.md` and `project_*.md` files into the index requires `SKILLSMITH_PROJECT_DIR_ENCODED` set in `.env` (validated by Varlock; see `.env.schema`). Without it, the bind in `docker-compose.yml` resolves to a non-existent host path and the adapter produces zero memory chunks — silently degrading priming + the per-class boost above. Setup one-liner in [.claude/development/ruvector-dev-tooling.md](.claude/development/ruvector-dev-tooling.md#setup-first-run).
+
 ---
 
 ## Troubleshooting

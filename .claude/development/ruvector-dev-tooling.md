@@ -16,14 +16,31 @@ for the design rationale and alternatives considered.
 ## Setup (first run)
 
 ```bash
+# 1. Set the encoded host project path so the memory adapter can read your
+#    Claude Code auto-memory dir from inside the container (SMI-4677).
+#    The one-liner is worktree-aware: encodes the MAIN repo, not the worktree.
+MAIN_REPO=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+echo "SKILLSMITH_PROJECT_DIR_ENCODED=$(echo "$MAIN_REPO" | sed 's|^/|-|;s|/|-|g')" >> .env
+varlock load   # validates schema; the new var is non-sensitive
+
+# 2. Bring up the container (will now bind ~/.claude/projects/<encoded>/memory
+#    into /skillsmith-memory:ro).
 docker compose --profile dev up -d
 docker exec skillsmith-dev-1 npm install
 docker exec skillsmith-dev-1 npm run build -w packages/doc-retrieval-mcp
 
-# Build the initial index (requires linux-arm64-gnu binding — must run in Docker)
+# 3. Verify the bind worked.
+docker exec skillsmith-dev-1 printenv SKILLSMITH_MEMORY_DIR_OVERRIDE   # → /skillsmith-memory
+docker exec skillsmith-dev-1 ls /skillsmith-memory/feedback_*.md | head # lists host memory files
+
+# 4. Build the initial index (requires linux-arm64-gnu binding — must run in Docker).
 git submodule update --init   # required: docs/internal must be present
 docker exec skillsmith-dev-1 node /app/packages/doc-retrieval-mcp/dist/src/cli.js reindex --full
 ```
+
+**SMI-4677 note**: the bind mount is in base `docker-compose.yml` (`services.dev` only — `services.test` and `services.orchestrator` deliberately omit it). Inside the container `homedir()` is `/root`, which has no `.claude/projects/` and no encoded match for the host path; `SKILLSMITH_MEMORY_DIR_OVERRIDE=/skillsmith-memory` tells the `memory-topic-files` adapter to bypass `homedir()`-based resolution and read from the bind directly. Without this, the adapter is enabled in `corpus.config.json` but produces zero `feedback_*.md` / `project_*.md` chunks — silently degrading the SMI-4451 priming + SMI-4468 per-class boost. See `feedback_ruvector_check_coverage_before_ranking.md`.
+
+**Worktree caveat**: `SKILLSMITH_PROJECT_DIR_ENCODED` always encodes the **main repo path**, not the worktree path. Claude Code keys auto-memory by main repo; all worktrees share the same memory dir. The one-liner above uses `git rev-parse --git-common-dir` which always points at the main `.git/` regardless of which worktree it's run from.
 
 Output lands at `.ruvector/skillsmith-docs/vectors` (single-file VectorDb),
 `.ruvector/metadata.json`, and `.ruvector/.index-state.json`. All three are
