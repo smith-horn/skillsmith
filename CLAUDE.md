@@ -138,7 +138,7 @@ The repair script is idempotent — sub-second `[skip]` exit when the binding al
 
 Caveats: (a) do not run `npm install` in the main repo while a pre-commit is active in a worktree — re-run the commit if it aborts; (b) on **macOS Docker Desktop**, worktree pre-commits AND pre-pushes fall back to host execution because virtiofs cannot traverse relative symlinks (per-package `node_modules` resolution fails inside the container). The host fallback works correctly thanks to the SMI-4381 per-package symlinks. Linux Docker hosts use the in-container path via `compute_container_wd`. (c) repair existing worktrees with `./scripts/repair-worktrees.sh` (idempotent; backfills both root and per-package symlinks AND host native bindings via the SMI-4549 script).
 
-**macOS + worktree → host fallback (SMI-4377 + SMI-4381 + SMI-4549 + SMI-4681)**: detection logic for both pre-commit and pre-push lives in two places today: `.husky/pre-commit:27-109` (legacy inline) and `scripts/lib/hook-docker-detect.sh` (canonical, sourced by `.husky/pre-push`, `scripts/pre-push-check.sh`, `scripts/pre-push-coverage-check.sh`). When you see one of these messages on macOS:
+**macOS + worktree → host fallback (SMI-4377 + SMI-4381 + SMI-4549 + SMI-4681 + SMI-4686)**: detection logic lives in one place — `scripts/lib/hook-docker-detect.sh` — sourced by all four hook callers (`.husky/pre-commit`, `.husky/pre-push`, `scripts/pre-push-check.sh`, `scripts/pre-push-coverage-check.sh`). When you see one of these messages on macOS:
 
 ```text
 📂 Worktree on macOS — falling back to host execution (SMI-4381 / SMI-4681)
@@ -146,7 +146,7 @@ Caveats: (a) do not run `npm install` in the main repo while a pre-commit is act
    Docker Desktop's virtiofs. Host resolution works correctly.
 ```
 
-…it is **expected** and the hook is doing the right thing. If the message is followed by `❌ Host node_modules missing in worktree.`, run `./scripts/repair-worktrees.sh` to backfill the symlinks + native bindings. Pre-commit migration to source the same helper is tracked in [SMI-4686](https://linear.app/smith-horn-group/issue/SMI-4686).
+…it is **expected** and the hook is doing the right thing. If the message is followed by `❌ Host node_modules missing in worktree.`, run `./scripts/repair-worktrees.sh` to backfill the symlinks + native bindings.
 
 **Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Use `--dry-run` to preview. Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
 

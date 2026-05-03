@@ -302,22 +302,9 @@ assert_true ".husky/_/pre-commit stub exists" \
   "[ -f '$REPO_ROOT/.husky/_/pre-commit' ]"
 
 # -----------------------------------------------------------------------
-# Scenario 9: structural guard — .husky/pre-commit contains SMI-4381 fallback
-# Prevents accidental deletion of the macOS-Darwin host fallback. If this
-# guard fails, typecheck from worktrees on macOS will regress to wrong-zod
-# false-positive errors (Docker Desktop virtiofs cannot traverse relative
-# symlinks for per-package node_modules).
+# Scenario 9: (removed in SMI-4686 — folded into Scenario 9b's consumer
+# loops, which now also assert .husky/pre-commit sources the shared helper.)
 # -----------------------------------------------------------------------
-if grep -q 'IS_WORKTREE=1' "$REPO_ROOT/.husky/pre-commit" && \
-   grep -q 'USE_DOCKER=0' "$REPO_ROOT/.husky/pre-commit" && \
-   grep -q 'SMI-4381' "$REPO_ROOT/.husky/pre-commit" && \
-   grep -q 'compute_container_wd' "$REPO_ROOT/.husky/pre-commit"; then
-  echo "PASS pre-commit: SMI-4381 path-translation + macOS-fallback block present"
-  pass=$((pass + 1))
-else
-  echo "FAIL pre-commit: SMI-4381 fallback block missing or altered"
-  fail=$((fail + 1))
-fi
 
 # -----------------------------------------------------------------------
 # Scenario 10: structural guard — lint-staged.config.js wires check-file-length
@@ -333,12 +320,15 @@ else
 fi
 
 # -----------------------------------------------------------------------
-# Scenario 9b (SMI-4681): structural guards for pre-push host fallback
+# Scenario 9b (SMI-4681 + SMI-4686): structural guards for hook chain
 # Prevents accidental deletion of:
 #   - the shared helper at scripts/lib/hook-docker-detect.sh
-#   - source lines in .husky/pre-push, scripts/pre-push-{check,coverage-check}.sh
+#   - source lines in .husky/pre-commit, .husky/pre-push,
+#     scripts/pre-push-{check,coverage-check}.sh
 # Also asserts each consumer has at most ONE local USE_DOCKER= assignment
 # (the graceful-degradation else branch); the helper is the canonical setter.
+# SMI-4686 added .husky/pre-commit to both loops; before, it had its own
+# inline copy of the detection logic.
 # -----------------------------------------------------------------------
 HELPER="$REPO_ROOT/scripts/lib/hook-docker-detect.sh"
 
@@ -357,6 +347,7 @@ fi
 
 # Each consumer sources the helper.
 for consumer in \
+  ".husky/pre-commit" \
   ".husky/pre-push" \
   "scripts/pre-push-check.sh" \
   "scripts/pre-push-coverage-check.sh"; do
@@ -373,6 +364,7 @@ done
 # degradation else branch). The helper is the canonical setter; duplicate
 # assignments are the kind of drift this PR is meant to prevent.
 for consumer in \
+  ".husky/pre-commit" \
   ".husky/pre-push" \
   "scripts/pre-push-check.sh" \
   "scripts/pre-push-coverage-check.sh"; do
