@@ -1318,13 +1318,27 @@ jobs:
             skillsmith-ci:${{ github.sha }} \
             npm run build
 
+      # SMI-4652: pass --config so PR matrix runs the SAME suite as
+      # post-merge-verify and the pre-push hook. Previously this step listed
+      # only positional globs (scripts/tests + supabase/functions) and silently
+      # skipped colocated `packages/*/src/**/*.test.ts` tests that
+      # `vitest.config.root-tests.ts` includes. SMI-4549, SMI-4640, and the
+      # 2026-05-02 install.test.ts hotfix (#883) all slipped through this gap.
+      #
+      # Reverses SMI-3502/SMI-4211 tradeoff (kept colocated tests OUT of the PR
+      # matrix to stay under the 7GB ubuntu-latest ceiling). Local measurement
+      # via `--logHeapUsage` against vitest.config.root-tests.ts: peak heap 78
+      # MB across 177 test files, total runtime ~14s — both far below the
+      # 6GB / 8min Wave 1 Step 4 thresholds. The cost of post-merge regressions
+      # (hotfix PRs, cascading rebases) now exceeds the cost of a heavier PR
+      # matrix.
       - name: Run root-level tests
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npx vitest run scripts/tests supabase/functions --passWithNoTests
+            npx vitest run --config vitest.config.root-tests.ts --passWithNoTests
 
   # Security audit always runs regardless of change classification.
   # Rationale: Security vulnerabilities can be introduced by any change type,
