@@ -24,89 +24,36 @@ if [ -n "$EXPECTED_BRANCH" ]; then
 fi
 
 # =============================================================================
-# Detect execution environment (Docker vs Local)
+# Detect execution environment (Docker vs Local) — SMI-4681 / SMI-4686
+# Source shared detection helper. Sets DOCKER_AVAILABLE, USE_DOCKER, FELL_BACK,
+# CONTAINER_WD, IS_WORKTREE, RUN_PREFIX; defines run_cmd, hook_debug.
+# Graceful degradation if the helper is missing (push from a worktree on a
+# branch that predates SMI-4686).
 # =============================================================================
-USE_DOCKER=0
-DOCKER_CONTAINER="skillsmith-dev-1"
-
-# Check if Docker is available and container is running
-if command -v docker > /dev/null 2>&1; then
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DOCKER_CONTAINER}$"; then
-    USE_DOCKER=1
-    echo "${BLUE}🐳 Using Docker container: ${DOCKER_CONTAINER}${NC}"
-  else
-    echo "${YELLOW}⚠️  Docker container '${DOCKER_CONTAINER}' not running - using local environment${NC}"
-    echo "${YELLOW}   Start with: docker compose --profile dev up -d${NC}"
-  fi
+HOOK_DETECT_LIB="$(dirname "$0")/../scripts/lib/hook-docker-detect.sh"
+if [ -r "$HOOK_DETECT_LIB" ]; then
+  # shellcheck source=../scripts/lib/hook-docker-detect.sh
+  . "$HOOK_DETECT_LIB"
 else
+  echo "${YELLOW}⚠️  scripts/lib/hook-docker-detect.sh missing — using legacy in-container path${NC}"
+  echo "${YELLOW}   (rebase onto main to pick up SMI-4686)${NC}"
+  DOCKER_AVAILABLE=1
+  USE_DOCKER=1
+  FELL_BACK=0
+  CONTAINER_WD="/app"
+  DOCKER_CONTAINER="skillsmith-dev-1"
+  RUN_PREFIX="docker exec ${DOCKER_CONTAINER}"
+  run_cmd() {
+    docker exec -w "$CONTAINER_WD" "$DOCKER_CONTAINER" "$@"
+  }
+fi
+
+if [ "$USE_DOCKER" = "1" ]; then
+  echo "${BLUE}🐳 Using Docker container: ${DOCKER_CONTAINER}${NC}"
+elif [ "$DOCKER_AVAILABLE" = "0" ] && [ "$FELL_BACK" = "0" ]; then
   echo "${YELLOW}ℹ️  Docker not available - using local environment${NC}"
 fi
-
-# SMI-4381: Compute container working directory for `docker exec -w`.
-# `docker-compose.yml` mounts `.:/app`, so worktrees under `<repo>/.worktrees/`
-# are visible inside the container at `/app/.worktrees/<name>/`. This helper
-# translates the host worktree path to its in-container equivalent. On Linux
-# Docker the in-container path works for all phases; on macOS Docker Desktop
-# the per-package node_modules symlinks (relative; SMI-4381 backfill) cannot
-# be traversed inside the container due to a virtiofs/gRPC FUSE limitation,
-# so worktrees on macOS fall back to host execution where the symlinks DO
-# resolve correctly.
-#
-# Returns:
-#   /app                          — main repo
-#   /app/.worktrees/<name>        — worktree under <repo-root>/.worktrees/
-#   ""  (empty)                   — off-tree worktree (e.g. ~/scratch/foo)
-compute_container_wd() {
-  WT_TOP="$(git rev-parse --show-toplevel 2>/dev/null)"
-  REPO_ROOT="$(git -C "$(git rev-parse --git-common-dir)/.." rev-parse --show-toplevel 2>/dev/null)"
-  if [ -z "$WT_TOP" ] || [ -z "$REPO_ROOT" ]; then
-    echo ""
-    return
-  fi
-  case "$WT_TOP" in
-    "$REPO_ROOT")     echo "/app" ;;
-    "$REPO_ROOT"/*)   echo "/app${WT_TOP#$REPO_ROOT}" ;;
-    *)                echo "" ;;  # off-tree worktree
-  esac
-}
-
-CONTAINER_WD="$(compute_container_wd)"
-
-# SMI-4381: macOS Docker Desktop cannot traverse relative symlinks at the
-# per-package level (zod resolves to wrong root version). Detect macOS and
-# fall back to host execution. The host fallback works correctly thanks to
-# the per-package node_modules symlinks created by scripts/_lib.sh
-# link_worktree_package_node_modules. This branch can be removed once Docker
-# Desktop fixes its virtiofs symlink handling, or when the workspace moves
-# to Linux-only dev hosts.
-IS_WORKTREE=0
-if [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ]; then
-  IS_WORKTREE=1
-fi
-
-if [ $USE_DOCKER -eq 1 ] && [ -z "$CONTAINER_WD" ]; then
-  USE_DOCKER=0
-  echo "${YELLOW}📂 Worktree outside repo root — falling back to host execution${NC}"
-  echo "${YELLOW}   (Docker bind-mount only covers paths under repo root)${NC}"
-elif [ $USE_DOCKER -eq 1 ] && [ $IS_WORKTREE -eq 1 ] && [ "$(uname)" = "Darwin" ]; then
-  USE_DOCKER=0
-  echo "${YELLOW}📂 Worktree on macOS — falling back to host execution (SMI-4381)${NC}"
-  echo "${YELLOW}   Per-package node_modules symlinks are not traversable in${NC}"
-  echo "${YELLOW}   Docker Desktop's virtiofs. Host resolution works correctly.${NC}"
-fi
 echo ""
-
-# Helper function to run commands in Docker or locally
-# SMI-1774: Use -w to support running from worktree directories
-# SMI-4381: CONTAINER_WD computed above; for in-tree worktrees this is
-# /app/.worktrees/<name>; for main repo it's /app.
-run_cmd() {
-  if [ $USE_DOCKER -eq 1 ]; then
-    docker exec -w "$CONTAINER_WD" $DOCKER_CONTAINER "$@"
-  else
-    "$@"
-  fi
-}
 
 # Phase 0: Secret Detection with Gitleaks
 echo "${YELLOW}[0/3] Scanning for secrets...${NC}"
