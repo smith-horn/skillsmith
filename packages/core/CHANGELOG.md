@@ -2,6 +2,12 @@
 
 All notable changes to `@skillsmith/core` are documented here.
 
+## v0.5.9
+
+- **Other**: docs+chore: SMI-4575 global rebrand sweep — Agent Skills, not Claude Skills (#857)
+- **Feature**: SMI-4578 + SMI-4580 — multi-client install paths + per-client MCP config snippets (#878)
+- **Fix**: SMI-4640 make closeDatabase tolerate undefined to surface real test-setup errors (#863)
+
 ## [Unreleased]
 
 - **Chore**: SMI-4575 refresh `HNSWEmbeddingStore.saveIndex()`/`loadIndex()` log messages — the legacy "Index persistence managed by V3 VectorDB backend" lines were factually wrong post-SMI-4577 (V3 was decommissioned with the claude-flow → ruflo rename). They now identify as no-op shims and point callers at `EmbeddingService` for HNSW persistence. Behaviour unchanged.

@@ -2,6 +2,11 @@
 
 All notable changes to `@skillsmith/cli` are documented here.
 
+## v0.5.13
+
+- **Other**: docs+chore: SMI-4575 global rebrand sweep — Agent Skills, not Claude Skills (#857)
+- **Feature**: SMI-4578 + SMI-4580 — multi-client install paths + per-client MCP config snippets (#878)
+
 ## [Unreleased]
 
 - **Chore**: SMI-4575 npm keywords add `agent-skills`, `cursor`, `copilot` — unblocks discovery beyond the `claude-code` keyword as the rebrand sweep generalises to multi-client. No CLI behaviour change.

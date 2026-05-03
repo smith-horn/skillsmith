@@ -2,6 +2,17 @@
 
 All notable changes to `@skillsmith/mcp-server` are documented here.
 
+## v0.4.14
+
+- **Feature**: SMI-4589 Wave 3 — edit-suggester (apply_with_confirmation for add_domain_qualifier) (#886)
+- **Other**: docs+chore: SMI-4575 global rebrand sweep — Agent Skills, not Claude Skills (#857)
+- **Feature**: SMI-4588 Wave 2 PR 4/4 — integration tests + audit-report rename section + backup-gc (#884)
+- **Fix**: SMI-4588 add runNamespaceGate mock to install.test.ts (#883)
+- **Feature**: SMI-4588 install pre-flight + mode gate (Wave 2 PR 3/4) (#881)
+- **Feature**: SMI-4578 + SMI-4580 — multi-client install paths + per-client MCP config snippets (#878)
+- **Feature**: SMI-4588 rename engine + suggestion chain + 3 apply paths (Wave 2 PR 2/4) (#880)
+- **Feature**: SMI-4588 namespace overrides ledger + shared audit types (Wave 2 PR 1/4) (#877)
+
 ## v0.4.13
 
 - **Fix**: map curated trust tier through MCP surface (SMI-4520) (#822)
