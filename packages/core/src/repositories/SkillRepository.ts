@@ -29,6 +29,8 @@ interface SkillRow {
   security_passed: number | null // SQLite uses 0/1 for boolean
   // SMI-2760: Compatibility tags (JSON array)
   compatibility: string | null
+  // SMI-4665: Provenance marker
+  source: string | null
   created_at: string
   updated_at: string
 }
@@ -62,8 +64,8 @@ export class SkillRepository {
     // Cast to our custom types for better-sqlite3 compatibility
     this.stmts = {
       insert: this.db.prepare(`
-        INSERT INTO skills (id, name, description, author, repo_url, quality_score, trust_tier, tags, risk_score, security_findings_count, security_scanned_at, security_passed, compatibility, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        INSERT INTO skills (id, name, description, author, repo_url, quality_score, trust_tier, tags, risk_score, security_findings_count, security_scanned_at, security_passed, compatibility, source, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
       `) as unknown as typeof this.stmts.insert,
 
       selectById: this.db.prepare(`
@@ -134,6 +136,10 @@ export class SkillRepository {
         row.compatibility && row.compatibility !== '[]'
           ? (JSON.parse(row.compatibility) as string[])
           : undefined,
+      // SMI-4665: Provenance — fall back to 'registry' for legacy rows that
+      // somehow lack the column (defence in depth; the NOT NULL DEFAULT in
+      // the schema should prevent this in practice).
+      source: row.source === 'local' ? 'local' : 'registry',
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }
@@ -161,7 +167,9 @@ export class SkillRepository {
       input.securityScannedAt ?? null,
       input.securityPassed === undefined ? null : input.securityPassed ? 1 : 0,
       // SMI-2760: Compatibility tags
-      JSON.stringify(input.compatibility || [])
+      JSON.stringify(input.compatibility || []),
+      // SMI-4665: Provenance — defaults to 'registry' for back-compat
+      input.source ?? 'registry'
     )
 
     const row = this.stmts.selectById.get(id) as SkillRow
@@ -195,7 +203,9 @@ export class SkillRepository {
             input.securityScannedAt ?? null,
             input.securityPassed === undefined ? null : input.securityPassed ? 1 : 0,
             // SMI-2760: Compatibility tags
-            JSON.stringify(input.compatibility || [])
+            JSON.stringify(input.compatibility || []),
+            // SMI-4665: Provenance — defaults to 'registry' for back-compat
+            input.source ?? 'registry'
           )
 
           const row = this.stmts.selectById.get(id) as SkillRow

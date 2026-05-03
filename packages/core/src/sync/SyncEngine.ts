@@ -273,16 +273,23 @@ export class SyncEngine {
         skillsUpdated = stats.updated
         skillsUnchanged = stats.unchanged
       } else if (dryRun) {
-        // In dry run, count what would be added/updated
+        // In dry run, count what would be added/updated.
+        // SMI-4665: rows where `source === 'local'` are reported as unchanged
+        // because the live path will skip them — keeps the dry-run summary
+        // honest about what `sync --force` would actually do.
         for (const skill of skillsToProcess) {
           const existing = this.skillRepo.findById(skill.id)
           if (existing) {
-            skillsUpdated++
+            if (existing.source === 'local') {
+              skillsUnchanged++
+            } else {
+              skillsUpdated++
+            }
           } else {
             skillsAdded++
           }
         }
-        skillsUnchanged = allSkills.length - skillsToProcess.length
+        skillsUnchanged += allSkills.length - skillsToProcess.length
       } else {
         skillsUnchanged = allSkills.length
       }
@@ -376,6 +383,16 @@ export class SyncEngine {
       const existing = this.skillRepo.findById(skill.id)
 
       if (existing) {
+        // SMI-4665: never overwrite a row that was imported from the local
+        // filesystem. The author iterates on a SKILL.md on disk; a registry
+        // sync (especially `sync --force`) must not silently replace it.
+        // Counts toward `unchanged` to keep the result tally honest.
+        if (existing.source === 'local') {
+          unchanged++
+          onProgress?.(i + 1)
+          continue
+        }
+
         // Check if actually changed
         if (existing.updatedAt !== skill.updated_at) {
           this.skillRepo.update(skill.id, {

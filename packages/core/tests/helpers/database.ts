@@ -46,7 +46,12 @@ export function createTestDatabase(): Database {
   // already included in the canonical SCHEMA_SQL. Those errors are expected and safe.
   for (const migration of MIGRATIONS) {
     try {
-      db.exec(migration.sql)
+      // SMI-4665: migrations may carry an `apply` function instead of `sql`.
+      if (migration.apply) {
+        migration.apply(db)
+      } else if (migration.sql !== undefined) {
+        db.exec(migration.sql)
+      }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       if (!msg.includes('duplicate column')) throw error
