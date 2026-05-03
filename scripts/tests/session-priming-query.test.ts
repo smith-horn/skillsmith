@@ -12,9 +12,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { searchMock, logRetrievalEventMock } = vi.hoisted(() => ({
+const { searchMock, logRetrievalEventMock, tmpHolder } = vi.hoisted(() => ({
   searchMock: vi.fn(),
   logRetrievalEventMock: vi.fn(),
+  // SMI-4549 Wave 2 — mutable holder so the writer.js mock factory can read
+  // the per-test tmp dir set in beforeEach. vi.hoisted ensures the holder
+  // exists at module load time when vi.mock runs.
+  tmpHolder: { current: '' as string },
 }))
 
 vi.mock('../../packages/doc-retrieval-mcp/src/search.js', () => ({
@@ -23,6 +27,13 @@ vi.mock('../../packages/doc-retrieval-mcp/src/search.js', () => ({
 
 vi.mock('../../packages/doc-retrieval-mcp/src/retrieval-log/writer.js', () => ({
   logRetrievalEvent: logRetrievalEventMock,
+  // SMI-4549 Wave 2: session-priming-query also imports resolveRetrievalLogPaths
+  // to feed dbPath/outageMarkerPath into the probe. Returns paths under
+  // the per-test tmp dir so the probe never touches HOME.
+  resolveRetrievalLogPaths: () => ({
+    dbPath: join(tmpHolder.current, 'retrieval-logs.db'),
+    outageMarkerPath: join(tmpHolder.current, 'retrieval-log.outage.json'),
+  }),
 }))
 
 import {
@@ -52,6 +63,7 @@ function makeHit(id: string, similarity: number, filePath: string): SearchHit {
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'session-priming-test-'))
+  tmpHolder.current = tmp
   process.env.RETRIEVAL_LOG_DIR_OVERRIDE = tmp
   searchMock.mockReset()
   logRetrievalEventMock.mockReset()

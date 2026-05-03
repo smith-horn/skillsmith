@@ -1,6 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRequire } from 'node:module'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 
@@ -311,6 +319,97 @@ describe('write error resilience', () => {
         (args: unknown[]) => typeof args[0] === 'string' && args[0].includes('failed to open DB')
       )
     ).toBe(true)
+  })
+})
+
+describe('SMI-4549 Wave 2 — outage marker', () => {
+  it('Docker no-op: NO marker is written when IS_DOCKER=true', async () => {
+    process.env.IS_DOCKER = 'true'
+    const { logRetrievalEvent } = await freshWriter()
+    logRetrievalEvent({
+      sessionId: 's',
+      ts: '2026-04-24T12:00:00Z',
+      trigger: 'other',
+      query: 'q',
+      topKResults: '[]',
+    })
+    // Docker is the documented "I don't write" mode, not an outage.
+    expect(existsSync(join(scratch, 'retrieval-log.outage.json'))).toBe(false)
+  })
+
+  it('owner mismatch: writes a marker with reason=owner_mismatch', async () => {
+    const { SCHEMA_SQL } = await import('./schema.js')
+    const dbPath = join(scratch, 'retrieval-logs.db')
+    const seed = new Database(dbPath)
+    seed.exec(SCHEMA_SQL)
+    seed.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('owner_user', 'not-really-me')
+    seed.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('schema_version', '1')
+    seed.close()
+    expect(userInfo().username).not.toBe('not-really-me')
+
+    const { logRetrievalEvent } = await freshWriter()
+    logRetrievalEvent({
+      sessionId: 's',
+      ts: '2026-04-24T12:00:00Z',
+      trigger: 'other',
+      query: 'q',
+      topKResults: '[]',
+    })
+
+    const markerPath = join(scratch, 'retrieval-log.outage.json')
+    expect(existsSync(markerPath)).toBe(true)
+    const parsed = JSON.parse(readFileSync(markerPath, 'utf8')) as {
+      reason: string
+      ts: string
+      hint: string
+    }
+    expect(parsed.reason).toBe('owner_mismatch')
+    expect(parsed.ts).toMatch(/T.*Z$/)
+    // mtime sanity: utimesSync to a fixed point + statSync confirms the file
+    // existed at the expected time without depending on real clock skew.
+    const fixed = new Date('2024-01-01T00:00:00Z')
+    utimesSync(markerPath, fixed, fixed)
+    const { statSync } = await import('node:fs')
+    expect(Math.floor(statSync(markerPath).mtimeMs)).toBe(fixed.getTime())
+  })
+
+  it('bind/open error: writes a marker with reason=binding_unavailable and clears on next success', async () => {
+    // First, seed a corrupt DB so openDb's catch fires.
+    const dbPath = join(scratch, 'retrieval-logs.db')
+    writeFileSync(dbPath, Buffer.from('not-a-sqlite-db'))
+
+    const { logRetrievalEvent, closeRetrievalLog: close } = await freshWriter()
+    logRetrievalEvent({
+      sessionId: 's',
+      ts: '2026-04-24T12:00:00Z',
+      trigger: 'other',
+      query: 'q',
+      topKResults: '[]',
+    })
+
+    const markerPath = join(scratch, 'retrieval-log.outage.json')
+    expect(existsSync(markerPath)).toBe(true)
+    const parsed = JSON.parse(readFileSync(markerPath, 'utf8')) as {
+      reason: string
+      hint: string
+      error: string
+    }
+    expect(parsed.reason).toBe('binding_unavailable')
+    expect(parsed.hint).toContain('repair-host-native-deps')
+    expect(parsed.error.length).toBeGreaterThan(0)
+
+    // Now restore: delete the corrupt file, allow a fresh open, marker clears.
+    close()
+    rmSync(dbPath, { force: true })
+    const { logRetrievalEvent: log2 } = await freshWriter()
+    log2({
+      sessionId: 's',
+      ts: '2026-04-24T12:00:01Z',
+      trigger: 'other',
+      query: 'q',
+      topKResults: '[]',
+    })
+    expect(existsSync(markerPath)).toBe(false)
   })
 })
 
