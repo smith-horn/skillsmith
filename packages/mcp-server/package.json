@@ -6,6 +6,18 @@
   "type": "module",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
+    },
+    "./audit": {
+      "types": "./dist/src/audit/index.d.ts",
+      "import": "./dist/src/audit/index.js",
+      "default": "./dist/src/audit/index.js"
+    }
+  },
   "bin": {
     "skillsmith-mcp": "./dist/src/index.js"
   },

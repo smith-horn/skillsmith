@@ -18,6 +18,7 @@
   "dependencies": {
     "@inquirer/prompts": "7.10.1",
     "@skillsmith/core": "^0.5.8",
+    "@skillsmith/mcp-server": "^0.4.13",
     "chalk": "5.6.2",
     "chokidar": "4.0.3",
     "cli-table3": "0.6.5",

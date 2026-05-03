@@ -128,3 +128,15 @@ export { APPLY_TEMPLATE_REGISTRY, applyRecommendedEdit } from './edit-applier.js
 export type { ApplyRecommendedEditOptions } from './edit-applier.js'
 
 export type { EditApplyError, EditApplyResult } from './edit-applier.types.js'
+
+// SMI-4590 Wave 4 PR 2/6 — FrameworkAdapter seam + claudeCodeAdapter (v1).
+// PR 3/6 will add `runInventoryAudit` shared helper to the same surface.
+export { claudeCodeAdapter, FrameworkAdapterError } from './framework-adapter.js'
+
+export type {
+  AdapterAction,
+  FileRenameAction,
+  FrameworkAdapter,
+  FrameworkName,
+  InlineEditAction,
+} from './framework-adapter.types.js'
