@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS skills (
   author TEXT,
   repo_url TEXT UNIQUE,
   quality_score REAL CHECK(quality_score IS NULL OR (quality_score >= 0 AND quality_score <= 1)),
-  trust_tier TEXT CHECK(trust_tier IN ('verified', 'community', 'experimental', 'unknown')) DEFAULT 'unknown',
+  trust_tier TEXT CHECK(trust_tier IN ('verified', 'community', 'experimental', 'unknown', 'local')) DEFAULT 'unknown', -- SMI-4665: added 'local' for filesystem-imported skills
   tags TEXT DEFAULT '[]', -- JSON array of tags
   risk_score INTEGER CHECK(risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 100)), -- SMI-825
   security_findings_count INTEGER DEFAULT 0,
@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS skills (
   security_passed INTEGER, -- boolean: 1 = passed, 0 = failed, NULL = not scanned
   compatibility TEXT DEFAULT '[]', -- SMI-2760: JSON array of IDE/LLM/platform slugs
   content_hash TEXT, -- SMI-3510: SHA-256 hash of SKILL.md for tamper detection
+  source TEXT NOT NULL DEFAULT 'registry' CHECK (source IN ('registry', 'local')), -- SMI-4665: filesystem-imported rows opt out of sync overwrites
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
