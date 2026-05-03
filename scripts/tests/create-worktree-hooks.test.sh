@@ -333,6 +333,190 @@ else
 fi
 
 # -----------------------------------------------------------------------
+# Scenario 9b (SMI-4681): structural guards for pre-push host fallback
+# Prevents accidental deletion of:
+#   - the shared helper at scripts/lib/hook-docker-detect.sh
+#   - source lines in .husky/pre-push, scripts/pre-push-{check,coverage-check}.sh
+# Also asserts each consumer has at most ONE local USE_DOCKER= assignment
+# (the graceful-degradation else branch); the helper is the canonical setter.
+# -----------------------------------------------------------------------
+HELPER="$REPO_ROOT/scripts/lib/hook-docker-detect.sh"
+
+if [ -r "$HELPER" ] && \
+   grep -q 'compute_container_wd' "$HELPER" && \
+   grep -q 'IS_WORKTREE' "$HELPER" && \
+   grep -q 'Darwin' "$HELPER" && \
+   grep -q 'SMI-4681' "$HELPER" && \
+   grep -q '_HOOK_DETECT_LOADED' "$HELPER"; then
+  echo "PASS hook-docker-detect.sh: helper present with required markers"
+  pass=$((pass + 1))
+else
+  echo "FAIL hook-docker-detect.sh: helper missing or markers stripped"
+  fail=$((fail + 1))
+fi
+
+# Each consumer sources the helper.
+for consumer in \
+  ".husky/pre-push" \
+  "scripts/pre-push-check.sh" \
+  "scripts/pre-push-coverage-check.sh"; do
+  if grep -q 'hook-docker-detect.sh' "$REPO_ROOT/$consumer"; then
+    echo "PASS $consumer: sources hook-docker-detect.sh"
+    pass=$((pass + 1))
+  else
+    echo "FAIL $consumer: missing source of hook-docker-detect.sh"
+    fail=$((fail + 1))
+  fi
+done
+
+# Each consumer has at most ONE local USE_DOCKER= assignment (graceful
+# degradation else branch). The helper is the canonical setter; duplicate
+# assignments are the kind of drift this PR is meant to prevent.
+for consumer in \
+  ".husky/pre-push" \
+  "scripts/pre-push-check.sh" \
+  "scripts/pre-push-coverage-check.sh"; do
+  count=$(grep -c '^[[:space:]]*USE_DOCKER=' "$REPO_ROOT/$consumer" || true)
+  if [ "$count" -le 1 ]; then
+    echo "PASS $consumer: at most one local USE_DOCKER= assignment ($count)"
+    pass=$((pass + 1))
+  else
+    echo "FAIL $consumer: $count local USE_DOCKER= assignments (expected ≤1)"
+    fail=$((fail + 1))
+  fi
+done
+
+# -----------------------------------------------------------------------
+# Scenario 11 (SMI-4681): hook-docker-detect.sh unit test in subshell.
+# Sources helper from a fake repo with controlled (uname, git rev-parse) shims.
+# Asserts USE_DOCKER / NEEDS_FALLBACK / FELL_BACK / CONTAINER_WD across
+# the four matrix cells: {Darwin, Linux} × {main-repo, in-tree-worktree}.
+# -----------------------------------------------------------------------
+# Build a minimal fake repo with a worktree.
+SCN11_ROOT=$(mktemp -d)
+trap 'rm -rf "$SCN11_ROOT"' EXIT
+SCN11_MAIN="$SCN11_ROOT/main"
+mkdir -p "$SCN11_MAIN"
+SCN11_MAIN=$(cd "$SCN11_MAIN" && pwd -P)
+(
+  cd "$SCN11_MAIN"
+  git init -q -b main
+  git config user.email "test@skillsmith.local"
+  git config user.name "Test"
+  echo "ok" > README.md
+  git add README.md
+  git -c core.hooksPath=/dev/null commit -q -m "initial" >/dev/null 2>&1
+  git worktree add -q -b scn11-wt "$SCN11_MAIN/.worktrees/wt"
+) >/dev/null 2>&1
+mkdir -p "$SCN11_MAIN/.worktrees/wt/node_modules" # native-binding preflight
+
+# Helper for matrix cells: shim `uname` via PATH, force docker-absent, then
+# source helper from the test fixture's cwd. Output the relevant vars.
+run_helper_with_uname() {
+  uname_value="$1"
+  cwd="$2"
+  shim_dir=$(mktemp -d)
+  cat > "$shim_dir/uname" <<UNAMEEOF
+#!/bin/sh
+echo "$uname_value"
+UNAMEEOF
+  chmod +x "$shim_dir/uname"
+  # Disable docker by overriding `command -v docker` with a non-zero stub.
+  cat > "$shim_dir/docker" <<DOCKEREOF
+#!/bin/sh
+exit 1
+DOCKEREOF
+  chmod +x "$shim_dir/docker"
+  ( cd "$cwd" && PATH="$shim_dir:$PATH" sh -c "
+      . '$REPO_ROOT/scripts/lib/hook-docker-detect.sh' >/dev/null 2>&1
+      printf 'IS_WORKTREE=%s NEEDS_FALLBACK=%s FELL_BACK=%s USE_DOCKER=%s CONTAINER_WD=%s\n' \
+        \"\$IS_WORKTREE\" \"\$NEEDS_FALLBACK\" \"\$FELL_BACK\" \"\$USE_DOCKER\" \"\$CONTAINER_WD\"
+    " 2>/dev/null )
+  rm -rf "$shim_dir"
+}
+
+# Cell 1: Darwin + main repo → no fallback.
+out=$(run_helper_with_uname "Darwin" "$SCN11_MAIN")
+case "$out" in
+  *"IS_WORKTREE=0"*"NEEDS_FALLBACK=0"*"USE_DOCKER=0"*"CONTAINER_WD=/app"*)
+    echo "PASS Scenario 11 cell 1: Darwin + main repo → no fallback (Docker absent → host)"
+    pass=$((pass + 1))
+    ;;
+  *)
+    echo "FAIL Scenario 11 cell 1: Darwin + main repo: $out"
+    fail=$((fail + 1))
+    ;;
+esac
+
+# Cell 2: Darwin + worktree → fallback (host).
+out=$(run_helper_with_uname "Darwin" "$SCN11_MAIN/.worktrees/wt")
+case "$out" in
+  *"IS_WORKTREE=1"*"NEEDS_FALLBACK=1"*"FELL_BACK=1"*"USE_DOCKER=0"*"CONTAINER_WD=/app/.worktrees/wt"*)
+    echo "PASS Scenario 11 cell 2: Darwin + worktree → host fallback"
+    pass=$((pass + 1))
+    ;;
+  *)
+    echo "FAIL Scenario 11 cell 2: Darwin + worktree: $out"
+    fail=$((fail + 1))
+    ;;
+esac
+
+# Cell 3: Linux + main repo → no fallback.
+out=$(run_helper_with_uname "Linux" "$SCN11_MAIN")
+case "$out" in
+  *"IS_WORKTREE=0"*"NEEDS_FALLBACK=0"*"FELL_BACK=0"*"CONTAINER_WD=/app"*)
+    echo "PASS Scenario 11 cell 3: Linux + main repo → in-container path computed"
+    pass=$((pass + 1))
+    ;;
+  *)
+    echo "FAIL Scenario 11 cell 3: Linux + main repo: $out"
+    fail=$((fail + 1))
+    ;;
+esac
+
+# Cell 4: Linux + worktree → no fallback (Docker handles symlinks on Linux).
+out=$(run_helper_with_uname "Linux" "$SCN11_MAIN/.worktrees/wt")
+case "$out" in
+  *"IS_WORKTREE=1"*"NEEDS_FALLBACK=0"*"FELL_BACK=0"*"CONTAINER_WD=/app/.worktrees/wt"*)
+    echo "PASS Scenario 11 cell 4: Linux + worktree → in-container with translated path"
+    pass=$((pass + 1))
+    ;;
+  *)
+    echo "FAIL Scenario 11 cell 4: Linux + worktree: $out"
+    fail=$((fail + 1))
+    ;;
+esac
+
+# -----------------------------------------------------------------------
+# Scenario 12 (SMI-4681): off-tree worktree returns empty CONTAINER_WD,
+# triggers NEEDS_FALLBACK=1 regardless of platform.
+# -----------------------------------------------------------------------
+SCN12_OFFTREE="$SCN11_ROOT/offtree-wt"
+mkdir -p "$SCN12_OFFTREE"
+(
+  cd "$SCN11_MAIN"
+  git worktree add -q -b scn12-offtree "$SCN12_OFFTREE"
+) >/dev/null 2>&1
+
+out=$(run_helper_with_uname "Linux" "$SCN12_OFFTREE")
+case "$out" in
+  *"IS_WORKTREE=1"*"NEEDS_FALLBACK=1"*"FELL_BACK=1"*"USE_DOCKER=0"*"CONTAINER_WD="*)
+    # Note: CONTAINER_WD= (empty value at end) is correct for off-tree.
+    if echo "$out" | grep -q 'CONTAINER_WD=$'; then
+      echo "PASS Scenario 12: off-tree worktree → empty CONTAINER_WD + NEEDS_FALLBACK=1"
+      pass=$((pass + 1))
+    else
+      echo "FAIL Scenario 12: off-tree CONTAINER_WD not empty: $out"
+      fail=$((fail + 1))
+    fi
+    ;;
+  *)
+    echo "FAIL Scenario 12: off-tree worktree: $out"
+    fail=$((fail + 1))
+    ;;
+esac
+
+# -----------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------
 total=$((pass + fail))

@@ -1,6 +1,7 @@
 #!/bin/bash
 # SMI-753: Pre-push Security Checks (Optimized)
 # SMI-1366: Improved Docker developer experience with graceful fallback
+# SMI-4681: Source shared Docker-vs-host detection helper
 # Comprehensive security validation before pushing code
 # Optimization: Single test run captures both output and exit code
 
@@ -21,21 +22,33 @@ echo ""
 CHECKS_FAILED=0
 
 # =============================================================================
-# SMI-1366: Detect execution environment (Docker vs Local)
+# SMI-1366 + SMI-4681: Docker-vs-host detection via shared helper.
+# Helper sets DOCKER_AVAILABLE, USE_DOCKER, FELL_BACK, CONTAINER_WD,
+# DOCKER_CONTAINER, RUN_PREFIX and defines run_cmd. Replaces the previous
+# in-script detection block (which hardcoded `-w /app` and missed worktree
+# semantics). Graceful degradation: missing helper falls back to today's
+# `-w /app` path so worktrees on pre-SMI-4681 branches don't break.
 # =============================================================================
-USE_DOCKER=0
-DOCKER_CONTAINER="skillsmith-dev-1"
-
-# Check if Docker is available and container is running
-if command -v docker &> /dev/null; then
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DOCKER_CONTAINER}$"; then
-    USE_DOCKER=1
-    echo -e "${BLUE}🐳 Using Docker container: ${DOCKER_CONTAINER}${NC}"
-  else
-    echo -e "${YELLOW}⚠️  Docker container '${DOCKER_CONTAINER}' not running - using local environment${NC}"
-  fi
+HOOK_DETECT_LIB="$(dirname "$0")/lib/hook-docker-detect.sh"
+if [ -r "$HOOK_DETECT_LIB" ]; then
+  # shellcheck source=lib/hook-docker-detect.sh
+  . "$HOOK_DETECT_LIB"
 else
-  echo -e "${YELLOW}ℹ️  Docker not available - using local environment${NC}"
+  echo -e "${YELLOW}⚠️  scripts/lib/hook-docker-detect.sh missing — using legacy in-container path${NC}"
+  USE_DOCKER=1
+  CONTAINER_WD="/app"
+  DOCKER_CONTAINER="skillsmith-dev-1"
+  run_cmd() {
+    docker exec -w "$CONTAINER_WD" "$DOCKER_CONTAINER" "$@"
+  }
+fi
+
+if [ "$USE_DOCKER" = "1" ]; then
+  echo -e "${BLUE}🐳 Using Docker container: ${DOCKER_CONTAINER} (cwd: ${CONTAINER_WD})${NC}"
+elif [ "${FELL_BACK:-0}" = "1" ]; then
+  echo -e "${BLUE}🖥️  Using host execution (worktree fallback)${NC}"
+else
+  echo -e "${YELLOW}⚠️  Docker container not running — using local environment${NC}"
 fi
 echo ""
 
@@ -65,15 +78,11 @@ if [ -f .gitattributes ] && grep -q "filter=git-crypt" .gitattributes 2>/dev/nul
 fi
 echo ""
 
-# Helper function to run commands in Docker or locally
-# SMI-1774: Use -w /app to support running from worktree directories
-run_cmd() {
-  if [ $USE_DOCKER -eq 1 ]; then
-    docker exec -w /app $DOCKER_CONTAINER "$@"
-  else
-    "$@"
-  fi
-}
+# SMI-4681: run_cmd is now provided by scripts/lib/hook-docker-detect.sh
+# (sourced above). The previous local definition hardcoded `-w /app` and
+# missed worktree semantics; the helper's definition uses $CONTAINER_WD
+# so Linux Docker + worktree gets the correct in-container path and
+# macOS + worktree falls back to host.
 
 # =============================================================================
 # SMI-4249: Detect docs-only / submodule-pointer pushes
