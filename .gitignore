@@ -12,6 +12,15 @@ agentdb.rvf.lock
 .ruvector/
 *.rvf
 
+# SMI-4680: stale CycloneDX SBOM at repo root (deleted; zero consumers
+# verified via grep). On-demand SBOM generation lives in
+# packages/mcp-server/src/tools/compliance-tools.ts (MCP tool output).
+# If a static SBOM is needed again, regenerate via:
+#   docker exec skillsmith-dev-1 npx @cyclonedx/cyclonedx-npm \
+#     --output-format json --output-file sbom.json
+sbom.json
+*.cdx.json
+
 # Build outputs
 dist/
 *.tsbuildinfo
