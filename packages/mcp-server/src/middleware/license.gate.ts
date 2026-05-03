@@ -1,7 +1,7 @@
 // SMI-3911: Unified license + quota gate helpers extracted from license.ts (500-line limit).
 // SMI-4402: profile_incomplete detection and JSON-RPC -32001 response.
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import type { ZodType, ZodTypeDef } from 'zod'
+import type { ZodType } from 'zod'
 import type { ToolContext } from '../context.types.js'
 import type { QuotaMiddleware } from './quota-types.js'
 import { safeParseOrError } from '../validation.js'
@@ -118,7 +118,7 @@ export function createProfileIncompleteResponse(): {
 export async function withLicenseAndQuota<T>(
   toolName: string,
   args: Record<string, unknown> | undefined,
-  schema: ZodType<T, ZodTypeDef, unknown>,
+  schema: ZodType<T>,
   handler: (input: T, ctx: ToolContext) => Promise<unknown>,
   toolContext: ToolContext,
   licenseMiddleware: LicenseMiddleware,
