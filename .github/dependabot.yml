@@ -13,6 +13,76 @@ updates:
         update-types:
           - 'minor'
           - 'patch'
+      # SMI-4669 — ecosystem groups for Dependabot CI Hardening Phase 2.
+      # Each group consolidates minor + patch bumps into one weekly PR per
+      # vendor namespace (major bumps still surface individually so they get
+      # the human review they need). Mirrors the typescript-eslint group's
+      # update-types: [minor, patch] pattern.
+      aws-sdk:
+        patterns:
+          - '@aws-sdk/*'
+        update-types:
+          - 'minor'
+          - 'patch'
+      hono:
+        patterns:
+          - '@hono/*'
+          - 'hono'
+        update-types:
+          - 'minor'
+          - 'patch'
+      astro:
+        patterns:
+          - 'astro'
+          - '@astrojs/*'
+        update-types:
+          - 'minor'
+          - 'patch'
+      vercel:
+        patterns:
+          - '@vercel/*'
+          - 'vercel'
+        update-types:
+          - 'minor'
+          - 'patch'
+      smithy:
+        patterns:
+          - '@smithy/*'
+        update-types:
+          - 'minor'
+          - 'patch'
+      supabase:
+        patterns:
+          - '@supabase/*'
+        update-types:
+          - 'minor'
+          - 'patch'
+      octokit:
+        patterns:
+          - '@octokit/*'
+          - 'octokit'
+        update-types:
+          - 'minor'
+          - 'patch'
+      opentelemetry:
+        patterns:
+          - '@opentelemetry/*'
+        update-types:
+          - 'minor'
+          - 'patch'
+      vitest:
+        patterns:
+          - 'vitest'
+          - '@vitest/*'
+        update-types:
+          - 'minor'
+          - 'patch'
+      types:
+        patterns:
+          - '@types/*'
+        update-types:
+          - 'minor'
+          - 'patch'
     open-pull-requests-limit: 10
     labels:
       - 'npm'
@@ -36,5 +106,18 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - 'github-actions'
+    reviewers:
+      - 'ryansmith108'
+
+  # SMI-4669 — Docker base-image ecosystem so CVEs in the FROM line
+  # (currently node:22-slim per Dockerfile:20) surface as targeted PRs
+  # instead of accumulating silently between manual rebuilds.
+  - package-ecosystem: 'docker'
+    directory: '/'
+    schedule:
+      interval: 'monthly'
+    open-pull-requests-limit: 5
+    labels:
+      - 'docker'
     reviewers:
       - 'ryansmith108'
