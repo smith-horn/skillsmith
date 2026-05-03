@@ -95,21 +95,26 @@ describe('claudeCodeAdapter.scanPaths', () => {
   })
 })
 
-describe('claudeCodeAdapter.applyAction — rename (raw transport)', () => {
-  it('performs fs.rename from `from` to `to`', async () => {
+describe('claudeCodeAdapter.applyAction — rename refusal (force-uses-applyRename)', () => {
+  it('refuses bare {kind:"rename"} dispatch with namespace.adapter.missing_context and leaves disk untouched', async () => {
     const fromPath = path.join(TEST_HOME, 'src.md')
     const toPath = path.join(TEST_HOME, 'dst.md')
     fs.writeFileSync(fromPath, 'hello', 'utf-8')
 
-    await claudeCodeAdapter.applyAction({
-      kind: 'rename',
-      from: fromPath,
-      to: toPath,
+    await expect(
+      claudeCodeAdapter.applyAction({
+        kind: 'rename',
+        from: fromPath,
+        to: toPath,
+      })
+    ).rejects.toMatchObject({
+      kind: 'namespace.adapter.missing_context',
     })
-
-    expect(fs.existsSync(fromPath)).toBe(false)
-    expect(fs.existsSync(toPath)).toBe(true)
-    expect(fs.readFileSync(toPath, 'utf-8')).toBe('hello')
+    // Disk untouched: refusing the bare path is the whole point — Wave 2's
+    // backup + ledger flow must not be bypassed.
+    expect(fs.existsSync(fromPath)).toBe(true)
+    expect(fs.existsSync(toPath)).toBe(false)
+    expect(fs.readFileSync(fromPath, 'utf-8')).toBe('hello')
   })
 })
 

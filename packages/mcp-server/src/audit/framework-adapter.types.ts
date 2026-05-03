@@ -139,9 +139,12 @@ export interface FrameworkAdapter {
   scanPaths(homeDir: string, projectDir?: string): Promise<InventoryEntry[]>
   /**
    * Required unified entry point. v1 Claude-Code:
-   *   - `kind: 'rename'` — performs a raw `fs.rename` from `from` to
-   *     `to`. Caller is responsible for backup + ledger; the
-   *     `applyRename` convenience wrapper does the full flow.
+   *   - `kind: 'rename'` — REFUSED. A thin {from, to} pair cannot
+   *     reconstruct the `InventoryEntry` Wave 2's `applyRename` needs;
+   *     a raw `fs.rename` would bypass the backup + namespace ledger.
+   *     Callers must use the `applyRename(entry, newName, opts)`
+   *     convenience wrapper. The shape stays in the union for v2
+   *     adapters that own their own audit-history.
    *   - `kind: 'inline-edit'` with `searchMode: 'literal'` — translates
    *     to a `RecommendedEdit` and dispatches to Wave 3
    *     `applyRecommendedEdit`. Requires `auditId` + `pattern`.

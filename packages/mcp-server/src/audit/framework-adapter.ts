@@ -8,10 +8,14 @@
  *
  * v1 contract (Claude-Code only):
  *   - `scanPaths` delegates to `scanLocalInventory` and returns `entries[]`.
- *   - `applyAction({kind:'rename'})` performs a raw `fs.rename` from `from`
- *     to `to` — forward-compat seam for v2 adapters that own their own
- *     audit-history. v1 callers should prefer the `applyRename` wrapper,
- *     which threads `auditId` through Wave 2's full backup + ledger flow.
+ *   - `applyAction({kind:'rename'})` is REFUSED — a thin {from, to} pair
+ *     cannot reconstruct the `InventoryEntry` Wave 2's `applyRename`
+ *     needs (kind discriminator, identifier, source_path), and a raw
+ *     `fs.rename` would bypass the backup + namespace ledger and leave
+ *     the user without a revert path. Callers must use the
+ *     `applyRename(entry, newName, { auditId })` convenience wrapper.
+ *     The bare `{kind:'rename'}` shape stays in the union as a forward-
+ *     compat surface for v2 adapters that own their own audit-history.
  *   - `applyAction({kind:'inline-edit', searchMode:'literal'})` translates
  *     the action into a Wave 3 `RecommendedEdit` and dispatches to
  *     `applyRecommendedEdit`. Requires `action.auditId` + `action.pattern`;
@@ -55,11 +59,20 @@ export class FrameworkAdapterError extends Error {
     | 'namespace.adapter.template_not_in_apply_registry'
     | 'namespace.adapter.search_not_found'
     | 'namespace.adapter.search_not_unique'
+    | 'namespace.adapter.subcall_failed'
 
-  constructor(kind: FrameworkAdapterError['kind'], message: string) {
+  /**
+   * For `'subcall_failed'`, carries the inner typed-error `kind` from
+   * Wave 2 (`RenameError`) or Wave 3 (`EditApplyError`) so callers can
+   * `switch` on it without parsing strings.
+   */
+  public readonly innerKind?: string
+
+  constructor(kind: FrameworkAdapterError['kind'], message: string, innerKind?: string) {
     super(message)
     this.name = 'FrameworkAdapterError'
     this.kind = kind
+    this.innerKind = innerKind
   }
 }
 
@@ -144,15 +157,19 @@ async function buildRecommendedEditFromInlineEdit(
   // must equal `before`), so we expand the substring search to the full
   // line(s) it sits on and replace within those lines.
   const fileLines = fileContent.split('\n')
-  const lineStartByteOffsets: number[] = [0]
+  // UTF-16 code-unit offsets (matches `String.indexOf` semantics) for
+  // the start of each line. Not byte offsets — for ASCII content the
+  // two coincide, but multi-byte glyphs (em dashes, emoji) make the
+  // distinction load-bearing if this is ever consumed as a byte index.
+  const lineStartOffsets: number[] = [0]
   for (let i = 0; i < fileLines.length - 1; i++) {
     // +1 for the consumed '\n' separator
-    lineStartByteOffsets.push(lineStartByteOffsets[i] + fileLines[i].length + 1)
+    lineStartOffsets.push(lineStartOffsets[i] + fileLines[i].length + 1)
   }
   // Locate the start line for `firstIndex`.
   let startLine = 1
-  for (let i = lineStartByteOffsets.length - 1; i >= 0; i--) {
-    if (firstIndex >= lineStartByteOffsets[i]) {
+  for (let i = lineStartOffsets.length - 1; i >= 0; i--) {
+    if (firstIndex >= lineStartOffsets[i]) {
       startLine = i + 1
       break
     }
@@ -213,13 +230,17 @@ export const claudeCodeAdapter: FrameworkAdapter = {
   },
   applyAction: async (action: AdapterAction): Promise<void> => {
     if (action.kind === 'rename') {
-      // Forward-compat seam: a raw filesystem rename. v1 callers
-      // should normally prefer `applyRename(entry, newName, opts)` so
-      // the rename is backed up + recorded in the namespace ledger.
-      // This bare path is intentional — v2 adapters that own their
-      // own audit-history use `applyAction` as the unified seam.
-      await fs.rename(action.from, action.to)
-      return
+      // v1 Claude-Code refuses bare `applyAction({kind:'rename'})` — a
+      // raw `fs.rename` would bypass Wave 2's backup + namespace
+      // ledger, leaving the user without a revert path. Callers must
+      // use the `applyRename(entry, newName, { auditId })` convenience
+      // wrapper which routes through Wave 2's full flow. The richer
+      // entry context (kind discriminator, identifier, source_path)
+      // cannot be reconstructed from a thin {from, to} pair.
+      throw new FrameworkAdapterError(
+        'namespace.adapter.missing_context',
+        `claudeCodeAdapter.applyAction({kind:'rename'}) refused — use applyRename(entry, newName, { auditId }) so the rename is backed up + recorded in the namespace ledger`
+      )
     }
     if (action.kind === 'inline-edit') {
       if (action.searchMode === 'regex') {
@@ -237,8 +258,9 @@ export const claudeCodeAdapter: FrameworkAdapter = {
       })
       if (!result.success) {
         throw new FrameworkAdapterError(
-          'namespace.adapter.unsupported_action',
-          `applyRecommendedEdit failed: ${result.error?.message ?? 'unknown'}`
+          'namespace.adapter.subcall_failed',
+          `applyRecommendedEdit failed: ${result.error?.message ?? 'unknown'}`,
+          result.error?.kind
         )
       }
       return
@@ -276,8 +298,9 @@ export const claudeCodeAdapter: FrameworkAdapter = {
     })
     if (!result.success) {
       throw new FrameworkAdapterError(
-        'namespace.adapter.unsupported_action',
-        `applyRename failed: ${result.error?.message ?? 'unknown'}`
+        'namespace.adapter.subcall_failed',
+        `applyRename failed: ${result.error?.message ?? 'unknown'}`,
+        result.error?.kind
       )
     }
   },
