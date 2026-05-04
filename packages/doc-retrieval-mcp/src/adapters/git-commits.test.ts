@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { rmSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { createGitCommitsAdapter, parseLogOutput, resolveRepoName } from './git-commits.js'
 import type { AdapterContext } from '../types.js'
@@ -47,9 +48,11 @@ let scratch: string
 beforeEach(() => {
   scratch = makeFixtureTempDir('git-commits-adapter')
   git(scratch, 'init', '-q', '-b', 'main')
-  git(scratch, 'config', 'user.email', 'test@example.com')
-  git(scratch, 'config', 'user.name', 'Test Author')
-  git(scratch, 'config', 'commit.gpgsign', 'false')
+  // SMI-4699: --local pins writes to <scratch>/.git/config even if
+  // env scrubbing has an edge case (defense in depth).
+  git(scratch, 'config', '--local', 'user.email', 'test@example.com')
+  git(scratch, 'config', '--local', 'user.name', 'Test Author')
+  git(scratch, 'config', '--local', 'commit.gpgsign', 'false')
 })
 
 afterEach(() => {
@@ -301,5 +304,71 @@ describe('git-commits headingChain — subject-based display (SMI-4450 M1)', () 
     // scratch basename would be a random tmpdir name, but remote name
     // is skillsmith — confirms the H1 fix overrides basename.
     expect(files[0].logicalPath).toMatch(/^git:\/\/skillsmith\/commit\/[0-9a-f]{8}$/)
+  })
+})
+
+describe('git-commits fixture isolation (SMI-4699)', () => {
+  // Proves the SMI-4699 hardening — env scrubbing + --local on
+  // `git config` — actually prevents writes to a sentinel "parent .git"
+  // even when GIT_DIR / HOME / XDG_CONFIG_HOME are deliberately leaky
+  // in the parent process env. If this fails, the helper has regressed
+  // and the SMI-4673-class config-leak vector is open again.
+  it('git config writes do not escape to a sentinel parent .git/config', () => {
+    const sentinel = makeFixtureTempDir('smi-4699-sentinel')
+    try {
+      // Build the sentinel as a fake "parent worktree" .git — what a
+      // leaked write would target.
+      execFileSync('git', ['init', '-q', '-b', 'main'], {
+        cwd: sentinel,
+        env: makeFixtureEnv(),
+      })
+      const sentinelConfigPath = join(sentinel, '.git', 'config')
+      const before = readFileSync(sentinelConfigPath, 'utf8')
+
+      // Stage the leak vector: GIT_DIR + HOME + XDG_CONFIG_HOME all
+      // pointed at the sentinel so a non-isolated `git config`
+      // (without --local, without env scrubbing) would land there.
+      const origGitDir = process.env.GIT_DIR
+      const origHome = process.env.HOME
+      const origXdg = process.env.XDG_CONFIG_HOME
+      process.env.GIT_DIR = join(sentinel, '.git')
+      process.env.HOME = sentinel
+      process.env.XDG_CONFIG_HOME = sentinel
+
+      try {
+        // Re-run beforeEach equivalent: a fresh scratch with the
+        // production helper. If the helper leaks, the sentinel's
+        // config will gain user.email / commit.gpgsign / etc.
+        const leakyScratch = makeFixtureTempDir('smi-4699-leaky')
+        try {
+          git(leakyScratch, 'init', '-q', '-b', 'main')
+          git(leakyScratch, 'config', '--local', 'user.email', 'leak-test@example.com')
+          git(leakyScratch, 'config', '--local', 'user.name', 'Leak Probe')
+          git(leakyScratch, 'config', '--local', 'commit.gpgsign', 'false')
+          // Force a commit to exercise the full code path — this is
+          // where the SMI-4673 leak originally manifested.
+          execFileSync('git', ['commit', '--allow-empty', '-m', 'probe'], {
+            cwd: leakyScratch,
+            encoding: 'utf8',
+            env: makeFixtureEnv(),
+          })
+        } finally {
+          rmSync(leakyScratch, { recursive: true, force: true })
+        }
+      } finally {
+        if (origGitDir === undefined) delete process.env.GIT_DIR
+        else process.env.GIT_DIR = origGitDir
+        if (origHome === undefined) delete process.env.HOME
+        else process.env.HOME = origHome
+        if (origXdg === undefined) delete process.env.XDG_CONFIG_HOME
+        else process.env.XDG_CONFIG_HOME = origXdg
+      }
+
+      const after = readFileSync(sentinelConfigPath, 'utf8')
+      // Byte-for-byte equality: no leak landed in the sentinel.
+      expect(after).toBe(before)
+    } finally {
+      rmSync(sentinel, { recursive: true, force: true })
+    }
   })
 })
