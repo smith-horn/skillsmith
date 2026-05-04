@@ -14,6 +14,13 @@
  *      fires, both symlink-repair functions are invoked before abort.
  *   6. Container regex matches `skillsmith-prod-dev-1` (S-1).
  *
+ * SMI-4700 adds:
+ *   7. With neither `gtimeout` nor a working `timeout` on PATH (macOS
+ *      simulation), the guard still fires when an active container is
+ *      detected — proving the capability-probe falls through to the
+ *      unbounded `docker ps` path instead of silently skipping the guard
+ *      on rc=127 from a missing binary.
+ *
  * Tests copy `repair-worktrees.sh` and `_lib.sh` into a temp dir alongside
  * a stub `repair-host-native-deps.sh`. SCRIPT_DIR resolution makes the
  * stub the only `repair-host-native-deps.sh` in scope, so we can detect
@@ -251,6 +258,43 @@ describe('SMI-4698: repair-worktrees.sh Docker-active guard', () => {
 
     expect(result.status).not.toBe(0)
     expect(result.stderr + result.stdout).toMatch(/skillsmith-prod-dev-1/)
+    expect(existsSync(rebuildLog)).toBe(false)
+  })
+
+  it('SMI-4700: guard still fires on macOS-style host with no `timeout`/`gtimeout` on PATH', () => {
+    // macOS does not ship GNU `timeout` by default, and Homebrew
+    // coreutils (`gtimeout`) is opt-in. Simulate that environment by
+    // shadowing both binaries in binDir with stubs that exit 127.
+    // Crucially these stubs are PATH-shadows: they match `command -v`
+    // (so the probe sees them), but `<bin> --kill-after=0 0 true`
+    // returns 127 (failing the validation) — matching what would happen
+    // if `command -v` had actually returned nothing. The probe must
+    // fall through to the unbounded `docker ps` path; the guard must
+    // still fire when an active container is detected.
+    const tempRoot = makeFixtureTempDir('rw-guard-macos-no-timeout')
+    tempDirs.push(tempRoot)
+    const { repoDir, binDir, rebuildLog } = setupRepo(tempRoot)
+    writeDockerShim(binDir, join(tempRoot, 'docker.log'), 'skillsmith-dev-1')
+
+    // Shadow `timeout` and `gtimeout` so the probe's validation
+    // (`<bin> --kill-after=0 0 true`) returns 127. binDir is first on
+    // PATH (see runScript) so these shadow any /usr/bin/timeout that
+    // ships with the Linux test runner.
+    const failingStub = `#!/bin/sh\nexit 127\n`
+    for (const name of ['timeout', 'gtimeout']) {
+      const stubPath = join(binDir, name)
+      writeFileSync(stubPath, failingStub)
+      chmodSync(stubPath, 0o755)
+    }
+
+    const result = runScript(repoDir, '', binDir)
+
+    expect(result.status).not.toBe(0)
+    const combined = result.stderr + result.stdout
+    expect(combined).toMatch(/Active Docker container detected/)
+    expect(combined).toMatch(/skillsmith-dev-1/)
+    // Rebuild step must NOT have run — guard fired even without
+    // `timeout` available, proving the unbounded fallback executed.
     expect(existsSync(rebuildLog)).toBe(false)
   })
 })
