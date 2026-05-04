@@ -5,12 +5,10 @@ import { rmSync } from 'node:fs'
 import { createGitCommitsAdapter, parseLogOutput, resolveRepoName } from './git-commits.js'
 import type { AdapterContext } from '../types.js'
 import type { CorpusConfig } from '../config.js'
-// SMI-4693: shared fixture helpers from scripts/tests/_lib. Path is deep
-// because this file lives in packages/doc-retrieval-mcp/src/adapters/.
-import {
-  makeFixtureEnv,
-  makeFixtureTempDir,
-} from '../../../../scripts/tests/_lib/git-fixture-env.js'
+// SMI-4693: per-package copy of the fixture helpers. Mirrors
+// scripts/tests/_lib/git-fixture-env.ts; cross-package import is blocked
+// by composite TypeScript's rootDir constraint.
+import { makeFixtureEnv, makeFixtureTempDir } from '../_lib/git-fixture-env.js'
 
 function makeCtx(
   repoRoot: string,
