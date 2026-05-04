@@ -2573,6 +2573,119 @@ try {
   warn('Could not check vercel.json sync: ' + e.message)
 }
 
+// 39. SMI-4693: fixture-leak guard — every test that spawns `git` against a
+// temp repo must import scripts/tests/_lib/git-fixture-env so GIT_DISCOVERY_VARS
+// are stripped from the spawned env. Without this, the SMI-4693 leak path
+// (vitest fork-pool worker cwd inheritance + macOS realpath asymmetry +
+// inherited GIT_INDEX_FILE) can re-mutate the parent worktree's branch state
+// when host vitest runs from a feature-branch worktree.
+//
+// B-2: regex covers `execFileSync` / `execSync` / `spawnSync` / template-literal
+//      `execSync(\`git …\`)`. SHELL_WRAPPER_EXEMPT documents the manually-
+//      audited carve-out for `runScript`-style fixtures whose tested shell
+//      script invokes git two layers removed (the .test.ts file itself does
+//      not spawn git directly).
+// S-5: glob includes `packages/&#42;/{src,tests}/**/*.test.ts` to catch
+//      `git-commits.test.ts` and any future colocated fixtures.
+console.log(`\n${BOLD}39. Fixture Git Env Sanitisation (SMI-4693)${RESET}`)
+{
+  const FIXTURE_GIT_AUDIT_GLOBS = [
+    'scripts/tests',
+    'packages/core/src',
+    'packages/core/tests',
+    'packages/mcp-server/src',
+    'packages/mcp-server/tests',
+    'packages/cli/src',
+    'packages/cli/tests',
+    'packages/doc-retrieval-mcp/src',
+    'packages/doc-retrieval-mcp/tests',
+    'packages/enterprise/src',
+    'packages/enterprise/tests',
+  ]
+
+  // SHELL_WRAPPER_EXEMPT — manually audited 2026-05-03. These tests invoke
+  // shell scripts that themselves run git; the .test.ts file itself does not
+  // spawn git, so the helper does not apply. The shell scripts must use
+  // git-scoped flags directly. Reverify quarterly when the SMI-4693 retro
+  // soak completes (Wave 4 follow-up PR).
+  // NOTE: `rebase-worktree.test.ts` and `remove-worktree.test.ts` DO spawn
+  // git directly (they build the fixture repo via execSync('git init …'))
+  // BEFORE invoking the shell wrapper, so they are NOT exempt — they were
+  // migrated in Wave 2.
+  const SHELL_WRAPPER_EXEMPT = new Set([])
+
+  // B-2: broadened regex — execFileSync | execSync | spawnSync | exec()
+  //      with template-literal first arg starting with `git`.
+  const SPAWNS_GIT =
+    /(?:execFileSync|execSync|spawnSync)\(\s*['"`]git['"`]|(?:execSync|exec)\(\s*[`'"]\s*git\b/
+
+  // Match relative imports of `_lib/git-fixture-env` from any depth. The path
+  // may include intermediate segments (e.g. `../../../../scripts/tests/_lib/…`
+  // from packages/doc-retrieval-mcp/src/adapters/), so we accept any
+  // relative-prefixed string ending in `_lib/git-fixture-env(.js)?`.
+  const HAS_HELPER_IMPORT = /from ['"]\.\.?\/[^'"]*_lib\/git-fixture-env(?:\.js)?['"]/
+
+  // SMI-4693-EXEMPT escape hatch: a `// SMI-4693-EXEMPT: <reason>` comment
+  // anywhere in the file marks an intentional opt-out. Use sparingly; document
+  // why the helper does not apply (e.g. test asserts on RAW process.env state).
+  const EXEMPT_MARKER = /\/\/\s*SMI-4693-EXEMPT:/
+
+  function listTestFiles(dirs) {
+    const out = []
+    for (const dir of dirs) {
+      if (!existsSync(dir)) continue
+      // Walk recursively; collect *.test.ts (NOT .test.sh — vitest only
+      // picks up .test.ts per CLAUDE.md SMI-1780).
+      const stack = [dir]
+      while (stack.length) {
+        const cur = stack.pop()
+        let entries
+        try {
+          entries = readdirSync(cur, { withFileTypes: true })
+        } catch {
+          continue
+        }
+        for (const ent of entries) {
+          const full = join(cur, ent.name)
+          if (ent.isDirectory()) {
+            if (ent.name === 'node_modules' || ent.name === 'dist') continue
+            stack.push(full)
+          } else if (ent.isFile() && ent.name.endsWith('.test.ts')) {
+            out.push(full)
+          }
+        }
+      }
+    }
+    return out
+  }
+
+  try {
+    const files = listTestFiles(FIXTURE_GIT_AUDIT_GLOBS)
+    const violations = []
+    let scanned = 0
+    for (const f of files) {
+      if (SHELL_WRAPPER_EXEMPT.has(f)) continue
+      const text = readFileSync(f, 'utf8')
+      if (!SPAWNS_GIT.test(text)) continue
+      scanned++
+      if (HAS_HELPER_IMPORT.test(text)) continue
+      if (EXEMPT_MARKER.test(text)) continue
+      violations.push(f)
+    }
+    if (violations.length === 0) {
+      pass(`All ${scanned} test fixtures that spawn git import the SMI-4693 helper`)
+    } else {
+      const list = violations.map((v) => `  - ${v}`).join('\n')
+      fail(
+        `${violations.length} test fixture(s) spawn git without importing scripts/tests/_lib/git-fixture-env:\n${list}`,
+        `Each listed file calls execFileSync/execSync/spawnSync with 'git' as the first arg but does not import \`makeFixtureEnv\` from \`scripts/tests/_lib/git-fixture-env\`. Without it, GIT_DISCOVERY_VARS inherited from the vitest worker can redirect the spawn into the parent worktree (the SMI-4693 leak). Migrate per the pattern in scripts/tests/session-priming-hook.test.ts. If the file legitimately needs raw process.env, add a \`// SMI-4693-EXEMPT: <reason>\` comment.`
+      )
+    }
+  } catch (e) {
+    warn(`Could not check fixture git env sanitisation: ${e.message}`)
+  }
+}
+
 // npm override drift check: @modelcontextprotocol/sdk override "." must match mcp-server range
 console.log(`\n${BOLD}Override Drift: @modelcontextprotocol/sdk${RESET}`)
 try {

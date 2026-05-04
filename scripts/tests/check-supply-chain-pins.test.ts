@@ -11,9 +11,15 @@
  * GIT_CRYPT_KEY access to the encrypted supabase/functions tree.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { rmSync, mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
+
+// SMI-4693: realpath-canonical tmpdir for symlink consistency. This file
+// does not spawn `git`, so it does not need `makeFixtureEnv` — but using
+// `makeFixtureTempDir` keeps the symlink behaviour consistent with the
+// rest of the test suite (closes the macOS /var ↔ /private/var asymmetry
+// uniformly across fixtures).
+import { makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
 // Dynamic import because the module is .mjs (ESM, no .ts transpilation).
 const mod = await import('../ci/check-supply-chain-pins.mjs')
@@ -53,7 +59,7 @@ describe('SMI-3985: check-supply-chain-pins', () => {
   let tmp: string
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'scpin-'))
+    tmp = makeFixtureTempDir('scpin')
   })
 
   afterEach(() => {
