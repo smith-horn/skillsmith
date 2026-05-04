@@ -16,10 +16,7 @@ import {
   loadExclusions,
   tierAllowsAuditMode,
 } from '../../../src/audit/exclusions.js'
-import type {
-  ExcludableEntry,
-  ExclusionsConfig,
-} from '../../../src/audit/exclusions.types.js'
+import type { ExcludableEntry, ExclusionsConfig } from '../../../src/audit/exclusions.types.js'
 
 let tmpDir: string
 let warnSpy: ReturnType<typeof vi.spyOn>
@@ -49,7 +46,7 @@ describe('loadExclusions', () => {
           { kind: 'command', identifier: '/ship', reason: 'Both packs are mine.' },
           { kind: 'skill', skillId: 'anthropic/code-helper', reason: 'Compatibility.' },
         ],
-      }),
+      })
     )
     const config = await loadExclusions({ configPath: path })
     expect(config.version).toBe(1)
@@ -82,7 +79,7 @@ describe('loadExclusions', () => {
       JSON.stringify({
         version: 1,
         exclusions: [{ kind: 'command', identifier: '/ship' }],
-      }),
+      })
     )
     const config = await loadExclusions({ configPath: path })
     expect(config.exclusions).toEqual([])
@@ -94,7 +91,7 @@ describe('loadExclusions', () => {
       JSON.stringify({
         version: 1,
         exclusions: [{ kind: 'mcp-tool', identifier: 'foo', reason: 'no' }],
-      }),
+      })
     )
     const config = await loadExclusions({ configPath: path })
     expect(config.exclusions).toEqual([])
@@ -156,11 +153,9 @@ describe('isExcluded', () => {
 
 describe('tierAllowsAuditMode (test 5: tier-revalidation gate)', () => {
   // Eligibility table from exclusions.ts JSDoc. Each row is one tier.
-  const cases: Array<[
-    Parameters<typeof tierAllowsAuditMode>[0],
-    Parameters<typeof tierAllowsAuditMode>[1],
-    boolean,
-  ]> = [
+  const cases: Array<
+    [Parameters<typeof tierAllowsAuditMode>[0], Parameters<typeof tierAllowsAuditMode>[1], boolean]
+  > = [
     // community
     ['community', 'preventative', true],
     ['community', 'off', true],

@@ -26,10 +26,6 @@ export {
   type LoadExclusionsOptions,
 } from './exclusions.js'
 
-export type {
-  ExcludableEntry,
-  ExclusionEntry,
-  ExclusionsConfig,
-} from './exclusions.types.js'
+export type { ExcludableEntry, ExclusionEntry, ExclusionsConfig } from './exclusions.types.js'
 
 export { emitInstallEvent, type InstallEventPayload } from './remote-audit.js'

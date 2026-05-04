@@ -24,11 +24,7 @@ import { join } from 'node:path'
 import { getConfigDir } from '../config/index.js'
 import type { AuditMode, Tier } from '../config/audit-mode.js'
 
-import type {
-  ExcludableEntry,
-  ExclusionEntry,
-  ExclusionsConfig,
-} from './exclusions.types.js'
+import type { ExcludableEntry, ExclusionEntry, ExclusionsConfig } from './exclusions.types.js'
 
 const EXCLUSIONS_FILE = 'audit-exclusions.json'
 
@@ -54,9 +50,7 @@ export interface LoadExclusionsOptions {
 }
 
 /** Load the exclusions config. Never throws; failures degrade to empty. */
-export async function loadExclusions(
-  opts: LoadExclusionsOptions = {},
-): Promise<ExclusionsConfig> {
+export async function loadExclusions(opts: LoadExclusionsOptions = {}): Promise<ExclusionsConfig> {
   const path = opts.configPath ?? getExclusionsPath()
 
   let raw: string
@@ -82,7 +76,7 @@ export async function loadExclusions(
 
   if (!isExclusionsConfig(parsed)) {
     console.warn(
-      `[audit-exclusions] unrecognized schema at ${path} (expected version: 1) — ignoring file`,
+      `[audit-exclusions] unrecognized schema at ${path} (expected version: 1) — ignoring file`
     )
     return EMPTY_CONFIG
   }
