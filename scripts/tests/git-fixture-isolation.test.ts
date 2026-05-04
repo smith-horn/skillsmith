@@ -12,7 +12,7 @@
  * whether `GIT_DIR` was the original env-leak vector.
  *
  * If a future regression breaks the helper, this file is the early-warning.
- * Audit-30 in `scripts/audit-standards.mjs` is the second line of defence.
+ * Audit-39 in `scripts/audit-standards.mjs` is the second line of defence.
  */
 import { execFileSync } from 'node:child_process'
 import { realpathSync, rmSync } from 'node:fs'
@@ -195,9 +195,9 @@ describe('SMI-4693: end-to-end — fixture spawn does not mutate parent worktree
   })
 })
 
-describe('SMI-4693 (B-2): Audit-30 broadened regex covers spawnSync + execFileSync + execSync', () => {
+describe('SMI-4693 (B-2): Audit-39 broadened regex covers spawnSync + execFileSync + execSync', () => {
   // Regex copy here MUST stay in lockstep with the one in
-  // scripts/audit-standards.mjs (Audit-30). If you change one, change both
+  // scripts/audit-standards.mjs (Audit-39). If you change one, change both
   // and update this test. The audit's primary defence is its own runtime
   // self-test (Wave 3 Step 2 §1 of the plan) — this is a cheap unit guard.
   const SPAWNS_GIT =
@@ -227,7 +227,7 @@ describe('SMI-4693 (B-2): Audit-30 broadened regex covers spawnSync + execFileSy
 // relative-prefixed string ending in `_lib/git-fixture-env(.js)?`.
 const HAS_HELPER_IMPORT = /from ['"]\.\.?\/[^'"]*_lib\/git-fixture-env(?:\.js)?['"]/
 
-describe('SMI-4693 (B-2): Audit-30 import-detection regex', () => {
+describe('SMI-4693 (B-2): Audit-39 import-detection regex', () => {
   // Same lockstep contract: keep in sync with scripts/audit-standards.mjs.
   it('matches relative imports from _lib/git-fixture-env (any depth)', () => {
     expect(
@@ -251,7 +251,7 @@ describe('SMI-4693 (B-2): Audit-30 import-detection regex', () => {
   })
 })
 
-describe('SMI-4693 (B-2 self-test): Audit-30 flags fixtures missing the helper', () => {
+describe('SMI-4693 (B-2 self-test): Audit-39 flags fixtures missing the helper', () => {
   // Synthetic file content — no I/O, just text matching.
   function checkFixture(text: string): { violation: boolean } {
     const spawnsGit = SPAWNS_GIT_RE.test(text)

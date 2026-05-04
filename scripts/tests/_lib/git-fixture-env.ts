@@ -27,7 +27,7 @@
  *   `tmpdir()`, so callers see `/private/var/folders/…` on macOS rather than
  *   the `/var/folders/…` symlink. Same root-cause class as SMI-4692.
  *
- * The `audit-standards` Audit-30 check (SMI-4693) enforces that every test
+ * The `audit-standards` Audit-39 check (SMI-4693) enforces that every test
  * file that spawns `git` against a temp repo imports this helper.
  */
 import { mkdtempSync, realpathSync } from 'node:fs'
