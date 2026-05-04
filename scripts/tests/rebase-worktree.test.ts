@@ -7,28 +7,24 @@
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { execSync } from 'child_process'
-import { mkdtempSync, rmSync, existsSync } from 'fs'
+import { rmSync, existsSync } from 'fs'
 import { join } from 'path'
-import { tmpdir } from 'os'
+
+import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
 // Absolute path to the script under test
 const SCRIPT_PATH = join(__dirname, '..', 'rebase-worktree.sh')
 
-/** Shared env for all git commands — ensures main as default branch */
-const GIT_ENV = {
-  ...process.env,
-  GIT_AUTHOR_NAME: 'Test',
-  GIT_AUTHOR_EMAIL: 'test@test.com',
-  GIT_COMMITTER_NAME: 'Test',
-  GIT_COMMITTER_EMAIL: 'test@test.com',
-  GIT_CONFIG_GLOBAL: '/dev/null',
-  GIT_CONFIG_SYSTEM: '/dev/null',
-}
+/**
+ * SMI-4693: shared env routes through `makeFixtureEnv` so GIT_DISCOVERY_VARS
+ * are stripped from every spawned git AND from the rebase-worktree.sh
+ * subprocess (which itself shells out to git).
+ */
+const GIT_ENV = makeFixtureEnv()
 
-/** Create a unique temp directory with Date.now() + random suffix */
+/** SMI-4693: realpath-canonical mkdtemp so /var ↔ /private/var asymmetry can't cause discovery mismatches. */
 function makeTempDir(prefix: string): string {
-  const base = join(tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
-  return mkdtempSync(base)
+  return makeFixtureTempDir(prefix)
 }
 
 /** Run a git command in a directory, returning stdout */

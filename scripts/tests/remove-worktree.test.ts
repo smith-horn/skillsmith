@@ -15,26 +15,21 @@
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { execSync } from 'child_process'
-import { mkdtempSync, rmSync, existsSync, writeFileSync, chmodSync, readFileSync } from 'fs'
+import { rmSync, existsSync, writeFileSync, chmodSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { tmpdir } from 'os'
+
+import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
 const SCRIPT_PATH = join(__dirname, '..', 'remove-worktree.sh')
 
-/** Shared env for git commands — main as default branch, no global config bleed */
-const GIT_ENV = {
-  ...process.env,
-  GIT_AUTHOR_NAME: 'Test',
-  GIT_AUTHOR_EMAIL: 'test@test.com',
-  GIT_COMMITTER_NAME: 'Test',
-  GIT_COMMITTER_EMAIL: 'test@test.com',
-  GIT_CONFIG_GLOBAL: '/dev/null',
-  GIT_CONFIG_SYSTEM: '/dev/null',
-}
+/**
+ * SMI-4693: GIT_DISCOVERY_VARS-stripped env for every git invocation AND
+ * the remove-worktree.sh subprocess. Same pattern as rebase-worktree.test.ts.
+ */
+const GIT_ENV = makeFixtureEnv()
 
 function makeTempDir(prefix: string): string {
-  const base = join(tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
-  return mkdtempSync(base)
+  return makeFixtureTempDir(prefix)
 }
 
 function git(cwd: string, args: string): string {

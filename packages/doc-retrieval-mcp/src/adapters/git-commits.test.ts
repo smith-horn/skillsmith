@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { rmSync } from 'node:fs'
 
 import { createGitCommitsAdapter, parseLogOutput, resolveRepoName } from './git-commits.js'
 import type { AdapterContext } from '../types.js'
 import type { CorpusConfig } from '../config.js'
+// SMI-4693: per-package copy of the fixture helpers. Mirrors
+// scripts/tests/_lib/git-fixture-env.ts; cross-package import is blocked
+// by composite TypeScript's rootDir constraint.
+import { makeFixtureEnv, makeFixtureTempDir } from '../_lib/git-fixture-env.js'
 
 function makeCtx(
   repoRoot: string,
@@ -25,23 +27,25 @@ function makeCtx(
 }
 
 function git(cwd: string, ...args: string[]): string {
+  // SMI-4693: makeFixtureEnv strips GIT_DISCOVERY_VARS so a leaky
+  // GIT_DIR / GIT_INDEX_FILE inherited from the vitest worker cannot
+  // redirect this spawn into the parent worktree.
   return execFileSync('git', args, {
     cwd,
     encoding: 'utf8',
-    env: {
-      ...process.env,
+    env: makeFixtureEnv({
       GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME ?? 'Test Author',
       GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL ?? 'test@example.com',
       GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? 'Test Author',
       GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL ?? 'test@example.com',
-    },
+    }),
   })
 }
 
 let scratch: string
 
 beforeEach(() => {
-  scratch = mkdtempSync(join(tmpdir(), 'git-commits-adapter-'))
+  scratch = makeFixtureTempDir('git-commits-adapter')
   git(scratch, 'init', '-q', '-b', 'main')
   git(scratch, 'config', 'user.email', 'test@example.com')
   git(scratch, 'config', 'user.name', 'Test Author')
@@ -53,24 +57,25 @@ afterEach(() => {
 })
 
 function commit(subject: string, body = '', authorName?: string): void {
-  // Use an empty commit so we don't need to track files.
-  const env: NodeJS.ProcessEnv = { ...process.env }
+  // SMI-4693: makeFixtureEnv strips GIT_DISCOVERY_VARS; layer optional
+  // author override on top.
+  const overrides: Record<string, string> = {}
   if (authorName) {
-    env.GIT_AUTHOR_NAME = authorName
-    env.GIT_AUTHOR_EMAIL = `${authorName.replace(/\s+/g, '.').toLowerCase()}@example.com`
-    env.GIT_COMMITTER_NAME = authorName
-    env.GIT_COMMITTER_EMAIL = env.GIT_AUTHOR_EMAIL
+    overrides.GIT_AUTHOR_NAME = authorName
+    overrides.GIT_AUTHOR_EMAIL = `${authorName.replace(/\s+/g, '.').toLowerCase()}@example.com`
+    overrides.GIT_COMMITTER_NAME = authorName
+    overrides.GIT_COMMITTER_EMAIL = overrides.GIT_AUTHOR_EMAIL
   } else {
-    env.GIT_AUTHOR_NAME = 'Test Author'
-    env.GIT_AUTHOR_EMAIL = 'test@example.com'
-    env.GIT_COMMITTER_NAME = 'Test Author'
-    env.GIT_COMMITTER_EMAIL = 'test@example.com'
+    overrides.GIT_AUTHOR_NAME = 'Test Author'
+    overrides.GIT_AUTHOR_EMAIL = 'test@example.com'
+    overrides.GIT_COMMITTER_NAME = 'Test Author'
+    overrides.GIT_COMMITTER_EMAIL = 'test@example.com'
   }
   const msg = body ? `${subject}\n\n${body}` : subject
   execFileSync('git', ['commit', '--allow-empty', '-m', msg], {
     cwd: scratch,
     encoding: 'utf8',
-    env,
+    env: makeFixtureEnv(overrides),
   })
 }
 
@@ -101,7 +106,7 @@ describe('parseLogOutput', () => {
 
 describe('git-commits adapter — listFiles', () => {
   it('returns [] when .git does not exist', async () => {
-    const nonRepo = mkdtempSync(join(tmpdir(), 'not-a-repo-'))
+    const nonRepo = makeFixtureTempDir('not-a-repo')
     try {
       const adapter = createGitCommitsAdapter()
       const files = await adapter.listFiles(makeCtx(nonRepo, 'full'))

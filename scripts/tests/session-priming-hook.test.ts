@@ -10,10 +10,11 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
 const HOOK = join(__dirname, '..', 'session-start-priming.sh')
 
@@ -22,10 +23,13 @@ interface HookOutput {
 }
 
 function runHook(event: object, env: NodeJS.ProcessEnv = {}): HookOutput {
+  // SMI-4693: route the hook subprocess through `makeFixtureEnv` so any `git`
+  // it spawns inherits a sanitised environment. The hook itself reads
+  // `event.cwd`, but defence-in-depth is cheap here.
   const stdout = execFileSync(HOOK, [], {
     input: JSON.stringify(event),
     encoding: 'utf8',
-    env: { ...process.env, ...env },
+    env: { ...makeFixtureEnv(), ...env },
   })
   // Strip any trailing newline; first/only JSON object on stdout
   const line = stdout.trim().split('\n').pop() ?? ''
@@ -35,11 +39,14 @@ function runHook(event: object, env: NodeJS.ProcessEnv = {}): HookOutput {
 let tmpRepo: string
 
 beforeEach(() => {
-  tmpRepo = mkdtempSync(join(tmpdir(), 'priming-hook-'))
-  execFileSync('git', ['init', '-q'], { cwd: tmpRepo })
-  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: tmpRepo })
-  execFileSync('git', ['config', 'user.name', 'test'], { cwd: tmpRepo })
-  execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: tmpRepo })
+  // SMI-4693: every git invocation under test must use makeFixtureEnv() so
+  // GIT_DISCOVERY_VARS cannot redirect the spawn into the parent worktree.
+  tmpRepo = makeFixtureTempDir('priming-hook')
+  const env = makeFixtureEnv()
+  execFileSync('git', ['init', '-q'], { cwd: tmpRepo, env })
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: tmpRepo, env })
+  execFileSync('git', ['config', 'user.name', 'test'], { cwd: tmpRepo, env })
+  execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: tmpRepo, env })
 })
 
 afterEach(() => {
@@ -63,7 +70,7 @@ describe('session-start-priming.sh — gate behavior', () => {
   })
 
   it('returns empty on non-git cwd', () => {
-    const nonGit = mkdtempSync(join(tmpdir(), 'non-git-'))
+    const nonGit = makeFixtureTempDir('non-git')
     try {
       const out = runHook({ source: 'startup', session_id: 'test-4', cwd: nonGit })
       expect(out.hookSpecificOutput.additionalContext).toBe('')
@@ -74,25 +81,34 @@ describe('session-start-priming.sh — gate behavior', () => {
 
   it('returns empty on main branch', () => {
     // Default branch in newer git is main; some configs use master. Force main.
-    execFileSync('git', ['checkout', '-B', 'main'], { cwd: tmpRepo })
+    execFileSync('git', ['checkout', '-B', 'main'], { cwd: tmpRepo, env: makeFixtureEnv() })
     const out = runHook({ source: 'startup', session_id: 'test-5', cwd: tmpRepo })
     expect(out.hookSpecificOutput.additionalContext).toBe('')
   })
 
   it('returns empty on dependabot/* branch', () => {
-    execFileSync('git', ['checkout', '-B', 'dependabot/npm/foo'], { cwd: tmpRepo })
+    execFileSync('git', ['checkout', '-B', 'dependabot/npm/foo'], {
+      cwd: tmpRepo,
+      env: makeFixtureEnv(),
+    })
     const out = runHook({ source: 'startup', session_id: 'test-6', cwd: tmpRepo })
     expect(out.hookSpecificOutput.additionalContext).toBe('')
   })
 
   it('returns empty on a non-smi/non-wave feature branch', () => {
-    execFileSync('git', ['checkout', '-B', 'random-feature'], { cwd: tmpRepo })
+    execFileSync('git', ['checkout', '-B', 'random-feature'], {
+      cwd: tmpRepo,
+      env: makeFixtureEnv(),
+    })
     const out = runHook({ source: 'startup', session_id: 'test-7', cwd: tmpRepo })
     expect(out.hookSpecificOutput.additionalContext).toBe('')
   })
 
   it('reuses transient when < 60s old (gate 3 idempotency)', () => {
-    execFileSync('git', ['checkout', '-B', 'smi-4451-test'], { cwd: tmpRepo })
+    execFileSync('git', ['checkout', '-B', 'smi-4451-test'], {
+      cwd: tmpRepo,
+      env: makeFixtureEnv(),
+    })
     const sessionId = 'test-idempotent-' + Date.now()
     const transient = `/tmp/session-priming-${sessionId}.md`
     writeFileSync(transient, 'cached priming content', 'utf8')

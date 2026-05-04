@@ -24,10 +24,13 @@
  */
 import { describe, it, expect } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+// SMI-4693: this file invokes `bash -n` (syntax check only) — no git
+// mutation. Use `makeFixtureTempDir` for symlink consistency.
+import { makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '..', '..')
@@ -83,7 +86,7 @@ function extractStep(yaml: string, stepName: string): WorkflowStep {
  * Returns true if the script is syntactically valid bash.
  */
 function bashSyntaxCheck(script: string): { ok: true } | { ok: false; stderr: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'wf-test-'))
+  const dir = makeFixtureTempDir('wf-test')
   const file = join(dir, 'script.sh')
   try {
     writeFileSync(file, script, 'utf8')

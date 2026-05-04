@@ -18,9 +18,8 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -29,6 +28,7 @@ import {
   FRONTMATTER_LINT_EVENTS_DDL,
   SCHEMA_SQL,
 } from '../../packages/doc-retrieval-mcp/src/retrieval-log/schema.js'
+import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
 
 const REPO_ROOT = join(import.meta.dirname ?? __dirname, '..', '..')
 const CLI = join(REPO_ROOT, 'scripts', 'retrieval-log-cli.mjs')
@@ -45,17 +45,19 @@ let origCwd: string
 let fixtureRoot: string
 
 beforeEach(() => {
-  scratch = mkdtempSync(join(tmpdir(), 'retro-frontmatter-'))
+  // SMI-4693: realpath-canonical tmpdir + sanitised env on every git spawn.
+  scratch = makeFixtureTempDir('retro-frontmatter')
   origHome = process.env.HOME
   origCwd = process.cwd()
   process.env.HOME = scratch
   fixtureRoot = join(scratch, 'fixture-project')
   mkdirSync(join(fixtureRoot, 'docs', 'internal', 'retros'), { recursive: true })
   // Initialize a git repo so firstCommitDate() has something to query.
-  spawnSync('git', ['init', '-q'], { cwd: fixtureRoot })
-  spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: fixtureRoot })
-  spawnSync('git', ['config', 'user.name', 'Test'], { cwd: fixtureRoot })
-  spawnSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: fixtureRoot })
+  const env = makeFixtureEnv()
+  spawnSync('git', ['init', '-q'], { cwd: fixtureRoot, env })
+  spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: fixtureRoot, env })
+  spawnSync('git', ['config', 'user.name', 'Test'], { cwd: fixtureRoot, env })
+  spawnSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: fixtureRoot, env })
 })
 
 afterEach(() => {
@@ -68,13 +70,18 @@ afterEach(() => {
 function writeRetro(filename: string, body: string, commitDateIso?: string): string {
   const full = join(fixtureRoot, 'docs', 'internal', 'retros', filename)
   writeFileSync(full, body)
-  spawnSync('git', ['add', full], { cwd: fixtureRoot })
-  const env = { ...process.env } as NodeJS.ProcessEnv
+  spawnSync('git', ['add', full], { cwd: fixtureRoot, env: makeFixtureEnv() })
+  // SMI-4693: makeFixtureEnv strips GIT_DISCOVERY_VARS; layer extra GIT_*_DATE
+  // overrides on top so the commit date control still works.
+  const extra: Record<string, string> = {}
   if (commitDateIso) {
-    env.GIT_AUTHOR_DATE = commitDateIso
-    env.GIT_COMMITTER_DATE = commitDateIso
+    extra.GIT_AUTHOR_DATE = commitDateIso
+    extra.GIT_COMMITTER_DATE = commitDateIso
   }
-  spawnSync('git', ['commit', '-q', '-m', `add ${filename}`], { cwd: fixtureRoot, env })
+  spawnSync('git', ['commit', '-q', '-m', `add ${filename}`], {
+    cwd: fixtureRoot,
+    env: makeFixtureEnv(extra),
+  })
   return full
 }
 
