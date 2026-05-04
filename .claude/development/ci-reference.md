@@ -125,6 +125,77 @@ If required checks are stuck or GitHub Actions is down:
 gh api repos/Smith-Horn/skillsmith/branches/main/protection -X PUT --input .github/branch-protection.json
 ```
 
+## Pure-JS Carve-Out (SMI-4647)
+
+Four CI jobs run on the host runner instead of inside the Docker image: `lint`, `typecheck` (Type Check), `compliance` (Standards Compliance), and `code-review` (Code Review). They are exempt from the project-wide Docker-first directive because their import closures contain zero native bindings.
+
+### Why
+
+`Build Docker Image` adds ~5 min to first-feedback wall-clock. Pre-carve-out, these four jobs all gated on `needs: docker-build` despite never loading `better-sqlite3` / `onnxruntime-node`. Dropping the gate lets them start at T+0 alongside `secret-scan` and `package-validation`.
+
+### Pattern (must match exactly)
+
+```yaml
+lint:                                        # also typecheck, compliance, code-review
+  name: Lint
+  # audit:carveout-pure-js — see docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md
+  needs: [classify, detect-changes]          # NO docker-build
+  steps:
+    - uses: actions/checkout@<sha>
+    - name: Unlock git-crypt
+      ...
+    - uses: actions/setup-node@<sha>
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+    - run: npm ci --ignore-scripts            # skips native postinstall
+    - run: npm run lint                       # or typecheck / audit:standards
+```
+
+Convention precedent: `release-cadence.yml:84` and the `package-validation` job in `ci.yml`. New carve-out jobs MUST match the same `setup-node` SHA, `cache: 'npm'`, and `--ignore-scripts` flag.
+
+### CI graph after carve-out
+
+```mermaid
+graph LR
+  detect-changes --> classify
+  detect-changes --> secret-scan
+  detect-changes --> package-validation
+
+  classify --> docker-build
+  secret-scan --> docker-build
+  package-validation --> docker-build
+
+  classify -.no docker.-> lint
+  classify -.no docker.-> typecheck
+  classify -.no docker.-> compliance
+
+  docker-build --> test
+  docker-build --> test-root
+  docker-build --> security
+  docker-build --> website-build
+  docker-build --> build
+  docker-build --> fresh-install-test
+
+  lint --> code-review
+  test --> code-review
+```
+
+`code-review` retains a Docker-bound predecessor (`test`) and gains no wall-clock improvement from carve-out — kept in for policy uniformity.
+
+### Drift prevention (Check 38 in `audit-standards.mjs`)
+
+`audit:standards` enforces two invariants:
+
+1. Every job with `needs: docker-build` either invokes `docker run skillsmith-ci:` OR carries the `# audit:carveout-pure-js` marker comment.
+2. Every job carrying the marker that invokes `npm run audit:standards` does NOT pass `--only <flag>` for any flag in the native-loading deny-list (initial: `retro-frontmatter`).
+
+Both invariants block CI on violation. The deny-list updates in lockstep when a new `--only` subset adds a lazy import of a native module.
+
+### Branch protection compatibility
+
+Job `name:` fields are unchanged (`Lint`, `Type Check`, `Standards Compliance`, `Code Review`). `.github/branch-protection.json` requires no edit.
+
 ## `continue-on-error` Audit (SMI-3217)
 
 Check 21 in `audit-standards.mjs` flags `continue-on-error: true` steps that lack downstream outcome checks — the pattern that caused 18 days of silent zero-data in the now-decommissioned `ab-results.yml` workflow.
