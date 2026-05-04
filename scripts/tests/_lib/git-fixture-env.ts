@@ -54,6 +54,14 @@ const GIT_DISCOVERY_VARS = [
   'GIT_PREFIX',
   'GIT_CEILING_DIRECTORIES',
   'GIT_DISCOVERY_ACROSS_FILESYSTEM',
+  // SMI-4699: HOME / XDG_CONFIG_HOME / GIT_CONFIG can still route a stray
+  // `git config` (without --local) into the developer's real ~/.gitconfig
+  // or trigger an `[includeIf "gitdir:..."]` rule that lands in the
+  // parent worktree's .git/config. Strip them; HOME is repinned to
+  // /dev/null below so any escape from --local fails loudly instead
+  // of silently writing to the host's gitconfig.
+  'GIT_CONFIG',
+  'XDG_CONFIG_HOME',
 ] as const
 
 /**
@@ -86,6 +94,10 @@ const realpath: (p: string) => string =
 export function makeFixtureEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
   for (const v of GIT_DISCOVERY_VARS) delete env[v]
+  // SMI-4699: GIT_CONFIG_GLOBAL=/dev/null already overrides $HOME/.gitconfig,
+  // so HOME itself is left as the caller set it (some fixtures legitimately
+  // chdir HOME to a scratch dir for non-git tooling). GIT_TERMINAL_PROMPT=0
+  // prevents an interactive credential prompt from blocking a hung test.
   return {
     ...env,
     GIT_AUTHOR_NAME: 'Test',
@@ -94,6 +106,7 @@ export function makeFixtureEnv(extra: Record<string, string> = {}): NodeJS.Proce
     GIT_COMMITTER_EMAIL: 'test@test.com',
     GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_CONFIG_SYSTEM: '/dev/null',
+    GIT_TERMINAL_PROMPT: '0',
     ...extra,
   }
 }
