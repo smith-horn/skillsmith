@@ -7,7 +7,7 @@ Developer guides for local development, testing, and debugging.
 | Document | Description |
 |----------|-------------|
 | [docker-guide.md](docker-guide.md) | Container management, rebuild scenarios, native modules, troubleshooting |
-| [git-crypt-guide.md](git-crypt-guide.md) | Encrypted docs, unlock, worktree setup, rebase workaround |
+| [git-crypt-guide.md](git-crypt-guide.md) | Encrypted docs, unlock, worktree setup, rebase workaround, host native bindings & SessionStart instrumentation (SMI-4549) |
 | [ci-reference.md](ci-reference.md) | Change classification, branch protection, Turborepo, CI scripts |
 | [deployment-guide.md](deployment-guide.md) | Edge function deployment, CORS, website, monitoring & alerts |
 | [claude-flow-guide.md](claude-flow-guide.md) | Agent spawning, swarm orchestration, hive mind, SPARC modes |
@@ -18,7 +18,7 @@ Developer guides for local development, testing, and debugging.
 | [stripe-testing.md](stripe-testing.md) | Stripe CLI testing setup and webhooks |
 | [stripe-billing-portal.md](stripe-billing-portal.md) | Stripe billing portal integration |
 | [email-templates.md](email-templates.md) | Supabase Auth email template source (SMI-2758) |
-| [publishing-guide.md](publishing-guide.md) | npm package publishing, CI workflow, local fallback |
+| [publishing-guide.md](publishing-guide.md) | npm package publishing, CI workflow, pre-publish checklist, break-glass, critical rules |
 | [vscode-publishing-guide.md](vscode-publishing-guide.md) | VS Code Marketplace publishing, PAT rotation, troubleshooting |
 | [cloudinary-guide.md](cloudinary-guide.md) | Blog image upload workflow, URL transforms, folder conventions |
 | [subagent-tool-permissions-guide.md](subagent-tool-permissions-guide.md) | Subagent tool access by type, foreground/background behavior |
