@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { executeGetSkill, formatSkillDetails } from '../tools/get-skill.js'
 import { SkillsmithError, ErrorCodes } from '@skillsmith/core'
-import { createSeededTestContext, type ToolContext } from './test-utils.js'
+import { createSeededTestContext, disposeTestContext, type ToolContext } from './test-utils.js'
 
 let context: ToolContext
 
@@ -15,8 +15,8 @@ beforeAll(() => {
   context = createSeededTestContext()
 })
 
-afterAll(() => {
-  context.db.close()
+afterAll(async () => {
+  await disposeTestContext(context)
 })
 
 describe('Get Skill Tool', () => {

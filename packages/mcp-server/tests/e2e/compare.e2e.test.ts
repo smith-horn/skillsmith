@@ -17,7 +17,7 @@ import {
   SkillRepository,
   type DatabaseType,
 } from '@skillsmith/core'
-import { createToolContext, type ToolContext } from '../../src/context.js'
+import { createToolContext, closeToolContext, type ToolContext } from '../../src/context.js'
 import { executeCompare, type CompareInput } from '../../src/tools/compare.js'
 import { scanForHardcoded } from './utils/hardcoded-detector.js'
 import { measureAsync, recordTiming } from './utils/baseline-collector.js'
@@ -116,8 +116,13 @@ describe('E2E: skill_compare tool', () => {
     context = createToolContext({ dbPath: TEST_DB_PATH, apiClientConfig: { offlineMode: true } })
   })
 
-  afterAll(() => {
-    db?.close()
+  afterAll(async () => {
+    // SMI-4694: closeToolContext removes signal handlers + closes DB.
+    if (context) {
+      await closeToolContext(context)
+    } else {
+      db?.close()
+    }
     if (existsSync(TEST_DIR)) {
       rmSync(TEST_DIR, { recursive: true, force: true })
     }

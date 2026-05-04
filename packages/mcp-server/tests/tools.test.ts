@@ -8,7 +8,11 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { executeSearch } from '../src/tools/search.js'
-import { createSeededTestContext, type ToolContext } from '../src/__tests__/test-utils.js'
+import {
+  createSeededTestContext,
+  disposeTestContext,
+  type ToolContext,
+} from '../src/__tests__/test-utils.js'
 
 // Mock the file operations for testing
 const TEST_SKILLS_DIR = path.join(os.tmpdir(), 'test-claude-skills-' + Date.now())
@@ -184,8 +188,8 @@ describe('Filter-only search', () => {
     context = createSeededTestContext()
   })
 
-  afterAll(() => {
-    context.db.close()
+  afterAll(async () => {
+    await disposeTestContext(context)
   })
 
   it('should search with category filter only (no query)', async () => {
