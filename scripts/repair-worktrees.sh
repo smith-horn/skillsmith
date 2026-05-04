@@ -83,8 +83,32 @@ check_docker_safety_for_rebuild() {
     # hang the script forever. `timeout` returns 124 on expiry; we treat
     # any non-zero exit as "couldn't determine state" and proceed without
     # the guard rather than blocking legitimate repair.
+    #
+    # SMI-4700: macOS does not ship GNU `timeout`. Calling `timeout 5 …`
+    # without the binary on PATH yields rc=127, which the rc handler
+    # below would treat as "couldn't determine state" — silently skipping
+    # the guard on the primary dev platform. Probe validated `gtimeout`
+    # (Homebrew coreutils) first, then validated `timeout`, and fall
+    # through to running `docker ps` unbounded if neither is available.
+    # The unbounded path matches today's macOS reality (a wedged daemon
+    # would have hung the script anyway since the guard never executed)
+    # but at least lets the guard fire when Docker is responsive. Pattern
+    # mirrors scripts/session-start-priming.sh:143-156, with the addition
+    # of validating `gtimeout` (priming-script only validates `timeout`)
+    # so a broken Homebrew coreutils install can't trip the same trap.
+    local timeout_bin=""
+    if command -v gtimeout >/dev/null 2>&1 && gtimeout --kill-after=0 0 true >/dev/null 2>&1; then
+        timeout_bin="gtimeout"
+    elif command -v timeout >/dev/null 2>&1 && timeout --kill-after=0 0 true >/dev/null 2>&1; then
+        timeout_bin="timeout"
+    fi
     local active rc=0
-    active="$(timeout 5 docker ps --format '{{.Names}}' 2>/dev/null)" || rc=$?
+    if [ -n "$timeout_bin" ]; then
+        active="$("$timeout_bin" 5 docker ps --format '{{.Names}}' 2>/dev/null)" || rc=$?
+    else
+        # Neither gtimeout nor a working timeout on PATH — run unbounded.
+        active="$(docker ps --format '{{.Names}}' 2>/dev/null)" || rc=$?
+    fi
     if [ "$rc" -ne 0 ]; then
         warn "  docker ps failed or timed out (rc=$rc); proceeding without guard."
         return 0
