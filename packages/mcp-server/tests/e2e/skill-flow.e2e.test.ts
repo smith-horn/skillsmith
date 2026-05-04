@@ -18,7 +18,7 @@ import {
   type SkillCreateInput,
   type DatabaseType,
 } from '@skillsmith/core'
-import { createToolContext, type ToolContext } from '../../src/context.js'
+import { createToolContext, closeToolContext, type ToolContext } from '../../src/context.js'
 import { executeSearch, type SearchInput } from '../../src/tools/search.js'
 import { executeGetSkill, type GetSkillInput } from '../../src/tools/get-skill.js'
 
@@ -121,8 +121,13 @@ describe('E2E: Skill Discovery Flow', () => {
     })
   })
 
-  afterAll(() => {
-    db?.close()
+  afterAll(async () => {
+    // SMI-4694: closeToolContext removes signal handlers + closes DB.
+    if (context) {
+      await closeToolContext(context)
+    } else {
+      db?.close()
+    }
     if (testDbPath && existsSync(testDbPath)) {
       rmSync(testDbPath, { force: true })
     }
@@ -310,8 +315,13 @@ describe('E2E: Data Quality Validation', () => {
     context = createToolContext({ dbPath: testDbPath, apiClientConfig: { offlineMode: true } })
   })
 
-  afterAll(() => {
-    db?.close()
+  afterAll(async () => {
+    // SMI-4694: closeToolContext removes signal handlers + closes DB.
+    if (context) {
+      await closeToolContext(context)
+    } else {
+      db?.close()
+    }
     if (testDbPath && existsSync(testDbPath)) {
       rmSync(testDbPath, { force: true })
     }

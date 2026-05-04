@@ -10,7 +10,7 @@ import {
   compareInputSchema,
 } from '../src/tools/compare.js'
 import { SkillsmithError, ErrorCodes } from '@skillsmith/core'
-import { createSeededTestContext } from '../src/__tests__/test-utils.js'
+import { createSeededTestContext, disposeTestContext } from '../src/__tests__/test-utils.js'
 import type { ToolContext } from '../src/context.js'
 
 let context: ToolContext
@@ -19,8 +19,8 @@ beforeAll(() => {
   context = createSeededTestContext()
 })
 
-afterAll(() => {
-  context.db.close()
+afterAll(async () => {
+  await disposeTestContext(context)
 })
 
 describe('Skill Compare Tool', () => {

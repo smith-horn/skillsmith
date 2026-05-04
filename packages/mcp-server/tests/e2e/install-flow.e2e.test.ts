@@ -17,7 +17,7 @@ import {
   SkillRepository,
   type DatabaseType,
 } from '@skillsmith/core'
-import { createToolContext, type ToolContext } from '../../src/context.js'
+import { createToolContext, closeToolContext, type ToolContext } from '../../src/context.js'
 import { scanForHardcoded } from './utils/hardcoded-detector.js'
 import { measureAsync } from './utils/baseline-collector.js'
 
@@ -109,13 +109,18 @@ describe('E2E: skill install/uninstall flow', () => {
     context = createToolContext({ dbPath: TEST_DB_PATH, apiClientConfig: { offlineMode: true } })
   })
 
-  afterAll(() => {
+  afterAll(async () => {
     // Restore HOME
     if (originalHome) {
       process.env['HOME'] = originalHome
     }
 
-    db?.close()
+    // SMI-4694: closeToolContext removes signal handlers + closes DB.
+    if (context) {
+      await closeToolContext(context)
+    } else {
+      db?.close()
+    }
     if (existsSync(TEST_DIR)) {
       rmSync(TEST_DIR, { recursive: true, force: true })
     }

@@ -9,7 +9,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { executeCompare, formatComparisonResults } from '../tools/compare.js'
 import type { CompareResponse, SkillSummary } from '../tools/compare.js'
 import { SkillsmithError } from '@skillsmith/core'
-import { createSeededTestContext, type ToolContext } from './test-utils.js'
+import { createSeededTestContext, disposeTestContext, type ToolContext } from './test-utils.js'
 
 let context: ToolContext
 
@@ -17,8 +17,8 @@ beforeAll(() => {
   context = createSeededTestContext()
 })
 
-afterAll(() => {
-  context.db.close()
+afterAll(async () => {
+  await disposeTestContext(context)
 })
 
 // ============================================================================

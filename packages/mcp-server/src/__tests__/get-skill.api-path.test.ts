@@ -9,12 +9,19 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { executeGetSkill } from '../tools/get-skill.js'
-import { createApiMockContext, type ToolContext } from './test-utils.js'
+import { createApiMockContext, disposeTestContext, type ToolContext } from './test-utils.js'
 
 let context: ToolContext | undefined
 
-afterEach(() => {
-  context?.db.close()
+afterEach(async () => {
+  // SMI-4694: closeToolContext (via disposeTestContext) removes signal
+  // handlers in addition to closing the DB. Direct context.db.close()
+  // bypassed the SIGTERM/SIGINT removal in createToolContext, leaking
+  // 2 listeners per `it` (createApiMockContext uses createToolContext
+  // internally; fresh :memory: DBs default syncConfig.enabled=true).
+  if (context) {
+    await disposeTestContext(context)
+  }
   context = undefined
 })
 

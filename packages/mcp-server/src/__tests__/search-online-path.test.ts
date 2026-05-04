@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach, afterEach } from 'vitest'
 import { executeSearch } from '../tools/search.js'
 import * as CoreModule from '@skillsmith/core'
-import { createTestContext, type ToolContext } from './test-utils.js'
+import { createTestContext, disposeTestContext, type ToolContext } from './test-utils.js'
 import * as LocalSkillSearchModule from '../tools/LocalSkillSearch.js'
 
 let onlineContext: ToolContext
@@ -19,8 +19,8 @@ beforeAll(() => {
   onlineContext = createTestContext()
 })
 
-afterAll(() => {
-  onlineContext.db.close()
+afterAll(async () => {
+  await disposeTestContext(onlineContext)
 })
 
 /**

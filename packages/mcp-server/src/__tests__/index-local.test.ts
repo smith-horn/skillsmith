@@ -11,7 +11,7 @@ import {
   formatIndexLocalResults,
   type IndexLocalResponse,
 } from '../tools/index-local.js'
-import { createTestContext, type ToolContext } from './test-utils.js'
+import { createTestContext, disposeTestContext, type ToolContext } from './test-utils.js'
 
 // Test fixtures directory
 let testSkillsDir: string
@@ -52,10 +52,10 @@ describe('index_local Tool', () => {
     context = createTestContext()
   })
 
-  afterAll(() => {
+  afterAll(async () => {
     // Cleanup temp directory
     fs.rmSync(testSkillsDir, { recursive: true, force: true })
-    context.db.close()
+    await disposeTestContext(context)
   })
 
   beforeEach(() => {
