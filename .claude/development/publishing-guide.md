@@ -26,6 +26,21 @@ Uses `SKILLSMITH_NPM_TOKEN` secret today; SMI-4539 will flip to npm trusted-publ
 
 If CI fails, fix CI. Do not reach for a local publish — see [`publish-ci-recovery.md`](../../docs/internal/runbooks/publish-ci-recovery.md) for triage.
 
+### Pre-publish checklist
+
+1. Build in Docker: `docker exec skillsmith-dev-1 npm run build`
+2. Run preflight: `docker exec skillsmith-dev-1 npm run preflight`
+3. Verify dependency versions are committed and pushed
+4. Trigger CI: `gh workflow run publish.yml -f dry_run=false`
+5. Watch the run: `gh run watch <run-id> --exit-status`
+6. Post-publish (CI smoke-tests automatically; manual fallback): `npx tsx scripts/smoke-test-published.ts @skillsmith/<pkg> <version>`
+
+If CI fails, do NOT reach for a local publish. Fix the underlying issue. Genuine break-glass: see [Break-Glass](#break-glass) below (requires `SKILLSMITH_PUBLISH_OVERRIDE=SMI-NNNN <rationale>` and a Linear retro within 24h).
+
+**Never** publish a consumer before its dependency. **Never** publish with an exact-pinned workspace dep (use `^` prefix). Workspace resolution masks version-pin errors locally — only fresh `npm install` from the registry reveals mismatches. See [retro: mcp-server@0.4.5](../../docs/internal/retros/2026-03-19-mcp-server-0.4.5-hotfix.md).
+
+**Note**: `packaging-test.yml` (weekly CI) installs from local tarballs, not the npm registry. It does NOT catch version-pin-against-unpublished-npm scenarios. The post-publish smoke test (`scripts/smoke-test-published.ts`) is the only check that exercises actual npm resolution.
+
 ## Local Publish — Forbidden (SMI-4533)
 
 The previous "local fallback" recipe (`source .env && npm publish`) is **gone**. Every publishable package's `prepublishOnly` chains `node ../../scripts/lib/forbid-local-publish.mjs` before build/test, and the script refuses unless invoked from a canonical-repo GitHub Actions runner.
