@@ -35,11 +35,7 @@ If CI fails, fix CI. Do not reach for a local publish — see [`publish-ci-recov
 5. Watch the run: `gh run watch <run-id> --exit-status`
 6. Post-publish (CI smoke-tests automatically; manual fallback): `npx tsx scripts/smoke-test-published.ts @skillsmith/<pkg> <version>`
 
-If CI fails, do NOT reach for a local publish. Fix the underlying issue. Genuine break-glass: see [Break-Glass](#break-glass) below (requires `SKILLSMITH_PUBLISH_OVERRIDE=SMI-NNNN <rationale>` and a Linear retro within 24h).
-
-**Never** publish a consumer before its dependency. **Never** publish with an exact-pinned workspace dep (use `^` prefix). Workspace resolution masks version-pin errors locally — only fresh `npm install` from the registry reveals mismatches. See [retro: mcp-server@0.4.5](../../docs/internal/retros/2026-03-19-mcp-server-0.4.5-hotfix.md).
-
-**Note**: `packaging-test.yml` (weekly CI) installs from local tarballs, not the npm registry. It does NOT catch version-pin-against-unpublished-npm scenarios. The post-publish smoke test (`scripts/smoke-test-published.ts`) is the only check that exercises actual npm resolution.
+If CI fails, do NOT reach for a local publish. Fix the underlying issue. Genuine break-glass: see [Break-Glass](#break-glass) below (requires `SKILLSMITH_PUBLISH_OVERRIDE=SMI-NNNN <rationale>` and a Linear retro within 24h). For workspace-resolution version-pin pitfalls and the `packaging-test.yml` registry-resolution caveat, see [Critical Rules](#critical-rules) below.
 
 ## Local Publish — Forbidden (SMI-4533)
 
