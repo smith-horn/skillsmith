@@ -245,6 +245,37 @@ export function startStripeWebhookServer(
 }
 
 /**
+ * Attach SIGTERM/SIGINT shutdown handlers idempotently to the standalone
+ * Stripe webhook server. Returns a `detach()` function that removes both
+ * handlers, intended for the listener-count audit test.
+ *
+ * SMI-4694: mirrors `webhook-endpoint.ts#attachShutdownHandlers`. Same
+ * risk profile (standalone daemon, supervisor re-entry possible).
+ *
+ * @internal Exported for the SMI-4694 listener-count audit test only; not
+ * part of the public webhook surface.
+ */
+export function attachShutdownHandlers(webhookServer: StripeWebhookServer): () => void {
+  const shutdown = async (): Promise<void> => {
+    console.log('\nShutting down Stripe webhook server...')
+    await webhookServer.stop()
+    console.log('Server stopped')
+    process.exit(0)
+  }
+
+  // Idempotent: removeListener is a no-op if not previously attached.
+  process.removeListener('SIGINT', shutdown)
+  process.on('SIGINT', shutdown)
+  process.removeListener('SIGTERM', shutdown)
+  process.on('SIGTERM', shutdown)
+
+  return (): void => {
+    process.removeListener('SIGINT', shutdown)
+    process.removeListener('SIGTERM', shutdown)
+  }
+}
+
+/**
  * Standalone entry point for Stripe webhook server
  */
 export async function main(): Promise<void> {
@@ -290,16 +321,8 @@ export async function main(): Promise<void> {
 
   await startStripeWebhookServer(webhookServer, { port, host })
 
-  // Handle graceful shutdown
-  const shutdown = async () => {
-    console.log('\nShutting down Stripe webhook server...')
-    await webhookServer.stop()
-    console.log('Server stopped')
-    process.exit(0)
-  }
-
-  process.on('SIGINT', shutdown)
-  process.on('SIGTERM', shutdown)
+  // SMI-4694: idempotent shutdown handler registration
+  attachShutdownHandlers(webhookServer)
 }
 
 if (process.argv.includes('--stripe-standalone')) {

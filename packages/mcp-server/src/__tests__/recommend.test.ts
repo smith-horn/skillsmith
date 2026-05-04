@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach, afterEach } from 'vitest'
 import { executeRecommend, formatRecommendations } from '../tools/recommend.js'
-import { createSeededTestContext, type ToolContext } from './test-utils.js'
+import { createSeededTestContext, disposeTestContext, type ToolContext } from './test-utils.js'
 import * as LocalSkillSearchModule from '../tools/LocalSkillSearch.js'
 import type { LocalSkill } from '../indexer/LocalIndexer.js'
 
@@ -18,8 +18,8 @@ beforeAll(() => {
   context = createSeededTestContext()
 })
 
-afterAll(() => {
-  context.db.close()
+afterAll(async () => {
+  await disposeTestContext(context)
 })
 
 describe('Recommend Tool', () => {
@@ -150,8 +150,8 @@ describe('Recommend Tool - Local Skill Integration (SMI-1837)', () => {
     branchContext = createSeededTestContext()
   })
 
-  afterAll(() => {
-    branchContext.db.close()
+  afterAll(async () => {
+    await disposeTestContext(branchContext)
   })
 
   beforeEach(() => {

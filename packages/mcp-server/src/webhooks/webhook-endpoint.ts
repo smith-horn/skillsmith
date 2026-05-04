@@ -297,6 +297,38 @@ export function stopWebhookServer(webhookServer: WebhookServer): Promise<void> {
 }
 
 /**
+ * Attach SIGTERM/SIGINT shutdown handlers idempotently to the standalone
+ * webhook server. Returns a `detach()` function that removes both handlers,
+ * intended for the listener-count audit test.
+ *
+ * SMI-4694: idempotent registration prevents handler accumulation if main()
+ * is invoked from a supervisor that may re-enter (rare but possible). The
+ * test surface relies on detach() to verify symmetric attach/detach.
+ *
+ * @internal Exported for the SMI-4694 listener-count audit test only; not
+ * part of the public webhook surface.
+ */
+export function attachShutdownHandlers(webhookServer: WebhookServer): () => void {
+  const shutdown = async (): Promise<void> => {
+    console.log('\nShutting down webhook server...')
+    await stopWebhookServer(webhookServer)
+    console.log('Webhook server stopped')
+    process.exit(0)
+  }
+
+  // Idempotent: removeListener is a no-op if not previously attached.
+  process.removeListener('SIGINT', shutdown)
+  process.on('SIGINT', shutdown)
+  process.removeListener('SIGTERM', shutdown)
+  process.on('SIGTERM', shutdown)
+
+  return (): void => {
+    process.removeListener('SIGINT', shutdown)
+    process.removeListener('SIGTERM', shutdown)
+  }
+}
+
+/**
  * Main entry point for standalone webhook server
  */
 export async function main(): Promise<void> {
@@ -328,16 +360,8 @@ export async function main(): Promise<void> {
 
   await startWebhookServer(webhookServer, { port, host })
 
-  // Handle graceful shutdown
-  const shutdown = async () => {
-    console.log('\nShutting down webhook server...')
-    await stopWebhookServer(webhookServer)
-    console.log('Webhook server stopped')
-    process.exit(0)
-  }
-
-  process.on('SIGINT', shutdown)
-  process.on('SIGTERM', shutdown)
+  // SMI-4694: idempotent shutdown handler registration
+  attachShutdownHandlers(webhookServer)
 }
 
 // Run if this is the main module

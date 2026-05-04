@@ -18,7 +18,7 @@ import {
   type SkillCreateInput,
   type DatabaseType,
 } from '@skillsmith/core'
-import { createToolContext, type ToolContext } from '../../src/context.js'
+import { createToolContext, closeToolContext, type ToolContext } from '../../src/context.js'
 import { executeSearch } from '../../src/tools/search.js'
 import { executeGetSkill } from '../../src/tools/get-skill.js'
 
@@ -78,8 +78,13 @@ describe('SMI-797: Performance Validation', () => {
     })
   })
 
-  afterAll(() => {
-    db?.close()
+  afterAll(async () => {
+    // SMI-4694: closeToolContext removes signal handlers + closes DB.
+    if (context) {
+      await closeToolContext(context)
+    } else {
+      db?.close()
+    }
     if (testDbPath && existsSync(testDbPath)) {
       rmSync(testDbPath, { force: true })
     }

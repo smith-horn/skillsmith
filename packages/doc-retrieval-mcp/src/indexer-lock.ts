@@ -118,18 +118,47 @@ function defaultProbeAlive(pid: number): boolean {
 function registerRelease(lockPath: string, registerHandlers: boolean): () => void {
   let released = false
 
+  // SMI-4694: capture handler refs so happy-path release can detach them.
+  // process.once self-removes only if the handler fires; happy-path release
+  // would otherwise leave 4 listeners pending until process exit, which
+  // accumulates across acquire/release cycles.
+  let onSignal: (() => void) | undefined
+  let onUncaught: ((err: Error) => void) | undefined
+
   const release = (): void => {
     if (released) return
     released = true
     tryUnlink(lockPath)
+
+    if (onSignal) {
+      // SMI-4694: explicit detach. Wrapped because removeListener is a no-op
+      // if the handler already fired (process.once semantics), but we belt-
+      // and-suspenders anyway to keep release() infallible.
+      try {
+        process.removeListener('SIGINT', onSignal)
+        process.removeListener('SIGTERM', onSignal)
+      } catch {
+        // No-op: handler already removed (e.g. fired) is harmless.
+      }
+    }
+    if (onUncaught) {
+      try {
+        process.removeListener('uncaughtException', onUncaught)
+      } catch {
+        // No-op: handler already removed is harmless.
+      }
+    }
+    // 'exit' handler is left attached: process.once('exit', …) self-removes
+    // when 'exit' fires, and Node's exit-handler semantics mean we cannot
+    // safely call removeListener mid-process. Harmless on happy path.
   }
 
   if (registerHandlers) {
-    const onSignal = (): void => {
+    onSignal = (): void => {
       release()
       process.exit(1)
     }
-    const onUncaught = (err: Error): void => {
+    onUncaught = (err: Error): void => {
       release()
       // Re-throw so Node's default handler prints the stack and exits non-zero.
       throw err

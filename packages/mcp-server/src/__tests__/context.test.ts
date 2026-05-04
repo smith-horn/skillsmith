@@ -87,7 +87,7 @@ describe('Context Module', () => {
 
   describe('createToolContext', () => {
     describe('basic initialization', () => {
-      it('should create context with in-memory database', () => {
+      it('should create context with in-memory database', async () => {
         const context = createToolContext({ dbPath: ':memory:' })
 
         expect(context.db).toBeDefined()
@@ -95,7 +95,7 @@ describe('Context Module', () => {
         expect(context.skillRepository).toBeDefined()
         expect(context.apiClient).toBeDefined()
 
-        context.db.close()
+        await closeToolContext(context)
       })
 
       it('should create context with default options', async () => {
@@ -115,7 +115,7 @@ describe('Context Module', () => {
         )
       })
 
-      it('should apply custom search cache TTL', () => {
+      it('should apply custom search cache TTL', async () => {
         const context = createToolContext({
           dbPath: ':memory:',
           searchCacheTtl: 600,
@@ -123,10 +123,10 @@ describe('Context Module', () => {
 
         expect(context.searchService).toBeDefined()
 
-        context.db.close()
+        await closeToolContext(context)
       })
 
-      it('should apply API client configuration', () => {
+      it('should apply API client configuration', async () => {
         const context = createToolContext({
           dbPath: ':memory:',
           apiClientConfig: {
@@ -139,10 +139,10 @@ describe('Context Module', () => {
         expect(context.apiClient).toBeDefined()
         expect(context.apiClient.isOffline()).toBe(true)
 
-        context.db.close()
+        await closeToolContext(context)
       })
 
-      it('should create directory for file-based database path', () => {
+      it('should create directory for file-based database path', async () => {
         const testDir = join(tmpdir(), 'skillsmith-context-test-' + Date.now())
         const dbPath = join(testDir, 'test.db')
 
@@ -155,30 +155,30 @@ describe('Context Module', () => {
 
         expect(existsSync(testDir)).toBe(true)
 
-        context.db.close()
+        await closeToolContext(context)
 
         // Clean up
         rmSync(testDir, { recursive: true })
       })
 
-      it('should skip directory creation for in-memory database', () => {
+      it('should skip directory creation for in-memory database', async () => {
         // This should not throw even though :memory: has no directory
         const context = createToolContext({ dbPath: ':memory:' })
         expect(context.db).toBeDefined()
-        context.db.close()
+        await closeToolContext(context)
       })
     })
 
     describe('telemetry configuration', () => {
-      it('should not enable telemetry by default', () => {
+      it('should not enable telemetry by default', async () => {
         const context = createToolContext({ dbPath: ':memory:' })
 
         expect(context.distinctId).toBeUndefined()
 
-        context.db.close()
+        await closeToolContext(context)
       })
 
-      it('should enable telemetry when env var is true and API key provided', () => {
+      it('should enable telemetry when env var is true and API key provided', async () => {
         process.env.SKILLSMITH_TELEMETRY_ENABLED = 'true'
         process.env.POSTHOG_API_KEY = 'phc_test_key_12345'
 
@@ -187,10 +187,10 @@ describe('Context Module', () => {
         expect(context.distinctId).toBeDefined()
         expect(typeof context.distinctId).toBe('string')
 
-        context.db.close()
+        await closeToolContext(context)
       })
 
-      it('should enable telemetry via config options', () => {
+      it('should enable telemetry via config options', async () => {
         const context = createToolContext({
           dbPath: ':memory:',
           telemetryConfig: {
@@ -201,10 +201,10 @@ describe('Context Module', () => {
 
         expect(context.distinctId).toBeDefined()
 
-        context.db.close()
+        await closeToolContext(context)
       })
 
-      it('should not enable telemetry without API key', () => {
+      it('should not enable telemetry without API key', async () => {
         process.env.SKILLSMITH_TELEMETRY_ENABLED = 'true'
         // No POSTHOG_API_KEY set
 
@@ -212,10 +212,10 @@ describe('Context Module', () => {
 
         expect(context.distinctId).toBeUndefined()
 
-        context.db.close()
+        await closeToolContext(context)
       })
 
-      it('should prefer env var over config when both set', () => {
+      it('should prefer env var over config when both set', async () => {
         process.env.SKILLSMITH_TELEMETRY_ENABLED = 'true'
         process.env.POSTHOG_API_KEY = 'phc_env_key'
 
@@ -230,22 +230,22 @@ describe('Context Module', () => {
         // env var wins
         expect(context.distinctId).toBeDefined()
 
-        context.db.close()
+        await closeToolContext(context)
       })
     })
 
     describe('background sync configuration', () => {
-      it('should not create backgroundSync when disabled via env var', () => {
+      it('should not create backgroundSync when disabled via env var', async () => {
         process.env.SKILLSMITH_BACKGROUND_SYNC = 'false'
 
         const context = createToolContext({ dbPath: ':memory:' })
 
         expect(context.backgroundSync).toBeUndefined()
 
-        context.db.close()
+        await closeToolContext(context)
       })
 
-      it('should not create backgroundSync when disabled via config', () => {
+      it('should not create backgroundSync when disabled via config', async () => {
         const context = createToolContext({
           dbPath: ':memory:',
           backgroundSyncConfig: { enabled: false },
@@ -253,10 +253,10 @@ describe('Context Module', () => {
 
         expect(context.backgroundSync).toBeUndefined()
 
-        context.db.close()
+        await closeToolContext(context)
       })
 
-      it('should check sync config enabled flag before starting', () => {
+      it('should check sync config enabled flag before starting', async () => {
         // backgroundSync is only created if syncConfig.enabled is true
         // Default sync config has enabled: false
         const context = createToolContext({
@@ -268,17 +268,17 @@ describe('Context Module', () => {
         // Just verify context creation succeeds
         expect(context.db).toBeDefined()
 
-        context.db.close()
+        await closeToolContext(context)
       })
     })
 
     describe('LLM failover configuration', () => {
-      it('should not create llmFailover by default', () => {
+      it('should not create llmFailover by default', async () => {
         const context = createToolContext({ dbPath: ':memory:' })
 
         expect(context.llmFailover).toBeUndefined()
 
-        context.db.close()
+        await closeToolContext(context)
       })
 
       it('should create llmFailover when enabled via env var', async () => {
@@ -315,7 +315,7 @@ describe('Context Module', () => {
         await closeToolContext(context)
       })
 
-      it('should not register signal handlers without services', () => {
+      it('should not register signal handlers without services', async () => {
         process.env.SKILLSMITH_BACKGROUND_SYNC = 'false'
 
         const context = createToolContext({
@@ -325,7 +325,7 @@ describe('Context Module', () => {
 
         expect(context._signalHandlers).toBeUndefined()
 
-        context.db.close()
+        await closeToolContext(context)
       })
     })
   })

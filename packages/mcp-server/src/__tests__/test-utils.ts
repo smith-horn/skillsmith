@@ -5,9 +5,24 @@
  */
 
 import type { ApiResponse, ApiSearchResult, ApiSkill } from '@skillsmith/core'
-import { createToolContext, type ToolContext } from '../context.js'
+import { createToolContext, closeToolContext, type ToolContext } from '../context.js'
 
 export type { ToolContext }
+
+/**
+ * SMI-4694: Symmetric disposer for `createTestContext` /
+ * `createSeededTestContext` / `createApiMockContext`. Calls
+ * `closeToolContext` to remove signal handlers, stop background sync,
+ * close the LLM failover chain, and close the database. Tests using any
+ * of the test-utils factories MUST call this in `afterAll`/`afterEach`
+ * to prevent SIGTERM/SIGINT handler accumulation.
+ *
+ * Replaces ad-hoc `context.db.close()` patterns that bypassed the
+ * cleanup in `closeToolContext`.
+ */
+export async function disposeTestContext(context: ToolContext): Promise<void> {
+  await closeToolContext(context)
+}
 
 /**
  * Create a test context with in-memory database

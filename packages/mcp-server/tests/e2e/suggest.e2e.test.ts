@@ -20,7 +20,7 @@ import {
   SkillRepository,
   type DatabaseType,
 } from '@skillsmith/core'
-import { createToolContext, type ToolContext } from '../../src/context.js'
+import { createToolContext, closeToolContext, type ToolContext } from '../../src/context.js'
 import { executeSuggest, type SuggestInput } from '../../src/tools/suggest.js'
 import { scanForHardcoded, type HardcodedIssue } from './utils/hardcoded-detector.js'
 import { recordTiming, measureAsync } from './utils/baseline-collector.js'
@@ -143,8 +143,15 @@ describe('E2E: skill_suggest tool', () => {
     context = createToolContext({ dbPath: TEST_DB_PATH, apiClientConfig: { offlineMode: true } })
   })
 
-  afterAll(() => {
-    db?.close()
+  afterAll(async () => {
+    // SMI-4694: closeToolContext removes signal handlers + closes the DB
+    // (preferred over standalone db.close, which leaves SIGTERM/SIGINT
+    // handlers attached if any sync/failover branch ever activates).
+    if (context) {
+      await closeToolContext(context)
+    } else {
+      db?.close()
+    }
     if (existsSync(TEST_DIR)) {
       rmSync(TEST_DIR, { recursive: true, force: true })
     }

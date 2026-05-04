@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach, afterEach } from 'vitest'
 import { executeRecommend } from '../tools/recommend.js'
-import { createTestContext, type ToolContext } from './test-utils.js'
+import { createTestContext, disposeTestContext, type ToolContext } from './test-utils.js'
 import * as LocalSkillSearchModule from '../tools/LocalSkillSearch.js'
 import * as CoreModule from '@skillsmith/core'
 import type { LocalSkill } from '../indexer/LocalIndexer.js'
@@ -44,8 +44,8 @@ describe('Recommend Tool - Online API Path (SMI-2755)', () => {
     onlineContext = createTestContext()
   })
 
-  afterAll(() => {
-    onlineContext.db.close()
+  afterAll(async () => {
+    await disposeTestContext(onlineContext)
   })
 
   beforeEach(() => {
