@@ -130,7 +130,6 @@ export type { ApplyRecommendedEditOptions } from './edit-applier.js'
 export type { EditApplyError, EditApplyResult } from './edit-applier.types.js'
 
 // SMI-4590 Wave 4 PR 2/6 — FrameworkAdapter seam + claudeCodeAdapter (v1).
-// PR 3/6 will add `runInventoryAudit` shared helper to the same surface.
 export { claudeCodeAdapter, FrameworkAdapterError } from './framework-adapter.js'
 
 export type {
@@ -140,3 +139,15 @@ export type {
   FrameworkName,
   InlineEditAction,
 } from './framework-adapter.types.js'
+
+// SMI-4590 Wave 4 PR 4/6 — shared `runInventoryAudit` composition helper
+// + per-audit suggestion persistence. Consumed by the MCP tool surface
+// (`skill_inventory_audit`) and (PR 5) the CLI `sklx audit collisions`
+// command.
+export { runInventoryAudit } from './run-inventory-audit.js'
+
+export type { RunInventoryAuditOptions, RunInventoryAuditResult } from './run-inventory-audit.js'
+
+export { readAuditSuggestions, writeAuditSuggestions } from './audit-suggestions.js'
+
+export type { AuditSuggestionsFile, AuditSuggestionsOptions } from './audit-suggestions.js'
