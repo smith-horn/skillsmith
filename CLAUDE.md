@@ -148,6 +148,8 @@ Caveats: (a) do not run `npm install` in the main repo while a pre-commit is act
 
 …it is **expected** and the hook is doing the right thing. If the message is followed by `❌ Host node_modules missing in worktree.`, run `./scripts/repair-worktrees.sh` to backfill the symlinks + native bindings.
 
+**Caveat (SMI-4698)**: the **native-rebuild step** of `./scripts/repair-worktrees.sh` aborts if a `skillsmith*-dev-N` container is running — it would otherwise overwrite the container's ELF native bindings via the symlinked `node_modules`. Symlink-repair steps run safely regardless. Stop the container first (`docker compose --profile dev down`), or pass `--force-with-active-docker` and run `docker exec -w /app skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node` afterward to restore the container's bindings.
+
 **Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Use `--dry-run` to preview. Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
 
 **Full guide**: [git-crypt-guide.md](.claude/development/git-crypt-guide.md)
@@ -486,6 +488,7 @@ A `SessionStart` hook (`scripts/session-start-priming.sh`) writes a transient pr
 | Native module errors | `docker exec skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node` |
 | Platform mismatch (SIGKILL 137) | `rm -rf packages/*/node_modules/better-sqlite3 packages/*/node_modules/onnxruntime-node` then rebuild |
 | Node ABI mismatch (after Node upgrade) | WASM fallback auto-activates since core 0.4.10. To restore native: `docker exec skillsmith-dev-1 npm rebuild better-sqlite3` (Docker side); `./scripts/repair-host-native-deps.sh` (host side, SMI-4549) |
+| "invalid ELF header" inside Docker after running `repair-worktrees.sh` (SMI-4698) | `docker exec -w /app skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node` |
 | Docker DNS failure | `docker network prune -f` then restart container |
 | Stale CJS artifacts | `docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f -delete'` |
 | Orphaned agents | `./scripts/cleanup-orphans.sh` (`--dry-run` to preview) |
