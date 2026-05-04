@@ -60,7 +60,7 @@ jobs:
           gh label create post-merge-verify --color FBCA04 --description "Post-merge verification observer" 2>/dev/null || true
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Typecheck (full workspace)
         run: npm run typecheck

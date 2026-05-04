@@ -364,7 +364,7 @@ jobs:
 
       - name: Install dependencies (fallback if no artifacts)
         if: steps.download-docker.outcome == 'failure'
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Load Docker image
         if: steps.download-docker.outcome == 'success'
@@ -504,7 +504,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Build core package
         run: npm run build -w @skillsmith/core
@@ -586,7 +586,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Build packages
         run: npm run build
@@ -740,7 +740,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Build packages
         run: npm run build
@@ -822,7 +822,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Build packages
         run: npm run build
@@ -882,7 +882,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Wait for npm propagation
         run: sleep 15

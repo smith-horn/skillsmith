@@ -958,7 +958,7 @@ jobs:
 
       - name: Install dependencies (fallback)
         if: steps.load-image.outcome != 'success'
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Extract node_modules
         if: steps.load-image.outcome == 'success'
@@ -1063,7 +1063,7 @@ jobs:
 
       - name: Install dependencies (fallback)
         if: steps.load-image.outcome != 'success'
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Extract node_modules
         if: steps.load-image.outcome == 'success'
@@ -1176,7 +1176,7 @@ jobs:
 
       - name: Install dependencies (fallback)
         if: steps.load-image.outcome != 'success'
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Extract node_modules
         if: steps.load-image.outcome == 'success'
@@ -1923,7 +1923,7 @@ jobs:
 
       - name: Install dependencies (fallback)
         if: steps.load-image.outcome != 'success'
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Extract node_modules
         if: steps.load-image.outcome == 'success'

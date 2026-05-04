@@ -70,7 +70,7 @@ jobs:
           echo "- **Next version target**: $VERSION (current published: $PUBLISHED)" >> $GITHUB_STEP_SUMMARY
 
       - name: Install dependencies
-        run: npm ci --workspace=packages/vscode-extension --include-workspace-root
+        run: npm ci --ignore-scripts --workspace=packages/vscode-extension --include-workspace-root
         env:
           npm_config_engine_strict: false
 
@@ -114,7 +114,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install dependencies
-        run: npm ci --workspace=packages/vscode-extension --include-workspace-root
+        run: npm ci --ignore-scripts --workspace=packages/vscode-extension --include-workspace-root
         env:
           npm_config_engine_strict: false
 
