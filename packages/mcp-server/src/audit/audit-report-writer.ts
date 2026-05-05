@@ -121,8 +121,11 @@ export function renderAuditReport(
     sections.push(renderRecommendedEditsSection(opts.recommendedEdits))
   }
 
-  // Single trailing newline; sections already terminate with `\n`.
-  return sections.join('\n').replace(/\n+$/, '\n')
+  // Single trailing newline. `trimEnd()` (not `/\n+$/`) is intentional —
+  // see SMI-4733: any non-`\n` trailing whitespace that leaks in is
+  // acceptable to strip in an ASCII report, and the non-regex form
+  // sidesteps polynomial backtracking flagged by CodeQL.
+  return sections.join('\n').trimEnd() + '\n'
 }
 
 /**

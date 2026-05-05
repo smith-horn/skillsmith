@@ -33,6 +33,8 @@ import * as crypto from 'node:crypto'
 import type { InventoryEntry } from './collision-detector.types.js'
 import type { SuggestionChain } from './rename-engine.types.js'
 
+const SANITIZE_MAX_LENGTH = 256
+
 /**
  * Compute the deterministic 4-char `shortHash` suffix used at chain tier 3.
  * Exported for tests; in normal flow callers use `generateSuggestionChain`.
@@ -52,6 +54,15 @@ export function computeShortHash(
  * consecutive separators. Mirrors the rule in plan §1 step 1.
  */
 export function sanitizeSegment(raw: string): string {
+  // Defense-in-depth length cap (SMI-4733): guards against polynomial
+  // backtracking on the regex chain below when callers pass unbounded
+  // input (e.g. `packDomain` from manifest, `token` from skillId). An
+  // empty segment falls through tier construction in
+  // `generateSuggestionChain` — same fall-through behavior as a
+  // pathologically un-sanitizable input.
+  if (raw.length > SANITIZE_MAX_LENGTH) {
+    return ''
+  }
   return raw
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
