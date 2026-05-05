@@ -89,7 +89,7 @@
     "husky": "9.1.7",
     "lint-staged": "16.4.0",
     "posthog-node": "5.29.2",
-    "prettier": "3.8.1",
+    "prettier": "3.8.3",
     "ruflo": "3.5.42",
     "stripe": "20.2.0",
     "supabase": "2.83.0",
