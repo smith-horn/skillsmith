@@ -2456,7 +2456,7 @@ console.log(`\n${BOLD}36. Smoke Surface Coverage (R-4, SMI-4459)${RESET}`)
       } else {
         const formatted = uncovered.map((p) => `  ${p}`).join('\n')
         warn(
-          `${uncovered.length} surface(s) not covered by surfaces.json and not allowlisted:\n${formatted}\n  Add a surface entry to scripts/smoke-prod/surfaces.json or document the exclusion in scripts/smoke-prod/.surfaces-allowlist.txt.`
+          `${uncovered.length} surface(s) not covered by surfaces.json and not allowlisted:\n${formatted}\n  User-facing → add to scripts/smoke-prod/surfaces.json.\n  Cron-only/internal → add to scripts/smoke-prod/.surfaces-allowlist.txt with rationale comment.\n  See .claude/development/deployment-guide.md § "Adding New Edge Functions".`
         )
       }
     } catch (e) {
