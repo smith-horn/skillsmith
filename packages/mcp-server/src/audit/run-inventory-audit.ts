@@ -155,8 +155,8 @@ export async function runInventoryAudit(
   if (applyExclusions) {
     const exclusions = await loadExclusions()
     filtered = applyExclusionsFilter(detectorResult, exclusions)
-    filteredRenames = renameSuggestions.filter(
-      (s) => !filtered.exactCollisions.every((f) => f.collisionId !== s.collisionId)
+    filteredRenames = renameSuggestions.filter((s) =>
+      filtered.exactCollisions.some((f) => f.collisionId === s.collisionId)
     )
     const keptCollisionIds = new Set([
       ...filtered.exactCollisions.map((f) => f.collisionId),
