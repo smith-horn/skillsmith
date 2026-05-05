@@ -131,6 +131,10 @@ export function derivePackDomain(
   allSkills: Array<{ tags?: unknown }>,
   stoplist: GenericTriggersStoplist
 ): string | null {
+  // SMI-4737: bail early on adversarial pack names to avoid wasted work.
+  // Cap is FIELD_LIMITS.packDomain (64) + '-skills'.length (7) = 71.
+  if (packName.length > FIELD_LIMITS.packDomain + '-skills'.length) return null
+
   const genericNamespaces = new Set(stoplist.namespaces.map((n) => n.toLowerCase()))
   const genericWords = new Set(stoplist.triggerWords.map((w) => w.toLowerCase()))
 
@@ -138,7 +142,13 @@ export function derivePackDomain(
   const lowerPack = packName.toLowerCase()
   if (lowerPack.endsWith('-skills') && !genericNamespaces.has(lowerPack)) {
     const prefix = lowerPack.slice(0, -'-skills'.length)
-    if (prefix.length > 0 && !genericNamespaces.has(prefix) && !genericWords.has(prefix)) {
+    // SMI-4737: cap derived prefix at FIELD_LIMITS.packDomain (64).
+    if (
+      prefix.length > 0 &&
+      prefix.length <= FIELD_LIMITS.packDomain &&
+      !genericNamespaces.has(prefix) &&
+      !genericWords.has(prefix)
+    ) {
       return prefix
     }
   }
@@ -170,7 +180,10 @@ export function derivePackDomain(
   // Require the mode to cover at least 2 skills (or the only skill) to avoid
   // picking random one-offs.
   const minSkills = allSkills.length >= 2 ? 2 : 1
-  return bestCount >= minSkills ? bestTag : null
+  if (bestCount < minSkills) return null
+  // SMI-4737: cap derived tag at FIELD_LIMITS.packDomain (64).
+  if (bestTag === null || bestTag.length > FIELD_LIMITS.packDomain) return null
+  return bestTag
 }
 
 /**

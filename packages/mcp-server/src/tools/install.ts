@@ -26,6 +26,7 @@ import type { ToolContext } from '../context.js'
 import { getToolContext } from '../context.js'
 import { CLAUDE_SKILLS_DIR, installInputSchema, type InstallResult } from './install.types.js'
 import { loadManifest, lookupSkillFromRegistry } from './install.helpers.js'
+import { FIELD_LIMITS } from './validate.types.js'
 
 // SMI-1867: Conflict resolution logic (extracted per governance review)
 import { checkForConflicts } from './install.conflict.js'
@@ -75,6 +76,22 @@ function buildValidationError(message: string): InstallResult {
 }
 
 /**
+ * SMI-4737: structured tool-error envelope for `extractSkillName` throws.
+ * Adversarial `skillId` values that survive Zod's 512-char boundary but
+ * produce an over-cap (>128 char) extracted segment are rejected here so
+ * the throw never escapes the MCP handler. Mirrors the `buildValidationError`
+ * shape (application-level failure, not MCP protocol-level `isError`).
+ */
+function buildInvalidSkillIdError(skillId: string, message: string): InstallResult {
+  return {
+    success: false,
+    skillId,
+    installPath: '',
+    error: `invalid_skill_id: ${message}`,
+  }
+}
+
+/**
  * Install a skill from GitHub to the local agent skills directory (~/.claude/skills/).
  *
  * Delegates core logic to SkillInstallationService from @skillsmith/core.
@@ -114,7 +131,17 @@ export async function installSkill(input: unknown, _context?: ToolContext): Prom
   // the install with no side effects. Pre-flight failure is non-blocking
   // (Edit 2) — `runNamespaceGate` swallows internal throws and returns
   // `decision: 'proceed'`.
-  const candidate = buildPreflightCandidate(validInput.skillId)
+  // SMI-4737: extractSkillName (called via buildPreflightCandidate) throws on
+  // over-cap (>128 char) extracted segments; surface as structured envelope.
+  let candidate: CandidateSkill
+  try {
+    candidate = buildPreflightCandidate(validInput.skillId)
+  } catch (err) {
+    return buildInvalidSkillIdError(
+      validInput.skillId,
+      err instanceof Error ? err.message : String(err)
+    )
+  }
   const tier = resolveCallerTier()
   const auditMode = resolveAuditMode({
     tier,
@@ -288,11 +315,29 @@ function readAuditModeOverride() {
 /**
  * Best-effort skill name extraction for conflict pre-check.
  * Does not need to be perfect -- just needs to match manifest keys.
+ *
+ * SMI-4737: throws when the extracted segment exceeds `FIELD_LIMITS.token`
+ * (128 chars). Adversarial `skillId` inputs that survive the Zod 512-char
+ * boundary but produce an over-cap segment are rejected at the derivation
+ * site so they cannot reach `sanitizeSegment`'s defensive 256-char floor
+ * (SMI-4733). Caller sites must wrap in try/catch and surface a structured
+ * tool-error envelope; the throw must not escape the MCP handler.
+ *
+ * Exported for direct unit testing (SMI-4737 tests).
  */
-function extractSkillName(skillId: string): string {
+export function extractSkillName(skillId: string): string {
+  let name: string
   if (skillId.includes('/')) {
     const parts = skillId.split('/')
-    return parts[parts.length - 1]
+    name = parts[parts.length - 1]
+  } else {
+    name = skillId
   }
-  return skillId
+  if (name.length > FIELD_LIMITS.token) {
+    throw new Error(
+      `Extracted skill name exceeds ${FIELD_LIMITS.token} chars (got ${name.length}). ` +
+        `skillId: ${skillId.slice(0, 64)}${skillId.length > 64 ? '...' : ''}`
+    )
+  }
+  return name
 }

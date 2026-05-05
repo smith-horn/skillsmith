@@ -54,6 +54,7 @@ import { runEditSuggester } from './edit-suggester.js'
 import type { RecommendedEdit } from './edit-suggester.types.js'
 import { generateSuggestionChain } from './suggestion-chain.js'
 import type { RenameAction, RenameSuggestion } from './rename-engine.types.js'
+import { FIELD_LIMITS } from '../tools/validate.types.js'
 
 /**
  * Input for {@link runInventoryAudit}. All fields optional — the MCP tool
@@ -228,8 +229,15 @@ function buildRenameSuggestions(
     const action = inventoryKindToRenameAction(target)
     if (action === null) continue // claude_md_rule entries can't be renamed.
 
+    // SMI-4737: defensive cap on filesystem-derived identifier. Filesystem
+    // entries with > 128-char names produce no rename suggestion; the
+    // collision is still surfaced via `result.exactCollisions`.
+    const rawToken = stripLeadingSlash(target.identifier)
+    if (rawToken.length > FIELD_LIMITS.token) {
+      continue
+    }
     const chain = generateSuggestionChain({
-      token: stripLeadingSlash(target.identifier),
+      token: rawToken,
       author: target.meta?.author ?? null,
       packDomain: null,
       tagFallback: target.meta?.tags?.[0] ?? null,
