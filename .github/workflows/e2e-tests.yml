@@ -83,7 +83,7 @@ jobs:
           fi
 
       - name: Build and cache Docker image
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
         with:
           context: .
           push: false
@@ -101,7 +101,7 @@ jobs:
           echo "✓ Saved image with tag: ${{ github.sha }}"
 
       - name: Upload Docker image artifact
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: docker-image-e2e
           path: /tmp/skillsmith-e2e.tar.zst
@@ -139,7 +139,7 @@ jobs:
           zstd -d --stdout /tmp/node_modules.tar.zst | tar -tf - | grep "^packages/" | head -20
 
       - name: Upload node_modules artifact
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: node-modules-e2e
           path: /tmp/node_modules.tar.zst
@@ -220,7 +220,7 @@ jobs:
 
       - name: Upload CLI test results
         if: always()
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: cli-e2e-results
           path: |
@@ -305,7 +305,7 @@ jobs:
 
       - name: Upload MCP test results
         if: always()
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: mcp-e2e-results
           path: |
@@ -405,7 +405,7 @@ jobs:
 
       - name: Upload combined reports
         if: always()
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: e2e-combined-reports
           path: |
@@ -416,7 +416,7 @@ jobs:
       - name: Post summary to PR
         if: github.event_name == 'pull_request'
         continue-on-error: true # audit:allow-continue-on-error — SMI-1256: Don't fail workflow if comment posting fails
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const fs = require('fs');
@@ -512,7 +512,7 @@ jobs:
             npm run test:e2e:baseline
 
       - name: Upload baseline report
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: performance-baselines
           path: test-results/combined-report.json
