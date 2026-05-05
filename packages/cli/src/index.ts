@@ -47,6 +47,7 @@ import {
   createInfoCommand,
   createImportCommand,
   createImportLocalCommand,
+  createConfigCommand,
 } from './commands/index.js'
 import { displayStartupHeader } from './utils/license.js'
 import { checkNodeVersion } from './utils/node-version.js'
@@ -155,5 +156,8 @@ program.addCommand(createCreateCommand())
 
 // SMI-3672: Skill info with SKILL.md content
 program.addCommand(createInfoCommand())
+
+// SMI-4590 Wave 4 PR 5/6: `sklx config get/set audit_mode`
+program.addCommand(createConfigCommand())
 
 program.parse()

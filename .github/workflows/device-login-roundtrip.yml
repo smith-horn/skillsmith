@@ -165,6 +165,7 @@ jobs:
         run: |
           set -eu
           npm run build -w @skillsmith/core
+          npm run build -w @skillsmith/mcp-server
           npm run build -w @skillsmith/cli
           # SMI-4511: derive CLI path from package.json `bin` field rather
           # than hardcoding. Earlier iterations of this workflow hardcoded

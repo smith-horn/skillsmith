@@ -14,7 +14,7 @@
  * Surface (post-SMI-4590 Step 0a):
  * - `sklx audit advisories <skill-id>` (canonical)
  * - `sklx audit <skill-id>` (deprecation alias — emits warning, forwards to advisories)
- * - `sklx audit collisions` is added by SMI-4590 PR 5/6.
+ * - `sklx audit collisions` is the namespace-collision audit (SMI-4590 PR 5/6).
  */
 
 import { Command } from 'commander'
@@ -28,6 +28,7 @@ import {
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { requireTier } from '../utils/require-tier.js'
+import { createAuditCollisionsSubcommand } from './audit-collisions.js'
 
 // ============================================================================
 // Severity display helpers
@@ -205,6 +206,8 @@ export function createAuditCommand(): Command {
   )
 
   audit.addCommand(createAuditAdvisoriesSubcommand())
+  // SMI-4590 PR 5/6 — register `collisions` sibling subcommand.
+  audit.addCommand(createAuditCollisionsSubcommand())
 
   // Deprecation alias: `sklx audit <skill-id>` → forward to `advisories`.
   // Implemented as a default-action on the parent: when Commander is invoked

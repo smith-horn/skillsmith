@@ -71,7 +71,12 @@
       "owner": "mcp-server",
       "trigger_globs": ["packages/mcp-server/**"],
       "script": "scripts/smoke-prod/mcp-server.sh",
-      "checks": ["check_mcp_server_version_exits_zero"]
+      "checks": [
+        "check_mcp_server_version_exits_zero",
+        "check_skill_inventory_audit_tool_listed",
+        "check_apply_namespace_rename_tool_listed",
+        "check_apply_recommended_edit_conditional"
+      ]
     },
     {
       "id": "blog-local-skill-database",
