@@ -12,11 +12,13 @@ import * as path from 'node:path'
 import { renderAuditReport, writeAuditReport } from '../../src/audit/audit-report-writer.js'
 import { newAuditId } from '../../src/audit/audit-history.js'
 import type {
+  CollisionId,
   ExactCollisionFlag,
   GenericTokenFlag,
   InventoryAuditResult,
   SemanticCollisionFlag,
 } from '../../src/audit/collision-detector.types.js'
+import type { RecommendedEdit } from '../../src/audit/edit-suggester.types.js'
 import type { InventoryEntry } from '../../src/utils/local-inventory.types.js'
 
 let TEST_DIR: string
@@ -203,6 +205,44 @@ describe('renderAuditReport — full result with all 3 collision kinds', () => {
     // Summary totals reflect 1 error + 2 warnings.
     expect(md).toContain('Errors (exact collisions): 1')
     expect(md).toContain('Warnings (generic + semantic): 2')
+  })
+})
+
+describe('renderAuditReport — SMI-4733 ReDoS hardening', () => {
+  it('handles input with many trailing newlines', () => {
+    // Construct a `RecommendedEdit` whose `before` snippet contains 1000
+    // consecutive `\n` chars. The renderer splits `before` on `\n` and
+    // emits each as a `-`-prefixed diff line — those propagate into the
+    // joined-section input that the trailing-newline trim runs against.
+    // Pre-fix code used `/\n+$/` (polynomial backtracking on this shape);
+    // the trimEnd-based replacement is O(n) linear. Regression gate is
+    // the CodeQL re-scan — we only assert correctness here.
+    const edit: RecommendedEdit = {
+      collisionId: '00112233aabbccdd' as CollisionId,
+      category: 'description_overlap',
+      pattern: 'add_domain_qualifier',
+      filePath: '/tmp/SKILL.md',
+      lineRange: { start: 1, end: 2 },
+      before: '\n'.repeat(1000),
+      after: 'description: ship a release for codehelper tasks',
+      rationale: 'differentiates from another skill',
+      applyAction: 'recommended_edit',
+      applyMode: 'apply_with_confirmation',
+      otherEntry: { identifier: 'release-tools', sourcePath: '/tmp/release-tools/SKILL.md' },
+    }
+    const md = renderAuditReport(emptyResult(), { recommendedEdits: [edit] })
+    expect(md.endsWith('\n')).toBe(true)
+    expect(md.endsWith('\n\n')).toBe(false)
+  })
+
+  it('handles empty result', () => {
+    // Regression test for the `trimEnd()` edge: ensures even a minimally-
+    // populated report (summary header only — no collision sections) ends
+    // with exactly one `\n` and is non-empty.
+    const md = renderAuditReport(emptyResult())
+    expect(md.length).toBeGreaterThan(0)
+    expect(md.endsWith('\n')).toBe(true)
+    expect(md.endsWith('\n\n')).toBe(false)
   })
 })
 

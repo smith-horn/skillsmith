@@ -37,6 +37,39 @@ describe('sanitizeSegment', () => {
   it('dedupes consecutive separators', () => {
     expect(sanitizeSegment('foo  bar___baz')).toBe('foo-bar-baz')
   })
+
+  // SMI-4733 ReDoS hardening: defense-in-depth length cap at 256 chars.
+  // Two of four callers (`token`, `packDomain`) have no upstream cap;
+  // unbounded input on the regex chain below caused polynomial backtracking
+  // (CodeQL alert 93). CodeQL re-scan is the regression gate; here we
+  // assert correctness.
+  it('accepts 256-char input at boundary', () => {
+    const input = 'a'.repeat(256)
+    expect(sanitizeSegment(input)).toBe(input)
+  })
+
+  it('returns empty string on input > 256 chars; chain falls through that tier', () => {
+    expect(sanitizeSegment('a'.repeat(257))).toBe('')
+
+    // Over-long `packDomain` must not throw; the suggestion chain falls
+    // through to the no-packDomain shape (tier 1 + tier 3 only) per the
+    // existing empty-segment behavior in `generateSuggestionChain`.
+    const result = generateSuggestionChain({
+      token: 'ship',
+      author: 'anthropic',
+      packDomain: 'x'.repeat(300),
+      authorPath: '/repo/x',
+      existingInventory: [],
+    })
+    expect(result.candidates[0]).toBe('anthropic-ship')
+    expect(result.candidates).toHaveLength(2)
+    expect(result.candidates[1]).toMatch(/^anthropic-ship-[0-9a-f]{4}$/)
+    expect(result.exhausted).toBe(false)
+  })
+
+  it('handles 200 dashes (correctness; no timing assertion)', () => {
+    expect(sanitizeSegment('-'.repeat(200) + 'x')).toBe('x')
+  })
 })
 
 describe('computeShortHash', () => {
