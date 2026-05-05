@@ -26,6 +26,7 @@ supabase/functions/skills-outreach-preferences/**
 supabase/functions/admin-grant-subscription/**
 supabase/functions/update-seat-count/**
 supabase/functions/webhook-dlq/**
+supabase/functions/quota-monitor/**
 
 # Stripe webhook endpoints (require signed payload to exercise; covered by
 # stripe-webhook-monitor.yml independently).
