@@ -36,15 +36,30 @@ npx supabase functions deploy list-invoices --no-verify-jwt
 
 **Note**: `verify_jwt` is also configured in `supabase/config.toml` for local development. Production deployments require the `--no-verify-jwt` flag explicitly.
 
-### Adding New Anonymous Functions (SMI-1900)
+### Adding New Edge Functions
 
-CI validates anonymous function configuration. When adding a new one:
+When creating a new edge function:
 
-1. Add `[functions.<name>]` with `verify_jwt = false` to `supabase/config.toml`
-2. Add deploy command to the list above
-3. Add function name to `ANONYMOUS_FUNCTIONS` array in `scripts/audit-standards.mjs`
+1. Add `[functions.<name>]` with `verify_jwt = false` to `supabase/config.toml` (anonymous functions only)
+2. Add deploy command to the CLAUDE.md deploy list and the list above
+3. Add function name to `NO_VERIFY_JWT_FUNCTIONS` in `scripts/audit-standards.mjs` (anonymous only)
+4. **Add to `.surfaces-allowlist.txt` or `surfaces.json`** — `audit:standards` Check 36 will warn if you skip this. Cron-only/internal functions belong in `.surfaces-allowlist.txt` with a rationale comment; user-facing functions belong in `surfaces.json`. Omitting this step requires a follow-up PR to fix the warning.
 
 CI will fail if any anonymous function is missing from `config.toml` or CLAUDE.md.
+
+### Supabase Admin API (GoTrue v2)
+
+Gotchas when using `POST/PUT /auth/v1/admin/users` (e.g., provisioning smoke test accounts):
+
+| Operation | Method | Path | Notes |
+|-----------|--------|------|-------|
+| Create user | POST | `/auth/v1/admin/users` | Use `email_confirm: true` to skip email verification |
+| Update user (set password, metadata) | **PUT** | `/auth/v1/admin/users/{id}` | **PATCH returns 405** — GoTrue v2 uses PUT |
+| Sign in (get JWT) | POST | `/auth/v1/token?grant_type=password` | Use `email` + `password` in JSON body |
+
+**OTP magic links are browser-only**: `POST /auth/v1/admin/generate_link` returns a redirect URL that terminates at the app's `/auth/confirm` page (302 → browser flow). The `hashed_token` is at the top level of the response, not inside `properties`. This flow cannot be used for server-side JWT exchange — use email+password credentials instead.
+
+**Smoke test credential pattern**: Generate passwords with Python `secrets.token_urlsafe(24)` and write directly to `.env` — never `echo $PASSWORD` or print in curl output. Set via `PUT /auth/v1/admin/users/{id}` with `{ "password": "..." }` in the JSON body.
 
 ### Auto-Deploy on Merge (SMI-4256)
 
