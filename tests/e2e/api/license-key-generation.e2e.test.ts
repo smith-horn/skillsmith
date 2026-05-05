@@ -30,7 +30,7 @@ const STAGING_ANON_KEY = process.env.STAGING_SUPABASE_ANON_KEY
 
 const skipReason =
   !STAGING_URL || !STAGING_SERVICE_KEY || !STAGING_ANON_KEY
-    ? 'STAGING_SUPABASE_* env vars missing — run via: varlock run -- npx vitest run tests/e2e/license-key-generation.e2e.test.ts'
+    ? 'STAGING_SUPABASE_* env vars missing — run via: varlock run -- npx vitest run --config vitest.e2e.config.ts tests/e2e/api/license-key-generation.e2e.test.ts'
     : ''
 
 const describeIfStaged = skipReason ? describe.skip : describe
