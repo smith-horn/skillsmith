@@ -28,6 +28,7 @@
 import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { acquireScanLock } from './scheduled-scan.lock.js'
 import type {
   ScheduledScanErrorCode,
   ScheduledScanOptions,
@@ -102,6 +103,8 @@ export async function runScheduledScan(
   const cacheMinutes = resolveCacheMinutes(opts.cacheMinutes)
 
   // Idempotency cache check — keyed on the resolved homeDir's audits dir.
+  // This is a freshness optimization; the lock-file mutex below is the
+  // correctness gate for concurrent fires (SMI-4752).
   if (!opts.force) {
     const cached = await findRecentAudit(homeDir, cacheMinutes)
     if (cached !== null) {
@@ -114,58 +117,96 @@ export async function runScheduledScan(
     }
   }
 
-  // Fresh audit. Governance mode: deep + un-filtered. The
-  // `runInventoryAudit` import is dynamic to avoid a hard package
-  // cycle (mcp-server lists enterprise as an optional peer dep).
-  let auditResult
-  try {
-    const runInventoryAudit = await loadRunInventoryAudit()
-    auditResult = await runInventoryAudit({
-      deep: true,
-      applyExclusions: false,
-      tier: 'enterprise',
-      homeDir,
-      ...(opts.projectDir !== undefined ? { projectDir: opts.projectDir } : {}),
-    })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+  // Lock-file mutex (SMI-4752). A second caller arriving during an
+  // in-flight scan either rides the in-flight peer's cached result
+  // (when it lands) or throws `scheduled_scan.in_flight`. The lock
+  // module is callback-driven (cache probe + fs-error thrower) so it
+  // stays decoupled from the runner's option/result types.
+  const lockOutcome = await acquireScanLock(
+    homeDir,
+    () => findRecentAudit(homeDir, cacheMinutes),
+    (err) => {
+      const message = err instanceof Error ? err.message : String(err)
+      throw new ScheduledScanError(
+        'scheduled_scan.audit_failed',
+        `Failed to acquire scheduled-scan lock: ${message}`
+      )
+    }
+  )
+  if (lockOutcome.kind === 'cached') {
+    return {
+      ...lockOutcome.cached,
+      cached: true,
+      outputDisposition: 'file',
+      durationMs: nsToMs(process.hrtime.bigint() - startedAt),
+    }
+  }
+  if (lockOutcome.kind === 'inflight') {
     throw new ScheduledScanError(
-      'scheduled_scan.audit_failed',
-      `Inventory audit failed during scheduled scan: ${message}`
+      'scheduled_scan.in_flight',
+      'Another scheduled scan is already running for this home directory. ' +
+        'Retry after the in-flight scan completes, or wait for stale-lock reclaim ' +
+        '(default 5 minutes).'
     )
   }
 
-  const counts = {
-    exact: auditResult.exactCollisions.length,
-    generic: auditResult.genericFlags.length,
-    semantic: auditResult.semanticCollisions.length,
-  }
+  // Fresh audit. Governance mode: deep + un-filtered. The
+  // `runInventoryAudit` import is dynamic to avoid a hard package
+  // cycle (mcp-server lists enterprise as an optional peer dep).
+  // try/finally guarantees lock release even on throw.
+  try {
+    let auditResult
+    try {
+      const runInventoryAudit = await loadRunInventoryAudit()
+      auditResult = await runInventoryAudit({
+        deep: true,
+        applyExclusions: false,
+        tier: 'enterprise',
+        homeDir,
+        ...(opts.projectDir !== undefined ? { projectDir: opts.projectDir } : {}),
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new ScheduledScanError(
+        'scheduled_scan.audit_failed',
+        `Inventory audit failed during scheduled scan: ${message}`
+      )
+    }
 
-  // Output dispatch.
-  const output = opts.output ?? { kind: 'file' as const }
-  let outputDisposition: ScheduledScanResult['outputDisposition'] = 'file'
+    const counts = {
+      exact: auditResult.exactCollisions.length,
+      generic: auditResult.genericFlags.length,
+      semantic: auditResult.semanticCollisions.length,
+    }
 
-  if (output.kind === 'webhook') {
-    const webhookOk = await deliverWebhook(output.url, {
+    // Output dispatch.
+    const output = opts.output ?? { kind: 'file' as const }
+    let outputDisposition: ScheduledScanResult['outputDisposition'] = 'file'
+
+    if (output.kind === 'webhook') {
+      const webhookOk = await deliverWebhook(output.url, {
+        auditId: auditResult.auditId,
+        reportPath: auditResult.reportPath,
+        counts,
+      })
+      if (webhookOk) {
+        outputDisposition = 'webhook'
+      } else {
+        await logWebhookFailure(homeDir, output.url, auditResult.auditId)
+        outputDisposition = 'webhook_fallback'
+      }
+    }
+
+    return {
       auditId: auditResult.auditId,
       reportPath: auditResult.reportPath,
+      cached: false,
       counts,
-    })
-    if (webhookOk) {
-      outputDisposition = 'webhook'
-    } else {
-      await logWebhookFailure(homeDir, output.url, auditResult.auditId)
-      outputDisposition = 'webhook_fallback'
+      outputDisposition,
+      durationMs: nsToMs(process.hrtime.bigint() - startedAt),
     }
-  }
-
-  return {
-    auditId: auditResult.auditId,
-    reportPath: auditResult.reportPath,
-    cached: false,
-    counts,
-    outputDisposition,
-    durationMs: nsToMs(process.hrtime.bigint() - startedAt),
+  } finally {
+    await lockOutcome.release()
   }
 }
 

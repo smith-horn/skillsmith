@@ -78,7 +78,11 @@ fi
 TIMEOUT_BIN=""
 if command -v gtimeout >/dev/null 2>&1; then
   TIMEOUT_BIN="gtimeout"
-elif command -v timeout >/dev/null 2>&1 && timeout --kill-after=0 0 true >/dev/null 2>&1; then
+elif command -v timeout >/dev/null 2>&1 && timeout 1 true >/dev/null 2>&1; then
+  # Probe with `timeout 1 true` — the simplest invocation that works on
+  # both GNU coreutils and BusyBox/Alpine. The previous probe
+  # (`timeout --kill-after=0 0 true`) used GNU-specific flag syntax and
+  # falsely failed on BusyBox, forcing the job-control fallback. (SMI-4753)
   TIMEOUT_BIN="timeout"
 fi
 

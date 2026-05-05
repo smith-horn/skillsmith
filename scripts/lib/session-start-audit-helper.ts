@@ -48,6 +48,26 @@ interface ResolvedContext {
 }
 
 /**
+ * Function-type alias for the dynamically-imported `runInventoryAudit`.
+ * Mirrors the `RunInventoryAuditFn` pattern in
+ * `packages/enterprise/src/audit/scheduled-scan.ts` so the dynamic
+ * import can be typed without an `any`-cast.
+ */
+type RunInventoryAuditFn = (opts: {
+  deep?: boolean
+  applyExclusions?: boolean
+  tier?: 'community' | 'individual' | 'team' | 'enterprise'
+  homeDir?: string
+  projectDir?: string
+}) => Promise<{
+  auditId: string
+  reportPath: string
+  exactCollisions: unknown[]
+  genericFlags: unknown[]
+  semanticCollisions: unknown[]
+}>
+
+/**
  * The render-input shape EXCLUDES per-entry fields by construction.
  * This is the only data type the renderer is permitted to see — so a
  * future contributor adding "let me print the colliding files inline"
@@ -111,10 +131,15 @@ async function main(): Promise<number> {
   }
 
   // Stage 4: run the audit. Dynamic import — costs nothing for the
-  // 99% Free/Individual path that never reaches here.
-  let runInventoryAudit
+  // 99% Free/Individual path that never reaches here. The `as` cast
+  // mirrors the `RunInventoryAuditFn` pattern in
+  // `packages/enterprise/src/audit/scheduled-scan.ts` so the dynamic
+  // import is typed (no implicit `any` — SMI-4753 finding 1).
+  let runInventoryAudit: RunInventoryAuditFn
   try {
-    const mod = await import('@skillsmith/mcp-server/audit')
+    const mod = (await import('@skillsmith/mcp-server/audit')) as {
+      runInventoryAudit: RunInventoryAuditFn
+    }
     runInventoryAudit = mod.runInventoryAudit
   } catch (err) {
     await logError(home, 'audit_module_load_failed', err)
@@ -199,7 +224,7 @@ function renderForTier(tier: ResolvedContext['tier'], input: RenderInput): Rende
 // ---------------------------------------------------------------------------
 
 async function resolveContext(home: string): Promise<ResolvedContext> {
-  const tier = await resolveTier()
+  const tier = await resolveTier(home)
   const fileMode = await readConfigAuditMode(home)
   const tierAllowsMode =
     fileMode === null ||
@@ -212,7 +237,7 @@ async function resolveContext(home: string): Promise<ResolvedContext> {
   return { tier, auditMode, tierIneligibleOverride }
 }
 
-async function resolveTier(): Promise<ResolvedContext['tier']> {
+async function resolveTier(home: string): Promise<ResolvedContext['tier']> {
   // Try the dynamic import path first (uses the enterprise validator
   // when available). Falls back to community on any failure.
   try {
@@ -241,16 +266,41 @@ async function resolveTier(): Promise<ResolvedContext['tier']> {
   if (!key) return 'community'
   try {
     const parts = key.split('.')
-    if (parts.length < 2) return 'community'
+    if (parts.length < 2) {
+      // Not a JWT shape — log so an Enterprise admin debugging "why am
+      // I getting community output" has a record (SMI-4753 finding 2).
+      await logInfo(home, 'license_key_malformed', { reason: 'not_jwt_shape' })
+      return 'community'
+    }
     const payloadB64 = parts[1] ?? ''
-    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8')) as {
-      tier?: string
+    let payload: { tier?: string }
+    try {
+      payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8')) as {
+        tier?: string
+      }
+    } catch (parseErr) {
+      // JWT shape but un-decodable payload. Log explicitly before
+      // falling through to community (SMI-4753 finding 2). Without
+      // this log, a malformed key looks identical to no key set —
+      // hiding the most common Enterprise misconfiguration mode.
+      await logInfo(home, 'license_key_malformed', {
+        reason: 'payload_decode_failed',
+        message: parseErr instanceof Error ? parseErr.message : String(parseErr),
+      })
+      return 'community'
     }
     if (payload.tier === 'individual' || payload.tier === 'team' || payload.tier === 'enterprise') {
       return payload.tier
     }
-  } catch {
-    // Fall through to community.
+    // Decoded but tier claim missing or unrecognized.
+    await logInfo(home, 'license_key_malformed', { reason: 'tier_claim_missing_or_unknown' })
+  } catch (err) {
+    // Buffer.from itself failing (extremely rare — only on memory
+    // pressure or bizarre input). Log and fall through.
+    await logInfo(home, 'license_key_malformed', {
+      reason: 'unexpected',
+      message: err instanceof Error ? err.message : String(err),
+    })
   }
   return 'community'
 }

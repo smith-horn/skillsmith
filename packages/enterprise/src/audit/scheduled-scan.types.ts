@@ -56,7 +56,19 @@ export interface ScheduledScanOptions {
    *
    * The cache key is the most-recent `~/.skillsmith/audits/<auditId>/`
    * mtime under the resolved `homeDir`, so each environment has its
-   * own cache — no global racing.
+   * own cache.
+   *
+   * Concurrent-fire correctness (SMI-4752): the mtime cache is a
+   * freshness optimization, NOT a race guard — two callers passing the
+   * cache check ~simultaneously would both invoke `runInventoryAudit`.
+   * The correctness gate is a lock-file mutex at
+   * `~/.skillsmith/audits/.scan.lock` (atomic `O_EXCL` create with
+   * `{ pid, startedAt, hostname }` payload). A second caller seeing a
+   * fresh, alive lock either (a) returns the cached result if a peer
+   * has just produced one, or (b) throws `scheduled_scan.in_flight`.
+   * Stale-lock reclaim windows: `> 5 min old` (env-overridable via
+   * `SKILLSMITH_SCHEDULED_AUDIT_LOCK_STALE_MS`) OR PID dead (`ESRCH`
+   * from `process.kill(pid, 0)`) on the same host.
    */
   cacheMinutes?: number
 
@@ -102,8 +114,16 @@ export interface ScheduledScanResult {
 /**
  * Typed error codes the runner may surface. Surfaced via thrown
  * `ScheduledScanError` (see `scheduled-scan.ts`).
+ *
+ * `scheduled_scan.in_flight` (SMI-4752): another `runScheduledScan` is
+ * holding the lock at `~/.skillsmith/audits/.scan.lock` and no cached
+ * result is available to fall back on. Caller should either back off
+ * and retry, or use `force: true` after waiting for the in-flight peer
+ * (note: `force` does NOT bypass the lock — it bypasses only the cache
+ * read).
  */
 export type ScheduledScanErrorCode =
   | 'scheduled_scan.audit_failed'
   | 'scheduled_scan.invalid_cache_minutes'
   | 'scheduled_scan.invalid_output'
+  | 'scheduled_scan.in_flight'

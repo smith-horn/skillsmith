@@ -249,6 +249,182 @@ describe('runScheduledScan', () => {
   })
 })
 
+describe('runScheduledScan — concurrent-fire lock (SMI-4752)', () => {
+  let tmpHome: string
+  let runScheduledScan: (typeof import('../../src/audit/scheduled-scan.js'))['runScheduledScan']
+
+  beforeEach(async () => {
+    tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), 'scheduled-scan-lock-test-'))
+    await fs.mkdir(path.join(tmpHome, '.skillsmith'), { recursive: true, mode: 0o700 })
+    mockRunInventoryAudit.mockReset()
+    const mod = await import('../../src/audit/scheduled-scan.js')
+    runScheduledScan = mod.runScheduledScan
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpHome, { recursive: true, force: true })
+    delete process.env['SKILLSMITH_SCHEDULED_AUDIT_LOCK_STALE_MS']
+  })
+
+  it('serializes two concurrent runScheduledScan calls — only one invokes runInventoryAudit', async () => {
+    // Mock runInventoryAudit so it takes long enough for both callers
+    // to be in flight simultaneously, and writes its result.json to
+    // the audits dir so the second caller can pick up the cache.
+    let invocations = 0
+    mockRunInventoryAudit.mockImplementation(async () => {
+      invocations += 1
+      const id = `AUDIT-CONCURRENT-${invocations}`
+      const dir = path.join(tmpHome, '.skillsmith', 'audits', id)
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 })
+      // Simulate audit work — long enough that the second caller enters
+      // the lock-acquire branch while we're still running.
+      await new Promise((r) => setTimeout(r, 100))
+      const resultJson = {
+        exactCollisions: [],
+        genericFlags: [],
+        semanticCollisions: [],
+      }
+      await fs.writeFile(path.join(dir, 'result.json'), JSON.stringify(resultJson))
+      await fs.writeFile(path.join(dir, 'report.md'), '# concurrent test')
+      return {
+        auditId: id,
+        reportPath: path.join(dir, 'report.md'),
+        ...resultJson,
+      }
+    })
+
+    const settled = await Promise.allSettled([
+      runScheduledScan({ homeDir: tmpHome }),
+      runScheduledScan({ homeDir: tmpHome }),
+    ])
+
+    // Exactly one runInventoryAudit invocation.
+    expect(invocations).toBe(1)
+
+    // One caller must have produced a fresh result; the other must
+    // have either ridden the cache (after the peer wrote result.json)
+    // OR thrown ScheduledScanError with code 'scheduled_scan.in_flight'.
+    const fulfilled = settled.filter((s) => s.status === 'fulfilled') as Array<
+      PromiseFulfilledResult<Awaited<ReturnType<typeof runScheduledScan>>>
+    >
+    const rejected = settled.filter((s) => s.status === 'rejected') as Array<PromiseRejectedResult>
+
+    // At least one caller succeeds — the lock-holder.
+    expect(fulfilled.length).toBeGreaterThanOrEqual(1)
+
+    if (rejected.length > 0) {
+      // The losing caller threw — must be the typed in-flight error.
+      const err = rejected[0]?.reason
+      expect(err).toBeInstanceOf(ScheduledScanError)
+      expect((err as ScheduledScanError).code).toBe('scheduled_scan.in_flight')
+    } else {
+      // Both fulfilled — the second one must have ridden the cache.
+      const fresh = fulfilled.find((s) => !s.value.cached)
+      const cached = fulfilled.find((s) => s.value.cached)
+      expect(fresh).toBeDefined()
+      expect(cached).toBeDefined()
+      expect(fresh?.value.auditId).toBe(cached?.value.auditId)
+    }
+
+    // Lock file must be cleaned up.
+    const lockPath = path.join(tmpHome, '.skillsmith', 'audits', '.scan.lock')
+    await expect(fs.access(lockPath)).rejects.toThrow()
+  })
+
+  it('reclaims a stale lock (older than lock-stale window) and proceeds', async () => {
+    // Plant a synthetic stale lock — startedAt 6 minutes ago, default
+    // stale window is 5 minutes.
+    const auditsDir = path.join(tmpHome, '.skillsmith', 'audits')
+    await fs.mkdir(auditsDir, { recursive: true, mode: 0o700 })
+    const lockPath = path.join(auditsDir, '.scan.lock')
+    await fs.writeFile(
+      lockPath,
+      JSON.stringify({
+        pid: process.pid, // Real pid — so PID-liveness check would say "alive"
+        startedAt: Date.now() - 6 * 60 * 1000,
+        hostname: os.hostname(),
+      }),
+      { mode: 0o600 }
+    )
+
+    mockRunInventoryAudit.mockResolvedValue({
+      auditId: 'AUDIT-RECLAIM-1',
+      reportPath: 'r',
+      exactCollisions: [],
+      genericFlags: [],
+      semanticCollisions: [],
+    })
+
+    const result = await runScheduledScan({ homeDir: tmpHome })
+    expect(result.cached).toBe(false)
+    expect(result.auditId).toBe('AUDIT-RECLAIM-1')
+    expect(mockRunInventoryAudit).toHaveBeenCalledTimes(1)
+
+    // Lock cleaned up after release.
+    await expect(fs.access(lockPath)).rejects.toThrow()
+  })
+
+  it('reclaims a lock held by a definitely-dead PID', async () => {
+    // PID 0x7fffffff is reserved-ish on Linux/macOS; process.kill(0x7fffffff, 0)
+    // returns ESRCH because no real process can use it.
+    const auditsDir = path.join(tmpHome, '.skillsmith', 'audits')
+    await fs.mkdir(auditsDir, { recursive: true, mode: 0o700 })
+    const lockPath = path.join(auditsDir, '.scan.lock')
+    await fs.writeFile(
+      lockPath,
+      JSON.stringify({
+        pid: 0x7fffffff,
+        startedAt: Date.now(), // Fresh — only the dead-PID branch can reclaim it.
+        hostname: os.hostname(),
+      }),
+      { mode: 0o600 }
+    )
+
+    mockRunInventoryAudit.mockResolvedValue({
+      auditId: 'AUDIT-DEADPID-1',
+      reportPath: 'r',
+      exactCollisions: [],
+      genericFlags: [],
+      semanticCollisions: [],
+    })
+
+    const result = await runScheduledScan({ homeDir: tmpHome })
+    expect(result.cached).toBe(false)
+    expect(result.auditId).toBe('AUDIT-DEADPID-1')
+    expect(mockRunInventoryAudit).toHaveBeenCalledTimes(1)
+    await expect(fs.access(lockPath)).rejects.toThrow()
+  })
+
+  it('reclaims an unparseable lock file as stale', async () => {
+    const auditsDir = path.join(tmpHome, '.skillsmith', 'audits')
+    await fs.mkdir(auditsDir, { recursive: true, mode: 0o700 })
+    const lockPath = path.join(auditsDir, '.scan.lock')
+    await fs.writeFile(lockPath, 'not-json{{{')
+
+    mockRunInventoryAudit.mockResolvedValue({
+      auditId: 'AUDIT-JUNK-1',
+      reportPath: 'r',
+      exactCollisions: [],
+      genericFlags: [],
+      semanticCollisions: [],
+    })
+
+    const result = await runScheduledScan({ homeDir: tmpHome })
+    expect(result.auditId).toBe('AUDIT-JUNK-1')
+    expect(mockRunInventoryAudit).toHaveBeenCalledTimes(1)
+  })
+
+  it('releases the lock even when runInventoryAudit throws', async () => {
+    mockRunInventoryAudit.mockRejectedValue(new Error('inventory boom'))
+
+    await expect(runScheduledScan({ homeDir: tmpHome })).rejects.toThrow(ScheduledScanError)
+
+    // Lock must NOT remain after a failure — try/finally guards it.
+    const lockPath = path.join(tmpHome, '.skillsmith', 'audits', '.scan.lock')
+    await expect(fs.access(lockPath)).rejects.toThrow()
+  })
+})
+
 describe('stripUrlSecrets', () => {
   it('strips path and query', () => {
     expect(stripUrlSecrets('https://hooks.slack.com/services/T1/B2/SECRET?x=1')).toBe(
