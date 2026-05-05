@@ -9,7 +9,7 @@
  * at most 1 active key per (user_id, tier), contradicting MAX_KEYS_BY_TIER.
  * Migration SMI-4740 drops it and adds idx_license_keys_community_active.
  *
- * Run via: varlock run -- npx vitest run tests/e2e/license-key-generation.e2e.test.ts
+ * Run via: varlock run -- npx vitest run --config vitest.e2e.config.ts tests/e2e/api/license-key-generation.e2e.test.ts
  *
  * Required env (varlock-loaded):
  *   STAGING_SUPABASE_URL              — must match staging ref ovhcifugwqnzoebwfuku
@@ -22,7 +22,7 @@ import {
   provisionTestUser,
   cleanupTestUser,
   type ProvisionedUser,
-} from './fixtures/usage-counter-fixture.js'
+} from '../fixtures/usage-counter-fixture.js'
 
 const STAGING_URL = process.env.STAGING_SUPABASE_URL
 const STAGING_SERVICE_KEY = process.env.STAGING_SUPABASE_SERVICE_ROLE_KEY
