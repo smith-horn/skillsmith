@@ -19,13 +19,13 @@
     "build:worker": "npx wrangler deploy --dry-run --outdir dist-worker"
   },
   "dependencies": {
-    "@astrojs/check": "0.9.8",
+    "@astrojs/check": "0.9.9",
     "@astrojs/rss": "4.0.18",
-    "@astrojs/sitemap": "3.7.0",
-    "@astrojs/vercel": "10.0.4",
+    "@astrojs/sitemap": "3.7.2",
+    "@astrojs/vercel": "10.0.6",
     "@supabase/supabase-js": "2.105.0",
     "@tailwindcss/vite": "4.1.18",
-    "astro": "6.1.9",
+    "astro": "6.2.2",
     "sharp": "0.34.5",
     "tailwindcss": "4.2.2",
     "turndown": "7.2.4",
