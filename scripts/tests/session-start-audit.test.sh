@@ -239,6 +239,59 @@ EOF
 }
 
 # ----------------------------------------------------------------------
+# Test 6: malformed SKILLSMITH_LICENSE_KEY → silent stderr (privacy
+# boundary holds for community fallback) AND a `license_key_malformed`
+# entry is appended to the per-day audit log (SMI-4753 finding 2).
+#
+# This invokes the REAL helper (not the stub) so the malformed-key path
+# in resolveTier actually runs. We isolate via HOME so the helper writes
+# to a tmp log dir we can inspect.
+# ----------------------------------------------------------------------
+{
+  REPO=$(mk_test_repo)
+  cp "$HOOK" "$REPO/scripts/session-start-audit.sh"
+  chmod +x "$REPO/scripts/session-start-audit.sh"
+  # Use the real helper from the repo under test.
+  cp "$REPO_ROOT/scripts/lib/session-start-audit-helper.ts" \
+    "$REPO/scripts/lib/session-start-audit-helper.ts"
+
+  TMPHOME=$(mktemp -d -t skillsmith-malformed-home.XXXXXX)
+  STDOUT_FILE=$(mktemp -t skillsmith-hook-stdout.XXXXXX)
+  STDERR_FILE=$(mktemp -t skillsmith-hook-stderr.XXXXXX)
+
+  # Pass HOME=$TMPHOME so the helper writes its log to
+  # $TMPHOME/.skillsmith/logs/. SKILLSMITH_LICENSE_KEY is malformed
+  # (not even JWT-shape).
+  printf '{"source":"startup","cwd":"%s","session_id":"t","transcript_path":""}' "$REPO" \
+    | env HOME="$TMPHOME" SKILLSMITH_LICENSE_KEY='garbage.not.a.jwt' \
+        "$REPO/scripts/session-start-audit.sh" \
+        >"$STDOUT_FILE" 2>"$STDERR_FILE" || true
+
+  STDOUT=$(cat "$STDOUT_FILE")
+  STDERR=$(cat "$STDERR_FILE")
+
+  # Privacy boundary: malformed key falls through to community → silent
+  # stderr (community emits no render). The hook's stdout JSON envelope
+  # is still emitted regardless.
+  assert_contains "malformed-stdout-envelope" '"additionalContext": ""' "$STDOUT"
+  assert_not_contains "malformed-no-render-leak" '[skillsmith]' "$STDERR"
+
+  # The log line MUST contain "license_key_malformed" — that's the whole
+  # point of the SMI-4753 finding-2 fix.
+  TODAY=$(date -u +%Y-%m-%d)
+  LOG_FILE="$TMPHOME/.skillsmith/logs/session-audit-$TODAY.log"
+  if [ ! -f "$LOG_FILE" ]; then
+    echo "FAIL malformed-log-exists: log file $LOG_FILE not created"
+    fail=$((fail + 1))
+  else
+    LOG=$(cat "$LOG_FILE")
+    assert_contains "malformed-log-has-code" 'license_key_malformed' "$LOG"
+  fi
+
+  rm -rf "$REPO" "$TMPHOME" "$STDOUT_FILE" "$STDERR_FILE"
+}
+
+# ----------------------------------------------------------------------
 echo
 echo "SUMMARY: $pass passed, $fail failed"
 if [ "$fail" -gt 0 ]; then
