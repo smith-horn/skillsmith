@@ -33,13 +33,9 @@
  * Plan: docs/internal/implementation/smi-4590-cli-mcp-framework-adapter.md §6.
  */
 
-import { execFile } from 'node:child_process'
 import * as fs from 'node:fs/promises'
 import { homedir } from 'node:os'
 import * as path from 'node:path'
-import { promisify } from 'node:util'
-
-const execFileP = promisify(execFile)
 
 // 24h debounce for the per-session audit. Configurable via env for tests.
 const DEFAULT_DEBOUNCE_HOURS = 24
@@ -399,11 +395,6 @@ async function opportunisticLogRotation(home: string): Promise<void> {
     // Best-effort.
   }
 }
-
-// Suppress the "execFile imported but unused" lint hit. Reserved for
-// future hook-internal subprocess gating; keep the import path warm so
-// the helper file pattern matches scripts/session-priming-query.ts.
-void execFileP
 
 main()
   .then((code) => {

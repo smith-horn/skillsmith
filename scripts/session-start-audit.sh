@@ -85,17 +85,11 @@ fi
 # Stage B: invoke the helper via tsx with a 5-second wall-clock cap. The
 # helper's stdout is REDIRECTED to /dev/null — only stderr reaches the
 # user terminal. The hook's own stdout is the fixed JSON envelope.
-run_with_timeout_bin() {
-  "$TIMEOUT_BIN" --kill-after=2s 5s npx --no-install tsx "$HELPER" >/dev/null 2>&1 || true
-  # Note: stderr isn't preserved through the redirect above by design —
-  # tier output is rendered by the helper directly to fd 2 of THIS
-  # subshell. Below we re-invoke to capture stderr. See run_capture.
-}
-
-# Capture helper stderr so we can stream it to the hook's stderr after
-# the timeout cap completes. The helper writes ONE line on success;
-# anything more is treated as overflow and truncated to keep the hook
-# bounded.
+#
+# Capture helper stderr to a tmp file so we can stream it to the hook's
+# stderr after the timeout cap completes. The helper writes ONE line on
+# success; anything more is treated as overflow and truncated at 8 KB
+# to keep the hook bounded.
 run_capture() {
   local stderr_file
   stderr_file=$(mktemp -t skillsmith-audit-stderr.XXXXXX) || return 0
@@ -132,9 +126,5 @@ run_capture() {
 }
 
 run_capture
-
-# Suppress the "unused function" complaint. Kept for documentation of
-# the silent fast-path used during early Stage B development.
-: "${TIMEOUT_BIN}" "${run_with_timeout_bin:-}"
 
 emit_empty_and_exit

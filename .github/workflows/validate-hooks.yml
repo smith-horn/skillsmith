@@ -67,8 +67,11 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install tsx (root devDep, for session-audit hook tests)
-        run: npm ci --ignore-scripts --no-audit --no-fund --omit=optional || npm i -g tsx
+      - name: Install root devDeps (tsx for session-audit hook tests)
+        # audit:carveout-pure-js — bash hook tests invoke `npx --no-install tsx`,
+        # which resolves from `node_modules/.bin/tsx` (root devDep). Pure JS,
+        # no native bindings; matches the SMI-4647 carve-out pattern.
+        run: npm ci --ignore-scripts --no-audit --no-fund --omit=optional
 
       - name: Hooks unit tests
         run: |
