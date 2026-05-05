@@ -127,6 +127,8 @@ git submodule update --init                           # Init internal docs (auth
 
 **Hooks in worktrees**: Pre-commit hooks work in worktrees via tracked `.husky/_/` dispatch stubs + per-package `node_modules` symlinks. One-time host setup after fresh clone: `npm install --ignore-scripts && ./scripts/repair-host-native-deps.sh`. The repair script is idempotent. Caveat: don't run `npm install` in the main repo while a pre-commit is active in a worktree.
 
+**Docker-side build in worktrees (SMI-4689)**: On macOS Docker Desktop, `create-worktree.sh` and `repair-worktrees.sh` emit per-package `node_modules` bind mounts into the worktree's `docker-compose.override.yml`. This masks the dangling SMI-4381 relative symlinks inside the container so `docker exec ... npm run build` resolves workspace-pinned deps correctly. Pre-commit/pre-push still use the host-fallback path (`scripts/lib/hook-docker-detect.sh`) because the symlinks themselves stay in place — they're needed for host resolution. Linux Docker hosts skip the bind-mount block (overlayfs handles the symlinks correctly). If a worktree container fails an entrypoint build with `Could not resolve <dep>` or `Cannot find module <pkg>`, run `./scripts/repair-worktrees.sh` from the main repo and restart the container.
+
 **Host native bindings, `IS_DOCKER` trap, outage marker + stale-instrumentation banner, macOS host fallback, SMI-4698 native-rebuild caveat**: see [git-crypt-guide.md § Host Native Bindings & SessionStart Instrumentation (SMI-4549)](.claude/development/git-crypt-guide.md#host-native-bindings--sessionstart-instrumentation-smi-4549).
 
 **Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Use `--dry-run` to preview. Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
@@ -451,6 +453,7 @@ A `SessionStart` hook (`scripts/session-start-priming.sh`) injects a per-session
 | Platform mismatch (SIGKILL 137) | `rm -rf packages/*/node_modules/better-sqlite3 packages/*/node_modules/onnxruntime-node` then rebuild |
 | Node ABI mismatch (after Node upgrade) | WASM fallback auto-activates since core 0.4.10. To restore native: `docker exec skillsmith-dev-1 npm rebuild better-sqlite3` (Docker side); `./scripts/repair-host-native-deps.sh` (host side, SMI-4549) |
 | "invalid ELF header" inside Docker after running `repair-worktrees.sh` (SMI-4698) | `docker exec -w /app skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node` |
+| Worktree container `npm run build` fails with `Could not resolve <dep>` (SMI-4689) | Run `./scripts/repair-worktrees.sh` from main repo, then `docker compose --profile dev down && docker compose --profile dev up -d` from the worktree. macOS Docker Desktop only — Linux is unaffected. |
 | Docker DNS failure | `docker network prune -f` then restart container |
 | Stale CJS artifacts | `docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f -delete'` |
 | Orphaned agents | `./scripts/cleanup-orphans.sh` (`--dry-run` to preview) |

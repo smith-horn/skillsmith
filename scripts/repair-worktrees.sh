@@ -156,6 +156,13 @@ repair_worktrees_node_modules "$REPO_ROOT"
 info "Backfilling per-package node_modules symlinks (SMI-4381)..."
 repair_worktrees_package_node_modules "$REPO_ROOT"
 
+# SMI-4689: regenerate docker-compose.override.yml on macOS so existing
+# worktrees pick up the per-package node_modules bind mounts. No-op on
+# Linux. Runs BEFORE check_docker_safety_for_rebuild — the override
+# regen never writes binaries, so it's safe with an active container.
+info "Regenerating docker-compose.override.yml (SMI-4689 macOS bind mounts)..."
+repair_worktrees_compose_override "$REPO_ROOT"
+
 # SMI-4698: gate the native-rebuild step on active-Docker detection.
 # Symlink-repair phases above run unconditionally — they don't touch
 # binary contents. Only the rebuild step below would clobber the
