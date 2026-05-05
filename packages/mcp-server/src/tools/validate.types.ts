@@ -76,7 +76,14 @@ export const validateToolSchema = {
 }
 
 /**
- * Maximum field lengths for validation
+ * Maximum field lengths.
+ *
+ * Manifest-field caps (validated via errors.push in validate.helpers.ts):
+ *   name, description, author, version, category, license, tagLength, maxTags
+ *
+ * Derived/extracted caps (validated at the derivation site, fail-fast):
+ *   token       — extracted skill-name segment (SMI-4737)
+ *   packDomain  — derived pack-domain identifier (SMI-4737)
  */
 export const FIELD_LIMITS = {
   name: 64,
@@ -87,6 +94,8 @@ export const FIELD_LIMITS = {
   license: 64,
   tagLength: 32,
   maxTags: 20,
+  token: 128, // SMI-4737: skill-name segment cap (matches author length)
+  packDomain: 64, // SMI-4737: derived pack-domain cap (matches name/category)
 }
 
 /**

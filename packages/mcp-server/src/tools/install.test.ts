@@ -88,7 +88,7 @@ vi.mock('./install.namespace-gate.js', () => ({
   runNamespaceGate: mockRunNamespaceGate,
 }))
 
-import { installSkill } from './install.js'
+import { installSkill, extractSkillName } from './install.js'
 import type { InstallResult } from './install.types.js'
 
 const HAPPY_RESULT: InstallResult = {
@@ -300,6 +300,62 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
         'overwrite',
         'bare-name'
       )
+    })
+  })
+
+  // SMI-4737: bound `packDomain` and `token` upstream
+  describe('SMI-4737 — skillId / token boundary caps', () => {
+    it('rejects skillId > 512 chars at the Zod boundary', async () => {
+      const result = await installSkill({ skillId: 'a'.repeat(513) })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('Invalid install input')
+      expect(result.error).toContain('skillId exceeds maximum length of 512 chars')
+      expect(mockInstall).not.toHaveBeenCalled()
+    })
+
+    it('accepts skillId at exactly 512 chars when extracted token <= 128 (boundary)', async () => {
+      // 'a'.repeat(383) + '/' + 'b'.repeat(128) = 512 chars total; token = 128 (boundary).
+      const skillId = 'a'.repeat(383) + '/' + 'b'.repeat(128)
+      expect(skillId.length).toBe(512)
+
+      const result = await installSkill({
+        skillId,
+        skipScan: true,
+        skipOptimize: true,
+        confirmed: true,
+      })
+
+      expect(result.success).toBe(true)
+      expect(mockInstall).toHaveBeenCalledTimes(1)
+    })
+
+    it('extractSkillName throws on extracted segment > 128 chars', () => {
+      // 511 chars total — passes Zod 512-cap; extracted segment = 129 — over token cap.
+      const overCap = 'valid/' + 'a'.repeat(129)
+      expect(() => extractSkillName(overCap)).toThrow(/exceeds 128 chars/)
+    })
+
+    it('extractSkillName accepts 128-char extracted segment at boundary', () => {
+      const atCap = 'valid/' + 'a'.repeat(128)
+      expect(extractSkillName(atCap)).toBe('a'.repeat(128))
+    })
+
+    it('installSkill returns structured invalid_skill_id envelope when extractSkillName throws', async () => {
+      // 'a'.repeat(382) + '/' + 'b'.repeat(129) = 512 chars total; passes Zod;
+      // extracted token = 129 → extractSkillName throws → caller wraps.
+      const skillId = 'a'.repeat(382) + '/' + 'b'.repeat(129)
+      expect(skillId.length).toBe(512)
+
+      const result = await installSkill({ skillId })
+
+      expect(result.success).toBe(false)
+      expect(result.skillId).toBe(skillId)
+      expect(result.installPath).toBe('')
+      expect(result.error).toContain('invalid_skill_id')
+      expect(result.error).toContain('128 chars')
+      // Core service must not be invoked when the skillId is rejected upstream.
+      expect(mockInstall).not.toHaveBeenCalled()
     })
   })
 })

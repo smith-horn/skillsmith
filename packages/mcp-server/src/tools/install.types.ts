@@ -155,7 +155,11 @@ export interface MergeResult {
 
 /** Input schema for install tool */
 export const installInputSchema = z.object({
-  skillId: z.string().min(1).describe('Skill ID or GitHub URL'),
+  skillId: z
+    .string()
+    .min(1)
+    .max(512, 'skillId exceeds maximum length of 512 chars')
+    .describe('Skill ID or GitHub URL'),
   force: z.boolean().default(false).describe('Force reinstall if exists'),
   skipScan: z.boolean().default(false).describe('Skip security scan (not recommended)'),
   /** SMI-1788: Skip optimization transformation */

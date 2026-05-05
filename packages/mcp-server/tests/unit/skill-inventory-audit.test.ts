@@ -270,3 +270,33 @@ describe('skill_inventory_audit — exclusions filter', () => {
     }
   })
 })
+
+describe('skill_inventory_audit — SMI-4737 token cap on target.identifier', () => {
+  // Defensive cap on filesystem-derived target.identifier. When an inventory
+  // entry's identifier exceeds FIELD_LIMITS.token (128 chars), the audit
+  // pipeline (buildRenameSuggestions in run-inventory-audit.ts) skips
+  // suggestion generation for that flag. The collision is still surfaced
+  // via `exactCollisions`; only the per-flag RenameSuggestion is omitted.
+  it('skips rename suggestion when target.identifier > 128 chars', async () => {
+    const previousHome = process.env['HOME']
+    process.env['HOME'] = TEST_HOME
+    try {
+      const overCapName = 'a'.repeat(129) // 129 > FIELD_LIMITS.token (128)
+      plantSkill(TEST_HOME, overCapName)
+      plantCommand(TEST_HOME, overCapName)
+      const response = await skillInventoryAudit({ homeDir: TEST_HOME })
+      expect(isResponse(response)).toBe(true)
+      if (!isResponse(response)) return
+      // Collision is still reported.
+      expect(response.exactCollisions.length).toBeGreaterThan(0)
+      // But the over-cap identifier produces no rename suggestion.
+      const overCapSuggestion = response.renameSuggestions.find(
+        (s) => s.currentName === overCapName
+      )
+      expect(overCapSuggestion).toBeUndefined()
+    } finally {
+      if (previousHome !== undefined) process.env['HOME'] = previousHome
+      else delete process.env['HOME']
+    }
+  })
+})
