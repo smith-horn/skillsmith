@@ -50,6 +50,12 @@ import type { QuotaMiddleware } from './middleware/quota.js'
  */
 export const AUDIT_TOOL_NAMES: ReadonlySet<string> = new Set<string>(buildAuditToolNames())
 
+// SMI-4590 Wave 4 PR 5/6: the post-deploy smoke harness
+// (`scripts/smoke-prod/mcp-server.sh`) greps the COMPILED JS of this file
+// for the literal tool-name strings below. If you ever extract them into
+// constants, named exports, or a JSON manifest, update those smoke checks
+// in the same PR — otherwise the smoke continues to pass on a regression
+// it was specifically built to catch.
 function buildAuditToolNames(): string[] {
   const names = [
     'skill_audit',

@@ -64,3 +64,6 @@ export { createImportCommand, importSkills } from './import.js'
 
 // SMI-4665: Filesystem-walking SKILL.md importer
 export { createImportLocalCommand, runImportLocal } from './import-local.js'
+
+// SMI-4590 Wave 4 PR 5/6: `sklx config get/set audit_mode`
+export { createConfigCommand } from './config.js'
