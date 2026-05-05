@@ -53,10 +53,35 @@ if [ ! -f "$CORE_DIST_ENTRY" ] || [ ! -f "$MCP_DIST_ENTRY" ]; then
     echo -e "${YELLOW}  ✗ dist/ not found (first container start) — building packages...${NC}"
     echo -e "${YELLOW}  This is a one-time cost per worktree (until dist/ is manually removed).${NC}"
 
-    if npm run build --prefix /app; then
+    # SMI-4689: in worktree containers, filter @skillsmith/website out of the
+    # entrypoint build. The Astro/Vite plugin canonicalizes paths in a way
+    # that virtiofs cannot round-trip ("/node_modules/astro/components/..."
+    # vs "/app/packages/website/node_modules/astro/..."), causing the build
+    # to fail with "No cached compile metadata found". Website is NOT in
+    # SMI-4689's explicit acceptance criteria; build it inside the main-repo
+    # container (skillsmith-dev-1) where the issue does not manifest.
+    # Tracked separately as SMI-4739.
+    BUILD_FILTER=""
+    if [ -f "/app/.git" ]; then
+        BUILD_FILTER='--filter=!@skillsmith/website'
+    fi
+
+    if npm run build --prefix /app -- $BUILD_FILTER; then
         echo -e "${GREEN}  ✓ Build complete.${NC}"
     else
         echo -e "${RED}  ✗ Build failed — run npm run build inside this container to see details.${NC}"
+        # SMI-4689: worktree-aware hint. /app/.git as a regular file (not dir)
+        # is git's worktree marker. If the build failed inside a worktree
+        # container, the most likely cause is a stale or missing per-package
+        # node_modules bind-mount block in docker-compose.override.yml.
+        if [ -f "/app/.git" ]; then
+            echo -e "${YELLOW}  Worktree detected. If the failure looks like 'Could not resolve <dep>' or${NC}"
+            echo -e "${YELLOW}  'Cannot find module <pkg>', the per-package node_modules bind mounts may${NC}"
+            echo -e "${YELLOW}  be missing or stale. From the host main repo, run:${NC}"
+            echo -e "${YELLOW}    ./scripts/repair-worktrees.sh${NC}"
+            echo -e "${YELLOW}  Then restart this container: docker compose --profile dev down && up -d${NC}"
+            echo -e "${YELLOW}  See CLAUDE.md § Worktrees and SMI-4689 for context.${NC}"
+        fi
         exit 1
     fi
 else

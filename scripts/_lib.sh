@@ -403,3 +403,211 @@ repair_worktrees_package_node_modules() {
         success "  Per-package node_modules synced across $wt_count worktree(s)"
     fi
 }
+
+#######################################
+# Enumerate compose bind mounts for the worktree override (SMI-4689).
+#
+# Emits two kinds of YAML list-item lines:
+#
+#   1. PER-PACKAGE node_modules bind mounts:
+#      <host>/packages/<pkg>/node_modules:/app/packages/<pkg>/node_modules
+#
+#      One line per packages/<pkg>/ whose node_modules dir exists in the main
+#      repo. Replaces the dangling SMI-4381 relative symlinks that virtiofs
+#      cannot traverse on macOS Docker Desktop.
+#
+#   2. WORKSPACE-SIBLING bind mounts:
+#      <host>/packages/<pkg>:/app/node_modules/<scoped-name>
+#
+#      One line per package whose package.json `name` matches a symlink
+#      under <host>/node_modules/(@<scope>/<n>|<n>). Replaces the
+#      relative `node_modules/@skillsmith/<sibling> -> ../../packages/<sibling>`
+#      symlinks in the Docker named volume — virtiofs cannot resolve them
+#      either (proven empirically: `readlink -f` returns `/packages/core`
+#      instead of `/app/packages/core`). The bind mount provides a real
+#      directory at the symlink's path so Node module resolution succeeds.
+#
+# Output is intended to be appended under a `volumes:` block; caller handles
+# indentation context. Each emitted line uses 6-space indent.
+#
+# Arguments:
+#   $1 - Repository root path (main repo, NOT worktree path)
+#######################################
+enumerate_compose_node_modules_mounts() {
+    local repo_root="$1"
+    local pkg_dir pkg_name main_target ws_name
+
+    [[ ! -d "$repo_root/packages" ]] && return 0
+
+    # Pass 1: per-package node_modules mounts (same gate as
+    # link_worktree_package_node_modules:358)
+    for pkg_dir in "$repo_root"/packages/*/; do
+        [[ -d "$pkg_dir" ]] || continue
+        pkg_name="$(basename "$pkg_dir")"
+        main_target="$repo_root/packages/$pkg_name/node_modules"
+        [[ -d "$main_target" ]] || continue
+        printf '      - %s:/app/packages/%s/node_modules\n' "$main_target" "$pkg_name"
+    done
+
+    # Pass 2: workspace-sibling mounts. The package.json `name` field is the
+    # canonical workspace identifier; npm hoists workspace siblings to
+    # <root>/node_modules/<name> as relative symlinks. We bind directly to
+    # the package source dir to make Node resolution work inside virtiofs.
+    for pkg_dir in "$repo_root"/packages/*/; do
+        [[ -d "$pkg_dir" ]] || continue
+        [[ -f "$pkg_dir/package.json" ]] || continue
+        # node -p is portable across Node versions and survives spaces in path.
+        ws_name="$(node -p "require('$pkg_dir/package.json').name" 2>/dev/null)"
+        [[ -n "$ws_name" ]] || continue
+        # Verify the host has the workspace symlink at the expected path.
+        # If npm hasn't created it (rare — should always exist after `npm install`),
+        # skip rather than emit a bind mount whose source doesn't exist.
+        [[ -e "$repo_root/node_modules/$ws_name" ]] || continue
+        # Trim trailing slash from pkg_dir for cleaner YAML output.
+        local pkg_dir_trim="${pkg_dir%/}"
+        printf '      - %s:/app/node_modules/%s\n' "$pkg_dir_trim" "$ws_name"
+    done
+}
+
+#######################################
+# Generate worktree docker-compose.override.yml (SMI-4377/SMI-4381/SMI-4689).
+#
+# Emits container_name + port overrides per profile (always), plus per-package
+# node_modules bind mounts on macOS only (SMI-4689 — virtiofs cannot traverse
+# the SMI-4381 relative symlinks). Linux Docker hosts handle the symlinks
+# correctly via overlayfs, so the bind mounts are not emitted there.
+#
+# Idempotency marker: when bind mounts are emitted, the volumes block is
+# headed by `# SMI-4689 bind mounts` so repair_worktrees_compose_override
+# can detect already-regenerated overrides.
+#
+# Arguments:
+#   $1 - Worktree path
+#   $2 - Branch name (used for unique container names + port hash)
+#   $3 - Repository root path (for resolving per-package node_modules; main repo)
+#######################################
+generate_docker_override() {
+    local worktree_path="$1"
+    local branch_name="$2"
+    local repo_root="$3"
+
+    # Extract a short name from branch (e.g., feature/jwt-rollout -> jwt-rollout)
+    local worktree_name
+    worktree_name=$(basename "$branch_name" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
+
+    # Calculate port offset based on hash of worktree name (1-99)
+    local port_offset
+    port_offset=$(echo -n "$worktree_name" | cksum | awk '{print ($1 % 99) + 1}')
+
+    # Base ports: dev=3001, test=3002, orchestrator=3003
+    local dev_app_port=$((3000 + port_offset * 10))
+    local dev_mcp_port=$((3000 + port_offset * 10 + 1))
+    local test_port=$((3000 + port_offset * 10 + 2))
+    local orchestrator_port=$((3000 + port_offset * 10 + 3))
+
+    # SMI-4689: per-package bind mounts only on macOS Docker Desktop.
+    local volumes_block=""
+    local volumes_marker=""
+    if [[ "$(uname)" == "Darwin" ]]; then
+        local mounts
+        mounts="$(enumerate_compose_node_modules_mounts "$repo_root")"
+        if [[ -n "$mounts" ]]; then
+            volumes_marker="    volumes:
+      # SMI-4689 bind mounts v2 (per-pkg + workspace-sibling): per-package
+      # node_modules AND workspace siblings (@skillsmith/*, @smith-horn/*,
+      # skillsmith-cli, skillsmith-vscode) bind-mounted from the main repo
+      # so workspace-pinned AND workspace-internal deps resolve inside the
+      # container. Replaces the SMI-4381 relative symlinks that virtiofs
+      # cannot traverse (proven empirically: readlink -f returns wrong path).
+"
+            volumes_block="${volumes_marker}${mounts}"
+        fi
+    fi
+
+    cat > "$worktree_path/docker-compose.override.yml" << EOF
+# Worktree-specific overrides (auto-generated by create-worktree.sh / repair-worktrees.sh)
+# Container names and ports must be unique per worktree
+# Worktree: $branch_name
+# Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+# Platform: $(uname)
+
+services:
+  dev:
+    container_name: ${worktree_name}-dev-1
+    ports:
+      - "${dev_app_port}:3000"   # Main app
+      - "${dev_mcp_port}:3001"   # MCP server
+${volumes_block}
+  test:
+    container_name: ${worktree_name}-test-1
+    ports:
+      - "${test_port}:3000"      # Test app
+${volumes_block}
+  orchestrator:
+    container_name: ${worktree_name}-orchestrator-1
+    ports:
+      - "${orchestrator_port}:3000"  # Orchestrator
+${volumes_block}
+EOF
+}
+
+#######################################
+# Idempotent regen of docker-compose.override.yml across all in-tree worktrees
+# on macOS (SMI-4689). On Linux, no-op (bind mounts not needed).
+#
+# Companion to repair_worktrees_node_modules / repair_worktrees_package_node_modules.
+# Iterates `git worktree list`, skips the main repo, off-tree worktrees, and
+# worktrees missing docker-compose.yml. Skips worktrees whose existing override
+# already contains the SMI-4689 marker (idempotent — second run is a no-op).
+#
+# Branch name is recovered from the worktree's HEAD (`git -C $wt branch --show-current`)
+# so the regenerated override is byte-equivalent to a fresh create-worktree run.
+#
+# Arguments:
+#   $1 - Repository root path
+#######################################
+repair_worktrees_compose_override() {
+    local repo_root="$1"
+    local wt_path branch_name override modified=0 skipped=0
+
+    if [[ "$(uname)" != "Darwin" ]]; then
+        info "  macOS-only — skipping per-package bind-mount regen on $(uname)"
+        return 0
+    fi
+
+    while IFS= read -r wt_path; do
+        [[ -z "$wt_path" ]] && continue
+        [[ "$wt_path" == "$repo_root" ]] && continue
+        [[ ! -d "$wt_path" ]] && continue
+        # Off-tree worktree gate (SMI-4689 plan-review): if no compose.yml
+        # in the worktree, no override is consumable. Skip silently.
+        [[ -f "$wt_path/docker-compose.yml" ]] || continue
+
+        override="$wt_path/docker-compose.override.yml"
+        # Idempotent marker check. The "v2" suffix forces re-generation of
+        # any override that was created with the v1 format (pre-merge, no
+        # workspace-sibling mounts). Future format bumps should follow the
+        # same pattern (v3, v4...) so contributors auto-upgrade by re-running
+        # repair-worktrees.sh after pulling.
+        if [[ -f "$override" ]] && grep -q "# SMI-4689 bind mounts v2" "$override" 2>/dev/null; then
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        branch_name="$(git -C "$wt_path" branch --show-current 2>/dev/null)"
+        if [[ -z "$branch_name" ]]; then
+            warn "  Could not determine branch for $wt_path; skipping"
+            continue
+        fi
+
+        generate_docker_override "$wt_path" "$branch_name" "$repo_root"
+        modified=$((modified + 1))
+    done < <(git -C "$repo_root" worktree list --porcelain | awk '/^worktree / { print $2 }')
+
+    if [[ $modified -gt 0 ]]; then
+        success "  Regenerated docker-compose.override.yml for $modified worktree(s) (SMI-4689)"
+    fi
+    if [[ $skipped -gt 0 ]]; then
+        info "  Skipped $skipped worktree(s) — already have SMI-4689 marker"
+    fi
+}
