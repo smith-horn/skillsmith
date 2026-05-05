@@ -69,9 +69,10 @@ jobs:
 
       - name: Install root devDeps (tsx for session-audit hook tests)
         # audit:carveout-pure-js — bash hook tests invoke `npx --no-install tsx`,
-        # which resolves from `node_modules/.bin/tsx` (root devDep). Pure JS,
-        # no native bindings; matches the SMI-4647 carve-out pattern.
-        run: npm ci --ignore-scripts --no-audit --no-fund --omit=optional
+        # which resolves from `node_modules/.bin/tsx` (root devDep). tsx pulls
+        # esbuild, which requires platform-specific optional deps
+        # (`@esbuild/linux-x64`); do NOT pass `--omit=optional` here.
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Hooks unit tests
         run: |
