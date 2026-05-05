@@ -137,12 +137,13 @@ Deno.serve(async (req: Request) => {
     const tier = profile.tier || 'community'
     const maxKeys = getMaxKeysForTier(tier)
 
-    // Count existing active keys
+    // Count existing active keys for this tier specifically (not cross-tier)
     const { count, error: countError } = await adminClient
       .from('license_keys')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', user.id)
       .eq('status', 'active')
+      .eq('tier', tier)
 
     if (countError) {
       console.error('Failed to count keys:', countError)
