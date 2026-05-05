@@ -314,14 +314,72 @@ skillsmith unpin community/jest-helper`}</code></pre>
 
   <h3>audit</h3>
 
-  <p>Check installed skills against known security advisories. Use <code>--fix</code> to attempt updating skills with available patches.</p>
+  <h4>audit advisories</h4>
 
-  <pre><code>{`skillsmith audit [options]
+  <p>Check installed skills against known security advisories (Team+ tier). Use <code>--fix</code> to attempt updating skills with available patches.</p>
 
-# Examples
-skillsmith audit
-skillsmith audit --json
-skillsmith audit --fix   # Update skills with available patches`}</code></pre>
+  <pre><code>{`skillsmith audit advisories
+skillsmith audit advisories --json
+skillsmith audit advisories --fix`}</code></pre>
+
+  <h4>audit collisions</h4>
+
+  <p>Audit installed skills for namespace collisions — duplicate tool names that could cause invocation conflicts (Community+). Runs interactively by default; use <code>--json</code> for machine-readable output.</p>
+
+  <pre><code>{`skillsmith audit collisions
+skillsmith audit collisions --deep
+skillsmith audit collisions --json
+skillsmith audit collisions --report-only`}</code></pre>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Option</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>--deep</code></td>
+        <td>Enable semantic-overlap detector pass</td>
+      </tr>
+      <tr>
+        <td><code>--json</code></td>
+        <td>Emit JSON; bypasses prompts and file mutation</td>
+      </tr>
+      <tr>
+        <td><code>--apply-all</code></td>
+        <td>Accept every suggestion (requires typing <code>APPLY ALL</code>)</td>
+      </tr>
+      <tr>
+        <td><code>--report-only</code></td>
+        <td>Write report without interactive prompts</td>
+      </tr>
+      <tr>
+        <td><code>--reset-ledger</code></td>
+        <td>Clear namespace-override ledger (requires typing <code>RESET LEDGER</code>)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>config</h3>
+
+  <p>Get or set Skillsmith configuration values in <code>~/.skillsmith/config.json</code>.</p>
+
+  <h4>config get</h4>
+
+  <p>Print the resolved value of a configuration key.</p>
+
+  <pre><code>{`skillsmith config get audit_mode`}</code></pre>
+
+  <h4>config set</h4>
+
+  <p>Write a configuration value. Tier-revalidated on write — community and individual users cannot select <code>power_user</code> or <code>governance</code>.</p>
+
+  <pre><code>{`skillsmith config set audit_mode preventative
+skillsmith config set audit_mode power_user   # team/enterprise
+skillsmith config set audit_mode governance   # enterprise only
+skillsmith config set audit_mode off`}</code></pre>
 
   <h2>Author Commands</h2>
 

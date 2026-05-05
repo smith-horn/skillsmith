@@ -437,6 +437,94 @@ skillsmith sync config --enable --frequency weekly
 - `--disable` - Disable automatic sync
 - `--frequency <freq>` - Set frequency: `daily` or `weekly`
 
+### audit
+
+#### audit advisories
+
+Check installed skills against known security advisories (Team+ tier). Use `--fix` to attempt updating skills with available patches.
+
+```bash
+# Check all installed skills
+skillsmith audit advisories
+
+# Output as JSON
+skillsmith audit advisories --json
+
+# Auto-update skills with patches
+skillsmith audit advisories --fix
+```
+
+**Options:**
+- `--json` - Emit results as JSON
+- `--fix` - Attempt `skillsmith update` for each advisory with a patch available
+
+#### audit collisions
+
+Audit installed skills for namespace collisions — duplicate tool names across multiple skills that could cause invocation conflicts (Community+).
+
+```bash
+# Interactive audit (prompts for each collision)
+skillsmith audit collisions
+
+# Include semantic-overlap detector pass
+skillsmith audit collisions --deep
+
+# Output raw JSON (no prompts, no file writes)
+skillsmith audit collisions --json
+
+# Accept every suggestion automatically (requires typing APPLY ALL)
+skillsmith audit collisions --apply-all
+
+# Write report only, no interactive prompts
+skillsmith audit collisions --report-only
+
+# Clear the namespace-override ledger (requires typing RESET LEDGER)
+skillsmith audit collisions --reset-ledger
+```
+
+**Options:**
+- `--deep` - Enable semantic-overlap detector pass
+- `--json` - Emit `RunInventoryAuditResult` as JSON; bypasses prompts and file mutation
+- `--apply-all` - Accept every rename suggestion; requires typing `APPLY ALL` to confirm
+- `--report-only` - Write audit report without prompts or apply
+- `--reset-ledger` - Clear `~/.skillsmith/namespace-overrides.json` (backs up first); requires typing `RESET LEDGER`
+
+### config
+
+Get or set Skillsmith configuration values in `~/.skillsmith/config.json`.
+
+#### config get
+
+Print the resolved value of a configuration key.
+
+```bash
+skillsmith config get audit_mode
+```
+
+**Supported keys:** `audit_mode`
+
+The resolved value reflects the config-file entry when set, else the tier default:
+- `community` / `individual` → `preventative`
+- `team` → `power_user`
+- `enterprise` → `governance`
+
+#### config set
+
+Write a configuration value. Tier-revalidated on write — `community` and `individual` users cannot select `power_user` or `governance`.
+
+```bash
+skillsmith config set audit_mode preventative
+skillsmith config set audit_mode power_user    # team/enterprise only
+skillsmith config set audit_mode governance    # enterprise only
+skillsmith config set audit_mode off
+```
+
+**Valid values for `audit_mode`:** `preventative`, `power_user`, `governance`, `off`
+
+**Error codes (stderr, exit 1):**
+- `audit.mode.invalid_value` — value not in the supported set
+- `audit.mode.tier_ineligible` — your tier cannot select the requested mode
+
 ### login
 
 Authenticate the Skillsmith CLI with your API key. Opens your browser to [skillsmith.app/account/cli-token](https://skillsmith.app/account/cli-token), where you generate and copy a key, then paste it into the terminal prompt.
