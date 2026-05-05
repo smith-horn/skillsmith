@@ -247,6 +247,9 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `compare` | Compare 2-5 skills side-by-side |
 | `skill_diff` | Diff two installed skill versions side-by-side |
 | `skill_audit` | Audit skill for security advisories (Team+) |
+| `skill_inventory_audit` | Audit local `~/.claude/` inventory for namespace collisions; returns rename + edit suggestions (SMI-4590) |
+| `apply_namespace_rename` | Apply a rename suggestion from an audit (`apply` / `custom` / `skip`) (SMI-4590) |
+| `apply_recommended_edit` | Apply a recommended prose edit; gated on `APPLY_TEMPLATE_REGISTRY` (SMI-4590) |
 | `audit_export` | Export audit log events for a time range (Enterprise) |
 | `audit_query` | Query audit logs with filters (Enterprise) |
 | `siem_export` | Export audit events for SIEM ingestion (Enterprise) |
@@ -257,7 +260,7 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 
 **Trust tiers**: verified (official), community (reviewed), experimental (new/beta).
 
-**CLI**: `skillsmith` or `sklx` — `author subagent/transform/mcp-init`, `sync/status/config`. See [ADR-018](docs/internal/adr/018-registry-sync-system.md).
+**CLI**: `skillsmith` or `sklx` — `author subagent/transform/mcp-init`, `sync/status/config`. See [ADR-018](docs/internal/adr/018-registry-sync-system.md). New in SMI-4590: `sklx audit collisions` (namespace audit, opposite of legacy `sklx audit advisories` security-advisory checker), `sklx config get audit_mode` / `sklx config set audit_mode <preventative|power_user|governance|off>` (tier-revalidated; Free/Individual cannot select `power_user`/`governance`).
 
 ---
 
@@ -351,6 +354,8 @@ npx supabase functions deploy auth-device-preview
 | Edge Function Deploy | On merge to main | GitHub Actions (`deploy-edge-functions.yml`) |
 | Device-login round-trip e2e | Nightly 06:00 UTC + paths-filtered PR (SMI-4460) | GitHub Actions (`device-login-roundtrip.yml`) |
 | Device-login audit_logs cleanup | Sundays 04:00 UTC (SMI-4460) | GitHub Actions (`device-login-roundtrip-cleanup.yml`) |
+| Skillsmith Scheduled Audit (Enterprise governance pass) | On-demand via `runScheduledScan` (SMI-4590); deep + un-filtered findings | `@skillsmith/enterprise/audit` (`runScheduledScan`); idempotent within `SKILLSMITH_SCHEDULED_AUDIT_CACHE_MIN` (default 5 min) |
+| Session-start audit hook (Team/Enterprise) | Per session start, debounced 24h (SMI-4590) | `scripts/session-start-audit.sh` → `scripts/lib/session-start-audit-helper.ts`; tier-gated render (Free/Individual silent) |
 
 Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table. Manual trigger & audit log details: [deployment-guide.md](.claude/development/deployment-guide.md#monitoring--alerts).
 
@@ -444,6 +449,8 @@ varlock run -- sh -c 'npx @vscode/vsce publish --no-dependencies --pat "$VSCE_SK
 
 A `SessionStart` hook (`scripts/session-start-priming.sh`) injects a per-session priming index into initial context as `additionalContext`. Fires only on `source=startup` and `smi-*`/`wave-*` branches. Disable with `SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING=1`. **Memory adapter prerequisite**: requires `SKILLSMITH_PROJECT_DIR_ENCODED` set in `.env` — without it, host-scope memory files don't reach the index. Full mechanism (per-class rank boost SMI-4468, outage marker, env vars): see [ruvector-dev-tooling.md § Session Priming (SMI-4451)](.claude/development/ruvector-dev-tooling.md#session-priming-smi-4451).
 
+**Session-start audit hook (SMI-4590)**: a sibling `SessionStart` hook (`scripts/session-start-audit.sh` → `scripts/lib/session-start-audit-helper.ts`) runs the namespace-audit (`runInventoryAudit`) for Team/Enterprise tiers, debounced 24h via `~/.skillsmith/last-audit.json`. Output is privacy-gated: Free/Individual emit zero output (intentional — silence is not a bug, audit is a paid feature). Team gets a one-line collapsed summary on stderr; Enterprise gets a path-only pointer on stderr. Helper stdout is always empty (priming hook owns the `additionalContext` slot). Bounded 5-second wall clock; helper failure is fail-soft (always exits 0). Disable: `SKILLSMITH_SESSION_AUDIT_DISABLE=1`. Logs: `~/.skillsmith/logs/session-audit-<date>.log` (30-day rotation, opportunistic).
+
 ---
 
 ## Troubleshooting
@@ -460,6 +467,7 @@ A `SessionStart` hook (`scripts/session-start-priming.sh`) injects a per-session
 | Stale CJS artifacts | `docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f -delete'` |
 | Orphaned agents | `./scripts/cleanup-orphans.sh` (`--dry-run` to preview) |
 | Symlink outside skills root skipped (SMI-4287) | LocalFilesystemAdapter rejects symlinks whose target resolves outside `rootDir` (GitHub #600). Set `allowSymlinksOutsideRoot: true` in `LocalFilesystemConfig` to opt in; caller accepts the security tradeoff. |
+| Session-start audit hook produces unexpected stderr at session start (SMI-4590) | Disable temporarily: `export SKILLSMITH_SESSION_AUDIT_DISABLE=1`. Check `~/.skillsmith/logs/session-audit-<date>.log` for the resolution code (`tier_resolution_failed`, `audit_run_failed`, etc.). Free/Individual tiers should see no output at all — if you do, check that `SKILLSMITH_LICENSE_KEY` env is unset and `~/.skillsmith/config.json` `audit_mode` is unset or `preventative`. |
 
 **Detailed diagnostics** (Symptoms / Root Cause / Fix): [docker-guide.md](.claude/development/docker-guide.md#troubleshooting)
 
