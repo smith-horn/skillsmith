@@ -26,6 +26,17 @@ Uses `SKILLSMITH_NPM_TOKEN` secret today; SMI-4539 will flip to npm trusted-publ
 
 If CI fails, fix CI. Do not reach for a local publish — see [`publish-ci-recovery.md`](../../docs/internal/runbooks/publish-ci-recovery.md) for triage.
 
+### Pre-publish checklist
+
+1. Build in Docker: `docker exec skillsmith-dev-1 npm run build`
+2. Run preflight: `docker exec skillsmith-dev-1 npm run preflight`
+3. Verify dependency versions are committed and pushed
+4. Trigger CI: `gh workflow run publish.yml -f dry_run=false`
+5. Watch the run: `gh run watch <run-id> --exit-status`
+6. Post-publish (CI smoke-tests automatically; manual fallback): `npx tsx scripts/smoke-test-published.ts @skillsmith/<pkg> <version>`
+
+If CI fails, do NOT reach for a local publish. Fix the underlying issue. Genuine break-glass: see [Break-Glass](#break-glass) below (requires `SKILLSMITH_PUBLISH_OVERRIDE=SMI-NNNN <rationale>` and a Linear retro within 24h). For workspace-resolution version-pin pitfalls and the `packaging-test.yml` registry-resolution caveat, see [Critical Rules](#critical-rules) below.
+
 ## Local Publish — Forbidden (SMI-4533)
 
 The previous "local fallback" recipe (`source .env && npm publish`) is **gone**. Every publishable package's `prepublishOnly` chains `node ../../scripts/lib/forbid-local-publish.mjs` before build/test, and the script refuses unless invoked from a canonical-repo GitHub Actions runner.

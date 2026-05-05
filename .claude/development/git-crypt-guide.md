@@ -311,3 +311,30 @@ git -C /path/to/skillsmith diff --cached docs/internal
 # Check submodule's HEAD (should be the commit you just made)
 git -C /path/to/skillsmith/docs/internal log --oneline -1
 ```
+
+## Host Native Bindings & SessionStart Instrumentation (SMI-4549)
+
+**One-time host setup required** (after fresh clone):
+
+```bash
+npm install --ignore-scripts             # populate $REPO_ROOT/node_modules (Docker volumes don't)
+./scripts/repair-host-native-deps.sh     # SMI-4549: rebuild better-sqlite3 binding (--ignore-scripts skipped it)
+```
+
+The repair script is idempotent — sub-second `[skip]` exit when the binding already loads. Skipping it leaves the host's retrieval-logs writer (`packages/doc-retrieval-mcp/src/retrieval-log/writer.ts`) silently no-op-ing, which the SMI-4549 retro caught after a 7-day soak window passed with zero captured rows.
+
+**`IS_DOCKER` trap (SMI-4549)**: The retrieval-logs writer no-ops when `process.env.IS_DOCKER === 'true'` because Docker has its own writer path. If you `export IS_DOCKER=true` in a host shell (e.g. sourced from `.env.docker`), the writer will refuse to write on the host too — matching the same zero-rows symptom as a missing native binding. Verify with `printenv IS_DOCKER` (must be empty on host) before debugging instrumentation.
+
+**Outage marker + stale-instrumentation banner (SMI-4549 Wave 2)**: When the writer enters a no-op branch the user is expected to remediate (binding load failure, owner mismatch — but NOT the Docker no-op, which is the documented "I don't write" mode), it writes `<projectDir>/retrieval-log.outage.json` (mode 0600, atomic). The next SessionStart hook reads the marker via `packages/doc-retrieval-mcp/src/retrieval-log/probe.ts` (which never imports `better-sqlite3` at module top level so a broken binding can't crash the hook) and prepends a `**Warning — SessionStart instrumentation appears stale.**` banner to `additionalContext`. The marker self-clears on the next successful open, or after 7 days. Stand-alone probe: `./scripts/check-retrieval-events.sh` (exit 0=healthy, 1=stale, 2=probe failed). Escape hatch: `SKILLSMITH_RETRIEVAL_PROBE_DISABLE=1`. **Diagnostic order before assuming the writer is dead: (1) check the marker file, (2) `printenv IS_DOCKER`, (3) probe the binding via `node -e "new (require('better-sqlite3'))(':memory:').close()"`.**
+
+**macOS + worktree → host fallback (SMI-4377 + SMI-4381 + SMI-4549 + SMI-4681 + SMI-4686)**: detection logic lives in one place — `scripts/lib/hook-docker-detect.sh` — sourced by all four hook callers (`.husky/pre-commit`, `.husky/pre-push`, `scripts/pre-push-check.sh`, `scripts/pre-push-coverage-check.sh`). When you see one of these messages on macOS:
+
+```text
+📂 Worktree on macOS — falling back to host execution (SMI-4381 / SMI-4681)
+   Per-package node_modules symlinks are not traversable in
+   Docker Desktop's virtiofs. Host resolution works correctly.
+```
+
+…it is **expected** and the hook is doing the right thing. If the message is followed by `❌ Host node_modules missing in worktree.`, run `./scripts/repair-worktrees.sh` to backfill the symlinks + native bindings.
+
+**Caveat (SMI-4698)**: the **native-rebuild step** of `./scripts/repair-worktrees.sh` aborts if a `skillsmith*-dev-N` container is running — it would otherwise overwrite the container's ELF native bindings via the symlinked `node_modules`. Symlink-repair steps run safely regardless. Stop the container first (`docker compose --profile dev down`), or pass `--force-with-active-docker` and run `docker exec -w /app skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node` afterward to restore the container's bindings.

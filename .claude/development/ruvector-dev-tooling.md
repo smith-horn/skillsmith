@@ -162,6 +162,16 @@ Fail = Phase 2 abandoned, retro filed.
 
 ---
 
+## Session Priming (SMI-4451)
+
+A `SessionStart` hook (`scripts/session-start-priming.sh`) writes a transient priming index to `/tmp/session-priming-${SESSION_ID}.md` and pipes the same content into initial context as `additionalContext`. Fires only on `source=startup` and `smi-*`/`wave-*` branches; otherwise no-op. The transient file is mode 0600 and swept after 24h. Disable with `SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING=1`. The underlying retrieval index lives in `packages/doc-retrieval-mcp/`.
+
+**Per-class rank boost (SMI-4468)**: `rerank.ts` multiplies similarity by 1.5x for `class: feedback`/`project` chunks and 0.85x for `class: wave-spec`/`plans-review` chunks before applying absorption/supersession penalties. Tunable via `SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY` and `SKILLSMITH_DOC_RETRIEVAL_DAMPEN_PROCESS` (clamped to [0.1, 5.0]).
+
+**Memory adapter prerequisite (SMI-4677)**: the `memory-topic-files` adapter that ingests host-scope `~/.claude/projects/<encoded>/memory/feedback_*.md` and `project_*.md` files into the index requires `SKILLSMITH_PROJECT_DIR_ENCODED` set in `.env` (validated by Varlock; see `.env.schema`). Without it, the bind in `docker-compose.yml` resolves to a non-existent host path and the adapter produces zero memory chunks — silently degrading priming + the per-class boost above. Setup one-liner in [Setup (first run)](#setup-first-run).
+
+---
+
 ## Troubleshooting
 
 | Symptom | Fix |

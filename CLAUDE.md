@@ -125,32 +125,9 @@ git submodule update --init                           # Init internal docs (auth
 
 **Worktrees**: Unlock main repo first, then `./scripts/create-worktree.sh`. Remove with `./scripts/remove-worktree.sh --prune`. By default removal also deletes the per-worktree Docker image (`<dir>-dev`) and `_node_modules` volume — pass `--keep-docker` to preserve them.
 
-**Hooks in worktrees (SMI-4377 + SMI-4381 + SMI-4549)**: Pre-commit hooks work inside worktrees via three mechanisms: (1) `.husky/_/` is tracked in git (husky's dispatch stubs) so hook discovery inherits through checkout; (2) `scripts/create-worktree.sh` symlinks the root `node_modules` from the main repo (relative path); (3) **per-package `node_modules` are also symlinked** (relative paths) so workspace-pinned deps (e.g. `zod@3.25.76` in `mcp-server`) resolve correctly without falling through to the hoisted root (which carries `zod@4.x`). **One-time host setup required** (after fresh clone):
+**Hooks in worktrees**: Pre-commit hooks work in worktrees via tracked `.husky/_/` dispatch stubs + per-package `node_modules` symlinks. One-time host setup after fresh clone: `npm install --ignore-scripts && ./scripts/repair-host-native-deps.sh`. The repair script is idempotent. Caveat: don't run `npm install` in the main repo while a pre-commit is active in a worktree.
 
-```bash
-npm install --ignore-scripts             # populate $REPO_ROOT/node_modules (Docker volumes don't)
-./scripts/repair-host-native-deps.sh     # SMI-4549: rebuild better-sqlite3 binding (--ignore-scripts skipped it)
-```
-
-The repair script is idempotent — sub-second `[skip]` exit when the binding already loads. Skipping it leaves the host's retrieval-logs writer (`packages/doc-retrieval-mcp/src/retrieval-log/writer.ts`) silently no-op-ing, which the SMI-4549 retro caught after a 7-day soak window passed with zero captured rows.
-
-**`IS_DOCKER` trap (SMI-4549)**: The retrieval-logs writer no-ops when `process.env.IS_DOCKER === 'true'` because Docker has its own writer path. If you `export IS_DOCKER=true` in a host shell (e.g. sourced from `.env.docker`), the writer will refuse to write on the host too — matching the same zero-rows symptom as a missing native binding. Verify with `printenv IS_DOCKER` (must be empty on host) before debugging instrumentation.
-
-**Outage marker + stale-instrumentation banner (SMI-4549 Wave 2)**: When the writer enters a no-op branch the user is expected to remediate (binding load failure, owner mismatch — but NOT the Docker no-op, which is the documented "I don't write" mode), it writes `<projectDir>/retrieval-log.outage.json` (mode 0600, atomic). The next SessionStart hook reads the marker via `packages/doc-retrieval-mcp/src/retrieval-log/probe.ts` (which never imports `better-sqlite3` at module top level so a broken binding can't crash the hook) and prepends a `**Warning — SessionStart instrumentation appears stale.**` banner to `additionalContext`. The marker self-clears on the next successful open, or after 7 days. Stand-alone probe: `./scripts/check-retrieval-events.sh` (exit 0=healthy, 1=stale, 2=probe failed). Escape hatch: `SKILLSMITH_RETRIEVAL_PROBE_DISABLE=1`. **Diagnostic order before assuming the writer is dead: (1) check the marker file, (2) `printenv IS_DOCKER`, (3) probe the binding via `node -e "new (require('better-sqlite3'))(':memory:').close()"`.**
-
-Caveats: (a) do not run `npm install` in the main repo while a pre-commit is active in a worktree — re-run the commit if it aborts; (b) on **macOS Docker Desktop**, worktree pre-commits AND pre-pushes fall back to host execution because virtiofs cannot traverse relative symlinks (per-package `node_modules` resolution fails inside the container). The host fallback works correctly thanks to the SMI-4381 per-package symlinks. Linux Docker hosts use the in-container path via `compute_container_wd`. (c) repair existing worktrees with `./scripts/repair-worktrees.sh` (idempotent; backfills both root and per-package symlinks AND host native bindings via the SMI-4549 script).
-
-**macOS + worktree → host fallback (SMI-4377 + SMI-4381 + SMI-4549 + SMI-4681 + SMI-4686)**: detection logic lives in one place — `scripts/lib/hook-docker-detect.sh` — sourced by all four hook callers (`.husky/pre-commit`, `.husky/pre-push`, `scripts/pre-push-check.sh`, `scripts/pre-push-coverage-check.sh`). When you see one of these messages on macOS:
-
-```text
-📂 Worktree on macOS — falling back to host execution (SMI-4381 / SMI-4681)
-   Per-package node_modules symlinks are not traversable in
-   Docker Desktop's virtiofs. Host resolution works correctly.
-```
-
-…it is **expected** and the hook is doing the right thing. If the message is followed by `❌ Host node_modules missing in worktree.`, run `./scripts/repair-worktrees.sh` to backfill the symlinks + native bindings.
-
-**Caveat (SMI-4698)**: the **native-rebuild step** of `./scripts/repair-worktrees.sh` aborts if a `skillsmith*-dev-N` container is running — it would otherwise overwrite the container's ELF native bindings via the symlinked `node_modules`. Symlink-repair steps run safely regardless. Stop the container first (`docker compose --profile dev down`), or pass `--force-with-active-docker` and run `docker exec -w /app skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node` afterward to restore the container's bindings.
+**Host native bindings, `IS_DOCKER` trap, outage marker + stale-instrumentation banner, macOS host fallback, SMI-4698 native-rebuild caveat**: see [git-crypt-guide.md § Host Native Bindings & SessionStart Instrumentation (SMI-4549)](.claude/development/git-crypt-guide.md#host-native-bindings--sessionstart-instrumentation-smi-4549).
 
 **Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Use `--dry-run` to preview. Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
 
@@ -426,20 +403,7 @@ Uses `SKILLSMITH_NPM_TOKEN` secret. Publishes in dependency order (core → mcp-
 1. `@skillsmith/core`
 2. `@skillsmith/mcp-server` and `@skillsmith/cli` (both depend on core)
 
-**Pre-publish checklist** (CI publish — the only supported path):
-
-1. Build in Docker: `docker exec skillsmith-dev-1 npm run build`
-2. Run preflight: `docker exec skillsmith-dev-1 npm run preflight`
-3. Verify dependency versions are committed and pushed
-4. Trigger CI: `gh workflow run publish.yml -f dry_run=false`
-5. Watch the run: `gh run watch <run-id> --exit-status`
-6. Post-publish (CI smoke-tests automatically; manual fallback): `npx tsx scripts/smoke-test-published.ts @skillsmith/<pkg> <version>`
-
-If CI fails, do NOT reach for a local publish. Fix the underlying issue. Genuine break-glass: see [publishing-guide.md § Break-Glass](.claude/development/publishing-guide.md#break-glass) (requires `SKILLSMITH_PUBLISH_OVERRIDE=SMI-NNNN <rationale>` and a Linear retro within 24h).
-
-**Never** publish a consumer before its dependency. **Never** publish with an exact-pinned workspace dep (use `^` prefix). Workspace resolution masks version-pin errors locally — only fresh `npm install` from the registry reveals mismatches. See [retro: mcp-server@0.4.5](docs/internal/retros/2026-03-19-mcp-server-0.4.5-hotfix.md).
-
-**Note**: `packaging-test.yml` (weekly CI) installs from local tarballs, not the npm registry. It does NOT catch version-pin-against-unpublished-npm scenarios. The post-publish smoke test (`scripts/smoke-test-published.ts`) is the only check that exercises actual npm resolution.
+**Pre-publish checklist, version-pin/workspace-resolution rules, and `packaging-test.yml` caveat**: see [publishing-guide.md § Pre-publish checklist](.claude/development/publishing-guide.md#pre-publish-checklist). If CI fails, do NOT reach for a local publish — fix the underlying issue. Genuine break-glass: [publishing-guide.md § Break-Glass](.claude/development/publishing-guide.md#break-glass).
 
 ---
 
@@ -474,11 +438,7 @@ varlock run -- sh -c 'npx @vscode/vsce publish --no-dependencies --pat "$VSCE_SK
 
 ## Session Priming (SMI-4451)
 
-A `SessionStart` hook (`scripts/session-start-priming.sh`) writes a transient priming index to `/tmp/session-priming-${SESSION_ID}.md` and pipes the same content into initial context as `additionalContext`. Fires only on `source=startup` and `smi-*`/`wave-*` branches; otherwise no-op. The transient file is mode 0600 and swept after 24h. Disable with `SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING=1`. The underlying retrieval index lives in `packages/doc-retrieval-mcp/`.
-
-**Per-class rank boost (SMI-4468)**: `rerank.ts` multiplies similarity by 1.5x for `class: feedback`/`project` chunks and 0.85x for `class: wave-spec`/`plans-review` chunks before applying absorption/supersession penalties. Tunable via `SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY` and `SKILLSMITH_DOC_RETRIEVAL_DAMPEN_PROCESS` (clamped to [0.1, 5.0]).
-
-**Memory adapter prerequisite (SMI-4677)**: the `memory-topic-files` adapter that ingests host-scope `~/.claude/projects/<encoded>/memory/feedback_*.md` and `project_*.md` files into the index requires `SKILLSMITH_PROJECT_DIR_ENCODED` set in `.env` (validated by Varlock; see `.env.schema`). Without it, the bind in `docker-compose.yml` resolves to a non-existent host path and the adapter produces zero memory chunks — silently degrading priming + the per-class boost above. Setup one-liner in [.claude/development/ruvector-dev-tooling.md](.claude/development/ruvector-dev-tooling.md#setup-first-run).
+A `SessionStart` hook (`scripts/session-start-priming.sh`) injects a per-session priming index into initial context as `additionalContext`. Fires only on `source=startup` and `smi-*`/`wave-*` branches. Disable with `SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING=1`. **Memory adapter prerequisite**: requires `SKILLSMITH_PROJECT_DIR_ENCODED` set in `.env` — without it, host-scope memory files don't reach the index. Full mechanism (per-class rank boost SMI-4468, outage marker, env vars): see [ruvector-dev-tooling.md § Session Priming (SMI-4451)](.claude/development/ruvector-dev-tooling.md#session-priming-smi-4451).
 
 ---
 
