@@ -60,6 +60,7 @@ jobs:
       # advisory-mode so workspace-dep drift is still surfaced as a warning,
       # but a stuck npm publish can't blast-radius into N blocked PRs.
       version_files: ${{ steps.filter.outputs.version_files }}
+      website: ${{ steps.filter.outputs.website }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -96,6 +97,8 @@ jobs:
             version_files:
               - 'packages/*/package.json'
               - 'package-lock.json'
+            website:
+              - 'packages/website/**'
 
       # SMI-3997 Finding #2: Observability — log the resolved output so the first
       # few carrier runs can be inspected in job logs without cross-referencing
@@ -104,6 +107,7 @@ jobs:
         run: |
           echo "Detected code=${{ steps.filter.outputs.code }}"
           echo "Detected version_files=${{ steps.filter.outputs.version_files }}"
+          echo "Detected website=${{ steps.filter.outputs.website }}"
 
   # Secret scanning with gitleaks - runs first, fast, no dependencies
   # Uses CLI directly (free) instead of gitleaks-action (requires paid license for orgs)
@@ -122,7 +126,15 @@ jobs:
         with:
           fetch-depth: 0 # Full history for scanning all commits in PR
 
+      - name: Restore gitleaks from cache
+        id: gitleaks-cache
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        with:
+          path: /usr/local/bin/gitleaks
+          key: gitleaks-8.21.2-linux-x64
+
       - name: Install gitleaks
+        if: steps.gitleaks-cache.outputs.cache-hit != 'true'
         run: |
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar -xz
           sudo mv gitleaks /usr/local/bin/
@@ -167,8 +179,16 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Restore minimatch from cache
+        id: minimatch-cache
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        with:
+          path: node_modules
+          key: classify-deps-${{ hashFiles('package-lock.json') }}
+
       - name: Install dependencies
-        run: npm install minimatch
+        if: steps.minimatch-cache.outputs.cache-hit != 'true'
+        run: npm install minimatch --prefer-offline
 
       - name: Classify changes
         id: classify
@@ -1061,8 +1081,26 @@ jobs:
             echo "✗ AWS SDK NOT found in packages/enterprise/node_modules"
           fi
 
+      - name: Restore package builds from cache
+        id: dist-cache
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        with:
+          path: |
+            packages/core/dist
+            packages/mcp-server/dist
+            packages/cli/dist
+            packages/enterprise/dist
+            packages/vscode-extension/dist
+            packages/doc-retrieval-mcp/dist
+            packages/website/.astro
+            .turbo
+            packages/*/.turbo
+          key: pkg-builds-turbo-${{ hashFiles('packages/*/src/**/*.ts', 'packages/*/src/**/*.tsx', 'packages/*/package.json', 'tsconfig*.json', 'turbo.json') }}
+          restore-keys: |
+            pkg-builds-turbo-
+
       - name: Build project (Docker)
-        if: steps.load-image.outcome == 'success'
+        if: steps.load-image.outcome == 'success' && steps.dist-cache.outputs.cache-hit != 'true'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
@@ -1071,7 +1109,7 @@ jobs:
             npm run build
 
       - name: Build project (fallback)
-        if: steps.load-image.outcome != 'success'
+        if: steps.load-image.outcome != 'success' && steps.dist-cache.outputs.cache-hit != 'true'
         run: npm run build
 
       # SMI-2250: Remove local vitest if present to ensure hoisted version is used
@@ -1178,7 +1216,25 @@ jobs:
       - name: Extract node_modules
         run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
+      - name: Restore package builds from cache
+        id: dist-cache
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        with:
+          path: |
+            packages/core/dist
+            packages/mcp-server/dist
+            packages/cli/dist
+            packages/enterprise/dist
+            packages/vscode-extension/dist
+            packages/doc-retrieval-mcp/dist
+            .turbo
+            packages/*/.turbo
+          key: pkg-builds-turbo-${{ hashFiles('packages/*/src/**/*.ts', 'packages/*/src/**/*.tsx', 'packages/*/package.json', 'tsconfig*.json', 'turbo.json') }}
+          restore-keys: |
+            pkg-builds-turbo-
+
       - name: Build project
+        if: steps.dist-cache.outputs.cache-hit != 'true'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
@@ -1264,7 +1320,25 @@ jobs:
       - name: Extract node_modules
         run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
+      - name: Restore package builds from cache
+        id: dist-cache
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        with:
+          path: |
+            packages/core/dist
+            packages/mcp-server/dist
+            packages/cli/dist
+            packages/enterprise/dist
+            packages/vscode-extension/dist
+            packages/doc-retrieval-mcp/dist
+            .turbo
+            packages/*/.turbo
+          key: pkg-builds-turbo-${{ hashFiles('packages/*/src/**/*.ts', 'packages/*/src/**/*.tsx', 'packages/*/package.json', 'tsconfig*.json', 'turbo.json') }}
+          restore-keys: |
+            pkg-builds-turbo-
+
       - name: Build project
+        if: steps.dist-cache.outputs.cache-hit != 'true'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
@@ -1414,7 +1488,25 @@ jobs:
           echo "::error::npm audit found high-severity vulnerabilities. See audit output above."
           exit 1
 
+      - name: Restore package builds from cache
+        id: dist-cache
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        with:
+          path: |
+            packages/core/dist
+            packages/mcp-server/dist
+            packages/cli/dist
+            packages/enterprise/dist
+            packages/vscode-extension/dist
+            packages/doc-retrieval-mcp/dist
+            .turbo
+            packages/*/.turbo
+          key: pkg-builds-turbo-${{ hashFiles('packages/*/src/**/*.ts', 'packages/*/src/**/*.tsx', 'packages/*/package.json', 'tsconfig*.json', 'turbo.json') }}
+          restore-keys: |
+            pkg-builds-turbo-
+
       - name: Build project for security tests
+        if: steps.dist-cache.outputs.cache-hit != 'true'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
@@ -1476,26 +1568,21 @@ jobs:
     name: Website Build
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: docker-build
-    # Only run when website files change (PRs only)
-    if: github.event_name == 'pull_request'
+    needs: [docker-build, detect-changes]
+    # Gate at job level using detect-changes output — avoids spinning up a runner
+    # on non-website PRs. Previously checked paths inline as the first step, which
+    # wasted ~20s of runner boot on every non-website PR.
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.detect-changes.outputs.website == 'true'
 
     steps:
-      - name: Check for website changes
-        id: changes
-        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
-        with:
-          filters: |
-            website:
-              - 'packages/website/**'
-
       - name: Checkout
-        if: steps.changes.outputs.website == 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
       - name: Unlock git-crypt
-        if: steps.changes.outputs.website == 'true' && env.GIT_CRYPT_KEY != ''
+        if: env.GIT_CRYPT_KEY != ''
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
@@ -1510,14 +1597,12 @@ jobs:
       # Note: No npm ci fallback for website-build - Astro build requires consistent
       # Node environment provided by Docker
       - name: Download Docker image
-        if: steps.changes.outputs.website == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: docker-image
           path: /tmp
 
       - name: Download node_modules
-        if: steps.changes.outputs.website == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: node-modules
@@ -1526,7 +1611,6 @@ jobs:
       # SMI-2240: Re-tag if loaded tag differs from expected (cache hit scenario)
       # SMI-2247: Non-critical job - warn on re-tag failure instead of failing
       - name: Load Docker image
-        if: steps.changes.outputs.website == 'true'
         run: |
           zstd -d --stdout /tmp/skillsmith-ci.tar.zst | docker load
           # LOADED_TAG will be empty if no images exist (handled by -n check below)
@@ -1540,11 +1624,9 @@ jobs:
           fi
 
       - name: Extract node_modules
-        if: steps.changes.outputs.website == 'true'
         run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
       - name: Build website in Docker
-        if: steps.changes.outputs.website == 'true'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
@@ -1555,7 +1637,6 @@ jobs:
       # SMI-2368: Enforce 0/0/0 baseline (zero errors, warnings, hints)
       # Parse the actual numbers from Astro's "- N errors/warnings/hints" summary
       - name: Check for Astro build warnings and hints
-        if: steps.changes.outputs.website == 'true'
         run: |
           BUILD_LOG="/tmp/astro-build.log"
           ERRORS=$(sed -n 's/^- \([0-9]*\) error.*/\1/p' "$BUILD_LOG" | tail -1)
@@ -1575,7 +1656,6 @@ jobs:
           echo "Build quality check passed: 0/0/0 baseline maintained"
 
       - name: Verify dist directory exists
-        if: steps.changes.outputs.website == 'true'
         run: |
           if [ ! -d "packages/website/dist" ]; then
             echo "::error::Website build failed - dist/ directory not created"
@@ -1589,9 +1669,7 @@ jobs:
         run: |
           echo "## Website Build Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.changes.outputs.website }}" != "true" ]; then
-            echo "Skipped - no changes to packages/website/**" >> $GITHUB_STEP_SUMMARY
-          elif [ -d "packages/website/dist" ]; then
+          if [ -d "packages/website/dist" ]; then
             FILE_COUNT=$(find packages/website/dist -type f | wc -l)
             echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
             echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
@@ -1741,12 +1819,31 @@ jobs:
         if: steps.load-image.outcome == 'success'
         run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
+      - name: Restore package builds from cache
+        id: dist-cache
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        with:
+          path: |
+            packages/core/dist
+            packages/mcp-server/dist
+            packages/cli/dist
+            packages/enterprise/dist
+            packages/vscode-extension/dist
+            packages/doc-retrieval-mcp/dist
+            packages/website/.astro
+            .turbo
+            packages/*/.turbo
+          key: pkg-builds-turbo-${{ hashFiles('packages/*/src/**/*.ts', 'packages/*/src/**/*.tsx', 'packages/*/package.json', 'tsconfig*.json', 'turbo.json') }}
+          restore-keys: |
+            pkg-builds-turbo-
+
       # SMI-970: This build is intentional, not a duplicate
       # The Test job builds for test execution, but that output is discarded
       # when the job ends. GitHub Actions jobs have isolated workspaces, so
       # we must rebuild here to generate artifacts for upload.
+      # dist-cache avoids the rebuild entirely on cache-hit runs.
       - name: Build all packages (Docker)
-        if: steps.load-image.outcome == 'success'
+        if: steps.load-image.outcome == 'success' && steps.dist-cache.outputs.cache-hit != 'true'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
@@ -1755,7 +1852,7 @@ jobs:
             npm run build
 
       - name: Build all packages (fallback)
-        if: steps.load-image.outcome != 'success'
+        if: steps.load-image.outcome != 'success' && steps.dist-cache.outputs.cache-hit != 'true'
         run: npm run build
 
       - name: Copy build artifacts
@@ -1828,7 +1925,25 @@ jobs:
       - name: Extract node_modules
         run: zstd -d --stdout /tmp/node_modules.tar.zst | tar -xf - -C ${{ github.workspace }}
 
+      - name: Restore package builds from cache
+        id: dist-cache
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        with:
+          path: |
+            packages/core/dist
+            packages/mcp-server/dist
+            packages/cli/dist
+            packages/enterprise/dist
+            packages/vscode-extension/dist
+            packages/doc-retrieval-mcp/dist
+            .turbo
+            packages/*/.turbo
+          key: pkg-builds-turbo-${{ hashFiles('packages/*/src/**/*.ts', 'packages/*/src/**/*.tsx', 'packages/*/package.json', 'tsconfig*.json', 'turbo.json') }}
+          restore-keys: |
+            pkg-builds-turbo-
+
       - name: Build packages in Docker
+        if: steps.dist-cache.outputs.cache-hit != 'true'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/app \
