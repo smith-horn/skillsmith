@@ -236,9 +236,11 @@ describe('renderAuditReport — SMI-4733 ReDoS hardening', () => {
   })
 
   it('handles empty result', () => {
-    // Regression test for the `trimEnd()` edge: ensures even a minimally-
-    // populated report (summary header only — no collision sections) ends
-    // with exactly one `\n` and is non-empty.
+    // Smoke test for the minimally-populated path (summary header only —
+    // no collision sections). Asserts non-empty output ending with exactly
+    // one `\n`. The trailing-newline regression itself is exercised by
+    // the 1000-newline test above; this case just guards against the
+    // empty-section branch returning `''` or losing its terminator.
     const md = renderAuditReport(emptyResult())
     expect(md.length).toBeGreaterThan(0)
     expect(md.endsWith('\n')).toBe(true)

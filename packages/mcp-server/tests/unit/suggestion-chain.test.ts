@@ -67,7 +67,7 @@ describe('sanitizeSegment', () => {
     expect(result.exhausted).toBe(false)
   })
 
-  it('handles 200 dashes (correctness; no timing assertion)', () => {
+  it('collapses 200 leading dashes to single segment', () => {
     expect(sanitizeSegment('-'.repeat(200) + 'x')).toBe('x')
   })
 })
