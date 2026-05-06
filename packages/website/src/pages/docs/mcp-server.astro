@@ -333,6 +333,81 @@ EOF`}</code></pre>
     <li>"Check if this skill structure is correct"</li>
   </ul>
 
+  <h2>Namespace Audit Tools (Team+)</h2>
+
+  <p>
+    These tools detect and resolve namespace collisions across your local skills, commands, agents, and CLAUDE.md files.
+    Available on the Team and Enterprise tiers. Free and Individual receive a typed error if invoked.
+  </p>
+
+  <h3>skill_inventory_audit</h3>
+
+  <p>Audit the local <code>~/.claude/</code> inventory for namespace collisions; returns rename and edit suggestions.</p>
+
+  <pre><code>{`// Tool: skill_inventory_audit
+// Parameters:
+{
+  "audit_mode": "preventative"  // optional: preventative | power_user | governance | off
+                                // defaults to ~/.skillsmith/config.json or tier default
+}`}</code></pre>
+
+  <p>
+    Three pass-modes control depth and ONNX cost:
+  </p>
+  <ul>
+    <li><strong>preventative</strong> (default for community/individual once unlocked) — exact-name collisions + generic-token flags. No ONNX model load.</li>
+    <li><strong>power_user</strong> (default for Team) — adds semantic-overlap pass via <code>OverlapDetector</code>.</li>
+    <li><strong>governance</strong> (default for Enterprise) — same as power_user; deeper audit-history retention.</li>
+    <li><strong>off</strong> — short-circuits to an empty result.</li>
+  </ul>
+
+  <p><strong>Example prompts:</strong></p>
+  <ul>
+    <li>"Audit my installed skills for namespace conflicts"</li>
+    <li>"Run a deep namespace audit on my ~/.claude inventory"</li>
+  </ul>
+
+  <h3>apply_namespace_rename</h3>
+
+  <p>Apply a rename suggestion from a prior <code>skill_inventory_audit</code> result; persists overrides via the namespace-overrides ledger.</p>
+
+  <pre><code>{`// Tool: apply_namespace_rename
+// Parameters:
+{
+  "audit_id": "01HXY...",       // ULID from skill_inventory_audit
+  "suggestion_id": "rename-1",
+  "mode": "apply"               // apply | custom | skip
+  // if mode === "custom", also pass: "custom_name": "my-new-name"
+}`}</code></pre>
+
+  <p><strong>Example prompts:</strong></p>
+  <ul>
+    <li>"Apply the suggested rename for skill X from the last audit"</li>
+    <li>"Skip the rename suggestion for the test-runner collision"</li>
+  </ul>
+
+  <h3>apply_recommended_edit</h3>
+
+  <p>Apply a recommended prose edit (e.g. <code>add_domain_qualifier</code>) from an audit result; gated behind an allow-list registry.</p>
+
+  <pre><code>{`// Tool: apply_recommended_edit
+// Parameters:
+{
+  "audit_id": "01HXY...",
+  "edit_id": "edit-1",
+  "confirm": true               // explicit confirmation required
+}`}</code></pre>
+
+  <p>
+    Only edits in the <code>APPLY_TEMPLATE_REGISTRY</code> allow-list are accepted.
+    Free-form prose edits are rejected.
+  </p>
+
+  <p><strong>Example prompts:</strong></p>
+  <ul>
+    <li>"Apply the suggested domain-qualifier edit to my skill description"</li>
+  </ul>
+
   <h2>Usage Examples</h2>
 
   <h3>Discovering Skills</h3>

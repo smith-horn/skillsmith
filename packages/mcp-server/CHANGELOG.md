@@ -2,6 +2,38 @@
 
 All notable changes to `@skillsmith/mcp-server` are documented here.
 
+## [Unreleased]
+
+## v0.5.0
+
+This release ships the consumer namespace-audit feature end-to-end (SMI-4587 → SMI-4590, Waves 1–4). Three new MCP tools, an install-time pre-flight gate, an apply-with-confirmation edit-suggester, a session-start audit hook (Team/Enterprise), and an Enterprise scheduled-scan path.
+
+### New MCP tools (Team+ tier)
+
+- **Feature**: `skill_inventory_audit` — audits the local `~/.claude/` inventory across skills/commands/agents/CLAUDE.md for namespace collisions; returns rename + edit suggestions. Three pass-modes (`preventative` / `power_user` / `governance`) controlled by `~/.skillsmith/config.json` `audit_mode` or `SKILLSMITH_AUDIT_MODE` env. ULID-based audit-history at `~/.skillsmith/audits/<auditId>/`. Privacy-gated for Free/Individual (returns typed error). (SMI-4587 / SMI-4590 PR #940)
+- **Feature**: `apply_namespace_rename` — applies a rename suggestion from an audit result with three modes (`apply` / `custom` / `skip`); persists overrides via the namespace-overrides ledger. (SMI-4588 / SMI-4590 PR #940)
+- **Feature**: `apply_recommended_edit` — applies a recommended prose edit (e.g. `add_domain_qualifier`); gated behind `APPLY_TEMPLATE_REGISTRY` allow-list with `apply_with_confirmation` UX from the edit-suggester pipeline. (SMI-4589 / SMI-4590 PR #940)
+
+### Install-time + session-time gates
+
+- **Feature**: SMI-4588 install pre-flight + mode gate — `runNamespaceGate` runs before `install_skill` to surface name conflicts ahead of disk write; mode-aware behaviour (block in `preventative`, warn in `power_user`, audit-only in `governance`, skip in `off`). (PR #881)
+- **Feature**: SMI-4590 Wave 4 PR 6/6 — tier-gated session-start audit hook (`scripts/session-start-audit.sh` → `scripts/lib/session-start-audit-helper.ts`). Debounced 24h via `~/.skillsmith/last-audit.json`. Free/Individual emit zero output (audit is a paid feature); Team gets a one-line collapsed summary on stderr; Enterprise gets a path-only pointer on stderr. Bounded 5-second wall clock; fail-soft (helper always exits 0). Disable via `SKILLSMITH_SESSION_AUDIT_DISABLE=1`. Logs at `~/.skillsmith/logs/session-audit-<date>.log`. (#956)
+- **Feature**: SMI-4590 Wave 4 — Enterprise scheduled-scan via `runScheduledScan`. Idempotent within `SKILLSMITH_SCHEDULED_AUDIT_CACHE_MIN` (default 5 min); emits deep + un-filtered findings.
+
+### Detection passes + plumbing
+
+- **Feature**: SMI-4587 Wave 1 — local-inventory scanner across 4 sources (skills/commands/agents/CLAUDE.md), ULID-based audit-history writer at `~/.skillsmith/audits/<auditId>/`, and exact-name collision detector. Adds `ulid@3.0.1` dependency. PR #2 adds the generic-token pass via the existing `detectGenericTriggerWords` helper (results surface as `genericFlags`, severity `warning`). PR #3 adds the semantic-overlap pass via existing `OverlapDetector` (gated by `audit_mode`), adds `bootstrapUnmanagedSkills` plumbing. Latency invariant: in `preventative` mode no `EmbeddingService` is touched (zero ONNX model load on the cheap critical path). PR #4 ships the audit-report writer (atomic markdown render with conditional CLAUDE.md scan caveat per D-ANTI-1), aggregate-only server telemetry (`namespace_audit_complete` event with collision counts and resolution counters; never auditId/path/identifier per decision #7), the `index.ts` barrel re-export at `@skillsmith/mcp-server/audit`, and refactors `LocalIndexer.indexSkillDir` to delegate to the new `indexLocalSkill` core helper.
+- **Feature**: SMI-4588 Wave 2 — namespace overrides ledger + shared audit types (PR #877); rename engine + suggestion chain + 3 apply paths (PR #880); install pre-flight + mode gate (PR #881); integration tests + audit-report rename section + backup-gc (PR #884).
+- **Feature**: SMI-4589 Wave 3 — edit-suggester (`apply_with_confirmation` for `add_domain_qualifier`). (PR #886)
+- **Feature**: SMI-4590 Wave 4 PR 1/6 — `sklx audit advisories` tool routing + audit-tool-dispatch extraction. (#899)
+- **Feature**: SMI-4590 Wave 4 PR 2/6 — `FrameworkAdapter` interface + `claudeCodeAdapter` + package wiring. Allows the audit pipeline to address agent frameworks beyond Claude Code in future. (#913)
+
+### Other
+
+- **Bump**: `@skillsmith/core` dep range to `^0.6.0` to pick up the new audit subpath exports (`@skillsmith/core/config/audit-mode`, `@skillsmith/core/skills/index-local`) and multi-client install paths (`@skillsmith/core/install`).
+- **Bump**: minor version (0.4.13 → 0.5.0) signals new MCP tool surface — three new tools added to the Team+ tier.
+- **Feature**: SMI-4124 `skill_pack_audit` trigger-quality + namespace collision checks (PR #505).
+
 ## v0.4.13
 
 - **Fix**: map curated trust tier through MCP surface (SMI-4520) (#822)
@@ -20,12 +52,6 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 - **Fix**: restore category/security/repo in skill detail view (SMI-4240) (#583)
 - **Other**: SMI-4190: release cadence docs — ADR-114 + CHANGELOG backfill + CONTRIBUTING (#552)
-
-## [Unreleased]
-
-- **Bump**: `@skillsmith/core` dep range to `^0.5.8` — pulls in SMI-4563 native SQLite driver auto-install via `optionalDependencies`. mcp-server's own version unchanged; consumers picking up `core@0.5.8` will get the native driver on `npx` install instead of silently falling back to WASM.
-- **Feature**: SMI-4124 `skill_pack_audit` trigger-quality + namespace collision checks (PR #505).
-- **Feature**: SMI-4587 Wave 1 PR #1 — local-inventory scanner across 4 sources (skills/commands/agents/CLAUDE.md), ULID-based audit-history writer at `~/.skillsmith/audits/<auditId>/`, and exact-name collision detector. Adds `ulid@3.0.1` dependency. Internal scaffolding for the consumer namespace audit; no user-visible MCP tool changes yet (gated on Wave 1 completion). PR #2 wires the generic-token pass via the existing `detectGenericTriggerWords` helper from `skill-pack-audit.helpers.ts`, sharing the curated `GENERIC_TRIGGERS` stoplist and `derivePackDomain` mode-of-tags inference; results surface as `genericFlags` (severity `warning`) on the same `InventoryAuditResult`. PR #3 wires the semantic-overlap pass via existing `OverlapDetector` (gated by `audit_mode`), adds `bootstrapUnmanagedSkills` plumbing, and ships the `audit_mode` resolver under new subpath export `@skillsmith/core/config/audit-mode`. Latency invariant: in `preventative` mode no `EmbeddingService` is touched (zero ONNX model load on the cheap critical path); `power_user` / `governance` invoke `OverlapDetector.findAllOverlaps` once per audit run; `off` short-circuits to an empty result. PR #4 ships the audit-report writer (`packages/mcp-server/src/audit/audit-report-writer.ts` — atomic markdown render with conditional CLAUDE.md scan caveat per D-ANTI-1), aggregate-only server telemetry (`packages/mcp-server/src/tools/namespace-audit/telemetry.ts` — emits `event: namespace_audit_complete` with collision counts and resolution counters; never auditId/path/identifier per decision #7), the `index.ts` barrel re-export at `@skillsmith/mcp-server/audit` (Step 9), and refactors `LocalIndexer.indexSkillDir` (and the `bootstrapUnmanagedSkills` default) to delegate to the new `indexLocalSkill` core helper extracted from the existing per-skill metadata path (NEW-E-2 surface grounding).
 
 ## v0.4.9
 

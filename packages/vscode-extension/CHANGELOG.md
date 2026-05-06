@@ -4,14 +4,16 @@ All notable changes to the Skillsmith VS Code extension will be documented in th
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## v0.2.2
-
-- Version bump
-
 ## [Unreleased]
+
+## [0.2.3] - 2026-05-06
 
 - Marketplace keywords: add `agent-skills`, `cursor`, `copilot` so the extension surfaces beyond the Claude Code search.
 - Welcome view: clarify that Skillsmith works with any agent client that supports skills, not just Claude Code.
+
+## v0.2.2
+
+- Version bump
 
 ## [0.2.1] - 2026-04-17
 
