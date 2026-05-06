@@ -209,6 +209,42 @@ function renderMarkdownTable(report: MetricsReport, showDifficulty: boolean): st
 }
 
 // ---------------------------------------------------------------------------
+// runRealMode — exported for ablation-runner (Worker 2 refactor, SMI-4702)
+//
+// Executes a real-mode eval pass over the gold set (or a pre-loaded subset)
+// and returns the overall MetricSet. The minScore parameter allows the ablation
+// runner to sweep the floor dimension without an env var.
+//
+// Called by ablation-runner.ts defaultRunEvalFn with env already applied to
+// process.env before invocation.
+// ---------------------------------------------------------------------------
+
+export async function runRealMode(minScore?: number): Promise<import('./metrics.js').MetricSet> {
+  const entries = loadGoldSet()
+  // Rebuild real results under the current process.env (env overrides applied by caller).
+  const { search } = await import('../src/search.js')
+  const { rerank } = await import('../src/rerank.js')
+  const { DEFAULT_MIN_SIMILARITY } = await import('../src/config.js')
+  const threshold = minScore ?? DEFAULT_MIN_SIMILARITY
+  const results: RunResult[] = []
+  for (const e of entries) {
+    const pool = await search({ query: e.query, k: 20, preRerank: true })
+    const reranked = rerank(pool, e.query)
+    const filtered = reranked.filter((h) => h.score >= threshold).slice(0, 10)
+    results.push({
+      id: e.id,
+      query: e.query,
+      category: e.category,
+      difficulty: e.difficulty,
+      hits: filtered.map((h) => ({ filePath: h.filePath })),
+      expectedChunks: e.expectedChunks,
+    })
+  }
+  const report = computeMetrics(results)
+  return report.overall
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
