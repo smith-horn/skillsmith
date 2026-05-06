@@ -131,6 +131,8 @@ git submodule update --init                           # Init internal docs (auth
 
 **SMI-4738**: `npm install` in the main repo auto-regenerates worktree `docker-compose.override.yml` files via postinstall (macOS only, via `scripts/regen-worktree-overrides.sh`). Adding a new `packages/<pkg>/` no longer requires a manual `./scripts/repair-worktrees.sh` for existing worktrees to pick up the new bind mounts — just bounce the worktree container. Idempotency is content-compare (`cmp -s`), not marker-based, so drift caused by adding/removing/renaming a package is detected even when the prior override already had the SMI-4689 marker.
 
+**Worktree pre-push** (SMI-4767): if the pre-push host vitest fails on a macOS worktree, prepend `SKILLSMITH_PRE_PUSH_DOCKER=1` to the push to route the hook through Docker (`SKILLSMITH_PRE_PUSH_DOCKER=1 git push`). Required because SMI-4693 only landed test-fixture env scrubbing — the parent vitest process still inherits parent-worktree `GIT_*` env. Docker must be running. Tracked in SMI-4767 (workaround) + SMI-4769 (proper fix: env scrub of `pre-push-coverage-check.sh`).
+
 **Host native bindings, `IS_DOCKER` trap, outage marker + stale-instrumentation banner, macOS host fallback, SMI-4698 native-rebuild caveat**: see [git-crypt-guide.md § Host Native Bindings & SessionStart Instrumentation (SMI-4549)](.claude/development/git-crypt-guide.md#host-native-bindings--sessionstart-instrumentation-smi-4549).
 
 **Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Use `--dry-run` to preview. Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
