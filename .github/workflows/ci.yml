@@ -390,12 +390,14 @@ jobs:
             exit 1
           fi
           echo "gold-set.json: $COUNT entries"
-      - name: Type-check eval module
-        if: steps.filter.outputs.relevant == 'true'
-        run: npx --yes -p typescript -- tsc -p packages/doc-retrieval-mcp/tsconfig.json --noEmit
+      # Note: TypeScript type-check of eval/ is already performed by the
+      # `Type Check` job (pure-JS carve-out runs root `npm run typecheck` which
+      # builds workspace deps via Turborepo). Re-running tsc here without
+      # building @skillsmith/core would fail on unrelated src/ imports.
       - name: Run eval unit tests (metrics, ablation, drift check)
         if: steps.filter.outputs.relevant == 'true'
-        run: npx --yes -p vitest@4 -- vitest run --root packages/doc-retrieval-mcp tests/eval/
+        working-directory: packages/doc-retrieval-mcp
+        run: npx --yes -p vitest@4.1.2 -- vitest run tests/eval/
       - name: Validate baseline.json schema
         if: steps.filter.outputs.relevant == 'true'
         run: |
