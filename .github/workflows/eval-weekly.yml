@@ -1,0 +1,45 @@
+name: Retrieval Eval -- Weekly Smoke (SMI-4702)
+
+# Wave 3a: skeleton-only schema validation. Wave 3b adds RETRIEVAL_EVAL_REAL=1
+# execution against a Docker container with native bindings, following the
+# device-login-roundtrip.yml carve-out pattern.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC, matches ops-report cadence
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  weekly-eval-skeleton:
+    name: Weekly Eval Skeleton (Wave 3a)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Validate gold-set.json
+        run: |
+          COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('packages/doc-retrieval-mcp/eval/gold-set.json','utf8')).length)")
+          echo "Gold-set entries: $COUNT" >> $GITHUB_STEP_SUMMARY
+          [ "$COUNT" -ge 50 ] || (echo "::warning::gold-set has fewer than 50 entries: $COUNT" && exit 0)
+      - name: Validate baseline.json schema
+        run: |
+          node -e "
+            const b = JSON.parse(require('fs').readFileSync('packages/doc-retrieval-mcp/eval/baseline.json','utf8'));
+            const required = ['prior','current','generated','corpus','knobs','metrics'];
+            const missing = required.filter(k => !(k in b));
+            if (missing.length > 0) {
+              console.log('::warning::baseline.json missing fields: ' + missing.join(','));
+            } else {
+              console.log('baseline.json schema OK');
+            }
+          "
+      - name: Step summary
+        if: always()
+        run: |
+          echo "## Weekly Eval Smoke (Wave 3a -- skeleton)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Status: schema validation only (no live index in CI). See plan s8." >> $GITHUB_STEP_SUMMARY
+          echo "Wave 3b: add RETRIEVAL_EVAL_REAL=1 execution + alert routing." >> $GITHUB_STEP_SUMMARY

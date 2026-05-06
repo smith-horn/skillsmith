@@ -348,6 +348,73 @@ jobs:
           echo "::notice::Findings here are advisory. They become required on PRs that touch packages/*/package.json."
           node scripts/verify-publish-deps.mjs || echo "::warning::verify-publish-deps reported issues (advisory on non-version-bump PRs)"
 
+  # SMI-4702: Retrieval Eval Gate -- structural validation + baseline drift check
+  # audit:carveout-pure-js -- pure-JS validation: tsx + vitest, no native modules
+  retrieval-eval-gate:
+    name: Retrieval Eval Gate
+    needs: [detect-changes]
+    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Path filter -- only run if ranking/eval files changed
+        id: filter
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
+        with:
+          base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+          filters: |
+            relevant:
+              - 'packages/doc-retrieval-mcp/src/rerank.ts'
+              - 'packages/doc-retrieval-mcp/src/search.ts'
+              - 'packages/doc-retrieval-mcp/src/corpus.config.json'
+              - 'packages/doc-retrieval-mcp/eval/gold-set.json'
+              - 'packages/doc-retrieval-mcp/eval/**'
+      - name: Install (eval-only, no native modules)
+        if: steps.filter.outputs.relevant == 'true'
+        run: npm ci --ignore-scripts
+      - name: Validate gold-set schema and count
+        if: steps.filter.outputs.relevant == 'true'
+        run: |
+          COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('packages/doc-retrieval-mcp/eval/gold-set.json','utf8')).length)")
+          if [ "$COUNT" -lt 50 ]; then
+            echo "::error::gold-set.json must have >=50 entries; found $COUNT"
+            exit 1
+          fi
+          echo "gold-set.json: $COUNT entries"
+      # Note: TypeScript type-check of eval/ is already performed by the
+      # `Type Check` job (pure-JS carve-out runs root `npm run typecheck` which
+      # builds workspace deps via Turborepo). Re-running tsc here without
+      # building @skillsmith/core would fail on unrelated src/ imports.
+      - name: Run eval unit tests (metrics, ablation, drift check)
+        if: steps.filter.outputs.relevant == 'true'
+        working-directory: packages/doc-retrieval-mcp
+        run: npx --yes -p vitest@4.1.2 -- vitest run tests/eval/
+      - name: Validate baseline.json schema
+        if: steps.filter.outputs.relevant == 'true'
+        run: |
+          node -e "
+            const b = JSON.parse(require('fs').readFileSync('packages/doc-retrieval-mcp/eval/baseline.json','utf8'));
+            const required = ['prior','current','generated','corpus','knobs','metrics'];
+            for (const k of required) {
+              if (!(k in b)) { console.error('::error::baseline.json missing required field: ' + k); process.exit(1); }
+            }
+            console.log('baseline.json schema OK');
+          "
+      - name: Check baseline drift (H1 + GAP 3 enforcement)
+        if: steps.filter.outputs.relevant == 'true'
+        run: npx --yes tsx packages/doc-retrieval-mcp/eval/check-baseline-drift.ts
+        env:
+          GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
+
   # SMI-3985: Supply-chain pin drift guard for the three Wave 1 hardening
   # surfaces that are NOT covered by `Standards Compliance` (audit-standards
   # Check 12, packages/*/package.json only) or `Security Audit` (npm audit):
