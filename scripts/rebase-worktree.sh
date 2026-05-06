@@ -381,17 +381,25 @@ step_report() {
 }
 
 main() {
+    # SMI-4766: collect positionals while still scanning for flags. The previous
+    # parser used `case ... *) break ;;` which silently dropped any flag that
+    # appeared after the first positional argument (e.g.
+    # `./scripts/rebase-worktree.sh worktrees/foo main --dry-run` ran the rebase
+    # to completion because --dry-run was never seen).
+    ARGS=()
     while [[ $# -gt 0 ]]; do
         case $1 in
             -h|--help) usage; exit 0 ;;
-            --dry-run) DRY_RUN=true; shift ;;
-            --no-submodule) SKIP_SUBMODULE=true; shift ;;
+            --dry-run) DRY_RUN=true ;;
+            --no-submodule) SKIP_SUBMODULE=true ;;
             -*) error "Unknown option: $1
 
 Run '$(basename "$0") --help' for usage information." ;;
-            *) break ;;
+            *) ARGS+=("$1") ;;
         esac
+        shift
     done
+    set -- "${ARGS[@]}"
 
     WORKTREE_PATH="${1:-}"
     TARGET_BRANCH="${2:-origin/main}"
