@@ -270,9 +270,20 @@ _require_skills_smoke_creds() {
   return 0
 }
 
+# JWT cache: module-level variable so all three usage-counter checks reuse
+# one sign-in call (avoids 3x sign-in overhead when all three surfaces
+# trigger together, e.g. on _shared/auth-middleware.ts or usage-counter.ts
+# changes, helping stay within the 60s total smoke budget).
+_SKILLS_JWT_CACHE=""
+
 # _skills_sign_in -- sign in with email/password; echoes JWT to stdout or
-# returns 1 on failure. Used to query user_api_usage via RLS-gated REST.
+# returns 1 on failure. Caches result in _SKILLS_JWT_CACHE so subsequent
+# calls within the same smoke run are a no-op.
 _skills_sign_in() {
+  if [ -n "$_SKILLS_JWT_CACHE" ]; then
+    printf '%s' "$_SKILLS_JWT_CACHE"
+    return 0
+  fi
   local resp jwt
   resp=$(curl --silent --max-time "$SMOKE_HTTP_TIMEOUT" \
     -X POST "${SMOKE_SUPABASE_URL}/auth/v1/token?grant_type=password" \
@@ -281,6 +292,7 @@ _skills_sign_in() {
     -d "{\"email\":\"${SMOKE_SKILLS_EMAIL}\",\"password\":\"${SMOKE_SKILLS_PASSWORD}\"}" 2>/dev/null) || return 1
   jwt=$(printf '%s' "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null) || return 1
   if [ -z "$jwt" ]; then return 1; fi
+  _SKILLS_JWT_CACHE="$jwt"
   printf '%s' "$jwt"
 }
 
