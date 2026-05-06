@@ -1,0 +1,22 @@
+// Mirrors packages/vscode-extension/src/utils/pathContainment.ts — uses the
+// `let X: string; try { X = await fs.realpath(...) } catch { X = ... }`
+// deferred-assignment pattern. Verifies the helper's R_VARS regex captures
+// the deferred form so both `resolvedRoot` and `resolvedTarget` are tainted
+// and the comparison is not flagged.
+// Expected: should-pass fixture — zero violations.
+
+import { promises as fs } from 'fs'
+import { resolve } from 'path'
+
+async function assertInsideRoot(target: string, root: string) {
+  const resolvedRoot = await fs.realpath(root)
+  let resolvedTarget: string
+  try {
+    resolvedTarget = await fs.realpath(target)
+  } catch {
+    resolvedTarget = resolve(target)
+  }
+  if (!resolvedTarget.startsWith(resolvedRoot)) {
+    throw new Error('escape')
+  }
+}

@@ -1,0 +1,19 @@
+// Mirrors the post-PR-#920 form of skill-pack-audit.ts (commit ec9e8ca3).
+// Both sides of the comparison are realpath'd via packPathReal — no asymmetry.
+// Expected: should-pass fixture — zero violations.
+
+import { promises as fs } from 'fs'
+import { resolve, sep } from 'path'
+
+async function audit(input: { pack_path: string; skillMdPath: string }) {
+  const packPath = resolve(input.pack_path)
+  let packPathReal: string
+  try {
+    packPathReal = await fs.realpath(packPath)
+  } catch {
+    packPathReal = packPath
+  }
+  const resolvedMdPath = await fs.realpath(input.skillMdPath)
+  if (!resolvedMdPath.startsWith(packPathReal + sep)) return null
+  return resolvedMdPath
+}
