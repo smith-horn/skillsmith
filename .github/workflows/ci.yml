@@ -1064,7 +1064,7 @@ jobs:
       - name: Build project (Docker)
         if: steps.load-image.outcome == 'success'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1084,7 +1084,7 @@ jobs:
       - name: Run tests for ${{ matrix.package }} (Docker)
         if: steps.load-image.outcome == 'success'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1097,7 +1097,7 @@ jobs:
       - name: Generate coverage for ${{ matrix.package }} (Docker)
         if: steps.load-image.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1180,7 +1180,7 @@ jobs:
 
       - name: Build project
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1197,7 +1197,7 @@ jobs:
       # own). See plan-review B-4 + Step 4b in the trifecta plan.
       - name: Run root-level tests
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1266,7 +1266,7 @@ jobs:
 
       - name: Build project
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1397,7 +1397,7 @@ jobs:
         continue-on-error: true
         id: audit
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1416,7 +1416,7 @@ jobs:
 
       - name: Build project for security tests
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1424,7 +1424,7 @@ jobs:
 
       - name: Run security test suite
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1546,7 +1546,7 @@ jobs:
       - name: Build website in Docker
         if: steps.changes.outputs.website == 'true'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app/packages/website \
             skillsmith-ci:${{ github.sha }} \
@@ -1748,7 +1748,7 @@ jobs:
       - name: Build all packages (Docker)
         if: steps.load-image.outcome == 'success'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1830,7 +1830,7 @@ jobs:
 
       - name: Build packages in Docker
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
