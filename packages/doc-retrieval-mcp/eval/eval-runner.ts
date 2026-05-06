@@ -284,15 +284,13 @@ export async function runRealMode(minScore?: number): Promise<import('./metrics.
 async function main(): Promise<void> {
   const opts = parseArgs(process.argv)
 
-  // Ablation delegation — Worker 2 (SMI-4707) will provide ablation-runner.ts.
-  // Dynamic import via string variable avoids a TS2307 compile error while the
-  // file is not yet present; the import is only attempted at runtime with --ablate.
+  // Ablation delegation: ablation-runner.ts is provided by SMI-4702 Worker 2.
+  // Dynamic import keeps the eval-runner module-loadable even if the ablation
+  // runner is ever moved or removed in a future refactor; the import only
+  // resolves at runtime when --ablate is passed.
   if (opts.ablate !== null) {
-    const ablationRunnerPath = './ablation-runner.js'
-
-    const ablationMod = await import(ablationRunnerPath)
-
-    await ablationMod.runAblation(opts.ablate, opts)
+    const { runAblation } = await import('./ablation-runner.js')
+    await runAblation(opts.ablate as 'boost' | 'dampen' | 'floor' | 'bm25', opts)
     return
   }
 
