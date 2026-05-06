@@ -1341,27 +1341,21 @@ jobs:
 
       - name: Run colocated package tests
         run: |
-          # SMI-4667 E2: --init makes tini PID 1 in the container so node
-          # is a normal child with default signal semantics + a child
+          # SMI-4667 E2 (active): --init makes tini PID 1 in the container so
+          # node is a normal child with default signal semantics + a child
           # reaper. PR #893's cascade had `node` as PID 1 (entrypoint
           # `exec`s the npx child) which has no SIGCHLD reaper — a worker
           # exit propagates SIGTERM to PID 1 itself, which `npm` reports
           # as `signal SIGTERM`. H2 hypothesis test per the SMI-4667 plan.
-          # SMI-4667 E1 (composes with E2): adds --no-file-parallelism to
-          # force serial file execution. E2 (--init) changed the cascade
-          # mechanism (tini cleaned up PID-1 reaping; exit went from
-          # `npm error signal SIGTERM` exit 1 → exit 143 directly) but the
-          # 11-listener accumulation persists. Tests cross-file leak from
-          # process.on('SIGTERM', …) registrations in product code (H1).
-          # Serial execution prevents accumulation across files.
-          # SMI-4667 E3 (composes with E1+E2): NODE_OPTIONS bootstrap raises
-          # defaultMaxListeners to 50 before vitest workers boot. Tests
-          # whether the MaxListenersExceededWarning is causal (suppression
-          # lets vitest finish + summary print + clean exit) or symptomatic
-          # (SIGTERM still arrives from the same source either way). E1
-          # (--no-file-parallelism) did NOT reduce the 11-listener count
-          # — accumulation persists even with serial file execution, so
-          # the source is per-file or vitest workers persist regardless.
+          # SMI-4667 E1 (retired SMI-4717): --pool=forks + --no-file-parallelism
+          # were removed after SMI-4711 (env-leak fix, PR #964) + SMI-4756
+          # (sync→async createDatabase migration, PR #974) landed green on
+          # Post-Merge Verify at 7ce95a36. The env-leak root cause is gone;
+          # serial-file workaround no longer needed.
+          # SMI-4667 E3 (active): NODE_OPTIONS bootstrap raises
+          # defaultMaxListeners to 50 before vitest workers boot. Suppresses
+          # MaxListenersExceededWarning from product-code SIGTERM handler
+          # accumulation (H1). Active until SMI-4694 (H1 proper fix) closes.
           # SMI-4667: full diagnostic stack defeats the SIGTERM-143
           # cascade but a residual teardown quirk causes vitest workers to
           # exit 1 when reporting results to a CLI parent that's already
