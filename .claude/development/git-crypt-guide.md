@@ -337,4 +337,13 @@ The repair script is idempotent — sub-second `[skip]` exit when the binding al
 
 …it is **expected** and the hook is doing the right thing. If the message is followed by `❌ Host node_modules missing in worktree.`, run `./scripts/repair-worktrees.sh` to backfill the symlinks + native bindings.
 
+**Escape hatch — `SKILLSMITH_PRE_PUSH_DOCKER=1` (SMI-4767)**: the host fallback above is correct for `pre-commit` (lint/format) but breaks `pre-push` test runs because the parent vitest invocation in `scripts/pre-push-coverage-check.sh` still inherits parent-worktree `GIT_*` env. SMI-4693 only landed Waves 1–3 (test-fixture env scrub via `git-fixture-env`); the parent-vitest leak is deferred to SMI-4769. Workaround: prepend `SKILLSMITH_PRE_PUSH_DOCKER=1` to the push to force Docker even on macOS worktrees, bypassing this fallback for pre-push only:
+
+```bash
+SKILLSMITH_PRE_PUSH_DOCKER=1 git push        # per-invocation (preferred)
+export SKILLSMITH_PRE_PUSH_DOCKER=1          # session-wide if pushing repeatedly
+```
+
+Docker must be running — the hook prints a red error + `exit 1` if `SKILLSMITH_PRE_PUSH_DOCKER=1` is set but the dev container is down. Do NOT use `git push --no-verify` as the default; that bypasses *all* pre-push checks (security scan, format check, etc.), not just the leaky vitest. The env-var workaround is targeted.
+
 **Caveat (SMI-4698)**: the **native-rebuild step** of `./scripts/repair-worktrees.sh` aborts if a `skillsmith*-dev-N` container is running — it would otherwise overwrite the container's ELF native bindings via the symlinked `node_modules`. Symlink-repair steps run safely regardless. Stop the container first (`docker compose --profile dev down`), or pass `--force-with-active-docker` and run `docker exec -w /app skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node` afterward to restore the container's bindings.
