@@ -43,11 +43,6 @@ supabase/functions/early-access-signup/**
 supabase/functions/contact-submit/**
 supabase/functions/stats/**
 
-# Skills public API (covered by direct query + indexer health, not smoke).
-supabase/functions/skills-search/**
-supabase/functions/skills-get/**
-supabase/functions/skills-recommend/**
-
 # Shared module (not a deployed function).
 supabase/functions/_shared/**
 

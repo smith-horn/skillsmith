@@ -105,6 +105,15 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          # SMI-4755: staging credentials for skills-search/get/recommend usage-counter smoke.
+          # SMOKE_SKILLS_API_KEY: sk_live_* key for the dedicated staging smoke account.
+          # SMOKE_SKILLS_EMAIL / SMOKE_SKILLS_PASSWORD: same account, used to sign in
+          # and query user_api_usage via RLS-gated REST to assert counter increment.
+          # Provisioning: see docs/internal/implementation/smi-4755* for the SQL.
+          # When unset, checks skip gracefully (report_fail + return 1).
+          SMOKE_SKILLS_API_KEY: ${{ secrets.SMOKE_SKILLS_API_KEY }}
+          SMOKE_SKILLS_EMAIL: ${{ secrets.SMOKE_SKILLS_EMAIL }}
+          SMOKE_SKILLS_PASSWORD: ${{ secrets.SMOKE_SKILLS_PASSWORD }}
         run: |
           set -euo pipefail
           REPORT="$RUNNER_TEMP/smoke-report.json"
