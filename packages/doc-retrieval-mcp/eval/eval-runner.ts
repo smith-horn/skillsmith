@@ -135,28 +135,61 @@ async function buildRealResults(entries: GoldEntry[]): Promise<RunResult[]> {
 // Baseline update
 // ---------------------------------------------------------------------------
 
-interface BaselineEntry {
-  metrics: MetricsReport
-  timestamp: string
+// Plan §7 / §6 baseline.json schema — flat, machine-readable, parsed by
+// check-baseline-drift.ts. `prior` and `current` are recall@5 scalars; the
+// full metric set lives under `metrics`. Promotion: each real-mode run
+// promotes existing.current → prior and writes the new recall@5 as current.
+interface BaselineFile {
+  prior: number | null
+  current: number | null
+  generated: string
+  corpus: { filesScanned: number; chunksUpserted: number }
+  knobs: { boost: number; dampen: number; floor: number; bm25: boolean }
+  metrics: {
+    recallAt5: number | null
+    recallAt10: number | null
+    mrr: number | null
+    ndcgAt10: number | null
+  }
 }
 
-interface BaselineFile {
-  current: BaselineEntry | null
-  prior: BaselineEntry | null
+function readKnobsFromEnv(): BaselineFile['knobs'] {
+  const num = (envVar: string, fallback: number): number => {
+    const v = Number(process.env[envVar])
+    return Number.isFinite(v) && v > 0 ? v : fallback
+  }
+  return {
+    boost: num('SKILLSMITH_DOC_RETRIEVAL_BOOST_MEMORY', 1.5),
+    dampen: num('SKILLSMITH_DOC_RETRIEVAL_DAMPEN_PROCESS', 0.85),
+    floor: 0.35,
+    bm25: process.env.SKILLSMITH_DOC_RETRIEVAL_RERANK === 'bm25',
+  }
 }
 
 function updateBaseline(report: MetricsReport): void {
-  let existing: BaselineFile = { current: null, prior: null }
+  let existingCurrent: number | null = null
+  let existingCorpus: BaselineFile['corpus'] = { filesScanned: 0, chunksUpserted: 0 }
   if (existsSync(BASELINE_PATH)) {
     try {
-      existing = JSON.parse(readFileSync(BASELINE_PATH, 'utf8')) as BaselineFile
+      const existing = JSON.parse(readFileSync(BASELINE_PATH, 'utf8')) as Partial<BaselineFile>
+      if (typeof existing.current === 'number') existingCurrent = existing.current
+      if (existing.corpus) existingCorpus = existing.corpus
     } catch {
       // malformed baseline — start fresh
     }
   }
   const updated: BaselineFile = {
-    prior: existing.current,
-    current: { metrics: report, timestamp: new Date().toISOString() },
+    prior: existingCurrent,
+    current: report.overall.recallAt5,
+    generated: new Date().toISOString().split('T')[0],
+    corpus: existingCorpus,
+    knobs: readKnobsFromEnv(),
+    metrics: {
+      recallAt5: report.overall.recallAt5,
+      recallAt10: report.overall.recallAt10,
+      mrr: report.overall.mrr,
+      ndcgAt10: report.overall.ndcgAt10,
+    },
   }
   writeFileSync(BASELINE_PATH, JSON.stringify(updated, null, 2) + '\n', 'utf8')
 }

@@ -1,0 +1,8 @@
+{
+  "prior": null,
+  "current": null,
+  "generated": "2026-05-05",
+  "corpus": { "filesScanned": 0, "chunksUpserted": 0 },
+  "knobs": { "boost": 1.5, "dampen": 0.85, "floor": 0.35, "bm25": false },
+  "metrics": { "recallAt5": null, "recallAt10": null, "mrr": null, "ndcgAt10": null }
+}
