@@ -240,6 +240,263 @@ check_blog_local_db_renders() {
   return 0
 }
 
+# ---- skills API usage-counter helpers ------------------------------------
+# Shared env vars consumed by the three usage-counter checks below.
+#
+# SMOKE_SKILLS_API_KEY   -- sk_live_* key for the staging smoke account.
+#                           Provisioned once; see SMI-4755 provisioning note.
+#                           Maps to SMOKE_SKILLS_API_KEY GitHub Actions secret.
+# SMOKE_SKILLS_EMAIL     -- Email address of the staging smoke account.
+#                           Used to sign in and obtain a JWT for reading
+#                           the user_api_usage row via RLS-gated REST.
+#                           Maps to SMOKE_SKILLS_EMAIL GitHub Actions secret.
+# SMOKE_SKILLS_PASSWORD  -- Password for SMOKE_SKILLS_EMAIL account.
+#                           Maps to SMOKE_SKILLS_PASSWORD GitHub Actions secret.
+#
+# Both SMOKE_SKILLS_API_KEY and the email/password credentials must refer to
+# the SAME staging user account so that the RLS-gated SELECT on
+# user_api_usage (authenticated users can read their own rows only) returns
+# the row incremented by the API call.
+
+_require_skills_smoke_creds() {
+  if [ -z "${SMOKE_SKILLS_API_KEY:-}" ]; then
+    smoke_warn "SMOKE_SKILLS_API_KEY not set -- skipping usage-counter check"
+    return 1
+  fi
+  if [ -z "${SMOKE_SKILLS_EMAIL:-}" ] || [ -z "${SMOKE_SKILLS_PASSWORD:-}" ]; then
+    smoke_warn "SMOKE_SKILLS_EMAIL / SMOKE_SKILLS_PASSWORD not set -- skipping usage-counter check"
+    return 1
+  fi
+  return 0
+}
+
+# SMI-4755: optional staging-routing for skills usage-counter checks.
+# The smoke harness signs in to the project where the smoke account lives.
+# When SMOKE_SKILLS_SUPABASE_URL / SMOKE_SKILLS_SUPABASE_ANON_KEY are set,
+# the three check_skills_* functions target staging (ovhcifugwqnzoebwfuku);
+# unset, they fall back to the prod SMOKE_SUPABASE_URL / SUPABASE_ANON_KEY.
+# Edge functions auto-deploy to both prod and staging from main, so smoking
+# against staging exercises the same code path without polluting prod.
+SMOKE_SKILLS_URL="${SMOKE_SKILLS_SUPABASE_URL:-$SMOKE_SUPABASE_URL}"
+SMOKE_SKILLS_ANON_KEY="${SMOKE_SKILLS_SUPABASE_ANON_KEY:-${SUPABASE_ANON_KEY:-}}"
+
+# JWT cache: module-level variable so all three usage-counter checks reuse
+# one sign-in call (avoids 3x sign-in overhead when all three surfaces
+# trigger together, e.g. on _shared/auth-middleware.ts or usage-counter.ts
+# changes, helping stay within the 60s total smoke budget).
+_SKILLS_JWT_CACHE=""
+
+# _skills_sign_in -- sign in with email/password; echoes JWT to stdout or
+# returns 1 on failure. Caches result in _SKILLS_JWT_CACHE so subsequent
+# calls within the same smoke run are a no-op.
+_skills_sign_in() {
+  if [ -n "$_SKILLS_JWT_CACHE" ]; then
+    printf '%s' "$_SKILLS_JWT_CACHE"
+    return 0
+  fi
+  local resp jwt
+  resp=$(curl --silent --max-time "$SMOKE_HTTP_TIMEOUT" \
+    -X POST "${SMOKE_SKILLS_URL}/auth/v1/token?grant_type=password" \
+    -H "apikey: ${SMOKE_SKILLS_ANON_KEY}" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"${SMOKE_SKILLS_EMAIL}\",\"password\":\"${SMOKE_SKILLS_PASSWORD}\"}" 2>/dev/null) || return 1
+  jwt=$(printf '%s' "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null) || return 1
+  if [ -z "$jwt" ]; then return 1; fi
+  _SKILLS_JWT_CACHE="$jwt"
+  printf '%s' "$jwt"
+}
+
+# _skills_usage_count ENDPOINT JWT -- queries user_api_usage for the current
+# hour bucket and returns the count for the given endpoint column
+# (search_count, get_count, or recommend_count). Returns -1 on error.
+_skills_usage_count() {
+  local endpoint="$1" jwt="$2"
+  local col resp count
+  case "$endpoint" in
+    search)    col="search_count" ;;
+    get)       col="get_count" ;;
+    recommend) col="recommend_count" ;;
+    *)         printf '%s' "-1"; return 1 ;;
+  esac
+  # Query user_api_usage for the current hour bucket. RLS policy allows
+  # each user to SELECT their own rows only (auth.uid() = user_id).
+  # Sum across all rows for safety, though there is normally at most one
+  # row per (user_id, hour_bucket) thanks to the UNIQUE constraint.
+  local hour_start
+  hour_start=$(date -u +%Y-%m-%dT%H:00:00Z)
+  resp=$(curl --silent --max-time "$SMOKE_HTTP_TIMEOUT" \
+    "${SMOKE_SKILLS_URL}/rest/v1/user_api_usage?select=${col}&hour_bucket=gte.${hour_start}" \
+    -H "apikey: ${SMOKE_SKILLS_ANON_KEY}" \
+    -H "Authorization: Bearer ${jwt}" \
+    -H "Accept: application/json" 2>/dev/null) || { printf '%s' "-1"; return 1; }
+  count=$(printf '%s' "$resp" | python3 -c "
+import sys, json
+rows = json.load(sys.stdin)
+if not isinstance(rows, list):
+    print(-1)
+else:
+    print(sum(r.get('${col}', 0) for r in rows))
+" 2>/dev/null) || count="-1"
+  printf '%s' "$count"
+}
+
+# ---- check_skills_search_usage_counter --------------------------------
+# SMI-4755: Authenticated GET to skills-search with a real sk_live_* key.
+# Asserts HTTP 200 and that search_count in user_api_usage incremented by 1
+# for the current hour bucket, proving the usage-counter path is live.
+check_skills_search_usage_counter() {
+  _require_supabase_url || { report_fail "edge-fn-skills-search" "check_skills_search_usage_counter" "" "SUPABASE_URL" "unset"; return 1; }
+  _require_skills_smoke_creds || {
+    report_fail "edge-fn-skills-search" "check_skills_search_usage_counter" "" "SMOKE_SKILLS_API_KEY" "unset"
+    return 1
+  }
+
+  local url="${SMOKE_SKILLS_URL}/functions/v1/skills-search?category=testing&limit=1"
+  local jwt before after expected_after t0 t1 ms status
+
+  jwt=$(_skills_sign_in) || {
+    report_fail "edge-fn-skills-search" "check_skills_search_usage_counter" "$url" "sign-in-ok" "sign-in-failed"
+    return 1
+  }
+
+  before=$(_skills_usage_count "search" "$jwt")
+  if [ "$before" = "-1" ]; then
+    report_fail "edge-fn-skills-search" "check_skills_search_usage_counter" "$url" "usage-query-ok" "pre-call-query-failed"
+    return 1
+  fi
+
+  t0=$(now_ms)
+  status=$(with_retry http_status GET "$url" \
+    -H "X-API-Key: ${SMOKE_SKILLS_API_KEY}" \
+    -H "Accept: application/json")
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+
+  if [ "$status" != "200" ]; then
+    report_fail "edge-fn-skills-search" "check_skills_search_usage_counter" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+
+  after=$(_skills_usage_count "search" "$jwt")
+  expected_after=$((before + 1))
+  if [ "$after" != "$expected_after" ]; then
+    report_fail "edge-fn-skills-search" "check_skills_search_usage_counter" "$url" \
+      "search_count=${expected_after}" "search_count=${after}" "$ms"
+    return 1
+  fi
+
+  report_pass "edge-fn-skills-search" "check_skills_search_usage_counter" "$url" "$ms"
+  return 0
+}
+
+# ---- check_skills_get_usage_counter -----------------------------------
+# SMI-4755: Authenticated GET to skills-get with a real sk_live_* key.
+# Uses a probe skill ID that need not exist -- the counter increments on
+# both 200 (found) and 404 (not found) authenticated responses.
+check_skills_get_usage_counter() {
+  _require_supabase_url || { report_fail "edge-fn-skills-get" "check_skills_get_usage_counter" "" "SUPABASE_URL" "unset"; return 1; }
+  _require_skills_smoke_creds || {
+    report_fail "edge-fn-skills-get" "check_skills_get_usage_counter" "" "SMOKE_SKILLS_API_KEY" "unset"
+    return 1
+  }
+
+  # skillsmith/smoke-test-probe need not exist; the auth middleware still
+  # runs, the counter increments, and the function returns 404 (skill not
+  # found). This is intentional: we want to verify the counter path runs
+  # on any authenticated request, not just successful lookups.
+  local url="${SMOKE_SKILLS_URL}/functions/v1/skills-get?id=skillsmith%2Fsmoke-test-probe"
+  local jwt before after expected_after t0 t1 ms status
+
+  jwt=$(_skills_sign_in) || {
+    report_fail "edge-fn-skills-get" "check_skills_get_usage_counter" "$url" "sign-in-ok" "sign-in-failed"
+    return 1
+  }
+
+  before=$(_skills_usage_count "get" "$jwt")
+  if [ "$before" = "-1" ]; then
+    report_fail "edge-fn-skills-get" "check_skills_get_usage_counter" "$url" "usage-query-ok" "pre-call-query-failed"
+    return 1
+  fi
+
+  t0=$(now_ms)
+  status=$(with_retry http_status GET "$url" \
+    -H "X-API-Key: ${SMOKE_SKILLS_API_KEY}" \
+    -H "Accept: application/json")
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+
+  # 200 (skill found) and 404 (skill not in registry) are both valid --
+  # the counter increments on both paths. 500/000/403 are real failures.
+  case "$status" in
+    200|404) ;;
+    *)
+      report_fail "edge-fn-skills-get" "check_skills_get_usage_counter" "$url" "200|404" "$status" "$ms"
+      return 1
+      ;;
+  esac
+
+  after=$(_skills_usage_count "get" "$jwt")
+  expected_after=$((before + 1))
+  if [ "$after" != "$expected_after" ]; then
+    report_fail "edge-fn-skills-get" "check_skills_get_usage_counter" "$url" \
+      "get_count=${expected_after}" "get_count=${after}" "$ms"
+    return 1
+  fi
+
+  report_pass "edge-fn-skills-get" "check_skills_get_usage_counter" "$url" "$ms"
+  return 0
+}
+
+# ---- check_skills_recommend_usage_counter -----------------------------
+# SMI-4755: Authenticated POST to skills-recommend with a real sk_live_* key.
+# Asserts HTTP 200 and that recommend_count in user_api_usage incremented by 1.
+check_skills_recommend_usage_counter() {
+  _require_supabase_url || { report_fail "edge-fn-skills-recommend" "check_skills_recommend_usage_counter" "" "SUPABASE_URL" "unset"; return 1; }
+  _require_skills_smoke_creds || {
+    report_fail "edge-fn-skills-recommend" "check_skills_recommend_usage_counter" "" "SMOKE_SKILLS_API_KEY" "unset"
+    return 1
+  }
+
+  local url="${SMOKE_SKILLS_URL}/functions/v1/skills-recommend"
+  local jwt before after expected_after t0 t1 ms status
+
+  jwt=$(_skills_sign_in) || {
+    report_fail "edge-fn-skills-recommend" "check_skills_recommend_usage_counter" "$url" "sign-in-ok" "sign-in-failed"
+    return 1
+  }
+
+  before=$(_skills_usage_count "recommend" "$jwt")
+  if [ "$before" = "-1" ]; then
+    report_fail "edge-fn-skills-recommend" "check_skills_recommend_usage_counter" "$url" "usage-query-ok" "pre-call-query-failed"
+    return 1
+  fi
+
+  t0=$(now_ms)
+  status=$(with_retry http_status POST "$url" \
+    -H "X-API-Key: ${SMOKE_SKILLS_API_KEY}" \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    -d '{"stack":["typescript"]}')
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+
+  if [ "$status" != "200" ]; then
+    report_fail "edge-fn-skills-recommend" "check_skills_recommend_usage_counter" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+
+  after=$(_skills_usage_count "recommend" "$jwt")
+  expected_after=$((before + 1))
+  if [ "$after" != "$expected_after" ]; then
+    report_fail "edge-fn-skills-recommend" "check_skills_recommend_usage_counter" "$url" \
+      "recommend_count=${expected_after}" "recommend_count=${after}" "$ms"
+    return 1
+  fi
+
+  report_pass "edge-fn-skills-recommend" "check_skills_recommend_usage_counter" "$url" "$ms"
+  return 0
+}
+
 # ---- check_product_page_renders ---------------------------------------
 # Verifies the /product comparison page renders. Uses the hero H1 text as
 # a stable fingerprint — the H1 is part of the page source (not a

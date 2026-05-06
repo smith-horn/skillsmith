@@ -25,6 +25,9 @@ with 2s backoff per call. Exit codes: `0` ok, `1` fail, `2` skipped.
 | `health` | `GET $SUPABASE_URL/functions/v1/health` returns 200 | always-on canary |
 | `website-device-page` | `GET https://www.skillsmith.app/device` returns 200 + contains `data-smoke="device-input"` | `packages/website/src/pages/device.astro` change |
 | `edge-fn-auth-device` | `auth-device-code` POST → 200/400 (NOT 404); `auth-device-preview` GET (no JWT) → 401 | `supabase/functions/auth-device-{code,preview,approve,token}/**` change |
+| `edge-fn-skills-search` | Authenticated GET with `X-API-Key: $SMOKE_SKILLS_API_KEY` → 200; asserts `user_api_usage.search_count` incremented by 1 | `supabase/functions/skills-search/**` or `_shared/usage-counter.ts` / `_shared/auth-middleware.ts` change |
+| `edge-fn-skills-get` | Authenticated GET with `X-API-Key` → 200 or 404 (skill not found is OK); asserts `user_api_usage.get_count` incremented by 1 | `supabase/functions/skills-get/**` or `_shared/usage-counter.ts` / `_shared/auth-middleware.ts` change |
+| `edge-fn-skills-recommend` | Authenticated POST `{"stack":["typescript"]}` with `X-API-Key` → 200; asserts `user_api_usage.recommend_count` incremented by 1 | `supabase/functions/skills-recommend/**` or `_shared/usage-counter.ts` / `_shared/auth-middleware.ts` change |
 | `cli-published` | `npx -y @skillsmith/cli@latest --help` exits 0 with a `Commands:` section; `--version` exits 0 | `packages/cli/**` change |
 | `mcp-server-published` | `npx -y @skillsmith/mcp-server@latest --version` exits 0 | `packages/mcp-server/**` change |
 
@@ -113,14 +116,63 @@ surfaces anyway (changed-file globbing skips them).
 
 ## Manual setup steps
 
-The workflow needs three GitHub Actions secrets, all already present in
-the repo for adjacent jobs:
+The workflow needs the following GitHub Actions secrets:
 
 - `SUPABASE_URL` — used by the `smoke` job for read-only HTTP checks.
-- `SUPABASE_ANON_KEY` — currently unused but reserved for future
-  authenticated smoke (e.g., low-quota anon-key endpoint).
+- `SUPABASE_ANON_KEY` — used by the `smoke` job for GoTrue sign-in (skills
+  usage-counter checks) and RLS-gated REST queries.
 - `SUPABASE_SERVICE_ROLE_KEY` — used by the `alert` job ONLY (separate
   job for secret scoping; service-role key never enters the smoke job).
+
+**SMI-4755 — skills API usage-counter checks** require five additional
+secrets. The smoke account is provisioned in **staging** (`ovhcifugwqnzoebwfuku`)
+and the three skills checks route to staging via two routing-override secrets;
+the rest of the harness stays on prod `SUPABASE_URL`. Edge functions auto-deploy
+to both refs from main, so smoking against staging exercises the same code
+path without polluting prod analytics or burning prod rate-limit budget.
+
+- `SMOKE_SKILLS_API_KEY` — a `sk_live_*` key for the staging smoke account.
+  Community tier or higher works (community = 1000 calls/month, plenty for
+  smoke). The account must exist in the staging GoTrue so the auth-middleware
+  resolves its `userId`.
+- `SMOKE_SKILLS_EMAIL` — email of the same staging account. Used to sign in
+  via GoTrue and obtain a JWT for the RLS-gated `user_api_usage` query.
+- `SMOKE_SKILLS_PASSWORD` — password for the above account.
+- `SMOKE_SKILLS_SUPABASE_URL` — staging URL, e.g. `https://ovhcifugwqnzoebwfuku.supabase.co`.
+  Routes the three `check_skills_*_usage_counter` calls (sign-in, REST query,
+  function invocation) to staging. When unset, falls back to `SUPABASE_URL`
+  (prod) — and the checks will fail because the account is staging-only.
+- `SMOKE_SKILLS_SUPABASE_ANON_KEY` — staging anon key. Pairs with the URL.
+
+To provision the staging account and key, run (staging only — never prod):
+
+```bash
+# 1. Create the smoke user account in staging GoTrue
+varlock run -- curl -s -X POST \
+  "${STAGING_SUPABASE_URL}/auth/v1/admin/users" \
+  -H "apikey: ${STAGING_SERVICE_ROLE_KEY}" \
+  -H "Authorization: Bearer ${STAGING_SERVICE_ROLE_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"smoke-skills@yourorg.test","password":"<strong-random-password>","email_confirm":true}'
+
+# 2. Grant Individual subscription (use admin-grant-subscription edge fn or
+#    direct SQL). Replace <user-id> with the UUID from step 1.
+varlock run -- ./scripts/pooler-psql.sh -c \
+  "INSERT INTO subscriptions (user_id, tier, status) VALUES ('<user-id>', 'individual', 'active') ON CONFLICT DO NOTHING;"
+
+# 3. Generate an API key for that user
+varlock run -- curl -s -X POST \
+  "${STAGING_SUPABASE_URL}/functions/v1/generate-license" \
+  -H "Authorization: Bearer <user-jwt-from-sign-in>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"smoke-skills-key"}'
+# Record the full sk_live_* value from the response and store in GitHub Actions
+# secrets as SMOKE_SKILLS_API_KEY.
+```
+
+When these secrets are absent, the three checks skip gracefully (they call
+`_require_skills_smoke_creds` which warns and returns 1). The checks will
+appear as failures in the smoke report until the secrets are provisioned.
 
 To enable Vercel-deploy-completion triggering, configure a Vercel deploy
 hook that POSTs to GitHub `repository_dispatch` with `event_type:
