@@ -1385,7 +1385,7 @@ jobs:
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npx vitest run --config vitest.config.colocated.ts --pool=forks --no-file-parallelism --passWithNoTests 2>&1 | tee /tmp/vitest-colocated.log
+            npx vitest run --config vitest.config.colocated.ts --passWithNoTests 2>&1 | tee /tmp/vitest-colocated.log
           DOCKER_EXIT=${PIPESTATUS[0]}
           if grep -qE '❯.*\| [1-9][0-9]* failed' /tmp/vitest-colocated.log; then
             echo "::error::vitest reported test failures (see ❯ lines above)"
