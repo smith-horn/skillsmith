@@ -1,0 +1,68 @@
+# SMI-4716: WASM env snapshot workflow
+#
+# Temporary investigation workflow — runs the same snapshot script inside the
+# same Docker image used by `Test (root colocated)` and uploads the result as
+# an artifact so it can be diffed against a host snapshot.
+#
+# ADR-109 note: this file modifies .github/workflows/ (a trigger path). It is
+# scoped solely to diagnostic capture for SMI-4716; it adds no new required
+# checks and does not alter branch protection. The workflow is dispatch-only
+# (manual + on PR path match) so it cannot block any merge. Reviewers may
+# choose to retain it long-term or remove it after the diff is captured.
+#
+# Usage:
+#   Manual:   gh workflow run wasm-env-snapshot.yml
+#   Artifact: download via gh run download <run-id> --name wasm-env-ci-snapshot
+#
+# After downloading the CI artifact:
+#   node scripts/diagnostics/wasm-env-snapshot.mjs \
+#     --diff /tmp/host-snapshot.json wasm-env-ci-snapshot.json
+
+name: WASM env snapshot (SMI-4716 investigation)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/diagnostics/wasm-env-snapshot.mjs'
+      - '.github/workflows/wasm-env-snapshot.yml'
+
+jobs:
+  wasm-env-snapshot:
+    name: Capture WASM env snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: []
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg NODE_VERSION="$(cat .nvmrc 2>/dev/null || echo 22)" \
+            -t skillsmith-snapshot:${{ github.sha }} \
+            .
+
+      - name: Run snapshot inside Docker (mirrors Test (root colocated) environment)
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            -w /app \
+            -e IS_DOCKER=1 \
+            -e NODE_ENV=test \
+            -e CI=true \
+            skillsmith-snapshot:${{ github.sha }} \
+            node scripts/diagnostics/wasm-env-snapshot.mjs --emit \
+            > wasm-env-ci-snapshot.json
+          echo "Exit code: $?"
+          echo "--- Snapshot preview ---"
+          head -40 wasm-env-ci-snapshot.json
+
+      - name: Upload CI snapshot artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: wasm-env-ci-snapshot
+          path: wasm-env-ci-snapshot.json
+          retention-days: 30
