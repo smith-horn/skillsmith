@@ -40,8 +40,8 @@ describe('Recommend Tool - Online API Path (SMI-2755)', () => {
     },
   ]
 
-  beforeAll(() => {
-    onlineContext = createTestContext()
+  beforeAll(async () => {
+    onlineContext = await createTestContext()
   })
 
   afterAll(async () => {

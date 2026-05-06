@@ -15,8 +15,8 @@ import { createSeededTestContext, disposeTestContext, type ToolContext } from '.
 describe('SMI-2760: compatible_with filter', () => {
   let filterContext: ToolContext
 
-  beforeAll(() => {
-    filterContext = createSeededTestContext()
+  beforeAll(async () => {
+    filterContext = await createSeededTestContext()
   })
 
   afterAll(async () => {

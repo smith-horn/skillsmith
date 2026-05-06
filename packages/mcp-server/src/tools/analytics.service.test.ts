@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { createDatabase } from '@skillsmith/core'
+import { createDatabaseAsync, initializeSchema } from '@skillsmith/core'
 import type { Database } from '@skillsmith/core'
 import { createRealAnalyticsService, type AnalyticsService } from './analytics.service.js'
 
@@ -52,13 +52,14 @@ describe('createRealAnalyticsService', () => {
   let db: Database
   let svc: AnalyticsService
 
-  beforeEach(() => {
-    db = createDatabase(':memory:')
+  beforeEach(async () => {
+    db = await createDatabaseAsync(':memory:')
+    initializeSchema(db)
     svc = createRealAnalyticsService(db)
   })
 
   afterEach(() => {
-    db.close()
+    if (db) db.close()
   })
 
   describe('getDashboardData', () => {

@@ -31,7 +31,7 @@ describe('executeGetSkill (API path)', () => {
       // Tags are empty, but API says the skill is a database skill.
       // Tag-inference alone would return "other" — the fix makes
       // categories[] win.
-      context = createApiMockContext({
+      context = await createApiMockContext({
         apiSkill: {
           id: 'microsoft/azure-resource-manager-redis-dotnet',
           name: 'azure-resource-manager-redis-dotnet',
@@ -51,7 +51,7 @@ describe('executeGetSkill (API path)', () => {
     })
 
     it('normalizes plural API category names to the singular enum form', async () => {
-      context = createApiMockContext({
+      context = await createApiMockContext({
         apiSkill: {
           id: 'x/y',
           name: 'y',
@@ -66,7 +66,7 @@ describe('executeGetSkill (API path)', () => {
     })
 
     it('falls back to tag inference when API returns an empty categories array', async () => {
-      context = createApiMockContext({
+      context = await createApiMockContext({
         apiSkill: {
           id: 'x/y',
           name: 'y',
@@ -81,7 +81,7 @@ describe('executeGetSkill (API path)', () => {
     })
 
     it('falls back to tag inference when API returns an unmappable category', async () => {
-      context = createApiMockContext({
+      context = await createApiMockContext({
         apiSkill: {
           id: 'x/y',
           name: 'y',
@@ -98,7 +98,7 @@ describe('executeGetSkill (API path)', () => {
 
   describe('security summary derivation', () => {
     it('returns passed=true for a clean scanned skill', async () => {
-      context = createApiMockContext({
+      context = await createApiMockContext({
         apiSkill: {
           id: 'x/y',
           name: 'y',
@@ -120,7 +120,7 @@ describe('executeGetSkill (API path)', () => {
     })
 
     it('returns passed=false for a quarantined skill', async () => {
-      context = createApiMockContext({
+      context = await createApiMockContext({
         apiSkill: {
           id: 'x/y',
           name: 'y',
@@ -139,7 +139,7 @@ describe('executeGetSkill (API path)', () => {
     })
 
     it('returns passed=null when a scan timestamp exists but no score', async () => {
-      context = createApiMockContext({
+      context = await createApiMockContext({
         apiSkill: {
           id: 'x/y',
           name: 'y',
@@ -158,7 +158,7 @@ describe('executeGetSkill (API path)', () => {
     })
 
     it('omits security entirely when the skill has never been scanned', async () => {
-      context = createApiMockContext({
+      context = await createApiMockContext({
         apiSkill: {
           id: 'x/y',
           name: 'y',
@@ -175,7 +175,7 @@ describe('executeGetSkill (API path)', () => {
     })
 
     it('derives findingsCount from the security_findings jsonb array', async () => {
-      context = createApiMockContext({
+      context = await createApiMockContext({
         apiSkill: {
           id: 'x/y',
           name: 'y',
@@ -195,7 +195,7 @@ describe('executeGetSkill (API path)', () => {
     it('maps repo_url to skill.repository', async () => {
       const url =
         'https://github.com/microsoft/skills/tree/main/.github/skills/azure-resource-manager-redis-dotnet'
-      context = createApiMockContext({
+      context = await createApiMockContext({
         apiSkill: {
           id: 'x/y',
           name: 'y',
@@ -209,7 +209,7 @@ describe('executeGetSkill (API path)', () => {
     })
 
     it('leaves skill.repository undefined when repo_url is null', async () => {
-      context = createApiMockContext({
+      context = await createApiMockContext({
         apiSkill: {
           id: 'x/y',
           name: 'y',

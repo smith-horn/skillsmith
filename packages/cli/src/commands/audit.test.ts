@@ -38,9 +38,9 @@ describe('audit command — AdvisoryRepository integration', () => {
   let db: DatabaseType
   let repo: AdvisoryRepository
 
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env['SKILLSMITH_SKIP_LICENSE_CHECK'] = 'true'
-    db = createTestDatabase()
+    db = await createTestDatabase()
     repo = new AdvisoryRepository(db)
   })
 

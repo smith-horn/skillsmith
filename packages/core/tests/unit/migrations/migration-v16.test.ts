@@ -22,8 +22,8 @@ import { createDatabase } from '../../../src/db/schema.js'
 describe('Migration v16: source column + trust_tier=local', () => {
   let db: Database
 
-  beforeEach(() => {
-    db = createTestDatabase()
+  beforeEach(async () => {
+    db = await createTestDatabase()
   })
 
   afterEach(() => {

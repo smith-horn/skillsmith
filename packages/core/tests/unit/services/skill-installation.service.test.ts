@@ -115,7 +115,7 @@ describe('SMI-3483: SkillInstallationService', () => {
   let db: Database
 
   beforeEach(async () => {
-    db = createTestDatabase()
+    db = await createTestDatabase()
     await createTmpDirs()
   })
 

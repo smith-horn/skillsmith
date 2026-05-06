@@ -46,10 +46,10 @@ function createTestSkill(
 }
 
 describe('index_local Tool', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     // Create a temp directory for test skills
     testSkillsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skillsmith-index-local-test-'))
-    context = createTestContext()
+    context = await createTestContext()
   })
 
   afterAll(async () => {

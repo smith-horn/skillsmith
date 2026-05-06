@@ -184,8 +184,8 @@ describe('MCP Tool Schemas', () => {
 describe('Filter-only search', () => {
   let context: ToolContext
 
-  beforeAll(() => {
-    context = createSeededTestContext()
+  beforeAll(async () => {
+    context = await createSeededTestContext()
   })
 
   afterAll(async () => {

@@ -32,8 +32,8 @@ describe('AdvisoryRepository', () => {
   let db: DatabaseType
   let repo: AdvisoryRepository
 
-  beforeEach(() => {
-    db = createTestDatabase()
+  beforeEach(async () => {
+    db = await createTestDatabase()
     repo = new AdvisoryRepository(db)
   })
 

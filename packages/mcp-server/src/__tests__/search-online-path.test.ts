@@ -15,8 +15,8 @@ import * as LocalSkillSearchModule from '../tools/LocalSkillSearch.js'
 
 let onlineContext: ToolContext
 
-beforeAll(() => {
-  onlineContext = createTestContext()
+beforeAll(async () => {
+  onlineContext = await createTestContext()
 })
 
 afterAll(async () => {

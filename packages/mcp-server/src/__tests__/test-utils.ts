@@ -2,10 +2,11 @@
  * Test utilities for MCP server tests
  * @see SMI-792: Database initialization
  * @see SMI-4240: createApiMockContext for API-path coverage
+ * @see SMI-4756: async factory functions for WASM fallback in post-merge-verify CI
  */
 
 import type { ApiResponse, ApiSearchResult, ApiSkill } from '@skillsmith/core'
-import { createToolContext, closeToolContext, type ToolContext } from '../context.js'
+import { createToolContextAsync, closeToolContext, type ToolContext } from '../context.js'
 
 export type { ToolContext }
 
@@ -27,9 +28,10 @@ export async function disposeTestContext(context: ToolContext): Promise<void> {
 /**
  * Create a test context with in-memory database
  * SMI-1183: Uses offline mode to avoid API calls during tests
+ * SMI-4756: Async to use WASM fallback when better-sqlite3 native is unavailable
  */
-export function createTestContext(): ToolContext {
-  return createToolContext({
+export async function createTestContext(): Promise<ToolContext> {
+  return createToolContextAsync({
     dbPath: ':memory:',
     apiClientConfig: { offlineMode: true },
   })
@@ -111,9 +113,10 @@ export function seedTestData(context: ToolContext): void {
 
 /**
  * Create a seeded test context
+ * SMI-4756: Async to use WASM fallback when better-sqlite3 native is unavailable
  */
-export function createSeededTestContext(): ToolContext {
-  const context = createTestContext()
+export async function createSeededTestContext(): Promise<ToolContext> {
+  const context = await createTestContext()
   seedTestData(context)
   return context
 }
@@ -136,12 +139,12 @@ export type ApiSkillFixtureInput = Partial<ApiSkill> &
  * message matches the API client's own "Skill not found" shape so the
  * tool's fallback logic behaves identically to production.
  */
-export function createApiMockContext(opts: {
+export async function createApiMockContext(opts: {
   apiSkill: ApiSkillFixtureInput
   /** Category names joined by the edge function; defaults to `[]`. */
   categories?: string[]
-}): ToolContext {
-  const context = createToolContext({
+}): Promise<ToolContext> {
+  const context = await createToolContextAsync({
     dbPath: ':memory:',
     apiClientConfig: { offlineMode: false },
   })
