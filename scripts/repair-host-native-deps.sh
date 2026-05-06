@@ -55,13 +55,42 @@ probe_binding() {
   # for the native .node file fires on `new Database(...)`. Without the open
   # call, a host with a missing binding probes green and bypasses the rebuild.
   # Stderr swallowed — callers print their own diagnostics on failure.
-  node -e "const D=require('better-sqlite3'); new D(':memory:').close()" >/dev/null 2>&1
+  # Optional first arg: cwd to probe from (defaults to current dir). This lets
+  # the script probe workspace-local copies in packages/<pkg>/node_modules/.
+  local probe_cwd="${1:-$PWD}"
+  (cd "$probe_cwd" && node -e "const D=require('better-sqlite3'); new D(':memory:').close()" >/dev/null 2>&1)
+}
+
+# Workspace-local better-sqlite3 copies. SMI-4702 retro learning:
+# `npm rebuild` at the workspace root only rebuilds the root copy. Packages
+# that have their own `node_modules/better-sqlite3` (because better-sqlite3
+# is a direct dep, not hoisted) keep stale binaries until rebuilt
+# explicitly. mcp-server and enterprise hoist to root and don't need this.
+WORKSPACE_BSQLITE_DIRS=(
+  "packages/core/node_modules/better-sqlite3"
+  "packages/doc-retrieval-mcp/node_modules/better-sqlite3"
+)
+
+probe_workspace_bindings() {
+  # Returns 0 only if EVERY workspace-local copy that exists also loads.
+  # Missing dirs are not failures — that workspace doesn't have a local copy.
+  local d
+  for d in "${WORKSPACE_BSQLITE_DIRS[@]}"; do
+    if [[ -d "$d" ]]; then
+      if ! probe_binding "$d"; then
+        return 1
+      fi
+    fi
+  done
+  return 0
 }
 
 # Guard 2: cheap healthy-path probe. Should be the FIRST thing this script
 # does so that calls from repair-worktrees.sh stay sub-second on a healthy host.
-if probe_binding; then
-  printf '[skip] better-sqlite3 binding already loaded\n'
+# SMI-4702 retro: also probe workspace-local copies; the root probe being
+# green doesn't mean packages/<pkg>/node_modules/better-sqlite3 are healthy.
+if probe_binding && probe_workspace_bindings; then
+  printf '[skip] better-sqlite3 binding already loaded (root + workspace-local)\n'
   exit 0
 fi
 
@@ -130,4 +159,47 @@ if ! probe_binding; then
     ./scripts/repair-host-native-deps.sh"
 fi
 
-printf '[ok] better-sqlite3 binding loaded\n'
+printf '[ok] better-sqlite3 binding loaded (root)\n'
+
+# SMI-4702 retro: workspace-local copies. Rebuild any that fail to load.
+# This MUST run after the root rebuild because it builds against the same
+# Node ABI, and we already validated the toolchain works on the root copy.
+WORKSPACE_REBUILT=0
+WORKSPACE_FAILED=()
+for d in "${WORKSPACE_BSQLITE_DIRS[@]}"; do
+  if [[ ! -d "$d" ]]; then
+    continue
+  fi
+  if probe_binding "$d"; then
+    continue
+  fi
+  info "rebuilding workspace-local copy: $d"
+  WORKSPACE_LOG="$(mktemp -t skillsmith-rebuild-ws-bsqlite3.XXXXXX)"
+  if ! (cd "$d" && rm -f build/Release/better_sqlite3.node && npm run build-release) >"$WORKSPACE_LOG" 2>&1; then
+    printf '\n--- workspace rebuild output (tail, %s) ---\n' "$d"
+    tail -20 "$WORKSPACE_LOG"
+    printf '\n'
+    WORKSPACE_FAILED+=("$d")
+    rm -f "$WORKSPACE_LOG"
+    continue
+  fi
+  rm -f "$WORKSPACE_LOG"
+  if ! probe_binding "$d"; then
+    WORKSPACE_FAILED+=("$d")
+    continue
+  fi
+  WORKSPACE_REBUILT=$((WORKSPACE_REBUILT + 1))
+  printf '[ok] better-sqlite3 binding loaded (%s)\n' "$d"
+done
+
+if [[ ${#WORKSPACE_FAILED[@]} -gt 0 ]]; then
+  error "Workspace-local rebuild failed for: ${WORKSPACE_FAILED[*]}.
+
+  Manual recovery:
+    cd <failed-dir> && rm -rf build && npm run build-release
+  Then re-run this script."
+fi
+
+if [[ "$WORKSPACE_REBUILT" -gt 0 ]]; then
+  printf '[ok] %d workspace-local copy/copies rebuilt\n' "$WORKSPACE_REBUILT"
+fi
