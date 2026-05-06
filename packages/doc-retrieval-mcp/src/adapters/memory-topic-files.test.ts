@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync } from 'node:fs'
 import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
@@ -8,18 +8,46 @@ import type { AdapterContext } from '../types.js'
 import type { CorpusConfig } from '../config.js'
 
 /**
- * Memory-topic-files tests use a scratch `$HOME` so `resolveMemoryDir`
- * lands in a disposable directory. Each case rebuilds the mirror of the
+ * Memory-topic-files tests use a scratch tmp directory so `resolveMemoryDir`
+ * lands in a disposable location. Each case rebuilds the mirror of the
  * `~/.claude/projects/<cwd-encoded>/memory/` tree on disk and exercises
  * one adapter entrypoint (listFiles / chunk).
+ *
+ * SMI-4711: `homedir()` from `node:os` reads the OS passwd record and does
+ * NOT respect `process.env.HOME` mutations — so the naive `process.env.HOME =
+ * scratch` approach silently breaks under vitest `--pool=threads`, where
+ * parallel test files share the same Node process and `homedir()` always
+ * returns the real system home. The fix is a `vi.mock` factory that replaces
+ * `homedir` with a `vi.fn()` whose return value is set per-test in
+ * `beforeEach`, giving each test a fully isolated scratch root.
  */
+
+// SMI-4711: replace os.homedir with a controllable stub so resolveMemoryDir
+// receives the per-test scratch directory instead of the real system home.
+// Node's homedir() reads the OS passwd record and ignores process.env.HOME —
+// under --pool=threads parallel test files share a process so it always
+// returns the real home. vi.mock is hoisted before any module import, which
+// makes the stub visible to memory-topic-files.ts at the time it binds
+// its `homedir` local from 'node:os'.
+//
+// vi.hoisted() is also hoisted (runs before vi.mock factories) so the
+// `homedirMock` reference is alive when the factory closure captures it.
+const { homedirMock } = vi.hoisted(() => ({
+  homedirMock: vi.fn(() => ''),
+}))
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>()
+  // Default: delegate to the real homedir so module-level calls (e.g.
+  // userInfo() used by USER constant) are safe before beforeEach fires.
+  homedirMock.mockImplementation(actual.homedir)
+  return { ...actual, homedir: homedirMock }
+})
 
 const USER = userInfo().username
 const FAKE_CWD = '/fake/project/root'
 const ENCODED = '-fake-project-root'
 
 let scratch: string
-let origHome: string | undefined
 let origMemoryOverride: string | undefined
 let memoryDir: string
 
@@ -43,8 +71,9 @@ function makeCtx(mode: 'full' | 'incremental', lastRunAt: string | null = null):
 
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), 'memory-adapter-'))
-  origHome = process.env.HOME
-  process.env.HOME = scratch
+  // SMI-4711: point homedir() at the per-test scratch dir so resolveMemoryDir
+  // derives its path from a disposable location, not the real system home.
+  vi.mocked(homedirMock).mockReturnValue(scratch)
   // SMI-4687: clear SKILLSMITH_MEMORY_DIR_OVERRIDE so the cwd-derivation tests
   // see a clean env. Host shells sourcing .env may export it for the docker
   // bind-mount; without this isolation those exports leak into the cases that
@@ -56,8 +85,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  if (origHome === undefined) delete process.env.HOME
-  else process.env.HOME = origHome
+  vi.mocked(homedirMock).mockReset()
   if (origMemoryOverride === undefined) delete process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE
   else process.env.SKILLSMITH_MEMORY_DIR_OVERRIDE = origMemoryOverride
   rmSync(scratch, { recursive: true, force: true })
