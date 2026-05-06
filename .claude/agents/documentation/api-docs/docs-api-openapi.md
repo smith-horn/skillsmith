@@ -1,5 +1,6 @@
 ---
 name: "api-docs"
+description: "Expert agent for creating and maintaining OpenAPI/Swagger documentation"
 color: "indigo"
 type: "documentation"
 version: "1.0.0"
