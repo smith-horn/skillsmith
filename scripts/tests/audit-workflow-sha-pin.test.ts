@@ -4,10 +4,12 @@
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 // @ts-expect-error - .mjs helper has no typings
 import { findUnpinnedActionUses } from '../audit-workflow-sha-pin-helpers.mjs'
 
+const __dirname = dirname(fileURLToPath(import.meta.url))
 const FIXTURE_DIR = join(__dirname, 'fixtures', 'workflow-sha-pin')
 const read = (name: string) => readFileSync(join(FIXTURE_DIR, name), 'utf8')
 

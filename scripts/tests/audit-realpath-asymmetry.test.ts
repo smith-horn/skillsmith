@@ -4,10 +4,12 @@
  */
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 // @ts-expect-error - .mjs helper has no typings
 import { findRealpathAsymmetry } from '../audit-realpath-asymmetry-helpers.mjs'
 
+const __dirname = dirname(fileURLToPath(import.meta.url))
 const FIXTURE_DIR = join(__dirname, 'fixtures', 'realpath-asymmetry')
 const read = (name: string) => readFileSync(join(FIXTURE_DIR, name), 'utf8')
 
@@ -53,6 +55,31 @@ describe('findRealpathAsymmetry', () => {
       const content = read('should-pass-suppression-comment.ts.fixture')
       const { violations } = findRealpathAsymmetry(content, 'fixture')
       expect(violations).toEqual([])
+    })
+
+    it('passes when suppression comment sits above a multi-line if (lookback 4)', () => {
+      const content = read('should-pass-suppression-multiline-if.ts.fixture')
+      const { violations } = findRealpathAsymmetry(content, 'fixture')
+      expect(violations).toEqual([])
+    })
+  })
+
+  describe('operator labeling', () => {
+    it('reports the actual operator (=== vs !==) in violations', () => {
+      const content = `
+import { promises as fs } from 'fs'
+import { resolve } from 'path'
+async function f(a: string, b: string) {
+  const real = await fs.realpath(a)
+  const raw = resolve(b)
+  if (real !== raw) return false
+  return true
+}
+`
+      const { violations } = findRealpathAsymmetry(content, 'fixture')
+      const eqViolation = violations.find((v) => v.op === '!==' || v.op === '===')
+      expect(eqViolation).toBeDefined()
+      expect(eqViolation?.op).toBe('!==')
     })
   })
 

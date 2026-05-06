@@ -1,0 +1,18 @@
+// Multi-line `if (\n ... \n)` with the suppression tag two lines above the
+// comparison. Verifies SUPPRESS_LOOKBACK (4) covers the canonical shape.
+// Expected: should-pass fixture — zero violations.
+
+import { promises as fs } from 'fs'
+import { resolve, sep } from 'path'
+
+async function intentionalAsymmetryMultiline(p: string, q: string) {
+  const a = await fs.realpath(p)
+  const b = resolve(q)
+  // audit-allow:realpath-asymmetry — caller documents virtual prefix
+  if (
+    a.startsWith(b + sep)
+  ) {
+    return true
+  }
+  return false
+}

@@ -30,6 +30,13 @@
  *     `(await fs.realpath(p)).startsWith(other)`) are not detected.
  *   - Reassignment chains beyond the immediate `X = await fs.realpath(...)` form.
  *
+ * Accepted false-positive: variable-name collisions across function scopes in
+ * the same file (R_VARS / N_VARS are file-scope sets, not function-scope).
+ * If `function a() { const x = path.resolve(...) }` and an unrelated
+ * `function b() { const real = await fs.realpath(...); if (real.startsWith(x)) }`
+ * coexist with `x` referring to different things, the helper will flag it.
+ * Suppress with the per-line comment.
+ *
  * Future contributors who hit a mis-classification: add
  *   `// audit-allow:realpath-asymmetry — <reason>`
  * on the line above the comparison. If the case is genuinely novel, extend
@@ -49,12 +56,18 @@ const RAW_PATH_INIT_RE =
 
 const COMPARISON_RES = [
   // X.startsWith(Y) or X.startsWith(Y + ...)
-  { re: /(\w+)\.startsWith\(\s*(\w+)/g, op: 'startsWith' },
+  { re: /(\w+)\.startsWith\(\s*(\w+)/g, opLabel: () => 'startsWith' },
   // X.endsWith(Y...)
-  { re: /(\w+)\.endsWith\(\s*(\w+)/g, op: 'endsWith' },
-  // X === Y or X !== Y (only bare-identifier on both sides)
-  { re: /\b(\w+)\s*(?:===|!==)\s*(\w+)\b/g, op: '===' },
+  { re: /(\w+)\.endsWith\(\s*(\w+)/g, opLabel: () => 'endsWith' },
+  // X === Y or X !== Y (only bare-identifier on both sides) — capture the
+  // actual operator so the violation message reflects what the developer wrote.
+  { re: /\b(\w+)\s*(===|!==)\s*(\w+)\b/g, opLabel: (m) => m[2] },
 ]
+
+// Suppression looks back this many lines for the audit-allow tag. 4 covers
+// the common multi-line `if (\n  X.startsWith(Y)\n)` shape where the tag
+// sits above the `if` statement.
+const SUPPRESS_LOOKBACK = 4
 
 const SUPPRESS_TAG = 'audit-allow:realpath-asymmetry'
 
@@ -92,16 +105,25 @@ export function findRealpathAsymmetry(content, filePath) {
   const violations = []
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    const prev = i > 0 ? lines[i - 1] : ''
-    if (line.includes(SUPPRESS_TAG) || prev.includes(SUPPRESS_TAG)) continue
+    // Suppression: look back up to SUPPRESS_LOOKBACK lines for the tag.
+    let suppressed = false
+    for (let j = i; j >= Math.max(0, i - SUPPRESS_LOOKBACK); j--) {
+      if (lines[j].includes(SUPPRESS_TAG)) {
+        suppressed = true
+        break
+      }
+    }
+    if (suppressed) continue
 
-    for (const { re, op } of COMPARISON_RES) {
+    for (const { re, opLabel } of COMPARISON_RES) {
       // Reset regex global state by recreating per line scan
       const localRe = new RegExp(re.source, re.flags)
       let m
       while ((m = localRe.exec(line)) !== null) {
+        // Last capture group is the right operand for both startsWith/endsWith
+        // (groups 1,2) and equality (groups 1,2,3 with op in m[2]).
         const a = m[1]
-        const b = m[2]
+        const b = m[m.length - 1]
         if (a === b) continue
         const aIsR = R_VARS.has(a)
         const bIsR = R_VARS.has(b)
@@ -112,7 +134,7 @@ export function findRealpathAsymmetry(content, filePath) {
             line: i + 1,
             lhs: a,
             rhs: b,
-            op,
+            op: opLabel(m),
           })
           break
         }
