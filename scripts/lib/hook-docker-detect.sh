@@ -143,23 +143,39 @@ fi
 # macOS + worktree: virtiofs cannot traverse relative symlinks (SMI-4381).
 # Always fall back here, regardless of Docker availability — running in
 # Docker would silently fail with wrong dep versions.
+#
+# SMI-4767 escape hatch: SKILLSMITH_PRE_PUSH_DOCKER=1 forces Docker even on
+# macOS worktrees, bypassing the SMI-4381 fallback. Required because SMI-4693
+# only fixed test-fixture env leak; the parent vitest process still inherits
+# parent-worktree GIT_* env. The proper fix is tracked in SMI-4769 (env scrub
+# of pre-push-coverage-check.sh).
 if [ "$IS_WORKTREE" = "1" ] && [ "$(uname)" = "Darwin" ]; then
-    NEEDS_FALLBACK=1
-    printf "${HOOK_DETECT_YELLOW}📂 Worktree on macOS — falling back to host execution (SMI-4381 / SMI-4681)${HOOK_DETECT_NC}\n"
-    printf "${HOOK_DETECT_YELLOW}   Per-package node_modules symlinks are not traversable in${HOOK_DETECT_NC}\n"
-    printf "${HOOK_DETECT_YELLOW}   Docker Desktop's virtiofs. Host resolution works correctly.${HOOK_DETECT_NC}\n"
+    if [ "${SKILLSMITH_PRE_PUSH_DOCKER:-0}" = "1" ]; then
+        if [ "$DOCKER_AVAILABLE" = "0" ]; then
+            printf "${HOOK_DETECT_RED}❌ SKILLSMITH_PRE_PUSH_DOCKER=1 set, but Docker is not running.${HOOK_DETECT_NC}\n" >&2
+            printf "${HOOK_DETECT_YELLOW}   Start the dev container: docker compose --profile dev up -d${HOOK_DETECT_NC}\n" >&2
+            printf "${HOOK_DETECT_YELLOW}   Or unset the env var to fall back to host (will hit SMI-4767 leak).${HOOK_DETECT_NC}\n" >&2
+            exit 1
+        fi
+        printf "${HOOK_DETECT_BLUE}🐳 SKILLSMITH_PRE_PUSH_DOCKER=1 — routing through Docker (SMI-4767 opt-in)${HOOK_DETECT_NC}\n"
+    else
+        NEEDS_FALLBACK=1
+        printf "${HOOK_DETECT_YELLOW}📂 Worktree on macOS — falling back to host execution (SMI-4381 / SMI-4681)${HOOK_DETECT_NC}\n"
+        printf "${HOOK_DETECT_YELLOW}   Per-package node_modules symlinks are not traversable in${HOOK_DETECT_NC}\n"
+        printf "${HOOK_DETECT_YELLOW}   Docker Desktop's virtiofs. Host resolution works correctly.${HOOK_DETECT_NC}\n"
 
-    # SMI-4681 change #15: native-binding preflight on host fallback.
-    # If host node_modules / per-package symlinks were never set up (fresh
-    # clone without `npm install --ignore-scripts` or `repair-worktrees.sh`),
-    # surface the repair path BEFORE format/coverage produces a cryptic
-    # Node module-resolution error. Symlink OR real dir both qualify;
-    # symlink target need not be eagerly resolved here.
-    if [ ! -e "node_modules" ]; then
-        printf "${HOOK_DETECT_RED}❌ Host node_modules missing in worktree.${HOOK_DETECT_NC}\n"
-        printf "${HOOK_DETECT_YELLOW}   Run: ./scripts/repair-worktrees.sh${HOOK_DETECT_NC}\n"
-        printf "${HOOK_DETECT_YELLOW}   Bypass: git push --no-verify${HOOK_DETECT_NC}\n"
-        exit 1
+        # SMI-4681 change #15: native-binding preflight on host fallback.
+        # If host node_modules / per-package symlinks were never set up (fresh
+        # clone without `npm install --ignore-scripts` or `repair-worktrees.sh`),
+        # surface the repair path BEFORE format/coverage produces a cryptic
+        # Node module-resolution error. Symlink OR real dir both qualify;
+        # symlink target need not be eagerly resolved here.
+        if [ ! -e "node_modules" ]; then
+            printf "${HOOK_DETECT_RED}❌ Host node_modules missing in worktree.${HOOK_DETECT_NC}\n"
+            printf "${HOOK_DETECT_YELLOW}   Run: ./scripts/repair-worktrees.sh${HOOK_DETECT_NC}\n"
+            printf "${HOOK_DETECT_YELLOW}   Bypass: git push --no-verify${HOOK_DETECT_NC}\n"
+            exit 1
+        fi
     fi
 fi
 

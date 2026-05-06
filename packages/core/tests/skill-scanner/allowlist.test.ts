@@ -381,14 +381,18 @@ describe('data/skills-security-allowlist.json (ship-it sanity)', () => {
   // SMI-4558 (2026-04-30): skill-protocol-rs added — Rust crate whose repo
   // description advertises a .env loader; bare-keyword sensitive_path regex
   // false-positives until Wave 2 tightens the check.
+  // SMI-4765 (2026-05-06): prompt-injection-auditor added — defensive auditor
+  // skill whose SKILL.md enumerates the jailbreak techniques it detects;
+  // bare /jailbreak/i pattern false-positives until Wave 2 tightens.
   it('is parseable and every entry expires 90 days after review', () => {
     const filePath = path.resolve(__dirname, '../../../../data/skills-security-allowlist.json')
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
     const parsed = parseAllowlistFile(raw)
-    expect(parsed.allowlist.length).toBe(5)
+    expect(parsed.allowlist.length).toBe(6)
     const ids = parsed.allowlist.map((e) => e.skillId).sort()
     expect(ids).toEqual(
       [
+        'github/RENJI04/prompt-injection-auditor',
         'github/RobinGase/skill-protocol-rs',
         'github/StrategicPromptArchitect-AI/MalPromptSentinel-CC-Skill',
         'github/kcmadden/claude-code-1password-skill',
