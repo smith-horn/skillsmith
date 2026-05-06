@@ -47,6 +47,15 @@
       "reviewedBy": "ryansmith108",
       "reviewedAt": "2026-04-30",
       "expiresAt": "2026-07-30"
+    },
+    {
+      "skillId": "github/RENJI04/prompt-injection-auditor",
+      "findingType": "jailbreak",
+      "messagePattern": "jailbreak",
+      "reason": "Defensive prompt-injection auditor skill whose SKILL.md enumerates the adversarial techniques it detects ('jailbreak, role manipulation, ...'). Bare /jailbreak/i pattern triggered CRITICAL on a security-tool describing its own subject matter — same class as MalPromptSentinel and claude-security-research-skill (allowlisted under SMI-4558). Triaged 2026-05-06 under SMI-4765 — Wave 2 will replace with contextual patterns. Closes GH #894.",
+      "reviewedBy": "ryansmith108",
+      "reviewedAt": "2026-05-06",
+      "expiresAt": "2026-08-06"
     }
   ]
 }
