@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { createDatabase } from '@skillsmith/core'
+import { createDatabaseAsync, initializeSchema } from '@skillsmith/core'
 import type { Database } from '@skillsmith/core'
 import { createRealComplianceService } from './compliance-tools.service.js'
 import type { ComplianceService } from './compliance-tools.js'
@@ -67,13 +67,14 @@ describe('createRealComplianceService', () => {
   let db: Database
   let svc: ComplianceService
 
-  beforeEach(() => {
-    db = createDatabase(':memory:')
+  beforeEach(async () => {
+    db = await createDatabaseAsync(':memory:')
+    initializeSchema(db)
     svc = createRealComplianceService(db)
   })
 
   afterEach(() => {
-    db.close()
+    if (db) db.close()
   })
 
   describe('gatherData', () => {

@@ -17,8 +17,8 @@ import * as LocalSkillSearchModule from '../tools/LocalSkillSearch.js'
 
 let context: ToolContext
 
-beforeAll(() => {
-  context = createSeededTestContext()
+beforeAll(async () => {
+  context = await createSeededTestContext()
 })
 
 afterAll(async () => {
@@ -129,8 +129,8 @@ describe('Search Tool', () => {
   describe('offline/fallback path tracking', () => {
     let offlineContext: ToolContext
 
-    beforeAll(() => {
-      offlineContext = createTestContext()
+    beforeAll(async () => {
+      offlineContext = await createTestContext()
     })
 
     afterAll(async () => {
@@ -171,8 +171,8 @@ describe('Search Tool', () => {
 describe('Search Tool branch coverage', () => {
   let branchContext: ToolContext
 
-  beforeAll(() => {
-    branchContext = createSeededTestContext()
+  beforeAll(async () => {
+    branchContext = await createSeededTestContext()
   })
 
   afterAll(async () => {

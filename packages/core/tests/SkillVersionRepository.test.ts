@@ -12,8 +12,8 @@ describe('SkillVersionRepository', () => {
   let db: Database
   let repo: SkillVersionRepository
 
-  beforeEach(() => {
-    db = createTestDatabase()
+  beforeEach(async () => {
+    db = await createTestDatabase()
     repo = new SkillVersionRepository(db)
   })
 

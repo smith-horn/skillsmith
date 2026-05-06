@@ -21,8 +21,8 @@ import { createDatabase } from '../../src/db/schema.js'
 let db: Database
 let repo: SkillDependencyRepository
 
-beforeEach(() => {
-  db = createTestDatabase()
+beforeEach(async () => {
+  db = await createTestDatabase()
   repo = new SkillDependencyRepository(db)
 })
 

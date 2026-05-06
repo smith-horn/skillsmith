@@ -14,8 +14,8 @@ import { CoInstallRepository } from '../../src/repositories/CoInstallRepository.
 let db: Database
 let repo: CoInstallRepository
 
-beforeEach(() => {
-  db = createTestDatabase()
+beforeEach(async () => {
+  db = await createTestDatabase()
   repo = new CoInstallRepository(db)
 
   // Insert fixture skills so JOIN works in getTopCoInstalls

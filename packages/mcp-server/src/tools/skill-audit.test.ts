@@ -39,8 +39,8 @@ describe('executeSkillAudit', () => {
   let db: DatabaseType
   let advisoryRepo: AdvisoryRepository
 
-  beforeEach(() => {
-    db = createTestDatabase()
+  beforeEach(async () => {
+    db = await createTestDatabase()
     advisoryRepo = new AdvisoryRepository(db)
   })
 
