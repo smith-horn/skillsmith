@@ -109,11 +109,19 @@ jobs:
           # SMOKE_SKILLS_API_KEY: sk_live_* key for the dedicated staging smoke account.
           # SMOKE_SKILLS_EMAIL / SMOKE_SKILLS_PASSWORD: same account, used to sign in
           # and query user_api_usage via RLS-gated REST to assert counter increment.
-          # Provisioning: see docs/internal/implementation/smi-4755* for the SQL.
+          # SMOKE_SKILLS_SUPABASE_URL / SMOKE_SKILLS_SUPABASE_ANON_KEY: optional
+          # routing override so the three skills checks target staging (where
+          # the smoke account lives) while the rest of the harness stays on
+          # SUPABASE_URL (prod). Edge functions auto-deploy to both refs from
+          # main, so smoking against staging exercises the same code without
+          # polluting prod analytics or burning prod rate-limit budget.
+          # Provisioning: see .claude/development/smoke-prod-guide.md § Manual setup steps.
           # When unset, checks skip gracefully (report_fail + return 1).
           SMOKE_SKILLS_API_KEY: ${{ secrets.SMOKE_SKILLS_API_KEY }}
           SMOKE_SKILLS_EMAIL: ${{ secrets.SMOKE_SKILLS_EMAIL }}
           SMOKE_SKILLS_PASSWORD: ${{ secrets.SMOKE_SKILLS_PASSWORD }}
+          SMOKE_SKILLS_SUPABASE_URL: ${{ secrets.SMOKE_SKILLS_SUPABASE_URL }}
+          SMOKE_SKILLS_SUPABASE_ANON_KEY: ${{ secrets.SMOKE_SKILLS_SUPABASE_ANON_KEY }}
         run: |
           set -euo pipefail
           REPORT="$RUNNER_TEMP/smoke-report.json"

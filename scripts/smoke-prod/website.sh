@@ -270,6 +270,16 @@ _require_skills_smoke_creds() {
   return 0
 }
 
+# SMI-4755: optional staging-routing for skills usage-counter checks.
+# The smoke harness signs in to the project where the smoke account lives.
+# When SMOKE_SKILLS_SUPABASE_URL / SMOKE_SKILLS_SUPABASE_ANON_KEY are set,
+# the three check_skills_* functions target staging (ovhcifugwqnzoebwfuku);
+# unset, they fall back to the prod SMOKE_SUPABASE_URL / SUPABASE_ANON_KEY.
+# Edge functions auto-deploy to both prod and staging from main, so smoking
+# against staging exercises the same code path without polluting prod.
+SMOKE_SKILLS_URL="${SMOKE_SKILLS_SUPABASE_URL:-$SMOKE_SUPABASE_URL}"
+SMOKE_SKILLS_ANON_KEY="${SMOKE_SKILLS_SUPABASE_ANON_KEY:-${SUPABASE_ANON_KEY:-}}"
+
 # JWT cache: module-level variable so all three usage-counter checks reuse
 # one sign-in call (avoids 3x sign-in overhead when all three surfaces
 # trigger together, e.g. on _shared/auth-middleware.ts or usage-counter.ts
@@ -286,8 +296,8 @@ _skills_sign_in() {
   fi
   local resp jwt
   resp=$(curl --silent --max-time "$SMOKE_HTTP_TIMEOUT" \
-    -X POST "${SMOKE_SUPABASE_URL}/auth/v1/token?grant_type=password" \
-    -H "apikey: ${SUPABASE_ANON_KEY:-}" \
+    -X POST "${SMOKE_SKILLS_URL}/auth/v1/token?grant_type=password" \
+    -H "apikey: ${SMOKE_SKILLS_ANON_KEY}" \
     -H "Content-Type: application/json" \
     -d "{\"email\":\"${SMOKE_SKILLS_EMAIL}\",\"password\":\"${SMOKE_SKILLS_PASSWORD}\"}" 2>/dev/null) || return 1
   jwt=$(printf '%s' "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null) || return 1
@@ -315,8 +325,8 @@ _skills_usage_count() {
   local hour_start
   hour_start=$(date -u +%Y-%m-%dT%H:00:00Z)
   resp=$(curl --silent --max-time "$SMOKE_HTTP_TIMEOUT" \
-    "${SMOKE_SUPABASE_URL}/rest/v1/user_api_usage?select=${col}&hour_bucket=gte.${hour_start}" \
-    -H "apikey: ${SUPABASE_ANON_KEY:-}" \
+    "${SMOKE_SKILLS_URL}/rest/v1/user_api_usage?select=${col}&hour_bucket=gte.${hour_start}" \
+    -H "apikey: ${SMOKE_SKILLS_ANON_KEY}" \
     -H "Authorization: Bearer ${jwt}" \
     -H "Accept: application/json" 2>/dev/null) || { printf '%s' "-1"; return 1; }
   count=$(printf '%s' "$resp" | python3 -c "
@@ -341,7 +351,7 @@ check_skills_search_usage_counter() {
     return 1
   }
 
-  local url="${SMOKE_SUPABASE_URL}/functions/v1/skills-search?category=testing&limit=1"
+  local url="${SMOKE_SKILLS_URL}/functions/v1/skills-search?category=testing&limit=1"
   local jwt before after expected_after t0 t1 ms status
 
   jwt=$(_skills_sign_in) || {
@@ -394,7 +404,7 @@ check_skills_get_usage_counter() {
   # runs, the counter increments, and the function returns 404 (skill not
   # found). This is intentional: we want to verify the counter path runs
   # on any authenticated request, not just successful lookups.
-  local url="${SMOKE_SUPABASE_URL}/functions/v1/skills-get?id=skillsmith%2Fsmoke-test-probe"
+  local url="${SMOKE_SKILLS_URL}/functions/v1/skills-get?id=skillsmith%2Fsmoke-test-probe"
   local jwt before after expected_after t0 t1 ms status
 
   jwt=$(_skills_sign_in) || {
@@ -447,7 +457,7 @@ check_skills_recommend_usage_counter() {
     return 1
   }
 
-  local url="${SMOKE_SUPABASE_URL}/functions/v1/skills-recommend"
+  local url="${SMOKE_SKILLS_URL}/functions/v1/skills-recommend"
   local jwt before after expected_after t0 t1 ms status
 
   jwt=$(_skills_sign_in) || {

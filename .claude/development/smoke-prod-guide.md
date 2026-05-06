@@ -124,15 +124,25 @@ The workflow needs the following GitHub Actions secrets:
 - `SUPABASE_SERVICE_ROLE_KEY` — used by the `alert` job ONLY (separate
   job for secret scoping; service-role key never enters the smoke job).
 
-**SMI-4755 — skills API usage-counter checks** require three additional
-secrets (provision once against staging, `ovhcifugwqnzoebwfuku`):
+**SMI-4755 — skills API usage-counter checks** require five additional
+secrets. The smoke account is provisioned in **staging** (`ovhcifugwqnzoebwfuku`)
+and the three skills checks route to staging via two routing-override secrets;
+the rest of the harness stays on prod `SUPABASE_URL`. Edge functions auto-deploy
+to both refs from main, so smoking against staging exercises the same code
+path without polluting prod analytics or burning prod rate-limit budget.
 
-- `SMOKE_SKILLS_API_KEY` — a `sk_live_*` key for a dedicated staging smoke
-  account. The account must be Individual-tier or higher so it has a
-  quota allocation and the auth-middleware resolves its `userId`.
-- `SMOKE_SKILLS_EMAIL` — email address of the same staging smoke account.
-  Used to sign in via GoTrue and obtain a JWT for querying `user_api_usage`.
+- `SMOKE_SKILLS_API_KEY` — a `sk_live_*` key for the staging smoke account.
+  Community tier or higher works (community = 1000 calls/month, plenty for
+  smoke). The account must exist in the staging GoTrue so the auth-middleware
+  resolves its `userId`.
+- `SMOKE_SKILLS_EMAIL` — email of the same staging account. Used to sign in
+  via GoTrue and obtain a JWT for the RLS-gated `user_api_usage` query.
 - `SMOKE_SKILLS_PASSWORD` — password for the above account.
+- `SMOKE_SKILLS_SUPABASE_URL` — staging URL, e.g. `https://ovhcifugwqnzoebwfuku.supabase.co`.
+  Routes the three `check_skills_*_usage_counter` calls (sign-in, REST query,
+  function invocation) to staging. When unset, falls back to `SUPABASE_URL`
+  (prod) — and the checks will fail because the account is staging-only.
+- `SMOKE_SKILLS_SUPABASE_ANON_KEY` — staging anon key. Pairs with the URL.
 
 To provision the staging account and key, run (staging only — never prod):
 
