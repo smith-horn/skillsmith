@@ -1,0 +1,13 @@
+// Synthetic SMI-4688 pre-PR-#920 snippet — reproduces the realpath-asymmetry
+// from packages/mcp-server/src/tools/skill-pack-audit.ts before commit ec9e8ca3.
+// Expected: should-flag fixture — Check 41 emits one violation on line 4.
+
+import { promises as fs } from 'fs'
+import { resolve, sep } from 'path'
+
+async function audit(input: { pack_path: string; skillMdPath: string }) {
+  const packPath = resolve(input.pack_path)
+  const resolvedMdPath = await fs.realpath(input.skillMdPath)
+  if (!resolvedMdPath.startsWith(packPath + sep)) return null
+  return resolvedMdPath
+}

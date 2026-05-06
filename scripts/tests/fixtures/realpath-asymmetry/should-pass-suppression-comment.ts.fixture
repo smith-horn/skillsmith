@@ -1,0 +1,13 @@
+// A real asymmetry annotated with the suppression comment on the line above.
+// Expected: should-pass fixture — zero violations (suppression honored).
+
+import { promises as fs } from 'fs'
+import { resolve, sep } from 'path'
+
+async function intentionalAsymmetry(p: string, q: string) {
+  const a = await fs.realpath(p)
+  const b = resolve(q)
+  // audit-allow:realpath-asymmetry — caller documented; b is a virtual prefix that should never be a real path
+  if (a.startsWith(b + sep)) return true
+  return false
+}
