@@ -262,6 +262,55 @@ describe('SMI-3102: rebase-worktree.sh', () => {
     expect(headAfter).toBe(headBefore)
   })
 
+  // SMI-4766: --dry-run honored regardless of position relative to positional args.
+  // Pre-fix, `case ... *) break ;;` exited the flag loop on the first positional,
+  // silently dropping any flag that appeared after it.
+  it('honors --dry-run when passed AFTER positional args (SMI-4766)', () => {
+    const tempRoot = makeTempDir('rw-test6b')
+    tempDirs.push(tempRoot)
+    const { cloneDir, worktreeDir } = setupRepoWithWorktree(tempRoot)
+
+    git(cloneDir, 'checkout main')
+    sh(`echo "after-positional" > "${join(cloneDir, 'after.txt')}"`)
+    git(cloneDir, 'add after.txt')
+    git(cloneDir, 'commit -m "advance for SMI-4766 after-positional"')
+    git(cloneDir, 'push origin main')
+    git(cloneDir, 'checkout -')
+
+    const headBefore = git(worktreeDir, 'rev-parse HEAD')
+
+    const result = runScript(`"${worktreeDir}" origin/main --dry-run`)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('dry-run')
+    expect(result.stdout).toContain('Dry run complete')
+
+    const headAfter = git(worktreeDir, 'rev-parse HEAD')
+    expect(headAfter).toBe(headBefore)
+  })
+
+  it('honors --dry-run when interspersed with positional args (SMI-4766)', () => {
+    const tempRoot = makeTempDir('rw-test6c')
+    tempDirs.push(tempRoot)
+    const { cloneDir, worktreeDir } = setupRepoWithWorktree(tempRoot)
+
+    git(cloneDir, 'checkout main')
+    sh(`echo "interspersed" > "${join(cloneDir, 'inter.txt')}"`)
+    git(cloneDir, 'add inter.txt')
+    git(cloneDir, 'commit -m "advance for SMI-4766 interspersed"')
+    git(cloneDir, 'push origin main')
+    git(cloneDir, 'checkout -')
+
+    const headBefore = git(worktreeDir, 'rev-parse HEAD')
+
+    const result = runScript(`"${worktreeDir}" --dry-run origin/main`)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('dry-run')
+    expect(result.stdout).toContain('Dry run complete')
+
+    const headAfter = git(worktreeDir, 'rev-parse HEAD')
+    expect(headAfter).toBe(headBefore)
+  })
+
   // Scenario 7: --no-submodule
   it('skips submodule steps when --no-submodule is passed', () => {
     const tempRoot = makeTempDir('rw-test7')
