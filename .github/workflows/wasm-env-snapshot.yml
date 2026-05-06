@@ -32,7 +32,6 @@ jobs:
     name: Capture WASM env snapshot
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: []
 
     steps:
       - name: Checkout
