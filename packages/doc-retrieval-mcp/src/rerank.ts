@@ -49,8 +49,8 @@ const SUPERSESSION_HALVE_FACTOR = 0.5
 // were outranked by longer impl docs covering the same topic. Boost factor
 // rewrites that imbalance by scaling similarity before the existing penalties.
 // Defaults are starting values; sweep via env to refine without code change.
-const DEFAULT_BOOST_MEMORY = 1.5
-const DEFAULT_DAMPEN_PROCESS = 0.85
+export const DEFAULT_BOOST_MEMORY = 1.5 // eval-harness-contract: rename requires updating eval/ablation-runner.ts import
+export const DEFAULT_DAMPEN_PROCESS = 0.85 // eval-harness-contract: rename requires updating eval/ablation-runner.ts import
 const BOOST_MIN = 0.1
 const BOOST_MAX = 5.0
 const MEMORY_CLASSES = new Set(['feedback', 'project'])
