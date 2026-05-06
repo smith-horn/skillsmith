@@ -23,10 +23,65 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { GoldEntry, RunResult, MetricsReport } from './metrics.js'
 import { computeMetrics } from './metrics.js'
+import { resolveRepoPath } from '../src/config.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const GOLD_SET_PATH = join(__dirname, 'gold-set.json')
 const BASELINE_PATH = join(__dirname, 'baseline.json')
+
+// ---------------------------------------------------------------------------
+// Index-state helpers (SMI-4763)
+//
+// `resolveIndexStateFile` mirrors src/config.ts repoRoot()/resolveRepoPath()
+// so the GAP 1 startup check and the corpus-stats refresh both consult the
+// SAME path the indexer writes to: `$SKILLSMITH_REPO_ROOT/.ruvector/.index-state.json`
+// (or `$CWD/.ruvector/.index-state.json` when the env var is unset).
+//
+// The previous `join(__dirname, '..', '.ruvector', '.index-state.json')` resolved
+// inside the package (`packages/doc-retrieval-mcp/.ruvector/...`), which never
+// exists in practice — the GAP 1 check silently passed and `updateBaseline()`
+// carried forward stale corpus stats forever. See SMI-4763 issue body.
+// ---------------------------------------------------------------------------
+
+export function resolveIndexStateFile(): string {
+  return resolveRepoPath('.ruvector/.index-state.json')
+}
+
+/**
+ * Read corpus stats (filesScanned, chunksUpserted) from the indexer's
+ * `.index-state.json`. Fails soft: missing or malformed files return zeros
+ * and emit a warning to stderr — a degraded baseline is preferable to a
+ * failed baseline write, since baseline.json is the only durable record of
+ * the metric run that just completed.
+ */
+export function readCorpusStatsFromIndex(stateFile: string): {
+  filesScanned: number
+  chunksUpserted: number
+} {
+  if (!existsSync(stateFile)) {
+    process.stderr.write(
+      `Warning: index-state file not found at ${stateFile}; baseline corpus stats will be 0/0.\n`
+    )
+    return { filesScanned: 0, chunksUpserted: 0 }
+  }
+  let chunkCountByFile: Record<string, number>
+  try {
+    const raw = readFileSync(stateFile, 'utf8')
+    const parsed = JSON.parse(raw) as { chunkCountByFile?: Record<string, number> }
+    chunkCountByFile = parsed.chunkCountByFile ?? {}
+  } catch (err: unknown) {
+    process.stderr.write(
+      `Warning: failed to parse index-state file at ${stateFile} (${String(err)}); baseline corpus stats will be 0/0.\n`
+    )
+    return { filesScanned: 0, chunksUpserted: 0 }
+  }
+  const filesScanned = Object.keys(chunkCountByFile).length
+  const chunksUpserted = Object.values(chunkCountByFile).reduce(
+    (sum, n) => sum + (typeof n === 'number' ? n : 0),
+    0
+  )
+  return { filesScanned, chunksUpserted }
+}
 
 // ---------------------------------------------------------------------------
 // CLI flag parsing
@@ -87,7 +142,10 @@ function buildMockResults(entries: GoldEntry[]): RunResult[] {
 
 async function buildRealResults(entries: GoldEntry[]): Promise<RunResult[]> {
   // GAP 1 startup check: verify memory-topic-files adapter is indexed.
-  const stateFile = join(__dirname, '..', '.ruvector', '.index-state.json')
+  // SMI-4763: resolve via repoRoot() so we consult the real .index-state.json
+  // the indexer writes to (`$REPO_ROOT/.ruvector/...`), not the
+  // package-local stub path that never exists in practice.
+  const stateFile = resolveIndexStateFile()
   if (existsSync(stateFile)) {
     const stateRaw = readFileSync(stateFile, 'utf8')
     const state = JSON.parse(stateRaw) as { chunkCountByFile?: Record<string, number> }
@@ -139,7 +197,7 @@ async function buildRealResults(entries: GoldEntry[]): Promise<RunResult[]> {
 // check-baseline-drift.ts. `prior` and `current` are recall@5 scalars; the
 // full metric set lives under `metrics`. Promotion: each real-mode run
 // promotes existing.current → prior and writes the new recall@5 as current.
-interface BaselineFile {
+export interface BaselineFile {
   prior: number | null
   current: number | null
   generated: string
@@ -166,23 +224,31 @@ function readKnobsFromEnv(): BaselineFile['knobs'] {
   }
 }
 
-function updateBaseline(report: MetricsReport): void {
+export function updateBaseline(
+  report: MetricsReport,
+  opts: { baselinePath?: string; stateFile?: string } = {}
+): void {
+  const baselinePath = opts.baselinePath ?? BASELINE_PATH
+  const stateFile = opts.stateFile ?? resolveIndexStateFile()
   let existingCurrent: number | null = null
-  let existingCorpus: BaselineFile['corpus'] = { filesScanned: 0, chunksUpserted: 0 }
-  if (existsSync(BASELINE_PATH)) {
+  if (existsSync(baselinePath)) {
     try {
-      const existing = JSON.parse(readFileSync(BASELINE_PATH, 'utf8')) as Partial<BaselineFile>
+      const existing = JSON.parse(readFileSync(baselinePath, 'utf8')) as Partial<BaselineFile>
       if (typeof existing.current === 'number') existingCurrent = existing.current
-      if (existing.corpus) existingCorpus = existing.corpus
     } catch {
       // malformed baseline — start fresh
     }
   }
+  // SMI-4763: recompute corpus stats from the live index-state file on every
+  // run. The previous implementation carried `existingCorpus` forward from the
+  // prior baseline.json, so once the value was wrong it stayed wrong even as
+  // the index grew (e.g., 1325 files → 1500 files would still report 1325).
+  const freshCorpus = readCorpusStatsFromIndex(stateFile)
   const updated: BaselineFile = {
     prior: existingCurrent,
     current: report.overall.recallAt5,
     generated: new Date().toISOString().split('T')[0],
-    corpus: existingCorpus,
+    corpus: freshCorpus,
     knobs: readKnobsFromEnv(),
     metrics: {
       recallAt5: report.overall.recallAt5,
@@ -191,7 +257,7 @@ function updateBaseline(report: MetricsReport): void {
       ndcgAt10: report.overall.ndcgAt10,
     },
   }
-  writeFileSync(BASELINE_PATH, JSON.stringify(updated, null, 2) + '\n', 'utf8')
+  writeFileSync(baselinePath, JSON.stringify(updated, null, 2) + '\n', 'utf8')
 }
 
 // ---------------------------------------------------------------------------
@@ -323,7 +389,17 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
-  process.stderr.write(`eval-runner error: ${String(err)}\n`)
-  process.exit(1)
-})
+// Only run as CLI entry point — do not execute when imported by tests.
+// SMI-4763: corpus-stats.test.ts imports updateBaseline / readCorpusStatsFromIndex
+// from this module; without this guard, every test import would run a full
+// mock-mode eval pass and pollute stdout. Mirrors check-baseline-drift.ts.
+const isEntryPoint =
+  process.argv[1] !== undefined &&
+  (process.argv[1].endsWith('eval-runner.ts') || process.argv[1].endsWith('eval-runner.js'))
+
+if (isEntryPoint) {
+  main().catch((err: unknown) => {
+    process.stderr.write(`eval-runner error: ${String(err)}\n`)
+    process.exit(1)
+  })
+}
