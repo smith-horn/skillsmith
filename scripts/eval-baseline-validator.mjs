@@ -184,7 +184,9 @@ function main() {
     return
   }
 
-  // Rule 1: baseline.json must be in the diff.
+  // Rule 1: baseline.json must be in the diff. emit() exits in both modes,
+  // so the return after it is unreachable — kept defensively in case emit()
+  // is ever refactored to no-op.
   if (!baselineChanged) {
     emit(
       [
@@ -196,7 +198,7 @@ function main() {
         'Then commit packages/doc-retrieval-mcp/eval/baseline.json and push again.',
       ].join('\n')
     )
-    return // unreachable in canonical mode; in advisory we keep going for hygiene only
+    return
   }
 
   // Rule 2: baseline.json sha must have a signature.
