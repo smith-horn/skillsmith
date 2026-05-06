@@ -1,5 +1,6 @@
 ---
 name: "code-analyzer"
+description: "Advanced code quality analysis agent for comprehensive code reviews and improvements"
 color: "purple"
 type: "analysis"
 version: "1.0.0"
