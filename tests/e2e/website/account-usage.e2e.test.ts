@@ -36,9 +36,11 @@ import {
   provisionTestUser,
   cleanupTestUser,
   getUsageRow,
+  setStaleSubscriptionRow,
   stagingFunctionUrl,
   stagingCredentialsAbsent,
   getStagingAnonKey,
+  getStagingServiceRoleKey,
   waitForCounterIncrement,
   type ProvisionedUser,
 } from '../fixtures/usage-counter-fixture.js'
@@ -108,3 +110,59 @@ describe.skipIf(skipIfNoCreds)('@e2e-usage-counter Website auth surface → usag
     expect(after.recommend_count).toBe(before.recommend_count)
   }, 30_000)
 })
+
+// SMI-4741: stale billing period fallback.
+// Verifies that get_user_usage_for_billing_period returns the calendar month
+// window (not 0) when the user's subscription.current_period_end is in the past.
+describe.skipIf(skipIfNoCreds)(
+  '@e2e-usage-counter Stale billing period → calendar month fallback',
+  () => {
+    let paidUser: ProvisionedUser
+
+    beforeAll(async () => {
+      paidUser = await provisionTestUser({ tier: 'individual' })
+      await setStaleSubscriptionRow(paidUser.userId)
+    }, 30_000)
+
+    afterAll(async () => {
+      if (paidUser?.userId) {
+        await cleanupTestUser(paidUser.userId)
+      }
+    }, 30_000)
+
+    it('returns calendar-month period_start when subscription period is expired', async () => {
+      const stagingUrl = stagingFunctionUrl('').replace('/functions/v1/', '/rest/v1/rpc/')
+      const rpcUrl = `${stagingUrl}get_user_usage_for_billing_period`
+      // service_role needed: GRANT EXECUTE ... TO service_role (not anon).
+      const serviceKey = getStagingServiceRoleKey()
+      const res = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ p_user_id: paidUser.userId }),
+      })
+      expect(res.ok, `RPC returned ${res.status}`).toBe(true)
+
+      const rows = (await res.json()) as Array<{ period_start?: string; period_end?: string }>
+      expect(rows.length).toBeGreaterThan(0)
+
+      const currentMonthStart = new Date()
+      currentMonthStart.setUTCDate(1)
+      currentMonthStart.setUTCHours(0, 0, 0, 0)
+
+      // period_start must equal the first of the current calendar month —
+      // proving the stale-period guard fired and fell back (not the expired Stripe period).
+      const returnedStart = new Date(rows[0]?.period_start ?? '')
+      expect(returnedStart.getUTCDate()).toBe(1)
+      expect(returnedStart.getUTCMonth()).toBe(currentMonthStart.getUTCMonth())
+      expect(returnedStart.getUTCFullYear()).toBe(currentMonthStart.getUTCFullYear())
+
+      // period_end must be strictly after now (calendar month end is in the future).
+      const returnedEnd = new Date(rows[0]?.period_end ?? '')
+      expect(returnedEnd.getTime()).toBeGreaterThan(Date.now())
+    }, 30_000)
+  }
+)

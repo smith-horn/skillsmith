@@ -899,9 +899,15 @@ const supabaseConfig = getSupabaseConfig()
       // SMI-4461 originally pointed this at get_user_usage_summary; that
       // helper still exists for backwards compat but the dashboard prefers
       // the billing-period-aware variant.
-      const { data: usageSummary } = await supabase.rpc('get_user_usage_for_billing_period', {
-        p_user_id: user.id,
-      })
+      const { data: usageSummary, error: usageError } = await supabase.rpc(
+        'get_user_usage_for_billing_period',
+        {
+          p_user_id: user.id,
+        }
+      )
+      if (usageError) {
+        console.error('[dashboard] get_user_usage_for_billing_period failed:', usageError)
+      }
       const totalUsage = Number(usageSummary?.[0]?.total_requests ?? 0)
       const periodEnd = usageSummary?.[0]?.period_end || ''
       const quotaLimits: Record<string, number> = {

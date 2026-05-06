@@ -8,6 +8,9 @@
 # SIGTERM thread) suggest gating it only after proven stable.
 name: Validate Hooks
 
+env:
+  NODE_VERSION: '22'
+
 on:
   pull_request:
     paths:
@@ -16,7 +19,10 @@ on:
       - 'scripts/remove-worktree.sh'
       - 'scripts/repair-worktrees.sh'
       - 'scripts/_lib.sh'
+      - 'scripts/session-start-audit.sh'
+      - 'scripts/lib/session-start-audit-helper.ts'
       - 'scripts/tests/create-worktree-hooks.test.sh'
+      - 'scripts/tests/session-start-audit.test.sh'
       - 'scripts/check-file-length.mjs'
       - 'lint-staged.config.js'
       - '.github/workflows/validate-hooks.yml'
@@ -41,7 +47,9 @@ jobs:
             scripts/create-worktree.sh \
             scripts/remove-worktree.sh \
             scripts/repair-worktrees.sh \
-            scripts/tests/create-worktree-hooks.test.sh
+            scripts/session-start-audit.sh \
+            scripts/tests/create-worktree-hooks.test.sh \
+            scripts/tests/session-start-audit.test.sh
 
       - name: Syntax check (bash -n)
         run: |
@@ -49,9 +57,24 @@ jobs:
           bash -n scripts/create-worktree.sh
           bash -n scripts/remove-worktree.sh
           bash -n scripts/repair-worktrees.sh
+          bash -n scripts/session-start-audit.sh
           bash -n scripts/tests/create-worktree-hooks.test.sh
+          bash -n scripts/tests/session-start-audit.test.sh
           sh -n .husky/pre-commit
+
+      - name: Setup Node (for session-audit hook tsx invocations)
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install root devDeps (tsx for session-audit hook tests)
+        # audit:carveout-pure-js — bash hook tests invoke `npx --no-install tsx`,
+        # which resolves from `node_modules/.bin/tsx` (root devDep). tsx pulls
+        # esbuild, which requires platform-specific optional deps
+        # (`@esbuild/linux-x64`); do NOT pass `--omit=optional` here.
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Hooks unit tests
         run: |
           bash scripts/tests/create-worktree-hooks.test.sh
+          bash scripts/tests/session-start-audit.test.sh

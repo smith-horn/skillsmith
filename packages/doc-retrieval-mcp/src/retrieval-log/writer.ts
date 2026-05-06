@@ -72,8 +72,10 @@ function encodeProjectPath(abs: string): string {
  * a directory (not a file — worktrees have `.git` as a file pointing to
  * the main repo's gitdir). Returns the first such ancestor, or `null` if
  * none is found before filesystem root.
+ *
+ * Exported for unit testing; production callers use `resolveProjectDir`.
  */
-function findMainRepoRoot(start: string): string | null {
+export function findMainRepoRoot(start: string): string | null {
   let current = resolve(start)
   // Safety cap — git worktrees live inside the main repo, so depth is small.
   for (let i = 0; i < 64; i += 1) {
@@ -112,8 +114,10 @@ function resolveProjectDir(): string {
  * Test-only override: `RETRIEVAL_LOG_DIR_OVERRIDE`, if set, is used as the
  * final DB directory verbatim (no encoding, no HOME prefix). Ignored in
  * production (`NODE_ENV === 'production'`) to prevent env-var redirection.
+ *
+ * Exported for unit testing of path-resolution logic (no native deps needed).
  */
-function resolveDbPath(): { dir: string; dbPath: string } {
+export function resolveDbPath(): { dir: string; dbPath: string } {
   const override = process.env.RETRIEVAL_LOG_DIR_OVERRIDE
   if (override && process.env.NODE_ENV !== 'production') {
     const dir = resolve(override)

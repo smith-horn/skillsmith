@@ -64,6 +64,11 @@ async function uploadImage(filePath, publicId) {
     public_id: publicId,
     folder: `blog/${slug}`,
     overwrite: true,
+    // SMI-4759: overwrite alone replaces the original asset but does NOT
+    // purge cached transformation URLs (f_auto,q_auto,w_1200/...) at the
+    // CDN edge. Without invalidate:true, regenerated images appear uploaded
+    // but readers see the prior version until edge TTL expires.
+    invalidate: true,
     resource_type: 'image',
   })
 }

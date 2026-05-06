@@ -15,8 +15,8 @@ import type { ToolContext } from '../src/context.js'
 
 let context: ToolContext
 
-beforeAll(() => {
-  context = createSeededTestContext()
+beforeAll(async () => {
+  context = await createSeededTestContext()
 })
 
 afterAll(async () => {

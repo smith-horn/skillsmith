@@ -18,7 +18,7 @@
     "incremental": true,
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src/**/*", "tests/**/*"],
+  "include": ["src/**/*", "tests/**/*", "eval/**/*"],
   "exclude": ["node_modules", "dist"],
   "references": [{ "path": "../core" }]
 }

@@ -1,6 +1,7 @@
 /**
  * @fileoverview Test database helpers — prevents "no such table" for migrated tables
  * @see SMI-2749
+ * @see SMI-4756 — async variant added to support WASM fallback in post-merge-verify
  *
  * Use createTestDatabase() instead of createDatabase(':memory:') whenever tests
  * need tables that only exist in migration files (e.g. skill_versions).
@@ -15,9 +16,14 @@
  * createTestDatabase() iterates MIGRATIONS directly (no version gate) so every
  * migration's SQL runs unconditionally. New migrations added to MIGRATIONS are
  * automatically included — no change required here.
+ *
+ * SMI-4756: createTestDatabase is now async. It uses createDatabaseAsync() so the
+ * sql.js WASM driver is used automatically when better-sqlite3 native bindings are
+ * unavailable (e.g. in post-merge-verify CI where the native module is not rebuilt
+ * for the container platform). Callers must await the result and use async beforeEach.
  */
 
-import { createDatabase, MIGRATIONS } from '../../src/db/schema.js'
+import { createDatabaseAsync, initializeSchema, MIGRATIONS } from '../../src/db/schema.js'
 import type { Database } from '../../src/db/database-interface.js'
 
 // Re-exported for test convenience — tests only need to import from this module
@@ -31,12 +37,16 @@ export type { Database } from '../../src/db/database-interface.js'
  * sync_config, sync_history). Forward-compatible: new migrations added to
  * MIGRATIONS are included automatically.
  *
- * @returns Database with full schema + all migrations applied
+ * SMI-4756: Returns a Promise so the sql.js WASM driver is used automatically
+ * when better-sqlite3 native bindings are unavailable. Callers must await.
+ *
+ * @returns Promise resolving to a Database with full schema + all migrations applied
  */
-export function createTestDatabase(): Database {
-  // createDatabase() calls initializeSchema() — runs SCHEMA_SQL (handling FTS5 triggers
-  // and multi-statement SQL correctly) and stamps SCHEMA_VERSION in schema_version.
-  const db = createDatabase()
+export async function createTestDatabase(): Promise<Database> {
+  // createDatabaseAsync() + initializeSchema() — async path uses WASM fallback
+  // when better-sqlite3 native module is unavailable (cross-platform / CI).
+  const db = await createDatabaseAsync()
+  initializeSchema(db)
 
   // Run all migrations unconditionally (no version gate) so tables that only exist in
   // migration SQL (not SCHEMA_SQL) are created. db.exec() handles multi-statement SQL

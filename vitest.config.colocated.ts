@@ -34,13 +34,6 @@ export default defineConfig({
       'packages/website/**',
       // VS Code integration tests require the `vscode` module — run via @vscode/test-electron
       'packages/vscode-extension/src/__tests__/integration/**',
-      // SMI-4667 final probe: writer.test.ts has 2 environmental failures
-      // (NODE_ENV-detection + .git dir-vs-file resolution) that are
-      // independent of the signal cascade. Excluding to verify the
-      // E2+E3+bootstrap stack produces fully green CI; if green, file
-      // a follow-up Linear issue to fix these tests for the docker-on-CI
-      // environment, then re-include via separate PR.
-      'packages/doc-retrieval-mcp/src/retrieval-log/writer.test.ts',
     ],
   },
 })

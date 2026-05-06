@@ -26,6 +26,7 @@ supabase/functions/skills-outreach-preferences/**
 supabase/functions/admin-grant-subscription/**
 supabase/functions/update-seat-count/**
 supabase/functions/webhook-dlq/**
+supabase/functions/quota-monitor/**
 
 # Stripe webhook endpoints (require signed payload to exercise; covered by
 # stripe-webhook-monitor.yml independently).
@@ -41,11 +42,6 @@ supabase/functions/events/**
 supabase/functions/early-access-signup/**
 supabase/functions/contact-submit/**
 supabase/functions/stats/**
-
-# Skills public API (covered by direct query + indexer health, not smoke).
-supabase/functions/skills-search/**
-supabase/functions/skills-get/**
-supabase/functions/skills-recommend/**
 
 # Shared module (not a deployed function).
 supabase/functions/_shared/**

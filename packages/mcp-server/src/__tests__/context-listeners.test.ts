@@ -11,7 +11,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { SyncConfigRepository } from '@skillsmith/core'
-import { createToolContext, closeToolContext } from '../context.js'
+import { closeToolContext, createToolContextAsync } from '../context.js'
 import { createTestContext, disposeTestContext } from './test-utils.js'
 
 describe('SMI-4694: context.ts listener-count audit', () => {
@@ -26,8 +26,9 @@ describe('SMI-4694: context.ts listener-count audit', () => {
       // on its in-memory DB, then close it. The "real" cycle below uses a
       // fresh DB whose SyncConfigRepository.enable() runs against a NEW
       // in-memory DB inline. Forcing this requires per-cycle bootstrap
-      // because :memory: DBs do not persist between createToolContext calls.
-      const seed = createToolContext({
+      // because :memory: DBs do not persist between createToolContextAsync calls.
+      // SMI-4756: Use createToolContextAsync for WASM fallback in post-merge-verify CI.
+      const seed = await createToolContextAsync({
         dbPath: ':memory:',
         apiClientConfig: { offlineMode: true },
         backgroundSyncConfig: { enabled: false },
@@ -36,14 +37,14 @@ describe('SMI-4694: context.ts listener-count audit', () => {
       repo.enable()
       await closeToolContext(seed)
 
-      // Note: createToolContext re-creates the DB; the seed above is mostly
+      // Note: createToolContextAsync re-creates the DB; the seed above is mostly
       // a sanity probe that SyncConfigRepository.enable() does not throw.
       // The actual handler registration is gated on syncConfig.enabled
       // returning true, which is the default for fresh DBs created with
       // ensureTable() — see SyncConfigRepository.ts:174 ('enabled BOOLEAN
       // DEFAULT 1'). With backgroundSyncConfig.enabled !== false AND
       // llmFailoverConfig.enabled === true, both branches register handlers.
-      const ctx = createToolContext({
+      const ctx = await createToolContextAsync({
         dbPath: ':memory:',
         apiClientConfig: { offlineMode: true },
         backgroundSyncConfig: { enabled: true },
@@ -79,7 +80,7 @@ describe('SMI-4694: context.ts listener-count audit', () => {
     }
 
     for (let i = 0; i < 5; i++) {
-      const ctx = createTestContext()
+      const ctx = await createTestContext()
       await disposeTestContext(ctx)
     }
 

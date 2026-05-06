@@ -11,8 +11,8 @@ import { MIGRATION_V10_SQL } from '../../../src/db/migrations/v10-dependencies.j
 describe('Migration v10: skill_dependencies table', () => {
   let db: Database
 
-  beforeEach(() => {
-    db = createTestDatabase()
+  beforeEach(async () => {
+    db = await createTestDatabase()
   })
 
   afterEach(() => {

@@ -23,12 +23,29 @@ import { createRequire } from 'node:module'
 import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createRequire as _createRequire } from 'node:module'
 
 import {
   FRONTMATTER_LINT_EVENTS_DDL,
   SCHEMA_SQL,
 } from '../../packages/doc-retrieval-mcp/src/retrieval-log/schema.js'
 import { makeFixtureEnv, makeFixtureTempDir } from './_lib/git-fixture-env.js'
+
+// SMI-4756: In Docker CI (post-merge-verify) the per-package better-sqlite3
+// binary may be macOS Mach-O (bind-mounted from a macOS host). Probe once so
+// tests that call writer.js (which require()s better-sqlite3 at module scope)
+// can be skipped gracefully rather than crashing the runner.
+let _nativeSqliteAvailable = false
+try {
+  const _req = _createRequire(import.meta.url)
+  _req(
+    '../../packages/doc-retrieval-mcp/node_modules/better-sqlite3/build/Release/better_sqlite3.node'
+  )
+  _nativeSqliteAvailable = true
+} catch {
+  _nativeSqliteAvailable = false
+}
+const nativeSqliteAvailable = _nativeSqliteAvailable
 
 const REPO_ROOT = join(import.meta.dirname ?? __dirname, '..', '..')
 const CLI = join(REPO_ROOT, 'scripts', 'retrieval-log-cli.mjs')
@@ -150,7 +167,7 @@ describe('retrieval-log-cli.mjs — arg validation', () => {
   })
 })
 
-describe('retrieval-log-cli.mjs — successful INSERT', () => {
+describe.skipIf(!nativeSqliteAvailable)('retrieval-log-cli.mjs — successful INSERT', () => {
   it('inserts a row when schema exists', async () => {
     const dbDir = join(scratch, 'logs')
     mkdirSync(dbDir, { recursive: true })
@@ -334,7 +351,7 @@ describe('audit-standards.mjs — --only dispatch', () => {
   })
 })
 
-describe('S6 divergence guard — runtime schema introspection', () => {
+describe('S6 divergence guard — static schema check', () => {
   it('FRONTMATTER_LINT_EVENTS_DDL is a substring of SCHEMA_SQL', () => {
     // Normalize both for whitespace/trailing-semicolon tolerance: compare the
     // CREATE TABLE body (ignoring the final semicolon which SCHEMA_SQL also
@@ -343,36 +360,41 @@ describe('S6 divergence guard — runtime schema introspection', () => {
       FRONTMATTER_LINT_EVENTS_DDL.replace(/;?\s*$/, '').replace(/\s+/g, ' ')
     )
   })
-
-  it('runtime PRAGMA introspection matches expected columns', async () => {
-    const dbDir = join(scratch, 'logs-pragma')
-    mkdirSync(dbDir, { recursive: true })
-    process.env.RETRIEVAL_LOG_DIR_OVERRIDE = dbDir
-
-    const { logFrontmatterLintEvent, closeRetrievalLog } =
-      await import('../../packages/doc-retrieval-mcp/src/retrieval-log/writer.js')
-    logFrontmatterLintEvent({
-      ts: new Date().toISOString(),
-      retroPath: '__bootstrap__',
-      outcome: 'complete',
-    })
-    closeRetrievalLog()
-
-    const require = createRequire(import.meta.url)
-    const Database = require('better-sqlite3')
-    const db = new Database(join(dbDir, 'retrieval-logs.db'))
-    const cols = db.prepare('PRAGMA table_info(frontmatter_lint_events)').all() as Array<{
-      name: string
-      type: string
-      notnull: number
-      pk: number
-    }>
-    db.close()
-
-    expect(cols.map((c) => c.name)).toEqual(['id', 'ts', 'retro_path', 'outcome'])
-    expect(cols.find((c) => c.name === 'id')?.pk).toBe(1)
-    expect(cols.find((c) => c.name === 'ts')?.notnull).toBe(1)
-    expect(cols.find((c) => c.name === 'retro_path')?.notnull).toBe(1)
-    expect(cols.find((c) => c.name === 'outcome')?.notnull).toBe(1)
-  })
 })
+
+describe.skipIf(!nativeSqliteAvailable)(
+  'S6 divergence guard — runtime schema introspection',
+  () => {
+    it('runtime PRAGMA introspection matches expected columns', async () => {
+      const dbDir = join(scratch, 'logs-pragma')
+      mkdirSync(dbDir, { recursive: true })
+      process.env.RETRIEVAL_LOG_DIR_OVERRIDE = dbDir
+
+      const { logFrontmatterLintEvent, closeRetrievalLog } =
+        await import('../../packages/doc-retrieval-mcp/src/retrieval-log/writer.js')
+      logFrontmatterLintEvent({
+        ts: new Date().toISOString(),
+        retroPath: '__bootstrap__',
+        outcome: 'complete',
+      })
+      closeRetrievalLog()
+
+      const require = createRequire(import.meta.url)
+      const Database = require('better-sqlite3')
+      const db = new Database(join(dbDir, 'retrieval-logs.db'))
+      const cols = db.prepare('PRAGMA table_info(frontmatter_lint_events)').all() as Array<{
+        name: string
+        type: string
+        notnull: number
+        pk: number
+      }>
+      db.close()
+
+      expect(cols.map((c) => c.name)).toEqual(['id', 'ts', 'retro_path', 'outcome'])
+      expect(cols.find((c) => c.name === 'id')?.pk).toBe(1)
+      expect(cols.find((c) => c.name === 'ts')?.notnull).toBe(1)
+      expect(cols.find((c) => c.name === 'retro_path')?.notnull).toBe(1)
+      expect(cols.find((c) => c.name === 'outcome')?.notnull).toBe(1)
+    })
+  }
+)

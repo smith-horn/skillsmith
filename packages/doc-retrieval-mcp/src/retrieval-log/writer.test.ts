@@ -10,12 +10,30 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir, userInfo } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import type BetterSqlite3 from 'better-sqlite3'
 
+// SMI-4756: The writer module uses better-sqlite3 natively (host-only, no WASM
+// fallback — it only writes on the host, IS_DOCKER=true is a no-op). In Docker
+// CI (post-merge-verify), the per-package binary resolves to the main repo's
+// node_modules via bind mount, which may be a macOS Mach-O binary running on
+// Linux. `require('better-sqlite3')` succeeds (loads the JS wrapper) but
+// `new Database()` fails with "invalid ELF header". Probe by actually opening
+// an in-memory DB to confirm the native binary is functional.
 const require = createRequire(import.meta.url)
-const Database = require('better-sqlite3') as typeof BetterSqlite3
+let Database: typeof BetterSqlite3 | null = null
+let nativeSqliteAvailable = false
+try {
+  const Ctor = require('better-sqlite3') as typeof BetterSqlite3
+  // Verify binary is functional — require() alone succeeds even on Mach-O in Linux.
+  const probe = new Ctor(':memory:')
+  probe.close()
+  Database = Ctor
+  nativeSqliteAvailable = true
+} catch {
+  nativeSqliteAvailable = false
+}
 
 /**
  * The writer caches a `Database` handle at module scope. Each test needs an
@@ -47,7 +65,7 @@ afterEach(async () => {
   rmSync(scratch, { recursive: true, force: true })
 })
 
-describe('logRetrievalEvent', () => {
+describe.skipIf(!nativeSqliteAvailable)('logRetrievalEvent', () => {
   it('writes a row with all columns matching input', async () => {
     const { logRetrievalEvent } = await freshWriter()
     logRetrievalEvent({
@@ -61,7 +79,7 @@ describe('logRetrievalEvent', () => {
       hookOutcome: 'primed',
     })
 
-    const db = new Database(join(scratch, 'retrieval-logs.db'), { readonly: true })
+    const db = new Database!(join(scratch, 'retrieval-logs.db'), { readonly: true })
     const rows = db.prepare('SELECT * FROM retrieval_events').all() as Array<{
       session_id: string
       ts: string
@@ -88,7 +106,7 @@ describe('logRetrievalEvent', () => {
   })
 })
 
-describe('logFrontmatterLintEvent', () => {
+describe.skipIf(!nativeSqliteAvailable)('logFrontmatterLintEvent', () => {
   it('writes a row', async () => {
     const { logFrontmatterLintEvent } = await freshWriter()
     logFrontmatterLintEvent({
@@ -97,7 +115,7 @@ describe('logFrontmatterLintEvent', () => {
       outcome: 'complete',
     })
 
-    const db = new Database(join(scratch, 'retrieval-logs.db'), { readonly: true })
+    const db = new Database!(join(scratch, 'retrieval-logs.db'), { readonly: true })
     const rows = db.prepare('SELECT * FROM frontmatter_lint_events').all() as Array<{
       retro_path: string
       outcome: string
@@ -108,12 +126,12 @@ describe('logFrontmatterLintEvent', () => {
   })
 })
 
-describe('$USER guard', () => {
+describe.skipIf(!nativeSqliteAvailable)('$USER guard', () => {
   it('refuses to write when owner_user mismatches current $USER', async () => {
     // Pre-create the DB with a foreign owner_user stamp.
     const { SCHEMA_SQL } = await import('./schema.js')
     const dbPath = join(scratch, 'retrieval-logs.db')
-    const seed = new Database(dbPath)
+    const seed = new Database!(dbPath)
     seed.exec(SCHEMA_SQL)
     seed.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('owner_user', 'not-really-me')
     seed.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('schema_version', '1')
@@ -132,14 +150,14 @@ describe('$USER guard', () => {
 
     expect(warnSpy).toHaveBeenCalledWith('[retrieval-logs] owner mismatch; refusing to write')
     // No row should have been appended.
-    const db = new Database(dbPath, { readonly: true })
+    const db = new Database!(dbPath, { readonly: true })
     const row = db.prepare('SELECT COUNT(*) AS c FROM retrieval_events').get() as { c: number }
     expect(row.c).toBe(0)
     db.close()
   })
 })
 
-describe('Docker guard', () => {
+describe.skipIf(!nativeSqliteAvailable)('Docker guard', () => {
   it('skips DB creation when IS_DOCKER=true', async () => {
     process.env.IS_DOCKER = 'true'
     const { logRetrievalEvent } = await freshWriter()
@@ -156,7 +174,7 @@ describe('Docker guard', () => {
   })
 })
 
-describe('schema idempotency', () => {
+describe.skipIf(!nativeSqliteAvailable)('schema idempotency', () => {
   it('second write does not re-insert meta rows', async () => {
     const { logRetrievalEvent } = await freshWriter()
     logRetrievalEvent({
@@ -174,7 +192,7 @@ describe('schema idempotency', () => {
       topKResults: '[]',
     })
 
-    const db = new Database(join(scratch, 'retrieval-logs.db'), { readonly: true })
+    const db = new Database!(join(scratch, 'retrieval-logs.db'), { readonly: true })
     const metaCount = db.prepare('SELECT COUNT(*) AS c FROM meta').get() as { c: number }
     // Exactly 3 meta rows: schema_version, owner_user, created_at.
     expect(metaCount.c).toBe(3)
@@ -186,7 +204,7 @@ describe('schema idempotency', () => {
   })
 })
 
-describe('row-count warning', () => {
+describe.skipIf(!nativeSqliteAvailable)('row-count warning', () => {
   it('emits once when retrieval_events exceeds 10k rows', async () => {
     const { logRetrievalEvent } = await freshWriter()
     // First insert opens+stamps the DB.
@@ -202,7 +220,7 @@ describe('row-count warning', () => {
     // for speed — bypassing the writer to avoid re-running the COUNT() check
     // on every row.
     const dbPath = join(scratch, 'retrieval-logs.db')
-    const raw = new Database(dbPath)
+    const raw = new Database!(dbPath)
     const ins = raw.prepare(
       'INSERT INTO retrieval_events (session_id, ts, trigger, query, top_k_results) VALUES (?, ?, ?, ?, ?)'
     )
@@ -241,50 +259,47 @@ describe('row-count warning', () => {
 
 describe('RETRIEVAL_LOG_DIR_OVERRIDE production guard', () => {
   it('ignores the override and falls through to real resolver when NODE_ENV=production', async () => {
-    // Set NODE_ENV=production — override must be ignored.
-    const originalNodeEnv = process.env.NODE_ENV
-    process.env.NODE_ENV = 'production'
-    // The override env var is still set (from beforeEach) but must be ignored.
-    // Redirect HOME to scratch so we don't touch the real ~/.claude/projects.
+    // Tests path-resolution logic via the exported resolveDbPath() seam —
+    // no better-sqlite3 (native module) required, so the result is identical
+    // in every environment (local macOS Docker, CI linux docker run --rm).
+    //
+    // vi.stubEnv ensures clean restore even when assertions throw.
+    vi.stubEnv('NODE_ENV', 'production')
+
+    // Redirect HOME so the test never touches the real ~/.claude/projects.
     const fakeHome = join(scratch, 'home-prod')
     mkdirSync(fakeHome, { recursive: true })
-    const originalHome = process.env.HOME
-    process.env.HOME = fakeHome
+    vi.stubEnv('HOME', fakeHome)
 
-    // We also need to redirect cwd so the project-dir resolver doesn't walk up
-    // to the real repo root (which has a .git dir) and write to the real home.
-    // Spy on cwd to return a leaf with no .git ancestor inside fakeHome.
+    // Spy on cwd to return a leaf with no .git ancestor inside scratch, so
+    // resolveProjectDir() falls back to cwd (no git root ancestor found).
     const fakeProject = join(fakeHome, 'project')
     mkdirSync(fakeProject, { recursive: true })
     const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(fakeProject)
 
     try {
-      const { logRetrievalEvent } = await freshWriter()
-      logRetrievalEvent({
-        sessionId: 's',
-        ts: '2026-04-24T12:00:00Z',
-        trigger: 'other',
-        query: 'q',
-        topKResults: '[]',
-      })
+      // Fresh module instance so module-cached state is cleared.
+      const { resolveDbPath: rdb } = await freshWriter()
 
-      // The DB must NOT be in the scratch override dir.
-      expect(existsSync(join(scratch, 'retrieval-logs.db'))).toBe(false)
-      // The DB must be under fakeHome/.claude/projects/ instead.
+      const { dir, dbPath } = rdb()
+
+      // With NODE_ENV=production the override (scratch) must be ignored:
+      // the resolved dir must not be scratch itself.
+      expect(dir).not.toBe(resolve(scratch))
+
+      // The resolved dir must be under fakeHome/.claude/projects/ specifically.
       const encoded = fakeProject.replace(/\//g, '-')
-      const expectedPath = join(fakeHome, '.claude', 'projects', encoded, 'retrieval-logs.db')
-      expect(existsSync(expectedPath)).toBe(true)
+      const expectedDir = join(fakeHome, '.claude', 'projects', encoded)
+      expect(dir).toBe(expectedDir)
+      expect(dbPath).toBe(join(expectedDir, 'retrieval-logs.db'))
     } finally {
       cwdSpy.mockRestore()
-      if (originalHome === undefined) delete process.env.HOME
-      else process.env.HOME = originalHome
-      if (originalNodeEnv === undefined) delete process.env.NODE_ENV
-      else process.env.NODE_ENV = originalNodeEnv
+      vi.unstubAllEnvs()
     }
   })
 })
 
-describe('write error resilience', () => {
+describe.skipIf(!nativeSqliteAvailable)('write error resilience', () => {
   it('emits console.warn and does not throw when the DB insert fails', async () => {
     // Open the DB normally first so cachedDb is populated.
     const { logRetrievalEvent, closeRetrievalLog: close } = await freshWriter()
@@ -322,7 +337,7 @@ describe('write error resilience', () => {
   })
 })
 
-describe('SMI-4549 Wave 2 — outage marker', () => {
+describe.skipIf(!nativeSqliteAvailable)('SMI-4549 Wave 2 — outage marker', () => {
   it('Docker no-op: NO marker is written when IS_DOCKER=true', async () => {
     process.env.IS_DOCKER = 'true'
     const { logRetrievalEvent } = await freshWriter()
@@ -340,7 +355,7 @@ describe('SMI-4549 Wave 2 — outage marker', () => {
   it('owner mismatch: writes a marker with reason=owner_mismatch', async () => {
     const { SCHEMA_SQL } = await import('./schema.js')
     const dbPath = join(scratch, 'retrieval-logs.db')
-    const seed = new Database(dbPath)
+    const seed = new Database!(dbPath)
     seed.exec(SCHEMA_SQL)
     seed.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('owner_user', 'not-really-me')
     seed.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('schema_version', '1')
@@ -415,7 +430,12 @@ describe('SMI-4549 Wave 2 — outage marker', () => {
 
 describe('worktree path canonicalization', () => {
   it('uses main repo path (dir .git) not worktree path (file .git)', async () => {
-    // Build a fake repo + worktree under the scratch tmpdir.
+    // Tests the .git dir-vs-file resolution logic via the exported
+    // findMainRepoRoot() seam — pure filesystem logic, no better-sqlite3
+    // needed, so behaviour is identical in every environment.
+    //
+    // Build a fake repo + worktree under scratch so we never touch the real
+    // repository root.
     const mainRepo = join(scratch, 'main-repo')
     const worktree = join(mainRepo, '.worktrees', 'feat-x')
     mkdirSync(join(mainRepo, '.git'), { recursive: true }) // real .git DIR
@@ -423,41 +443,19 @@ describe('worktree path canonicalization', () => {
     // Worktrees have .git as a FILE pointing at the main gitdir.
     writeFileSync(join(worktree, '.git'), 'gitdir: ../../.git/worktrees/feat-x\n')
 
-    // Point override at a location that will NOT match the chosen path, so
-    // we force the writer onto its real resolver. The writer checks the env
-    // var first and short-circuits — so for this test we must NOT set it.
-    delete process.env.RETRIEVAL_LOG_DIR_OVERRIDE
+    // Fresh module instance so module-cached state is cleared.
+    const { findMainRepoRoot: fmrr } = await freshWriter()
 
-    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(worktree)
+    // Starting from the worktree, the resolver must return mainRepo (where
+    // .git is a directory), not the worktree itself (where .git is a file).
+    expect(fmrr(worktree)).toBe(mainRepo)
 
-    // Redirect HOME so the test doesn't touch the real ~/.claude/projects.
-    const fakeHome = join(scratch, 'home')
-    mkdirSync(fakeHome, { recursive: true })
-    const originalHome = process.env.HOME
-    process.env.HOME = fakeHome
+    // Starting from the mainRepo directly must also return mainRepo.
+    expect(fmrr(mainRepo)).toBe(mainRepo)
 
-    try {
-      const { logRetrievalEvent } = await freshWriter()
-      logRetrievalEvent({
-        sessionId: 's',
-        ts: '2026-04-24T12:00:00Z',
-        trigger: 'other',
-        query: 'q',
-        topKResults: '[]',
-      })
-
-      // Expected encoded path uses mainRepo, NOT worktree.
-      const encoded = mainRepo.replace(/\//g, '-')
-      const expectedDir = join(fakeHome, '.claude', 'projects', encoded)
-      expect(existsSync(join(expectedDir, 'retrieval-logs.db'))).toBe(true)
-
-      // The worktree path must NOT be the one used.
-      const worktreeEncoded = worktree.replace(/\//g, '-')
-      expect(existsSync(join(fakeHome, '.claude', 'projects', worktreeEncoded))).toBe(false)
-    } finally {
-      cwdSpy.mockRestore()
-      if (originalHome === undefined) delete process.env.HOME
-      else process.env.HOME = originalHome
-    }
+    // A path with no .git ancestor must return null.
+    const isolated = join(scratch, 'no-git')
+    mkdirSync(isolated, { recursive: true })
+    expect(fmrr(isolated)).toBeNull()
   })
 })

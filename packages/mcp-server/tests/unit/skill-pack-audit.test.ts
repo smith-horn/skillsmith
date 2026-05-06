@@ -24,7 +24,7 @@ import type { ToolContext } from '../../src/context.js'
 
 /** Seed a single skill_versions row for testing */
 function seedVersion(
-  db: ReturnType<typeof createTestDatabase>,
+  db: Database,
   skillId: string,
   semver: string | null,
   recordedAt = Math.floor(Date.now() / 1000)
@@ -59,7 +59,7 @@ describe('skill_pack_audit', () => {
     skillsDir = join(testDir, 'skills')
     await fs.mkdir(skillsDir)
 
-    db = createTestDatabase()
+    db = await createTestDatabase()
     toolContext = { db } as unknown as ToolContext
   })
 

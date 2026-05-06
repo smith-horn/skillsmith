@@ -70,3 +70,15 @@ export * from './retention/index.js'
 
 // Export from streaming
 export * from './streaming/index.js'
+
+// SMI-4590 Wave 4 PR 6/6 — Enterprise scheduled-scan governance runner.
+// Named export only (no `export *`) to avoid name-collisions with the
+// existing AuditLogger surface above.
+export { runScheduledScan, ScheduledScanError, stripUrlSecrets } from './scheduled-scan.js'
+
+export type {
+  ScheduledScanOptions,
+  ScheduledScanOutput,
+  ScheduledScanResult,
+  ScheduledScanErrorCode,
+} from './scheduled-scan.types.js'

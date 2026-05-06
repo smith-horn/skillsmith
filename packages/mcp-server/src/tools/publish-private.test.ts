@@ -66,8 +66,8 @@ describe('publishPrivateInputSchema', () => {
 describe('executePublishPrivate', () => {
   let db: DatabaseType
 
-  beforeEach(() => {
-    db = createTestDatabase()
+  beforeEach(async () => {
+    db = await createTestDatabase()
     setTeamWorkspaceService(createStubService())
   })
 

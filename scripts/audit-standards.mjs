@@ -28,6 +28,8 @@ import {
   checkCarveOutInvariants,
 } from './audit-standards-helpers.mjs'
 import { VERCEL_JSON_SHARED_FIELDS, validateVercelJsonSync } from './audit-vercel-sync-helpers.mjs'
+import { findRealpathAsymmetry } from './audit-realpath-asymmetry-helpers.mjs'
+import { findUnpinnedActionUses } from './audit-workflow-sha-pin-helpers.mjs'
 
 const RED = '\x1b[31m'
 const GREEN = '\x1b[32m'
@@ -2456,7 +2458,7 @@ console.log(`\n${BOLD}36. Smoke Surface Coverage (R-4, SMI-4459)${RESET}`)
       } else {
         const formatted = uncovered.map((p) => `  ${p}`).join('\n')
         warn(
-          `${uncovered.length} surface(s) not covered by surfaces.json and not allowlisted:\n${formatted}\n  Add a surface entry to scripts/smoke-prod/surfaces.json or document the exclusion in scripts/smoke-prod/.surfaces-allowlist.txt.`
+          `${uncovered.length} surface(s) not covered by surfaces.json and not allowlisted:\n${formatted}\n  User-facing → add to scripts/smoke-prod/surfaces.json.\n  Cron-only/internal → add to scripts/smoke-prod/.surfaces-allowlist.txt with rationale comment.\n  See .claude/development/deployment-guide.md § "Adding New Edge Functions".`
         )
       }
     } catch (e) {
@@ -2600,7 +2602,7 @@ console.log(`\n${BOLD}38. CI pure-JS carve-out drift (SMI-4647 + SMI-4648)${RESE
 //   • buildCommand (root needs the BOA postbuild copy; website-local does not)
 //   • outputDirectory (today not set in either — the cp-step makes it unnecessary;
 //     if reintroduced, validate as a relative POSIX path with no `..` segments)
-console.log(`\n${BOLD}38. vercel.json structural sync (SMI-4641)${RESET}`)
+console.log(`\n${BOLD}39. vercel.json structural sync (SMI-4641)${RESET}`)
 try {
   const root = JSON.parse(readFileSync('vercel.json', 'utf8'))
   const website = JSON.parse(readFileSync('packages/website/vercel.json', 'utf8'))
@@ -2638,7 +2640,7 @@ try {
 //      not spawn git directly).
 // S-5: glob includes `packages/&#42;/{src,tests}/**/*.test.ts` to catch
 //      `git-commits.test.ts` and any future colocated fixtures.
-console.log(`\n${BOLD}39. Fixture Git Env Sanitisation (SMI-4693)${RESET}`)
+console.log(`\n${BOLD}40. Fixture Git Env Sanitisation (SMI-4693)${RESET}`)
 {
   const FIXTURE_GIT_AUDIT_GLOBS = [
     'scripts/tests',
@@ -2734,6 +2736,88 @@ console.log(`\n${BOLD}39. Fixture Git Env Sanitisation (SMI-4693)${RESET}`)
     }
   } catch (e) {
     warn(`Could not check fixture git env sanitisation: ${e.message}`)
+  }
+}
+
+// 41. SMI-4758: realpath-asymmetry path-comparison detector. Backstops the
+// SMI-4688/SMI-4692 anti-pattern (caught by PR #920) — comparing two paths
+// where one operand is `fs.realpath`'d and the other is `path.resolve`'d
+// silently fails on macOS (`/var/folders` ↔ `/private/var/folders`) but
+// passes on Linux. Heuristic regex-based detector; suppression via
+// `// audit-allow:realpath-asymmetry — <reason>` comment.
+console.log(`\n${BOLD}41. Realpath-Asymmetry Path Comparison (SMI-4758)${RESET}`)
+{
+  const sourceFiles = getFilesRecursive('packages', ['.ts', '.tsx', '.mts', '.cts']).filter(
+    (f) =>
+      !f.includes('/node_modules/') &&
+      !f.includes('/dist/') &&
+      !f.endsWith('.test.ts') &&
+      !f.endsWith('.test.tsx') &&
+      !f.endsWith('.spec.ts') &&
+      !f.endsWith('.spec.tsx') &&
+      !f.endsWith('.d.ts')
+  )
+  const allViolations = []
+  for (const file of sourceFiles) {
+    const content = readFileSync(file, 'utf8')
+    const { violations } = findRealpathAsymmetry(content, file)
+    for (const v of violations) {
+      allViolations.push({ file, ...v })
+    }
+  }
+  if (allViolations.length === 0) {
+    pass(`No realpath-asymmetry path comparisons found (${sourceFiles.length} files scanned)`)
+  } else {
+    const formatted = allViolations
+      .map(
+        (v) =>
+          `  ${v.file}:${v.line} — '${v.lhs}.${v.op}(${v.rhs}...)' (one side realpath'd, other path.resolve'd)`
+      )
+      .join('\n')
+    fail(
+      `${allViolations.length} realpath-asymmetry comparison(s) detected:\n${formatted}`,
+      'Realpath both sides — `const Yreal = await fs.realpath(Y).catch(() => Y); X.startsWith(Yreal + sep)` — OR add `// audit-allow:realpath-asymmetry — <reason>` on the line above to suppress.'
+    )
+  }
+}
+
+// 42. SMI-4758: GitHub Actions `uses:` SHA-pin invariant. Repo convention is
+// `<owner>/<repo>(/<path>)?@<40-hex-sha> # <human-tag>`. Floating tag refs
+// (e.g. `actions/setup-node@v6`) silently absorb upstream tag-pointer
+// rewrites — a supply-chain risk. Inline-fixed for `wasm-env-snapshot.yml`
+// in PR #975 commit 06267d27; this check prevents the next instance.
+// Uses `fail()` (not `warn()` like Check 37) — security invariant, not style.
+console.log(`\n${BOLD}42. Workflow uses: SHA-Pin (SMI-4758)${RESET}`)
+{
+  const workflowDir = '.github/workflows'
+  if (!existsSync(workflowDir)) {
+    pass('Skipped (no .github/workflows/ directory)')
+  } else {
+    const workflowFiles = readdirSync(workflowDir).filter(
+      (f) => f.endsWith('.yml') || f.endsWith('.yaml')
+    )
+    const allViolations = []
+    for (const file of workflowFiles) {
+      const fullPath = join(workflowDir, file)
+      const content = readFileSync(fullPath, 'utf8')
+      const violations = findUnpinnedActionUses(content, fullPath)
+      for (const v of violations) {
+        allViolations.push({ file: fullPath, ...v })
+      }
+    }
+    if (allViolations.length === 0) {
+      pass(
+        `All ${workflowFiles.length} workflow file(s) SHA-pin every remote 'uses:' (skipping ./ and docker:// refs)`
+      )
+    } else {
+      const formatted = allViolations
+        .map((v) => `  ${v.file}:${v.line} — uses '${v.value}' (kind: ${v.kind})`)
+        .join('\n')
+      fail(
+        `${allViolations.length} unpinned 'uses:' reference(s) detected:\n${formatted}`,
+        'Replace the floating ref with the 40-hex commit SHA. Find it via: `gh api /repos/<owner>/<repo>/git/ref/tags/<tag> --jq .object.sha`. Canonical form: `<owner>/<repo>@<40-hex-sha> # <tag>`.'
+      )
+    }
   }
 }
 

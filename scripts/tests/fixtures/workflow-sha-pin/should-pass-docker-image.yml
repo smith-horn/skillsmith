@@ -1,0 +1,9 @@
+name: should-pass-docker-image
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: docker://alpine:3.18
+    steps:
+      - uses: docker://alpine:3.18

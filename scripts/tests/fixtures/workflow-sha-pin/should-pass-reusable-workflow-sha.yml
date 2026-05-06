@@ -1,0 +1,5 @@
+name: should-pass-reusable-workflow-sha
+on: [push]
+jobs:
+  call:
+    uses: org/repo/.github/workflows/build.yml@abc1234567890abcdef1234567890abcdef12345 # v2

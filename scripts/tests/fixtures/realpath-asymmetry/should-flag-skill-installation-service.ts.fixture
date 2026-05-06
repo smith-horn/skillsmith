@@ -1,0 +1,18 @@
+// Synthetic SMI-4692 pre-PR-#920 snippet — reproduces the realpath-asymmetry
+// from packages/core/src/services/skill-installation.service.ts before commit 62a40358.
+// Expected: should-flag fixture — Check 41 emits one violation.
+
+import { promises as fs } from 'fs'
+import * as path from 'path'
+
+async function install(installPath: string, skillsDir: string) {
+  await fs.mkdir(installPath, { recursive: true })
+  const realInstallPath = await fs.realpath(installPath)
+  const expectedPrefix = path.resolve(skillsDir)
+  if (
+    !realInstallPath.startsWith(expectedPrefix + path.sep) &&
+    realInstallPath !== expectedPrefix
+  ) {
+    throw new Error('escape')
+  }
+}

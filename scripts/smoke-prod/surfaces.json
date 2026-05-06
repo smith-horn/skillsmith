@@ -95,6 +95,39 @@
       ],
       "script": "scripts/smoke-prod/website.sh",
       "checks": ["check_product_page_renders"]
+    },
+    {
+      "id": "edge-fn-skills-search",
+      "owner": "edge-functions",
+      "trigger_globs": [
+        "supabase/functions/skills-search/**",
+        "supabase/functions/_shared/usage-counter.ts",
+        "supabase/functions/_shared/auth-middleware.ts"
+      ],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_skills_search_usage_counter"]
+    },
+    {
+      "id": "edge-fn-skills-get",
+      "owner": "edge-functions",
+      "trigger_globs": [
+        "supabase/functions/skills-get/**",
+        "supabase/functions/_shared/usage-counter.ts",
+        "supabase/functions/_shared/auth-middleware.ts"
+      ],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_skills_get_usage_counter"]
+    },
+    {
+      "id": "edge-fn-skills-recommend",
+      "owner": "edge-functions",
+      "trigger_globs": [
+        "supabase/functions/skills-recommend/**",
+        "supabase/functions/_shared/usage-counter.ts",
+        "supabase/functions/_shared/auth-middleware.ts"
+      ],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": ["check_skills_recommend_usage_counter"]
     }
   ]
 }

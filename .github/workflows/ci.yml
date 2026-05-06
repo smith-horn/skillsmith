@@ -368,6 +368,73 @@ jobs:
           echo "::notice::Findings here are advisory. They become required on PRs that touch packages/*/package.json."
           node scripts/verify-publish-deps.mjs || echo "::warning::verify-publish-deps reported issues (advisory on non-version-bump PRs)"
 
+  # SMI-4702: Retrieval Eval Gate -- structural validation + baseline drift check
+  # audit:carveout-pure-js -- pure-JS validation: tsx + vitest, no native modules
+  retrieval-eval-gate:
+    name: Retrieval Eval Gate
+    needs: [detect-changes]
+    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Path filter -- only run if ranking/eval files changed
+        id: filter
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
+        with:
+          base: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+          filters: |
+            relevant:
+              - 'packages/doc-retrieval-mcp/src/rerank.ts'
+              - 'packages/doc-retrieval-mcp/src/search.ts'
+              - 'packages/doc-retrieval-mcp/src/corpus.config.json'
+              - 'packages/doc-retrieval-mcp/eval/gold-set.json'
+              - 'packages/doc-retrieval-mcp/eval/**'
+      - name: Install (eval-only, no native modules)
+        if: steps.filter.outputs.relevant == 'true'
+        run: npm ci --ignore-scripts
+      - name: Validate gold-set schema and count
+        if: steps.filter.outputs.relevant == 'true'
+        run: |
+          COUNT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('packages/doc-retrieval-mcp/eval/gold-set.json','utf8')).length)")
+          if [ "$COUNT" -lt 50 ]; then
+            echo "::error::gold-set.json must have >=50 entries; found $COUNT"
+            exit 1
+          fi
+          echo "gold-set.json: $COUNT entries"
+      # Note: TypeScript type-check of eval/ is already performed by the
+      # `Type Check` job (pure-JS carve-out runs root `npm run typecheck` which
+      # builds workspace deps via Turborepo). Re-running tsc here without
+      # building @skillsmith/core would fail on unrelated src/ imports.
+      - name: Run eval unit tests (metrics, ablation, drift check)
+        if: steps.filter.outputs.relevant == 'true'
+        working-directory: packages/doc-retrieval-mcp
+        run: npx --yes -p vitest@4.1.2 -- vitest run tests/eval/
+      - name: Validate baseline.json schema
+        if: steps.filter.outputs.relevant == 'true'
+        run: |
+          node -e "
+            const b = JSON.parse(require('fs').readFileSync('packages/doc-retrieval-mcp/eval/baseline.json','utf8'));
+            const required = ['prior','current','generated','corpus','knobs','metrics'];
+            for (const k of required) {
+              if (!(k in b)) { console.error('::error::baseline.json missing required field: ' + k); process.exit(1); }
+            }
+            console.log('baseline.json schema OK');
+          "
+      - name: Check baseline drift (H1 + GAP 3 enforcement)
+        if: steps.filter.outputs.relevant == 'true'
+        run: npx --yes tsx packages/doc-retrieval-mcp/eval/check-baseline-drift.ts
+        env:
+          GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
+
   # SMI-3985: Supply-chain pin drift guard for the three Wave 1 hardening
   # surfaces that are NOT covered by `Standards Compliance` (audit-standards
   # Check 12, packages/*/package.json only) or `Security Audit` (npm audit):
@@ -1102,7 +1169,7 @@ jobs:
       - name: Build project (Docker)
         if: steps.load-image.outcome == 'success' && steps.dist-cache.outputs.cache-hit != 'true'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1122,7 +1189,7 @@ jobs:
       - name: Run tests for ${{ matrix.package }} (Docker)
         if: steps.load-image.outcome == 'success'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1135,7 +1202,7 @@ jobs:
       - name: Generate coverage for ${{ matrix.package }} (Docker)
         if: steps.load-image.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1236,7 +1303,7 @@ jobs:
       - name: Build project
         if: steps.dist-cache.outputs.cache-hit != 'true'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1253,7 +1320,7 @@ jobs:
       # own). See plan-review B-4 + Step 4b in the trifecta plan.
       - name: Run root-level tests
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1340,7 +1407,7 @@ jobs:
       - name: Build project
         if: steps.dist-cache.outputs.cache-hit != 'true'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1348,27 +1415,21 @@ jobs:
 
       - name: Run colocated package tests
         run: |
-          # SMI-4667 E2: --init makes tini PID 1 in the container so node
-          # is a normal child with default signal semantics + a child
+          # SMI-4667 E2 (active): --init makes tini PID 1 in the container so
+          # node is a normal child with default signal semantics + a child
           # reaper. PR #893's cascade had `node` as PID 1 (entrypoint
           # `exec`s the npx child) which has no SIGCHLD reaper — a worker
           # exit propagates SIGTERM to PID 1 itself, which `npm` reports
           # as `signal SIGTERM`. H2 hypothesis test per the SMI-4667 plan.
-          # SMI-4667 E1 (composes with E2): adds --no-file-parallelism to
-          # force serial file execution. E2 (--init) changed the cascade
-          # mechanism (tini cleaned up PID-1 reaping; exit went from
-          # `npm error signal SIGTERM` exit 1 → exit 143 directly) but the
-          # 11-listener accumulation persists. Tests cross-file leak from
-          # process.on('SIGTERM', …) registrations in product code (H1).
-          # Serial execution prevents accumulation across files.
-          # SMI-4667 E3 (composes with E1+E2): NODE_OPTIONS bootstrap raises
-          # defaultMaxListeners to 50 before vitest workers boot. Tests
-          # whether the MaxListenersExceededWarning is causal (suppression
-          # lets vitest finish + summary print + clean exit) or symptomatic
-          # (SIGTERM still arrives from the same source either way). E1
-          # (--no-file-parallelism) did NOT reduce the 11-listener count
-          # — accumulation persists even with serial file execution, so
-          # the source is per-file or vitest workers persist regardless.
+          # SMI-4667 E1 (retired SMI-4717): --pool=forks + --no-file-parallelism
+          # were removed after SMI-4711 (env-leak fix, PR #964) + SMI-4756
+          # (sync→async createDatabase migration, PR #974) landed green on
+          # Post-Merge Verify at 7ce95a36. The env-leak root cause is gone;
+          # serial-file workaround no longer needed.
+          # SMI-4667 E3 (active): NODE_OPTIONS bootstrap raises
+          # defaultMaxListeners to 50 before vitest workers boot. Suppresses
+          # MaxListenersExceededWarning from product-code SIGTERM handler
+          # accumulation (H1). Active until SMI-4694 (H1 proper fix) closes.
           # SMI-4667: full diagnostic stack defeats the SIGTERM-143
           # cascade but a residual teardown quirk causes vitest workers to
           # exit 1 when reporting results to a CLI parent that's already
@@ -1392,7 +1453,7 @@ jobs:
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
-            npx vitest run --config vitest.config.colocated.ts --pool=forks --no-file-parallelism --passWithNoTests 2>&1 | tee /tmp/vitest-colocated.log
+            npx vitest run --config vitest.config.colocated.ts --passWithNoTests 2>&1 | tee /tmp/vitest-colocated.log
           DOCKER_EXIT=${PIPESTATUS[0]}
           if grep -qE '❯.*\| [1-9][0-9]* failed' /tmp/vitest-colocated.log; then
             echo "::error::vitest reported test failures (see ❯ lines above)"
@@ -1471,7 +1532,7 @@ jobs:
         continue-on-error: true
         id: audit
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1508,7 +1569,7 @@ jobs:
       - name: Build project for security tests
         if: steps.dist-cache.outputs.cache-hit != 'true'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1516,7 +1577,7 @@ jobs:
 
       - name: Run security test suite
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1628,7 +1689,7 @@ jobs:
 
       - name: Build website in Docker
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app/packages/website \
             skillsmith-ci:${{ github.sha }} \
@@ -1845,7 +1906,7 @@ jobs:
       - name: Build all packages (Docker)
         if: steps.load-image.outcome == 'success' && steps.dist-cache.outputs.cache-hit != 'true'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \
@@ -1945,7 +2006,7 @@ jobs:
       - name: Build packages in Docker
         if: steps.dist-cache.outputs.cache-hit != 'true'
         run: |
-          docker run --rm \
+          docker run --rm --init \
             -v ${{ github.workspace }}:/app \
             -w /app \
             skillsmith-ci:${{ github.sha }} \

@@ -14,8 +14,8 @@ import type { LocalSkill } from '../indexer/LocalIndexer.js'
 
 let context: ToolContext
 
-beforeAll(() => {
-  context = createSeededTestContext()
+beforeAll(async () => {
+  context = await createSeededTestContext()
 })
 
 afterAll(async () => {
@@ -146,8 +146,8 @@ describe('Recommend Tool - Local Skill Integration (SMI-1837)', () => {
     },
   ]
 
-  beforeAll(() => {
-    branchContext = createSeededTestContext()
+  beforeAll(async () => {
+    branchContext = await createSeededTestContext()
   })
 
   afterAll(async () => {

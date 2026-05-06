@@ -86,8 +86,8 @@ describe('executeOutdated', () => {
   let db: Database
   let versionRepo: SkillVersionRepository
 
-  beforeEach(() => {
-    db = createTestDatabase()
+  beforeEach(async () => {
+    db = await createTestDatabase()
     versionRepo = new SkillVersionRepository(db)
     vi.clearAllMocks()
   })

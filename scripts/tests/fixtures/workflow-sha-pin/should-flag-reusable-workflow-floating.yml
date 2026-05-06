@@ -1,0 +1,5 @@
+name: should-flag-reusable-workflow-floating
+on: [push]
+jobs:
+  call:
+    uses: org/repo/.github/workflows/build.yml@v2

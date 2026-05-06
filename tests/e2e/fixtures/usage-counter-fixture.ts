@@ -349,6 +349,11 @@ export async function cleanupTestUser(userId: string): Promise<void> {
     console.warn(`[cleanupTestUser] quota_warning_log delete: ${JSON.stringify(quotaErr)}`)
   }
 
+  const subscriptionErr = await postgrestDelete(env, 'subscriptions', filter)
+  if (subscriptionErr) {
+    console.warn(`[cleanupTestUser] subscriptions delete: ${JSON.stringify(subscriptionErr)}`)
+  }
+
   const licenseErr = await postgrestDelete(env, 'license_keys', filter)
   if (licenseErr) {
     console.warn(`[cleanupTestUser] license_keys delete: ${JSON.stringify(licenseErr)}`)
@@ -417,6 +422,26 @@ export function stagingFunctionUrl(fn: string): string {
   return `${env.url}/functions/v1/${fn}`
 }
 
+/** SMI-4741: Insert stale sub row (status='active', current_period_end=yesterday). */
+export async function setStaleSubscriptionRow(userId: string): Promise<void> {
+  const env = resolveStagingEnv()
+  const startIso = new Date(Date.now() - 32 * 24 * 60 * 60 * 1000).toISOString()
+  const endIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  await postgrestWrite(env, 'subscriptions', {
+    user_id: userId,
+    stripe_customer_id: `cus_e2e_stale_${userId.slice(0, 8)}`,
+    stripe_subscription_id: `sub_e2e_stale_${userId.slice(0, 8)}`,
+    tier: 'individual',
+    status: 'active',
+    billing_period: 'monthly',
+    seat_count: 1,
+    current_period_start: startIso,
+    current_period_end: endIso,
+    cancel_at_period_end: false,
+    metadata: {},
+  })
+}
+
 /**
  * Ergonomic guard for vitest `it.skipIf` — returns true when staging creds
  * are absent (e.g. local dev box without varlock).
@@ -438,6 +463,10 @@ export function stagingCredentialsAbsent(): boolean {
  */
 export function getStagingAnonKey(): string {
   return readEnv('STAGING_SUPABASE_ANON_KEY')
+}
+
+export function getStagingServiceRoleKey(): string {
+  return readEnv('STAGING_SUPABASE_SERVICE_ROLE_KEY')
 }
 
 type CounterColumn = 'search_count' | 'get_count' | 'recommend_count'

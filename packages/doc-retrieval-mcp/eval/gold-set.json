@@ -1,0 +1,535 @@
+[
+  {
+    "id": "q001",
+    "category": "memory-recall",
+    "query": "migration INSERT INTO audit_logs with user_id column",
+    "expectedChunks": [
+      { "filePath": "feedback_audit_logs_no_user_id_column.md", "matchType": "substring" }
+    ],
+    "rationale": "Existing retro-training pair-1. Memory bullet about user_id trap in audit_logs migrations.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q002",
+    "category": "memory-recall",
+    "query": "new edge function auto-deploy allowlist silently skipped",
+    "expectedChunks": [
+      { "filePath": "feedback_edge_function_allowlists.md", "matchType": "substring" }
+    ],
+    "rationale": "Existing retro-training pair-2. Memory bullet about edge function allowlist gap.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q003",
+    "category": "memory-recall",
+    "query": "SMI-4401 callback H1 guard overlay session-blindness regression",
+    "expectedChunks": [{ "filePath": "2026-04-23-smi-4401-wave2-ux.md", "matchType": "substring" }],
+    "rationale": "Existing retro-training pair-3. Retro covering wave2 UX callback regression.",
+    "difficulty": "hard"
+  },
+  {
+    "id": "q004",
+    "category": "memory-recall",
+    "query": "publish.yml workflow pattern drift ci yml e2e extraction",
+    "expectedChunks": [
+      { "filePath": "feedback_workflow_pattern_drift.md", "matchType": "substring" },
+      {
+        "filePath": "2026-04-20-smi-4361-publish-yml-nested-node-modules.md",
+        "matchType": "substring"
+      }
+    ],
+    "rationale": "Existing retro-training pair-4. Memory about publish.yml drift and nested node_modules.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q005",
+    "category": "memory-recall",
+    "query": "supabase pooler url password URL-special-characters psql helper",
+    "expectedChunks": [
+      { "filePath": "scripts/pooler-psql.sh", "matchType": "substring" },
+      { "filePath": "feedback_pooler_url_stale_vs_db_password.md", "matchType": "substring" }
+    ],
+    "rationale": "Existing retro-training pair-5. Pooler URL special-character trap and pooler-psql.sh.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q006",
+    "category": "memory-recall",
+    "query": "supabase prod staging project ref verify edge function curl",
+    "expectedChunks": [
+      { "filePath": "project_supabase_prod_vs_staging.md", "matchType": "substring" },
+      {
+        "filePath": "2026-04-17-smi-4252-prod-verification-and-staging-url-confusion.md",
+        "matchType": "substring"
+      }
+    ],
+    "rationale": "Existing retro-training pair-6. Prod vs staging ref confusion and verification failures.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q007",
+    "category": "memory-recall",
+    "query": "Linear team name Smith Horn Group UUID GraphQL",
+    "expectedChunks": [{ "filePath": "feedback_linear_team_name.md", "matchType": "substring" }],
+    "rationale": "New memory-recall. Linear team UUID and correct name frequently looked up.",
+    "difficulty": "easy"
+  },
+  {
+    "id": "q008",
+    "category": "memory-recall",
+    "query": "verify main branch broken CI logs gh run log-failed local repro",
+    "expectedChunks": [
+      { "filePath": "feedback_main_branch_claims_via_ci.md", "matchType": "substring" }
+    ],
+    "rationale": "New memory-recall. Rule against local repro of main-broken claims; use CI logs.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q009",
+    "category": "memory-recall",
+    "query": "doc drift consumer dependency bump CHANGELOG unreleased stub",
+    "expectedChunks": [
+      { "filePath": "feedback_doc_drift_consumer_dep_bump.md", "matchType": "substring" }
+    ],
+    "rationale": "New memory-recall. Pattern where dep-range bump in consumer triggers doc-drift check.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q010",
+    "category": "memory-recall",
+    "query": "in-flight infra fix check open PRs before admin bypass CI",
+    "expectedChunks": [
+      { "filePath": "feedback_in_flight_infra_fix_check.md", "matchType": "substring" }
+    ],
+    "rationale": "New memory-recall. Wait for in-flight fix before admin-bypassing CI gate.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q011",
+    "category": "memory-recall",
+    "query": "vitest SIGTERM signal cascade H1 product code tini reaper NODE_OPTIONS",
+    "expectedChunks": [
+      { "filePath": "feedback_vitest_signal_cascade.md", "matchType": "substring" }
+    ],
+    "rationale": "New memory-recall. SMI-4667 vitest SIGTERM cascade in Docker PR-matrix.",
+    "difficulty": "hard"
+  },
+  {
+    "id": "q012",
+    "category": "memory-recall",
+    "query": "rebase worktree git-crypt smudge filter nonce mismatch failure",
+    "expectedChunks": [
+      { "filePath": "feedback_rebase_worktree_filter_leak.md", "matchType": "substring" }
+    ],
+    "rationale": "New memory-recall. Smudge filter leak pattern when rebasing with git-crypt.",
+    "difficulty": "hard"
+  },
+  {
+    "id": "q013",
+    "category": "memory-recall",
+    "query": "ruflo worktree parallel sessions hive-mind queen investigation multi-step",
+    "expectedChunks": [
+      { "filePath": "feedback_ruflo_worktree_parallel_sessions.md", "matchType": "substring" }
+    ],
+    "rationale": "New memory-recall. Default pattern for multi-step research in parallel sessions.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q014",
+    "category": "memory-recall",
+    "query": "ruvector coverage before ranking short file chunks outranked longer docs",
+    "expectedChunks": [
+      { "filePath": "feedback_ruvector_check_coverage_before_ranking.md", "matchType": "substring" }
+    ],
+    "rationale": "New memory-recall. SMI-4451 halt: short memory chunks outranked by longer impl docs.",
+    "difficulty": "hard"
+  },
+  {
+    "id": "q015",
+    "category": "implementation-lookup",
+    "query": "SMI-4450 ruvector long-term memory doc retrieval architecture phases",
+    "expectedChunks": [
+      { "filePath": "smi-4450-ruvector-long-term-memory.md", "matchType": "substring" }
+    ],
+    "rationale": "Implementation plan for the ruvector long-term memory system.",
+    "difficulty": "easy"
+  },
+  {
+    "id": "q016",
+    "category": "implementation-lookup",
+    "query": "device login round-trip e2e test RFC 8628 device auth workflow",
+    "expectedChunks": [
+      { "filePath": "smi-4460-device-login-roundtrip-e2e.md", "matchType": "substring" }
+    ],
+    "rationale": "E2E plan for device-login flow in GitHub Actions nightly.",
+    "difficulty": "easy"
+  },
+  {
+    "id": "q017",
+    "category": "implementation-lookup",
+    "query": "pure JS CI carve-out docker build audit standards check 38 marker",
+    "expectedChunks": [
+      { "filePath": "smi-4647-pure-js-carveout-and-drift-check.md", "matchType": "substring" }
+    ],
+    "rationale": "Plan for exempting lint/typecheck from Docker build requirement.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q018",
+    "category": "implementation-lookup",
+    "query": "namespace audit inventory collision detector cli mcp framework adapter",
+    "expectedChunks": [
+      { "filePath": "smi-4590-cli-mcp-framework-adapter.md", "matchType": "substring" }
+    ],
+    "rationale": "SMI-4590 namespace audit framework plan with apply-rename engine.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q019",
+    "category": "implementation-lookup",
+    "query": "smoke prod harness surface manifest trigger globs post-deploy verification",
+    "expectedChunks": [{ "filePath": "smi-4459-smoke-prod-harness.md", "matchType": "substring" }],
+    "rationale": "Smoke-prod harness implementation plan and surface manifest design.",
+    "difficulty": "easy"
+  },
+  {
+    "id": "q020",
+    "category": "implementation-lookup",
+    "query": "SMI-4450 SPARC research ruvector semantic retrieval plan review",
+    "expectedChunks": [{ "filePath": "smi-4450-sparc-research.md", "matchType": "substring" }],
+    "rationale": "SPARC research document for ruvector retrieval system.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q021",
+    "category": "implementation-lookup",
+    "query": "memory topic files pool isolation multi-layer routing SMI-4677",
+    "expectedChunks": [
+      { "filePath": "smi-4711-memory-topic-files-pool-isolation.md", "matchType": "substring" }
+    ],
+    "rationale": "Memory-routing multi-layer plan referenced by eval-runner GAP 1 check.",
+    "difficulty": "hard"
+  },
+  {
+    "id": "q022",
+    "category": "implementation-lookup",
+    "query": "host wasm tree-sitter fallback Node ABI mismatch native binding",
+    "expectedChunks": [
+      { "filePath": "smi-4715-host-wasm-tree-sitter.md", "matchType": "substring" }
+    ],
+    "rationale": "WASM tree-sitter fallback for host-side ABI mismatches.",
+    "difficulty": "hard"
+  },
+  {
+    "id": "q023",
+    "category": "implementation-lookup",
+    "query": "indexer idle timeout shutdown sentinel file graceful exit",
+    "expectedChunks": [
+      { "filePath": "smi-4736-indexer-idle-timeout.md", "matchType": "substring" }
+    ],
+    "rationale": "Indexer idle-timeout implementation plan.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q024",
+    "category": "implementation-lookup",
+    "query": "postinstall worktree override regeneration macOS Docker bind mounts SMI-4738",
+    "expectedChunks": [
+      { "filePath": "smi-4738-postinstall-worktree-override-regen.md", "matchType": "substring" }
+    ],
+    "rationale": "Postinstall hook for auto-regenerating worktree docker-compose.override.yml.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q025",
+    "category": "implementation-lookup",
+    "query": "pre-commit helper migration husky hook dispatch smudge filter abort",
+    "expectedChunks": [
+      { "filePath": "smi-4686-pre-commit-helper-migration.md", "matchType": "substring" }
+    ],
+    "rationale": "Pre-commit hook helper migration plan.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q026",
+    "category": "implementation-lookup",
+    "query": "ReDoS audit regex hardening 200 char cap user input",
+    "expectedChunks": [
+      { "filePath": "smi-4733-redos-audit-regex-hardening.md", "matchType": "substring" }
+    ],
+    "rationale": "ReDoS audit and regex hardening implementation plan.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q027",
+    "category": "retro-lookup",
+    "query": "wave 1 ship gate halt recall 2/6 short memory chunks boosting SMI-4468",
+    "expectedChunks": [
+      { "filePath": "2026-04-25-smi-4451-wave1-ship-gate-halt.md", "matchType": "substring" }
+    ],
+    "rationale": "Prior art for corpus-coverage halt with short memory chunks underranked.",
+    "difficulty": "easy"
+  },
+  {
+    "id": "q028",
+    "category": "retro-lookup",
+    "query": "SMI-4381 original diagnosis wrong virtiofs symlink worktree bind mount",
+    "expectedChunks": [
+      { "filePath": "2026-04-29-smi-4381-original-diagnosis-wrong.md", "matchType": "substring" }
+    ],
+    "rationale": "Retro about wrong RCA for SMI-4381 virtiofs/symlink issue.",
+    "difficulty": "hard"
+  },
+  {
+    "id": "q029",
+    "category": "retro-lookup",
+    "query": "pooler psql helper supabase transaction pooler 6543 port rationale",
+    "expectedChunks": [
+      { "filePath": "2026-04-23-smi-4380-pooler-helper.md", "matchType": "substring" }
+    ],
+    "rationale": "Retro covering pooler-psql.sh rationale and transaction pooler routing.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q030",
+    "category": "retro-lookup",
+    "query": "token delta harness failure regression threshold retro SMI-4437",
+    "expectedChunks": [
+      { "filePath": "2026-04-23-smi-4437-token-delta-fail.md", "matchType": "substring" }
+    ],
+    "rationale": "Retro on token-delta-harness failure threshold.",
+    "difficulty": "hard"
+  },
+  {
+    "id": "q031",
+    "category": "retro-lookup",
+    "query": "high trust fallback hits persist indexer wildcard expansion SMI-4425",
+    "expectedChunks": [
+      {
+        "filePath": "2026-04-22-smi-4425-high-trust-fallback-hits-persist.md",
+        "matchType": "substring"
+      }
+    ],
+    "rationale": "Retro about high-trust wildcard fallback hits persisting across runs.",
+    "difficulty": "hard"
+  },
+  {
+    "id": "q032",
+    "category": "retro-lookup",
+    "query": "CLI token auto-detect login UX refinement retro SMI-4454",
+    "expectedChunks": [
+      { "filePath": "2026-04-24-smi-4454-cli-login-ux-refinement.md", "matchType": "substring" }
+    ],
+    "rationale": "Retro on CLI token auto-detect UX improvements.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q033",
+    "category": "retro-lookup",
+    "query": "security batch april 2026 npm vulnerability remediation retro",
+    "expectedChunks": [
+      { "filePath": "2026-04-27-security-batch-april-alerts.md", "matchType": "substring" }
+    ],
+    "rationale": "April 2026 security batch retro for npm vulnerability fixes.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q034",
+    "category": "retro-lookup",
+    "query": "stale npx cache cleanup retro SMI-4568 publish cache invalidation",
+    "expectedChunks": [
+      { "filePath": "2026-04-30-smi-4568-stale-npx-cache-cleanup.md", "matchType": "substring" }
+    ],
+    "rationale": "Retro on stale npx cache causing publish issues.",
+    "difficulty": "hard"
+  },
+  {
+    "id": "q035",
+    "category": "retro-lookup",
+    "query": "usage report end-to-end audit logs api call counting SMI-4157",
+    "expectedChunks": [
+      { "filePath": "2026-04-13-smi-4157-usage-report-end-to-end.md", "matchType": "substring" }
+    ],
+    "rationale": "Retro on usage report pipeline and api call counting.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q036",
+    "category": "retro-lookup",
+    "query": "indexer maintenance timeout schedule 00 UTC discovery SMI-4241",
+    "expectedChunks": [
+      { "filePath": "2026-04-16-smi-4241-indexer-maintenance-timeout.md", "matchType": "substring" }
+    ],
+    "rationale": "Retro on indexer maintenance window timeout issues.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q037",
+    "category": "script-header",
+    "query": "pooler psql script transaction pooler port 6543 password special characters",
+    "expectedChunks": [{ "filePath": "pooler-psql.sh", "matchType": "substring" }],
+    "rationale": "Script header for pooler-psql.sh with URL-safe password rationale.",
+    "difficulty": "easy"
+  },
+  {
+    "id": "q038",
+    "category": "script-header",
+    "query": "create worktree script git-crypt unlock mcp.json patch symlink setup",
+    "expectedChunks": [{ "filePath": "create-worktree.sh", "matchType": "substring" }],
+    "rationale": "Script header for create-worktree.sh with worktree setup procedure.",
+    "difficulty": "easy"
+  },
+  {
+    "id": "q039",
+    "category": "script-header",
+    "query": "session start priming hook additionalContext ruvector index branch filter",
+    "expectedChunks": [{ "filePath": "session-start-priming.sh", "matchType": "substring" }],
+    "rationale": "Script header for session-start-priming.sh SMI-4451.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q040",
+    "category": "script-header",
+    "query": "audit standards check 38 file length 500 lines pure JS carve-out marker",
+    "expectedChunks": [{ "filePath": "audit-standards.mjs", "matchType": "substring" }],
+    "rationale": "Script header and check logic for audit-standards.mjs.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q041",
+    "category": "script-header",
+    "query": "sync main quiet wrapper git-crypt noise token output minimal",
+    "expectedChunks": [{ "filePath": "sync-main.sh", "matchType": "substring" }],
+    "rationale": "Script header for sync-main.sh with quiet git-crypt rationale.",
+    "difficulty": "easy"
+  },
+  {
+    "id": "q042",
+    "category": "script-header",
+    "query": "token delta harness thresholds eval retrieval quality delta gate",
+    "expectedChunks": [{ "filePath": "token-delta-harness.mjs", "matchType": "substring" }],
+    "rationale": "Script header for token-delta-harness.mjs eval quality gate.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q043",
+    "category": "script-header",
+    "query": "session start audit hook namespace collision tier-gated debounce 24h",
+    "expectedChunks": [{ "filePath": "session-start-audit.sh", "matchType": "substring" }],
+    "rationale": "Script header for session-start-audit.sh SMI-4590.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q044",
+    "category": "script-header",
+    "query": "rebase worktree script git-crypt filter management submodule cross-fetch",
+    "expectedChunks": [{ "filePath": "rebase-worktree.sh", "matchType": "substring" }],
+    "rationale": "Script header for rebase-worktree.sh handling smudge filters.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q045",
+    "category": "adr-lookup",
+    "query": "docker glibc requirement node 22 slim alpine native modules ADR-002",
+    "expectedChunks": [{ "filePath": "002-docker-glibc-requirement.md", "matchType": "substring" }],
+    "rationale": "ADR-002 rationale for glibc node:22-slim over Alpine.",
+    "difficulty": "easy"
+  },
+  {
+    "id": "q046",
+    "category": "adr-lookup",
+    "query": "embedding service fallback ONNX mock WASM fallback ADR-009",
+    "expectedChunks": [
+      { "filePath": "009-embedding-service-fallback.md", "matchType": "substring" }
+    ],
+    "rationale": "ADR-009 embedding fallback chain: ONNX → WASM → mock.",
+    "difficulty": "easy"
+  },
+  {
+    "id": "q047",
+    "category": "adr-lookup",
+    "query": "SPARC plan review infra changes mandatory ADR-109 trigger paths",
+    "expectedChunks": [
+      { "filePath": "109-sparc-plan-review-for-infra-changes.md", "matchType": "substring" }
+    ],
+    "rationale": "ADR-109 policy requiring SPARC review for infra changes.",
+    "difficulty": "easy"
+  },
+  {
+    "id": "q048",
+    "category": "adr-lookup",
+    "query": "semantic doc retrieval ruvector corpus architecture ADR-117 similarity band",
+    "expectedChunks": [{ "filePath": "117-semantic-doc-retrieval.md", "matchType": "substring" }],
+    "rationale": "ADR-117 semantic retrieval system and similarity band thresholds.",
+    "difficulty": "easy"
+  },
+  {
+    "id": "q049",
+    "category": "adr-lookup",
+    "query": "release cadence weekly Sunday changelog unreleased 15 entries ADR-114",
+    "expectedChunks": [
+      { "filePath": "114-release-cadence-and-gh-release-alignment.md", "matchType": "substring" }
+    ],
+    "rationale": "ADR-114 release cadence and changelog threshold.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q050",
+    "category": "adr-lookup",
+    "query": "Elastic License 2.0 open-core licensing model ADR-013",
+    "expectedChunks": [{ "filePath": "013-open-core-licensing.md", "matchType": "substring" }],
+    "rationale": "ADR-013 Elastic License 2.0 rationale for open-core model.",
+    "difficulty": "easy"
+  },
+  {
+    "id": "q051",
+    "category": "skill-discovery",
+    "query": "governance skill standards enforcement code review post-commit",
+    "expectedChunks": [
+      { "filePath": ".claude/skills/governance/SKILL.md", "matchType": "substring" }
+    ],
+    "rationale": "Project-level governance skill for standards enforcement.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q052",
+    "category": "skill-discovery",
+    "query": "worktree manager parallel development feature branches git-crypt unlock",
+    "expectedChunks": [
+      { "filePath": ".claude/skills/worktree-manager/SKILL.md", "matchType": "substring" }
+    ],
+    "rationale": "Project-level worktree-manager skill for parallel development.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q053",
+    "category": "skill-discovery",
+    "query": "supabase migration reviewer pre-apply post-apply ACCESS EXCLUSIVE lock",
+    "expectedChunks": [
+      {
+        "filePath": ".claude/skills/supabase-migration-reviewer/SKILL.md",
+        "matchType": "substring"
+      }
+    ],
+    "rationale": "Project-level skill for automated Supabase migration review.",
+    "difficulty": "hard"
+  },
+  {
+    "id": "q054",
+    "category": "skill-discovery",
+    "query": "security auditor skill vulnerability scanning SSRF injection detection",
+    "expectedChunks": [{ "filePath": "security-auditor/SKILL.md", "matchType": "substring" }],
+    "rationale": "User-level security-auditor skill for vulnerability scanning.",
+    "difficulty": "medium"
+  },
+  {
+    "id": "q055",
+    "category": "skill-discovery",
+    "query": "sparc methodology orchestrator researcher coder reviewer SPARC modes",
+    "expectedChunks": [
+      { "filePath": ".claude/skills/sparc-methodology/SKILL.md", "matchType": "substring" }
+    ],
+    "rationale": "Project-level sparc-methodology skill for structured planning.",
+    "difficulty": "medium"
+  }
+]

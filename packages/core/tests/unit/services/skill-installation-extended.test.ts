@@ -113,7 +113,7 @@ describe('SkillInstallationService (extended)', () => {
   let db: Database
 
   beforeEach(async () => {
-    db = createTestDatabase()
+    db = await createTestDatabase()
     await createTmpDirs()
   })
 
