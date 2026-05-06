@@ -37,6 +37,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Install workspace deps (artifact probe)
+        # The snapshot script probes for installed deps via the workspace mount.
+        # Without node_modules populated on the host, artifact paths return null.
+        # --ignore-scripts skips native module rebuilds; the snapshot only reads
+        # package.json/lock metadata.
+        run: npm ci --ignore-scripts
+
       - name: Build Docker image
         run: |
           docker build \
