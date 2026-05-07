@@ -2878,8 +2878,12 @@ console.log(`\n${BOLD}43. CHANGELOG [Unreleased] Placement (SMI-4776)${RESET}`)
     if (firstUnreleasedIdx > firstVersionIdx) {
       placementIssues++
       const offendingVersion = headings[firstVersionIdx].text
+      // Convert char offsets to 1-indexed line numbers so operators can jump
+      // straight to the misordered headings (SMI-4776 acceptance criterion).
+      const versionLine = content.slice(0, headings[firstVersionIdx].index).split('\n').length
+      const unreleasedLine = content.slice(0, headings[firstUnreleasedIdx].index).split('\n').length
       fail(
-        `${label}: '## [Unreleased]' is placed after '## ${offendingVersion}'`,
+        `${label}: '## [Unreleased]' (${changelogPath}:${unreleasedLine}) is placed after '## ${offendingVersion}' (${changelogPath}:${versionLine})`,
         `Move the [Unreleased] section above the first ## v... heading in ${changelogPath}`
       )
     }
