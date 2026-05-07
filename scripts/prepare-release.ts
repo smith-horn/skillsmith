@@ -43,7 +43,12 @@ import {
   type NpmLookup,
 } from './lib/release-collision.js'
 import { findLastVersionBumpCommit, prependToChangelog } from './lib/release-changelog.js'
-import { validatePostWrite, getCurrentBranch, createCommit } from './lib/release-git.js'
+import {
+  validatePostWrite,
+  getCurrentBranch,
+  createCommit,
+  regenerateLockfile,
+} from './lib/release-git.js'
 
 // Re-export the helper surface so existing test imports continue to resolve
 // against `../prepare-release` (SMI-4783 keeps the public surface stable).
@@ -64,6 +69,7 @@ interface Options {
   dryRun: boolean
   noChangelog: boolean
   noCommit: boolean
+  noLockfileRegen: boolean
   allowDowngrade: boolean
   check: boolean
 }
@@ -76,6 +82,7 @@ function parseArgs(): Options {
   let dryRun = false
   let noChangelog = false
   let noCommit = false
+  let noLockfileRegen = false
   let allowDowngrade = false
   let check = false
 
@@ -86,6 +93,8 @@ function parseArgs(): Options {
       noChangelog = true
     } else if (arg === '--no-commit') {
       noCommit = true
+    } else if (arg === '--no-lockfile-regen') {
+      noLockfileRegen = true
     } else if (arg === '--allow-downgrade') {
       allowDowngrade = true
     } else if (arg === '--check') {
@@ -126,7 +135,7 @@ function parseArgs(): Options {
     }
   }
 
-  return { bumps, dryRun, noChangelog, noCommit, allowDowngrade, check }
+  return { bumps, dryRun, noChangelog, noCommit, noLockfileRegen, allowDowngrade, check }
 }
 
 function printUsage(): void {
@@ -144,6 +153,7 @@ Options:
   --dry-run             Preview changes without writing
   --no-changelog        Skip changelog generation
   --no-commit           Write files but don't create git commit
+  --no-lockfile-regen   Skip 'npm install --package-lock-only' after dep-range bumps (SMI-4775)
   --check               Audit-only: run npm collision check, no writes, exit non-zero on conflict
   --allow-downgrade     Permit bumping to a semver <= highest published (rare; never overrides equals-published)
   --help                Show this help
@@ -242,7 +252,7 @@ function updateCoreDependency(newCoreVersion: string): void {
 
 async function main(): Promise<void> {
   const options = parseArgs()
-  const { bumps, dryRun, noChangelog, noCommit, allowDowngrade, check } = options
+  const { bumps, dryRun, noChangelog, noCommit, noLockfileRegen, allowDowngrade, check } = options
 
   // Step 0: Branch guard (skip in --check mode — audit is safe on any branch)
   if (!check) {
@@ -326,6 +336,19 @@ async function main(): Promise<void> {
     console.log(`  ✓ Updated @skillsmith/core dep in dependents`)
   }
 
+  // Step 6.5: Regenerate package-lock.json so the lockfile matches the bumped
+  // dep ranges (SMI-4775). Without this, the publish workflow ships a
+  // lockfile pinned to the previous core version while package.json declares
+  // the new one — `npm ci` then either fails or silently resolves stale
+  // transitive deps. Opt out with --no-lockfile-regen for emergency releases.
+  if (!noLockfileRegen) {
+    console.log('  Regenerating package-lock.json (SMI-4775)...')
+    regenerateLockfile()
+    console.log('  ✓ Lockfile regenerated')
+  } else {
+    console.log('  ⚠ Skipping lockfile regen (--no-lockfile-regen)')
+  }
+
   // Step 7-8: Generate and prepend changelogs
   if (!noChangelog) {
     const since = findLastVersionBumpCommit()
@@ -369,9 +392,9 @@ async function main(): Promise<void> {
     process.exit(0)
   }
 
-  // Step 11: Commit
+  // Step 11: Commit (include package-lock.json when regen ran)
   const preBranch = getCurrentBranch()
-  createCommit(plans)
+  createCommit(plans, !noLockfileRegen)
 
   // Step 12: Post-commit branch verification
   const postBranch = getCurrentBranch()
