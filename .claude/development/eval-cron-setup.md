@@ -44,6 +44,39 @@ launchctl start app.skillsmith.eval-baseline-cron
 tail ~/.skillsmith/logs/eval-cron-$(date -u +%Y-%m-%d).log
 ```
 
+### macOS TCC (privacy sandbox) gotcha
+
+If your repo lives under `~/Documents/`, `~/Desktop/`, or `~/Downloads/`, **launchd will be denied filesystem access by macOS TCC** and the agent will exit with code 126 + this stderr:
+
+```text
+shell-init: error retrieving current directory: getcwd: cannot access parent directories: Operation not permitted
+job-working-directory: error retrieving current directory: getcwd: cannot access parent directories: Operation not permitted
+/bin/bash: ./scripts/eval-baseline-cron.sh: Operation not permitted
+```
+
+This is macOS Privacy & Security blocking launchd jobs from traversing user-data folders. Two fixes (pick one):
+
+**Option A — Grant `/bin/bash` Full Disk Access (recommended)**:
+
+```bash
+# Open the right pane directly:
+open 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles'
+# Click the "+" button, hit Cmd+Shift+G in the file picker, type /bin/bash, add it.
+# Toggle the switch ON for /bin/bash.
+# Then re-load:
+launchctl unload ~/Library/LaunchAgents/app.skillsmith.eval-baseline-cron.plist 2>/dev/null
+launchctl load   ~/Library/LaunchAgents/app.skillsmith.eval-baseline-cron.plist
+launchctl start  app.skillsmith.eval-baseline-cron
+tail -20 ~/.skillsmith/logs/eval-cron-launchd-stderr.log   # should be empty
+ls -la packages/doc-retrieval-mcp/eval/.cron-heartbeat     # should now exist
+```
+
+**Option B — Move the repo outside `~/Documents/`**:
+
+A clone at `~/code/skillsmith` or similar bypasses TCC entirely. Re-generate the plist after relocating (the substituted paths become stale).
+
+**Why this isn't the systemd path's problem**: Linux has no equivalent global per-folder consent system, so the systemd timer just works. macOS Sequoia tightened TCC to cover launchd→`~/Documents/` traversal — pre-Sequoia LaunchAgents in the same configuration ran without intervention.
+
 ## Linux setup (fallback)
 
 ```bash
@@ -127,6 +160,7 @@ The `audit:standards` warning will fire after 14 days of pause — that's intent
 | `eval invocation failed with exit N` | Eval-runner errored (network, OOM, indexer state) | Inspect `~/.skillsmith/logs/eval-cron-<date>.log`; .cron-heartbeat will record `FAIL` so the audit can distinguish `not running` vs `running but failing` |
 | Auto-PR not opened despite drift | `gh` not authenticated, or branch already exists | Check `gh auth status`; remove stale `chore/eval-baseline-cron-<date>` branch with `git branch -D` + `git push --delete origin <branch>` |
 | `audit:standards` heartbeat stale warning despite cron running | Forgetting the manual heartbeat-only push when there's no drift | Run `git add packages/doc-retrieval-mcp/eval/.cron-heartbeat && git commit -m 'chore(eval): cron heartbeat' && git push` |
+| `launchctl list` shows exit code 126 + stderr `Operation not permitted` | macOS TCC blocks launchd from accessing repo under `~/Documents/` | See "macOS TCC (privacy sandbox) gotcha" above — grant `/bin/bash` Full Disk Access OR move repo outside `~/Documents/` |
 
 ## What this does NOT cover
 
