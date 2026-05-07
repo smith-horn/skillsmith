@@ -17,6 +17,7 @@ source "$SCRIPT_DIR/_lib.sh"
 # Flags
 DRY_RUN=false
 SKIP_SUBMODULE=false
+ALLOW_SUBMODULE_AHEAD=false
 
 # State (set during execution)
 WORKTREE_PATH="" TARGET_BRANCH="" TARGET_REF=""
@@ -37,9 +38,12 @@ Arguments:
   target-branch   Branch to rebase onto (default: origin/main)
 
 Options:
-  --dry-run       Print steps without executing mutations (fetch still runs)
-  --no-submodule  Skip submodule cross-fetch and rebase even if initialized
-  -h, --help      Show this help message and exit
+  --dry-run                 Print steps without executing mutations (fetch still runs)
+  --no-submodule            Skip submodule cross-fetch and rebase even if initialized
+  --allow-submodule-ahead   Permit a strict-descendant submodule pointer in the
+                            worktree (SMI-4773). Worktree submodule stays at its
+                            current SHA instead of erroring. Divergence still errors.
+  -h, --help                Show this help message and exit
 
 Exit Codes:
   0  Success or already up-to-date
@@ -236,10 +240,20 @@ step_rebase_submodule() {
     # Directional guard: worktree's submodule must not be ahead of target
     if ! git -C "$WT_SUB" merge-base --is-ancestor "$EXPECTED_SUBMODULE_SHA" "$target_sub_sha" 2>/dev/null; then
         if git -C "$WT_SUB" merge-base --is-ancestor "$target_sub_sha" "$EXPECTED_SUBMODULE_SHA" 2>/dev/null; then
+            # SMI-4773: with --allow-submodule-ahead, leave worktree at its strict-
+            # descendant SHA instead of erroring; rebased parent commits will
+            # reference that SHA. Divergence (else branch below) still errors.
+            if [ "$ALLOW_SUBMODULE_AHEAD" = true ]; then
+                info "  Worktree submodule is ahead of target (strict descendant) — keeping worktree SHA"
+                info "  Worktree: ${EXPECTED_SUBMODULE_SHA:0:12}"
+                info "  Target:   ${target_sub_sha:0:12}"
+                return 0
+            fi
             error "Worktree submodule (docs/internal) is AHEAD of target's pointer.
   Worktree: $EXPECTED_SUBMODULE_SHA
   Target:   $target_sub_sha
-Push and merge your submodule changes first, then retry."
+Push and merge your submodule changes first, then retry.
+(Pass --allow-submodule-ahead to keep the worktree's strict-descendant pointer.)"
         else
             error "Worktree submodule (docs/internal) has diverged from target.
   Worktree: $EXPECTED_SUBMODULE_SHA
@@ -392,6 +406,7 @@ main() {
             -h|--help) usage; exit 0 ;;
             --dry-run) DRY_RUN=true ;;
             --no-submodule) SKIP_SUBMODULE=true ;;
+            --allow-submodule-ahead) ALLOW_SUBMODULE_AHEAD=true ;;
             -*) error "Unknown option: $1
 
 Run '$(basename "$0") --help' for usage information." ;;

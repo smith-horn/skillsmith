@@ -135,7 +135,7 @@ git submodule update --init                           # Init internal docs (auth
 
 **Host native bindings, `IS_DOCKER` trap, outage marker + stale-instrumentation banner, macOS host fallback, SMI-4698 native-rebuild caveat**: see [git-crypt-guide.md § Host Native Bindings & SessionStart Instrumentation (SMI-4549)](.claude/development/git-crypt-guide.md#host-native-bindings--sessionstart-instrumentation-smi-4549).
 
-**Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Use `--dry-run` to preview. Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
+**Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Use `--dry-run` to preview. Pass `--allow-submodule-ahead` (SMI-4773) when the worktree's `docs/internal` pointer is a strict descendant of target's — keeps the worktree's submodule SHA instead of erroring. Divergence still errors. Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
 
 **Full guide**: [git-crypt-guide.md](.claude/development/git-crypt-guide.md)
 

@@ -431,4 +431,117 @@ describe('SMI-3102: rebase-worktree.sh', () => {
     const combined = result.stdout + result.stderr
     expect(combined).toContain('AHEAD')
   })
+
+  // SMI-4773: Scenario 10 — strict-descendant submodule + --allow-submodule-ahead
+  it('exits 0 with --allow-submodule-ahead when worktree submodule is a strict descendant', () => {
+    const tempRoot = makeTempDir('rw-test10')
+    tempDirs.push(tempRoot)
+
+    const bareDir = join(tempRoot, 'bare.git')
+    const subBareDir = join(tempRoot, 'sub-bare.git')
+    const cloneDir = join(tempRoot, 'clone')
+    const worktreeDir = join(tempRoot, 'wt')
+
+    git(tempRoot, `init --bare "${bareDir}"`)
+    git(tempRoot, `init --bare "${subBareDir}"`)
+
+    const subSeedDir = join(tempRoot, 'sub-seed')
+    git(tempRoot, `clone "${subBareDir}" "${subSeedDir}"`)
+    sh(`touch "${join(subSeedDir, 'doc.md')}"`)
+    git(subSeedDir, 'add doc.md')
+    git(subSeedDir, 'commit -m "sub initial"')
+    git(subSeedDir, 'push origin main')
+
+    git(tempRoot, `clone "${bareDir}" "${cloneDir}"`)
+    sh(`touch "${join(cloneDir, 'README.md')}"`)
+    git(cloneDir, 'add README.md')
+    git(cloneDir, 'commit -m "initial"')
+    git(cloneDir, `submodule add "${subBareDir}" docs/internal`)
+    git(cloneDir, 'commit -m "add submodule"')
+    git(cloneDir, 'push origin main')
+
+    git(cloneDir, `worktree add -b feature "${worktreeDir}"`)
+    git(worktreeDir, 'submodule update --init')
+
+    // Advance worktree submodule strictly ahead (descendant) of main's pointer
+    const wtSub = join(worktreeDir, 'docs', 'internal')
+    sh(`echo "ahead content" > "${join(wtSub, 'ahead.md')}"`)
+    git(wtSub, 'add ahead.md')
+    git(wtSub, 'commit -m "worktree sub ahead"')
+    const wtSubSha = git(wtSub, 'rev-parse HEAD')
+
+    // Advance main parent (non-submodule change) so rebase is needed
+    git(cloneDir, 'checkout main')
+    sh(`echo "main advance" > "${join(cloneDir, 'main-file.txt')}"`)
+    git(cloneDir, 'add main-file.txt')
+    git(cloneDir, 'commit -m "advance main"')
+    git(cloneDir, 'push origin main')
+    git(cloneDir, 'checkout -')
+
+    const result = runScript(`--allow-submodule-ahead "${worktreeDir}"`)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('strict descendant')
+
+    // Worktree submodule SHA should be unchanged (still the descendant SHA)
+    const wtSubShaAfter = git(wtSub, 'rev-parse HEAD')
+    expect(wtSubShaAfter).toBe(wtSubSha)
+  })
+
+  // SMI-4773: Scenario 11 — divergent submodule + --allow-submodule-ahead must still error
+  it('exits 1 with --allow-submodule-ahead when worktree submodule has DIVERGED', () => {
+    const tempRoot = makeTempDir('rw-test11')
+    tempDirs.push(tempRoot)
+
+    const bareDir = join(tempRoot, 'bare.git')
+    const subBareDir = join(tempRoot, 'sub-bare.git')
+    const cloneDir = join(tempRoot, 'clone')
+    const worktreeDir = join(tempRoot, 'wt')
+
+    git(tempRoot, `init --bare "${bareDir}"`)
+    git(tempRoot, `init --bare "${subBareDir}"`)
+
+    const subSeedDir = join(tempRoot, 'sub-seed')
+    git(tempRoot, `clone "${subBareDir}" "${subSeedDir}"`)
+    sh(`touch "${join(subSeedDir, 'doc.md')}"`)
+    git(subSeedDir, 'add doc.md')
+    git(subSeedDir, 'commit -m "sub initial"')
+    git(subSeedDir, 'push origin main')
+
+    git(tempRoot, `clone "${bareDir}" "${cloneDir}"`)
+    sh(`touch "${join(cloneDir, 'README.md')}"`)
+    git(cloneDir, 'add README.md')
+    git(cloneDir, 'commit -m "initial"')
+    git(cloneDir, `submodule add "${subBareDir}" docs/internal`)
+    git(cloneDir, 'commit -m "add submodule"')
+    git(cloneDir, 'push origin main')
+
+    git(cloneDir, `worktree add -b feature "${worktreeDir}"`)
+    git(worktreeDir, 'submodule update --init')
+
+    // Worktree advances submodule to its own SHA (commit A)
+    const wtSub = join(worktreeDir, 'docs', 'internal')
+    sh(`echo "wt branch" > "${join(wtSub, 'wt.md')}"`)
+    git(wtSub, 'add wt.md')
+    git(wtSub, 'commit -m "wt commit A"')
+
+    // Main also advances submodule to a DIFFERENT SHA (commit B) — divergence
+    const mainSubClone = join(tempRoot, 'main-sub-clone')
+    git(tempRoot, `clone "${subBareDir}" "${mainSubClone}"`)
+    sh(`echo "main branch" > "${join(mainSubClone, 'main.md')}"`)
+    git(mainSubClone, 'add main.md')
+    git(mainSubClone, 'commit -m "main commit B"')
+    git(mainSubClone, 'push origin main')
+
+    git(cloneDir, 'checkout main')
+    git(cloneDir, 'submodule update --remote docs/internal')
+    git(cloneDir, 'add docs/internal')
+    git(cloneDir, 'commit -m "main: bump submodule"')
+    git(cloneDir, 'push origin main')
+    git(cloneDir, 'checkout -')
+
+    const result = runScript(`--allow-submodule-ahead "${worktreeDir}"`)
+    expect(result.status).toBe(1)
+    const combined = result.stdout + result.stderr
+    expect(combined).toContain('diverged')
+  })
 })
