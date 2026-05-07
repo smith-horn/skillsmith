@@ -69,7 +69,7 @@ journalctl --user -u skillsmith-eval-baseline-cron --since '1 day ago'
 
 The cron always writes a heartbeat row to `packages/doc-retrieval-mcp/eval/.cron-heartbeat`:
 
-```
+```text
 <ISO-timestamp>\t<git-HEAD-sha>\tOK
 ```
 
@@ -92,6 +92,7 @@ If the canonical dev becomes unavailable for >2 weeks:
    - Has Docker + `gh` set up
    - Commits to running the cron + manual weekly heartbeat-only pushes
 3. **Hand off the canonical role**: the new dev installs the cron locally per the macOS / Linux setup above. The old dev disables their cron:
+
    ```bash
    # macOS
    launchctl unload ~/Library/LaunchAgents/app.skillsmith.eval-baseline-cron.plist
@@ -99,6 +100,7 @@ If the canonical dev becomes unavailable for >2 weeks:
    # Linux
    systemctl --user disable --now skillsmith-eval-baseline-cron.timer
    ```
+
 4. **Document the hand-off**: comment on SMI-4764 (or successor) noting the date and new canonical dev.
 
 ## Disabling temporarily
