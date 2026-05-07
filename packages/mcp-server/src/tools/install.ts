@@ -218,12 +218,17 @@ export async function installSkill(input: unknown, _context?: ToolContext): Prom
     confirmed: validInput.confirmed,
   })
 
-  // SMI-4182: fire-and-forget install telemetry for usage report funnel
+  // SMI-4182 / SMI-4795: fire-and-forget install telemetry for usage report
+  // funnel. `trustTier` is included on every event (when known) and
+  // `errorCode` is included only on failures so the wire payload stays
+  // minimal for successful installs.
   void emitInstallEvent({
     skillId: validInput.skillId,
     source: 'mcp',
     success: result.success,
     durationMs: Date.now() - installStart,
+    ...(result.trustTier !== undefined && { trustTier: result.trustTier }),
+    ...(!result.success && result.errorCode !== undefined && { errorCode: result.errorCode }),
   })
 
   // SMI-4578: fan-out to additional clients after primary install. Failures

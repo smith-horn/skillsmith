@@ -382,6 +382,7 @@ export {
   type ProgressCallback,
   type InstallOptions,
   type InstallResult as CoreInstallResult,
+  type InstallErrorCode,
   type UninstallOptions,
   type UninstallResult as CoreUninstallResult,
   type SkillManifest,

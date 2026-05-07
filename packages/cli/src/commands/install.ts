@@ -282,13 +282,18 @@ export function createInstallCommand(): Command {
             const installStart = Date.now()
             const result = await service.install(skillId, installOptions)
 
-            // SMI-4182: fire-and-forget install telemetry — skipped when CLI
-            // is unauthenticated (no SKILLSMITH_API_KEY), per product decision.
+            // SMI-4182 / SMI-4795: fire-and-forget install telemetry —
+            // skipped when CLI is unauthenticated (no SKILLSMITH_API_KEY),
+            // per product decision. `trustTier` is included on every event
+            // (when known); `errorCode` is included only on failures.
             void emitInstallEvent({
               skillId,
               source: 'cli',
               success: result.success,
               durationMs: Date.now() - installStart,
+              ...(result.trustTier !== undefined && { trustTier: result.trustTier }),
+              ...(!result.success &&
+                result.errorCode !== undefined && { errorCode: result.errorCode }),
             })
 
             // SMI-4578: fan-out to --also-link clients only after the

@@ -69,6 +69,27 @@ export interface OptimizationInfo {
   optimizedLines?: number
 }
 
+/**
+ * SMI-4795: Coarse error-code taxonomy for failed install events.
+ *
+ * Each code maps to a specific `success: false` return path inside
+ * SkillInstallationService.install(). The taxonomy is intentionally narrow —
+ * it should be cardinality-bounded enough for telemetry funnel analysis and
+ * stable across releases. Adding a new code requires (a) a real new failure
+ * return path and (b) updating downstream funnel queries.
+ */
+export type InstallErrorCode =
+  | 'REGISTRY_LOOKUP_UNAVAILABLE' // Registry ID supplied but no registry-lookup adapter configured
+  | 'REGISTRY_SKILL_NOT_FOUND' // Registry lookup returned null (no installable repo_url)
+  | 'QUARANTINED' // Skill is quarantined per registry metadata
+  | 'ALREADY_INSTALLED' // Skill present in manifest and force=false
+  | 'FETCH_FAILED' // SKILL.md fetch from GitHub failed
+  | 'VALIDATION_FAILED' // SKILL.md missing required frontmatter / too short
+  | 'SKIP_SCAN_FORBIDDEN' // skipScan requested but trust tier disallows it
+  | 'SCAN_REJECTED' // Security scan returned non-passing report
+  | 'CONFIRMATION_REQUIRED' // Experimental/unknown registry skill needs confirmed=true
+  | 'UNKNOWN' // Unhandled exception caught by outer try/catch
+
 /** Result of an install operation */
 export interface InstallResult {
   success: boolean
@@ -77,6 +98,12 @@ export interface InstallResult {
   securityReport?: ScanReport
   tips?: string[]
   error?: string
+  /**
+   * SMI-4795: Coarse machine-readable failure code, populated at every
+   * `success: false` return path. Always undefined when `success: true`.
+   * Used by install-telemetry funnel; see {@link InstallErrorCode}.
+   */
+  errorCode?: InstallErrorCode
   /** Trust tier used for security scanning */
   trustTier?: TrustTier
   /** Optimization info (Skillsmith Optimization Layer) */
