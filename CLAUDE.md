@@ -19,6 +19,7 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 | [smoke-prod-guide.md](.claude/development/smoke-prod-guide.md) | Post-deploy smoke harness (SMI-4459). Surface manifest, adding new surfaces, failure triage, phase rollout. |
 | [vercel-deploy-hook.md](.claude/development/vercel-deploy-hook.md) | One-time Vercel→GitHub `repository_dispatch` setup that triggers `smoke-prod.yml` after a website deploy. |
 | [e2e-staging-runbook.md](.claude/development/e2e-staging-runbook.md) | `device-login-roundtrip.yml` (SMI-4460) — secret rotation, Docker-policy carve-out, prod-ref grep gate. |
+| [eval-cron-setup.md](.claude/development/eval-cron-setup.md) | Canonical-dev retrieval-eval cron (SMI-4764 Wave 2) — launchd/systemd templates, heartbeat lifecycle, replacement protocol. |
 
 **Implementation plan template**: [.claude/templates/implementation-plan.md](.claude/templates/implementation-plan.md) — use this structure for all plans in `docs/internal/implementation/`.
 

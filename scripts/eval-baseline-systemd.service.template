@@ -1,0 +1,49 @@
+# scripts/eval-baseline-systemd.service.template — SMI-4764 Wave 2
+#
+# Linux systemd service template for the canonical-dev retrieval-eval cron.
+# Pair with the matching .timer unit (see eval-baseline-systemd.timer.template).
+#
+# Setup (canonical dev only — see .claude/development/eval-cron-setup.md):
+#
+#   1. Copy template, substituting __REPO_PATH__ and __USER__:
+#        sed "s|__REPO_PATH__|$(pwd)|g; s|__USER__|$USER|g" \
+#          scripts/eval-baseline-systemd.service.template \
+#          > ~/.config/systemd/user/skillsmith-eval-baseline-cron.service
+#
+#   2. Copy + adapt the timer (paired):
+#        sed "s|__REPO_PATH__|$(pwd)|g" \
+#          scripts/eval-baseline-systemd.timer.template \
+#          > ~/.config/systemd/user/skillsmith-eval-baseline-cron.timer
+#
+#   3. Reload + enable:
+#        systemctl --user daemon-reload
+#        systemctl --user enable --now skillsmith-eval-baseline-cron.timer
+#
+#   4. Verify:
+#        systemctl --user list-timers | grep skillsmith
+#        journalctl --user -u skillsmith-eval-baseline-cron --since '1 day ago'
+#        tail ~/.skillsmith/logs/eval-cron-*.log
+
+[Unit]
+Description=Skillsmith retrieval-eval baseline cron (SMI-4764 Wave 2)
+Documentation=https://github.com/smith-horn/skillsmith/blob/main/.claude/development/eval-cron-setup.md
+# Defer until Docker daemon ready — eval requires the dev container.
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__REPO_PATH__
+# Login shell so PATH includes docker/gh/varlock per canonical dev's profile.
+ExecStart=/bin/bash -lc 'cd __REPO_PATH__ && ./scripts/eval-baseline-cron.sh'
+StandardOutput=append:%h/.skillsmith/logs/eval-cron-systemd-stdout.log
+StandardError=append:%h/.skillsmith/logs/eval-cron-systemd-stderr.log
+# Hardening: cron runs in canonical dev's user context. No root, no
+# privileged caps. WorkingDirectory pin prevents path-injection attacks
+# via env override.
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+# user-mode service — invoked by user systemd, not system systemd.
+WantedBy=default.target
