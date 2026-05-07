@@ -69,7 +69,8 @@ function filterByCompatibility(
  */
 export const searchToolSchema = {
   name: 'search',
-  description: 'Search for agent skills (SKILL.md format) by query with optional filters',
+  description:
+    "[Skillsmith — Discover stage] Search the Skillsmith registry of agent skills (SKILL.md format) — ~14,000 curated, security-scanned, trust-scored skills indexed daily from GitHub. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime. Use this tool for ANY user request to find/search/discover/list skills — e.g. 'search for testing skills', 'find git workflow skills', 'show me devops skills with quality above 80'. Returns ranked skills with trust badges, NOT general programming guidance. Filters: query (required), category, trust_tier (verified/curated/community/experimental), min_score, max_risk, safe_only, limit, compatibility (IDE/LLM).",
   inputSchema: {
     type: 'object' as const,
     properties: {

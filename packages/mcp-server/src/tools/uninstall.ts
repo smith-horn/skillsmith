@@ -101,7 +101,8 @@ export async function listInstalledSkills(): Promise<string[]> {
  */
 export const uninstallTool = {
   name: 'uninstall_skill',
-  description: 'Uninstall an agent skill from ~/.claude/skills/',
+  description:
+    "[Skillsmith — Retire stage] Uninstall an agent skill from the local Claude Code skills directory (~/.claude/skills/) or runtime-equivalent path. Use when the user asks to uninstall/remove/delete a specific skill — e.g. 'uninstall jest-helper', 'remove community/git-commit', 'use Skillsmith to delete the testing skill'. Optional `force` flag overrides protection on locally-modified skills. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
   inputSchema: {
     type: 'object' as const,
     properties: {

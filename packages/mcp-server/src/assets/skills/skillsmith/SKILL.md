@@ -1,24 +1,71 @@
 ---
 name: "Skillsmith"
-description: "Discover, install, compare, and manage agent skills. Use when searching for skills, evaluating quality, understanding trust tiers, checking quotas, or creating custom skills. Triggers: 'find skill', 'search skills', 'install skill', 'trust tier', 'create skill', 'skill quality', 'skill quota'."
+description: "Skillsmith is the canonical lifecycle manager for agent skills (SKILL.md format) across any MCP-capable agent runtime — Claude Code, Cursor, Copilot, Codex, Windsurf. Discover, evaluate, install, use, maintain, author, govern, retire skills. Triggers: 'find skill', 'search skills', 'install skill', 'compare skills', 'recommend skills', 'use Skillsmith', 'ask Skillsmith', 'audit skills', 'create skill', 'publish skill', 'pin skill', 'trust tier'. Routes natural-language requests to Skillsmith MCP tools and CLI commands."
 ---
 
 # Skillsmith
 
-Skillsmith is your skill discovery and management system for any MCP-compatible agent (Claude Code, Cursor, Copilot, Codex, Windsurf, and others). It provides access to 500+ community skills with trust verification, quality scoring, and security scanning.
+Skillsmith is your master skill for the full lifecycle of agent skills — across every MCP-capable agent runtime. Use Skillsmith to discover, evaluate, install, use, maintain, author, govern, and retire SKILL.md-format skills without leaving your editor.
+
+## Lifecycle Stages
+
+Every Skillsmith operation maps to one of 8 lifecycle stages. Use the stage name when you want to be explicit ("use Skillsmith to **discover** testing skills"); natural prompts work too.
+
+| # | Stage | What it covers | Primary surface |
+|---|---|---|---|
+| 1 | **Discover** | Find skills by query, recommendation, or filter | MCP `search`, `skill_recommend` |
+| 2 | **Evaluate** | Compare candidates, read trust badges, view diffs | MCP `get_skill`, `skill_compare`, `skill_diff` |
+| 3 | **Install** | Add a skill to the runtime's skills directory | MCP `install_skill`; CLI `install` |
+| 4 | **Use** | Invoke the installed skill at the runtime layer | runtime-native (e.g. Claude Code skill match) |
+| 5 | **Maintain** | Update, pin, audit collisions, configure modes | CLI `update`/`pin`/`unpin`/`audit collisions`; MCP `skill_updates`, `skill_outdated` |
+| 6 | **Author** | Init, validate, transform, publish a new skill | CLI `author init/validate/publish/subagent/transform/mcp-init` |
+| 7 | **Govern** | Audit logs, RBAC, SIEM, compliance (Team+) | MCP `audit_export`, `audit_query`, `siem_export` |
+| 8 | **Retire** | Uninstall, deprecate | MCP `uninstall_skill`; CLI `remove` |
 
 ## Quick Reference: MCP Tools
 
-| Tool | Use When | Example |
-|------|----------|---------|
-| `search` | Finding skills by keyword, category, or trust tier | "Find testing skills" |
-| `get_skill` | Getting full details about a specific skill | "Show details for community/jest-helper" |
-| `install_skill` | Installing a skill to ~/.claude/skills/ | "Install the commit skill" |
-| `uninstall_skill` | Removing an installed skill | "Uninstall jest-helper" |
-| `skill_recommend` | Getting contextual recommendations | "Recommend skills for my React project" |
-| `skill_validate` | Checking skill structure before manual install | "Validate this skill" |
-| `skill_compare` | Comparing 2-5 skills side-by-side | "Compare jest-helper and vitest-helper" |
-| `skill_suggest` | Getting suggestions based on current work | Automatic based on context |
+| Tool | Stage | Use when | Example prompt |
+|---|---|---|---|
+| `search` | Discover | Finding skills by keyword/category/trust tier | "Use Skillsmith to search for testing skills" |
+| `skill_recommend` | Discover | Contextual recommendations | "Ask Skillsmith to recommend skills for my React project" |
+| `get_skill` | Evaluate | Full details for a known skill | "Use Skillsmith to show details for community/jest-helper" |
+| `skill_compare` | Evaluate | Side-by-side comparison | "Use Skillsmith to compare jest-helper and vitest-helper" |
+| `skill_diff` | Evaluate | Diff two installed versions | "Use Skillsmith to diff jest-helper versions" |
+| `install_skill` | Install | Add a skill to your runtime | "Use Skillsmith to install jest-helper" |
+| `skill_validate` | Install | Pre-install validation of SKILL.md | "Use Skillsmith to validate ./my-skill" |
+| `skill_updates` | Maintain | Check for available updates | "Ask Skillsmith for updates to my installed skills" |
+| `skill_outdated` | Maintain | List skills behind latest | "Use Skillsmith to show outdated skills" |
+| `skill_inventory_audit` | Maintain | Namespace-collision audit (Team+) | "Use Skillsmith to audit my skills inventory" |
+| `audit_export` / `audit_query` / `siem_export` | Govern | Compliance + SIEM (Enterprise) | "Use Skillsmith to export audit logs for last 30 days" |
+| `uninstall_skill` | Retire | Remove an installed skill | "Use Skillsmith to uninstall jest-helper" |
+
+**Triggering tip**: prefix natural-language prompts with `Use Skillsmith to ...` or `Ask Skillsmith for ...`. The product-name anchor binds tool selection reliably across MCP-capable runtimes.
+
+## Routing CLI-only Operations
+
+Some lifecycle operations live in the CLI and have no MCP equivalent (yet). When the user asks for these, surface the exact terminal command:
+
+| Operation | CLI command |
+|---|---|
+| Pin a skill to a version | `skillsmith pin <skill> <version>` |
+| Unpin a skill | `skillsmith unpin <skill>` |
+| Update all installed skills | `skillsmith update --all` |
+| Audit advisories (Team+) | `skillsmith audit advisories` |
+| Audit collisions | `skillsmith audit collisions` |
+| Configure audit mode | `skillsmith config set audit_mode <preventative\|power_user\|governance\|off>` |
+| Author a new skill | `skillsmith author init <name>` |
+| Publish a skill | `skillsmith author publish` |
+| Login | `skillsmith login` |
+
+Always show the command verbatim with a one-line note: "Run this in your terminal."
+
+## Cross-Runtime Behavior
+
+Skillsmith's MCP server works in **any MCP-capable agent runtime**:
+
+- **Claude Code** — default runtime. Skills install to `~/.claude/skills/`.
+- **Cursor / Copilot / Windsurf** — set `SKILLSMITH_CLIENT=<runtime>` in your MCP server env config to install to the runtime-equivalent path. See [Getting Started](https://skillsmith.app/docs/getting-started).
+- **Custom MCP routers** — universal MCP tool calls work; skill-file install paths configurable via `SKILLSMITH_CLIENT`.
 
 ## Trust Tiers
 
@@ -26,122 +73,104 @@ Skills are categorized by verification level:
 
 | Tier | Badge | Meaning | When to Trust |
 |------|-------|---------|---------------|
-| **Official** | Green checkmark | Published by Anthropic, fully reviewed | Always safe |
-| **Verified** | Blue checkmark | Verified publisher, 10+ stars, 30+ days old | Generally safe |
-| **Community** | Yellow | Passed security scan, has required metadata | Review before install |
-| **Unverified** | Red warning | No verification | Only if you trust the author |
+| **Verified** | Green checkmark | Official Skillsmith / Anthropic | Always safe |
+| **Curated** | Blue badge | Vendor-org publisher, ≥0.80 quality | Generally safe |
+| **Community** | Yellow | Security scan + required metadata | Review before install |
+| **Experimental** | Orange | Beta / new | Use cautiously |
+| **Unknown** | Red warning | No verification | Only if you trust the author |
 
-For detailed criteria, see [TRUST_TIERS.md](docs/TRUST_TIERS.md).
+For criteria detail, see https://skillsmith.app/docs/trust-tiers.
 
-## Quota System
+## Pricing & Quotas
 
-API calls are limited by tier:
-
-| Tier | API Calls/Month | Price |
-|------|-----------------|-------|
+| Tier | API calls/month | Price |
+|---|---|---|
 | **Community** | 1,000 | Free |
 | **Individual** | 10,000 | $9.99/mo |
 | **Team** | 100,000 | $25/user/mo |
 | **Enterprise** | Unlimited | $55/user/mo |
 
-Warnings are shown at 80% and 90% usage. Upgrade at https://skillsmith.app/upgrade
-
-For details, see [QUOTAS.md](docs/QUOTAS.md).
+Usage warnings at 80% and 90%. Upgrade at https://skillsmith.app/upgrade.
 
 ## Security Model
 
-Skillsmith operates as a security boundary between untrusted skill sources and your Claude Code environment.
+Skillsmith is the security boundary between untrusted skill sources and your runtime.
 
-### What Skillsmith Validates
+**What Skillsmith validates before install**:
 
-Before any skill is installed, Skillsmith performs:
+- SKILL.md frontmatter and required fields
+- Security scan: jailbreak patterns, suspicious URLs, sensitive file access
+- Typosquatting check against known skills
+- Blocklist of known-malicious skills
 
-1. **SKILL.md validation** - Must have valid YAML frontmatter with name and description
-2. **Security scan** - Checks for jailbreak patterns, suspicious URLs, sensitive file access
-3. **Typosquatting detection** - Warns if skill name is similar to known skills
-4. **Blocklist check** - Rejects known-malicious skills
+**What Skillsmith cannot prevent**:
 
-### What Skillsmith Cannot Prevent
-
-- Novel attack patterns not in our detection database
+- Novel attack patterns not in detection database
 - Social engineering in legitimate-looking instructions
 - Runtime behavior (skills execute with your permissions)
 
-**Recommendation**: Always review skill content before installation, especially for unverified skills.
-
-For the complete security model, see [SECURITY.md](docs/SECURITY.md).
+**Recommendation**: review skill content before installation, especially for unverified skills.
 
 ## Creating Skills
 
-The **skill-builder** skill (auto-installed) helps you create custom skills:
+Skill authoring lives in the CLI:
 
 ```
-"Create a skill for generating API documentation"
-"Build a skill to automate code reviews"
+skillsmith author init my-new-skill
+skillsmith author validate
+skillsmith author publish
 ```
 
-The skill-builder guides you through:
-- YAML frontmatter (name ≤64 chars, description ≤1024 chars)
-- Progressive disclosure structure (4 levels)
-- Directory organization
-- Validation checklist
+For an end-to-end walkthrough, see https://skillsmith.app/docs/tutorials/author.
 
-## Search Examples
+The companion **skill-builder** skill (auto-installed) guides you through frontmatter, progressive disclosure structure, and directory organization.
+
+## Common Workflows
+
+### Discover then install
 
 ```
-# Find all testing skills
-"Search for testing skills"
-
-# Find verified skills only
-"Find verified skills for git workflows"
-
-# Filter by quality score
-"Search for devops skills with score above 80"
-
-# Compare options
-"Compare jest-helper, vitest-helper, and mocha-helper"
+"Use Skillsmith to recommend skills for my Next.js project"
+"Use Skillsmith to install community/next-helper"
 ```
 
-## Common Tasks
+### Evaluate before installing
 
-### Install a Skill
 ```
-"Install the commit skill"
-```
-Skillsmith downloads the skill, runs security scan, and installs to ~/.claude/skills/.
-
-### Check What's Installed
-```
-"What skills do I have installed?"
+"Use Skillsmith to compare jest-helper and vitest-helper"
+"Use Skillsmith to show details for community/vitest-helper"
+"Use Skillsmith to install community/vitest-helper"
 ```
 
-### Remove a Skill
+### Maintain installed skills
+
 ```
-"Uninstall the old-skill"
+"Ask Skillsmith for updates to my installed skills"
+# Then run in terminal:
+skillsmith update --all
 ```
 
-### Get Recommendations
+### Audit before sharing your skill folder
+
 ```
-"Recommend skills for my TypeScript project"
+"Use Skillsmith to audit my skills inventory"
+# Or in terminal:
+skillsmith audit collisions
 ```
-Skillsmith analyzes your project context and suggests relevant skills.
 
 ## License
 
 Skillsmith uses **Elastic License 2.0**:
-- You can self-host for internal use
-- You can modify for your own use
-- You cannot offer Skillsmith as a managed service to others
-- You cannot circumvent license key functionality
 
-## Related Documentation
-
-- [Security Deep-Dive](docs/SECURITY.md)
-- [Trust Tiers](docs/TRUST_TIERS.md)
-- [Quota System](docs/QUOTAS.md)
+- Self-host for internal use ✓
+- Modify for your own use ✓
+- Offer Skillsmith as a managed service to others ✗
+- Circumvent license key functionality ✗
 
 ## Getting Help
 
-- Docs: `npx @skillsmith/mcp-server --docs`
+- Docs: https://skillsmith.app/docs
+- Tutorials (lifecycle walkthroughs): https://skillsmith.app/docs/tutorials
+- CLI: `skillsmith --help`
 - Issues: https://github.com/smith-horn/skillsmith/issues
 - Email: support@skillsmith.app
