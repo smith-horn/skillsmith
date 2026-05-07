@@ -38,6 +38,7 @@ import {
   validateOptionalConfig,
   checkDepsAgainstQuarantine,
 } from './skill-installation.helpers.js'
+import { buildInstallFailure, buildConfirmationRequired } from './skill-installation.errors.js'
 const DEFAULT_SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
 const DEFAULT_MANIFEST_PATH = path.join(os.homedir(), '.skillsmith', 'manifest.json')
 export interface SkillInstallationServiceParams {
@@ -95,21 +96,18 @@ export class SkillInstallationService {
       let indexedContentHash: string | undefined
       if (parsed.isRegistryId) {
         if (!this.registryLookup) {
-          return {
-            success: false,
+          return buildInstallFailure('REGISTRY_LOOKUP_UNAVAILABLE', {
             skillId,
             installPath: '',
             error:
               'Registry lookup not available. ' +
               'Use a full GitHub URL: install { skillId: "https://github.com/owner/repo" }',
-          }
+          })
         }
-
         this.onProgress('lookup', 'Looking up skill in registry')
         const registrySkill = await this.registryLookup.lookup(skillId)
         if (!registrySkill) {
-          return {
-            success: false,
+          return buildInstallFailure('REGISTRY_SKILL_NOT_FOUND', {
             skillId,
             installPath: '',
             error:
@@ -123,13 +121,13 @@ export class SkillInstallationService {
               'Search for installable skills using the search tool',
               'Many indexed skills are metadata-only and cannot be installed directly',
             ],
-          }
+          })
         }
         if (registrySkill.quarantined) {
-          return {
-            success: false,
+          return buildInstallFailure('QUARANTINED', {
             skillId,
             installPath: '',
+            trustTier: registrySkill.trustTier,
             error:
               'Skill "' +
               skillId +
@@ -140,7 +138,7 @@ export class SkillInstallationService {
               'If you believe this is a false positive, contact support via https://skillsmith.app/contact?topic=security',
               'Contact the skill author or visit the quarantine documentation for more information',
             ],
-          }
+          })
         }
 
         const repoInfo = parseRepoUrl(registrySkill.repoUrl)
@@ -163,12 +161,12 @@ export class SkillInstallationService {
       this.onProgress('manifest', 'Checking manifest')
       const manifest = await this.manifest.load()
       if (manifest.installedSkills[skillName] && !options.force) {
-        return {
-          success: false,
+        return buildInstallFailure('ALREADY_INSTALLED', {
           skillId,
           installPath,
+          trustTier,
           error: 'Skill "' + skillName + '" is already installed. Use force=true to reinstall.',
-        }
+        })
       }
       this.onProgress('fetch', 'Fetching SKILL.md from GitHub')
       const skillMdPath = basePath + 'SKILL.md'
@@ -177,10 +175,10 @@ export class SkillInstallationService {
         skillMdContent = await fetchFromGitHub(owner, repo, skillMdPath, branch)
       } catch {
         const repoUrl = 'https://github.com/' + owner + '/' + repo
-        return {
-          success: false,
+        return buildInstallFailure('FETCH_FAILED', {
           skillId,
           installPath,
+          trustTier,
           error: fromRegistry
             ? 'This skill is indexed in the Skillsmith registry but its installation source appears broken (SKILL.md not found at ' +
               (basePath || 'repository root') +
@@ -199,31 +197,31 @@ export class SkillInstallationService {
                 'This skill may be browse-only (no SKILL.md at expected location)',
                 'Verify the repository exists: ' + repoUrl,
               ],
-        }
+        })
       }
       this.onProgress('validate', 'Validating SKILL.md')
       const validation = validateSkillMd(skillMdContent)
       if (!validation.valid) {
-        return {
-          success: false,
+        return buildInstallFailure('VALIDATION_FAILED', {
           skillId,
           installPath,
+          trustTier,
           error: 'Invalid SKILL.md: ' + validation.errors.join(', '),
           tips: [
             'SKILL.md must have YAML frontmatter with name and description fields',
             'Content must be at least 100 characters',
           ],
-        }
+        })
       }
 
       const contentHashMismatch = // SMI-3510
         indexedContentHash != null ? hashContent(skillMdContent) !== indexedContentHash : false
       // Security scan — GAP-06: Restrict skipScan to trusted tiers only
       if (options.skipScan && (trustTier === 'experimental' || trustTier === 'unknown')) {
-        return {
-          success: false,
+        return buildInstallFailure('SKIP_SCAN_FORBIDDEN', {
           skillId,
           installPath: '',
+          trustTier,
           error:
             'Cannot skip security scan for ' +
             trustTier +
@@ -233,7 +231,7 @@ export class SkillInstallationService {
             'Trust tier "' + trustTier + '" requires a security scan before installation',
             'If you believe this skill is safe, request a trust tier upgrade from the author',
           ],
-        }
+        })
       }
       let securityReport: InstallResult['securityReport']
       if (!options.skipScan) {
@@ -259,12 +257,11 @@ export class SkillInstallationService {
                 ? ' (Experimental skill - aggressive scanning applied)'
                 : ''
 
-          return {
-            success: false,
+          return buildInstallFailure('SCAN_REJECTED', {
             skillId,
             installPath,
-            securityReport,
             trustTier,
+            securityReport,
             error:
               'Security scan failed with ' +
               criticalFindings.length +
@@ -277,7 +274,7 @@ export class SkillInstallationService {
               'Trust tier: ' + trustTier + ' (threshold: ' + scannerOptions.riskThreshold + ')',
               'Risk score: ' + securityReport.riskScore,
             ],
-          }
+          })
         }
       }
 
@@ -292,13 +289,11 @@ export class SkillInstallationService {
             ? trustTier + ' tier skills have not been reviewed.'
             : 'Security scan detected issues.'
           : 'No security scan was performed.'
-        return {
-          success: false,
+        return buildConfirmationRequired({
           skillId,
           installPath,
-          securityReport,
           trustTier,
-          requiresConfirmation: true,
+          securityReport,
           confirmationReason:
             'This is an ' +
             trustTier +
@@ -306,7 +301,7 @@ export class SkillInstallationService {
             scanNote +
             ' Re-run with confirmed=true to proceed.',
           tips: ['Trust tier: ' + trustTier, 'Use confirmed=true to proceed with installation'],
-        }
+        })
       }
       this.onProgress('optimize', 'Applying optimization')
       const optimizeResult = options.skipOptimize
@@ -479,12 +474,12 @@ export class SkillInstallationService {
         tips,
       }
     } catch (error) {
-      return {
-        success: false,
+      return buildInstallFailure('UNKNOWN', {
         skillId,
         installPath: '',
+        trustTier,
         error: sanitizeInstallError(error),
-      }
+      })
     }
   }
 

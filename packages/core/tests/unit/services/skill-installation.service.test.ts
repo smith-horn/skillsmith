@@ -437,4 +437,139 @@ describe('SMI-3483: SkillInstallationService', () => {
       expect(forceResult.warning).toContain('not in the manifest')
     })
   })
+
+  // ==========================================================================
+  // SMI-4795: errorCode taxonomy on install failures
+  //
+  // Each failing return path inside install() must populate `errorCode` with
+  // a code from InstallErrorCode. Telemetry (emitInstallEvent) reads this
+  // field; without it the install funnel cannot classify failures.
+  // ==========================================================================
+
+  describe('SMI-4795: install failures populate errorCode', () => {
+    beforeEach(() => {
+      vi.stubGlobal('fetch', vi.fn())
+    })
+
+    it('REGISTRY_LOOKUP_UNAVAILABLE when registry id supplied without lookup adapter', async () => {
+      const service = createService(db) // no registryLookup
+      const result = await service.install('author/some-skill')
+
+      expect(result.success).toBe(false)
+      expect(result.errorCode).toBe('REGISTRY_LOOKUP_UNAVAILABLE')
+    })
+
+    it('REGISTRY_SKILL_NOT_FOUND when registry returns null', async () => {
+      const service = createService(db, {
+        registryLookup: createMockRegistryLookup({}), // empty registry
+      })
+      const result = await service.install('author/missing-skill')
+
+      expect(result.success).toBe(false)
+      expect(result.errorCode).toBe('REGISTRY_SKILL_NOT_FOUND')
+    })
+
+    it('QUARANTINED when registry flags the skill', async () => {
+      const service = createService(db, {
+        registryLookup: createMockRegistryLookup({
+          'author/quarantined-skill': {
+            repoUrl: 'https://github.com/author/quarantined-skill',
+            name: 'quarantined-skill',
+            quarantined: true,
+            trustTier: 'community',
+          },
+        }),
+      })
+      const result = await service.install('author/quarantined-skill')
+
+      expect(result.success).toBe(false)
+      expect(result.errorCode).toBe('QUARANTINED')
+      expect(result.trustTier).toBe('community')
+    })
+
+    it('FETCH_FAILED when SKILL.md is unreachable', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockResolvedValue(new Response('Not found', { status: 404 }))
+
+      const service = createService(db)
+      const result = await service.install('https://github.com/owner/missing-repo')
+
+      expect(result.success).toBe(false)
+      expect(result.errorCode).toBe('FETCH_FAILED')
+    })
+
+    it('VALIDATION_FAILED when SKILL.md is malformed/short', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockImplementation(async (url) => {
+        const urlStr = typeof url === 'string' ? url : url.toString()
+        if (urlStr.includes('SKILL.md')) {
+          return new Response(SHORT_SKILL_MD, { status: 200 })
+        }
+        return new Response('Not found', { status: 404 })
+      })
+
+      const service = createService(db)
+      const result = await service.install('https://github.com/owner/short-repo')
+
+      expect(result.success).toBe(false)
+      expect(result.errorCode).toBe('VALIDATION_FAILED')
+    })
+
+    it('ALREADY_INSTALLED on repeat install without force', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockImplementation(async (url) => {
+        const urlStr = typeof url === 'string' ? url : url.toString()
+        if (urlStr.includes('SKILL.md')) {
+          return new Response(VALID_SKILL_MD, { status: 200 })
+        }
+        return new Response('Not found', { status: 404 })
+      })
+
+      const service = createService(db)
+      const first = await service.install('https://github.com/owner/dup-repo')
+      expect(first.success).toBe(true)
+
+      const second = await service.install('https://github.com/owner/dup-repo')
+      expect(second.success).toBe(false)
+      expect(second.errorCode).toBe('ALREADY_INSTALLED')
+    })
+
+    it('SKIP_SCAN_FORBIDDEN when skipScan requested on unknown tier', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockImplementation(async (url) => {
+        const urlStr = typeof url === 'string' ? url : url.toString()
+        if (urlStr.includes('SKILL.md')) {
+          return new Response(VALID_SKILL_MD, { status: 200 })
+        }
+        return new Response('Not found', { status: 404 })
+      })
+
+      // Direct GitHub URL → trust tier defaults to 'unknown', skipScan disallowed
+      const service = createService(db)
+      const result = await service.install('https://github.com/owner/skip-repo', {
+        skipScan: true,
+      })
+
+      expect(result.success).toBe(false)
+      expect(result.errorCode).toBe('SKIP_SCAN_FORBIDDEN')
+      expect(result.trustTier).toBe('unknown')
+    })
+
+    it('successful install does NOT carry errorCode', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockImplementation(async (url) => {
+        const urlStr = typeof url === 'string' ? url : url.toString()
+        if (urlStr.includes('SKILL.md')) {
+          return new Response(VALID_SKILL_MD, { status: 200 })
+        }
+        return new Response('Not found', { status: 404 })
+      })
+
+      const service = createService(db)
+      const result = await service.install('https://github.com/owner/ok-repo')
+
+      expect(result.success).toBe(true)
+      expect(result.errorCode).toBeUndefined()
+    })
+  })
 })

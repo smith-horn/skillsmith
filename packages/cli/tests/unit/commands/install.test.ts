@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   createDatabaseAsync: vi.fn(),
   initializeSchema: vi.fn(),
   dbClose: vi.fn(),
+  // SMI-4795: hoisted so tests can assert install-telemetry payloads.
+  emitInstallEvent: vi.fn(async () => undefined),
 }))
 
 vi.mock('ora', () => ({
@@ -50,7 +52,7 @@ vi.mock('@skillsmith/core', () => ({
     }
   }),
   isGitHubUrl: vi.fn((url: string) => url.startsWith('https://github.com/')),
-  emitInstallEvent: vi.fn(async () => undefined),
+  emitInstallEvent: (...args: unknown[]) => mocks.emitInstallEvent(...args),
 }))
 
 // Mock console and process.exit
@@ -526,6 +528,78 @@ describe('SMI-3484: CLI Install Command', () => {
       await cmd.parseAsync(['node', 'test', 'community/jest-helper'])
 
       expect(mocks.dbClose).toHaveBeenCalled()
+    })
+  })
+
+  // ==========================================================================
+  // SMI-4795: install telemetry must thread errorCode + trustTier
+  //
+  // CLI emit site previously forwarded only {skillId, source, success,
+  // durationMs}. After SMI-4795 trustTier is included on every event (when
+  // the service surfaces it) and errorCode is included only on failures.
+  // ==========================================================================
+
+  describe('SMI-4795: emitInstallEvent receives errorCode + trustTier', () => {
+    it('forwards trustTier and errorCode on a failed install', async () => {
+      mocks.installFn.mockResolvedValueOnce({
+        success: false,
+        skillId: 'community/jest-helper',
+        installPath: '/tmp/.claude/skills/jest-helper',
+        errorCode: 'SCAN_REJECTED',
+        trustTier: 'community',
+        error: 'Security scan failed',
+      })
+
+      const { createInstallCommand } = await import('../../../src/commands/install.js')
+      const cmd = createInstallCommand()
+      await cmd.parseAsync(['node', 'test', 'community/jest-helper'])
+
+      expect(mocks.emitInstallEvent).toHaveBeenCalledTimes(1)
+      const payload = mocks.emitInstallEvent.mock.calls[0]?.[0] as Record<string, unknown>
+      expect(payload).toMatchObject({
+        skillId: 'community/jest-helper',
+        source: 'cli',
+        success: false,
+        errorCode: 'SCAN_REJECTED',
+        trustTier: 'community',
+      })
+      expect(typeof payload.durationMs).toBe('number')
+    })
+
+    it('forwards trustTier on success but omits errorCode', async () => {
+      // Default beforeEach already returns success+trustTier:'community'.
+      const { createInstallCommand } = await import('../../../src/commands/install.js')
+      const cmd = createInstallCommand()
+      await cmd.parseAsync(['node', 'test', 'community/jest-helper'])
+
+      expect(mocks.emitInstallEvent).toHaveBeenCalledTimes(1)
+      const payload = mocks.emitInstallEvent.mock.calls[0]?.[0] as Record<string, unknown>
+      expect(payload).toMatchObject({
+        skillId: 'community/jest-helper',
+        source: 'cli',
+        success: true,
+        trustTier: 'community',
+      })
+      expect(payload.errorCode).toBeUndefined()
+    })
+
+    it('omits both fields when service result lacks them', async () => {
+      mocks.installFn.mockResolvedValueOnce({
+        success: false,
+        skillId: 'community/jest-helper',
+        installPath: '',
+        error: 'legacy failure',
+      })
+
+      const { createInstallCommand } = await import('../../../src/commands/install.js')
+      const cmd = createInstallCommand()
+      await cmd.parseAsync(['node', 'test', 'community/jest-helper'])
+
+      expect(mocks.emitInstallEvent).toHaveBeenCalledTimes(1)
+      const payload = mocks.emitInstallEvent.mock.calls[0]?.[0] as Record<string, unknown>
+      expect(payload.errorCode).toBeUndefined()
+      expect(payload.trustTier).toBeUndefined()
+      expect(payload.success).toBe(false)
     })
   })
 })

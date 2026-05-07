@@ -358,4 +358,79 @@ describe('installSkill() Zod boundary guard (SMI-4288 / #599)', () => {
       expect(mockInstall).not.toHaveBeenCalled()
     })
   })
+
+  // ==========================================================================
+  // SMI-4795: install telemetry must thread errorCode + trustTier
+  //
+  // Prior to SMI-4795, the MCP emit site only forwarded {skillId, source,
+  // success, durationMs}. This left every failed install in the funnel as
+  // `error_code: NULL`, blocking root-cause classification. These tests
+  // assert the four metadata fields are now propagated to emitInstallEvent.
+  // ==========================================================================
+
+  describe('SMI-4795: emitInstallEvent receives errorCode + trustTier', () => {
+    it('forwards trustTier and errorCode on a failed install', async () => {
+      mockInstall.mockResolvedValueOnce({
+        success: false,
+        skillId: 'owner/repo/scan-rejected',
+        installPath: '',
+        errorCode: 'SCAN_REJECTED',
+        trustTier: 'community',
+        error: 'Security scan failed',
+      })
+
+      await installSkill({ skillId: 'owner/repo/scan-rejected' })
+
+      expect(mockEmitInstallEvent).toHaveBeenCalledTimes(1)
+      const payload = mockEmitInstallEvent.mock.calls[0]?.[0]
+      expect(payload).toMatchObject({
+        skillId: 'owner/repo/scan-rejected',
+        source: 'mcp',
+        success: false,
+        errorCode: 'SCAN_REJECTED',
+        trustTier: 'community',
+      })
+      expect(typeof payload.durationMs).toBe('number')
+    })
+
+    it('forwards trustTier on a successful install but omits errorCode', async () => {
+      mockInstall.mockResolvedValueOnce({
+        success: true,
+        skillId: 'owner/repo/ok-skill',
+        installPath: '/tmp/mock/ok-skill',
+        trustTier: 'verified',
+      })
+
+      await installSkill({ skillId: 'owner/repo/ok-skill' })
+
+      expect(mockEmitInstallEvent).toHaveBeenCalledTimes(1)
+      const payload = mockEmitInstallEvent.mock.calls[0]?.[0]
+      expect(payload).toMatchObject({
+        skillId: 'owner/repo/ok-skill',
+        source: 'mcp',
+        success: true,
+        trustTier: 'verified',
+      })
+      expect(payload.errorCode).toBeUndefined()
+    })
+
+    it('omits both errorCode and trustTier when neither is set', async () => {
+      // Service returned a failure result that pre-dates SMI-4795 (no fields).
+      // Emit-site must not invent values — payload omits both keys cleanly.
+      mockInstall.mockResolvedValueOnce({
+        success: false,
+        skillId: 'owner/repo/legacy-failure',
+        installPath: '',
+        error: 'something went wrong',
+      })
+
+      await installSkill({ skillId: 'owner/repo/legacy-failure' })
+
+      expect(mockEmitInstallEvent).toHaveBeenCalledTimes(1)
+      const payload = mockEmitInstallEvent.mock.calls[0]?.[0]
+      expect(payload.errorCode).toBeUndefined()
+      expect(payload.trustTier).toBeUndefined()
+      expect(payload.success).toBe(false)
+    })
+  })
 })
