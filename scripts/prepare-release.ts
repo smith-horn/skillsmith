@@ -10,13 +10,13 @@
  *   npx tsx scripts/prepare-release.ts --all=patch --dry-run
  *   npx tsx scripts/prepare-release.ts --all=patch --no-changelog
  *   npx tsx scripts/prepare-release.ts --all=patch --no-commit
+ *
+ * SMI-4783: collision/changelog/git helpers extracted to scripts/lib/release-*.ts
+ * to keep this orchestrator under the 500-line file-length budget.
  */
 
-import { execFileSync } from 'child_process'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
-
-import semver from 'semver'
 
 import {
   PACKAGE_SPECS,
@@ -31,24 +31,33 @@ import {
   formatChangelogSection,
   type PackageSpec,
 } from './lib/version-utils.js'
-// SMI-4530: shared with scripts/check-publish-collision.mjs. Drift between the
-// two reserved-range definitions was the root cause of PR #824's stuck publish.
-import { RESERVED_RANGES, filterReservedVersions } from './lib/reserved-ranges.mjs'
-// SMI-4531: full collision-rule unification. Both prepare-release.ts and
-// check-publish-collision.mjs now consume the same per-rule evaluators.
 import {
-  evaluateReservedRange,
-  evaluateAlreadyPublished,
-  evaluateLiveMax,
-} from './lib/collision-rules.mjs'
+  RESERVED_RANGES,
+  checkReservedVersionRanges,
+  checkVersionCollision,
+  resolveNpmLookups,
+  fetchNpmLatest,
+  fetchAllPublishedVersions,
+  type BumpPlan,
+  type CollisionCheckResult,
+  type NpmLookup,
+} from './lib/release-collision.js'
+import { findLastVersionBumpCommit, prependToChangelog } from './lib/release-changelog.js'
+import { validatePostWrite, getCurrentBranch, createCommit } from './lib/release-git.js'
+
+// Re-export the helper surface so existing test imports continue to resolve
+// against `../prepare-release` (SMI-4783 keeps the public surface stable).
+export {
+  RESERVED_RANGES,
+  checkReservedVersionRanges,
+  checkVersionCollision,
+  resolveNpmLookups,
+  fetchNpmLatest,
+  fetchAllPublishedVersions,
+}
+export type { BumpPlan, CollisionCheckResult, NpmLookup }
 
 // --- Types ---
-
-export interface BumpPlan {
-  spec: PackageSpec
-  currentVersion: string
-  newVersion: string
-}
 
 interface Options {
   bumps: Map<string, string>
@@ -57,12 +66,6 @@ interface Options {
   noCommit: boolean
   allowDowngrade: boolean
   check: boolean
-}
-
-export interface CollisionCheckResult {
-  ok: boolean
-  errors: string[]
-  report: string[]
 }
 
 // --- Arg Parsing ---
@@ -145,275 +148,6 @@ Options:
   --allow-downgrade     Permit bumping to a semver <= highest published (rare; never overrides equals-published)
   --help                Show this help
 `)
-}
-
-// --- NPM Registry Lookup ---
-
-/**
- * Fetch all published versions from npm for a package and return the highest valid semver.
- * Returns null ONLY when npm reports E404 (package does not exist).
- * Throws for any other error (network, timeout, malformed JSON, non-404 npm error) — fail closed.
- */
-export async function fetchNpmLatest(pkg: string): Promise<string | null> {
-  let stdout: string
-  try {
-    stdout = execFileSync('npm', ['view', pkg, 'versions', '--json'], {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 30_000,
-    })
-  } catch (err: unknown) {
-    const e = err as { code?: string; stderr?: string | Buffer; message?: string }
-    const stderrText =
-      typeof e.stderr === 'string'
-        ? e.stderr
-        : Buffer.isBuffer(e.stderr)
-          ? e.stderr.toString('utf-8')
-          : ''
-    const is404 = e.code === 'E404' || /E404/.test(stderrText) || /E404/.test(e.message ?? '')
-    if (is404) {
-      return null
-    }
-    throw new Error(
-      `npm view ${pkg} failed (fail-closed): ${e.message ?? 'unknown error'}${stderrText ? '\n' + stderrText : ''}`
-    )
-  }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(stdout)
-  } catch (err) {
-    throw new Error(
-      `npm view ${pkg} returned malformed JSON (fail-closed): ${(err as Error).message}`
-    )
-  }
-
-  // npm view returns either a string (single version) or an array.
-  let versions: string[]
-  if (typeof parsed === 'string') {
-    versions = [parsed]
-  } else if (Array.isArray(parsed)) {
-    versions = parsed.filter((v): v is string => typeof v === 'string')
-  } else {
-    throw new Error(`npm view ${pkg} returned unexpected shape (fail-closed): ${typeof parsed}`)
-  }
-
-  const valid = versions.filter((v) => semver.valid(v))
-  if (valid.length === 0) {
-    return null
-  }
-  const sorted = semver.rsort([...valid])
-  return sorted[0] ?? null
-}
-
-export async function fetchAllPublishedVersions(pkg: string): Promise<string[] | null> {
-  // Same as fetchNpmLatest but returns the full list (for equals-published check).
-  // Returns null on E404; throws on other errors.
-  let stdout: string
-  try {
-    stdout = execFileSync('npm', ['view', pkg, 'versions', '--json'], {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 30_000,
-    })
-  } catch (err: unknown) {
-    const e = err as { code?: string; stderr?: string | Buffer; message?: string }
-    const stderrText =
-      typeof e.stderr === 'string'
-        ? e.stderr
-        : Buffer.isBuffer(e.stderr)
-          ? e.stderr.toString('utf-8')
-          : ''
-    const is404 = e.code === 'E404' || /E404/.test(stderrText) || /E404/.test(e.message ?? '')
-    if (is404) return null
-    throw new Error(
-      `npm view ${pkg} failed (fail-closed): ${e.message ?? 'unknown error'}${stderrText ? '\n' + stderrText : ''}`
-    )
-  }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(stdout)
-  } catch (err) {
-    throw new Error(
-      `npm view ${pkg} returned malformed JSON (fail-closed): ${(err as Error).message}`
-    )
-  }
-  if (typeof parsed === 'string') return [parsed]
-  if (Array.isArray(parsed)) return parsed.filter((v): v is string => typeof v === 'string')
-  throw new Error(`npm view ${pkg} returned unexpected shape (fail-closed): ${typeof parsed}`)
-}
-
-// --- Collision Guard ---
-
-export interface NpmLookup {
-  latest: string | null
-  allVersions: string[] | null
-}
-
-/**
- * Evaluate the collision rules for a planned bump against the npm registry state.
- * Pure function — does NOT perform network I/O. Callers must supply lookups.
- *
- * SMI-4531: Rules 3 and 2 are now delegated to the shared
- * `scripts/lib/collision-rules.mjs` module — same evaluators
- * `check-publish-collision.mjs` consumes. Rule 1 (reserved-range) lives in
- * `checkReservedVersionRanges` for legacy ordering reasons (it runs in a
- * separate pass before this function in `main()`); the wrapper below also
- * checks Rule 1 defensively so callers that invoke `checkVersionCollision`
- * alone still get correct precedence.
- *
- * Rule 1 — reserved range                → refuse UNCONDITIONALLY (no override).
- * Rule 3 — proposed in published list    → refuse UNCONDITIONALLY (no override).
- *                                          Error must not mention any flag.
- * Rule 2 — proposed <= live max,
- *          not in published list         → refuse unless --allow-downgrade.
- *
- * Multi-package contract: errors accumulate across plans; never short-circuit.
- */
-export function checkVersionCollision(
-  plans: BumpPlan[],
-  lookups: Map<string, NpmLookup>,
-  opts: { allowDowngrade: boolean }
-): CollisionCheckResult {
-  const errors: string[] = []
-  const report: string[] = []
-
-  for (const plan of plans) {
-    const { spec, newVersion } = plan
-    const lookup = lookups.get(spec.name)
-    if (!lookup) {
-      errors.push(`${spec.name}: internal error — no npm lookup recorded (fail-closed).`)
-      continue
-    }
-    const { latest, allVersions } = lookup
-
-    // New package on npm (E404) — proceed silently.
-    if (allVersions === null) {
-      report.push(`  ${spec.name}: new on npm (proposed ${newVersion}) → proceed`)
-      continue
-    }
-
-    // Rule 1 — reserved range (defensive; main() runs checkReservedVersionRanges first).
-    const r1 = evaluateReservedRange(spec.name, newVersion)
-    if (!r1.ok) {
-      errors.push(r1.message)
-      continue
-    }
-
-    // Rule 3 — exact-equal-published (no override).
-    const r3 = evaluateAlreadyPublished(spec.name, newVersion, allVersions)
-    if (!r3.ok) {
-      errors.push(r3.message)
-      continue
-    }
-
-    // Rule 2 — live-max <= refuse (overridable via --allow-downgrade).
-    const live = filterReservedVersions(spec.name, allVersions, semver)
-    if (!live.length) {
-      // No live anchor (every entry is reserved). Proceed — Rule 3 already
-      // covered the "republish any existing version" case.
-      report.push(
-        `  ${spec.name}: proposed ${newVersion} (no live versions published yet, all reserved) → proceed`
-      )
-      continue
-    }
-
-    const r2 = evaluateLiveMax(spec.name, newVersion, live, { allowDowngrade: opts.allowDowngrade })
-    if (!r2.ok) {
-      errors.push(r2.message)
-      continue
-    }
-
-    const liveMax = live.reduce((a, b) => (semver.gt(a, b) ? a : b))
-    if (semver.gt(newVersion, liveMax)) {
-      report.push(`  ${spec.name}: proposed ${newVersion} > highest published ${liveMax} → proceed`)
-    } else {
-      // r2.ok was true → either allowDowngrade=true or live was empty.
-      report.push(
-        `  ${spec.name}: proposed ${newVersion} <= highest published ${liveMax} (--allow-downgrade set) → proceed`
-      )
-    }
-    // Suppress unused-variable lint for `latest` — kept on the type for now to
-    // preserve the public NpmLookup shape; downstream consumers may still read it.
-    void latest
-  }
-
-  return { ok: errors.length === 0, errors, report }
-}
-
-/**
- * Re-export the shared `RESERVED_RANGES` map for downstream consumers and tests
- * that previously imported it from this module.
- *
- * MUST stay in sync with scripts/check-publish-collision.mjs (the publish.yml
- * workflow guard). Both now consume `scripts/lib/reserved-ranges.mjs` as the
- * single source of truth — drift between the two collision implementations was
- * the SMI-4530 failure mode and must not return. See SMI-4531 for the full
- * unification follow-up (Rules 1/2/3 still duplicated by design — the shim
- * avoids pulling tsx into GitHub Actions).
- *
- * SMI-4207 / ADR-115 background: `@skillsmith/core@2.0.0`–`2.1.2` were
- * self-published in January 2026 during an aborted version-strategy experiment
- * and rolled back. The `>=2.0.0 <3.0.0` range is permanently deprecated; the
- * next major for `@skillsmith/core` jumps from 0.x straight to 3.0.0.
- */
-export { RESERVED_RANGES }
-
-/**
- * Refuse proposed versions that fall inside reserved/orphaned ranges.
- *
- * Belt-and-suspenders on top of `checkVersionCollision`: the npm-latest guard alone would
- * catch `@skillsmith/core@2.1.3` indirectly, but this rule states the skip explicitly and
- * refuses unconditionally — no `--allow-downgrade` override. Error message points at ADR-115.
- *
- * SMI-4531: Thin wrapper around `evaluateReservedRange` from the shared
- * `scripts/lib/collision-rules.mjs` module. Multi-package contract preserved
- * — errors accumulate per-plan; never short-circuit.
- *
- * Pure function — no network I/O.
- */
-export function checkReservedVersionRanges(plans: BumpPlan[]): CollisionCheckResult {
-  const errors: string[] = []
-  const report: string[] = []
-
-  for (const plan of plans) {
-    const { spec, newVersion } = plan
-    const result = evaluateReservedRange(spec.name, newVersion)
-    if (!result.ok) {
-      errors.push(result.message)
-      continue
-    }
-    report.push(`  ${spec.name}: proposed ${newVersion} outside reserved ranges → proceed`)
-  }
-
-  return { ok: errors.length === 0, errors, report }
-}
-
-/**
- * Resolve npm lookups for every plan. Separated from checkVersionCollision so tests can
- * inject lookups without patching network. Throws (fail-closed) on any non-404 npm error.
- */
-export async function resolveNpmLookups(plans: BumpPlan[]): Promise<Map<string, NpmLookup>> {
-  const lookups = new Map<string, NpmLookup>()
-  for (const plan of plans) {
-    const allVersions = await fetchAllPublishedVersions(plan.spec.name)
-    let latest: string | null = null
-    if (allVersions !== null) {
-      // Exclude reserved ranges (SMI-4207 / ADR-115) from the "live" pool used to compute
-      // `latest`. Deprecated orphaned versions must not block normal bumps on the live line.
-      // `allVersions` retains the full list — Rule 3's isPublished check still catches
-      // attempts to republish any existing semver, reserved or not.
-      const valid = filterReservedVersions(
-        plan.spec.name,
-        allVersions.filter((v) => semver.valid(v)),
-        semver
-      )
-      latest = valid.length === 0 ? null : (semver.rsort([...valid])[0] ?? null)
-    }
-    lookups.set(plan.spec.name, { latest, allVersions })
-  }
-  return lookups
 }
 
 // --- Version Resolution ---
@@ -502,131 +236,6 @@ function updateCoreDependency(newCoreVersion: string): void {
       writeFileSync(fullPath, JSON.stringify(pkg, null, 2) + '\n')
     }
   }
-}
-
-// --- Changelog ---
-
-function findLastVersionBumpCommit(): string {
-  try {
-    const output = execFileSync('git', ['log', '--oneline', '--format=%H %s', '-50'], {
-      cwd: ROOT_DIR,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim()
-
-    for (const line of output.split('\n')) {
-      const [hash, ...rest] = line.split(' ')
-      const msg = rest.join(' ')
-      if (
-        msg.startsWith('chore(release):') ||
-        msg.startsWith('chore: bump version') ||
-        /^chore:.*bump.*\d+\.\d+\.\d+/.test(msg)
-      ) {
-        return hash
-      }
-    }
-    return 'HEAD~20'
-  } catch {
-    return 'HEAD~20'
-  }
-}
-
-function prependToChangelog(relPath: string, section: string): void {
-  const fullPath = join(ROOT_DIR, relPath)
-  let content: string
-  if (existsSync(fullPath)) {
-    content = readFileSync(fullPath, 'utf-8')
-  } else {
-    content = `# Changelog\n\nAll notable changes to this package are documented here.\n`
-  }
-
-  // Insert after the header (first line starting with #)
-  const headerEnd = content.indexOf('\n## ')
-  if (headerEnd !== -1) {
-    content = content.slice(0, headerEnd) + '\n' + section + '\n' + content.slice(headerEnd)
-  } else {
-    content = content.trimEnd() + '\n\n' + section + '\n'
-  }
-
-  writeFileSync(fullPath, content)
-}
-
-// --- Validation ---
-
-function validatePostWrite(plans: BumpPlan[]): string[] {
-  const errors: string[] = []
-  for (const plan of plans) {
-    const { spec, newVersion } = plan
-    const actual = readPackageVersion(spec.packageJsonPath)
-    if (actual !== newVersion) {
-      errors.push(`${spec.name}: package.json has ${actual}, expected ${newVersion}`)
-    }
-    if (spec.versionConstFile && spec.versionConstPattern) {
-      const constVer = readVersionConstant(spec.versionConstFile, spec.versionConstPattern)
-      if (constVer !== newVersion) {
-        errors.push(`${spec.name}: version constant has ${constVer}, expected ${newVersion}`)
-      }
-    }
-    if (spec.serverJsonPath) {
-      const fullPath = join(ROOT_DIR, spec.serverJsonPath)
-      const server = JSON.parse(readFileSync(fullPath, 'utf-8'))
-      if (server.version !== newVersion) {
-        errors.push(
-          `${spec.name}: server.json version has ${server.version}, expected ${newVersion}`
-        )
-      }
-      if (server.packages?.[0]?.version !== newVersion) {
-        errors.push(
-          `${spec.name}: server.json packages[0].version has ${server.packages?.[0]?.version}, expected ${newVersion}`
-        )
-      }
-    }
-  }
-  return errors
-}
-
-// --- Git ---
-
-function getCurrentBranch(): string {
-  return execFileSync('git', ['branch', '--show-current'], {
-    cwd: ROOT_DIR,
-    encoding: 'utf-8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-  }).trim()
-}
-
-function createCommit(plans: BumpPlan[]): void {
-  const filesToAdd: string[] = []
-
-  for (const plan of plans) {
-    filesToAdd.push(plan.spec.packageJsonPath)
-    if (plan.spec.versionConstFile) filesToAdd.push(plan.spec.versionConstFile)
-    if (plan.spec.serverJsonPath) filesToAdd.push(plan.spec.serverJsonPath)
-    filesToAdd.push(join(plan.spec.dir, 'CHANGELOG.md'))
-  }
-
-  // Add core dependent package.jsons if core was bumped
-  if (plans.some((p) => p.spec.shortName === 'core')) {
-    for (const dep of CORE_DEPENDENTS) {
-      if (existsSync(join(ROOT_DIR, dep))) {
-        filesToAdd.push(dep)
-      }
-    }
-  }
-
-  const existing = filesToAdd.filter((f) => existsSync(join(ROOT_DIR, f)))
-  execFileSync('git', ['add', ...existing], {
-    cwd: ROOT_DIR,
-    stdio: 'inherit',
-  })
-
-  const parts = plans.map((p) => `${p.spec.shortName} ${p.newVersion}`)
-  const message = `chore(release): bump ${parts.join(', ')}`
-
-  execFileSync('git', ['commit', '-m', message], {
-    cwd: ROOT_DIR,
-    stdio: 'inherit',
-  })
 }
 
 // --- Main ---
