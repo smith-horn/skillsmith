@@ -2890,6 +2890,64 @@ console.log(`\n${BOLD}43. CHANGELOG [Unreleased] Placement (SMI-4776)${RESET}`)
   }
 }
 
+// SMI-4764 Wave 2 — Eval cron heartbeat freshness (advisory).
+//
+// Reads packages/doc-retrieval-mcp/eval/.cron-heartbeat (written by
+// scripts/eval-baseline-cron.sh on each canonical-dev run) and emits a
+// warning if the most recent timestamp is >14 days old. Intent: surface
+// "canonical dev's cron stopped running" so the replacement protocol
+// (.claude/development/eval-cron-setup.md) can be invoked.
+//
+// Skipped when the file doesn't exist — that's the pre-Wave-2-rollout
+// state, not a regression.
+console.log(`\n${BOLD}44. Eval Cron Heartbeat Freshness (SMI-4764 Wave 2)${RESET}`)
+{
+  const heartbeatPath = 'packages/doc-retrieval-mcp/eval/.cron-heartbeat'
+  if (!existsSync(heartbeatPath)) {
+    pass(
+      `No .cron-heartbeat file present (canonical-dev cron not yet installed; see .claude/development/eval-cron-setup.md)`
+    )
+  } else {
+    try {
+      const content = readFileSync(heartbeatPath, 'utf8').trim()
+      // Heartbeat format: <ISO-timestamp>\t<git-HEAD-sha>\t(OK|FAIL)
+      // Take the last non-empty line — the file is overwritten on each
+      // run today, but tolerate multi-line variants for forward-compat.
+      const lines = content.split('\n').filter((l) => l.length > 0)
+      if (lines.length === 0) {
+        warn(
+          `Eval cron heartbeat is empty — cron may have failed to write. See ~/.skillsmith/logs/eval-cron-*.log`
+        )
+      } else {
+        const latest = lines[lines.length - 1]
+        const [ts, _sha, status] = latest.split('\t')
+        const parsedMs = Date.parse(ts)
+        if (Number.isNaN(parsedMs)) {
+          warn(
+            `Eval cron heartbeat first column is not a valid ISO timestamp: "${ts}". Reset the file or rerun the cron.`
+          )
+        } else {
+          const ageMs = Date.now() - parsedMs
+          const ageDays = Math.floor(ageMs / (1000 * 60 * 60 * 24))
+          if (ageDays > 14) {
+            warn(
+              `Eval cron heartbeat is ${ageDays} days old (>14d threshold). Designate a replacement canonical dev or restart the cron — see .claude/development/eval-cron-setup.md §Replacement protocol.`
+            )
+          } else if (status === 'FAIL') {
+            warn(
+              `Eval cron most recent run reported FAIL (${ageDays}d ago). Inspect ~/.skillsmith/logs/eval-cron-*.log on the canonical dev's machine.`
+            )
+          } else {
+            pass(`Eval cron heartbeat is ${ageDays} days old (status: ${status || 'unknown'})`)
+          }
+        }
+      }
+    } catch (e) {
+      warn(`Could not read .cron-heartbeat: ${e.message}`)
+    }
+  }
+}
+
 // npm override drift check: @modelcontextprotocol/sdk override "." must match mcp-server range
 console.log(`\n${BOLD}Override Drift: @modelcontextprotocol/sdk${RESET}`)
 try {

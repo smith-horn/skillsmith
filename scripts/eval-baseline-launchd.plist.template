@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  scripts/eval-baseline-launchd.plist.template — SMI-4764 Wave 2
+
+  macOS LaunchAgent template for the canonical-dev retrieval-eval cron.
+
+  Setup (canonical dev only — see .claude/development/eval-cron-setup.md):
+
+    1. Copy template, substituting __REPO_PATH__ and __HOME__:
+         sed "s|__REPO_PATH__|$(pwd)|g; s|__HOME__|$HOME|g" \
+           scripts/eval-baseline-launchd.plist.template \
+           > ~/Library/LaunchAgents/app.skillsmith.eval-baseline-cron.plist
+
+    2. Load:
+         launchctl unload ~/Library/LaunchAgents/app.skillsmith.eval-baseline-cron.plist 2>/dev/null
+         launchctl load   ~/Library/LaunchAgents/app.skillsmith.eval-baseline-cron.plist
+
+    3. Verify:
+         launchctl list | grep skillsmith
+         tail ~/.skillsmith/logs/eval-cron-*.log
+
+  Cadence: weekly Sunday 03:00 local time (matches plan §3 — quiet hours,
+  outside of Mon 06:00 UTC eval-weekly.yml so audit/cron don't collide).
+
+  Notes:
+    - StandardOutPath / StandardErrorPath capture launchd stdout (the
+      script itself writes detailed logs to ~/.skillsmith/logs/).
+    - RunAtLoad=false: do NOT fire on `launchctl load`. Schedule-only.
+    - StartCalendarInterval is the launchd equivalent of cron expressions.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>app.skillsmith.eval-baseline-cron</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-l</string>
+    <string>-c</string>
+    <string>cd __REPO_PATH__ &amp;&amp; ./scripts/eval-baseline-cron.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO_PATH__</string>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>0</integer>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/.skillsmith/logs/eval-cron-launchd-stdout.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.skillsmith/logs/eval-cron-launchd-stderr.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- PATH inherited from /bin/bash -l (login shell) so docker, gh,
+         and varlock resolve correctly. Add explicit overrides here if
+         the canonical dev's shell init is non-standard. -->
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>

@@ -1,0 +1,25 @@
+# scripts/eval-baseline-systemd.timer.template — SMI-4764 Wave 2
+#
+# Paired timer for eval-baseline-systemd.service.template. See that file
+# for setup instructions.
+#
+# Cadence: weekly Sunday 03:00 local time (matches the launchd template
+# and avoids collision with the Mon 06:00 UTC eval-weekly.yml workflow).
+
+[Unit]
+Description=Skillsmith retrieval-eval baseline cron timer (SMI-4764 Wave 2)
+Requires=skillsmith-eval-baseline-cron.service
+
+[Timer]
+# OnCalendar uses systemd time-spec format: DayOfWeek YYYY-MM-DD HH:MM:SS
+OnCalendar=Sun *-*-* 03:00:00
+# Persistent=true ensures missed runs (e.g. machine off Sunday) fire at
+# next boot. Stale heartbeat audit warning still triggers if missed >14d.
+Persistent=true
+# Add 0–30m random delay so multiple canonical dev replacements don't
+# stampede CI on the same minute.
+RandomizedDelaySec=1800
+Unit=skillsmith-eval-baseline-cron.service
+
+[Install]
+WantedBy=timers.target
