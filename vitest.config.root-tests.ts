@@ -41,6 +41,9 @@ export default defineConfig({
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
+      // SMI-4777: exclude git-worktree directories. Both forms (dot and no-dot).
+      '.worktrees/**',
+      'worktrees/**',
       'supabase/functions/indexer/**',
       // In locked CI checkouts, supabase/** is git-crypt ciphertext.
       // Pre-push and ci.yml matrix decrypt. Refs: SMI-4221, SMI-2672.

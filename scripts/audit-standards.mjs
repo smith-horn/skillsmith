@@ -2821,6 +2821,75 @@ console.log(`\n${BOLD}42. Workflow uses: SHA-Pin (SMI-4758)${RESET}`)
   }
 }
 
+// 43. CHANGELOG [Unreleased] Placement (SMI-4776)
+//
+// In the v0.6.0 / v0.5.0 release on 2026-05-06, two of four CHANGELOGs (mcp-server
+// + vscode-extension) had their `## [Unreleased]` block placed AFTER a `## v...`
+// version heading. The release prep ran `--no-changelog --no-commit` and hand-
+// curated the entries; the misplacement was subtle enough to slip past review.
+//
+// `[Unreleased]` MUST be the first heading after the introductory paragraph (i.e.
+// before any versioned release section). Otherwise consumers reading the file
+// top-to-bottom see a stale "current" section. Auto-generators that prepend
+// new sections also break: prepending above the (misplaced) `[Unreleased]`
+// orphans it inside an old release section.
+console.log(`\n${BOLD}43. CHANGELOG [Unreleased] Placement (SMI-4776)${RESET}`)
+{
+  const pkgDirs = existsSync('packages')
+    ? readdirSync('packages').filter((d) => existsSync(join('packages', d, 'package.json')))
+    : []
+
+  const targets = [
+    { changelogPath: 'CHANGELOG.md', label: 'root' },
+    ...pkgDirs.map((d) => ({
+      changelogPath: join('packages', d, 'CHANGELOG.md'),
+      label: `packages/${d}`,
+    })),
+  ]
+
+  let placementIssues = 0
+  for (const { changelogPath, label } of targets) {
+    if (!existsSync(changelogPath)) continue
+
+    const content = readFileSync(changelogPath, 'utf8')
+
+    // Find ALL h2 headings in order. Look for `## ` at the start of a line.
+    // Capture both `[Unreleased]` and version forms (`## vX.Y.Z`, `## [X.Y.Z]`,
+    // `## X.Y.Z`).
+    const headingRegex = /^## (.+)$/gm
+    const headings = []
+    let match
+    while ((match = headingRegex.exec(content)) !== null) {
+      const text = match[1].trim()
+      const isUnreleased = /^\[?Unreleased\]?$/i.test(text)
+      const isVersion = /^\[?v?\d+\.\d+\.\d+\]?(\s|$)/.test(text)
+      if (isUnreleased || isVersion) {
+        headings.push({ text, isUnreleased, isVersion, index: match.index })
+      }
+    }
+
+    if (headings.length === 0) continue
+
+    const firstUnreleasedIdx = headings.findIndex((h) => h.isUnreleased)
+    const firstVersionIdx = headings.findIndex((h) => h.isVersion)
+
+    if (firstUnreleasedIdx === -1 || firstVersionIdx === -1) continue
+
+    if (firstUnreleasedIdx > firstVersionIdx) {
+      placementIssues++
+      const offendingVersion = headings[firstVersionIdx].text
+      fail(
+        `${label}: '## [Unreleased]' is placed after '## ${offendingVersion}'`,
+        `Move the [Unreleased] section above the first ## v... heading in ${changelogPath}`
+      )
+    }
+  }
+
+  if (placementIssues === 0) {
+    pass('All CHANGELOGs have [Unreleased] before any versioned section')
+  }
+}
+
 // npm override drift check: @modelcontextprotocol/sdk override "." must match mcp-server range
 console.log(`\n${BOLD}Override Drift: @modelcontextprotocol/sdk${RESET}`)
 try {
