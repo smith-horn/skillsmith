@@ -1,0 +1,6 @@
+# SMI-4764 Wave 0: Per-developer eval baseline signature markers.
+# Written by packages/doc-retrieval-mcp/eval/eval-runner.ts after each
+# real-mode run. Consumed by scripts/eval-baseline-validator.mjs (pre-push).
+# This directory is per-developer state; never commit.
+*
+!.gitignore

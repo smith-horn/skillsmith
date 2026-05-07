@@ -34,13 +34,21 @@
 # Phase 0: Skip all checks for delete-only pushes (SMI-3709)
 # git push --delete sends lines where local_sha is all zeros.
 # No code is being pushed, so quality gates are irrelevant.
+#
+# SMI-4764 Wave 0: We also stash the raw stdin so the eval-baseline validator
+# (Phase 6) can re-read it. Git pipes pre-push refs to stdin exactly once.
+PRE_PUSH_REFS="$(cat)"
 DELETE_ONLY=true
-while read -r _local_ref local_sha _remote_ref _remote_sha; do
-  if [ "$local_sha" != "0000000000000000000000000000000000000000" ]; then
+while IFS= read -r line; do
+  # shellcheck disable=SC2086
+  set -- $line
+  if [ "$2" != "0000000000000000000000000000000000000000" ]; then
     DELETE_ONLY=false
     break
   fi
-done
+done <<EOF
+$PRE_PUSH_REFS
+EOF
 if [ "$DELETE_ONLY" = true ]; then
   exit 0
 fi
@@ -146,5 +154,24 @@ fi
 # Syncs SMI-* references from unpushed commits to Linear
 echo "🔄 Syncing Linear issues..."
 node "$(dirname "$0")/../scripts/linear-hook.mjs" --batch || echo "⚠️  Linear sync skipped (non-blocking)"
+
+# Phase 6: Retrieval eval baseline validator (SMI-4764 Wave 0)
+# Runs only if ranking-relevant files are in the diff. No-op for unrelated PRs.
+# Canonical mode (SKILLSMITH_EVAL_CANONICAL=true): blocks push on stale baseline.
+# Advisory mode (default): warns to stderr but allows push.
+EVAL_VALIDATOR="$(dirname "$0")/../scripts/eval-baseline-validator.mjs"
+if [ -r "$EVAL_VALIDATOR" ]; then
+  # Replay the stashed pre-push refs to the validator (Phase 0 consumed git's
+  # stdin already). Validator falls back to @{upstream}..HEAD if PRE_PUSH_REFS
+  # is empty (e.g. invoked outside a real push).
+  printf '%s\n' "$PRE_PUSH_REFS" | node "$EVAL_VALIDATOR"
+  EVAL_STATUS=$?
+  if [ $EVAL_STATUS -ne 0 ]; then
+    exit $EVAL_STATUS
+  fi
+else
+  # Older branches (pre-SMI-4764) won't have the validator. Don't break them.
+  echo "ℹ️  scripts/eval-baseline-validator.mjs not present — skipping eval-baseline check (SMI-4764)"
+fi
 
 exit 0

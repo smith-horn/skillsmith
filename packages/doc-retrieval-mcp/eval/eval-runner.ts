@@ -18,9 +18,11 @@
  * Output uses process.stdout.write (not console.log) for determinism.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import type { GoldEntry, RunResult, MetricsReport } from './metrics.js'
 import { computeMetrics } from './metrics.js'
 import { resolveRepoPath } from '../src/config.js'
@@ -28,6 +30,14 @@ import { resolveRepoPath } from '../src/config.js'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const GOLD_SET_PATH = join(__dirname, 'gold-set.json')
 const BASELINE_PATH = join(__dirname, 'baseline.json')
+// SMI-4764 Wave 0: signature emission constants. The committed FIFO log keeps
+// the last N signatures so the pre-push validator (scripts/eval-baseline-validator.mjs)
+// can verify a pushed baseline.json corresponds to a real-mode run by some
+// developer in the recent past. Per-developer markers under
+// `.skillsmith/eval-signatures/` are git-ignored and used by the same validator
+// to detect locally-fresh runs.
+const SIGNATURES_LOG_PATH = join(__dirname, '.signatures.log')
+const SIGNATURE_LOG_MAX_LINES = 15
 
 // ---------------------------------------------------------------------------
 // Index-state helpers (SMI-4763)
@@ -257,7 +267,67 @@ export function updateBaseline(
       ndcgAt10: report.overall.ndcgAt10,
     },
   }
-  writeFileSync(baselinePath, JSON.stringify(updated, null, 2) + '\n', 'utf8')
+  const serialized = JSON.stringify(updated, null, 2) + '\n'
+  writeFileSync(baselinePath, serialized, 'utf8')
+  emitBaselineSignature(serialized)
+}
+
+// ---------------------------------------------------------------------------
+// Signature emission (SMI-4764 Wave 0)
+//
+// After each real-mode write, append `<sha256>\t<ISO-timestamp>\t<git-HEAD>`
+// to two locations:
+//   1. eval/.signatures.log — committed FIFO, last 15 entries (plan §6)
+//   2. .skillsmith/eval-signatures/<short-sha>.sig — per-developer marker,
+//      ignored by git, consumed by scripts/eval-baseline-validator.mjs.
+//
+// Failures are non-fatal: a real-mode run that produced a baseline.json should
+// not be invalidated by a signature-side I/O hiccup. The pre-push validator
+// re-checks freshness independently.
+// ---------------------------------------------------------------------------
+
+function getGitHeadSha(): string {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: __dirname,
+      encoding: 'utf8',
+    }).trim()
+  } catch {
+    return 'unknown'
+  }
+}
+
+function emitBaselineSignature(serializedBaseline: string): void {
+  const sha = createHash('sha256').update(serializedBaseline, 'utf8').digest('hex')
+  const timestamp = new Date().toISOString()
+  const headSha = getGitHeadSha()
+  const line = `${sha}\t${timestamp}\t${headSha}`
+
+  // 1. FIFO log (committed). Read existing, append, trim to last N.
+  try {
+    const existing = existsSync(SIGNATURES_LOG_PATH)
+      ? readFileSync(SIGNATURES_LOG_PATH, 'utf8')
+          .split('\n')
+          .filter((l) => l.length > 0)
+      : []
+    existing.push(line)
+    const trimmed = existing.slice(-SIGNATURE_LOG_MAX_LINES)
+    writeFileSync(SIGNATURES_LOG_PATH, trimmed.join('\n') + '\n', 'utf8')
+  } catch (err) {
+    process.stderr.write(`warning: failed to update .signatures.log: ${String(err)}\n`)
+  }
+
+  // 2. Per-developer marker (ignored by git).
+  try {
+    // Walk up from eval/ to repo root: eval/ -> doc-retrieval-mcp/ -> packages/ -> repo
+    const repoRoot = join(__dirname, '..', '..', '..')
+    const markerDir = join(repoRoot, '.skillsmith', 'eval-signatures')
+    mkdirSync(markerDir, { recursive: true })
+    const shortSha = sha.slice(0, 8)
+    writeFileSync(join(markerDir, `${shortSha}.sig`), line + '\n', 'utf8')
+  } catch (err) {
+    process.stderr.write(`warning: failed to write per-developer signature: ${String(err)}\n`)
+  }
 }
 
 // ---------------------------------------------------------------------------
