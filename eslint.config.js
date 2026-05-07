@@ -32,6 +32,13 @@ const globalIgnores = {
     // Deno files have incompatible module semantics; lint them with deno lint instead
     'supabase/functions/**',
     'supabase/migrations/**',
+    // Git-crypt encrypted .ts files: dependabot PRs don't get GIT_CRYPT_KEY secret,
+    // so encrypted blobs reach ESLint as binary garbage and fail with "Parsing error:
+    // Invalid character". Encryption scope per CLAUDE.md: .claude/skills/, .claude/plans/,
+    // .claude/hive-mind/. Main branch CI sees plaintext via the unlock step. SMI-4785.
+    '.claude/skills/**/*.ts',
+    '.claude/plans/**/*.ts',
+    '.claude/hive-mind/**/*.ts',
     // VS Code extension integration tests use @vscode/test-electron and Mocha globals
     // that aren't represented in the TS project graph; they're executed by the VS Code
     // test runner, not Vitest. Lint them separately if needed.
