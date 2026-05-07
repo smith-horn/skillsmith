@@ -4,8 +4,15 @@ All notable changes to `@skillsmith/cli` are documented here.
 
 ## [Unreleased]
 
+## v0.6.0
+
+- **Feature**: SMI-4590 Wave 4 PR 5/6 — new `sklx audit collisions` subcommand runs the consumer namespace audit (mirrors the `skill_inventory_audit` MCP tool); new `sklx config get audit_mode` / `sklx config set audit_mode <preventative|power_user|governance|off>` for managing audit verbosity. Tier-revalidated: Free/Individual cannot select `power_user`/`governance`. (#950)
+- **Feature**: SMI-4590 Wave 4 PR 1/6 — new `sklx audit advisories` subcommand for legacy security-advisory checks (the original `audit` semantic). Step 0b extracts shared audit-tool-dispatch into a reusable module. (#899)
+- **Feature**: SMI-4590 Wave 4 PR 2/6 — `FrameworkAdapter`/`claudeCodeAdapter` plumbing wired through the CLI to support multi-framework audits in future. (#913)
 - **Chore**: SMI-4575 npm keywords add `agent-skills`, `cursor`, `copilot` — unblocks discovery beyond the `claude-code` keyword as the rebrand sweep generalises to multi-client. No CLI behaviour change.
-- **Bump**: `@skillsmith/core` dep range to `^0.5.8` — pulls in SMI-4563 native SQLite driver auto-install via `optionalDependencies`. cli's own version unchanged; fresh installs of `@skillsmith/cli@0.5.12` will now resolve `core@0.5.8` and get native better-sqlite3 by default.
+- **Bump**: `@skillsmith/core` dep range to `^0.6.0` — pulls in the new audit subpath exports and multi-client install paths.
+- **Bump**: `@skillsmith/mcp-server` dep range to `^0.5.0` — required because `audit-collisions.ts` imports from `@skillsmith/mcp-server/audit`, which gained new types and exports in mcp-server 0.5.0.
+- **Bump**: minor version (0.5.12 → 0.6.0) signals new CLI subcommand surface — `audit collisions`, `audit advisories`, `config set audit_mode`.
 
 ## v0.5.12
 
