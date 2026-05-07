@@ -535,7 +535,12 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # SMI-4803: `!cancelled() &&` overrides GitHub Actions' implicit `success()`
+    # check on `needs:`. Without it, when `publish-core` skips (because core is
+    # already published), this job is auto-skipped before its `if:` is evaluated
+    # — making the explicit `result == 'skipped'` clause below dead code.
     if: |
+      !cancelled() &&
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.mcp-exists != 'true' &&
       (needs.publish-core.result == 'success' || needs.publish-core.result == 'skipped')
@@ -683,7 +688,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # SMI-4803: see publish-mcp-server for `!cancelled()` rationale.
     if: |
+      !cancelled() &&
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.cli-exists != 'true' &&
       (needs.publish-core.result == 'success' || needs.publish-core.result == 'skipped')
@@ -758,7 +765,9 @@ jobs:
       contents: read
       id-token: write
       packages: write
+    # SMI-4803: see publish-mcp-server for `!cancelled()` rationale.
     if: |
+      !cancelled() &&
       (github.event_name == 'release' || github.event.inputs.dry_run == 'false') &&
       needs.pre-publish-check.outputs.enterprise-exists != 'true' &&
       (needs.publish-core.result == 'success' || needs.publish-core.result == 'skipped')
