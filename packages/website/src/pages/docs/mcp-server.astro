@@ -201,6 +201,29 @@ EOF`}</code></pre>
 
   <p>The MCP server provides the following tools:</p>
 
+  <div class="callout">
+    <p class="callout-heading">Triggering the MCP from natural prompts</p>
+    <p>
+      To make sure your prompt actually invokes the Skillsmith MCP (rather than
+      having the model answer from its training data), prefix natural-language
+      prompts with <strong>"Use Skillsmith to..."</strong> or
+      <strong>"Ask Skillsmith for..."</strong>. The product-name anchor tells the
+      model to consider Skillsmith's tools instead of treating the request as
+      general programming knowledge. The example prompts below already use this
+      pattern.
+    </p>
+    <p>
+      For an even more reliable trigger on Claude Code, install the bundled
+      slash-command skill once with <code>skillsmith setup</code>, then use
+      <code>/skillsmith &lt;verb&gt;</code> (e.g. <code>/skillsmith search testing</code>).
+    </p>
+    <p>
+      Skillsmith's MCP server works in any MCP-capable agent runtime &mdash;
+      Claude Code, Cursor, Continue, Copilot, Windsurf. For runtime-specific
+      installation, see <a href="/docs/getting-started">Getting Started</a>.
+    </p>
+  </div>
+
   <h3>search</h3>
 
   <p>Search for skills in the registry.</p>
@@ -222,9 +245,9 @@ EOF`}</code></pre>
 
   <p><strong>Example prompts:</strong></p>
   <ul>
-    <li>"Search for testing skills"</li>
-    <li>"Find verified skills for git workflows"</li>
-    <li>"Show me devops skills with high quality scores"</li>
+    <li>"Use Skillsmith to search for testing skills"</li>
+    <li>"Ask Skillsmith for verified skills tagged git workflows"</li>
+    <li>"Use Skillsmith to find devops skills with quality score above 80"</li>
   </ul>
 
   <h3>get_skill</h3>
@@ -246,8 +269,8 @@ EOF`}</code></pre>
 
   <p><strong>Example prompts:</strong></p>
   <ul>
-    <li>"Show details for community/jest-helper"</li>
-    <li>"What does the git-commit skill do?"</li>
+    <li>"Use Skillsmith to show details for community/jest-helper"</li>
+    <li>"Ask Skillsmith what the git-commit skill does"</li>
   </ul>
 
   <h3>install_skill</h3>
@@ -264,8 +287,8 @@ EOF`}</code></pre>
 
   <p><strong>Example prompts:</strong></p>
   <ul>
-    <li>"Install the jest-helper skill"</li>
-    <li>"Install community/git-commit"</li>
+    <li>"Use Skillsmith to install jest-helper"</li>
+    <li>"Ask Skillsmith to install community/git-commit"</li>
   </ul>
 
   <h3>uninstall_skill</h3>
@@ -280,8 +303,8 @@ EOF`}</code></pre>
 
   <p><strong>Example prompts:</strong></p>
   <ul>
-    <li>"Uninstall the jest-helper skill"</li>
-    <li>"Remove community/git-commit"</li>
+    <li>"Use Skillsmith to uninstall jest-helper"</li>
+    <li>"Ask Skillsmith to remove community/git-commit"</li>
   </ul>
 
   <h3>recommend</h3>
@@ -297,8 +320,8 @@ EOF`}</code></pre>
 
   <p><strong>Example prompts:</strong></p>
   <ul>
-    <li>"Recommend skills for my React project"</li>
-    <li>"What skills would help with Node.js development?"</li>
+    <li>"Ask Skillsmith to recommend skills for my React project"</li>
+    <li>"Use Skillsmith to find skills that help with Node.js development"</li>
   </ul>
 
   <h3>compare</h3>
@@ -313,8 +336,8 @@ EOF`}</code></pre>
 
   <p><strong>Example prompts:</strong></p>
   <ul>
-    <li>"Compare jest-helper and vitest-helper"</li>
-    <li>"What's the difference between these testing skills?"</li>
+    <li>"Use Skillsmith to compare jest-helper and vitest-helper"</li>
+    <li>"Ask Skillsmith to compare these testing skills side-by-side"</li>
   </ul>
 
   <h3>validate</h3>
@@ -329,8 +352,8 @@ EOF`}</code></pre>
 
   <p><strong>Example prompts:</strong></p>
   <ul>
-    <li>"Validate my skill at ./my-skill"</li>
-    <li>"Check if this skill structure is correct"</li>
+    <li>"Use Skillsmith to validate my skill at ./my-skill"</li>
+    <li>"Ask Skillsmith to check if this skill structure is correct"</li>
   </ul>
 
   <h2>Namespace Audit Tools (Team+)</h2>
@@ -363,8 +386,8 @@ EOF`}</code></pre>
 
   <p><strong>Example prompts:</strong></p>
   <ul>
-    <li>"Audit my installed skills for namespace conflicts"</li>
-    <li>"Run a deep namespace audit on my ~/.claude inventory"</li>
+    <li>"Use Skillsmith to audit my installed skills for namespace conflicts"</li>
+    <li>"Ask Skillsmith to run a deep namespace audit on my ~/.claude inventory"</li>
   </ul>
 
   <h3>apply_namespace_rename</h3>
@@ -382,8 +405,8 @@ EOF`}</code></pre>
 
   <p><strong>Example prompts:</strong></p>
   <ul>
-    <li>"Apply the suggested rename for skill X from the last audit"</li>
-    <li>"Skip the rename suggestion for the test-runner collision"</li>
+    <li>"Use Skillsmith to apply the suggested rename for skill X from the last audit"</li>
+    <li>"Ask Skillsmith to skip the rename suggestion for the test-runner collision"</li>
   </ul>
 
   <h3>apply_recommended_edit</h3>
@@ -405,7 +428,7 @@ EOF`}</code></pre>
 
   <p><strong>Example prompts:</strong></p>
   <ul>
-    <li>"Apply the suggested domain-qualifier edit to my skill description"</li>
+    <li>"Use Skillsmith to apply the suggested domain-qualifier edit to my skill description"</li>
   </ul>
 
   <h2>Usage Examples</h2>
