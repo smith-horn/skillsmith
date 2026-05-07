@@ -450,18 +450,14 @@ jobs:
       # not receive secrets.GIT_CRYPT_KEY; the drift script below detects the
       # GITCRYPT magic header and emits a coverage-skipped warning (not a
       # failure) when unlock did not run. Pattern copied from ci.yml:662-672.
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       # A. GitHub-native dependency review — license + OpenSSF scorecard.
       #    Complements (does NOT duplicate) the existing `Security Audit` job
@@ -717,22 +713,14 @@ jobs:
       # SMI-2159: Decrypt git-crypt encrypted files before Docker build
       # Narrowed scope (SMI-2604): .claude/skills/**, .claude/plans/**, .claude/hive-mind/**,
       # supabase/functions/**, supabase/migrations/** (docs moved to private submodule)
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          # Decode and write key file
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          # Unlock repository
-          git-crypt unlock /tmp/git-crypt-key
-          # Clean up key file
-          rm -f /tmp/git-crypt-key
-          echo "✓ git-crypt unlocked successfully"
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       # SMI-2194: Cache Docker image to skip rebuild when only TS source changes
       # Key includes: Dockerfile, lockfile, .dockerignore, and Node version
@@ -966,17 +954,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Setup Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
@@ -1008,17 +993,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Setup Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
@@ -1054,18 +1036,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Download Docker image
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -1200,18 +1178,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       # SMI-2250: Decrypt git-crypt encrypted files (supabase/functions tests are encrypted)
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       # Note: No npm ci fallback for test-root - these tests require Docker environment
       # for consistent behavior with root-level scripts and supabase functions
@@ -1292,17 +1266,14 @@ jobs:
 
       # Note: colocated tests don't read git-crypt content, but unlock matches
       # `Test (root)` so devs see consistent setup across jobs.
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Download Docker image
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -1407,18 +1378,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       # Note: No npm ci fallback for security - audit requires Docker for reproducible results
       # and consistent dependency resolution across environments
@@ -1507,17 +1474,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Setup Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
@@ -1555,18 +1519,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: steps.changes.outputs.website == 'true' && env.GIT_CRYPT_KEY != ''
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       # Note: No npm ci fallback for website-build - Astro build requires consistent
       # Node environment provided by Docker

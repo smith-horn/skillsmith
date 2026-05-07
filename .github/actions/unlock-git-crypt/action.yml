@@ -1,0 +1,39 @@
+name: Unlock git-crypt
+description: Install git-crypt (skipping apt-get update when possible) and unlock the repo.
+
+inputs:
+  git-crypt-key:
+    description: Base64-encoded git-crypt symmetric key.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install git-crypt
+      shell: bash
+      run: |
+        if command -v git-crypt &>/dev/null; then
+          echo "git-crypt already on PATH; skipping install"
+          exit 0
+        fi
+        # SMI-4770: try install without `apt-get update` first — ubuntu-latest
+        # apt index is usually fresh enough. Falls back to update+install if
+        # the runner's apt cache is stale (e.g. immediately after a runner
+        # image cut). Saves ~12-14s/job on the common cache-fresh path.
+        if sudo apt-get install -y --no-install-recommends git-crypt 2>/dev/null; then
+          echo "✓ Installed git-crypt without apt-get update"
+        else
+          echo "Stale apt cache; running apt-get update"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends git-crypt
+        fi
+
+    - name: Unlock repository
+      shell: bash
+      env:
+        GIT_CRYPT_KEY: ${{ inputs.git-crypt-key }}
+      run: |
+        echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
+        git-crypt unlock /tmp/git-crypt-key
+        rm -f /tmp/git-crypt-key
+        echo "✓ git-crypt unlocked successfully"
