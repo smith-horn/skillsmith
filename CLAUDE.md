@@ -81,6 +81,8 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 
 **Branch protection**: 13 required checks for code PRs, 2 for docs-only. Admin bypass for emergencies. Details: [ci-reference.md](.claude/development/ci-reference.md#branch-protection).
 
+**Release-PR `Package Validation` carve-out (SMI-4530, SMI-4778)**: `Package Validation` (script: `scripts/verify-publish-deps.mjs --ci`) fails by design on `chore/release-*` branches. The check verifies that every `@skillsmith/<pkg>` dep range is satisfied by an already-published npm version — but a release PR's whole purpose is to bump to a version that hasn't been published yet, so it cannot pass. **Admin-merge with `gh pr merge --admin` is the correct path** when this is the *only* failing check on a release PR and all other required checks are green. Before bypassing, search for an in-flight infra fix (`gh pr list --search "verify-publish-deps OR Package Validation"`); if one is open, rebase onto it instead. Do not admin-bypass other failing checks — that's how the SMI-4647 / SMI-4767 incidents started.
+
 ---
 
 ## Project Overview

@@ -21,6 +21,13 @@ export default defineConfig({
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
+      // SMI-4777: git worktrees carry their own (potentially encrypted, possibly
+      // half-rebased) test trees. They run vitest from inside the worktree, not
+      // the main repo. Both the canonical dot-prefix `.worktrees/` and the
+      // ad-hoc no-dot `worktrees/` (parallel sessions) are excluded here,
+      // mirroring the .prettierignore + ESLint fix from the same wave.
+      '.worktrees/**',
+      'worktrees/**',
       // SMI-1312: E2E and integration tests require external services (API, DB, test repos)
       // These run in dedicated workflows: e2e-tests.yml
       'tests/e2e/**',
