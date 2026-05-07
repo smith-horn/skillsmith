@@ -105,7 +105,8 @@ jobs:
 
       # REQUIRED — supabase/functions/** is encrypted. Without unlock,
       # deploy pushes encrypted binary blobs. Hard fail if key is missing.
-      - name: Unlock git-crypt
+      # SMI-4770: deploy-time hard-fail check + composite action for the install/unlock.
+      - name: Verify git-crypt key present
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
@@ -113,11 +114,11 @@ jobs:
             echo "::error::GIT_CRYPT_KEY secret is not set — cannot deploy encrypted edge functions"
             exit 1
           fi
-          sudo apt-get update && sudo apt-get install -y git-crypt
-          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
-          echo "git-crypt unlocked"
+
+      - name: Unlock git-crypt
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Setup Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
@@ -206,7 +207,8 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Unlock git-crypt
+      # SMI-4770: deploy-time hard-fail check + composite action for the install/unlock.
+      - name: Verify git-crypt key present
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
         run: |
@@ -214,11 +216,11 @@ jobs:
             echo "::error::GIT_CRYPT_KEY secret is not set — cannot deploy encrypted edge functions"
             exit 1
           fi
-          sudo apt-get update && sudo apt-get install -y git-crypt
-          echo "$GIT_CRYPT_KEY" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
-          echo "git-crypt unlocked"
+
+      - name: Unlock git-crypt
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Setup Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6

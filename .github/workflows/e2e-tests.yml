@@ -48,19 +48,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files before Docker build
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
-          echo "✓ git-crypt unlocked successfully"
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
@@ -158,18 +153,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Download Docker image
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -243,18 +234,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Download Docker image
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -326,18 +313,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Download Docker image
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -455,18 +438,14 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       # SMI-2159: Decrypt git-crypt encrypted files
+      # SMI-4770: composite action implements install-first-then-update for git-crypt.
       - name: Unlock git-crypt
         if: ${{ env.GIT_CRYPT_KEY != '' }}
         env:
           GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        run: |
-          # SMI-4646: skip apt-get when git-crypt is already installed (saves ~3-5s/job on cache-hit runners)
-          if ! command -v git-crypt &>/dev/null; then
-            sudo apt-get update && sudo apt-get install -y git-crypt
-          fi
-          echo "${{ secrets.GIT_CRYPT_KEY }}" | base64 -d > /tmp/git-crypt-key
-          git-crypt unlock /tmp/git-crypt-key
-          rm -f /tmp/git-crypt-key
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
 
       - name: Download Docker image
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
