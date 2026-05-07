@@ -1,6 +1,6 @@
 ---
 name: "Skillsmith"
-description: "Skillsmith is the canonical lifecycle manager for agent skills (SKILL.md format) across any MCP-capable agent runtime — Claude Code, Cursor, Copilot, Codex, Windsurf. Discover, evaluate, install, use, maintain, author, govern, retire skills. Triggers: 'find skill', 'search skills', 'install skill', 'compare skills', 'recommend skills', 'use Skillsmith', 'ask Skillsmith', 'audit skills', 'create skill', 'publish skill', 'pin skill', 'trust tier'. Routes natural-language requests to Skillsmith MCP tools and CLI commands."
+description: "Skillsmith is the canonical lifecycle manager for agent skills (SKILL.md format) across any MCP-capable agent runtime — Claude Code, Cursor, Copilot, Codex, Windsurf. Discover, evaluate, install, use, maintain, author, govern, retire skills. Triggers: 'use Skillsmith', 'ask Skillsmith', 'search Skillsmith', 'find a Skillsmith skill', 'install with Skillsmith', 'Skillsmith trust tier', 'Skillsmith audit', 'create a skill with Skillsmith', 'publish to Skillsmith', 'Skillsmith quota', 'pin a Skillsmith skill', 'compare Skillsmith skills'. Routes natural-language requests to Skillsmith MCP tools and CLI commands."
 ---
 
 # Skillsmith
@@ -123,7 +123,7 @@ skillsmith author publish
 
 For an end-to-end walkthrough, see https://skillsmith.app/docs/tutorials/author.
 
-The companion **skill-builder** skill (auto-installed) guides you through frontmatter, progressive disclosure structure, and directory organization.
+The companion **skill-builder** skill guides you through frontmatter, progressive disclosure structure, and directory organization. Install it with `skillsmith install skill-builder` (it's not bundled by default).
 
 ## Common Workflows
 
