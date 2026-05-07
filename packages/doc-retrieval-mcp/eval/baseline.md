@@ -5,21 +5,25 @@ It is prose-only; the machine-readable source of truth is `baseline.json`.
 
 ## Current Baseline
 
-Generated: 2026-05-06 (first real-mode run -- SMI-4762 bootstrap)
+Generated: 2026-05-07 (SMI-4764 Wave 1 -- first run with `byCategory` populated)
 
-Corpus: 1325 files, 28432 chunks
+Corpus: 1329 files, 28451 chunks
 
 Knobs: boost=1.5, dampen=0.85, floor=0.35, BM25=off
 
-| Metric     | Value  | Prior |
-|------------|--------|-------|
-| recall@5   | 0.4182 | --    |
-| recall@10  | 0.4909 | --    |
-| MRR        | 0.2824 | --    |
-| nDCG@10    | 0.3327 | --    |
+| Metric     | Value  | Prior  |
+|------------|--------|--------|
+| recall@5   | 0.4182 | 0.4182 |
+| recall@10  | 0.4909 | --     |
+| MRR        | 0.2824 | --     |
+| nDCG@10    | 0.3327 | --     |
 
-`prior` is `--` because this is the first real-mode run. Subsequent runs will promote
-`current → prior` and the drift check will gate >5% recall@5 regression.
+Overall scalars are unchanged from the SMI-4762 bootstrap (deterministic against the same
+gold set + corpus). The schema additions are `byCategory.recallAt5` (per-category current),
+`byCategory.recallAt5Prior` (null on this first run, will promote next time), and
+`byCategory.count` (gold-set entries per category, used by the hybrid threshold's N-hit floor).
+Drift gate now uses the SMI-4764 hybrid path: per-category `max(5% rel, 1-hit/2-hit floor)` +
+global 10% tripwire on overall.
 
 ### By Category
 

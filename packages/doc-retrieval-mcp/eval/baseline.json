@@ -1,10 +1,10 @@
 {
-  "prior": null,
+  "prior": 0.41818181818181815,
   "current": 0.41818181818181815,
-  "generated": "2026-05-06",
+  "generated": "2026-05-07",
   "corpus": {
-    "filesScanned": 1325,
-    "chunksUpserted": 28432
+    "filesScanned": 1329,
+    "chunksUpserted": 28451
   },
   "knobs": {
     "boost": 1.5,
@@ -17,5 +17,24 @@
     "recallAt10": 0.4909090909090909,
     "mrr": 0.28244588744588744,
     "ndcgAt10": 0.33272058903974044
+  },
+  "byCategory": {
+    "recallAt5": {
+      "memory-recall": 0.2857142857142857,
+      "implementation-lookup": 0.25,
+      "retro-lookup": 0.5,
+      "script-header": 0.625,
+      "adr-lookup": 0.5,
+      "skill-discovery": 0.6
+    },
+    "recallAt5Prior": null,
+    "count": {
+      "memory-recall": 14,
+      "implementation-lookup": 12,
+      "retro-lookup": 10,
+      "script-header": 8,
+      "adr-lookup": 6,
+      "skill-discovery": 5
+    }
   }
 }
