@@ -98,6 +98,13 @@ RUN npm run build || echo "Build completed with warnings"
 # Includes: All dependencies, build tools, source code
 FROM deps AS dev
 
+# SMI-4782 — install psql so scripts/pooler-psql.sh works as documented.
+# Scoped to the dev stage only to keep prod/builder images lean.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
 # Copy TypeScript config and source for development
 COPY tsconfig*.json ./
 COPY turbo.json ./
