@@ -142,6 +142,34 @@ if ! npm rebuild better-sqlite3 --build-from-source >"$REBUILD_LOG" 2>&1; then
 fi
 
 # Re-probe — building succeeded, but did the binding actually load?
+#
+# SMI-4780: `npm rebuild better-sqlite3 --build-from-source` reports exit 0 and
+# stdout claims a successful rebuild, but on macOS Docker Desktop the binary
+# at build/Release/better_sqlite3.node sometimes isn't actually written. The
+# v0.6.0 / v0.5.0 release session (2026-05-06) hit this and only recovered
+# by running `cd node_modules/better-sqlite3 && npm run build-release`
+# directly — same fallback the workspace-local loop already uses below.
+#
+# Apply the same fallback at the root level before erroring out: drop the
+# stale binary, run `npm run build-release` from inside the package, then
+# re-probe. Only if THAT also fails do we surface the ABI mismatch error.
+ROOT_BSQLITE_DIR="node_modules/better-sqlite3"
+if ! probe_binding; then
+  if [[ -d "$ROOT_BSQLITE_DIR" ]]; then
+    info "root npm rebuild reported success but binding still missing"
+    info "  → applying SMI-4780 fallback: build-release from inside $ROOT_BSQLITE_DIR"
+    FALLBACK_LOG="$(mktemp -t skillsmith-rebuild-root-fallback.XXXXXX)"
+    if (cd "$ROOT_BSQLITE_DIR" && rm -f build/Release/better_sqlite3.node && npm run build-release) >"$FALLBACK_LOG" 2>&1; then
+      rm -f "$FALLBACK_LOG"
+    else
+      printf '\n--- root build-release fallback output (tail) ---\n'
+      tail -20 "$FALLBACK_LOG"
+      printf '\n'
+      rm -f "$FALLBACK_LOG"
+    fi
+  fi
+fi
+
 if ! probe_binding; then
   printf '\n--- npm rebuild output (tail) ---\n'
   tail -20 "$REBUILD_LOG"
