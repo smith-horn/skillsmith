@@ -107,7 +107,7 @@ export interface RecommendResponse {
 export const recommendToolSchema = {
   name: 'skill_recommend',
   description:
-    'Recommend skills based on currently installed skills and optional project context. Uses semantic similarity to find relevant skills. Auto-detects installed skills from ~/.claude/skills/ if not provided. SMI-1631: Supports role-based filtering for targeted recommendations.',
+    "[Skillsmith — Discover stage] Recommend skills from the Skillsmith registry based on the user's project context and currently installed skills, using semantic similarity. Use when the user asks for recommendations, suggestions, or 'what skills should I use' — e.g. 'recommend skills for my React project', 'what skills help with Node.js', 'suggest skills for testing'. Auto-detects installed skills from ~/.claude/skills/ when not provided. Optional role-based filtering (SMI-1631). Returns ranked Skillsmith candidates, NOT general programming advice. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
   inputSchema: {
     type: 'object' as const,
     properties: {

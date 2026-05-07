@@ -56,7 +56,7 @@ export interface ValidateResponse {
 export const validateToolSchema = {
   name: 'skill_validate',
   description:
-    'Validate a SKILL.md file or skill directory against Skillsmith specification. Checks structure, required fields, and security patterns.',
+    "[Skillsmith — Install stage] Validate a SKILL.md file or skill directory against the Skillsmith specification before installing or publishing. Use when the user wants to check/validate a skill's structure — e.g. 'validate my skill at ./my-skill', 'check if this skill is valid', 'use Skillsmith to validate this SKILL.md'. Checks YAML frontmatter, required fields, file structure, and security-pattern signatures. For end-to-end skill authoring including scaffolding/publishing, use the CLI `skillsmith author` commands. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
   inputSchema: {
     type: 'object' as const,
     properties: {

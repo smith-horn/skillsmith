@@ -13,7 +13,7 @@
 export const installTool = {
   name: 'install_skill',
   description:
-    'Install an agent skill (SKILL.md format) from GitHub. Performs security scan and Skillsmith optimization before installation.',
+    "[Skillsmith — Install stage] Install an agent skill (SKILL.md format) from the Skillsmith registry or a GitHub repository to the local Claude Code skills directory (~/.claude/skills/) — or runtime-equivalent path when SKILLSMITH_CLIENT is set (cursor, copilot, windsurf). Use when the user asks to install/add/get a specific skill — e.g. 'install jest-helper', 'add community/git-commit', 'use Skillsmith to install the testing skill'. Performs Skillsmith security scan and content optimization (decomposition, subagent generation) before installation. Returns install path and Skillsmith optimization summary. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
   inputSchema: {
     type: 'object' as const,
     properties: {

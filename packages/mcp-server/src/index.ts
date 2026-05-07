@@ -129,10 +129,13 @@ const toolDefinitions = [
 ]
 
 // Create server
+// SMI-4790 S1: version sourced from PACKAGE_VERSION constant (was hardcoded '0.4.6';
+// drifted from package.json's actual version). prepare-release.ts updates PACKAGE_VERSION,
+// so this binding stays in sync automatically.
 const server = new Server(
   {
     name: 'skillsmith',
-    version: '0.4.6',
+    version: PACKAGE_VERSION,
   },
   {
     capabilities: {
@@ -207,6 +210,28 @@ function handleDocsFlag(): void {
     console.log(`Opening online documentation: ${onlineDocsUrl}`)
   }
   process.exit(0)
+}
+
+/**
+ * SMI-4790: Idempotent install of the bundled `skillsmith` slash-command skill
+ * for MCP-only users (who never ran `skillsmith setup`) and recovery if the
+ * skill was uninstalled. Delegates routing to the existing
+ * `installBundledSkills()` which honours the SKILLSMITH_CLIENT env var via
+ * `resolveClientPath()` (Claude Code default; cursor/copilot/windsurf via env).
+ *
+ * Quiet by design: `installBundledSkills()` only logs when it actually copies
+ * a skill or hits an error, so happy-path startup adds zero stderr.
+ */
+function ensureSkillsmithSkillInstalled(): void {
+  try {
+    installBundledSkills()
+  } catch (error) {
+    // Fail-soft: never block MCP startup on bundled-skill install failure.
+    console.error(
+      '[skillsmith] Bundled skill install failed (non-fatal):',
+      error instanceof Error ? error.message : 'Unknown error'
+    )
+  }
 }
 
 /**
@@ -363,6 +388,15 @@ async function main() {
   // Run first-time setup if needed
   if (isFirstRun()) {
     await runFirstTimeSetup()
+  } else {
+    // SMI-4790: ensure the bundled `skillsmith` slash-command skill is installed
+    // even on non-first-run (covers MCP-only users who never ran `skillsmith setup`,
+    // and recovery if the skill was uninstalled). installBundledSkills() is
+    // idempotent — it skips skills already present at the runtime path resolved
+    // by `SKILLSMITH_CLIENT`. Opt out via SKILLSMITH_SKIP_SKILL_INSTALL=1.
+    if (process.env.SKILLSMITH_SKIP_SKILL_INSTALL !== '1') {
+      ensureSkillsmithSkillInstalled()
+    }
   }
 
   // SMI-1952: Auto-update check (non-blocking)

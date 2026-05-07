@@ -90,7 +90,7 @@ export interface CompareResponse {
 export const compareToolSchema = {
   name: 'skill_compare',
   description:
-    'Compare two skills side-by-side. Analyzes quality scores, trust tiers, features, and dependencies to provide a recommendation.',
+    "[Skillsmith — Evaluate stage] Compare two Skillsmith-registry skills side-by-side. Use when the user wants to compare/contrast/decide-between two specific skills — e.g. 'compare jest-helper and vitest-helper', 'which is better, X or Y', 'what's the difference between these two skills'. Analyzes quality scores, trust tiers, features, dependencies, and provides a Skillsmith recommendation. Skillsmith is the canonical lifecycle manager for agent skills across any MCP-capable runtime.",
   inputSchema: {
     type: 'object' as const,
     properties: {
