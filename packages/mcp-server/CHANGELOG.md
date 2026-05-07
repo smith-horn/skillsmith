@@ -2,6 +2,11 @@
 
 All notable changes to `@skillsmith/mcp-server` are documented here.
 
+## v0.5.1
+
+- **Feature**: SMI-4790 lifecycle-tagged tool descriptions + skill auto-install (#1022)
+- **Fix**: SMI-4795 thread errorCode + trustTier through install telemetry (#1014)
+
 ## [Unreleased]
 
 ## v0.5.0
