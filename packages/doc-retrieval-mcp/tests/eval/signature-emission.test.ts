@@ -25,6 +25,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 // resolve: tests/eval -> tests -> doc-retrieval-mcp -> packages -> repo
 const REPO_ROOT = resolve(__dirname, '..', '..', '..', '..')
 const EVAL_RUNNER = join(REPO_ROOT, 'packages', 'doc-retrieval-mcp', 'eval', 'eval-runner.ts')
+const EVAL_SIGNATURES = join(
+  REPO_ROOT,
+  'packages',
+  'doc-retrieval-mcp',
+  'eval',
+  'eval-runner-signatures.ts'
+)
 
 function shaOf(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex')
@@ -68,17 +75,21 @@ describe('SMI-4764 Wave 0: signature emission invariants', () => {
     expect(`${shortSha}.sig`).toMatch(/^[a-f0-9]{8}\.sig$/)
   })
 
-  it('eval-runner.ts source contains the signature-emission wiring', () => {
+  it('eval-runner-signatures.ts contains the signature-emission wiring', () => {
     // Guard against accidental removal of the Wave 0 wiring during refactors.
-    // This is a weak invariant but keeps the test directory adjacent to the
-    // change it protects.
-    const src = readFileSync(EVAL_RUNNER, 'utf8')
-    expect(src).toContain('emitBaselineSignature')
-    expect(src).toContain('.signatures.log')
-    expect(src).toContain('.skillsmith')
-    expect(src).toContain('eval-signatures')
-    expect(src).toContain('SIGNATURE_LOG_MAX_LINES')
-    expect(src).toContain('createHash')
+    // SMI-4764 Wave 1: helpers moved out of eval-runner.ts into
+    // eval-runner-signatures.ts to keep the parent file under the 500-line gate.
+    const sigSrc = readFileSync(EVAL_SIGNATURES, 'utf8')
+    expect(sigSrc).toContain('emitBaselineSignature')
+    expect(sigSrc).toContain('.signatures.log')
+    expect(sigSrc).toContain('.skillsmith')
+    expect(sigSrc).toContain('eval-signatures')
+    expect(sigSrc).toContain('SIGNATURE_LOG_MAX_LINES')
+    expect(sigSrc).toContain('createHash')
+    // eval-runner.ts must still import + invoke the helper.
+    const runnerSrc = readFileSync(EVAL_RUNNER, 'utf8')
+    expect(runnerSrc).toContain("from './eval-runner-signatures.js'")
+    expect(runnerSrc).toContain('emitBaselineSignature(serialized)')
   })
 
   it('FIFO trim retains exactly the last 15 entries (cap matches SIGNATURE_LOG_MAX_LINES)', () => {

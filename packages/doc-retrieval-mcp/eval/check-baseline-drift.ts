@@ -1,10 +1,17 @@
 /**
- * SMI-4702 -- Retrieval Eval baseline drift check.
+ * SMI-4702 / SMI-4764 -- Retrieval Eval baseline drift check.
  *
- * Invoked by the "Retrieval Eval Gate" CI job. Enforces three rules:
+ * Invoked by the "Retrieval Eval Gate" CI job. Enforces:
  *   1. Ranking files changed -> baseline.json must also change (H1)
  *   2. gold-set.json changed -> baseline.json must also change (GAP 3)
- *   3. baseline.json changed + prior != null -> recall@5 must not drop >5%
+ *   3. baseline.json changed -> hybrid drift threshold (SMI-4764 Wave 1):
+ *      - byCategory present: per-category max(5% rel, N-hit floor) +
+ *        global 10% tripwire on overall recall@5
+ *      - byCategory absent (transitional / pre-Wave-1): legacy global 5% gate
+ *
+ * The N-hit floor is 1 for high-N categories (count >= LOW_N_THRESHOLD)
+ * and 2 for low-N (count < LOW_N_THRESHOLD) — prevents single-flap
+ * false positives in small categories like skill-discovery (N=5).
  *
  * Exits 0 on pass, 1 on failure. Error messages use ::error:: (GHA format).
  * Usage: tsx eval/check-baseline-drift.ts
@@ -25,6 +32,18 @@ const RANKING_FILES = [
 const GOLD_SET_FILE = 'packages/doc-retrieval-mcp/eval/gold-set.json'
 const BASELINE_FILE = 'packages/doc-retrieval-mcp/eval/baseline.json'
 
+// SMI-4764 Wave 1 hybrid threshold tuning.
+const PER_CATEGORY_REL_THRESHOLD = 0.05 // 5% relative drop trips per-category
+const GLOBAL_TRIPWIRE_REL_THRESHOLD = 0.1 // 10% relative drop on overall trips global
+const LEGACY_GLOBAL_REL_THRESHOLD = 0.05 // applied when byCategory absent (back-compat)
+const LOW_N_THRESHOLD = 10 // categories with count < 10 use 2-hit floor
+const HIGH_N_HIT_FLOOR = 1
+const LOW_N_HIT_FLOOR = 2
+// Recall values are floats derived from hit-count / question-count divisions,
+// so an "exactly 1-hit" drop can read as 0.99999...×(1/N). Compare with a
+// tiny epsilon so integer-hit boundaries trip predictably.
+const HIT_FLOOR_EPSILON = 1e-9
+
 // Types
 
 export interface BaselineMetrics {
@@ -34,6 +53,15 @@ export interface BaselineMetrics {
   ndcgAt10?: number | null
 }
 
+export interface BaselineByCategory {
+  recallAt5: Record<string, number>
+  // Promoted from the prior run's `recallAt5`. `null` on the first run
+  // that emits byCategory, `undefined` on baselines written before
+  // SMI-4764 Wave 1 (drift checker treats both as "no per-category prior").
+  recallAt5Prior?: Record<string, number> | null
+  count: Record<string, number>
+}
+
 export interface BaselineFile {
   prior: number | null
   current: number | null
@@ -41,6 +69,7 @@ export interface BaselineFile {
   corpus?: { filesScanned: number; chunksUpserted: number }
   knobs?: { boost: number; dampen: number; floor: number; bm25: boolean }
   metrics?: BaselineMetrics
+  byCategory?: BaselineByCategory
 }
 
 export interface DriftResult {
@@ -49,6 +78,110 @@ export interface DriftResult {
 }
 
 // Core logic -- exported for unit tests
+
+/**
+ * SMI-4764 Wave 1 hybrid drift check.
+ *
+ * When `byCategory` (with `recallAt5Prior` and `count`) is present on the
+ * baseline, applies:
+ *   - Per-category: fail if any category drops by max(5% rel, N-hit floor),
+ *     where N-hit floor = 1 (count >= 10) or 2 (count < 10).
+ *   - Global tripwire: fail if overall recall@5 drops > 10% relative.
+ *
+ * When byCategory or its prior snapshot is absent, falls back to the legacy
+ * global 5% gate. This preserves protection during the post-Wave-1 window
+ * before the canonical dev re-runs to populate byCategory.
+ */
+export function checkHybridDrift(
+  baseline: BaselineFile,
+  prior: number,
+  current: number
+): DriftResult {
+  const byCat = baseline.byCategory
+  const priorByCat =
+    byCat && byCat.recallAt5Prior !== null && byCat.recallAt5Prior !== undefined
+      ? byCat.recallAt5Prior
+      : null
+
+  // Fallback path: byCategory absent OR no per-category prior available.
+  // Use legacy global 5% gate so protection is preserved during the
+  // transitional window between Wave 1 merge and the canonical dev's
+  // first real-mode run that populates byCategory.recallAt5Prior.
+  if (!byCat || !priorByCat) {
+    const delta = (current - prior) / prior
+    if (delta < -LEGACY_GLOBAL_REL_THRESHOLD) {
+      const pct = (delta * 100).toFixed(1)
+      return {
+        pass: false,
+        message:
+          `::error::recall@5 regressed >5% vs prior (delta: ${pct}%, prior: ${prior}, current: ${current}). ` +
+          'Investigate ranking changes before merging.',
+      }
+    }
+    return {
+      pass: true,
+      message:
+        `✓ Retrieval Eval Gate: byCategory not present, recall@5 within 5% threshold ` +
+        `(prior: ${prior}, current: ${current}).`,
+    }
+  }
+
+  // Hybrid path: per-category + global tripwire.
+  const failures: string[] = []
+  const currentByCat = byCat.recallAt5
+  const counts = byCat.count
+
+  for (const [cat, currentCat] of Object.entries(currentByCat)) {
+    const priorCat = priorByCat[cat]
+    if (priorCat === undefined) continue // new category — no prior to compare
+    if (priorCat === 0) continue // can't compute relative drop from zero
+    const drop = priorCat - currentCat
+    if (drop <= 0) continue
+    const count = counts[cat] ?? 0
+    if (count === 0) continue // no entries in this category — skip
+    const hitFloor = count < LOW_N_THRESHOLD ? LOW_N_HIT_FLOOR : HIGH_N_HIT_FLOOR
+    const absoluteHitDrop = hitFloor / count // smallest drop that counts
+    const relThreshold = priorCat * PER_CATEGORY_REL_THRESHOLD
+    const threshold = Math.max(relThreshold, absoluteHitDrop)
+    if (drop + HIT_FLOOR_EPSILON >= threshold) {
+      const pctRel = ((drop / priorCat) * 100).toFixed(1)
+      failures.push(
+        `${cat} (count=${count}): ${priorCat.toFixed(4)} → ${currentCat.toFixed(4)} ` +
+          `(Δ -${pctRel}%, threshold max(5%, ${hitFloor}/${count}=${absoluteHitDrop.toFixed(4)}))`
+      )
+    }
+  }
+
+  // Global tripwire: catches multi-category degradation that doesn't trip
+  // any single category by itself.
+  const overallDelta = (current - prior) / prior
+  const tripwireTriggered = overallDelta < -GLOBAL_TRIPWIRE_REL_THRESHOLD
+
+  if (failures.length > 0 || tripwireTriggered) {
+    const lines: string[] = []
+    if (failures.length > 0) {
+      lines.push(`::error::Per-category recall@5 regression detected:`)
+      for (const f of failures) lines.push(`  - ${f}`)
+    }
+    if (tripwireTriggered) {
+      const pct = (overallDelta * 100).toFixed(1)
+      lines.push(
+        `::error::Global tripwire: overall recall@5 dropped >10% (delta: ${pct}%, prior: ${prior}, current: ${current}).`
+      )
+    }
+    lines.push(
+      'Re-run RETRIEVAL_EVAL_REAL=1 npm run eval:retrieval and investigate ranking changes before merging.'
+    )
+    return { pass: false, message: lines.join('\n') }
+  }
+
+  return {
+    pass: true,
+    message:
+      `✓ Retrieval Eval Gate: hybrid threshold passed across ${Object.keys(currentByCat).length} ` +
+      `categories (overall recall@5: ${prior} → ${current}).`,
+  }
+}
 
 /**
  * Evaluate drift rules against a set of changed files and a parsed baseline.
@@ -101,23 +234,7 @@ export function evaluateDrift(changedFiles: string[], baseline: BaselineFile): D
       }
     }
 
-    const delta = (current - prior) / prior
-    if (delta < -0.05) {
-      const pct = (delta * 100).toFixed(1)
-      return {
-        pass: false,
-        message:
-          `::error::recall@5 regressed >5% vs prior (delta: ${pct}%, prior: ${prior}, current: ${current}). ` +
-          'Investigate ranking changes before merging.',
-      }
-    }
-
-    return {
-      pass: true,
-      message:
-        `✓ Retrieval Eval Gate: ranking files changed, baseline.json updated, recall@5 within 5% threshold ` +
-        `(prior: ${prior}, current: ${current}).`,
-    }
+    return checkHybridDrift(baseline, prior, current)
   }
 
   return {
