@@ -27,10 +27,24 @@ const navSections: NavSection[] = [
     ],
   },
   {
+    heading: 'Tutorials',
+    items: [
+      { href: '/docs/tutorials', label: 'Lifecycle Overview', icon: 'compass' },
+      { href: '/docs/tutorials/discover', label: 'Discover skills', icon: 'search' },
+      { href: '/docs/tutorials/evaluate', label: 'Evaluate candidates', icon: 'scale' },
+      { href: '/docs/tutorials/install-and-use', label: 'Install & use', icon: 'download' },
+      { href: '/docs/tutorials/maintain', label: 'Maintain installed', icon: 'refresh' },
+      { href: '/docs/tutorials/author', label: 'Author your own', icon: 'edit' },
+      { href: '/docs/tutorials/govern', label: 'Govern at scale', icon: 'shield-check' },
+      { href: '/docs/tutorials/retire', label: 'Retire skills', icon: 'archive' },
+    ],
+  },
+  {
     heading: 'Reference',
     items: [
       { href: '/docs/cli', label: 'CLI Reference', icon: 'terminal' },
       { href: '/docs/mcp-server', label: 'MCP Server', icon: 'server' },
+      { href: '/docs/vscode-extension', label: 'VS Code Extension', icon: 'puzzle' },
       { href: '/docs/api', label: 'API Reference', icon: 'code' },
       { href: '/docs/dependencies', label: 'Dependencies', icon: 'git-branch' },
     ],
@@ -223,6 +237,38 @@ function isActive(href: string): boolean {
 
   .nav-icon[data-icon='help-circle']::before {
     mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3'/%3E%3Cline x1='12' y1='17' x2='12.01' y2='17'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='compass']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpolygon points='16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='search']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='scale']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M16 16.01V16M8 16.01V16M12 3v18M3 7h18M5 7l3 9h0M16 16l3-9h0'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='download']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/%3E%3Cpolyline points='7 10 12 15 17 10'/%3E%3Cline x1='12' y1='15' x2='12' y2='3'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='refresh']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpolyline points='23 4 23 10 17 10'/%3E%3Cpolyline points='1 20 1 14 7 14'/%3E%3Cpath d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='shield-check']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/%3E%3Cpolyline points='9 12 11 14 15 10'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='archive']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpolyline points='21 8 21 21 3 21 3 8'/%3E%3Crect x='1' y='3' width='22' height='5'/%3E%3Cline x1='10' y1='12' x2='14' y2='12'/%3E%3C/svg%3E");
+  }
+
+  .nav-icon[data-icon='puzzle']::before {
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.47 1.229 0 1.698l-2.281 2.281a.929.929 0 0 1-1.318 0l-1.318-1.318a.929.929 0 0 0-1.318 0l-2.034 2.034a.929.929 0 0 0 0 1.318l1.318 1.318a.929.929 0 0 1 0 1.318l-2.281 2.281a1.2 1.2 0 0 1-1.698 0l-1.568-1.568a.929.929 0 0 0-.878-.289c-.97.196-2.06-.105-2.825-.87-.766-.766-1.066-1.855-.87-2.825a.929.929 0 0 0-.289-.878L1.668 12.6a1.2 1.2 0 0 1 0-1.698l2.281-2.281a.929.929 0 0 1 1.318 0l1.318 1.318a.929.929 0 0 0 1.318 0l2.035-2.034a.929.929 0 0 0 0-1.318l-1.318-1.318a.929.929 0 0 1 0-1.318L10.9 1.668a1.2 1.2 0 0 1 1.698 0l1.568 1.568c.23.23.556.338.878.289.97-.196 2.06.105 2.825.87.766.766 1.066 1.855.87 2.825z'/%3E%3C/svg%3E");
   }
 
   @media (max-width: 1024px) {
