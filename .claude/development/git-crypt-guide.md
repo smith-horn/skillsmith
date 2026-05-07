@@ -70,6 +70,9 @@ For worktree branches, use the rebase script which handles all steps automatical
 
 # Skip submodule steps:
 ./scripts/rebase-worktree.sh --no-submodule <worktree-path>
+
+# Keep worktree's submodule pointer when it's a strict descendant of target (SMI-4773):
+./scripts/rebase-worktree.sh --allow-submodule-ahead <worktree-path>
 ```
 
 The script handles: submodule cross-fetching, git-crypt filter disable/restore, stash management, submodule conflict auto-resolution, and branch verification. See `./scripts/rebase-worktree.sh --help` for full details.
