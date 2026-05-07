@@ -10,7 +10,7 @@
  */
 
 import { execSync } from 'child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -99,13 +99,18 @@ export async function smokeTestPackage(
 
     // Package-specific tests
     if (packageName === '@skillsmith/mcp-server') {
-      // Test 2: CLI --version works
+      // Test 2: bin link is created in the locally-installed package
+      // (Re-using test 1's install instead of `npx -y` because the latter
+      // races with the npx cache on Ubuntu CI runners — confirmed flaky on
+      // 25470514891 and 25470514891 rerun. The mcp-server bin has no
+      // --version flag anyway; it just starts the MCP server, so all the
+      // old test really checked was that npx could resolve the bin.)
       tests.push(
-        await runTest('version-check', () => {
-          execSync(`npx -y ${packageName}@${version} --version`, {
-            stdio: 'pipe',
-            timeout: 30000,
-          })
+        await runTest('bin-link', () => {
+          const binPath = join(tempDir, 'node_modules', '.bin', 'skillsmith-mcp')
+          if (!existsSync(binPath)) {
+            throw new Error(`bin link not found at ${binPath}`)
+          }
         })
       )
 
