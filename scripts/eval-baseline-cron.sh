@@ -81,13 +81,15 @@ fi
 # ---------------------------------------------------------------------------
 #
 # `git status --porcelain` lists modified, staged, untracked, and conflicted
-# entries. We tolerate untracked files in the worktrees/ directory (created
-# by other parallel sessions) but nothing else, since cron must produce a
-# reproducible baseline. The `submodule.recurse=false` keeps submodule
-# untracked changes invisible — docs/internal is a submodule, so its dirty
-# state doesn't poison the parent's clean check unless explicitly staged.
+# entries. We tolerate:
+#   - Untracked files in worktrees/ (created by parallel create-worktree.sh)
+#   - Submodule dirty content (untracked + modified files INSIDE the submodule),
+#     because docs/internal often carries parallel-session WIP files. The
+#     parent's submodule POINTER (the SHA the parent commit references) is
+#     still validated — `--ignore-submodules=dirty` ignores dirty content
+#     but NOT pointer changes, so an unstaged SHA bump still flags `M`.
 
-PORCELAIN="$(git -c submodule.recurse=false status --porcelain | grep -vE '^\?\? worktrees/' || true)"
+PORCELAIN="$(git -c submodule.recurse=false status --porcelain --ignore-submodules=dirty | grep -vE '^\?\? worktrees/' || true)"
 if [ -n "$PORCELAIN" ]; then
   log "ERROR: cron requires clean working tree. Found:"
   echo "$PORCELAIN" | tee -a "$LOG_FILE" >&2
