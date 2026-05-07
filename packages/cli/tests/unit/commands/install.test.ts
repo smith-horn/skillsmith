@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => ({
   initializeSchema: vi.fn(),
   dbClose: vi.fn(),
   // SMI-4795: hoisted so tests can assert install-telemetry payloads.
-  emitInstallEvent: vi.fn(async () => undefined),
+  emitInstallEvent: vi.fn(async (_payload: unknown) => undefined),
 }))
 
 vi.mock('ora', () => ({
@@ -52,7 +52,7 @@ vi.mock('@skillsmith/core', () => ({
     }
   }),
   isGitHubUrl: vi.fn((url: string) => url.startsWith('https://github.com/')),
-  emitInstallEvent: (...args: unknown[]) => mocks.emitInstallEvent(...args),
+  emitInstallEvent: (payload: unknown) => mocks.emitInstallEvent(payload),
 }))
 
 // Mock console and process.exit
@@ -540,6 +540,25 @@ describe('SMI-3484: CLI Install Command', () => {
   // ==========================================================================
 
   describe('SMI-4795: emitInstallEvent receives errorCode + trustTier', () => {
+    interface TelemetryPayload {
+      skillId: string
+      source: string
+      success: boolean
+      durationMs?: number
+      trustTier?: string
+      errorCode?: string
+    }
+
+    function getEmittedPayload(): TelemetryPayload {
+      const calls = mocks.emitInstallEvent.mock.calls as unknown as Array<[unknown]>
+      expect(calls.length).toBeGreaterThan(0)
+      const firstCall = calls[0]
+      expect(firstCall).toBeDefined()
+      const payload = (firstCall as [unknown])[0] as TelemetryPayload
+      expect(payload).toBeDefined()
+      return payload
+    }
+
     it('forwards trustTier and errorCode on a failed install', async () => {
       mocks.installFn.mockResolvedValueOnce({
         success: false,
@@ -555,7 +574,7 @@ describe('SMI-3484: CLI Install Command', () => {
       await cmd.parseAsync(['node', 'test', 'community/jest-helper'])
 
       expect(mocks.emitInstallEvent).toHaveBeenCalledTimes(1)
-      const payload = mocks.emitInstallEvent.mock.calls[0]?.[0] as Record<string, unknown>
+      const payload = getEmittedPayload()
       expect(payload).toMatchObject({
         skillId: 'community/jest-helper',
         source: 'cli',
@@ -573,7 +592,7 @@ describe('SMI-3484: CLI Install Command', () => {
       await cmd.parseAsync(['node', 'test', 'community/jest-helper'])
 
       expect(mocks.emitInstallEvent).toHaveBeenCalledTimes(1)
-      const payload = mocks.emitInstallEvent.mock.calls[0]?.[0] as Record<string, unknown>
+      const payload = getEmittedPayload()
       expect(payload).toMatchObject({
         skillId: 'community/jest-helper',
         source: 'cli',
@@ -596,7 +615,7 @@ describe('SMI-3484: CLI Install Command', () => {
       await cmd.parseAsync(['node', 'test', 'community/jest-helper'])
 
       expect(mocks.emitInstallEvent).toHaveBeenCalledTimes(1)
-      const payload = mocks.emitInstallEvent.mock.calls[0]?.[0] as Record<string, unknown>
+      const payload = getEmittedPayload()
       expect(payload.errorCode).toBeUndefined()
       expect(payload.trustTier).toBeUndefined()
       expect(payload.success).toBe(false)

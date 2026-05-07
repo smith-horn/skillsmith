@@ -73,7 +73,7 @@ export function buildConfirmationRequired(args: {
   trustTier: TrustTier
   securityReport?: ScanReport
   confirmationReason: string
-  tips: string[]
+  tips?: string[]
 }): InstallResult {
   const result: InstallResult = {
     success: false,
@@ -83,7 +83,9 @@ export function buildConfirmationRequired(args: {
     trustTier: args.trustTier,
     requiresConfirmation: true,
     confirmationReason: args.confirmationReason,
-    tips: args.tips,
+  }
+  if (args.tips !== undefined) {
+    result.tips = args.tips
   }
   if (args.securityReport !== undefined) {
     result.securityReport = args.securityReport
