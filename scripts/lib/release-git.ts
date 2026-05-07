@@ -54,7 +54,20 @@ export function getCurrentBranch(): string {
   }).trim()
 }
 
-export function createCommit(plans: BumpPlan[]): void {
+/**
+ * SMI-4775: regenerate package-lock.json after dep-range bumps so the published
+ * release ships a lockfile that matches the bumped `^X.Y.Z` ranges in
+ * package.json. `--ignore-scripts` skips native postinstall (better-sqlite3,
+ * onnxruntime-node) which the host doesn't need rebuilt for a lockfile-only pass.
+ */
+export function regenerateLockfile(): void {
+  execFileSync('npm', ['install', '--package-lock-only', '--ignore-scripts'], {
+    cwd: ROOT_DIR,
+    stdio: 'inherit',
+  })
+}
+
+export function createCommit(plans: BumpPlan[], includeLockfile = false): void {
   const filesToAdd: string[] = []
 
   for (const plan of plans) {
@@ -71,6 +84,11 @@ export function createCommit(plans: BumpPlan[]): void {
         filesToAdd.push(dep)
       }
     }
+  }
+
+  // SMI-4775: include regenerated package-lock.json when caller opts in.
+  if (includeLockfile) {
+    filesToAdd.push('package-lock.json')
   }
 
   const existing = filesToAdd.filter((f) => existsSync(join(ROOT_DIR, f)))
