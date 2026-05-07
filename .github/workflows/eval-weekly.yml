@@ -28,7 +28,13 @@ jobs:
         run: |
           node -e "
             const b = JSON.parse(require('fs').readFileSync('packages/doc-retrieval-mcp/eval/baseline.json','utf8'));
-            const required = ['prior','current','generated','corpus','knobs','metrics'];
+            // SMI-4764 Wave 1: byCategory added. Required by the validator
+            // (warns if absent) so a post-merge baseline.json without it
+            // surfaces as a Monday warning prompting the canonical dev to
+            // re-run RETRIEVAL_EVAL_REAL=1. Drift-checker reads byCategory
+            // for per-category thresholds when present, falls back to the
+            // global 5% gate when absent.
+            const required = ['prior','current','generated','corpus','knobs','metrics','byCategory'];
             const missing = required.filter(k => !(k in b));
             if (missing.length > 0) {
               console.log('::warning::baseline.json missing fields: ' + missing.join(','));
