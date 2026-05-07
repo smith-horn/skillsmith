@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Pre-push Phase 4: Per-workspace test validation
-# Issues: SMI-1602, SMI-2166, SMI-3502, SMI-4681
+# Issues: SMI-1602, SMI-2166, SMI-3502, SMI-4681, SMI-4772
 #
 # Runs tests per workspace to avoid aggregate I/O contention (SMI-3502).
-# Matches CI behavior (npm test --workspace=packages/X).
+# Invokes the root vitest binary directly (SMI-4772) instead of `npm --workspace=`,
+# which resolves vitest via SMI-4381 per-package symlinks that dangle under
+# macOS Docker Desktop virtiofs (vitest exits 234).
 # Previously ran all 254 test files in a single Vitest process with V8 coverage.
 #
 # SMI-4681: source shared detection so macOS+worktree falls back to host
@@ -44,7 +46,10 @@ for pkg in $WORKSPACES; do
   [ -z "$pkg" ] && continue
 
   echo "  📦 packages/$pkg..."
-  LAST_OUTPUT=$(run_cmd npm test --workspace=packages/"$pkg" 2>&1)
+  # SMI-4772: invoke root vitest binary directly. `npm --workspace=` would
+  # resolve vitest via packages/<pkg>/node_modules/.bin/vitest, a SMI-4381
+  # symlink chain that dangles under macOS Docker Desktop virtiofs and exits 234.
+  LAST_OUTPUT=$(run_cmd bash -c "cd packages/$pkg && ../../node_modules/.bin/vitest run" 2>&1)
   if [ $? -ne 0 ]; then
     FAILED_PACKAGES="$FAILED_PACKAGES $pkg"
   fi
@@ -77,7 +82,7 @@ for pkg in $FAILED_PACKAGES; do
     echo "   Run: ${HINT_PREFIX}npx vitest run --config vitest.config.root-tests.ts"
   else
     echo "❌ Tests failed in packages/$pkg!"
-    echo "   Run: ${HINT_PREFIX}npm test --workspace=packages/$pkg"
+    echo "   Run: ${HINT_PREFIX}bash -c \"cd packages/$pkg && ../../node_modules/.bin/vitest run\""
   fi
 done
 
