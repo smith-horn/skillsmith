@@ -4,6 +4,11 @@ All notable changes to `@skillsmith/mcp-server` are documented here.
 
 ## [Unreleased]
 
+## v0.5.1
+
+- **Feature**: SMI-4790 lifecycle-tagged tool descriptions + skill auto-install (#1022)
+- **Fix**: SMI-4795 thread errorCode + trustTier through install telemetry (#1014)
+
 ## v0.5.0
 
 This release ships the consumer namespace-audit feature end-to-end (SMI-4587 → SMI-4590, Waves 1–4). Three new MCP tools, an install-time pre-flight gate, an apply-with-confirmation edit-suggester, a session-start audit hook (Team/Enterprise), and an Enterprise scheduled-scan path.
