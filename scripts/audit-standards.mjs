@@ -11,6 +11,7 @@
  */
 
 import { parseArgs } from 'node:util'
+import { createHash } from 'node:crypto'
 import { execSync } from 'child_process'
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
 import { dirname, extname, join, relative, resolve as resolvePath } from 'path'
@@ -2949,6 +2950,84 @@ console.log(`\n${BOLD}44. Eval Cron Heartbeat Freshness (SMI-4764 Wave 2)${RESET
     } catch (e) {
       warn(`Could not read .cron-heartbeat: ${e.message}`)
     }
+  }
+}
+
+// SMI-4764 Wave 3 — Eval baseline signature provenance (advisory).
+//
+// When packages/doc-retrieval-mcp/eval/baseline.json is modified in a PR diff
+// (GITHUB_BASE_REF...HEAD when set, otherwise local working-tree diff against
+// HEAD), compute its SHA-256 and look it up in the .signatures.log registry
+// emitted by eval-runner-signatures.ts. Hash absent -> emit informational
+// annotation prompting reviewers to verify the developer ran
+// RETRIEVAL_EVAL_REAL=1 locally. Never fails CI; never bumps the global
+// failure or warning counters. This is observability, not security; ed25519
+// cryptographic signing is Wave 5.
+console.log(`\n${BOLD}45. Eval Baseline Signature Provenance (SMI-4764 Wave 3)${RESET}`)
+{
+  const baselinePath = 'packages/doc-retrieval-mcp/eval/baseline.json'
+  const sigsPath = 'packages/doc-retrieval-mcp/eval/.signatures.log'
+  let advisoryCount = 0
+  if (!existsSync(sigsPath)) {
+    pass(`No .signatures.log present (pre-Wave-3 backward-compat; provenance check inactive)`)
+  } else {
+    let changedFiles = []
+    try {
+      const baseRef = process.env.GITHUB_BASE_REF
+      if (baseRef && baseRef.length > 0) {
+        // PR context: diff between PR base and HEAD. origin/<base> is the
+        // canonical reference actions/checkout fetches.
+        const out = execSync(`git diff --name-only origin/${baseRef}...HEAD`, {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+        changedFiles = out.split('\n').filter((l) => l.length > 0)
+      } else {
+        // Local run: stage + worktree diff vs HEAD covers both committed and
+        // uncommitted edits the developer is about to push.
+        const out = execSync('git diff --name-only HEAD', {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+        changedFiles = out.split('\n').filter((l) => l.length > 0)
+      }
+    } catch {
+      // Diff failed (shallow clone, no HEAD, etc.) — silently skip; this is
+      // observability and must not block.
+      changedFiles = []
+    }
+
+    const baselineChanged = changedFiles.includes(baselinePath)
+    if (!baselineChanged || !existsSync(baselinePath)) {
+      pass('baseline.json unchanged in diff; provenance check skipped')
+    } else {
+      const baselineBytes = readFileSync(baselinePath)
+      const sha = createHash('sha256').update(baselineBytes).digest('hex')
+      const sigLines = readFileSync(sigsPath, 'utf8')
+        .split('\n')
+        .filter((l) => l.length > 0)
+      // Each line: <ISO-timestamp>\t<sha256>\t<commit-sha-or-none>
+      // We accept a match in any column that equals the baseline sha; the
+      // canonical column is index 1 but ed25519 evolution may shift layout.
+      const matched = sigLines.some((line) => {
+        const cols = line.split('\t')
+        return cols.includes(sha)
+      })
+      if (matched) {
+        pass(`baseline.json sha256 ${sha.slice(0, 12)}… present in .signatures.log`)
+      } else {
+        // Advisory: never fails CI, never bumps warn/fail counters.
+        advisoryCount++
+        console.log(
+          `ℹ INFO: baseline.json change has no matching signature in .signatures.log; reviewer please verify the developer ran RETRIEVAL_EVAL_REAL=1 locally before merging.`
+        )
+        console.log(`  computed sha256: ${sha}`)
+        console.log(`  registry: ${sigsPath} (${sigLines.length} entries)`)
+      }
+    }
+  }
+  if (advisoryCount > 0) {
+    console.log(`  (${advisoryCount} advisory annotation(s); not failing CI per SMI-4764 Wave 3)`)
   }
 }
 

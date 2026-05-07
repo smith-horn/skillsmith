@@ -358,7 +358,10 @@ jobs:
     timeout-minutes: 3
     permissions:
       contents: read
-      pull-requests: read
+      # SMI-4764 Wave 3: bumped from read to write so the sticky PR comment
+      # step (actions/github-script below) can create or update the per-PR
+      # eval baseline delta comment.
+      pull-requests: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -414,6 +417,44 @@ jobs:
         run: npx --yes tsx packages/doc-retrieval-mcp/eval/check-baseline-drift.ts
         env:
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref }}
+      # SMI-4764 Wave 3: render + post sticky PR comment with overall and
+      # per-category recall@5 deltas. Renderer reads baseline.json from the
+      # checked-out tree and emits markdown to /tmp/eval-comment.md. The
+      # github-script step is observability-only; continue-on-error keeps
+      # transient API failures from blocking the gate.
+      - name: Render eval baseline PR comment
+        if: steps.filter.outputs.relevant == 'true'
+        run: node scripts/eval-baseline/render-pr-comment.mjs > /tmp/eval-comment.md
+      - name: Post or update sticky PR comment
+        if: steps.filter.outputs.relevant == 'true' && github.event_name == 'pull_request'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        continue-on-error: true # audit:allow-continue-on-error -- SMI-4764 Wave 3 sticky comment is observability; transient GitHub API failures must not fail the eval gate.
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/eval-comment.md', 'utf8');
+            const marker = '<!-- skillsmith:eval-baseline-comment -->';
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
 
   # SMI-3985: Supply-chain pin drift guard for the three Wave 1 hardening
   # surfaces that are NOT covered by `Standards Compliance` (audit-standards

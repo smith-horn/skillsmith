@@ -69,6 +69,7 @@ packages/vscode-extension/.vscode/*
 # Logs
 logs/
 *.log
+!packages/doc-retrieval-mcp/eval/.signatures.log
 npm-debug.log*
 
 # Testing
