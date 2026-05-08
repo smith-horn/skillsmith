@@ -112,12 +112,14 @@ Edit `eval/gold-set.json` (JSON array). Each entry must satisfy all four labelin
 
 ## Baseline Lifecycle
 
-`eval/baseline.json` is the machine-readable source of truth for regression gating.
+`eval/baseline.json` is the machine-readable source of truth for regression gating. SMI-4764 added pre-push, cron, and CI automation around it; the manual "first developer to merge a ranking PR must populate" step is gone.
 
 1. **Initial state** (shipped with Worker 3): `prior: null`, `current: null` — no real-mode run yet. The CI regression gate skips when `prior === null`.
-2. **First real-mode run**: `RETRIEVAL_EVAL_REAL=1 npm run eval:retrieval` sets `current` from the run. `prior` remains `null`.
-3. **Subsequent real-mode runs**: eval-runner promotes `current → prior` and sets the new value as `current`. The CI drift check then validates `(current - prior) / prior < -0.05` (>5% regression fails CI).
-4. **PR gating**: if `rerank.ts`, `search.ts`, or `corpus.config.json` change in a PR but `baseline.json` does NOT, CI fails: "Ranking files changed but baseline.json was not updated." Developer must run real-mode locally and commit the updated baseline.
+2. **First real-mode run**: `RETRIEVAL_EVAL_REAL=1 npm run eval:retrieval` sets `current` from the run. `prior` remains `null`. The eval-runner appends a SHA-256 signature of the new `baseline.json` to `eval/.signatures.log` (FIFO 15-line cap).
+3. **Subsequent real-mode runs**: eval-runner promotes `current → prior` and sets the new value as `current`. SMI-4764 Wave 1 added per-category metrics (`byCategory.recallAt5` + `byCategory.recallAt5Prior`); the hybrid drift gate uses per-category `max(5% rel, N-hit floor)` thresholds plus a 10% global tripwire.
+4. **Pre-push enforcement** (SMI-4764 Wave 0, `.husky/pre-push` Phase 6 → `scripts/eval-baseline-validator.mjs`): if the push touches a ranking file (`rerank.ts`, `search.ts`, `corpus.config.json`, anything under `eval/`), the validator looks up the local `baseline.json` SHA-256 in `.signatures.log`. Hash absent in **canonical mode** (`SKILLSMITH_EVAL_CANONICAL=true`) → push **rejected** with copy-pasteable repro. Hash absent in **advisory mode** (default) → warning printed, push proceeds. Hash present → silent pass.
+5. **Weekly cron** (SMI-4764 Wave 2, canonical-dev only): `scripts/eval-baseline-cron.sh` fires Sunday 03:00 local on the canonical dev's machine. If the run produces a drifted `baseline.json`, an auto-PR opens with the `eval-baseline-cron` label. A heartbeat is always written to `.cron-heartbeat`; `audit:standards` check 44 warns if it's >14 days old (replacement-protocol prompt — see `.claude/development/eval-cron-setup.md`).
+6. **CI gate** (Retrieval Eval Gate in `.github/workflows/ci.yml`): on every PR that touches a ranking file, runs `check-baseline-drift.ts` against the hybrid threshold, posts a sticky comment with overall + per-category recall@5 deltas, and emits an advisory annotation (audit:standards check 45) if the new `baseline.json` SHA-256 has no matching signature in `.signatures.log`.
 
 `eval/baseline.md` is the human-readable companion — prose only, not parsed by CI.
 
