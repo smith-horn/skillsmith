@@ -1,4 +1,5 @@
 #!/bin/bash
+# audit:host-npm-required — see SMI-4814 (npm runs inside a multi-line `docker exec -w /app sh -c '...'` block the per-line audit scanner cannot see; verify line ~141)
 # scripts/eval-baseline-cron.sh — SMI-4764 Wave 2
 #
 # Canonical-developer cron entry point for the retrieval-eval baseline.

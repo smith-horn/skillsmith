@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# audit:host-npm-required — see SMI-4814 (by-design host-side native binding rebuild per SMI-4549; cannot run in Docker)
 #
 # repair-host-native-deps.sh - Idempotent host-side native binding repair (SMI-4549)
 #

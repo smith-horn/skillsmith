@@ -371,6 +371,17 @@ if (existsSync(scriptsDir)) {
     if (!stat.isFile()) continue
 
     const content = readFileSync(filePath, 'utf8')
+
+    // SMI-4814: scripts that legitimately invoke host npm (host native
+    // bindings, docs/instructional strings, multi-line `docker exec sh -c`
+    // blocks the per-line scanner can't see, or CI-runner-only scripts
+    // whose containing workflow runs everything host-side). Marker mirrors
+    // the SMI-4647 `# audit:carveout-pure-js` pattern at line 2543. Marker
+    // must appear in the first 20 lines so adding it can't silently move
+    // up the file as the script grows.
+    const headerLines = content.split('\n').slice(0, 20).join('\n')
+    if (/#\s*audit:host-npm-required\b/.test(headerLines)) continue
+
     // Check for npm commands that should be in Docker
     // Match: npm run/test/install but NOT docker exec ... npm
     const lines = content.split('\n')
