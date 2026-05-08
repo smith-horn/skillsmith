@@ -1,0 +1,232 @@
+---
+import DocsLayout from '../../../layouts/DocsLayout.astro'
+---
+
+<DocsLayout
+  title="Tutorial: Discover skills"
+  description="Skillsmith Discover stage — find skills by keyword, recommendation, or filter."
+>
+  <h1>Tutorial: Discover skills</h1>
+
+  <p class="lead">
+    The Discover stage is where every skill journey begins. You ask Skillsmith to find skills that
+    match an intent — by keyword, by trust tier, by quality score, or by what a similar developer is
+    using — and it returns candidates ranked by relevance.
+  </p>
+
+  <p>
+    These tutorials show Skillsmith in Claude Code. For installation in your preferred runtime
+    (Cursor, Continue, Copilot, Windsurf), see
+    <a href="/docs/getting-started">Getting Started</a>.
+  </p>
+
+  <h2>What you will do</h2>
+
+  <ul>
+    <li>Search the registry by keyword</li>
+    <li>Filter results by trust tier and quality score</li>
+    <li>Get recommendations based on a project context</li>
+    <li>
+      Recognize when Discover is the wrong stage and you should jump to Evaluate or Install instead
+    </li>
+  </ul>
+
+  <h2>Tools that map to Discover</h2>
+
+  <p>Two MCP tools and two CLI subcommands cover the Discover stage:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Surface</th>
+        <th>Tool / command</th>
+        <th>Purpose</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>MCP</td>
+        <td><code>search</code></td>
+        <td>Keyword search with optional category, trust-tier, and score filters</td>
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>skill_recommend</code></td>
+        <td>Context-aware recommendations (e.g. "skills for a React project")</td>
+      </tr>
+      <tr>
+        <td>CLI</td>
+        <td><code>skillsmith search</code></td>
+        <td>Same as MCP <code>search</code>, formatted for the terminal</td>
+      </tr>
+      <tr>
+        <td>CLI</td>
+        <td><code>skillsmith recommend</code></td>
+        <td>Same as MCP <code>skill_recommend</code>, formatted for the terminal</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Step 1 — Search by keyword</h2>
+
+  <p>
+    In Claude Code, type a natural-language prompt. The Skillsmith MCP server binds these phrases
+    directly — you do not need to prefix them with
+    <em>"Use Skillsmith to..."</em> any longer.
+  </p>
+
+  <p><strong>Try these prompts:</strong></p>
+
+  <ul>
+    <li>"Search for testing skills"</li>
+    <li>"Find git workflow skills"</li>
+    <li>"Show me devops skills above quality 80"</li>
+  </ul>
+
+  <p>
+    Claude Code will invoke the <code>search</code> tool and return a ranked list. Each entry shows the
+    skill ID (<code>author/name</code>), a short description, the trust tier, and a quality score
+    from 0-100.
+  </p>
+
+  <div class="callout">
+    <p class="callout-heading">Recognizing a successful search</p>
+    <p>
+      You will see a tool-use indicator from Claude Code naming
+      <code>mcp__skillsmith__search</code>. If you instead see a generic answer that looks like
+      training-data summary, the MCP did not bind. Ask again with the explicit form <em
+        >"Use Skillsmith to search for ..."</em
+      >
+      and check that the server is configured in
+      <code>~/.claude/settings.json</code>.
+    </p>
+  </div>
+
+  <h2>Step 2 — Filter by trust tier</h2>
+
+  <p>
+    Skillsmith ranks every skill into one of five trust tiers (see the
+    <a href="/docs/trust-tiers">Trust Tiers</a> reference). For production work you usually want <code
+      >verified</code
+    > or <code>curated</code>; for exploration, <code>community</code> is fine.
+  </p>
+
+  <p><strong>Try these prompts:</strong></p>
+
+  <ul>
+    <li>"Search for verified testing skills"</li>
+    <li>"Find curated CI/CD skills"</li>
+    <li>"Show me only verified or curated skills tagged 'react'"</li>
+  </ul>
+
+  <p>
+    The MCP server accepts <code>trust_tier</code> values
+    <code>verified</code>, <code>curated</code>, <code>community</code>, and
+    <code>experimental</code> — exactly the labels documented on the
+    <a href="/docs/trust-tiers">Trust Tiers page</a>. Skillsmith will pass your phrase through to
+    that filter.
+  </p>
+
+  <h2>Step 3 — Filter by quality score</h2>
+
+  <p>
+    Quality scores combine SKILL.md structure, freshness, install velocity, and review signal. A
+    score above 80 is generally safe; below 60 is experimental.
+  </p>
+
+  <p><strong>Try these prompts:</strong></p>
+
+  <ul>
+    <li>"Search for testing skills with a quality score above 80"</li>
+    <li>"Find devops skills, top 5 by quality"</li>
+  </ul>
+
+  <h2>Step 4 — Get recommendations for your project</h2>
+
+  <p>
+    Sometimes you know your stack but not what skills exist for it. Skillsmith's <code
+      >skill_recommend</code
+    > tool takes a free-text context and returns skills that other developers in similar contexts have
+    installed.
+  </p>
+
+  <p><strong>Try these prompts:</strong></p>
+
+  <ul>
+    <li>"Recommend skills for my React project"</li>
+    <li>"What skills should a Node.js developer install?"</li>
+    <li>"Suggest skills for a team running CI on GitHub Actions"</li>
+  </ul>
+
+  <p>
+    Recommendations include co-install signals — if you ask for React skills, you will often see
+    entries marked <em>"frequently installed alongside"</em>
+    a popular React skill. That signal only appears once a pair has reached five or more co-installs.
+  </p>
+
+  <h2>Step 5 — Use the CLI for repeatable searches</h2>
+
+  <p>
+    If you script your skill discovery (for onboarding new team members, for example), the CLI gives
+    you stable JSON output.
+  </p>
+
+  <p>Run this in your terminal:</p>
+
+  <pre><code>{`skillsmith search testing --trust verified --min-score 80 --limit 5
+skillsmith recommend "react project with vitest"`}</code></pre>
+
+  <p>
+    The CLI's <code>--json</code> flag emits machine-readable output suitable for piping into <code
+      >jq</code
+    > or downstream tooling. See the
+    <a href="/docs/cli">CLI reference</a> for the full flag set.
+  </p>
+
+  <h2>Common pitfalls</h2>
+
+  <h3>The MCP returns no results</h3>
+
+  <p>
+    First, broaden the query. The registry has roughly 14,000 skills; a five-word phrase often
+    over-narrows. Drop adjectives, drop the
+    <code>min_score</code> filter, drop the trust-tier filter. If you still get nothing, the registry
+    may genuinely not have what you are looking for — at which point the <a
+      href="/docs/tutorials/author">Author tutorial</a
+    >
+    is where you go next.
+  </p>
+
+  <h3>Claude answers from training data instead of calling the tool</h3>
+
+  <p>
+    This was the symptom that drove the Wave 1 tool-description rewrite. Bare prompts now bind, but
+    if your runtime is older or running a stale cache, fall back to the explicit form: <em
+      >"Use Skillsmith to search for testing skills"</em
+    >. If even that fails, run <code>skillsmith setup</code>
+    in your terminal — that installs the bundled <code>/skillsmith</code>
+    slash-command skill, which is the most reliable trigger on Claude Code.
+  </p>
+
+  <h3>Results look stale</h3>
+
+  <p>
+    The registry indexes four times a day (00, 06, 12, 18 UTC). New skills appear within hours of
+    publish. If you see a skill version that is older than what the author's GitHub shows, the
+    indexer has not yet run; wait for the next cycle.
+  </p>
+
+  <h2>Where to next</h2>
+
+  <p>
+    You have a list of candidates. Now you need to decide which one to install. That is the
+    <a href="/docs/tutorials/evaluate">Evaluate stage</a> — compare candidates side-by-side, read trust
+    badges in detail, and diff versions if you are upgrading.
+  </p>
+
+  <p>
+    Reference: <a href="/docs/mcp-server#search">MCP <code>search</code> tool</a>
+    · <a href="/docs/cli#search">CLI <code>search</code> command</a>
+    · <a href="/docs/trust-tiers">Trust Tiers</a>.
+  </p>
+</DocsLayout>

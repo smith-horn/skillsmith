@@ -1,0 +1,376 @@
+---
+import DocsLayout from '../../../layouts/DocsLayout.astro'
+---
+
+<DocsLayout
+  title="Tutorial: Author your own skill"
+  description="Skillsmith Author stage — scaffold, validate, and publish a new agent skill end-to-end."
+>
+  <script
+    is:inline
+    type="application/ld+json"
+    slot="head"
+    set:html={JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'HowTo',
+      name: 'How to Create and Publish an Agent Skill with Skillsmith',
+      description:
+        'Use the Skillsmith CLI to scaffold, validate, and publish reusable agent skills in SKILL.md format that work in any MCP-capable runtime.',
+      totalTime: 'PT15M',
+      tool: [
+        { '@type': 'HowToTool', name: 'Skillsmith CLI' },
+        { '@type': 'HowToTool', name: 'Node.js 18+' },
+      ],
+      step: [
+        {
+          '@type': 'HowToStep',
+          position: 1,
+          name: 'Scaffold',
+          text: 'Run skillsmith create or skillsmith author init to generate the skill directory.',
+        },
+        {
+          '@type': 'HowToStep',
+          position: 2,
+          name: 'Edit SKILL.md',
+          text: 'Customize description, trigger phrases, and behavioral classification.',
+        },
+        {
+          '@type': 'HowToStep',
+          position: 3,
+          name: 'Validate',
+          text: 'Run skillsmith author validate to confirm structure and frontmatter.',
+        },
+        {
+          '@type': 'HowToStep',
+          position: 4,
+          name: 'Publish',
+          text: 'Run skillsmith author publish to generate a checksum manifest and submit to the registry.',
+        },
+      ],
+    })}
+  />
+
+  <h1>Tutorial: Author your own skill</h1>
+
+  <p class="lead">
+    The Author stage is where you give back. You have used Skillsmith to find and install other
+    people's skills; now you scaffold, validate, and publish your own. The end-to-end path is
+    CLI-led — that is intentional: authoring is filesystem-heavy, and the CLI is the cleanest tool
+    for the job.
+  </p>
+
+  <p>
+    These tutorials show Skillsmith in Claude Code. For installation in your preferred runtime
+    (Cursor, Continue, Copilot, Windsurf), see
+    <a href="/docs/getting-started">Getting Started</a>.
+  </p>
+
+  <h2>What you will do</h2>
+
+  <ul>
+    <li>Scaffold a new skill directory from a template</li>
+    <li>Edit SKILL.md to define trigger phrases and instructions</li>
+    <li>Validate the structure before publishing</li>
+    <li>Publish the skill to the Skillsmith registry</li>
+    <li>Generate a companion subagent if your skill needs one</li>
+    <li>Convert an existing prompt into a skill (transform)</li>
+    <li>Scaffold a custom MCP server for skills that need backend logic</li>
+  </ul>
+
+  <h2>The six author subcommands</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Command</th>
+        <th>Purpose</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>skillsmith create &lt;name&gt;</code></td>
+        <td
+          >Full scaffold for skills you plan to publish (CHANGELOG, behavioral classification,
+          license)</td
+        >
+      </tr>
+      <tr>
+        <td><code>skillsmith author init &lt;name&gt;</code></td>
+        <td>Lighter scaffold for in-project skills that live alongside your codebase</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith author validate &lt;path&gt;</code></td>
+        <td>Check frontmatter, required fields, and file structure before publishing</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith author publish &lt;path&gt;</code></td>
+        <td>Generate a checksum manifest and submit to the registry</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith author subagent &lt;path&gt;</code></td>
+        <td>Generate a companion Claude Code subagent that drives the skill programmatically</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith author transform &lt;input&gt;</code></td>
+        <td>Convert an existing prompt or instructions document into a skill</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith author mcp-init &lt;name&gt;</code></td>
+        <td>Scaffold a custom MCP server that the skill calls into</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    Skills follow Anthropic's SKILL.md format and work in any MCP-capable runtime. The author
+    tooling itself is universal; we use Claude Code below only because it is the most common runtime
+    for testing your skill once it is scaffolded.
+  </p>
+
+  <h2>Step 1 — Choose your scaffold</h2>
+
+  <p>
+    <code>create</code> and <code>author init</code> overlap; the difference is destination and depth.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Command</th>
+        <th>Output location</th>
+        <th>Best for</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>skillsmith create &lt;name&gt;</code></td>
+        <td><code>~/.claude/skills/&lt;name&gt;/</code></td>
+        <td>Skills you plan to share or publish. Full publishing structure.</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith author init &lt;name&gt;</code></td>
+        <td>Current working directory</td>
+        <td>In-project skills that live alongside your codebase. Lighter scaffold.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Scaffolding interactively</h3>
+
+  <p>Run this in your terminal:</p>
+
+  <pre><code>{`skillsmith create my-awesome-skill`}</code></pre>
+
+  <p>
+    The CLI prompts for description, author, category, skill type, and behavioral classification.
+    Hit enter on defaults if you are unsure; everything is editable in the generated SKILL.md.
+  </p>
+
+  <h3>Scaffolding non-interactively</h3>
+
+  <p>For scripted scaffolding (CI, onboarding scripts):</p>
+
+  <pre><code>{`skillsmith create my-awesome-skill \\
+  --description "Automates code review checklists" \\
+  --author myusername \\
+  --category development \\
+  --type basic \\
+  --behavior guided`}</code></pre>
+
+  <p>
+    Pass <code>--dry-run</code> to preview the scaffold output without writing files.
+  </p>
+
+  <h2>Step 2 — Edit SKILL.md</h2>
+
+  <p>
+    The scaffold writes a SKILL.md with TODO markers. The two fields that matter most for
+    discoverability are <code>description</code> (which runtimes match against user prompts) and the <em
+      >trigger phrases</em
+    >
+    embedded in it.
+  </p>
+
+  <pre><code>{`---
+name: my-awesome-skill
+description: Automates code review checklists. Use when reviewing pull requests, running pre-merge checks, or auditing code quality. Triggers on phrases like "review this PR", "check this code", "audit before merge".
+author: myusername
+version: 0.1.0
+category: development
+---
+
+# My Awesome Skill
+
+Instructions for the agent...`}</code></pre>
+
+  <div class="callout">
+    <p class="callout-heading">Trigger phrases are your discoverability lever</p>
+    <p>
+      Embed three to five concrete trigger phrases in <code>description</code>. The runtime matches
+      user prompts against this field; vague descriptions lead to vague matches. <em
+        >"review this PR"</em
+      > and <em>"audit before merge"</em> are good triggers; <em>"helps with code"</em> is not.
+    </p>
+  </div>
+
+  <h3>Behavioral classification</h3>
+
+  <p>
+    Skills scaffolded with <code>create</code> include a behavioral classification: <code
+      >guided</code
+    > (interactive, asks the user questions), <code>autonomous</code> (runs through to completion without
+    asking), or <code>reactive</code> (responds to a specific trigger then stops). Pick the one that best
+    describes your skill's behavior.
+  </p>
+
+  <h2>Step 3 — Validate</h2>
+
+  <p>
+    Validation catches the common authoring mistakes — missing frontmatter fields, broken bundle
+    references, malformed YAML — before publish rejects them.
+  </p>
+
+  <p>Run this in your terminal:</p>
+
+  <pre><code>{`skillsmith author validate ~/.claude/skills/my-awesome-skill`}</code></pre>
+
+  <p>
+    Or via the MCP from Claude Code: <em
+      >"Validate my skill at ~/.claude/skills/my-awesome-skill"</em
+    >.
+  </p>
+
+  <p>The validator checks:</p>
+
+  <ul>
+    <li><code>SKILL.md</code> exists and parses as valid YAML frontmatter</li>
+    <li>
+      Required fields: <code>name</code>, <code>description</code>, <code>author</code>, <code
+        >version</code>
+    </li>
+    <li>Referenced bundle files (scripts, assets) actually exist on disk</li>
+    <li>Trigger phrases present in description</li>
+    <li>License header where required (Elastic 2.0, MIT, Apache, etc.)</li>
+  </ul>
+
+  <h2>Step 4 — Publish to the registry</h2>
+
+  <p>
+    Publishing generates a checksum manifest, packages the skill bundle, and submits to the
+    Skillsmith registry. New skills enter at the
+    <code>experimental</code> trust tier and graduate to <code>community</code>
+    after peer review.
+  </p>
+
+  <p>Run this in your terminal:</p>
+
+  <pre><code>{`skillsmith author publish ~/.claude/skills/my-awesome-skill`}</code></pre>
+
+  <p>
+    The first publish from your account requires a logged-in CLI session — run <code
+      >skillsmith login</code
+    > if you have not already. Subsequent publishes inherit that session.
+  </p>
+
+  <p>
+    After publish, the skill appears in <code>search</code> within the next indexing cycle (within ~6
+    hours). You can verify via Discover:
+    <em>"Search for my-awesome-skill"</em>.
+  </p>
+
+  <h2>Step 5 — Generate a companion subagent (optional)</h2>
+
+  <p>
+    If your skill is autonomous and needs to run as a Claude Code subagent (separate context window,
+    separate tool permissions), generate the subagent definition:
+  </p>
+
+  <pre><code>{`skillsmith author subagent ~/.claude/skills/my-awesome-skill`}</code></pre>
+
+  <p>
+    This emits an agent definition under
+    <code>~/.claude/agents/&lt;name&gt;.md</code> that mirrors the skill's trigger phrases. Useful when
+    the skill needs to operate without polluting the main conversation context.
+  </p>
+
+  <h2>Step 6 — Transform an existing prompt into a skill</h2>
+
+  <p>
+    If you have an existing instructions document, system prompt, or README you want to convert into
+    a properly structured skill, the
+    <code>transform</code> subcommand does the heavy lifting.
+  </p>
+
+  <pre><code>{`skillsmith author transform ./my-prompt.md -o ~/.claude/skills/my-skill`}</code></pre>
+
+  <p>
+    The transformer extracts trigger phrases, derives a description, scaffolds the SKILL.md
+    frontmatter, and copies the instructions content. Always follow up with <code
+      >author validate</code
+    > — the transformer is a starting point, not a final answer.
+  </p>
+
+  <h2>Step 7 — Scaffold a custom MCP server (advanced)</h2>
+
+  <p>
+    Some skills need backend logic that cannot live in SKILL.md alone — a database query, an API
+    call, a long-running computation. The
+    <code>mcp-init</code> subcommand scaffolds a TypeScript MCP server that your skill can call into.
+  </p>
+
+  <pre><code>{`skillsmith author mcp-init my-skill-mcp`}</code></pre>
+
+  <p>
+    This is an advanced path. Most skills do not need a custom MCP server — they work fine in pure
+    SKILL.md form. Reach for <code>mcp-init</code>
+    only when you have verified the skill cannot be expressed declaratively.
+  </p>
+
+  <h2>Common pitfalls</h2>
+
+  <h3>"Skill name already taken"</h3>
+
+  <p>
+    Skill names are unique per author. <code>community/my-skill</code> is yours forever; if someone else
+    has <code>otherauthor/my-skill</code>, that does not collide. Pick descriptive, qualified names
+    — generic names like <code>helper</code> trip the namespace audit even after publish.
+  </p>
+
+  <h3>Publish rejects with "missing trigger phrases"</h3>
+
+  <p>
+    The <code>description</code> field needs explicit trigger phrasing. The publisher runs the same heuristic
+    as the namespace audit — descriptions without recognizable triggers are rejected to keep the registry's
+    discoverability signal high.
+  </p>
+
+  <h3>Validation passes locally but publish fails</h3>
+
+  <p>
+    The most common cause is a missing license header. Check
+    <code>LICENSE</code> at the skill root; the publisher will refuse to submit a skill without one.
+  </p>
+
+  <h2>Where to next</h2>
+
+  <p>
+    Your skill is published. Now monitor it: the
+    <a href="/docs/tutorials/govern">Govern stage</a> covers audit logs and install metrics if you operate
+    at team scale, and
+    <a href="/docs/tutorials/maintain">Maintain</a> applies once you start iterating on your published
+    skill.
+  </p>
+
+  <p>
+    Reference: <a href="/docs/cli">CLI reference</a>
+    · <a href="/docs/trust-tiers">Trust Tiers</a>
+    · <a href="https://github.com/anthropics/anthropic-cookbook/tree/main/skills">SKILL.md format</a
+    >.
+  </p>
+
+  <p>
+    Previous: <a href="/docs/tutorials/maintain">Maintain</a> — Next: <a
+      href="/docs/tutorials/govern">Govern</a
+    >
+  </p>
+</DocsLayout>

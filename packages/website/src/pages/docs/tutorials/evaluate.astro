@@ -1,0 +1,242 @@
+---
+import DocsLayout from '../../../layouts/DocsLayout.astro'
+---
+
+<DocsLayout
+  title="Tutorial: Evaluate skills"
+  description="Skillsmith Evaluate stage — compare candidates, read trust badges, and view diffs before installing."
+>
+  <h1>Tutorial: Evaluate candidates</h1>
+
+  <p class="lead">
+    The Evaluate stage is where you decide which skill to install. You have a list of candidates
+    from <a href="/docs/tutorials/discover">Discover</a>; now you read their details, compare them
+    side-by-side, and check the diff if you are upgrading from a previous version.
+  </p>
+
+  <p>
+    These tutorials show Skillsmith in Claude Code. For installation in your preferred runtime
+    (Cursor, Continue, Copilot, Windsurf), see
+    <a href="/docs/getting-started">Getting Started</a>.
+  </p>
+
+  <h2>What you will do</h2>
+
+  <ul>
+    <li>Read the full details of a single skill</li>
+    <li>Compare two to five skills side-by-side</li>
+    <li>View a diff between two installed versions of the same skill</li>
+    <li>Use trust tiers and quality scores to make a confident choice</li>
+  </ul>
+
+  <h2>Tools that map to Evaluate</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Surface</th>
+        <th>Tool / command</th>
+        <th>Purpose</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>MCP</td>
+        <td><code>get_skill</code></td>
+        <td
+          >Full details for one skill: description, trust tier, install count, co-install signals</td
+        >
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>skill_compare</code></td>
+        <td>Side-by-side table for 2-5 skills</td>
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>skill_diff</code></td>
+        <td>Diff between two installed versions of the same skill</td>
+      </tr>
+      <tr>
+        <td>CLI</td>
+        <td><code>skillsmith info &lt;id&gt;</code></td>
+        <td>Same as MCP <code>get_skill</code>, formatted for the terminal</td>
+      </tr>
+      <tr>
+        <td>CLI</td>
+        <td><code>skillsmith diff &lt;id&gt;</code></td>
+        <td>Same as MCP <code>skill_diff</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Step 1 — Read a skill's full details</h2>
+
+  <p>
+    Once Discover gives you a skill ID like <code>community/jest-helper</code>, ask Skillsmith for
+    its full record before deciding to install.
+  </p>
+
+  <p><strong>Try these prompts:</strong></p>
+
+  <ul>
+    <li>"Show details for community/jest-helper"</li>
+    <li>"What does the git-commit skill do?"</li>
+    <li>"Read me the description of community/playwright-utils"</li>
+  </ul>
+
+  <p>The response includes:</p>
+
+  <ul>
+    <li>The full description from the skill's SKILL.md</li>
+    <li>Trust tier and quality score</li>
+    <li>Repository and homepage URLs (when declared by the author)</li>
+    <li>Compatibility tags (which agent runtimes, IDEs, and platforms it supports)</li>
+    <li>
+      An <code>also_installed</code> array — skills that users frequently install alongside this one.
+      Only surfaces after five or more co-installs.
+    </li>
+  </ul>
+
+  <h2>Step 2 — Compare candidates side-by-side</h2>
+
+  <p>
+    When you have two or three plausible candidates, ask Skillsmith to lay them out in a comparison
+    table. The MCP <code>skill_compare</code> tool accepts 2-5 skill IDs.
+  </p>
+
+  <p><strong>Try these prompts:</strong></p>
+
+  <ul>
+    <li>"Compare community/jest-helper and community/vitest-helper"</li>
+    <li>"Show me a side-by-side of these three testing skills"</li>
+    <li>"Which is better for a Vite project: jest-helper or vitest-helper?"</li>
+  </ul>
+
+  <p>
+    The output is a table with each skill in a column and rows for description, trust tier, quality
+    score, install count, dependencies, compatibility, and last-updated date. Use it to spot the
+    differences that matter to your project.
+  </p>
+
+  <div class="callout">
+    <p class="callout-heading">Quality score is not the whole story</p>
+    <p>
+      A skill with quality 95 from an unknown author can be less trustworthy than a skill with
+      quality 78 from a verified vendor. Read the trust tier alongside the score, and prefer <code
+        >verified</code
+      > or
+      <code>curated</code> tiers for production paths.
+    </p>
+  </div>
+
+  <h2>Step 3 — Diff two versions before upgrading</h2>
+
+  <p>
+    If you already have a skill installed and Maintain is telling you a newer version exists, the
+    Evaluate stage's <code>skill_diff</code> tool shows you exactly what changed before you upgrade.
+  </p>
+
+  <p><strong>Try this prompt:</strong></p>
+
+  <ul>
+    <li>"Diff my installed jest-helper against the latest version"</li>
+  </ul>
+
+  <p>Or run it from the CLI for a side-by-side terminal view:</p>
+
+  <pre><code>{`skillsmith diff community/jest-helper`}</code></pre>
+
+  <p>
+    The diff shows changes to SKILL.md content, dependencies, and any bundled scripts or assets.
+    Skip the upgrade if the diff includes something that breaks your workflow; fall through to
+    <a href="/docs/tutorials/maintain#pinning">pinning</a> in Maintain to lock yourself to the safe version.
+  </p>
+
+  <h2>Step 4 — Read trust badges deliberately</h2>
+
+  <p>The five trust tiers carry different review processes. Treat them literally:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Tier</th>
+        <th>Review</th>
+        <th>Use when</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>verified</code></td>
+        <td>Full security audit by Skillsmith</td>
+        <td>Production paths, regulated environments</td>
+      </tr>
+      <tr>
+        <td><code>curated</code></td>
+        <td>GitHub vendor verification + editorial floor (quality &ge; 0.80)</td>
+        <td>Vendor-published skills you trust the org behind</td>
+      </tr>
+      <tr>
+        <td><code>community</code></td>
+        <td>Peer review + automated checks</td>
+        <td>Personal projects, prototypes</td>
+      </tr>
+      <tr>
+        <td><code>experimental</code></td>
+        <td>Basic validation only</td>
+        <td>Bleeding-edge exploration; expect breakage</td>
+      </tr>
+      <tr>
+        <td><code>unknown</code></td>
+        <td>None</td>
+        <td>Read the source first, then decide</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    Full criteria are documented on the <a href="/docs/trust-tiers">Trust Tiers</a> page.
+  </p>
+
+  <h2>Common pitfalls</h2>
+
+  <h3>Comparison returns &quot;skill not found&quot;</h3>
+
+  <p>
+    Skill IDs are case-sensitive and require the
+    <code>author/name</code> form. <code>jest-helper</code> alone does not resolve; <code
+      >community/jest-helper</code
+    > does. If Discover returned only the name, prefix it with the trust tier (most often
+    <code>community/</code>) or the author's GitHub org.
+  </p>
+
+  <h3>Diff is empty even though I expect changes</h3>
+
+  <p>
+    The diff compares your installed version against the registry's latest. If the registry copy is
+    stale (the indexer runs four times a day), the diff will look empty. Check the registry version
+    with
+    <em>"Show details for &lt;skill&gt;"</em> first.
+  </p>
+
+  <h2>Where to next</h2>
+
+  <p>
+    You have a winner. Now install it and learn how to invoke it — that is the <a
+      href="/docs/tutorials/install-and-use">Install &amp; Use</a
+    >
+    tutorial.
+  </p>
+
+  <p>
+    Reference: <a href="/docs/mcp-server#get_skill">MCP <code>get_skill</code></a>
+    · <a href="/docs/cli#info">CLI <code>info</code></a>
+    · <a href="/docs/trust-tiers">Trust Tiers</a>.
+  </p>
+
+  <p>
+    Previous: <a href="/docs/tutorials/discover">Discover</a> — Next: <a
+      href="/docs/tutorials/install-and-use">Install &amp; Use</a
+    >
+  </p>
+</DocsLayout>
