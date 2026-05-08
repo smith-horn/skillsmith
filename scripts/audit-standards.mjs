@@ -552,7 +552,11 @@ if (existsSync(MIGRATIONS_DIR)) {
       const headerLines = lines.slice(0, 10).join('\n')
 
       // Check 1: SMI reference in header
-      const hasSmiRef = /--\s*SMI-\d+/i.test(headerLines)
+      // SMI-4815: accept `SMI-NONE` for pre-convention migrations whose
+      // introducing commit had no SMI ref (must be paired with a
+      // `-- Justification:` line in the migration; see
+      // scripts/backfill-migration-headers.mjs).
+      const hasSmiRef = /--\s*SMI-(\d+|NONE)/i.test(headerLines)
 
       // Check 2: Date in header (YYYY-MM-DD format)
       const hasDate =
