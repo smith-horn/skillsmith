@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# audit:host-npm-required — see SMI-4814 (npm install lives in a heredoc warning string shown to users; not executed)
 #
 # _lib.sh — Shared utilities for worktree management scripts
 #

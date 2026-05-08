@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# audit:host-npm-required — see SMI-4814 (invoked from .github/workflows/device-login-roundtrip.yml which builds host-side; no skillsmith-dev-1 container exists in that CI job)
 # scripts/e2e-negative-control.sh
 #
 # SMI-4460 — negative-control mode for device-login round-trip e2e.
