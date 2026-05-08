@@ -1,6 +1,7 @@
 /**
  * SMI-4813: SkillParser type surface, extracted from SkillParser.ts so the
- * class file stays under the audit:standards 500-line gate.
+ * class file stays under the audit:standards 500-line gate. Public surface
+ * is preserved by re-export from `SkillParser.ts` and `indexer/index.ts`.
  *
  * SMI-628: Original SkillParser frontmatter / metadata types.
  */
