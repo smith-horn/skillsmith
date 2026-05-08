@@ -102,20 +102,23 @@ if [ -z "$REPO_ROOT" ]; then
   emit_empty
 fi
 
-# Gate 2: branch must be smi-* or wave-*
+# Gate 2: branch must contain smi-NNN or wave-NNN, AND not be in the deny list.
+# SMI-4809: extracts smi-NNN/wave-NNN from anywhere in the branch name, so
+# fix/smi-4809-foo, chore/smi-4809, feat/wave-2-bar all match. Deny list
+# (main/hotfix/dependabot/renovate/release/revert) is checked first so that
+# branches like release/smi-4809-hotfix do NOT prime even though they contain
+# an SMI token.
 BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null || echo "")
 case "$BRANCH" in
-  main|hotfix-*|dependabot/*|renovate/*|"")
-    emit_empty
-    ;;
-  smi-*|wave-*)
-    ;;
-  *)
+  main|hotfix-*|hotfix/*|dependabot/*|renovate/*|release/*|revert/*|"")
     emit_empty
     ;;
 esac
 
-SMI=$(echo "$BRANCH" | grep -oE '^(smi-[0-9]+|wave-[0-9]+)' || echo "")
+SMI=$(echo "$BRANCH" | grep -oE '(smi-[0-9]+|wave-[0-9]+)' | head -1 || echo "")
+if [ -z "$SMI" ]; then
+  emit_empty
+fi
 
 # Gate 3: idempotency — reuse a < 60s old transient
 TRANSIENT="/tmp/session-priming-${SESSION_ID}.md"
