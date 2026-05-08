@@ -44,7 +44,8 @@ const MATRIX: MatrixRow[] = [
   { branch: 'feat/wave-2-bar', primed: true, reason: 'feat/wave-N prefix (SMI-4809 regression)' },
   // Skip controls — must remain skipped.
   { branch: 'main', primed: false, reason: 'main is in deny list' },
-  { branch: 'hotfix/urgent-fix', primed: false, reason: 'hotfix/* is in deny list' },
+  { branch: 'hotfix/urgent-fix', primed: false, reason: 'hotfix/* (slash form) is in deny list' },
+  { branch: 'hotfix-1234', primed: false, reason: 'hotfix-* (dash form) is in deny list' },
   { branch: 'dependabot/npm/foo', primed: false, reason: 'dependabot/* is in deny list' },
   // Plan-review M1 additions — deny list must trump SMI extractor.
   {
@@ -197,5 +198,41 @@ describe('session-start-priming.sh Gate 2 (SMI-4809)', () => {
 
     expect(proc.status).toBe(0)
     expect(existsSync(logDir)).toBe(false) // Gate 1 still rejects, doesn't reach Gate 2
+  })
+
+  it('skips on detached HEAD (empty branch — covered by deny-list "" arm)', () => {
+    // Detached-HEAD repos report empty string from \`git branch --show-current\`.
+    // The deny list explicitly matches \`""\` so the hook must short-circuit before
+    // the SMI extractor — guarding against future extractor changes that could
+    // misinterpret an empty string.
+    const { repo, home } = setupFixtureRepo('smi-4809-foo')
+    tempDirs.push(repo, home)
+
+    // Detach HEAD so \`git branch --show-current\` returns empty.
+    execFileSync('git', ['checkout', '--detach', 'HEAD'], {
+      cwd: repo,
+      env: makeFixtureEnv(),
+      stdio: 'pipe',
+    })
+
+    const event = JSON.stringify({
+      session_id: 'test-detached-001',
+      source: 'startup',
+      cwd: repo,
+      transcript_path: '',
+    })
+    const proc = spawnSync('bash', [HOOK_SCRIPT], {
+      cwd: repo,
+      env: makeFixtureEnv({ HOME: home }),
+      input: event,
+      encoding: 'utf8',
+      timeout: 10_000,
+    })
+
+    const encoded = repo.replace(/^\//, '-').replace(/\//g, '-')
+    const logDir = join(home, '.claude', 'projects', encoded)
+
+    expect(proc.status).toBe(0)
+    expect(existsSync(logDir)).toBe(false) // empty branch is in deny list
   })
 })
