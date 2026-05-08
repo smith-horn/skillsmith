@@ -627,8 +627,12 @@ if (existsSync(MIGRATIONS_DIR)) {
 
       if (funcMatches) {
         for (const funcBlock of funcMatches) {
-          // Check if it has SET search_path
-          if (!/SET\s+search_path\s*=/i.test(funcBlock)) {
+          // SMI-4816: accept both `SET search_path = ...` and
+          // `SET search_path TO ...` forms — both are valid Postgres syntax
+          // and the codebase mixes them. Earlier check only matched `=`,
+          // which falsely flagged seven device-code/profile-completion
+          // functions in 080-083 that use `TO 'public', 'extensions'`.
+          if (!/SET\s+search_path\s+(=|TO)\s*\S/i.test(funcBlock)) {
             searchPathIssues++
             if (!filesWithSearchPathIssues.includes(file)) {
               filesWithSearchPathIssues.push(file)
