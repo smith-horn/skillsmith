@@ -1,0 +1,136 @@
+---
+import DocsLayout from '../../../layouts/DocsLayout.astro'
+---
+
+<DocsLayout
+  title="Tutorials"
+  description="Walk through every stage of the Skillsmith skill lifecycle — Discover, Evaluate, Install, Use, Maintain, Author, Govern, Retire."
+>
+  <h1>Tutorials</h1>
+
+  <p class="lead">
+    Skillsmith is the lifecycle manager for agent skills. These tutorials walk you through every
+    stage of that lifecycle in order — from finding your first skill to retiring one that has
+    outlived its purpose.
+  </p>
+
+  <p>
+    These tutorials show Skillsmith in Claude Code. For installation in your preferred runtime
+    (Cursor, Continue, Copilot, Windsurf), see
+    <a href="/docs/getting-started">Getting Started</a>.
+  </p>
+
+  <h2>The Skillsmith lifecycle</h2>
+
+  <p>
+    Every agent skill moves through eight stages. You can revisit Maintain, Use, and Author
+    indefinitely; Discover, Evaluate, Install, Govern, and Retire bracket the lifespan of any single
+    installed skill on your machine or your team's.
+  </p>
+
+  <div class="card-grid">
+    <a href="/docs/tutorials/discover" class="doc-card">
+      <h3>1. Discover</h3>
+      <p>
+        Find skills by keyword, recommendation, or filter. Two MCP tools and two CLI subcommands.
+        Bare prompts in Claude Code now bind directly to the registry.
+      </p>
+    </a>
+
+    <a href="/docs/tutorials/evaluate" class="doc-card">
+      <h3>2. Evaluate</h3>
+      <p>
+        Compare candidates side-by-side, read trust badges, and view diffs between versions before
+        committing to an install.
+      </p>
+    </a>
+
+    <a href="/docs/tutorials/install-and-use" class="doc-card">
+      <h3>3. Install &amp; Use</h3>
+      <p>
+        Install a skill into your runtime's skills directory, then invoke it in conversation.
+        Includes the troubleshooting steps for skills that do not trigger.
+      </p>
+    </a>
+
+    <a href="/docs/tutorials/maintain" class="doc-card">
+      <h3>4. Maintain</h3>
+      <p>
+        Update installed skills, pin to a specific version, audit your local inventory for namespace
+        collisions, and configure audit modes.
+      </p>
+    </a>
+
+    <a href="/docs/tutorials/author" class="doc-card">
+      <h3>5. Author</h3>
+      <p>
+        Scaffold, validate, and publish your own skill — including subagent, transform, and MCP-init
+        variants. CLI-led, end-to-end.
+      </p>
+    </a>
+
+    <a href="/docs/tutorials/govern" class="doc-card">
+      <h3>6. Govern</h3>
+      <p>
+        Query audit logs, export to SIEM, and apply namespace policy at team scale. Team and
+        Enterprise tiers.
+      </p>
+    </a>
+
+    <a href="/docs/tutorials/retire" class="doc-card">
+      <h3>7. Retire</h3>
+      <p>
+        Uninstall a skill cleanly. One command, one outcome — but worth doing deliberately so you do
+        not leave orphaned references behind.
+      </p>
+    </a>
+  </div>
+
+  <h2>How to read these tutorials</h2>
+
+  <p>
+    Each tutorial uses Claude Code as the worked-example runtime. Where a workflow is
+    surface-specific (for example, <code>pin</code> and
+    <code>unpin</code> are CLI-only), the tutorial calls that out inline:
+    <em>"Run this in your terminal: <code>skillsmith pin &lt;skill&gt;</code>"</em>.
+  </p>
+
+  <p>
+    MCP tool calls are documented as natural-language prompts you type to Claude Code, not as JSON
+    tool-call payloads. Implementation details for each tool live in the <a href="/docs/mcp-server"
+      >MCP Server reference</a
+    >. Universal CLI syntax is in the <a href="/docs/cli">CLI reference</a>.
+  </p>
+
+  <h2>Prerequisites</h2>
+
+  <ul>
+    <li>
+      <strong>Skillsmith MCP server installed</strong> in your runtime — see
+      <a href="/docs/getting-started">Getting Started</a>. Tutorials assume the server is running
+      and reachable.
+    </li>
+    <li>
+      <strong>Skillsmith CLI installed</strong> for stages that touch the filesystem directly: <code
+        >npm install -g @skillsmith/cli</code
+      >. The CLI ships as <code>skillsmith</code> and the shorthand <code>sklx</code>.
+    </li>
+    <li>
+      <strong>An API key</strong> if you plan to issue more than a handful of requests. Free tier covers
+      personal exploration. See the
+      <a href="/docs/mcp-server#api-key-configuration">API key setup</a>
+      section for configuration.
+    </li>
+  </ul>
+
+  <h2>Where to next</h2>
+
+  <p>
+    Start with <a href="/docs/tutorials/discover">Discover</a> if Skillsmith is new to you. If you already
+    have skills installed and want to keep them healthy, jump to <a href="/docs/tutorials/maintain"
+      >Maintain</a
+    >. If you are ready to publish your own skill,
+    <a href="/docs/tutorials/author">Author</a> walks the full path from
+    <code>author init</code> to <code>author publish</code>.
+  </p>
+</DocsLayout>

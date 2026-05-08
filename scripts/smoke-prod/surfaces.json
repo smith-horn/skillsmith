@@ -128,6 +128,27 @@
       ],
       "script": "scripts/smoke-prod/website.sh",
       "checks": ["check_skills_recommend_usage_counter"]
+    },
+    {
+      "id": "website-docs-tutorials",
+      "owner": "website",
+      "trigger_globs": [
+        "packages/website/src/pages/docs/tutorials/**",
+        "packages/website/src/pages/docs/vscode-extension.astro"
+      ],
+      "script": "scripts/smoke-prod/website.sh",
+      "checks": [
+        "check_website_docs_tutorials_index_renders",
+        "check_website_docs_tutorials_discover_renders",
+        "check_website_docs_tutorials_evaluate_renders",
+        "check_website_docs_tutorials_install_and_use_renders",
+        "check_website_docs_tutorials_maintain_renders",
+        "check_website_docs_tutorials_author_renders",
+        "check_website_docs_tutorials_govern_renders",
+        "check_website_docs_tutorials_retire_renders",
+        "check_website_docs_vscode_extension_renders",
+        "check_website_docs_authoring_redirect"
+      ]
     }
   ]
 }

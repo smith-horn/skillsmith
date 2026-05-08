@@ -1,0 +1,292 @@
+---
+import DocsLayout from '../../../layouts/DocsLayout.astro'
+---
+
+<DocsLayout
+  title="Tutorial: Govern at scale"
+  description="Skillsmith Govern stage — audit logs, RBAC, SIEM export, and team-scope namespace policy."
+>
+  <h1>Tutorial: Govern at scale</h1>
+
+  <p class="lead">
+    The Govern stage is where Skillsmith stops being a personal tool and becomes infrastructure. It
+    covers audit logs, role-based access control, SIEM export, and the team-scope view of the same
+    namespace audit you ran in <a href="/docs/tutorials/maintain">Maintain</a>. Most flows here are
+    Team or Enterprise tier.
+  </p>
+
+  <p>
+    These tutorials show Skillsmith in Claude Code. For installation in your preferred runtime
+    (Cursor, Continue, Copilot, Windsurf), see
+    <a href="/docs/getting-started">Getting Started</a>.
+  </p>
+
+  <h2>What you will do</h2>
+
+  <ul>
+    <li>Query audit logs for a time range and event type</li>
+    <li>Export audit events for compliance reporting</li>
+    <li>Stream events to a SIEM (Splunk, Elastic, Datadog)</li>
+    <li>Run skill-level and pack-level security audits</li>
+    <li>Read the session-start governance summary at the start of every Claude Code session</li>
+  </ul>
+
+  <h2>Tools that map to Govern</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Surface</th>
+        <th>Tool / command</th>
+        <th>Purpose</th>
+        <th>Tier</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>MCP</td>
+        <td><code>skill_audit</code></td>
+        <td>Audit a single skill for security advisories</td>
+        <td>Team+</td>
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>skill_pack_audit</code></td>
+        <td>Audit a pack of skills (bulk advisory check)</td>
+        <td>Team+</td>
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>audit_query</code></td>
+        <td>Query the audit log with filters (event type, actor, time range)</td>
+        <td>Enterprise</td>
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>audit_export</code></td>
+        <td>Export audit events for a time range (CSV / JSON)</td>
+        <td>Enterprise</td>
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>siem_export</code></td>
+        <td>Export audit events for SIEM ingestion (CEF / LEEF / JSON)</td>
+        <td>Enterprise</td>
+      </tr>
+      <tr>
+        <td>CLI</td>
+        <td><code>skillsmith audit advisories</code></td>
+        <td>Run security advisory scan against installed skills</td>
+        <td>Team+</td>
+      </tr>
+      <tr>
+        <td>CLI</td>
+        <td><code>skillsmith audit collisions</code></td>
+        <td>Same namespace audit as Maintain, with team-scope reporting</td>
+        <td>All (deeper modes Team+)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-warning">
+    <p class="callout-heading">Tier gating is enforced</p>
+    <p>
+      Governance tools require a Team or Enterprise license. Free and Individual tiers see typed
+      errors when they invoke these tools — not stub data. Configure <code
+        >SKILLSMITH_LICENSE_KEY</code
+      > in your MCP env config; missing keys produce a "license required" error rather than a silent fallback.
+    </p>
+  </div>
+
+  <h2>Step 1 — Audit a skill for security advisories</h2>
+
+  <p>
+    Before adding a skill to your team's approved set, run the security audit. It checks for known
+    CVEs in declared dependencies, flagged authors, and structural patterns associated with
+    malicious skills.
+  </p>
+
+  <p><strong>Try these prompts:</strong></p>
+
+  <ul>
+    <li>"Audit community/jest-helper for security advisories"</li>
+    <li>"Run a security audit on community/git-commit"</li>
+    <li>"Check this skill for known vulnerabilities"</li>
+  </ul>
+
+  <p>Or from the terminal:</p>
+
+  <pre><code>{`skillsmith audit advisories community/jest-helper
+skillsmith audit advisories --all   # Audit every installed skill`}</code></pre>
+
+  <p>
+    The audit returns a per-skill verdict (clean, advisory, blocked) with links to the underlying
+    advisory feed. Treat blocked verdicts as hard stops; revisit advisory verdicts case-by-case.
+  </p>
+
+  <h2>Step 2 — Audit a pack of skills in bulk</h2>
+
+  <p>
+    For team rollouts you typically pack a curated set of skills together — a "frontend pack",
+    "backend pack", "compliance pack" — and need to audit the whole pack at once.
+  </p>
+
+  <p><strong>Try this prompt:</strong></p>
+
+  <ul>
+    <li>"Audit my team's approved skill pack for advisories"</li>
+  </ul>
+
+  <p>
+    The MCP tool <code>skill_pack_audit</code> takes a pack manifest, runs advisory checks on every skill
+    in it, and returns a roll-up report. Use it before publishing internal pack updates so you do not
+    roll out a skill with a new CVE attached.
+  </p>
+
+  <h2>Step 3 — Query the audit log</h2>
+
+  <p>
+    Every Skillsmith operation that mutates state (install, uninstall, update, pin, publish) writes
+    an event to the audit log. The
+    <code>audit_query</code> tool lets you read that log back filtered by actor, event type, and time
+    range.
+  </p>
+
+  <p><strong>Try these prompts:</strong></p>
+
+  <ul>
+    <li>"Show me Skillsmith audit events from the last 24 hours"</li>
+    <li>"Query the audit log for installs by user @alice in March"</li>
+    <li>"List uninstall events for community/jest-helper"</li>
+  </ul>
+
+  <p>
+    The MCP returns structured events (timestamp, actor, action, target, metadata). For ad-hoc
+    analysis, ask Claude Code to summarize patterns:
+    <em>"Are there any unusual patterns in last week's audit events?"</em>
+  </p>
+
+  <h2>Step 4 — Export audit events for compliance</h2>
+
+  <p>
+    Annual audit cycles, SOC 2 reviews, and customer security questionnaires all need exportable
+    evidence. <code>audit_export</code> emits a sealed JSON or CSV bundle for a time range.
+  </p>
+
+  <p><strong>Try this prompt:</strong></p>
+
+  <ul>
+    <li>"Export the Skillsmith audit log for Q1 2026 as JSON"</li>
+  </ul>
+
+  <p>
+    The export includes a SHA-256 manifest hash so the auditor can verify the bundle has not been
+    tampered with. Store the bundle alongside your other compliance evidence; do not commit it to
+    source control.
+  </p>
+
+  <h2>Step 5 — Stream events to a SIEM</h2>
+
+  <p>
+    For continuous monitoring rather than point-in-time export,
+    <code>siem_export</code> emits events in a format your SIEM can ingest: CEF (ArcSight), LEEF (QRadar),
+    or structured JSON (Splunk, Elastic, Datadog).
+  </p>
+
+  <p><strong>Try this prompt:</strong></p>
+
+  <ul>
+    <li>"Configure Skillsmith to stream audit events to our SIEM in CEF format"</li>
+  </ul>
+
+  <p>
+    The MCP returns the export endpoint and authentication token; wire those into your SIEM's HTTP
+    collector. Events stream within seconds of the underlying mutation. See the
+    <a href="/docs/api">API reference</a> for the wire format details.
+  </p>
+
+  <h2>Step 6 — Read the session-start governance summary</h2>
+
+  <p>
+    Team and Enterprise installs include a <code>SessionStart</code> hook in Claude Code that runs the
+    namespace audit on every session and emits a summary on stderr. Free and Individual tiers see no output
+    (intentional — the audit is a paid feature).
+  </p>
+
+  <p>A typical Team summary looks like:</p>
+
+  <pre><code>{`[skillsmith] audit: 0 collisions, 2 advisories pending review`}</code></pre>
+
+  <p>
+    The hook is debounced 24 hours (it does not fire on every session), and is bounded to a 5-second
+    wall clock. Disable it with
+    <code>SKILLSMITH_SESSION_AUDIT_DISABLE=1</code> if it interferes with automation; logs land in <code
+      >~/.skillsmith/logs/</code
+    >.
+  </p>
+
+  <h2>Step 7 — Apply policy at team scope</h2>
+
+  <p>
+    The <a href="/docs/tutorials/maintain">Maintain tutorial</a>'s namespace audit reports
+    collisions for a single user. At team scope, the same audit rolls up across every developer in
+    your workspace, surfacing drift between team members' installed inventories.
+  </p>
+
+  <p>
+    Combine the audit output with <code>apply_recommended_edit</code>
+    (Team+) and <code>apply_namespace_rename</code> (Team+) to centrally enforce naming policy. Renames
+    apply via the namespace-overrides ledger so subsequent audits respect them.
+  </p>
+
+  <h2>Common pitfalls</h2>
+
+  <h3>"License required" on every Govern call</h3>
+
+  <p>
+    Set <code>SKILLSMITH_LICENSE_KEY</code> in your MCP server's env config (not in your shell — MCP subprocesses
+    do not inherit shell env). The license key resolves your team via the
+    <code>resolve_team_from_license</code> RPC. If you have just upgraded and the error persists, restart
+    the MCP server so it picks up the new env.
+  </p>
+
+  <h3>Audit log returns empty</h3>
+
+  <p>
+    Audit logs are scoped to your team. If you query without a license key or with a key that
+    resolves to a different team, you see an empty result. Verify with <em
+      >"Who am I authenticated as?"</em
+    > before assuming the log is empty.
+  </p>
+
+  <h3>SIEM ingestion drops events</h3>
+
+  <p>
+    The SIEM endpoint is HTTPS only and requires a bearer token in the
+    <code>Authorization</code> header. Most ingestion drops trace back to misconfigured authentication
+    — check your SIEM's HTTP collector logs first. The Skillsmith side will log the export attempts in
+    the audit log itself (recursive but useful).
+  </p>
+
+  <h2>Where to next</h2>
+
+  <p>
+    The full lifecycle ends at <a href="/docs/tutorials/retire">Retire</a> — deliberately uninstalling
+    skills you no longer need. For ongoing day-to-day hygiene, Govern's signals feed back into
+    <a href="/docs/tutorials/maintain">Maintain</a>'s actions.
+  </p>
+
+  <p>
+    Reference:
+    <a href="/docs/mcp-server#namespace-audit-tools-team">MCP audit tools</a>
+    · <a href="/docs/cli">CLI reference</a>
+    · <a href="/docs/api">API reference</a>
+    · <a href="/pricing">Tier pricing</a>.
+  </p>
+
+  <p>
+    Previous: <a href="/docs/tutorials/author">Author</a> — Next: <a href="/docs/tutorials/retire"
+      >Retire</a
+    >
+  </p>
+</DocsLayout>

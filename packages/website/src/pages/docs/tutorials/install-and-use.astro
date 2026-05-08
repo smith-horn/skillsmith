@@ -1,0 +1,276 @@
+---
+import DocsLayout from '../../../layouts/DocsLayout.astro'
+---
+
+<DocsLayout
+  title="Tutorial: Install and Use a skill"
+  description="Skillsmith Install and Use stages — install a skill into your runtime and invoke it in conversation."
+>
+  <h1>Tutorial: Install &amp; Use</h1>
+
+  <p class="lead">
+    The Install stage adds a skill to your runtime's skills directory. The Use stage invokes that
+    skill in conversation. They are tightly coupled — a skill you cannot trigger is functionally not
+    installed — so this tutorial covers both end-to-end.
+  </p>
+
+  <p>
+    These tutorials show Skillsmith in Claude Code. For installation in your preferred runtime
+    (Cursor, Continue, Copilot, Windsurf), see
+    <a href="/docs/getting-started">Getting Started</a>.
+  </p>
+
+  <h2>What you will do</h2>
+
+  <ul>
+    <li>Install a skill into <code>~/.claude/skills/</code></li>
+    <li>Validate the install structure</li>
+    <li>Invoke the skill in a Claude Code conversation</li>
+    <li>Troubleshoot when a skill does not trigger</li>
+  </ul>
+
+  <h2>Tools that map to Install and Use</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Stage</th>
+        <th>Surface</th>
+        <th>Tool / command</th>
+        <th>Purpose</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Install</td>
+        <td>MCP</td>
+        <td><code>install_skill</code></td>
+        <td>Install a skill from the registry to the runtime's skills directory</td>
+      </tr>
+      <tr>
+        <td>Install</td>
+        <td>MCP</td>
+        <td><code>skill_validate</code></td>
+        <td>Validate SKILL.md structure pre- or post-install</td>
+      </tr>
+      <tr>
+        <td>Install</td>
+        <td>CLI</td>
+        <td><code>skillsmith install &lt;id&gt;</code></td>
+        <td>Same as MCP <code>install_skill</code></td>
+      </tr>
+      <tr>
+        <td>Use</td>
+        <td>Runtime</td>
+        <td>(natural prompts)</td>
+        <td
+          >The runtime — Claude Code in this tutorial — invokes the skill via its trigger phrases</td
+        >
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Step 1 — Install a skill</h2>
+
+  <p>
+    Pick a skill ID from <a href="/docs/tutorials/evaluate">Evaluate</a>. We will use <code
+      >community/jest-helper</code
+    > as the running example.
+  </p>
+
+  <p><strong>Try these prompts:</strong></p>
+
+  <ul>
+    <li>"Install community/jest-helper"</li>
+    <li>"Install jest-helper to ~/.claude/skills"</li>
+    <li>"Install community/git-commit and overwrite if it exists"</li>
+  </ul>
+
+  <p>
+    Skillsmith downloads the skill bundle, verifies the SKILL.md structure, and writes it to your
+    runtime's skills directory. On Claude Code that is
+    <code>~/.claude/skills/&lt;author&gt;/&lt;name&gt;/</code>.
+  </p>
+
+  <div class="callout">
+    <p class="callout-heading">Other runtimes write to other paths</p>
+    <p>
+      Cursor, Copilot, and Windsurf each have their own skills directory. Set <code
+        >SKILLSMITH_CLIENT</code
+      > in your MCP server's environment config to <code>cursor</code>, <code>copilot</code>, or
+      <code>windsurf</code> and Skillsmith will route the install to the right place. Defaults to <code
+        >claude-code</code
+      >. See
+      <a href="/docs/getting-started">Getting Started</a>.
+    </p>
+  </div>
+
+  <h2>Step 2 — Validate the install</h2>
+
+  <p>
+    Skillsmith validates SKILL.md structure during install, but if you ever receive a skill outside
+    the registry — for example, a teammate hands you a directory — validate it before relying on it.
+  </p>
+
+  <p><strong>Try these prompts:</strong></p>
+
+  <ul>
+    <li>"Validate the skill at ~/.claude/skills/community/jest-helper"</li>
+    <li>"Check the structure of my local ./my-skill directory"</li>
+  </ul>
+
+  <p>Or from the terminal:</p>
+
+  <pre><code>{`skillsmith author validate ~/.claude/skills/community/jest-helper`}</code></pre>
+
+  <p>
+    Validation checks that <code>SKILL.md</code> exists, has the required YAML frontmatter (<code
+      >name</code
+    >, <code>description</code>), and that referenced bundle files (scripts, assets) actually exist
+    on disk.
+  </p>
+
+  <h2>Step 3 — Use the skill in conversation</h2>
+
+  <p>
+    A skill is "used" when its trigger phrases match something you say to the runtime, and the
+    runtime loads the skill's instructions into the conversation context. With <code
+      >community/jest-helper</code
+    > installed, triggers like the following should activate it:
+  </p>
+
+  <ul>
+    <li>"Help me write Jest tests for this function"</li>
+    <li>"Set up Jest in this project"</li>
+    <li>"Debug a failing Jest test"</li>
+  </ul>
+
+  <p>
+    The actual trigger phrases for any installed skill live in its
+    <code>SKILL.md</code> frontmatter under <code>description</code>. Read them once after
+    installing: <em>"Read me the description of jest-helper so I know how to trigger it"</em>.
+  </p>
+
+  <h3>The /skillsmith slash command — most reliable trigger</h3>
+
+  <p>
+    Claude Code installs a bundled <code>/skillsmith</code> slash command when you run <code
+      >skillsmith setup</code
+    >. It gives you an unambiguous way to route any lifecycle action to the right Skillsmith tool,
+    regardless of how natural-language tool selection might drift.
+  </p>
+
+  <pre><code>{`/skillsmith discover testing
+/skillsmith evaluate community/jest-helper
+/skillsmith install community/jest-helper
+/skillsmith audit
+/skillsmith create "API doc generator"`}</code></pre>
+
+  <p>
+    If you ever find that a bare prompt is not triggering Skillsmith reliably, fall back to the
+    slash form.
+  </p>
+
+  <h2>Step 4 — Troubleshoot when a skill does not trigger</h2>
+
+  <p>
+    The most common Use-stage failure is "I installed it but it never fires." Walk this checklist:
+  </p>
+
+  <h3>Check the install actually landed</h3>
+
+  <p>Run this in your terminal:</p>
+
+  <pre><code>{`ls ~/.claude/skills/community/jest-helper/SKILL.md`}</code></pre>
+
+  <p>
+    If the file is missing, Skillsmith never wrote it. Re-run the install, this time watching the
+    output for an error.
+  </p>
+
+  <h3>Restart your runtime</h3>
+
+  <p>
+    Claude Code, Cursor, and most other runtimes load the skills directory once at startup. After
+    installing a new skill, restart the runtime so it can pick up the SKILL.md.
+  </p>
+
+  <h3>Read the skill's trigger phrases</h3>
+
+  <p>
+    A skill's <code>description</code> in SKILL.md is what the runtime matches your prompts against. If
+    the description says <em>"Use when asked to write Jest tests"</em> and you are saying <em
+      >"add unit tests"</em
+    >, the runtime may not connect them. Either rephrase or read the description directly:
+  </p>
+
+  <pre><code>{`cat ~/.claude/skills/community/jest-helper/SKILL.md | head -10`}</code></pre>
+
+  <h3>Check for namespace collisions</h3>
+
+  <p>
+    If two installed skills both claim a similar trigger phrase, the runtime picks one — usually not
+    the one you want. Run the namespace audit to surface collisions:
+  </p>
+
+  <pre><code>{`skillsmith audit collisions`}</code></pre>
+
+  <p>
+    The Maintain tutorial covers
+    <a href="/docs/tutorials/maintain#namespace-audit">resolving collisions</a>
+    in detail.
+  </p>
+
+  <h2>Common pitfalls</h2>
+
+  <h3>"Skill already installed" error</h3>
+
+  <p>
+    By default <code>install_skill</code> refuses to overwrite. Pass
+    <code>force: true</code> in the prompt or <code>--force</code> on the CLI to overwrite an existing
+    install. Combine with a
+    <a href="/docs/tutorials/evaluate#step-3-diff-two-versions-before-upgrading">diff</a>
+    first if you are unsure what changed.
+  </p>
+
+  <h3>Wrong runtime path</h3>
+
+  <p>
+    If <code>SKILLSMITH_CLIENT</code> is unset, Skillsmith defaults to Claude Code (<code
+      >~/.claude/skills/</code
+    >). Cursor users who have not set the env var will see installs land in <code
+      >~/.claude/skills/</code
+    >
+    rather than Cursor's skills directory, and Cursor will never load them. Set the env var in your MCP
+    server's config and re-install.
+  </p>
+
+  <h3>API rate-limit during install</h3>
+
+  <p>
+    The free tier (no API key) caps at 10 requests total. After that, every install fails until you
+    configure an API key. See
+    <a href="/docs/mcp-server#api-key-configuration">API key setup</a>.
+  </p>
+
+  <h2>Where to next</h2>
+
+  <p>
+    You have a working installed skill. Keeping it healthy — updating it, pinning it, auditing it —
+    is the
+    <a href="/docs/tutorials/maintain">Maintain stage</a>.
+  </p>
+
+  <p>
+    Reference:
+    <a href="/docs/mcp-server#install_skill">MCP <code>install_skill</code></a>
+    · <a href="/docs/cli#install">CLI <code>install</code></a>
+    · <a href="/docs/getting-started">Runtime install</a>.
+  </p>
+
+  <p>
+    Previous: <a href="/docs/tutorials/evaluate">Evaluate</a> — Next: <a
+      href="/docs/tutorials/maintain">Maintain</a
+    >
+  </p>
+</DocsLayout>

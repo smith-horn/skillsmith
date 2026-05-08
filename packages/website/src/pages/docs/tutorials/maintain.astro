@@ -1,0 +1,346 @@
+---
+import DocsLayout from '../../../layouts/DocsLayout.astro'
+---
+
+<DocsLayout
+  title="Tutorial: Maintain installed skills"
+  description="Skillsmith Maintain stage — update, pin, audit collisions, configure audit modes."
+>
+  <h1>Tutorial: Maintain installed skills</h1>
+
+  <p class="lead">
+    Skills drift. Authors release fixes; your local install grows stale; two skills you installed
+    last month now claim overlapping trigger phrases. The Maintain stage is the regular hygiene pass
+    that keeps your installed inventory healthy.
+  </p>
+
+  <p>
+    These tutorials show Skillsmith in Claude Code. For installation in your preferred runtime
+    (Cursor, Continue, Copilot, Windsurf), see
+    <a href="/docs/getting-started">Getting Started</a>.
+  </p>
+
+  <h2>What you will do</h2>
+
+  <ul>
+    <li>Check which installed skills have updates available</li>
+    <li>Pin a skill to a specific version</li>
+    <li>Audit your local <code>~/.claude/</code> inventory for namespace collisions</li>
+    <li>Apply rename suggestions and recommended edits</li>
+    <li>Choose an audit mode that matches your tier and risk tolerance</li>
+  </ul>
+
+  <h2>Tools that map to Maintain</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Surface</th>
+        <th>Tool / command</th>
+        <th>Purpose</th>
+        <th>Tier</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>MCP</td>
+        <td><code>skill_updates</code></td>
+        <td>List installed skills with newer versions in the registry</td>
+        <td>All</td>
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>skill_outdated</code></td>
+        <td>Same as <code>skill_updates</code> with stricter staleness criteria</td>
+        <td>All</td>
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>skill_inventory_audit</code></td>
+        <td
+          >Audit local <code>~/.claude/</code> for namespace collisions; returns rename + edit suggestions</td
+        >
+        <td>All (results scoped by audit_mode)</td>
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>apply_namespace_rename</code></td>
+        <td>Apply a rename suggestion (apply / custom / skip)</td>
+        <td>Team+</td>
+      </tr>
+      <tr>
+        <td>MCP</td>
+        <td><code>apply_recommended_edit</code></td>
+        <td>Apply a recommended prose edit; gated on <code>APPLY_TEMPLATE_REGISTRY</code></td>
+        <td>Team+</td>
+      </tr>
+      <tr>
+        <td>CLI</td>
+        <td><code>skillsmith update</code></td>
+        <td>Update one or all installed skills</td>
+        <td>All</td>
+      </tr>
+      <tr>
+        <td>CLI</td>
+        <td><code>skillsmith pin / unpin</code></td>
+        <td>Lock a skill to a specific version</td>
+        <td>All</td>
+      </tr>
+      <tr>
+        <td>CLI</td>
+        <td><code>skillsmith audit collisions</code></td>
+        <td>Same as MCP <code>skill_inventory_audit</code>, formatted for the terminal</td>
+        <td>All</td>
+      </tr>
+      <tr>
+        <td>CLI</td>
+        <td><code>skillsmith config get/set audit_mode</code></td>
+        <td
+          >Read or set the audit mode (<code>preventative</code>, <code>power_user</code>, <code
+            >governance</code
+          >, <code>off</code>)</td
+        >
+        <td>All (some modes Team+)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Step 1 — Find skills with updates</h2>
+
+  <p><strong>Try these prompts:</strong></p>
+
+  <ul>
+    <li>"Which of my installed skills have updates?"</li>
+    <li>"Check for outdated skills"</li>
+    <li>"List skills I should update"</li>
+  </ul>
+
+  <p>
+    Skillsmith reads your installed skills directory, looks each one up in the registry, and returns
+    those whose registry version is newer than your local copy.
+  </p>
+
+  <p>
+    The MCP returns two related tools: <code>skill_updates</code> reports every newer version; <code
+      >skill_outdated</code
+    > applies a stricter staleness threshold (typically 30 days) so you only see skills that are falling
+    behind.
+  </p>
+
+  <h3>Update from the CLI</h3>
+
+  <p>Run this in your terminal:</p>
+
+  <pre><code>{`skillsmith update                       # Update all installed skills
+skillsmith update community/jest-helper # Update one skill
+skillsmith update --dry-run             # See what would change without applying`}</code></pre>
+
+  <p>
+    Before a major-version update, run a
+    <a href="/docs/tutorials/evaluate#step-3-diff-two-versions-before-upgrading">diff</a>
+    first to see what changed.
+  </p>
+
+  <h2 id="pinning">Step 2 — Pin a skill to a specific version</h2>
+
+  <p>
+    Pinning is CLI-only. It locks a skill at its current installed version so subsequent <code
+      >update</code
+    > runs skip it.
+  </p>
+
+  <p>Run this in your terminal:</p>
+
+  <pre><code>{`skillsmith pin community/jest-helper      # Lock current version
+skillsmith unpin community/jest-helper    # Allow updates again
+skillsmith pin --list                     # See all currently pinned skills`}</code></pre>
+
+  <p>
+    Pin when an upgrade has known regressions in your environment, or when you have customized the
+    installed copy and want to prevent
+    <code>update</code> from clobbering it. Always pair with a Linear follow-up to revisit the pin once
+    upstream lands a fix.
+  </p>
+
+  <h2 id="namespace-audit">Step 3 — Audit your local inventory for collisions</h2>
+
+  <p>
+    Two skills can both claim <em>"git workflows"</em> as a trigger. When that happens, the runtime picks
+    one — and not always the one you want. The namespace audit surfaces these collisions so you can rename
+    or skip deliberately.
+  </p>
+
+  <p><strong>Try these prompts:</strong></p>
+
+  <ul>
+    <li>"Audit my installed skills for namespace conflicts"</li>
+    <li>"Run a deep namespace audit on my ~/.claude inventory"</li>
+    <li>"Show me which of my skills overlap"</li>
+  </ul>
+
+  <p>
+    The MCP tool <code>skill_inventory_audit</code> walks your local
+    <code>~/.claude/</code> tree (skills, commands, agents, CLAUDE.md contents) and returns:
+  </p>
+
+  <ul>
+    <li>Exact-name collisions (two files claiming the same trigger)</li>
+    <li>Generic-token flags (skills using overly broad words like "helper")</li>
+    <li>Semantic-overlap pairs, when in <code>power_user</code> or <code>governance</code> mode</li>
+    <li>Suggested renames with audit IDs you can pass to <code>apply_namespace_rename</code></li>
+  </ul>
+
+  <h3>Audit modes — pick the right depth</h3>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Mode</th>
+        <th>What it checks</th>
+        <th>Tier</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>preventative</code></td>
+        <td>Exact-name collisions + generic-token flags. No ONNX model load.</td>
+        <td>All (default for Free / Individual)</td>
+      </tr>
+      <tr>
+        <td><code>power_user</code></td>
+        <td>Adds semantic-overlap pass via embedding model</td>
+        <td>Team+ (default for Team)</td>
+      </tr>
+      <tr>
+        <td><code>governance</code></td>
+        <td>Same as <code>power_user</code> with deeper audit-history retention</td>
+        <td>Enterprise (default for Enterprise)</td>
+      </tr>
+      <tr>
+        <td><code>off</code></td>
+        <td>Short-circuits to an empty result; useful in CI noise reduction</td>
+        <td>All</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    Set the mode in <code>~/.skillsmith/config.json</code> or via the CLI:
+  </p>
+
+  <pre><code>{`skillsmith config get audit_mode
+skillsmith config set audit_mode power_user`}</code></pre>
+
+  <p>
+    Free and Individual tiers cannot select <code>power_user</code> or
+    <code>governance</code>; the CLI rejects the change with a typed error. See the <a
+      href="/docs/mcp-server#namespace-audit-tools-team">MCP namespace-audit tools reference</a
+    > for the full schema.
+  </p>
+
+  <h2>Step 4 — Apply rename suggestions</h2>
+
+  <p>The audit returns suggestions with stable IDs. To act on one:</p>
+
+  <p><strong>Try these prompts:</strong></p>
+
+  <ul>
+    <li>"Apply the suggested rename for jest-helper from the last audit"</li>
+    <li>"Skip the rename suggestion for the test-runner collision"</li>
+    <li>"Rename the test skill to my-team-jest-helper instead"</li>
+  </ul>
+
+  <div class="callout">
+    <p class="callout-heading">Team+ feature</p>
+    <p>
+      <code>apply_namespace_rename</code> and
+      <code>apply_recommended_edit</code> are gated to Team and Enterprise tiers. Free and Individual
+      tiers see the rename suggestions but cannot apply them via the MCP — the CLI fallback is also tier-gated.
+      See <a href="/pricing">pricing</a>.
+    </p>
+  </div>
+
+  <p>
+    The rename modes are <code>apply</code> (use the suggested name),
+    <code>custom</code> (provide your own), and <code>skip</code> (record the decision so the audit does
+    not re-flag it). The override is persisted to a namespace-overrides ledger so subsequent audits respect
+    your choices.
+  </p>
+
+  <h2>Step 5 — Apply recommended prose edits</h2>
+
+  <p>
+    Beyond renames, the audit can suggest small prose edits — for example, adding a domain qualifier
+    to a description that triggers too broadly (<em>"helper"</em> &rarr; <em
+      >"jest-helper for unit tests"</em
+    >). These are gated through an allow-list (<code>APPLY_TEMPLATE_REGISTRY</code>) so only safe
+    templated edits can be auto-applied.
+  </p>
+
+  <p><strong>Try this prompt:</strong></p>
+
+  <ul>
+    <li>"Apply the suggested domain-qualifier edit to my skill description"</li>
+  </ul>
+
+  <p>
+    Free-form prose edits are rejected. If the audit suggests an edit that is not in the registry,
+    it surfaces the suggestion as text for you to apply manually.
+  </p>
+
+  <h2>Common pitfalls</h2>
+
+  <h3>"audit_mode requires Team tier"</h3>
+
+  <p>
+    You set <code>power_user</code> or <code>governance</code> on a Free or Individual subscription. Either
+    upgrade or set
+    <code>preventative</code>. The session-start audit hook (Team+) is also silent for lower tiers
+    by design.
+  </p>
+
+  <h3>Update overwrote my customizations</h3>
+
+  <p>
+    <code>skillsmith update</code> replaces the installed copy with the registry's. If you have customized
+    a skill, pin it before running
+    <code>update</code> next time. If you have already lost the customizations, check git history in your
+    dotfiles repo (if you version-control <code>~/.claude/</code>) or restore from a known-good
+    backup.
+  </p>
+
+  <h3>Audit reports collisions but the runtime works fine</h3>
+
+  <p>
+    Collisions are warnings, not errors. They mean the runtime <em>could</em>
+    pick the wrong skill on a given prompt; whether that has happened depends on your prompts. Resolve
+    high-overlap pairs eagerly; live with low-overlap warnings if the trigger phrases are different enough
+    in practice.
+  </p>
+
+  <h2>Where to next</h2>
+
+  <p>
+    Maintain is for individual users. If you operate at team or enterprise scale, the same audit
+    signals roll up into the
+    <a href="/docs/tutorials/govern">Govern stage</a> — audit logs, RBAC, SIEM export.
+  </p>
+
+  <p>
+    If you want to <em>create</em> rather than maintain, the
+    <a href="/docs/tutorials/author">Author tutorial</a> walks you through scaffolding your own skill.
+  </p>
+
+  <p>
+    Reference:
+    <a href="/docs/mcp-server#skill_inventory_audit">MCP audit tools</a>
+    · <a href="/docs/cli#audit-collisions">CLI <code>audit collisions</code></a>
+    · <a href="/docs/cli#pin">CLI <code>pin</code></a>.
+  </p>
+
+  <p>
+    Previous: <a href="/docs/tutorials/install-and-use">Install &amp; Use</a> — Next: <a
+      href="/docs/tutorials/author">Author</a
+    >
+  </p>
+</DocsLayout>

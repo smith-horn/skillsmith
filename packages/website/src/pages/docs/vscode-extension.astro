@@ -1,0 +1,362 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro'
+---
+
+<DocsLayout
+  title="VS Code Extension"
+  description="Skillsmith for VS Code — commands, configuration keys, and walkthrough."
+>
+  <h1>VS Code Extension</h1>
+
+  <p class="lead">
+    The Skillsmith VS Code extension brings skill discovery, install, and authoring into the editor.
+    It is a visual surface over the same MCP server you use from Claude Code or the CLI — install
+    the extension and you get a sidebar tree, commands, and a guided walkthrough without leaving VS
+    Code.
+  </p>
+
+  <h2>Install</h2>
+
+  <p>
+    Install <strong>Skillsmith</strong> from the
+    <a href="https://marketplace.visualstudio.com/items?itemName=skillsmith.skillsmith-vscode"
+      >VS Code Marketplace</a
+    >, or run from the editor:
+  </p>
+
+  <pre><code>{`code --install-extension skillsmith.skillsmith-vscode`}</code></pre>
+
+  <p>
+    The extension activates on startup. On first activation, it connects to a local Skillsmith MCP
+    server (spawned via <code>npx</code>) and loads your installed skills tree.
+  </p>
+
+  <h2>Activity bar and views</h2>
+
+  <p>
+    The extension contributes a <strong>Skillsmith</strong> entry in the activity bar. Click it to open
+    two views:
+  </p>
+
+  <ul>
+    <li>
+      <strong>Skills</strong> — tree view of the skills currently installed in your runtime's skills directory
+      (default <code>~/.claude/skills</code>; configurable via <code
+        >skillsmith.skillsDirectory</code
+      >).
+    </li>
+    <li>
+      <strong>Search Results</strong> — populated when you run the
+      <em>Search Skills</em> command. Collapsed by default.
+    </li>
+  </ul>
+
+  <h2>Commands</h2>
+
+  <p>
+    All commands are listed in the Command Palette under the
+    <strong>Skillsmith</strong> category (<kbd>Cmd+Shift+P</kbd> on macOS,
+    <kbd>Ctrl+Shift+P</kbd> on Windows / Linux).
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Command</th>
+        <th>Command ID</th>
+        <th>Lifecycle stage</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Search Skills</td>
+        <td><code>skillsmith.searchSkills</code></td>
+        <td>Discover</td>
+        <td>Open a quick-pick to search the registry; results land in the Search Results view.</td>
+      </tr>
+      <tr>
+        <td>View Skill Details</td>
+        <td><code>skillsmith.viewSkillDetails</code></td>
+        <td>Evaluate</td>
+        <td>Open a webview panel with the selected skill's full details.</td>
+      </tr>
+      <tr>
+        <td>Install Skill</td>
+        <td><code>skillsmith.installSkill</code></td>
+        <td>Install</td>
+        <td>Install the selected skill into the configured skills directory.</td>
+      </tr>
+      <tr>
+        <td>Refresh Skills</td>
+        <td><code>skillsmith.refreshSkills</code></td>
+        <td>Maintain</td>
+        <td>Re-scan the skills directory and refresh the tree view.</td>
+      </tr>
+      <tr>
+        <td>Create Skill</td>
+        <td><code>skillsmith.createSkill</code></td>
+        <td>Author</td>
+        <td>Scaffold a new skill via the CLI; opens a terminal with the prompt sequence.</td>
+      </tr>
+      <tr>
+        <td>Uninstall Skill</td>
+        <td><code>skillsmith.uninstallSkill</code></td>
+        <td>Retire</td>
+        <td>Remove the selected installed skill.</td>
+      </tr>
+      <tr>
+        <td>Connect / Reconnect to MCP Server</td>
+        <td><code>skillsmith.mcpReconnect</code></td>
+        <td>(maintenance)</td>
+        <td>Manually reconnect to the MCP server. Useful after restarting the server externally.</td
+        >
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Walkthrough</h2>
+
+  <p>
+    First-time users see a guided walkthrough at <em>Welcome &rarr; Get Started with Skillsmith</em
+    >. It has three steps:
+  </p>
+
+  <ol>
+    <li>
+      <strong>Discover skills</strong> — search the registry by keyword, category, or trust tier.
+    </li>
+    <li>
+      <strong>Install a skill</strong> — install any skill with one click from the Search Results view.
+    </li>
+    <li>
+      <strong>Create your own skill</strong> — scaffold a new skill via the CLI from inside VS Code.
+    </li>
+  </ol>
+
+  <p>
+    Re-open the walkthrough at any time via the Command Palette: <em
+      >Welcome: Open Walkthrough &rarr; Get Started with Skillsmith</em
+    >.
+  </p>
+
+  <h2>Configuration keys</h2>
+
+  <p>
+    Configure the extension via Settings (<kbd>Cmd+,</kbd> on macOS,
+    <kbd>Ctrl+,</kbd> elsewhere) or directly in <code>settings.json</code>.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Key</th>
+        <th>Type</th>
+        <th>Default</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>skillsmith.skillsDirectory</code></td>
+        <td>string</td>
+        <td><code>~/.claude/skills</code></td>
+        <td>Directory where skills are installed.</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith.apiEndpoint</code></td>
+        <td>string</td>
+        <td>(empty)</td>
+        <td>Custom API endpoint for skill search. Leave empty for the default registry.</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith.mcp.serverCommand</code></td>
+        <td>string</td>
+        <td><code>npx</code></td>
+        <td>Command to run the MCP server.</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith.mcp.serverArgs</code></td>
+        <td>array</td>
+        <td><code>["@skillsmith/mcp-server"]</code></td>
+        <td>Arguments for the MCP server command.</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith.mcp.autoConnect</code></td>
+        <td>boolean</td>
+        <td><code>true</code></td>
+        <td>Automatically connect to the MCP server on extension activation.</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith.mcp.autoReconnect</code></td>
+        <td>boolean</td>
+        <td><code>true</code></td>
+        <td>Automatically reconnect when the connection is lost.</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith.mcp.connectionTimeout</code></td>
+        <td>number</td>
+        <td><code>30000</code></td>
+        <td>Connection timeout in milliseconds.</td>
+      </tr>
+      <tr>
+        <td><code>skillsmith.mcp.minServerVersion</code></td>
+        <td>string</td>
+        <td><code>0.4.9</code></td>
+        <td>
+          Minimum required <code>@skillsmith/mcp-server</code> version. When the connected server is older,
+          an informational toast prompts to run <code
+            >npm install -g @skillsmith/mcp-server@latest</code
+          >. Non-blocking.
+        </td>
+      </tr>
+      <tr>
+        <td><code>skillsmith.telemetry.enabled</code></td>
+        <td>boolean</td>
+        <td><code>true</code></td>
+        <td>
+          Send anonymous usage telemetry. Also respects VS Code's global
+          <code>telemetry.telemetryLevel</code> setting — either being off disables telemetry.
+        </td>
+      </tr>
+      <tr>
+        <td><code>skillsmith.telemetryEndpoint</code></td>
+        <td>string</td>
+        <td>(empty)</td>
+        <td>
+          Telemetry endpoint URL. Leave empty to disable network calls. Events POST as <code
+            >{`{ event, anonymous_id, metadata }`}</code
+          >.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Lifecycle stage coverage</h2>
+
+  <p>
+    The VS Code extension covers most lifecycle stages with a visual surface; some stages remain
+    CLI-only because they are inherently filesystem- or terminal-led.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Stage</th>
+        <th>VS Code support</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><a href="/docs/tutorials/discover">Discover</a></td>
+        <td>Yes</td>
+        <td>Search Skills command + Search Results view.</td>
+      </tr>
+      <tr>
+        <td><a href="/docs/tutorials/evaluate">Evaluate</a></td>
+        <td>Yes (partial)</td>
+        <td
+          >View Skill Details opens a details panel; <code>compare</code> and <code>diff</code> are MCP
+          / CLI only.</td
+        >
+      </tr>
+      <tr>
+        <td><a href="/docs/tutorials/install-and-use">Install</a></td>
+        <td>Yes</td>
+        <td>Install Skill command from the Search Results view.</td>
+      </tr>
+      <tr>
+        <td>Use</td>
+        <td>Runtime-dependent</td>
+        <td
+          >VS Code itself is not the agent runtime; use Claude Code, Continue, Copilot, or Cursor
+          inside VS Code as the runtime layer.</td
+        >
+      </tr>
+      <tr>
+        <td><a href="/docs/tutorials/maintain">Maintain</a></td>
+        <td>Partial</td>
+        <td>Refresh Skills re-scans the tree; pin / audit collisions remain CLI-only.</td>
+      </tr>
+      <tr>
+        <td><a href="/docs/tutorials/author">Author</a></td>
+        <td>Yes (CLI-driven)</td>
+        <td>Create Skill command opens a terminal with <code>skillsmith create</code>.</td>
+      </tr>
+      <tr>
+        <td><a href="/docs/tutorials/govern">Govern</a></td>
+        <td>No</td>
+        <td>Audit query and SIEM export are MCP only — drive them from Claude Code or curl.</td>
+      </tr>
+      <tr>
+        <td><a href="/docs/tutorials/retire">Retire</a></td>
+        <td>Yes</td>
+        <td>Uninstall Skill command from the Skills tree.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Troubleshooting</h2>
+
+  <h3>"MCP server not connecting"</h3>
+
+  <p>
+    The extension spawns the MCP server via <code>npx</code> by default. If your shell does not have <code
+      >npx</code
+    > on its PATH (rare on developer machines), set <code>skillsmith.mcp.serverCommand</code> to an absolute
+    path. Use the Command Palette's <em>Connect / Reconnect to MCP Server</em> command to retry.
+  </p>
+
+  <h3>"Skills tree is empty but I have skills installed"</h3>
+
+  <p>
+    Check <code>skillsmith.skillsDirectory</code> — the default
+    <code>~/.claude/skills</code> is correct for Claude Code, but Cursor, Copilot, and Windsurf use different
+    paths. Set the directory to your runtime's skills location and refresh the tree.
+  </p>
+
+  <h3>"MCP server version mismatch toast"</h3>
+
+  <p>
+    The extension checks the connected server's version against
+    <code>skillsmith.mcp.minServerVersion</code>. The toast is informational only — features still
+    work — but upgrading the server is recommended. Run <code
+      >npm install -g @skillsmith/mcp-server@latest</code
+    >.
+  </p>
+
+  <h3>"Telemetry"</h3>
+
+  <p>
+    The extension respects VS Code's global telemetry setting in addition to its own <code
+      >skillsmith.telemetry.enabled</code
+    > flag. Either being off disables telemetry. Events post to <code
+      >skillsmith.telemetryEndpoint</code
+    >
+    if configured; the empty default means no network calls.
+  </p>
+
+  <h2>Source</h2>
+
+  <p>
+    The extension is source-available under the
+    <a href="https://www.elastic.co/licensing/elastic-license">Elastic License 2.0</a>. Source lives
+    under
+    <a href="https://github.com/smith-horn/skillsmith/tree/main/packages/vscode-extension"
+      >packages/vscode-extension</a
+    >
+    in the main repository.
+  </p>
+
+  <h2>Where to next</h2>
+
+  <p>
+    The lifecycle <a href="/docs/tutorials">tutorials</a> show every stage end-to-end; if you prefer a
+    CLI-led path, the
+    <a href="/docs/cli">CLI reference</a> covers the same surface from the terminal. The <a
+      href="/docs/mcp-server">MCP Server reference</a
+    >
+    documents the underlying tools the extension drives.
+  </p>
+</DocsLayout>

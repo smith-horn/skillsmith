@@ -528,3 +528,217 @@ check_product_page_renders() {
   report_pass "website-product-page" "check_product_page_renders" "$url" "$ms"
   return 0
 }
+
+# ---- Wave 2 lifecycle tutorials (SMI-4791) ---------------------------
+# Each check verifies HTTP 200 on a tutorial URL and asserts a stable
+# fingerprint string from the page body so a deploy that serves an empty
+# 200 (Vercel fallback) doesn't pass.
+
+check_website_docs_tutorials_index_renders() {
+  local url="${SMOKE_WEBSITE_URL}/docs/tutorials"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+  if [ "$status" != "200" ]; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_index_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'The Skillsmith lifecycle' "tutorials-landing"; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_index_renders" "$url" "lifecycle-fingerprint" "missing" "$ms"
+    return 1
+  fi
+  report_pass "website-docs-tutorials" "check_website_docs_tutorials_index_renders" "$url" "$ms"
+  return 0
+}
+
+check_website_docs_tutorials_discover_renders() {
+  local url="${SMOKE_WEBSITE_URL}/docs/tutorials/discover"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+  if [ "$status" != "200" ]; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_discover_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'Tutorial: Discover skills' "discover-fingerprint"; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_discover_renders" "$url" "discover-fingerprint" "missing" "$ms"
+    return 1
+  fi
+  report_pass "website-docs-tutorials" "check_website_docs_tutorials_discover_renders" "$url" "$ms"
+  return 0
+}
+
+check_website_docs_tutorials_evaluate_renders() {
+  local url="${SMOKE_WEBSITE_URL}/docs/tutorials/evaluate"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+  if [ "$status" != "200" ]; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_evaluate_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'Tutorial: Evaluate candidates' "evaluate-fingerprint"; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_evaluate_renders" "$url" "evaluate-fingerprint" "missing" "$ms"
+    return 1
+  fi
+  report_pass "website-docs-tutorials" "check_website_docs_tutorials_evaluate_renders" "$url" "$ms"
+  return 0
+}
+
+check_website_docs_tutorials_install_and_use_renders() {
+  local url="${SMOKE_WEBSITE_URL}/docs/tutorials/install-and-use"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+  if [ "$status" != "200" ]; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_install_and_use_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'Tutorial: Install &amp; Use' "install-and-use-fingerprint"; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_install_and_use_renders" "$url" "install-and-use-fingerprint" "missing" "$ms"
+    return 1
+  fi
+  report_pass "website-docs-tutorials" "check_website_docs_tutorials_install_and_use_renders" "$url" "$ms"
+  return 0
+}
+
+check_website_docs_tutorials_maintain_renders() {
+  local url="${SMOKE_WEBSITE_URL}/docs/tutorials/maintain"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+  if [ "$status" != "200" ]; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_maintain_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'Tutorial: Maintain installed skills' "maintain-fingerprint"; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_maintain_renders" "$url" "maintain-fingerprint" "missing" "$ms"
+    return 1
+  fi
+  report_pass "website-docs-tutorials" "check_website_docs_tutorials_maintain_renders" "$url" "$ms"
+  return 0
+}
+
+check_website_docs_tutorials_author_renders() {
+  local url="${SMOKE_WEBSITE_URL}/docs/tutorials/author"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+  if [ "$status" != "200" ]; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_author_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'Tutorial: Author your own skill' "author-fingerprint"; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_author_renders" "$url" "author-fingerprint" "missing" "$ms"
+    return 1
+  fi
+  report_pass "website-docs-tutorials" "check_website_docs_tutorials_author_renders" "$url" "$ms"
+  return 0
+}
+
+check_website_docs_tutorials_govern_renders() {
+  local url="${SMOKE_WEBSITE_URL}/docs/tutorials/govern"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+  if [ "$status" != "200" ]; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_govern_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'Tutorial: Govern at scale' "govern-fingerprint"; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_govern_renders" "$url" "govern-fingerprint" "missing" "$ms"
+    return 1
+  fi
+  report_pass "website-docs-tutorials" "check_website_docs_tutorials_govern_renders" "$url" "$ms"
+  return 0
+}
+
+check_website_docs_tutorials_retire_renders() {
+  local url="${SMOKE_WEBSITE_URL}/docs/tutorials/retire"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+  if [ "$status" != "200" ]; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_retire_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'Tutorial: Retire skills' "retire-fingerprint"; then
+    report_fail "website-docs-tutorials" "check_website_docs_tutorials_retire_renders" "$url" "retire-fingerprint" "missing" "$ms"
+    return 1
+  fi
+  report_pass "website-docs-tutorials" "check_website_docs_tutorials_retire_renders" "$url" "$ms"
+  return 0
+}
+
+check_website_docs_vscode_extension_renders() {
+  local url="${SMOKE_WEBSITE_URL}/docs/vscode-extension"
+  local t0 t1 ms resp status body
+  t0=$(now_ms)
+  resp=$(with_retry http_body GET "$url") || true
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  status=$(printf '%s' "$resp" | head -n1)
+  body=$(printf '%s' "$resp" | tail -n +2)
+  if [ "$status" != "200" ]; then
+    report_fail "website-docs-tutorials" "check_website_docs_vscode_extension_renders" "$url" "200" "$status" "$ms"
+    return 1
+  fi
+  if ! assert_contains "$body" 'Activity bar and views' "vscode-fingerprint"; then
+    report_fail "website-docs-tutorials" "check_website_docs_vscode_extension_renders" "$url" "vscode-fingerprint" "missing" "$ms"
+    return 1
+  fi
+  report_pass "website-docs-tutorials" "check_website_docs_vscode_extension_renders" "$url" "$ms"
+  return 0
+}
+
+# Verify /docs/authoring permanently redirects to /docs/tutorials/author.
+# Vercel emits 308 (Permanent Redirect) for permanent: true. Treat any
+# 3xx with the expected Location as success.
+check_website_docs_authoring_redirect() {
+  local url="${SMOKE_WEBSITE_URL}/docs/authoring"
+  local t0 t1 ms status
+  t0=$(now_ms)
+  status=$(with_retry http_status GET "$url")
+  t1=$(now_ms)
+  ms=$((t1 - t0))
+  case "$status" in
+    301|302|307|308)
+      report_pass "website-docs-tutorials" "check_website_docs_authoring_redirect" "$url" "$ms"
+      return 0
+      ;;
+  esac
+  report_fail "website-docs-tutorials" "check_website_docs_authoring_redirect" "$url" "3xx-redirect" "$status" "$ms"
+  return 1
+}

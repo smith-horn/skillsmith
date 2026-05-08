@@ -1,0 +1,172 @@
+---
+import DocsLayout from '../../../layouts/DocsLayout.astro'
+---
+
+<DocsLayout
+  title="Tutorial: Retire skills"
+  description="Skillsmith Retire stage — uninstall skills cleanly without leaving orphaned references."
+>
+  <h1>Tutorial: Retire skills</h1>
+
+  <p class="lead">
+    The Retire stage is short. Uninstall is a single command. But running it deliberately — knowing
+    what you remove, what stays, and what to clean up afterward — keeps your <code>~/.claude/</code> tree
+    honest and your audit log readable.
+  </p>
+
+  <p>
+    These tutorials show Skillsmith in Claude Code. For installation in your preferred runtime
+    (Cursor, Continue, Copilot, Windsurf), see
+    <a href="/docs/getting-started">Getting Started</a>.
+  </p>
+
+  <h2>What you will do</h2>
+
+  <ul>
+    <li>Uninstall a skill from the runtime's skills directory</li>
+    <li>Verify the uninstall actually landed</li>
+    <li>Check for orphaned references (companion subagents, namespace overrides)</li>
+  </ul>
+
+  <h2>Tools that map to Retire</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Surface</th>
+        <th>Tool / command</th>
+        <th>Purpose</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>MCP</td>
+        <td><code>uninstall_skill</code></td>
+        <td>Remove a skill from the runtime's skills directory</td>
+      </tr>
+      <tr>
+        <td>CLI</td>
+        <td><code>skillsmith remove &lt;id&gt;</code></td>
+        <td>Same as MCP <code>uninstall_skill</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Step 1 — Uninstall a skill</h2>
+
+  <p><strong>Try these prompts:</strong></p>
+
+  <ul>
+    <li>"Uninstall community/jest-helper"</li>
+    <li>"Remove the git-commit skill"</li>
+    <li>"Uninstall jest-helper from my skills directory"</li>
+  </ul>
+
+  <p>Or from the terminal:</p>
+
+  <pre><code>{`skillsmith remove community/jest-helper`}</code></pre>
+
+  <p>
+    Skillsmith deletes the skill bundle from the runtime's skills directory and writes an <code
+      >uninstall</code
+    > event to the audit log. On Claude Code that means removing
+    <code>~/.claude/skills/&lt;author&gt;/&lt;name&gt;/</code> entirely.
+  </p>
+
+  <h2>Step 2 — Verify the uninstall</h2>
+
+  <p>Run this in your terminal:</p>
+
+  <pre><code>{`ls ~/.claude/skills/community/jest-helper 2>&1
+# Expected: "No such file or directory"`}</code></pre>
+
+  <p>
+    If the directory still exists, the uninstall did not complete. Check the Skillsmith log for the
+    failure reason and re-run.
+  </p>
+
+  <h2>Step 3 — Clean up orphaned references</h2>
+
+  <p>
+    Some skills generate companion artifacts that <code>uninstall_skill</code>
+    does not remove automatically — by design, since you may want to keep them.
+  </p>
+
+  <h3>Companion subagents</h3>
+
+  <p>
+    If you generated a Claude Code subagent for the skill via
+    <code>skillsmith author subagent</code>, the agent definition lives at
+    <code>~/.claude/agents/&lt;name&gt;.md</code>. Remove it manually if you no longer need the
+    subagent:
+  </p>
+
+  <pre><code>{`rm ~/.claude/agents/jest-helper.md`}</code></pre>
+
+  <h3>Namespace overrides</h3>
+
+  <p>
+    If you applied a rename via
+    <a href="/docs/tutorials/maintain#namespace-audit"><code>apply_namespace_rename</code></a>, that
+    decision is persisted in
+    <code>~/.skillsmith/namespace-overrides.json</code>. Future installs of a skill with the renamed
+    name will pick up the override, which usually is what you want — but if you uninstall a skill
+    and want to clear the override too, edit the file directly.
+  </p>
+
+  <h3>Configuration entries</h3>
+
+  <p>
+    If your skill required configuration in
+    <code>~/.skillsmith/config.json</code> (for example, a per-skill API key or feature flag), those entries
+    persist after uninstall. Review the file periodically and prune entries for skills you have removed.
+  </p>
+
+  <h2>Common pitfalls</h2>
+
+  <h3>"Skill not found"</h3>
+
+  <p>
+    Same root cause as Evaluate: skill IDs are case-sensitive and require the <code
+      >author/name</code
+    > form. <code>community/jest-helper</code>
+    resolves; <code>jest-helper</code> alone does not.
+  </p>
+
+  <h3>Uninstall succeeded but the skill still triggers</h3>
+
+  <p>
+    Most runtimes load the skills directory once at startup. Restart the runtime so it forgets the
+    uninstalled skill. If you restart and the skill still loads, check whether you have a duplicate
+    copy — a namespace audit (<a href="/docs/tutorials/maintain#namespace-audit">Maintain Step 3</a
+    >) will surface it.
+  </p>
+
+  <h3>Audit log shows uninstall but I never ran it</h3>
+
+  <p>
+    On Team and Enterprise tiers, anyone with admin access can uninstall a skill on a managed
+    device. Query the audit log (<a href="/docs/tutorials/govern#step-3-query-the-audit-log"
+      >Govern Step 3</a
+    >) to see who initiated the uninstall.
+  </p>
+
+  <h2>Where to next</h2>
+
+  <p>
+    You have completed the lifecycle. Most users loop back through Discover when a new need arises,
+    or through Maintain on a regular cadence to keep the inventory healthy.
+  </p>
+
+  <p>
+    Reference:
+    <a href="/docs/mcp-server#uninstall_skill">MCP <code>uninstall_skill</code></a>
+    · <a href="/docs/cli">CLI <code>remove</code></a>.
+  </p>
+
+  <p>
+    Previous: <a href="/docs/tutorials/govern">Govern</a> — Back to: <a href="/docs/tutorials"
+      >Tutorials overview</a
+    >
+  </p>
+</DocsLayout>
