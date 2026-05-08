@@ -1,179 +1,23 @@
 /**
  * SMI-628: SkillParser - Parse SKILL.md files with YAML frontmatter.
  * Extracts metadata from the standard SKILL.md format.
+ *
+ * SMI-4813: Type surface and `parseYamlFrontmatter` helper extracted into
+ * sibling files (`SkillParser.types.ts`, `SkillParser.helpers.ts`) to keep
+ * this file under the audit:standards 500-line gate.
  */
 
 import type { TrustTier } from '../types/skill.js'
-import type { ConflictDeclaration, DependencyDeclaration } from '../types/dependencies.js'
+import type { DependencyDeclaration } from '../types/dependencies.js'
+import type {
+  SkillFrontmatter,
+  ParsedSkillMetadata,
+  ValidationResult,
+  SkillParserOptions,
+} from './SkillParser.types.js'
+import { parseYamlFrontmatter } from './SkillParser.helpers.js'
 
-/**
- * Raw metadata extracted from SKILL.md frontmatter
- */
-export interface SkillFrontmatter {
-  name: string
-  description?: string
-  author?: string
-  version?: string
-  tags?: string[]
-  /** SMI-3135: Structured dependency declaration (replaces string[]) */
-  dependencies?: DependencyDeclaration
-  category?: string
-  license?: string
-  repository?: string
-  homepage?: string
-  /** SMI-2760: Compatibility tags — IDE, LLM, and platform values */
-  compatibility?: string[]
-  /** SMI-3135: Conflict declarations */
-  conflicts?: ConflictDeclaration[]
-  /** SMI-3135: Deprecation flag */
-  deprecated?: boolean
-  /** SMI-3135: Skill that supersedes this one */
-  superseded_by?: string | null
-  /** @deprecated Use dependencies.skills instead */
-  composes?: string[]
-  [key: string]: unknown
-}
-
-/**
- * Parsed skill metadata ready for database insertion
- */
-export interface ParsedSkillMetadata {
-  name: string
-  description: string | null
-  author: string | null
-  version: string | null
-  tags: string[]
-  /** SMI-3135: Structured dependency declaration (replaces string[]) */
-  dependencies?: DependencyDeclaration
-  category: string | null
-  license: string | null
-  repository: string | null
-  rawContent: string
-  frontmatter: SkillFrontmatter
-}
-
-/**
- * Validation result for skill metadata
- */
-export interface ValidationResult {
-  valid: boolean
-  errors: string[]
-  warnings: string[]
-}
-
-/**
- * Parser options
- */
-export interface SkillParserOptions {
-  /**
-   * Whether to require a name field (default: true)
-   */
-  requireName?: boolean
-
-  /**
-   * Whether to require a description field (default: false)
-   */
-  requireDescription?: boolean
-
-  /**
-   * Custom validation function
-   */
-  customValidator?: (frontmatter: SkillFrontmatter) => ValidationResult
-}
-
-/**
- * Simple YAML frontmatter parser
- * Parses basic YAML key-value pairs without external dependencies
- */
-function parseYamlFrontmatter(yaml: string): Record<string, unknown> {
-  const result: Record<string, unknown> = {}
-  const lines = yaml.split('\n')
-  let currentKey: string | null = null
-  let arrayBuffer: string[] = []
-  let inArray = false
-
-  for (const line of lines) {
-    const trimmed = line.trim()
-
-    // Skip empty lines and comments
-    if (!trimmed || trimmed.startsWith('#')) {
-      continue
-    }
-
-    // Check for array item
-    if (trimmed.startsWith('- ')) {
-      if (currentKey && inArray) {
-        const value = trimmed.slice(2).trim()
-        // Remove quotes if present
-        const unquoted = value.replace(/^["']|["']$/g, '')
-        arrayBuffer.push(unquoted)
-      }
-      continue
-    }
-
-    // Check for key-value pair
-    const colonIndex = trimmed.indexOf(':')
-    if (colonIndex > 0) {
-      // Save previous array if exists
-      if (currentKey && inArray && arrayBuffer.length > 0) {
-        result[currentKey] = arrayBuffer
-        arrayBuffer = []
-      }
-
-      const key = trimmed.slice(0, colonIndex).trim()
-      const value = trimmed.slice(colonIndex + 1).trim()
-
-      if (value === '' || value === '|' || value === '>') {
-        // This might be an array or multiline value
-        currentKey = key
-        inArray = true
-        arrayBuffer = []
-      } else {
-        // Simple key-value
-        currentKey = null
-        inArray = false
-
-        // Parse the value
-        let parsedValue: unknown = value
-
-        // Remove quotes
-        if (
-          (value.startsWith('"') && value.endsWith('"')) ||
-          (value.startsWith("'") && value.endsWith("'"))
-        ) {
-          parsedValue = value.slice(1, -1)
-        }
-        // Parse boolean
-        else if (value === 'true') {
-          parsedValue = true
-        } else if (value === 'false') {
-          parsedValue = false
-        }
-        // Parse number
-        else if (/^-?\d+(\.\d+)?$/.test(value)) {
-          parsedValue = parseFloat(value)
-        }
-        // Parse inline array [item1, item2]
-        else if (value.startsWith('[') && value.endsWith(']')) {
-          parsedValue = value
-            .slice(1, -1)
-            .split(',')
-            .map((item) => item.trim().replace(/^["']|["']$/g, ''))
-            .filter((item) => item.length > 0)
-        }
-
-        result[key] = parsedValue
-      }
-    }
-  }
-
-  // Save final array if exists
-  if (currentKey && inArray && arrayBuffer.length > 0) {
-    result[currentKey] = arrayBuffer
-  }
-
-  return result
-}
+export type { SkillFrontmatter, ParsedSkillMetadata, ValidationResult, SkillParserOptions }
 
 /**
  * SkillParser - Parses SKILL.md files with YAML frontmatter
