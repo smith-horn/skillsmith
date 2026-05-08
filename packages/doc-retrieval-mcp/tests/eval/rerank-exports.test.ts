@@ -3,7 +3,16 @@
  *
  * Purpose: catch any Wave 3c (SMI-4707) rename of DEFAULT_BOOST_MEMORY or
  * DEFAULT_DAMPEN_PROCESS that would silently break eval/ablation-runner.ts.
- * If either export disappears or changes value, this test fails immediately.
+ *
+ * SMI-4764 Wave 4 finding 1: literal value-pins (toBe(1.5), toBe(0.85))
+ * short-circuited the byCategory regression detector + sticky-comment
+ * renderer when ranking knobs change intentionally — every PR tuning a
+ * constant had to update this test in the same commit, defeating the
+ * Wave 1 hybrid-threshold gate. Replaced with sane-range bounds: catches
+ * absurd values (zero, negative, wildly out-of-range) and the rename
+ * case (still covered by typeof + Number.isFinite + the import line),
+ * while letting intentional tuning flow through to the proper byCategory
+ * regression signal.
  */
 
 import { describe, it, expect } from 'vitest'
@@ -14,16 +23,18 @@ describe('rerank.ts — eval-harness-contract exports', () => {
     expect(typeof DEFAULT_BOOST_MEMORY).toBe('number')
   })
 
-  it('DEFAULT_BOOST_MEMORY equals 1.5', () => {
-    expect(DEFAULT_BOOST_MEMORY).toBe(1.5)
+  it('DEFAULT_BOOST_MEMORY is in sane range (0 < x <= 5)', () => {
+    expect(DEFAULT_BOOST_MEMORY).toBeGreaterThan(0)
+    expect(DEFAULT_BOOST_MEMORY).toBeLessThanOrEqual(5)
   })
 
   it('DEFAULT_DAMPEN_PROCESS is a number', () => {
     expect(typeof DEFAULT_DAMPEN_PROCESS).toBe('number')
   })
 
-  it('DEFAULT_DAMPEN_PROCESS equals 0.85', () => {
-    expect(DEFAULT_DAMPEN_PROCESS).toBe(0.85)
+  it('DEFAULT_DAMPEN_PROCESS is in sane range (0 < x <= 1)', () => {
+    expect(DEFAULT_DAMPEN_PROCESS).toBeGreaterThan(0)
+    expect(DEFAULT_DAMPEN_PROCESS).toBeLessThanOrEqual(1)
   })
 
   it('both constants are finite positive numbers', () => {

@@ -1518,6 +1518,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # SMI-4764 Wave 4 finding 2: audit:standards check 45 needs full
+          # history to compute origin/${baseRef}...HEAD diff. Default depth=1
+          # caused the diff to throw, the catch handler returned empty
+          # changedFiles, and check 45 silently no-op'd in every PR --
+          # zero protection as deployed. fetch-depth: 0 unblocks the diff.
+          fetch-depth: 0
 
       # SMI-2159: Decrypt git-crypt encrypted files
       # SMI-4770: composite action implements install-first-then-update for git-crypt.
