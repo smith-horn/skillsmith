@@ -1,10 +1,10 @@
 {
-  "prior": 0.41818181818181815,
-  "current": 0.41818181818181815,
-  "generated": "2026-05-07",
+  "prior": 0,
+  "current": 0.43636363636363634,
+  "generated": "2026-05-08",
   "corpus": {
-    "filesScanned": 1329,
-    "chunksUpserted": 28451
+    "filesScanned": 1343,
+    "chunksUpserted": 28509
   },
   "knobs": {
     "boost": 1.5,
@@ -13,21 +13,28 @@
     "bm25": false
   },
   "metrics": {
-    "recallAt5": 0.41818181818181815,
-    "recallAt10": 0.4909090909090909,
-    "mrr": 0.28244588744588744,
-    "ndcgAt10": 0.33272058903974044
+    "recallAt5": 0.43636363636363634,
+    "recallAt10": 0.4727272727272727,
+    "mrr": 0.28305194805194805,
+    "ndcgAt10": 0.3291818287959214
   },
   "byCategory": {
     "recallAt5": {
-      "memory-recall": 0.2857142857142857,
+      "memory-recall": 0.21428571428571427,
       "implementation-lookup": 0.25,
-      "retro-lookup": 0.5,
+      "retro-lookup": 0.7,
       "script-header": 0.625,
       "adr-lookup": 0.5,
       "skill-discovery": 0.6
     },
-    "recallAt5Prior": null,
+    "recallAt5Prior": {
+      "memory-recall": 0,
+      "implementation-lookup": 0,
+      "retro-lookup": 0,
+      "script-header": 0,
+      "adr-lookup": 0,
+      "skill-discovery": 0
+    },
     "count": {
       "memory-recall": 14,
       "implementation-lookup": 12,
