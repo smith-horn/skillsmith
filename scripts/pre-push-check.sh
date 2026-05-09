@@ -121,11 +121,21 @@ fi
 # =============================================================================
 # CHECK 1: Security Test Suite (Optimized - single run)
 # SMI-1366: Uses run_cmd for Docker/local fallback
+# SMI-4820: From worktree-cwd inside Docker, `npm test` (and the worktree-local
+# `./node_modules/.bin/vitest`) fail at module resolution because virtiofs
+# cannot traverse the relative symlink chain SMI-4381 puts in worktree
+# node_modules. Mirroring the SMI-4772 fix in pre-push-coverage-check.sh:
+# invoke vitest binary directly. In Docker, pin to /app/node_modules (always
+# absolute). On host, ./node_modules works (host resolves symlinks fine).
 # =============================================================================
 echo "📋 Running security test suite..."
 
 # Run tests once, capture both output and exit code
-TEST_OUTPUT=$(run_cmd npm test -- packages/core/tests/security/ 2>&1) || TEST_STATUS=$?
+if [ "$USE_DOCKER" = "1" ]; then
+  TEST_OUTPUT=$(docker exec -w "$CONTAINER_WD" "$DOCKER_CONTAINER" /app/node_modules/.bin/vitest run packages/core/tests/security/ 2>&1) || TEST_STATUS=$?
+else
+  TEST_OUTPUT=$(run_cmd ./node_modules/.bin/vitest run packages/core/tests/security/ 2>&1) || TEST_STATUS=$?
+fi
 TEST_STATUS=${TEST_STATUS:-0}
 
 # Display relevant output (filter for test results)
