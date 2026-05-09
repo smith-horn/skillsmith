@@ -4,6 +4,12 @@ import BaseLayout from '../../layouts/BaseLayout.astro'
 // Overlay markup is never emitted to crawlers so organic skills traffic remains indexable.
 import SignedOutOverlay from '../../components/SignedOutOverlay.astro'
 import { isCrawlerUserAgent } from '../../lib/crawler-detect'
+// SMI-4838: featured-skills catalog seed — pinned author/name set verified against indexer DB.
+import featuredSkillsData from '../../data/featured-skills.json'
+
+const FEATURED_SKILL_IDS: string[] = (featuredSkillsData.skills as Array<{ id: string }>).map(
+  (s) => s.id
+)
 
 const categories = [
   { value: '', label: 'All Categories' },
@@ -127,13 +133,14 @@ const isCrawler = isCrawlerUserAgent(userAgent)
     }
     {!isCrawler && <SignedOutOverlay data-hidden-when-auth="true" />}
 
-    <!-- Header -->
+    <!-- Header (SMI-4838/4839: examples-catalog reframe) -->
     <div class="text-center mb-12">
       <h1 class="text-4xl md:text-5xl font-bold mb-4">
-        Discover <span class="gradient-text">Skills</span>
+        Examples <span class="gradient-text">catalog</span>
       </h1>
       <p class="text-dark-400 text-lg max-w-2xl mx-auto">
-        Search through our collection of verified skills to enhance your development experience.
+        Curated example skills demonstrating the Agent Skills SDK lifecycle &mdash; author, test,
+        ship, govern, and retire. Search the full registry below.
       </p>
     </div>
 
@@ -294,23 +301,22 @@ const isCrawler = isCrawlerUserAgent(userAgent)
       <p class="text-dark-500">Try adjusting your search or filters</p>
     </div>
 
-    <!-- Search Prompt State (shown when no query entered) -->
-    <div id="search-prompt-state" class="hidden text-center py-12">
-      <svg
-        class="w-16 h-16 mx-auto text-primary-500 mb-4"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
+    <!-- Featured Examples State (SMI-4838: shown when no query/filter is active). -->
+    <div id="search-prompt-state" class="hidden">
+      <div class="text-center mb-8">
+        <h2 class="text-2xl font-semibold text-white mb-2">Featured examples</h2>
+        <p class="text-dark-400 max-w-2xl mx-auto">
+          A curated walkthrough of the Agent Skills SDK lifecycle. Search above to browse the full
+          registry.
+        </p>
+      </div>
+      <div
+        id="featured-skills-grid"
+        class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6"
       >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="1.5"
-          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-      </svg>
-      <h2 class="text-xl font-semibold text-dark-300 mb-2">Start Searching</h2>
-      <p class="text-dark-500 mb-4">Enter a search term or select a filter to browse skills</p>
-      <div class="flex flex-wrap justify-center gap-2 max-w-md mx-auto">
+      </div>
+      <div class="flex flex-wrap justify-center gap-2 max-w-md mx-auto mt-6">
+        <span class="text-dark-500 text-sm w-full text-center mb-1">Or jump to a topic:</span>
         <button
           class="search-suggestion px-3 py-1.5 bg-dark-800 border border-dark-700 rounded-lg text-dark-300 hover:text-white hover:border-primary-500 transition-colors text-sm"
           data-query="testing">testing</button
@@ -385,6 +391,7 @@ const isCrawler = isCrawlerUserAgent(userAgent)
     is:inline
     define:vars={{
       apiBase: `${import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'}/functions/v1`,
+      FEATURED_SKILL_IDS,
     }}
   >
     const API_BASE = apiBase
@@ -643,8 +650,9 @@ const isCrawler = isCrawlerUserAgent(userAgent)
         const hasFilter = category || trustTier
 
         if (!hasQuery && !hasFilter) {
+          // SMI-4838: empty query falls back to the featured-examples view, not a blank prompt.
           showState('search-prompt')
-          resultsCount.textContent = 'Enter a search term or select a filter'
+          resultsCount.textContent = 'Showing featured examples'
           allResults = []
           return
         }
@@ -916,10 +924,43 @@ const isCrawler = isCrawlerUserAgent(userAgent)
         })
       })
 
-      // SMI-2081: Initialize auth then show search prompt
-      initAuth().then(() => {
+      // SMI-4838: Featured-examples loader. Fetch each pinned skill in parallel via skills-get,
+      // render into #featured-skills-grid using the same card markup as search results. Failures
+      // are non-fatal — a missing skill is silently skipped.
+      async function loadFeaturedSkills() {
+        const grid = document.getElementById('featured-skills-grid')
+        if (!grid || !Array.isArray(FEATURED_SKILL_IDS) || FEATURED_SKILL_IDS.length === 0) return
+        try {
+          const results = await Promise.all(
+            FEATURED_SKILL_IDS.map(async (id) => {
+              try {
+                const res = await fetch(`${API_BASE}/skills-get/${encodeURIComponent(id)}`, {
+                  headers: {
+                    Authorization: `Bearer ${authToken}`,
+                    'Content-Type': 'application/json',
+                  },
+                })
+                if (!res.ok) return null
+                const body = await res.json()
+                return body?.data ?? null
+              } catch {
+                return null
+              }
+            })
+          )
+          const skills = results.filter((s) => s && s.id)
+          if (skills.length === 0) return
+          grid.innerHTML = skills.map(createSkillCard).join('')
+        } catch (e) {
+          console.debug('[Skills] featured-skills load failed:', e?.message)
+        }
+      }
+
+      // SMI-2081 + SMI-4838: Initialize auth, load featured examples, then show featured state.
+      initAuth().then(async () => {
+        await loadFeaturedSkills()
         showState('search-prompt')
-        resultsCount.textContent = 'Enter a search term or select a filter'
+        resultsCount.textContent = 'Showing featured examples'
       })
     }) // End astro:page-load handler
   </script>

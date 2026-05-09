@@ -271,21 +271,18 @@ const jsonLd = {
             Create, Optimize, <br />and Secure Agent Skills.
           </h1>
 
-          <!-- Subheadline -->
+          <!-- Subheadline (SMI-4839: SDK-for-teams positioning, ≤20 words) -->
           <p
             class="text-lg sm:text-xl text-[#A1A1AA] max-w-[600px] mx-auto mb-10 opacity-0 animate-fade-up"
             style="animation-delay: 0.08s;"
           >
-            <span id="github-total" class="hidden"
-              ><span id="github-total-count">20,000+</span> skills on GitHub &mdash;
-            </span><span id="skill-count">14,000+</span> curated &amp; verified. Searchable from within
-            your project by your agent.<br />
-            From version control to replicable agent skill frameworks, Skillsmith has you covered.
+            The Agent Skills SDK for teams &mdash; author, version, govern, and retire skills across
+            your org.
           </p>
 
           <!-- CTA Buttons -->
           <div
-            class="flex flex-col sm:flex-row gap-4 justify-center mb-6 opacity-0 animate-fade-up"
+            class="flex flex-col sm:flex-row gap-4 justify-center mb-3 opacity-0 animate-fade-up"
             style="animation-delay: 0.12s;"
           >
             <a
@@ -296,12 +293,22 @@ const jsonLd = {
               Get Started Free →
             </a>
             <a
-              href="#mcp-install-block"
+              href="/docs"
               class="px-8 py-4 border border-white/10 rounded-xl font-medium text-white hover:border-white/20 transition-colors text-center focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none"
             >
-              Install MCP Server
+              Read the SDK docs
             </a>
           </div>
+          <!-- SMI-4836: email-login parity — secondary text link beneath the GitHub-default CTA -->
+          <p class="text-sm mb-6 opacity-0 animate-fade-up" style="animation-delay: 0.13s;">
+            <a
+              href="/login"
+              data-cta="email-login"
+              class="text-[#A1A1AA] hover:text-white underline-offset-4 hover:underline transition-colors focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none rounded-sm"
+            >
+              or sign in with email
+            </a>
+          </p>
 
           <!-- Social Proof -->
           <p
@@ -511,12 +518,17 @@ const jsonLd = {
         </div>
       </section>
 
-      <!-- Problem/Solution Section -->
+      <!-- Problem/Solution Section (SMI-4839: lifecycle reframe) -->
       <section class="py-24">
         <div class="max-w-[1000px] mx-auto px-6">
-          <h2 class="text-3xl sm:text-4xl font-bold text-center mb-12">
-            The skill discovery problem
+          <h2 class="text-3xl sm:text-4xl font-bold text-center mb-6">
+            The skill lifecycle problem
           </h2>
+          <p class="text-[#A1A1AA] text-center max-w-[700px] mx-auto mb-12">
+            Skills sprawl across teams: no source-of-truth, no governance, no lifecycle. Skillsmith
+            gives your org a single SDK and registry to author, distribute, govern, and retire
+            skills.
+          </p>
 
           <div class="grid md:grid-cols-2 gap-6">
             <!-- Without Skillsmith -->
@@ -527,19 +539,23 @@ const jsonLd = {
               <ul class="space-y-4">
                 <li class="flex items-start gap-3">
                   <span class="text-[#71717A] mt-0.5">✕</span>
-                  <span class="text-[#A1A1AA]">Manual searches across fragmented sources</span>
+                  <span class="text-[#A1A1AA]"
+                    >Skills scattered across forks, gists, and shared drives</span
+                  >
                 </li>
                 <li class="flex items-start gap-3">
                   <span class="text-[#71717A] mt-0.5">✕</span>
-                  <span class="text-[#A1A1AA]">No quality signals or verification</span>
+                  <span class="text-[#A1A1AA]">No source-of-truth for which version teams run</span>
                 </li>
                 <li class="flex items-start gap-3">
                   <span class="text-[#71717A] mt-0.5">✕</span>
-                  <span class="text-[#A1A1AA]">Trial and error installations</span>
+                  <span class="text-[#A1A1AA]">No governance, audit trail, or retirement path</span>
                 </li>
                 <li class="flex items-start gap-3">
                   <span class="text-[#71717A] mt-0.5">✕</span>
-                  <span class="text-[#A1A1AA]">Missing skills that would save time</span>
+                  <span class="text-[#A1A1AA]"
+                    >Authoring is ad-hoc &mdash; every team reinvents the basics</span
+                  >
                 </li>
               </ul>
             </div>
@@ -553,20 +569,27 @@ const jsonLd = {
                 <li class="flex items-start gap-3">
                   <span class="text-[#81B29A] mt-0.5">✓</span>
                   <span class="text-[#FAFAFA]"
-                    >Semantic search across <span id="skill-count-feature">14,000+</span> curated skills</span
+                    >One SDK and registry for your org &mdash; author, version, govern, retire</span
                   >
                 </li>
                 <li class="flex items-start gap-3">
                   <span class="text-[#81B29A] mt-0.5">✓</span>
-                  <span class="text-[#FAFAFA]">Quality scores you can trust</span>
+                  <span class="text-[#FAFAFA]"
+                    >Quality scores, signed publishes, audit logs you can trust</span
+                  >
                 </li>
                 <li class="flex items-start gap-3">
                   <span class="text-[#81B29A] mt-0.5">✓</span>
-                  <span class="text-[#FAFAFA]">Stack-aware recommendations</span>
+                  <span class="text-[#FAFAFA]"
+                    >MCP, CLI, and VS Code surfaces over the same registry</span
+                  >
                 </li>
                 <li class="flex items-start gap-3">
                   <span class="text-[#81B29A] mt-0.5">✓</span>
-                  <span class="text-[#FAFAFA]">Discover skills before you need them</span>
+                  <span class="text-[#FAFAFA]"
+                    >Stack-aware recommendations from <span id="skill-count-feature">14,000+</span>
+                    curated examples</span
+                  >
                 </li>
               </ul>
             </div>
@@ -716,6 +739,16 @@ const jsonLd = {
               View Pricing
             </a>
           </div>
+          <!-- SMI-4836: email-login parity — secondary text link beneath the GitHub-default CTA -->
+          <p class="text-sm mt-3">
+            <a
+              href="/login"
+              data-cta="email-login-final"
+              class="text-[#A1A1AA] hover:text-white underline-offset-4 hover:underline transition-colors focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#0D0D0F] focus-visible:outline-none rounded-sm"
+            >
+              or sign in with email
+            </a>
+          </p>
         </div>
       </section>
     </main>
