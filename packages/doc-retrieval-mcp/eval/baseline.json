@@ -1,10 +1,10 @@
 {
   "prior": 0.41818181818181815,
-  "current": 0.41818181818181815,
+  "current": 0.43636363636363634,
   "generated": "2026-05-09",
   "corpus": {
-    "filesScanned": 1329,
-    "chunksUpserted": 28451
+    "filesScanned": 1353,
+    "chunksUpserted": 28529
   },
   "knobs": {
     "boost": 1.5,
@@ -13,10 +13,10 @@
     "bm25": false
   },
   "metrics": {
-    "recallAt5": 0.41818181818181815,
+    "recallAt5": 0.43636363636363634,
     "recallAt10": 0.4909090909090909,
-    "mrr": 0.28244588744588744,
-    "ndcgAt10": 0.33272058903974044
+    "mrr": 0.2722727272727273,
+    "ndcgAt10": 0.325399556762287
   },
   "byCategory": {
     "recallAt5": {
@@ -24,10 +24,17 @@
       "implementation-lookup": 0.25,
       "retro-lookup": 0.5,
       "script-header": 0.625,
+      "adr-lookup": 0.6666666666666666,
+      "skill-discovery": 0.6
+    },
+    "recallAt5Prior": {
+      "memory-recall": 0.2857142857142857,
+      "implementation-lookup": 0.25,
+      "retro-lookup": 0.5,
+      "script-header": 0.625,
       "adr-lookup": 0.5,
       "skill-discovery": 0.6
     },
-    "recallAt5Prior": null,
     "count": {
       "memory-recall": 14,
       "implementation-lookup": 12,
