@@ -1,0 +1,56 @@
+{
+  "_comment": "SMI-4838: Curated set of example skills demonstrating the Agent Skills SDK lifecycle (author -> test -> ship -> govern -> retire). All entries verified against the production indexer DB on 2026-05-09. Use 'author/name' format — `/skills/[id]` resolves either UUID or author/name.",
+  "_lifecycle_stages": ["author", "test", "ship", "govern", "secure", "review"],
+  "skills": [
+    {
+      "id": "anthropics/mcp-builder",
+      "stage": "author",
+      "rationale": "Anthropic's first-party guide to building MCP servers — the foundation any team needs when authoring agent integrations."
+    },
+    {
+      "id": "addyosmani/test-driven-development",
+      "stage": "test",
+      "rationale": "Verified TDD skill — keeps agent-authored code under test before it ships."
+    },
+    {
+      "id": "anthropics/webapp-testing",
+      "stage": "test",
+      "rationale": "Anthropic-authored web app testing skill — repeatable test scaffolding for shipped skills."
+    },
+    {
+      "id": "google-gemini/ci",
+      "stage": "ship",
+      "rationale": "Google Gemini CI skill — shows how a skill drives continuous integration for agent workflows."
+    },
+    {
+      "id": "addyosmani/ci-cd-and-automation",
+      "stage": "ship",
+      "rationale": "End-to-end CI/CD automation with verified provenance."
+    },
+    {
+      "id": "addyosmani/shipping-and-launch",
+      "stage": "ship",
+      "rationale": "Launch-readiness checks teams run before promoting a skill to prod."
+    },
+    {
+      "id": "google-gemini/code-reviewer",
+      "stage": "review",
+      "rationale": "Verified code-review skill — adds a governance gate to agent-driven changes."
+    },
+    {
+      "id": "addyosmani/security-and-hardening",
+      "stage": "secure",
+      "rationale": "Security and hardening guide for agent-managed code paths."
+    },
+    {
+      "id": "google-gemini/behavioral-evals",
+      "stage": "govern",
+      "rationale": "Behavioral evals for agent skills — the empirical layer of skill governance."
+    },
+    {
+      "id": "addyosmani/context-engineering",
+      "stage": "author",
+      "rationale": "Context-engineering skill — elevates authoring quality for teams writing their own skills."
+    }
+  ]
+}

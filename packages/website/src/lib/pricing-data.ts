@@ -79,7 +79,8 @@ export const pricingTiers: PricingTier[] = [
     id: 'community',
     name: 'Community',
     monthlyPrice: 0,
-    description: 'Perfect for exploring Skillsmith and personal projects.',
+    // SMI-4839: free dev surface of the Agent Skills SDK
+    description: 'The free dev surface for the Agent Skills SDK and registry.',
     apiCalls: 1000,
     apiCallsFormatted: '1,000 API calls/month',
     features: [
@@ -97,7 +98,8 @@ export const pricingTiers: PricingTier[] = [
     name: 'Individual',
     monthlyPrice: 9.99,
     period: '/month',
-    description: 'For developers who want deeper insights into their skill usage.',
+    // SMI-4839: solo builders working across multiple agents/projects
+    description: 'For solo builders authoring and using skills across multiple projects.',
     apiCalls: 10000,
     apiCallsFormatted: '10,000 API calls/month',
     features: [
@@ -115,7 +117,8 @@ export const pricingTiers: PricingTier[] = [
     name: 'Team',
     monthlyPrice: 25,
     period: '/user/month',
-    description: 'Collaborate on skills with your entire team.',
+    // SMI-4839: SDK-for-teams positioning — author, version, govern, retire
+    description: 'The Agent Skills SDK for teams — author, version, govern, and retire together.',
     apiCalls: 100000,
     apiCallsFormatted: '100,000 API calls/month',
     features: [
@@ -132,7 +135,8 @@ export const pricingTiers: PricingTier[] = [
     name: 'Enterprise',
     monthlyPrice: 55,
     period: '/user/month',
-    description: 'Advanced security, compliance, and dedicated support for organizations.',
+    // SMI-4839: SDK-for-teams at org scale — governance, compliance, dedicated support
+    description: 'The SDK at org scale — governance, compliance, and dedicated support.',
     apiCalls: 'unlimited',
     apiCallsFormatted: 'Unlimited API calls',
     features: [

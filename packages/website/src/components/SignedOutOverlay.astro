@@ -3,10 +3,16 @@
  * SignedOutOverlay
  *
  * SMI-4401 Wave 2 — Soft sign-in overlay for anonymous humans on /skills (spec §5.5).
+ * SMI-4837 — race fix: render hidden by default, reveal only when getSession() resolves
+ * to null AND no auth event arrives within a 250ms grace window.
  *
  * Rendering policy:
  * - SSR frontmatter in the caller MUST gate this component with
  *   `{!isCrawler && <SignedOutOverlay />}` (L7). Crawlers never receive the markup.
+ * - SMI-4837: overlay is rendered with the `hidden` attribute by default. Client script
+ *   reveals it only after confirming no live Supabase session exists. This eliminates the
+ *   cold-load race where the inline IIFE would run before the Supabase client (initialized
+ *   under astro:page-load in BaseLayout) had written the auth token to localStorage.
  * - Client-side, the overlay removes itself from DOM when a Supabase session is
  *   detected (not just hidden — DOM removal unblocks tab-nav a11y).
  * - A dismiss CTA writes `localStorage['skills_overlay_dismissed_until']` with a
@@ -34,6 +40,7 @@ import LoginButton from './auth/LoginButton.astro'
   aria-modal="false"
   aria-label="Sign in to continue"
   data-hidden-when-auth="true"
+  hidden
 >
   <div class="overlay-card">
     <h2 class="overlay-heading">Sign in to browse the full catalog</h2>
@@ -54,62 +61,124 @@ import LoginButton from './auth/LoginButton.astro'
   </div>
 </div>
 
-<script is:inline>
-  ;(function () {
-    var DISMISS_KEY = 'skills_overlay_dismissed_until'
-    var overlay = document.getElementById('signed-out-overlay')
+<script>
+  // SMI-4837: deferred module script — runs after the BaseLayout astro:page-load handler
+  // has had a chance to initialize window.__SUPABASE_CLIENT__. Subscribes to auth state
+  // and queries getSession() to decide whether to reveal the overlay. Preserves the 7-day
+  // dismiss tracking and DOM-removal-on-session behavior of the prior inline IIFE.
+  import { getSupabaseClient } from '../lib/supabase-client'
+
+  const DISMISS_KEY = 'skills_overlay_dismissed_until'
+  // Grace window: if onAuthStateChange fires within this many ms with a session, suppress
+  // the overlay even when getSession() initially resolved null. Covers cold-load timing
+  // where the singleton hydrates after the script runs.
+  const AUTH_GRACE_MS = 250
+
+  function setupOverlay() {
+    const overlay = document.getElementById('signed-out-overlay')
     if (!overlay) return
 
-    // Session-aware: if a @supabase/supabase-js v2 session exists and is not expired,
-    // remove the overlay immediately. Reads the sb-<project-ref>-auth-token localStorage
-    // key directly to avoid a full client init. Matches the JSDoc contract at :10-11.
-    try {
-      var keys = Object.keys(localStorage)
-      for (var i = 0; i < keys.length; i++) {
-        var k = keys[i]
-        if (k.indexOf('sb-') !== 0 || !/-auth-token$/.test(k)) continue
-        var raw = localStorage.getItem(k)
-        if (!raw) continue
-        var parsed = JSON.parse(raw)
-        var expiresAt = parsed && parsed.expires_at
-        if (typeof expiresAt === 'number' && expiresAt * 1000 > Date.now()) {
-          overlay.remove()
-          return
+    // Wire dismiss handler immediately — works regardless of auth state path below.
+    const dismissBtn = document.getElementById('overlay-dismiss')
+    if (dismissBtn) {
+      dismissBtn.addEventListener('click', () => {
+        try {
+          const sevenDays = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+          localStorage.setItem(DISMISS_KEY, sevenDays)
+        } catch {
+          /* no-op: dismiss still works for this session */
         }
-      }
-    } catch (_e) {
-      /* localStorage / JSON.parse failed — fall through to dismissal check */
+        overlay.remove()
+      })
     }
 
-    // On load: if a non-expired dismissal exists, remove the overlay; otherwise sweep a stale key.
+    // 7-day dismissal: if a live dismissal exists, remove overlay immediately and skip
+    // the auth check entirely. Sweep stale values on the way through.
     try {
-      var storedUntil = localStorage.getItem(DISMISS_KEY)
+      const storedUntil = localStorage.getItem(DISMISS_KEY)
       if (storedUntil) {
-        var untilMs = Date.parse(storedUntil)
+        const untilMs = Date.parse(storedUntil)
         if (!isNaN(untilMs) && untilMs > Date.now()) {
           overlay.remove()
           return
         }
         localStorage.removeItem(DISMISS_KEY)
       }
-    } catch (_e) {
-      /* localStorage unavailable (private mode, policy) — fall through to visible render */
+    } catch {
+      /* localStorage unavailable — fall through to auth check */
     }
 
-    // Dismiss handler: write 7-day expiry then remove overlay from DOM.
-    var dismissBtn = document.getElementById('overlay-dismiss')
-    if (dismissBtn) {
-      dismissBtn.addEventListener('click', function () {
-        try {
-          var sevenDays = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-          localStorage.setItem(DISMISS_KEY, sevenDays)
-        } catch (_e) {
-          /* no-op: dismiss still works for this session */
-        }
-        overlay.remove()
-      })
+    // Subscribe BEFORE calling getSession so a token-write between subscribe-and-resolve
+    // is captured. authResolved guards against double-handling.
+    let authResolved = false
+    let supabase: ReturnType<typeof getSupabaseClient> | null = null
+    try {
+      supabase = getSupabaseClient()
+    } catch {
+      /* Config missing — fall back to anon path (overlay reveals after grace) */
     }
-  })()
+
+    const handleSignedIn = () => {
+      if (authResolved) return
+      authResolved = true
+      overlay.remove()
+    }
+
+    const handleSignedOut = () => {
+      if (authResolved) return
+      authResolved = true
+      overlay.removeAttribute('hidden')
+    }
+
+    let unsubscribe: (() => void) | null = null
+    if (supabase) {
+      const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (authResolved) return
+        if (session) {
+          handleSignedIn()
+          if (unsubscribe) unsubscribe()
+        }
+      })
+      unsubscribe = () => {
+        try {
+          data.subscription.unsubscribe()
+        } catch {
+          /* no-op */
+        }
+      }
+
+      // Resolve initial state. If a session exists, hide; if not, wait AUTH_GRACE_MS
+      // for onAuthStateChange to fire (covers cold-load token-write race) before revealing.
+      supabase.auth
+        .getSession()
+        .then(({ data: sessionData }) => {
+          if (authResolved) return
+          if (sessionData?.session) {
+            handleSignedIn()
+            if (unsubscribe) unsubscribe()
+            return
+          }
+          // No session yet — give the singleton a grace window to fire onAuthStateChange.
+          window.setTimeout(() => {
+            if (authResolved) return
+            handleSignedOut()
+          }, AUTH_GRACE_MS)
+        })
+        .catch(() => {
+          if (!authResolved) handleSignedOut()
+        })
+    } else {
+      // No Supabase client available — reveal after grace so signed-in users on a
+      // misconfigured page aren't unfairly prompted instantly, and the page still
+      // surfaces the CTA for anon visitors.
+      window.setTimeout(() => {
+        if (!authResolved) handleSignedOut()
+      }, AUTH_GRACE_MS)
+    }
+  }
+
+  // Astro ClientRouter: setup on every page load (initial + transition).
+  document.addEventListener('astro:page-load', setupOverlay)
 </script>
 
 <style>
