@@ -806,14 +806,12 @@ const jsonLd = {
       }
 
       /* Reserve space for dynamic content to prevent CLS */
-      #skill-count,
       #skill-count-feature,
       #skill-count-install {
         display: inline-block;
         min-width: 6ch;
       }
 
-      #github-total-count,
       #github-total-count-install {
         display: inline-block;
         min-width: 8ch;
@@ -1008,12 +1006,10 @@ const jsonLd = {
         }
 
         function updateCount(count) {
-          const el = document.getElementById('skill-count')
           const elFeature = document.getElementById('skill-count-feature')
           const elInstall = document.getElementById('skill-count-install')
           if (count > 0) {
             var formattedCount = formatNumber(count) + '+'
-            if (el) el.textContent = formattedCount
             if (elFeature) elFeature.textContent = formattedCount
             if (elInstall) elInstall.textContent = formattedCount
           }
@@ -1022,14 +1018,10 @@ const jsonLd = {
         function updateGithubTotal(total, skillCount) {
           if (total > 0 && total > skillCount) {
             var formatted = formatNumber(total) + '+'
-            ;['github-total-count', 'github-total-count-install'].forEach(function (id) {
-              var el = document.getElementById(id)
-              if (el) el.textContent = formatted
-            })
-            ;['github-total', 'github-total-install'].forEach(function (id) {
-              var el = document.getElementById(id)
-              if (el) el.classList.remove('hidden')
-            })
+            var elInstallCount = document.getElementById('github-total-count-install')
+            if (elInstallCount) elInstallCount.textContent = formatted
+            var elInstall = document.getElementById('github-total-install')
+            if (elInstall) elInstall.classList.remove('hidden')
           }
         }
 
