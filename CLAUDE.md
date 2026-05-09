@@ -7,19 +7,23 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 | Document | Description |
 |----------|-------------|
 | [docker-guide.md](.claude/development/docker-guide.md) | Container rebuild scenarios, DNS failure, native modules, troubleshooting |
-| [git-crypt-guide.md](.claude/development/git-crypt-guide.md) | Unlock, worktree setup, rebase workaround, smudge filter fixes |
-| [ci-reference.md](.claude/development/ci-reference.md) | Branch protection, change classification, Turborepo, CI scripts |
-| [deployment-guide.md](.claude/development/deployment-guide.md) | Edge function deploy commands, CORS, website, monitoring & alerts |
+| [git-crypt-guide.md](.claude/development/git-crypt-guide.md) | Unlock, worktree setup, hooks-in-worktrees, Docker bind-mounts (SMI-4689/4738), pre-push (SMI-4767), rebase workaround, smudge filter fixes |
+| [ci-reference.md](.claude/development/ci-reference.md) | Branch protection, change classification, Turborepo, npm overrides, release-PR carve-out, vitest split rationale |
+| [deployment-guide.md](.claude/development/deployment-guide.md) | Edge function deploy, CORS, website, full monitoring & alerts table |
+| [branch-management.md](.claude/development/branch-management.md) | Pre-commit auto-restore prose, post-commit fallback recovery, direct-to-main SQL rule (SMI-2598) |
+| [edge-function-patterns.md](.claude/development/edge-function-patterns.md) | Function-auth matrix, project refs, auto-deploy mechanics |
+| [mcp-tools-guide.md](.claude/development/mcp-tools-guide.md) | Team-tool resolution chain (SMI-4312/ADR-116), CLI surface (SMI-4590) |
+| [publishing-guide.md](.claude/development/publishing-guide.md) | Local-fallback deprecation (SMI-4533), publish-order rationale, version-pin rules |
 | [claude-flow-guide.md](.claude/development/claude-flow-guide.md) | Ruflo (formerly claude-flow) — agent types, swarm examples, hive mind, SPARC modes |
 | [cloudinary-guide.md](.claude/development/cloudinary-guide.md) | Blog image upload workflow, URL transforms, folder conventions |
 | [vscode-publishing-guide.md](.claude/development/vscode-publishing-guide.md) | VS Code Marketplace publishing, local/CI workflow, PAT rotation |
 | [subagent-tool-permissions-guide.md](.claude/development/subagent-tool-permissions-guide.md) | Subagent tool access by type, foreground/background behavior, skill author checklist |
-| [supabase-migration-safety.md](.claude/development/supabase-migration-safety.md) | Pre/post-apply query catalog, ACCESS EXCLUSIVE lock discipline, rollback convention, pooler rules. Invoke via `supabase-migration-reviewer` skill for automated review. |
-| [ruvector-dev-tooling.md](.claude/development/ruvector-dev-tooling.md) | `skillsmith-doc-retrieval` MCP — local semantic doc search (SMI-4417). Setup, tool surface, privacy boundary, post-commit hook, token-delta gate. |
-| [smoke-prod-guide.md](.claude/development/smoke-prod-guide.md) | Post-deploy smoke harness (SMI-4459). Surface manifest, adding new surfaces, failure triage, phase rollout. |
-| [vercel-deploy-hook.md](.claude/development/vercel-deploy-hook.md) | One-time Vercel→GitHub `repository_dispatch` setup that triggers `smoke-prod.yml` after a website deploy. |
-| [e2e-staging-runbook.md](.claude/development/e2e-staging-runbook.md) | `device-login-roundtrip.yml` (SMI-4460) — secret rotation, Docker-policy carve-out, prod-ref grep gate. |
-| [eval-cron-setup.md](.claude/development/eval-cron-setup.md) | Canonical-dev retrieval-eval cron (SMI-4764 Wave 2) — launchd/systemd templates, heartbeat lifecycle, replacement protocol. |
+| [supabase-migration-safety.md](.claude/development/supabase-migration-safety.md) | Pre/post-apply query catalog, ACCESS EXCLUSIVE locks, rollback, pooler. Invoke via `supabase-migration-reviewer` skill |
+| [ruvector-dev-tooling.md](.claude/development/ruvector-dev-tooling.md) | `skillsmith-doc-retrieval` MCP (SMI-4417) — local semantic doc search, post-commit hook, token-delta gate |
+| [smoke-prod-guide.md](.claude/development/smoke-prod-guide.md) | Post-deploy smoke harness (SMI-4459) — surface manifest, failure triage, phase rollout |
+| [vercel-deploy-hook.md](.claude/development/vercel-deploy-hook.md) | Vercel→GitHub `repository_dispatch` triggering `smoke-prod.yml` post-deploy |
+| [e2e-staging-runbook.md](.claude/development/e2e-staging-runbook.md) | `device-login-roundtrip.yml` (SMI-4460) — secret rotation, Docker carve-out, prod-ref grep gate |
+| [eval-cron-setup.md](.claude/development/eval-cron-setup.md) | Canonical-dev retrieval-eval cron (SMI-4764 W2) — launchd/systemd, heartbeat, replacement protocol |
 
 **Implementation plan template**: [.claude/templates/implementation-plan.md](.claude/templates/implementation-plan.md) — use this structure for all plans in `docs/internal/implementation/`.
 
@@ -29,7 +33,7 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 
 **All code execution MUST happen in Docker** for any path that loads native modules (`better-sqlite3`, `onnxruntime-node`, etc.). Native modules require glibc — see [ADR-002](docs/internal/adr/002-docker-glibc-requirement.md), whose scope is narrowly the choice of `node:22-slim` over Alpine, *not* a project-wide mandate that every CI job run in Docker.
 
-**CI carve-out (SMI-4647)**: four pure-JS jobs run on the host runner via `actions/setup-node@v6` + `npm ci --ignore-scripts` + direct execution: `lint`, `typecheck` (Type Check), `compliance` (Standards Compliance), and `code-review` (Code Review). They are exempt because their import closures contain zero native bindings (verified: ESLint, Prettier, `tsc`, `audit-standards.mjs`, `ci-code-review.sh`). The carve-out lets these jobs start at T+0 instead of waiting ~5 min on `Build Docker Image`. All other jobs (`test`, `test-root`, `security`, `build`, `website-build`, `fresh-install-test`) remain Docker-bound. New jobs default to Docker; opting into the carve-out requires a `# audit:carveout-pure-js` marker comment, which `audit:standards` Check 38 enforces. Plan: [smi-4647-pure-js-carveout-and-drift-check.md](docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md).
+**CI carve-out (SMI-4647)**: four pure-JS jobs run on the host runner — `lint`, `typecheck`, `compliance`, `code-review`. New jobs default to Docker; opt-in requires `# audit:carveout-pure-js` marker. Full rationale: [ci-reference.md § Docker-First CI Carve-out](.claude/development/ci-reference.md#docker-first-ci-carve-out-smi-4647).
 
 ```bash
 docker compose --profile dev up -d                    # Start container (REQUIRED first)
@@ -41,63 +45,25 @@ docker exec skillsmith-dev-1 npm run audit:standards   # Standards audit
 docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 ```
 
-**After pulling changes**: The `post-merge` hook auto-runs `npm install` in Docker when `package-lock.json` changes. If the container is not running, start it and run `docker exec skillsmith-dev-1 npm install && docker exec skillsmith-dev-1 npm run build`.
-
-**Full rebuild** (native module issues, major upgrades): See [docker-guide.md](.claude/development/docker-guide.md#full-rebuild-thorough).
-
-**Container management**: `docker compose --profile dev down` (stop), `docker logs skillsmith-dev-1` (logs).
-
-**Submodule**: Run `git submodule update --init` before `docker compose up` if internal docs are needed inside the container. Internal docs are not available inside Docker by default.
+**After pulling**: post-merge hook auto-runs `npm install` in Docker on `package-lock.json` change; if container is down, start it and run `docker exec skillsmith-dev-1 npm install && npm run build`. **Full rebuild** (native modules, major upgrades): [docker-guide.md](.claude/development/docker-guide.md#full-rebuild-thorough). **Stop**: `docker compose --profile dev down`. **Logs**: `docker logs skillsmith-dev-1`. **Submodule**: `git submodule update --init` before `docker compose up` if internal docs needed inside container.
 
 ---
 
 ## CI Health Requirements
 
-| Category | Requirement |
-|----------|-------------|
-| ESLint | Zero warnings, zero errors |
-| TypeScript | Strict mode, no unjustified `any` |
-| Prettier | All files formatted |
-| Tests | 100% pass rate |
-| Security | No high-severity vulnerabilities |
-| File size | < 500 lines per file |
-| Test coverage | > 80% |
-| Test co-update | Source file changes must include related test updates |
+Zero ESLint warnings/errors. TypeScript strict (no unjustified `any`). All files Prettier-formatted. 100% test pass. No high-severity vulns. **<500 lines/file** (`audit:standards` enforces; split into `foo.helpers.ts`/`foo.types.ts` if approaching). >80% coverage. Source-file changes must include related test updates.
 
-**New source files must be under 500 lines.** Split into companion files (e.g., `foo.helpers.ts`, `foo.types.ts`) if approaching the limit. The `audit:standards` script enforces this.
+**When CI fails**: don't merge. Run `docker exec skillsmith-dev-1 npm run preflight` locally. Linear issue if non-trivial.
 
-**When CI fails**: Don't merge. Check logs. Run `docker exec skillsmith-dev-1 npm run preflight` locally. Create Linear issue if non-trivial.
+**Post-deploy smoke (SMI-4459)**: `smoke-prod.yml` runs `scripts/smoke-prod.sh` against prod after each merge. Failure → Linear + email. Skip: `[skip-smoke]` in PR body. [smoke-prod-guide.md](.claude/development/smoke-prod-guide.md).
 
-**Post-deploy smoke (SMI-4459)**: `.github/workflows/smoke-prod.yml` runs `scripts/smoke-prod.sh` against real prod after every merge. Each surface in `scripts/smoke-prod/surfaces.json` whose `trigger_globs` match changed files is exercised end-to-end. Failure → Linear issue + email. Skip via `[skip-smoke]` in PR body. Full guide: [smoke-prod-guide.md](.claude/development/smoke-prod-guide.md).
-
-**npm overrides** (transitive vulnerability fixes in root `package.json`):
-
-- **Before adding an override**, check if the target is exact-pinned: `docker exec skillsmith-dev-1 node -e "console.log(require('<pkg>/package.json').dependencies['<dep>'])"`. If no `^`/`~` prefix, a flat override alone **will not work** — npm cannot replace exact-pinned versions. However, `npm update <pkg>` may resolve it via dedup if another chain pulls in the patched version. Verify with `npm ls <dep>` after update. If the exact-pinned copy persists, dismiss the alert with documented rationale.
-- `ajv`: scoped overrides only (`"parent": { "ajv": "^8.18.0" }`). A global override breaks ESLint (`ajv@6.x` → `8.x` API incompatible).
-- `typescript-eslint` is a meta-package — always update `typescript-eslint`, `@typescript-eslint/parser`, and `@typescript-eslint/eslint-plugin` together (they share internal version locks). Dependabot groups them automatically (see `.github/dependabot.yml`).
-
-**Change tiers**: `docs` (~30s), `config` (validation), `code` (~11 min full), `deps` (rebuild + audit). Mixed commits trigger full CI. Details: [ci-reference.md](.claude/development/ci-reference.md).
-
-**Build**: Uses Turborepo (`npm run build`). Legacy fallback: `npm run build:legacy`. See [ADR-106](docs/internal/adr/106-turborepo-build-orchestration.md).
-
-**Branch protection**: 13 required checks for code PRs, 2 for docs-only. Admin bypass for emergencies. Details: [ci-reference.md](.claude/development/ci-reference.md#branch-protection).
-
-**Release-PR `Package Validation` carve-out (SMI-4530, SMI-4778)**: `Package Validation` (script: `scripts/verify-publish-deps.mjs --ci`) fails by design on `chore/release-*` branches. The check verifies that every `@skillsmith/<pkg>` dep range is satisfied by an already-published npm version — but a release PR's whole purpose is to bump to a version that hasn't been published yet, so it cannot pass. **Admin-merge with `gh pr merge --admin` is the correct path** when this is the *only* failing check on a release PR and all other required checks are green. Before bypassing, search for an in-flight infra fix (`gh pr list --search "verify-publish-deps OR Package Validation"`); if one is open, rebase onto it instead. Do not admin-bypass other failing checks — that's how the SMI-4647 / SMI-4767 incidents started.
+**Build**: Turborepo (`npm run build`); legacy fallback `npm run build:legacy` ([ADR-106](docs/internal/adr/106-turborepo-build-orchestration.md)). **Change tiers**: `docs` ~30s, `config` validation, `code` ~11 min full, `deps` rebuild+audit. **Branch protection**: 13 checks (code) / 2 checks (docs-only). **npm overrides, release-PR carve-out, vitest split rationale**: [ci-reference.md](.claude/development/ci-reference.md).
 
 ---
 
 ## Project Overview
 
-Skillsmith is an MCP server for Claude Code skill discovery, installation, and management.
-
-```text
-packages/
-├── core/        # @skillsmith/core - Database, repositories, services
-├── mcp-server/  # @skillsmith/mcp-server - MCP tools (search, install, etc.)
-└── cli/         # @skillsmith/cli - Command-line interface
-```
-
-**License**: [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license) — See [ADR-013](docs/internal/adr/013-open-core-licensing.md)
+Skillsmith is an MCP server for Claude Code skill discovery, installation, and management. Packages: `@skillsmith/core` (DB, repositories, services), `@skillsmith/mcp-server` (MCP tools), `@skillsmith/cli`. License: [Elastic 2.0](https://www.elastic.co/licensing/elastic-license) ([ADR-013](docs/internal/adr/013-open-core-licensing.md)). Quick Start: [README](README.md).
 
 | Tier | Price | API Calls/Month |
 |------|-------|-----------------|
@@ -105,12 +71,6 @@ packages/
 | Individual | $9.99/mo | 10,000 |
 | Team | $25/user/mo | 100,000 |
 | Enterprise | $55/user/mo | Unlimited |
-
-**Quick Start** — Add to `~/.claude/settings.json`:
-
-```json
-{ "mcpServers": { "skillsmith": { "command": "npx", "args": ["-y", "@skillsmith/mcp-server"] } } }
-```
 
 ---
 
@@ -126,94 +86,31 @@ git submodule update --init                           # Init internal docs (auth
 
 **Not encrypted** (always readable): `.claude/settings.json`, `supabase/config.toml`, `.claude/development/`, `.claude/templates/`.
 
-**Worktrees**: Unlock main repo first, then `./scripts/create-worktree.sh`. Remove with `./scripts/remove-worktree.sh --prune`. By default removal also deletes the per-worktree Docker image (`<dir>-dev`) and `_node_modules` volume — pass `--keep-docker` to preserve them.
+**Worktrees**: Unlock main repo first, then `./scripts/create-worktree.sh`. Remove with `./scripts/remove-worktree.sh --prune`. Hooks-in-worktrees, Docker bind-mounts (SMI-4689/4738), pre-push (SMI-4767), host native bindings (SMI-4549), and SMI-4698 native-rebuild caveat: see [git-crypt-guide.md § Worktree Setup](.claude/development/git-crypt-guide.md#worktree-setup).
 
-**Hooks in worktrees**: Pre-commit hooks work in worktrees via tracked `.husky/_/` dispatch stubs + per-package `node_modules` symlinks. One-time host setup after fresh clone: `npm install --ignore-scripts && ./scripts/repair-host-native-deps.sh`. The repair script is idempotent. Caveat: don't run `npm install` in the main repo while a pre-commit is active in a worktree.
-
-**Docker-side build in worktrees (SMI-4689)**: On macOS Docker Desktop, `create-worktree.sh` and `repair-worktrees.sh` emit per-package `node_modules` bind mounts into the worktree's `docker-compose.override.yml`. This masks the dangling SMI-4381 relative symlinks inside the container so `docker exec ... npm run build` resolves workspace-pinned deps correctly. Pre-commit/pre-push still use the host-fallback path (`scripts/lib/hook-docker-detect.sh`) because the symlinks themselves stay in place — they're needed for host resolution. Linux Docker hosts skip the bind-mount block (overlayfs handles the symlinks correctly). If a worktree container fails an entrypoint build with `Could not resolve <dep>` or `Cannot find module <pkg>`, run `./scripts/repair-worktrees.sh` from the main repo and restart the container.
-
-**SMI-4738**: `npm install` in the main repo auto-regenerates worktree `docker-compose.override.yml` files via postinstall (macOS only, via `scripts/regen-worktree-overrides.sh`). Adding a new `packages/<pkg>/` no longer requires a manual `./scripts/repair-worktrees.sh` for existing worktrees to pick up the new bind mounts — just bounce the worktree container. Idempotency is content-compare (`cmp -s`), not marker-based, so drift caused by adding/removing/renaming a package is detected even when the prior override already had the SMI-4689 marker.
-
-**Worktree pre-push** (SMI-4767): if the pre-push host vitest fails on a macOS worktree, prepend `SKILLSMITH_PRE_PUSH_DOCKER=1` to the push to route the hook through Docker (`SKILLSMITH_PRE_PUSH_DOCKER=1 git push`). Required because SMI-4693 only landed test-fixture env scrubbing — the parent vitest process still inherits parent-worktree `GIT_*` env. Docker must be running. Tracked in SMI-4767 (workaround) + SMI-4769 (proper fix: env scrub of `pre-push-coverage-check.sh`).
-
-**Host native bindings, `IS_DOCKER` trap, outage marker + stale-instrumentation banner, macOS host fallback, SMI-4698 native-rebuild caveat**: see [git-crypt-guide.md § Host Native Bindings & SessionStart Instrumentation (SMI-4549)](.claude/development/git-crypt-guide.md#host-native-bindings--sessionstart-instrumentation-smi-4549).
-
-**Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Use `--dry-run` to preview. Pass `--allow-submodule-ahead` (SMI-4773) when the worktree's `docs/internal` pointer is a strict descendant of target's — keeps the worktree's submodule SHA instead of erroring. Divergence still errors. Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
-
-**Full guide**: [git-crypt-guide.md](.claude/development/git-crypt-guide.md)
+**Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Use `--dry-run` to preview. Pass `--allow-submodule-ahead` (SMI-4773) when the worktree's `docs/internal` pointer is a strict descendant of target's. Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
 
 ---
 
 ## Branch Management (SMI-2536)
 
-Git-crypt smudge filters can silently switch branches during stash/pop operations (including lint-staged in pre-commit hooks). The pre-commit hook detects and aborts if this happens, but follow this protocol as defense-in-depth:
+Git-crypt smudge filters can silently switch branches during stash/pop (including lint-staged). Defense-in-depth: run `git branch --show-current` before first edit, and after every `commit` / `stash pop` / `checkout` (stash pop is the most common trigger; checkout can report false success). **Pre-commit auto-restore** (SMI-2747) and **post-commit fallback recovery**: [branch-management.md](.claude/development/branch-management.md).
 
-1. **Before first edit**: `git branch --show-current` — confirm you're on the feature branch
-2. **After `git commit`**: `git branch --show-current` — verify the commit landed correctly
-3. **After `git stash pop`**: `git branch --show-current` — stash pop is the most common trigger
-4. **After `git checkout`**: `git branch --show-current` — checkout can report false success
-
-**If branch switched during pre-commit**, the hook auto-restores to the correct branch
-and exits 1 (SMI-2747). You will see:
-
-```text
-  ✓ Restored to <branch>. Staged changes preserved.
-    Re-run: git commit
-
-  Emergency bypass: git commit --no-verify
-```
-
-Re-run `git commit` — staged changes are preserved.
-
-**If branch switched during commit** (post-commit fallback, rare), the post-commit hook prints
-recovery commands:
-
-```bash
-git checkout <expected-branch>
-git cherry-pick <commit-hash>
-```
-
-**Syncing main**: Use the quiet wrapper to avoid ~5,000 tokens of git-crypt noise:
-
-```bash
-./scripts/sync-main.sh                              # Quiet sync (~75 tokens output)
-git checkout -b <branch-name>                        # Then create feature branch
-```
+**Syncing main**: `./scripts/sync-main.sh` (quiet, ~75 tokens vs ~5k git-crypt noise). Then `git checkout -b <branch-name>`.
 
 **Risk-first wave ordering (SMI-2596)**: Waves with database migrations or production behavior changes execute first, regardless of implementation readiness. If deviating from risk order, document the rationale explicitly in the wave plan.
 
 **Wave branch stacking (SMI-2597)**: When multiple waves modify overlapping files, branch sequentially (Wave N+1 from Wave N's branch) instead of all from main. This prevents merge conflicts from squash-merges. Tradeoff: earlier waves must merge before later waves can start CI.
 
-**Direct-to-main commits (SMI-2598)**: Only allowed for SQL-only fixes to migrations already deployed to staging (not production). Must run `supabase db lint` locally first and include Linear issue ref in commit message.
+**Direct-to-main SQL fixes (SMI-2598)**: see [branch-management.md § Direct-to-Main Commits](.claude/development/branch-management.md#direct-to-main-commits-smi-2598).
 
 ---
 
 ## Varlock Security
 
-**All secrets via Varlock. Never expose API keys in terminal output.**
+**All secrets via Varlock. Never expose API keys in terminal output.** Commit `.env.schema` (defines `@sensitive`) and `.env.example` (placeholders); **never** `.env`. Run with secrets: `varlock run -- npm test`. Validate: `varlock load` (masked). **Never** `echo $SECRET` or `cat .env`. Never ask users to paste secrets in chat. See [AI Agent Secret Handling](docs/internal/architecture/standards-security.md#411-ai-agent-secret-handling-smi-1956).
 
-| File | Commit? |
-|------|---------|
-| `.env.schema` | Yes (defines `@sensitive` annotations) |
-| `.env.example` | Yes (placeholder values) |
-| `.env` | Never |
-
-```bash
-varlock load                    # Validate (masked output)
-varlock run -- npm test         # Run with secrets injected
-```
-
-**Never** `echo $SECRET` or `cat .env`. Never ask users to paste secrets in chat. See [AI Agent Secret Handling](docs/internal/architecture/standards-security.md#411-ai-agent-secret-handling-smi-1956).
-
-**Supabase pooler access**: `SUPABASE_POOLER_URL` in `.env` contains a literal `[YOUR-PASSWORD]` placeholder by design — passwords with URL-special characters (`@ / : !`) break URI parsing, so every caller must build the connection from parts. Use the canonical helper instead of hand-rolling it:
-
-```bash
-echo 'SELECT COUNT(*) FROM skills;' | varlock run -- ./scripts/pooler-psql.sh
-varlock run -- ./scripts/pooler-psql.sh -c 'SELECT version();'
-cat query.sql | varlock run -- ./scripts/pooler-psql.sh
-```
-
-The script routes through the transaction pooler (port 6543) which avoids PostgREST's 8s `statement_timeout` on `audit_logs` LIKE queries (error 57014). Requires Docker container `skillsmith-dev-1` running. See `scripts/pooler-psql.sh` header for the full rationale.
+**Supabase pooler access**: `SUPABASE_POOLER_URL` has a literal `[YOUR-PASSWORD]` placeholder. Use the canonical helper: `varlock run -- ./scripts/pooler-psql.sh`. Routes through transaction pooler (port 6543), avoiding PostgREST's 8s `statement_timeout`. Requires Docker container running. Full rationale: script header.
 
 ---
 
@@ -231,11 +128,7 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `supabase/functions/**/*.test.ts` | `supabase/functions/indexer/index.test.ts` |
 | `scripts/tests/**/*.test.ts` | `scripts/tests/validate-skills.test.ts` |
 
-**Common mistakes**: `scripts/__tests__/` (use `scripts/tests/`), `packages/core/test/` (use `tests/` plural), `src/foo.test.ts` (must be inside a package). Reference: `vitest.config.ts`.
-
-**SMI-3502 split rationale**: colocated `packages/*/src/**/*.test.ts` tests run only in `vitest.config.root-tests.ts` (post-merge-verify). Per-package configs use `tests/**/*.test.ts` only — including `src/**` everywhere previously caused CI OOM at 147 files (vs 120 with memory benchmarks excluded).
-
-**SMI-4557 carve-out**: `packages/core/src/analysis/tree-sitter/**/*.test.ts` is included in `packages/core/vitest.config.ts` so PR matrix catches dependabot bumps to `web-tree-sitter` / `tree-sitter-*` deps before merge. Subtree is small (~4 files) and well below SMI-3502's 147-file OOM threshold. Driven by SMI-4556 — 0.26.x bump merged green and broke `post-merge-verify` for ~14 commits before detection.
+**Common mistakes**: `scripts/__tests__/` (use `scripts/tests/`), `packages/core/test/` (use `tests/` plural), `src/foo.test.ts` (must be inside a package). Reference: `vitest.config.ts`. Split rationale (SMI-3502/4557): [ci-reference.md § Vitest Split Rationale](.claude/development/ci-reference.md#vitest-split-rationale).
 
 ---
 
@@ -259,13 +152,7 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `audit_query` | Query audit logs with filters (Enterprise) |
 | `siem_export` | Export audit events for SIEM ingestion (Enterprise) |
 
-**Auth**: Personal API Key (`X-API-Key: sk_live_*`, tier-based), Supabase Anon Key (30/min), No Auth (10 trial). Configure in `~/.skillsmith/config.json` or `SKILLSMITH_API_KEY` env in Claude settings. Shell exports don't reach MCP subprocesses.
-
-**Team-scoped tools** (`team_workspace`, `share_skill`, `private_registry_*`) additionally require `SKILLSMITH_LICENSE_KEY` to resolve the caller's team AND `SUPABASE_SERVICE_ROLE_KEY` on the MCP host for downstream CRUD (SMI-4312 / ADR-116 — the MCP subprocess has no user JWT, so anon-key RLS policies deny). Resolution path: `SKILLSMITH_LICENSE_KEY` env → SHA-256 → `license_keys.key_hash` → `subscriptions` → `teams.subscription_id`, via the `resolve_team_from_license` RPC (migration 071, SECURITY DEFINER, invoked via anon client). Missing/invalid keys return a typed error (not stub data) when Supabase is configured; missing service-role key surfaces `Team workspace operations require SUPABASE_SERVICE_ROLE_KEY`.
-
-**Trust tiers**: verified (official), community (reviewed), experimental (new/beta).
-
-**CLI**: `skillsmith` or `sklx` — `author subagent/transform/mcp-init`, `sync/status/config`. See [ADR-018](docs/internal/adr/018-registry-sync-system.md). New in SMI-4590: `sklx audit collisions` (namespace audit, opposite of legacy `sklx audit advisories` security-advisory checker), `sklx config get audit_mode` / `sklx config set audit_mode <preventative|power_user|governance|off>` (tier-revalidated; Free/Individual cannot select `power_user`/`governance`).
+**Auth**: Personal API Key (`X-API-Key: sk_live_*`, tier-based), Supabase Anon Key (30/min), No Auth (10 trial). Configure in `~/.skillsmith/config.json` or `SKILLSMITH_API_KEY` env. Shell exports don't reach MCP subprocesses. Team-tool resolution chain (SMI-4312/ADR-116), trust tiers, CLI surface: see [mcp-tools-guide.md](.claude/development/mcp-tools-guide.md).
 
 ---
 
@@ -278,33 +165,9 @@ Vitest only runs tests matching these patterns. Tests elsewhere are **silently i
 | `vrcnzpmndtroqxxoqkzy` | **Prod** | `.env` `SUPABASE_URL` / `SUPABASE_PROJECT_REF`; all `supabase functions deploy`; `audit_logs` / `v_indexer_health` / `/functions/v1/stats` when validating prod |
 | `ovhcifugwqnzoebwfuku` | Staging | Low-cadence — data lags prod; never curl this when verifying a prod deploy |
 
-When verifying a prod edge function via `curl`, always use `$SUPABASE_URL` (under `varlock run --`) or the literal `https://vrcnzpmndtroqxxoqkzy.supabase.co`. Hardcoding `ovhcifugwqnzoebwfuku` will make a healthy prod deploy look stale — a 2026-04-17 session burned ~7 minutes on this.
+When verifying a prod edge function via `curl`, always use `$SUPABASE_URL` (under `varlock run --`) or the literal `https://vrcnzpmndtroqxxoqkzy.supabase.co`. Function-auth matrix (21 rows) and auto-deploy mechanics: see [edge-function-patterns.md § Function Auth Matrix](.claude/development/edge-function-patterns.md#function-auth-matrix).
 
-| Function | Auth | `--no-verify-jwt` |
-|----------|------|--------------------|
-| `early-access-signup`, `contact-submit`, `stats`, `checkout`, `stripe-webhook`, `events` | Anonymous | Yes |
-| `skills-search`, `skills-get`, `skills-recommend` | API Key | Yes |
-| `health` | Anonymous (health check) | Yes |
-| `email-inbound` | Anonymous (Resend webhook) | Yes |
-| `generate-license`, `regenerate-license`, `create-portal-session`, `list-invoices` | Authenticated (internal JWT) | Yes |
-| `skills-outreach-preferences` | Authenticated (User JWT, handler-level) | Yes |
-| `admin-grant-subscription` | Authenticated (Admin JWT) | Yes |
-| `webhook-dlq` | Authenticated (User JWT, gateway-verified for RLS) | No |
-| `update-seat-count` | Authenticated | No |
-| `indexer`, `skills-refresh-metadata`, `ops-report`, `alert-notify` | Service Role | No |
-| `process-pending-subscription` | Service Role | No |
-| `expire-complimentary` | Service Role (daily 3 AM UTC cron) | No |
-| `quota-monitor` | Service Role (every 30 min cron) | Yes |
-| `skills-outreach` | Service Role | No |
-| `advance-notice-email` | Service Role | Yes |
-| `auth-device-code` | Anonymous (RFC 8628 device auth) | Yes |
-| `auth-device-token` | Anonymous (RFC 8628 token poll) | Yes |
-| `auth-device-approve` | Authenticated (User JWT, gateway-verified) | No |
-| `auth-device-preview` | Authenticated (User JWT, gateway-verified) | No |
-
-**Adding anonymous functions** (CI validates): Add to `supabase/config.toml` with `verify_jwt = false`, add to `NO_VERIFY_JWT_FUNCTIONS` in `scripts/audit-standards.mjs`, and add deploy command below.
-
-**Deploy commands** (`--no-verify-jwt` required — CI scans CLAUDE.md for these):
+**Adding anonymous functions** (CI validates): add to `supabase/config.toml` with `verify_jwt = false`, to `NO_VERIFY_JWT_FUNCTIONS` in `scripts/audit-standards.mjs`, and to the deploy block below. **Deploy commands** (`--no-verify-jwt` required — CI scans CLAUDE.md for these):
 
 ```bash
 npx supabase functions deploy early-access-signup --no-verify-jwt
@@ -330,131 +193,43 @@ npx supabase functions deploy auth-device-token --no-verify-jwt
 npx supabase functions deploy quota-monitor --no-verify-jwt
 ```
 
-**Gateway-verified auth** (SMI-4291 — relies on `auth.uid()` for RLS; no `--no-verify-jwt`):
-
-```bash
-npx supabase functions deploy webhook-dlq
-npx supabase functions deploy auth-device-approve
-npx supabase functions deploy auth-device-preview
-```
-
-**Auto-deploy**: Edge functions are automatically deployed to **both** prod (`vrcnzpmndtroqxxoqkzy`) and staging (`ovhcifugwqnzoebwfuku`) when changes to `supabase/functions/**` are merged to main. The `deploy-edge-functions.yml` workflow detects changed functions and runs `deploy-prod` and `deploy-staging` jobs in parallel; failure of one does not block the other. `_shared/` changes trigger a full deploy of all 32 functions to both refs. Manual full deploy: `gh workflow run deploy-edge-functions.yml -f deploy_all=true`. (SMI-4528)
-
-**CORS & monitoring details**: [deployment-guide.md](.claude/development/deployment-guide.md)
+**Gateway-verified auth** (SMI-4291; deploy without `--no-verify-jwt`): `webhook-dlq`, `auth-device-approve`, `auth-device-preview`. **CORS, auto-deploy & monitoring**: [deployment-guide.md](.claude/development/deployment-guide.md), [edge-function-patterns.md § Auto-deploy](.claude/development/edge-function-patterns.md#auto-deploy).
 
 ---
 
 ## Monitoring & Alerts
 
-| Job | Schedule | Function |
-|-----|----------|----------|
-| Skill Indexer | 4× daily (00 UTC maintenance + 06/12/18 UTC discovery) | `indexer` |
-| Metadata Refresh | Hourly :30 | `skills-refresh-metadata` |
-| Ops Report | Monday 9 AM UTC | `ops-report` |
-| Quality Outreach | Manual (beta) | `skills-outreach` |
-| Expire Complimentary | Daily 3 AM UTC | GitHub Actions (`expire-complimentary.yml`) |
-| Quota Monitor | Every 30 min | GitHub Actions (`quota-monitor.yml`) |
-| Weekly Analytics | Monday 9 AM UTC | GitHub Actions (`analytics-report.yml`) |
-| Billing Monitor | Monday 9 AM UTC | GitHub Actions |
-| Edge Function Deploy | On merge to main | GitHub Actions (`deploy-edge-functions.yml`) |
-| Device-login round-trip e2e | Nightly 06:00 UTC + paths-filtered PR (SMI-4460) | GitHub Actions (`device-login-roundtrip.yml`) |
-| Device-login audit_logs cleanup | Sundays 04:00 UTC (SMI-4460) | GitHub Actions (`device-login-roundtrip-cleanup.yml`) |
-| Skillsmith Scheduled Audit (Enterprise governance pass) | On-demand via `runScheduledScan` (SMI-4590); deep + un-filtered findings | `@skillsmith/enterprise/audit` (`runScheduledScan`); idempotent within `SKILLSMITH_SCHEDULED_AUDIT_CACHE_MIN` (default 5 min) |
-| Session-start audit hook (Team/Enterprise) | Per session start, debounced 24h (SMI-4590) | `scripts/session-start-audit.sh` → `scripts/lib/session-start-audit-helper.ts`; tier-gated render (Free/Individual silent) |
-
-Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table. Manual trigger & audit log details: [deployment-guide.md](.claude/development/deployment-guide.md#monitoring--alerts).
+High-cadence: Skill Indexer (4× daily 00/06/12/18 UTC, `indexer`), Metadata Refresh (hourly :30, `skills-refresh-metadata`), Quota Monitor (30 min, GHA), Edge Function Deploy (on merge to main, GHA). Full table: [deployment-guide.md § Scheduled Jobs](.claude/development/deployment-guide.md#scheduled-jobs). Alerts to `support@smithhorn.ca` via Resend on failures. All jobs log to `audit_logs` table.
 
 ---
 
-## Ruflo MCP Server (formerly Claude-Flow)
+## Ruflo MCP Server + MCP Registry
 
-Required for hive mind and agent spawning. Auto-configured via `.mcp.json`. Manual: `claude mcp add ruflo -s project -- npx ruflo@latest mcp start`.
-
-**Tools**: `swarm_init`, `agent_spawn`, `task_orchestrate`, `memory_usage`, `swarm_destroy` (prefixed `mcp__claude-flow__` for backwards compatibility).
-
-**Agent types**: architect, coder, tester, reviewer, researcher.
-
-**Full guide**: [claude-flow-guide.md](.claude/development/claude-flow-guide.md)
-
----
-
-## MCP Registry
-
-Published as `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/). Auto-published via CI. **Version sync required**: update both `packages/mcp-server/package.json` and `packages/mcp-server/server.json`. Full guide: [mcp-registry.md](.claude/development/mcp-registry.md).
-
-**Auth (SMI-4534)**: GitHub Actions OIDC (`mcp-publisher login github-oidc`); no manual `MCP_REGISTRY_TOKEN` rotation needed. If the registry publish step fails, see `.github/workflows/publish.yml` step "Login to MCP Registry" and the `v1.x.y` mcp-publisher pin in the install step — bump intentionally per SMI-4537. Registry-publish failures are isolated from npm publish (`continue-on-error: true`); a loud-fail step files a GitHub issue automatically.
+**Ruflo** (hive mind, agent spawning): auto-configured via `.mcp.json`. Tools `mcp__claude-flow__{swarm_init, agent_spawn, task_orchestrate, memory_usage, swarm_destroy}`. Agent types: architect, coder, tester, reviewer, researcher. Full guide: [claude-flow-guide.md](.claude/development/claude-flow-guide.md). **MCP Registry**: `io.github.smith-horn/skillsmith` on [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/), auto-published via CI; sync `packages/mcp-server/{package,server}.json`. Auth: GitHub Actions OIDC (SMI-4534). Full guide: [mcp-registry.md](.claude/development/mcp-registry.md).
 
 ---
 
 ## Publishing Packages
 
-**Release preparation** (version bump + changelog + commit):
-
-```bash
-docker exec skillsmith-dev-1 npx tsx scripts/prepare-release.ts --all=patch   # bump all
-docker exec skillsmith-dev-1 npx tsx scripts/prepare-release.ts --core=minor --cli=patch  # selective
-docker exec skillsmith-dev-1 npx tsx scripts/prepare-release.ts --dry-run --all=patch  # preview
-```
-
-The script updates all 6 version locations (package.json, VERSION constants, server.json), generates changelog entries, and creates a commit. See `docs/internal/implementation/release-automation.md` for details.
-
-**Release cadence**: weekly (Sunday 03:00 UTC) OR when root `CHANGELOG.md [Unreleased]` ≥ 15 entries. Automation per [ADR-114](docs/internal/adr/114-release-cadence-and-gh-release-alignment.md); contributor-facing docs in [CONTRIBUTING.md § Releases](CONTRIBUTING.md#releases).
-
-**Publishing — CI workflow** (preferred, avoids local npm auth/OTP issues):
-
-```bash
-git push
-gh workflow run publish.yml -f dry_run=false
-gh run watch <run-id> --exit-status              # Monitor progress
-```
-
-Uses `SKILLSMITH_NPM_TOKEN` secret. Publishes in dependency order (core → mcp-server, cli, enterprise) with validation, smoke tests, and MCP Registry publish. Always try this first.
-
-**Local fallback**: **Deprecated (SMI-4533)**: local fallback is forbidden. CI is the only publish path. If CI fails, fix CI; for genuine emergencies see [`docs/internal/runbooks/publish-ci-recovery.md`](docs/internal/runbooks/publish-ci-recovery.md) and the `SKILLSMITH_PUBLISH_OVERRIDE` break-glass in [.claude/development/publishing-guide.md](.claude/development/publishing-guide.md#break-glass).
-
-**Publish order** (dependencies before consumers):
-
-1. `@skillsmith/core`
-2. `@skillsmith/mcp-server` and `@skillsmith/cli` (both depend on core)
-
-**Pre-publish checklist, version-pin/workspace-resolution rules, and `packaging-test.yml` caveat**: see [publishing-guide.md § Pre-publish checklist](.claude/development/publishing-guide.md#pre-publish-checklist). If CI fails, do NOT reach for a local publish — fix the underlying issue. Genuine break-glass: [publishing-guide.md § Break-Glass](.claude/development/publishing-guide.md#break-glass).
+**Release prep**: `docker exec skillsmith-dev-1 npx tsx scripts/prepare-release.ts --all=patch` (also `--core=minor --cli=patch`, `--dry-run`). **Publish (CI-only)**: `git push && gh workflow run publish.yml -f dry_run=false`. Cadence: weekly (Sun 03:00 UTC) OR `[Unreleased]` ≥ 15 entries ([ADR-114](docs/internal/adr/114-release-cadence-and-gh-release-alignment.md)). Order: core → mcp-server, cli, enterprise. Local fallback deprecated (SMI-4533). Pre-publish checklist, version-pin rules, break-glass: [publishing-guide.md](.claude/development/publishing-guide.md).
 
 ---
 
 ## VS Code Extension
 
-Published to [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=skillsmith.skillsmith-vscode) as `skillsmith-vscode` (unscoped — vsce rejects `@skillsmith/` prefix). No Docker required (ADR-113).
-
-```bash
-cd packages/vscode-extension
-npm run build                    # esbuild bundle
-npm run package:check            # Validate VSIX contents
-varlock run -- sh -c 'npx @vscode/vsce publish --no-dependencies --pat "$VSCE_SKILLSMITH"'  # Publish
-```
-
-**CI publish**: `gh workflow run publish-vscode.yml -f dry_run=false` — see [vscode-publishing-guide.md](.claude/development/vscode-publishing-guide.md).
-
-**PAT**: `VSCE_SKILLSMITH` in `.env` (Varlock), `VSCE_PAT` in GitHub Actions. 90-day rotation.
-
-**Changelog**: user-facing only — no `SMI-xxxx`, PR #, ADR, or GitHub issue refs. Ships on the Marketplace "Changelog" tab. See [vscode-publishing-guide.md § Changelog Authoring](.claude/development/vscode-publishing-guide.md#changelog-authoring).
+Published as `skillsmith-vscode` on [Marketplace](https://marketplace.visualstudio.com/items?itemName=skillsmith.skillsmith-vscode). No Docker (ADR-113). Build: `cd packages/vscode-extension && npm run build && npm run package:check`. CI publish, PAT rotation, changelog rules: [vscode-publishing-guide.md](.claude/development/vscode-publishing-guide.md).
 
 ---
 
 ## Skills & Embedding
 
-**Project skills** (`.claude/skills/`): [governance](.claude/skills/governance/SKILL.md) (standards enforcement), [worktree-manager](.claude/skills/worktree-manager/SKILL.md) (parallel development).
-
-**User skills** (`~/.claude/skills/`): linear, mcp-decision-helper, flaky-test-detector, version-sync, ci-doctor, docker-optimizer, security-auditor, session-cleanup (end-of-session housekeeping — `/session-cleanup`).
-
-**Embedding**: Real ONNX (~50ms) or mock (<1ms, `SKILLSMITH_USE_MOCK_EMBEDDINGS=true`). See [ADR-009](docs/internal/adr/009-embedding-service-fallback.md). Auto-update check: `SKILLSMITH_AUTO_UPDATE_CHECK=false` to disable.
+Project skills (`.claude/skills/`): [governance](.claude/skills/governance/SKILL.md), [worktree-manager](.claude/skills/worktree-manager/SKILL.md). Embedding: real ONNX (~50ms) or mock (`SKILLSMITH_USE_MOCK_EMBEDDINGS=true`); see [ADR-009](docs/internal/adr/009-embedding-service-fallback.md). Disable auto-update: `SKILLSMITH_AUTO_UPDATE_CHECK=false`.
 
 ---
 
 ## Session Priming (SMI-4451)
 
-A `SessionStart` hook (`scripts/session-start-priming.sh`) injects a per-session priming index into initial context as `additionalContext`. Fires only on `source=startup` and branches containing an SMI/wave token (`smi-NNN` or `wave-NNN`) anywhere in the name — covers `smi-NNN-foo`, `fix/smi-NNN-foo`, `chore/smi-NNN`, `feat/wave-N-bar`, etc. Deny list (no priming) covers `main`, `hotfix-*`/`hotfix/*`, `dependabot/*`, `renovate/*`, `release/*`, `revert/*` regardless of any embedded token. SMI-4809 broadened the matcher; before it, only literal-prefix `smi-*`/`wave-*` primed, which silently skipped the project's standard `fix/smi-…` and `chore/smi-…` branches. Disable with `SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING=1`. **Memory adapter prerequisite**: requires `SKILLSMITH_PROJECT_DIR_ENCODED` set in `.env` — without it, host-scope memory files don't reach the index. Full mechanism (per-class rank boost SMI-4468, outage marker, env vars): see [ruvector-dev-tooling.md § Session Priming (SMI-4451)](.claude/development/ruvector-dev-tooling.md#session-priming-smi-4451).
-
-**Session-start audit hook (SMI-4590)**: a sibling `SessionStart` hook (`scripts/session-start-audit.sh` → `scripts/lib/session-start-audit-helper.ts`) runs the namespace-audit (`runInventoryAudit`) for Team/Enterprise tiers, debounced 24h via `~/.skillsmith/last-audit.json`. Output is privacy-gated: Free/Individual emit zero output (intentional — silence is not a bug, audit is a paid feature). Team gets a one-line collapsed summary on stderr; Enterprise gets a path-only pointer on stderr. Helper stdout is always empty (priming hook owns the `additionalContext` slot). Bounded 5-second wall clock; helper failure is fail-soft (always exits 0). Disable: `SKILLSMITH_SESSION_AUDIT_DISABLE=1`. Logs: `~/.skillsmith/logs/session-audit-<date>.log` (30-day rotation, opportunistic).
+`SessionStart` hooks fire on `source=startup` for branches containing an SMI/wave token anywhere in the name (`smi-NNN` or `wave-NNN`; covers `fix/smi-…`, `chore/smi-…`, etc — SMI-4809 broadened the matcher from literal-prefix only). Deny list: `main`, `hotfix-*`, `dependabot/*`, `renovate/*`, `release/*`, `revert/*`. Two hooks: priming (`scripts/session-start-priming.sh`, requires `SKILLSMITH_PROJECT_DIR_ENCODED`, disable via `SKILLSMITH_DOC_RETRIEVAL_DISABLE_PRIMING=1`) + audit (SMI-4590 — Team/Enterprise namespace audit, 24h debounce, fail-soft, tier-gated; disable via `SKILLSMITH_SESSION_AUDIT_DISABLE=1`). Full mechanism: [ruvector-dev-tooling.md § Session Priming](.claude/development/ruvector-dev-tooling.md#session-priming-smi-4451).
 
 ---
 
@@ -465,33 +240,30 @@ A `SessionStart` hook (`scripts/session-start-priming.sh`) injects a per-session
 | Container won't start | `docker compose --profile dev down && docker volume rm skillsmith_node_modules && docker compose --profile dev up -d` |
 | Native module errors | `docker exec skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node` |
 | Platform mismatch (SIGKILL 137) | `rm -rf packages/*/node_modules/better-sqlite3 packages/*/node_modules/onnxruntime-node` then rebuild |
-| Node ABI mismatch (after Node upgrade) | WASM fallback auto-activates since core 0.4.10. To restore native: `docker exec skillsmith-dev-1 npm rebuild better-sqlite3` (Docker side); `./scripts/repair-host-native-deps.sh` (host side, SMI-4549) |
-| "invalid ELF header" inside Docker after running `repair-worktrees.sh` (SMI-4698) | Root rebuild + per-package rebuild (root only doesn't traverse workspace-local copies): `docker exec -w /app skillsmith-dev-1 npm rebuild better-sqlite3 onnxruntime-node && for d in packages/core packages/doc-retrieval-mcp; do docker exec -w /app/$d/node_modules/better-sqlite3 skillsmith-dev-1 bash -c 'rm -f build/Release/better_sqlite3.node && npm run build-release'; done`. Host-side: `./scripts/repair-host-native-deps.sh` now handles workspace-local copies automatically. |
-| Worktree container `npm run build` fails with `Could not resolve <dep>` (SMI-4689) | Postinstall (SMI-4738) auto-regenerates the override on `npm install` in the main repo, so the common "new package added" case resolves itself — just bounce the worktree container (`docker compose --profile dev down && docker compose --profile dev up -d`). For genuine drift (e.g. an override hand-edited or stuck on an older format), run `./scripts/repair-worktrees.sh` from the main repo, then bounce the container. macOS Docker Desktop only — Linux is unaffected. |
-| Docker DNS failure | `docker network prune -f` then restart container |
+| Node ABI mismatch | WASM fallback auto-activates (core ≥0.4.10). Restore native: rebuild in Docker + `./scripts/repair-host-native-deps.sh` (SMI-4549) |
+| "invalid ELF header" in Docker (SMI-4698) | [git-crypt-guide.md § Host Native Bindings](.claude/development/git-crypt-guide.md#host-native-bindings--sessionstart-instrumentation-smi-4549) |
+| Worktree `npm run build` fails (SMI-4689) | SMI-4738 postinstall auto-regenerates override; bounce worktree container. Drift: `./scripts/repair-worktrees.sh` from main repo. macOS only. [Details](.claude/development/git-crypt-guide.md#worktree-docker-bind-mounts-smi-4689) |
+| Docker DNS failure | `docker network prune -f` then restart |
 | Stale CJS artifacts | `docker exec skillsmith-dev-1 bash -c 'find /app/packages -path "*/src/*.js" -not -path "*/node_modules/*" -not -path "*/dist/*" -type f -delete'` |
 | Tool missing in `skillsmith-dev-1` (e.g. `psql: executable file not found`) after a Dockerfile change merged on `main` (SMI-4820) | Stale local image — your container predates the Dockerfile commit. `docker compose --profile dev down && docker compose --profile dev build --no-cache dev && docker compose --profile dev up -d`. `--no-cache` ensures the cached `dev` layer doesn't shadow new `RUN apt-get install` lines. |
 | Orphaned agents | `./scripts/cleanup-orphans.sh` (`--dry-run` to preview) |
-| Symlink outside skills root skipped (SMI-4287) | LocalFilesystemAdapter rejects symlinks whose target resolves outside `rootDir` (GitHub #600). Set `allowSymlinksOutsideRoot: true` in `LocalFilesystemConfig` to opt in; caller accepts the security tradeoff. |
-| Session-start audit hook produces unexpected stderr at session start (SMI-4590) | Disable temporarily: `export SKILLSMITH_SESSION_AUDIT_DISABLE=1`. Check `~/.skillsmith/logs/session-audit-<date>.log` for the resolution code (`tier_resolution_failed`, `audit_run_failed`, etc.). Free/Individual tiers should see no output at all — if you do, check that `SKILLSMITH_LICENSE_KEY` env is unset and `~/.skillsmith/config.json` `audit_mode` is unset or `preventative`. |
+| Symlink outside skills root (SMI-4287) | Set `allowSymlinksOutsideRoot: true` in `LocalFilesystemConfig` to opt in |
+| Session-start audit unexpected stderr (SMI-4590) | `export SKILLSMITH_SESSION_AUDIT_DISABLE=1`. Logs: `~/.skillsmith/logs/session-audit-<date>.log` |
 
-**Detailed diagnostics** (Symptoms / Root Cause / Fix): [docker-guide.md](.claude/development/docker-guide.md#troubleshooting)
+**Detailed diagnostics**: [docker-guide.md](.claude/development/docker-guide.md#troubleshooting).
 
 ---
 
 ## Key References
 
-| Category | Documents |
-|----------|-----------|
-| Architecture | [System Overview](docs/internal/architecture/system-design/system-overview.md), [Skill Dependencies](docs/internal/architecture/system-design/skill-dependencies.md), [Index](docs/internal/architecture/index.md) |
-| Standards | [Engineering](docs/internal/architecture/standards.md), [Database](docs/internal/architecture/standards-database.md), [Astro](docs/internal/architecture/standards-astro.md), [Security](docs/internal/architecture/standards-security.md) |
-| Process | [Context Compaction](docs/internal/process/context-compaction.md), [Linear Hygiene](docs/internal/process/linear-hygiene-guide.md), [Wave Checklist](docs/internal/process/wave-completion-checklist.md) |
-| Development | [Docker](.claude/development/docker-guide.md), [Git-Crypt](.claude/development/git-crypt-guide.md), [CI](.claude/development/ci-reference.md), [Deploy](.claude/development/deployment-guide.md), [Ruflo](.claude/development/claude-flow-guide.md) |
-| Testing | [Stripe](.claude/development/stripe-testing.md), [Neural](.claude/development/neural-testing.md), [Benchmarks](.claude/development/benchmarks.md) |
-| Billing | [Admin Grants](docs/internal/runbooks/admin-complimentary-subscriptions.md), [Stripe Ops](docs/internal/runbooks/stripe-operations.md) |
-| Website | [skillsmith.app/docs](https://skillsmith.app/docs) — Deploy: `cd packages/website && vercel --prod` |
+- **Architecture**: [System Overview](docs/internal/architecture/system-design/system-overview.md), [Skill Dependencies](docs/internal/architecture/system-design/skill-dependencies.md), [Index](docs/internal/architecture/index.md)
+- **Standards**: [Engineering](docs/internal/architecture/standards.md), [DB](docs/internal/architecture/standards-database.md), [Astro](docs/internal/architecture/standards-astro.md), [Security](docs/internal/architecture/standards-security.md)
+- **Process**: [Context Compaction](docs/internal/process/context-compaction.md), [Linear Hygiene](docs/internal/process/linear-hygiene-guide.md), [Wave Checklist](docs/internal/process/wave-completion-checklist.md)
+- **Testing**: [Stripe](.claude/development/stripe-testing.md), [Neural](.claude/development/neural-testing.md), [Benchmarks](.claude/development/benchmarks.md)
+- **Billing**: [Admin Grants](docs/internal/runbooks/admin-complimentary-subscriptions.md), [Stripe Ops](docs/internal/runbooks/stripe-operations.md)
+- **Website**: [skillsmith.app/docs](https://skillsmith.app/docs); deploy `cd packages/website && vercel --prod`
 
-**Linear**: Initiative Skillsmith (SMI-xxx). Authoritative standards: `docs/internal/architecture/standards.md`.
+**Linear**: Skillsmith initiative (SMI-xxx). Authoritative standards: `docs/internal/architecture/standards.md`.
 
 ---
 
