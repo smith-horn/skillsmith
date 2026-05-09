@@ -14,6 +14,7 @@ Reusable templates for common documentation and development tasks.
 | [implementation-plan.md](implementation-plan.md) | Implementation plan structure for `docs/internal/implementation/` |
 | [migration-review-checklist.md](migration-review-checklist.md) | Migration code review checklist |
 | [beta-invite-email.md](beta-invite-email.md) | Beta invite email template (Resend HTML) |
+| [history-rewrite-notification.md](history-rewrite-notification.md) | Notification template for git history rewrites (re-clone instructions) |
 
 ## Usage
 
