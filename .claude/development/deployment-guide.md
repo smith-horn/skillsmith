@@ -376,13 +376,23 @@ cd packages/website && vercel --prod       # Deploy to production after verifica
 
 ### Scheduled Jobs
 
+Authoritative table (extracted from CLAUDE.md per SMI-4828; the inline CLAUDE.md table is a 4-row high-cadence subset):
+
 | Job | Schedule | Function |
 |-----|----------|----------|
-| Skill Indexer | Daily 2 AM UTC | `indexer` |
+| Skill Indexer | 4× daily (00 UTC maintenance + 06/12/18 UTC discovery) | `indexer` |
 | Metadata Refresh | Hourly :30 | `skills-refresh-metadata` |
-| Weekly Ops Report | Monday 9 AM UTC | `ops-report` |
-| Weekly Analytics | Monday 9 AM UTC | `analytics-report` (GitHub Actions) |
-| Billing Monitor | Monday 9 AM UTC | GitHub Actions only |
+| Ops Report | Monday 9 AM UTC | `ops-report` |
+| Quality Outreach | Manual (beta) | `skills-outreach` |
+| Expire Complimentary | Daily 3 AM UTC | GitHub Actions (`expire-complimentary.yml`) |
+| Quota Monitor | Every 30 min | GitHub Actions (`quota-monitor.yml`) |
+| Weekly Analytics | Monday 9 AM UTC | GitHub Actions (`analytics-report.yml`) |
+| Billing Monitor | Monday 9 AM UTC | GitHub Actions |
+| Edge Function Deploy | On merge to main | GitHub Actions (`deploy-edge-functions.yml`) |
+| Device-login round-trip e2e | Nightly 06:00 UTC + paths-filtered PR (SMI-4460) | GitHub Actions (`device-login-roundtrip.yml`) |
+| Device-login audit_logs cleanup | Sundays 04:00 UTC (SMI-4460) | GitHub Actions (`device-login-roundtrip-cleanup.yml`) |
+| Skillsmith Scheduled Audit (Enterprise governance pass) | On-demand via `runScheduledScan` (SMI-4590); deep + un-filtered findings | `@skillsmith/enterprise/audit` (`runScheduledScan`); idempotent within `SKILLSMITH_SCHEDULED_AUDIT_CACHE_MIN` (default 5 min) |
+| Session-start audit hook (Team/Enterprise) | Per session start, debounced 24h (SMI-4590) | `scripts/session-start-audit.sh` → `scripts/lib/session-start-audit-helper.ts`; tier-gated render (Free/Individual silent) |
 
 ### Alert Notifications
 

@@ -305,6 +305,49 @@ describe('checkTrialLimit', () => {
 
 ---
 
+## Function Auth Matrix
+
+Authoritative auth/JWT-verification table for every edge function. CLAUDE.md keeps the deploy-command block inline (CI-pinned) but extracts the full table here. (SMI-4828)
+
+| Function | Auth | `--no-verify-jwt` |
+|----------|------|--------------------|
+| `early-access-signup`, `contact-submit`, `stats`, `checkout`, `stripe-webhook`, `events` | Anonymous | Yes |
+| `skills-search`, `skills-get`, `skills-recommend` | API Key | Yes |
+| `health` | Anonymous (health check) | Yes |
+| `email-inbound` | Anonymous (Resend webhook) | Yes |
+| `generate-license`, `regenerate-license`, `create-portal-session`, `list-invoices` | Authenticated (internal JWT) | Yes |
+| `skills-outreach-preferences` | Authenticated (User JWT, handler-level) | Yes |
+| `admin-grant-subscription` | Authenticated (Admin JWT) | Yes |
+| `webhook-dlq` | Authenticated (User JWT, gateway-verified for RLS) | No |
+| `update-seat-count` | Authenticated | No |
+| `indexer`, `skills-refresh-metadata`, `ops-report`, `alert-notify` | Service Role | No |
+| `process-pending-subscription` | Service Role | No |
+| `expire-complimentary` | Service Role (daily 3 AM UTC cron) | No |
+| `quota-monitor` | Service Role (every 30 min cron) | Yes |
+| `skills-outreach` | Service Role | No |
+| `advance-notice-email` | Service Role | Yes |
+| `auth-device-code` | Anonymous (RFC 8628 device auth) | Yes |
+| `auth-device-token` | Anonymous (RFC 8628 token poll) | Yes |
+| `auth-device-approve` | Authenticated (User JWT, gateway-verified) | No |
+| `auth-device-preview` | Authenticated (User JWT, gateway-verified) | No |
+
+**Adding anonymous functions** (CI validates): Add to `supabase/config.toml` with `verify_jwt = false`, add to `NO_VERIFY_JWT_FUNCTIONS` in `scripts/audit-standards.mjs`, and add deploy command to `CLAUDE.md` (the deploy block is CI-pinned via `audit-standards.mjs:472` + `validate-anonymous-functions.ts`).
+
+## Project Refs (Prod vs Staging)
+
+**Project refs — do not confuse (SMI-4252 retro 2026-04-17)**:
+
+| Ref | Role | Used for |
+|-----|------|----------|
+| `vrcnzpmndtroqxxoqkzy` | **Prod** | `.env` `SUPABASE_URL` / `SUPABASE_PROJECT_REF`; all `supabase functions deploy`; `audit_logs` / `v_indexer_health` / `/functions/v1/stats` when validating prod |
+| `ovhcifugwqnzoebwfuku` | Staging | Low-cadence — data lags prod; never curl this when verifying a prod deploy |
+
+When verifying a prod edge function via `curl`, always use `$SUPABASE_URL` (under `varlock run --`) or the literal `https://vrcnzpmndtroqxxoqkzy.supabase.co`. Hardcoding `ovhcifugwqnzoebwfuku` will make a healthy prod deploy look stale — a 2026-04-17 session burned ~7 minutes on this.
+
+## Auto-deploy
+
+Edge functions are automatically deployed to **both** prod (`vrcnzpmndtroqxxoqkzy`) and staging (`ovhcifugwqnzoebwfuku`) when changes to `supabase/functions/**` are merged to main. The `deploy-edge-functions.yml` workflow detects changed functions and runs `deploy-prod` and `deploy-staging` jobs in parallel; failure of one does not block the other. `_shared/` changes trigger a full deploy of all 32 functions to both refs. Manual full deploy: `gh workflow run deploy-edge-functions.yml -f deploy_all=true`. (SMI-4528)
+
 ## Related Documentation
 
 - [Supabase Edge Functions Guide](https://supabase.com/docs/guides/functions)

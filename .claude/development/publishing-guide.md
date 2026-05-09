@@ -99,3 +99,7 @@ Dependencies before consumers:
 **Verify dependency floors when adding cross-package imports.** If `mcp-server` starts importing a new export from `core`, bump the dep floor in `mcp-server/package.json` to the core version that introduced that export. The workspace resolves the latest local version, masking floor mismatches — only fresh `npm install` from the registry catches this. See [SMI-3668](https://linear.app/smith-horn-group/issue/SMI-3668).
 
 **Note**: `packaging-test.yml` (weekly CI) installs from local tarballs, not the npm registry. It does NOT catch version-pin-against-unpublished-npm scenarios. The post-publish smoke test (`scripts/smoke-test-published.ts`) is the only check that exercises actual npm resolution.
+
+## Local Fallback (Deprecated SMI-4533)
+
+**Deprecated (SMI-4533)**: local fallback is forbidden. CI is the only publish path. If CI fails, fix CI; for genuine emergencies see [`docs/internal/runbooks/publish-ci-recovery.md`](../../docs/internal/runbooks/publish-ci-recovery.md) and the `SKILLSMITH_PUBLISH_OVERRIDE` break-glass in [#break-glass](#break-glass).

@@ -387,3 +387,25 @@ gh api repos/smith-horn/skillsmith/actions/caches --paginate \
 ## CodeQL Scope (SMI-3531)
 
 CodeQL runs on push/PR to main with the same `paths-ignore` as `ci.yml` (docs, templates, markdown, LICENSE, issue templates). Weekly scheduled scan (Monday 2 AM UTC) runs unconditionally on all paths — no security coverage regression.
+
+## npm Overrides (Transitive Vulnerability Fixes)
+
+Extracted from CLAUDE.md (SMI-4828). Authoritative guidance on transitive vulnerability fixes via root `package.json` overrides.
+
+- **Before adding an override**, check if the target is exact-pinned: `docker exec skillsmith-dev-1 node -e "console.log(require('<pkg>/package.json').dependencies['<dep>'])"`. If no `^`/`~` prefix, a flat override alone **will not work** — npm cannot replace exact-pinned versions. However, `npm update <pkg>` may resolve it via dedup if another chain pulls in the patched version. Verify with `npm ls <dep>` after update. If the exact-pinned copy persists, dismiss the alert with documented rationale.
+- `ajv`: scoped overrides only (`"parent": { "ajv": "^8.18.0" }`). A global override breaks ESLint (`ajv@6.x` → `8.x` API incompatible).
+- `typescript-eslint` is a meta-package — always update `typescript-eslint`, `@typescript-eslint/parser`, and `@typescript-eslint/eslint-plugin` together (they share internal version locks). Dependabot groups them automatically (see `.github/dependabot.yml`).
+
+## Release-PR `Package Validation` Carve-out (SMI-4530, SMI-4778)
+
+`Package Validation` (script: `scripts/verify-publish-deps.mjs --ci`) fails by design on `chore/release-*` branches. The check verifies that every `@skillsmith/<pkg>` dep range is satisfied by an already-published npm version — but a release PR's whole purpose is to bump to a version that hasn't been published yet, so it cannot pass. **Admin-merge with `gh pr merge --admin` is the correct path** when this is the *only* failing check on a release PR and all other required checks are green. Before bypassing, search for an in-flight infra fix (`gh pr list --search "verify-publish-deps OR Package Validation"`); if one is open, rebase onto it instead. Do not admin-bypass other failing checks — that's how the SMI-4647 / SMI-4767 incidents started.
+
+## Vitest Split Rationale
+
+**SMI-3502 split rationale**: colocated `packages/*/src/**/*.test.ts` tests run only in `vitest.config.root-tests.ts` (post-merge-verify). Per-package configs use `tests/**/*.test.ts` only — including `src/**` everywhere previously caused CI OOM at 147 files (vs 120 with memory benchmarks excluded).
+
+**SMI-4557 carve-out**: `packages/core/src/analysis/tree-sitter/**/*.test.ts` is included in `packages/core/vitest.config.ts` so PR matrix catches dependabot bumps to `web-tree-sitter` / `tree-sitter-*` deps before merge. Subtree is small (~4 files) and well below SMI-3502's 147-file OOM threshold. Driven by SMI-4556 — 0.26.x bump merged green and broke `post-merge-verify` for ~14 commits before detection.
+
+## Docker-First CI Carve-out (SMI-4647)
+
+Four pure-JS jobs run on the host runner via `actions/setup-node@v6` + `npm ci --ignore-scripts` + direct execution: `lint`, `typecheck` (Type Check), `compliance` (Standards Compliance), and `code-review` (Code Review). They are exempt because their import closures contain zero native bindings (verified: ESLint, Prettier, `tsc`, `audit-standards.mjs`, `ci-code-review.sh`). The carve-out lets these jobs start at T+0 instead of waiting ~5 min on `Build Docker Image`. All other jobs (`test`, `test-root`, `security`, `build`, `website-build`, `fresh-install-test`) remain Docker-bound. New jobs default to Docker; opting into the carve-out requires a `# audit:carveout-pure-js` marker comment, which `audit:standards` Check 38 enforces. Plan: [smi-4647-pure-js-carveout-and-drift-check.md](../../docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md).

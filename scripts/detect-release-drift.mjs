@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // SMI-4191: detect drift between npm-published versions and GitHub Releases.
-// Runs hourly from .github/workflows/detect-release-drift.yml to catch the
-// local `npm publish --ignore-scripts -w` fallback path (CLAUDE.md line 487)
-// that bypasses publish.yml and therefore never creates a GH Release.
+// Runs hourly from .github/workflows/detect-release-drift.yml to catch any
+// off-CI publish path (e.g. the deprecated SMI-4533 local fallback documented
+// in .claude/development/publishing-guide.md) that bypasses publish.yml and
+// therefore never creates a GH Release.
 //
 // For each tracked package:
 //   - Read local `packages/<pkg>/package.json` version (the main-branch state)

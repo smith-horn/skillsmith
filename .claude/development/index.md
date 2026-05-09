@@ -27,6 +27,8 @@ Developer guides for local development, testing, and debugging.
 | [smoke-prod-guide.md](smoke-prod-guide.md) | Post-deploy smoke harness (SMI-4459), surface manifest, failure triage |
 | [vercel-deploy-hook.md](vercel-deploy-hook.md) | Vercel→GitHub `repository_dispatch` trigger for `smoke-prod.yml` |
 | [e2e-staging-runbook.md](e2e-staging-runbook.md) | Device-login round-trip e2e (SMI-4460) — secret rotation, Docker carve-out |
+| [eval-cron-setup.md](eval-cron-setup.md) | Canonical-dev retrieval-eval cron (SMI-4764 W2) — launchd/systemd, heartbeat, replacement protocol |
+| [branch-management.md](branch-management.md) | Pre-commit auto-restore, post-commit fallback recovery, direct-to-main SQL rule (SMI-2598) |
 
 ## Quick Links
 

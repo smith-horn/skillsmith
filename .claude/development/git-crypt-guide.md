@@ -232,6 +232,16 @@ varlock run -- sh -c 'git-crypt unlock "${GIT_CRYPT_KEY_PATH/#\~/$HOME}"'
 git worktree add ../worktrees/my-feature -b feature/my-feature
 ```
 
+### Hooks in worktrees
+
+Pre-commit hooks work in worktrees via tracked `.husky/_/` dispatch stubs + per-package `node_modules` symlinks. One-time host setup after fresh clone: `npm install --ignore-scripts && ./scripts/repair-host-native-deps.sh`. The repair script is idempotent. Caveat: don't run `npm install` in the main repo while a pre-commit is active in a worktree.
+
+### Worktree Docker bind-mounts (SMI-4689)
+
+On macOS Docker Desktop, `create-worktree.sh` and `repair-worktrees.sh` emit per-package `node_modules` bind mounts into the worktree's `docker-compose.override.yml`. This masks the dangling SMI-4381 relative symlinks inside the container so `docker exec ... npm run build` resolves workspace-pinned deps correctly. Pre-commit/pre-push still use the host-fallback path (`scripts/lib/hook-docker-detect.sh`) because the symlinks themselves stay in place — they're needed for host resolution. Linux Docker hosts skip the bind-mount block (overlayfs handles the symlinks correctly). If a worktree container fails an entrypoint build with `Could not resolve <dep>` or `Cannot find module <pkg>`, run `./scripts/repair-worktrees.sh` from the main repo and restart the container.
+
+**SMI-4738**: `npm install` in the main repo auto-regenerates worktree `docker-compose.override.yml` files via postinstall (macOS only, via `scripts/regen-worktree-overrides.sh`). Adding a new `packages/<pkg>/` no longer requires a manual `./scripts/repair-worktrees.sh` for existing worktrees to pick up the new bind mounts — just bounce the worktree container. Idempotency is content-compare (`cmp -s`), not marker-based, so drift caused by adding/removing/renaming a package is detected even when the prior override already had the SMI-4689 marker.
+
 ## Submodule Workflow
 
 Internal docs are in a private submodule. After cloning or creating a worktree:
