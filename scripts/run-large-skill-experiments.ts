@@ -671,10 +671,7 @@ async function main(): Promise<void> {
   // mount-point for the strategy submodule. When uninitialized (the default
   // external-contributor case), skip rather than erroring out.
   if (!existsSync(join(PROJECT_ROOT, SKILLS_PATH))) {
-    log(
-      'Strategy submodule not initialized — skipping large-skill experiments',
-      'warn'
-    )
+    log('Strategy submodule not initialized — skipping large-skill experiments', 'warn')
     process.exit(0)
   }
 
