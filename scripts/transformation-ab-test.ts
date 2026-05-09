@@ -328,6 +328,9 @@ function findSkillPath(skillName: string, customPath?: string): string | null {
     return customPath
   }
 
+  // SMI-4829: project-relative path may be an uninitialized strategy-submodule
+  // mount-point; existsSync guard below ensures we fall through to the
+  // user-home path without error when .claude/skills is absent.
   const searchPaths = [
     join(PROJECT_ROOT, '.claude/skills', skillName, 'SKILL.md'),
     join(homedir(), '.claude/skills', skillName, 'SKILL.md'),

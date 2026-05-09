@@ -9,6 +9,10 @@ import { join, dirname } from 'path'
 import { homedir } from 'os'
 import { parse as parseYaml } from 'yaml'
 
+// SMI-4829: post-cutover, project-relative `.claude/skills` may be an
+// uninitialized strategy-submodule mount-point. The fan-out below
+// already handles missing dirs via `existsSync` in findSkills(); no
+// guard added here.
 const SKILLS_DIRS = [
   join(homedir(), '.claude/skills'),
   // Also index project-level skills if running from skillsmith repo

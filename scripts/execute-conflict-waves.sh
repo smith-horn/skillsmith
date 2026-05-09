@@ -31,6 +31,10 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKTREE_BASE="$PROJECT_ROOT/worktrees"
 HIVE_MIND_DIR="$PROJECT_ROOT/.claude/hive-mind"
 
+# SMI-4829: strategy-submodule guard — .claude/hive-mind may be an uninitialized
+# mount-point post-cutover. Exit cleanly so external contributors aren't blocked.
+[[ -d "$HIVE_MIND_DIR" ]] || { echo "Strategy submodule not initialized — skipping conflict waves execution"; exit 0; }
+
 # Wave configuration functions (bash 3.x compatible)
 get_wave_name() {
   case "$1" in
