@@ -400,6 +400,13 @@ const isCrawler = isCrawlerUserAgent(userAgent)
 
     // Use astro:page-load for View Transitions compatibility (fires on both initial load and client-side navigation)
     document.addEventListener('astro:page-load', () => {
+      // Document-level listeners persist across ClientRouter navigations. When the user
+      // navigates /skills → /skills/[id] (or any non-/skills page), this handler still
+      // fires but the elements it expects (search-input, etc.) don't exist on the new
+      // page. Bail early to avoid `null.addEventListener` deref on line ~893+.
+      // Mirrors the same defensive guard at packages/website/src/pages/skills/[id].astro:575.
+      if (!document.getElementById('search-input')) return
+
       // Get Supabase config for API authentication
       const config = window.__SUPABASE_CONFIG__ || { url: '', anonKey: '' }
       const supabaseAnonKey = config.anonKey
