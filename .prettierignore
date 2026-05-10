@@ -15,8 +15,12 @@ scripts/linear-api.mjs
 # Must match encrypted paths in .gitattributes
 docs/
 # .claude/skills, .claude/plans, .claude/hive-mind are now private submodules
-# (smith-horn/skillsmith-strategy, per-branch refs) — Prettier already skips
-# them via the submodule boundary, so no explicit entry needed.
+# (smith-horn/skillsmith-strategy, per-branch refs). Prettier walks the
+# filesystem, so submodule mount-points are NOT auto-skipped despite the
+# git boundary; explicit entries required (SMI-4829 Wave 5 push-time fix).
+.claude/skills/
+.claude/plans/
+.claude/hive-mind/
 supabase/functions/
 supabase/migrations/
 
