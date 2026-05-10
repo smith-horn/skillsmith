@@ -3,12 +3,6 @@
 # Only encrypt proprietary code and business logic
 # WARNING: Do NOT add a broad docs/** pattern -- docs/internal/ is a private submodule
 
-# .claude/ -- encrypt skills and plans (proprietary IP)
-# .claude/development/ and .claude/templates/ are intentionally unencrypted (public dev docs)
-.claude/skills/** filter=git-crypt diff=git-crypt
-.claude/plans/** filter=git-crypt diff=git-crypt
-.claude/hive-mind/** filter=git-crypt diff=git-crypt
-
 # supabase/ -- encrypt edge functions and migrations (business logic)
 supabase/functions/** filter=git-crypt diff=git-crypt
 supabase/migrations/** filter=git-crypt diff=git-crypt

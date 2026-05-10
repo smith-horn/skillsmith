@@ -14,9 +14,6 @@ scripts/linear-api.mjs
 # Git-crypt encrypted directories - cannot be parsed when locked (CI, fresh clones)
 # Must match encrypted paths in .gitattributes
 docs/
-.claude/skills/
-.claude/plans/
-.claude/hive-mind/
 supabase/functions/
 supabase/migrations/
 
