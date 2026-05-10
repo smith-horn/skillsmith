@@ -679,3 +679,41 @@ repair_worktrees_compose_override() {
         info "  Skipped $skipped worktree(s) — override content already current"
     fi
 }
+
+#######################################
+# Enumerate submodule paths declared in a repo's .gitmodules (SMI-4829).
+#
+# Replaces hardcoded "docs/internal" references in worktree tooling. With only
+# docs/internal declared (current pre-cutover state) this returns a single
+# line; post-cutover (Wave 3 adds the strategy submodule mounts) it returns N.
+#
+# Arguments:
+#   $1 - repo_root   absolute path to the repo whose .gitmodules to read
+#
+# Outputs:
+#   stdout - one submodule path per line (in declaration order); empty if
+#            .gitmodules is absent or has no submodule.<name>.path entries
+# Returns:
+#   0 always (missing .gitmodules is not an error — pre-cutover state)
+#######################################
+enumerate_submodules() {
+    local repo_root="$1"
+    local gitmodules="$repo_root/.gitmodules"
+    if [[ ! -f "$gitmodules" ]]; then
+        return 0
+    fi
+    # `git config --get-regexp` lines look like:
+    #   submodule.docs/internal.path docs/internal
+    # The trailing field is the path. awk extracts column 2; if a path ever
+    # contains whitespace (rare but legal), git stores it quoted/escaped and
+    # this helper would need updating — flag at that time.
+    #
+    # SMI-4829 footgun: `git config --file <abs-path>` STILL performs repo
+    # discovery from cwd to evaluate `[includeIf "gitdir:..."]` directives,
+    # and a stale `.git` file (e.g. a worktree imported from another host
+    # whose gitdir pointer is now invalid) makes git exit 128 — silently
+    # turning the result into "no submodules". Subshell into `/` to break
+    # discovery before invoking. `--no-includes` does NOT suffice.
+    (cd / && git config --file "$gitmodules" --get-regexp 'submodule\..*\.path' 2>/dev/null) \
+        | awk '{print $2}' || true
+}

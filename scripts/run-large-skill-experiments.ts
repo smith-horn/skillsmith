@@ -667,6 +667,14 @@ Model: ${MODEL}
 // ============================================================================
 
 async function main(): Promise<void> {
+  // SMI-4829: strategy-submodule guard — post-cutover, .claude/skills is a
+  // mount-point for the strategy submodule. When uninitialized (the default
+  // external-contributor case), skip rather than erroring out.
+  if (!existsSync(join(PROJECT_ROOT, SKILLS_PATH))) {
+    log('Strategy submodule not initialized — skipping large-skill experiments', 'warn')
+    process.exit(0)
+  }
+
   const args = parseArgs()
 
   log('Large Skill A/B Testing Experiments')

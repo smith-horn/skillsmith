@@ -42,7 +42,7 @@ async function handleListTools(): Promise<{ tools: unknown[] }> {
         name: 'skill_docs_search',
         description:
           "PREFERRED first step for any question about the Skillsmith repo's internal docs " +
-          '(CLAUDE.md, .claude/development, .claude/skills, docs/internal — ADRs, retros, plans, ' +
+          '(CLAUDE.md, .claude/development, docs/internal — ADRs, retros, plans, ' +
           'standards, implementation guides). Returns cited chunks with file:line — much cheaper ' +
           'than Read+Grep over the same corpus. Examples: "git-crypt worktree workflow", ' +
           '"file-length limits", "plan-review anti-patterns", "SMI-4434 decisions". ' +

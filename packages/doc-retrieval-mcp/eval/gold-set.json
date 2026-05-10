@@ -484,34 +484,29 @@
   {
     "id": "q051",
     "category": "skill-discovery",
-    "query": "governance skill standards enforcement code review post-commit",
+    "query": "git-crypt worktree setup workflow",
     "expectedChunks": [
-      { "filePath": ".claude/skills/governance/SKILL.md", "matchType": "substring" }
+      { "filePath": ".claude/development/git-crypt-guide.md", "matchType": "substring" }
     ],
-    "rationale": "Project-level governance skill for standards enforcement.",
+    "rationale": "SMI-4829: replaced project-level skill path with stable .claude/development reference. Eval cron must pass on a clean clone without strategy submodule init.",
     "difficulty": "medium"
   },
   {
     "id": "q052",
     "category": "skill-discovery",
-    "query": "worktree manager parallel development feature branches git-crypt unlock",
+    "query": "supabase migration safety pre-apply queries",
     "expectedChunks": [
-      { "filePath": ".claude/skills/worktree-manager/SKILL.md", "matchType": "substring" }
+      { "filePath": ".claude/development/supabase-migration-safety.md", "matchType": "substring" }
     ],
-    "rationale": "Project-level worktree-manager skill for parallel development.",
+    "rationale": "SMI-4829: replaced project-level skill path with stable .claude/development reference. Eval cron must pass on a clean clone without strategy submodule init.",
     "difficulty": "medium"
   },
   {
     "id": "q053",
     "category": "skill-discovery",
-    "query": "supabase migration reviewer pre-apply post-apply ACCESS EXCLUSIVE lock",
-    "expectedChunks": [
-      {
-        "filePath": ".claude/skills/supabase-migration-reviewer/SKILL.md",
-        "matchType": "substring"
-      }
-    ],
-    "rationale": "Project-level skill for automated Supabase migration review.",
+    "query": "Docker-first development mandate and CI carve-out",
+    "expectedChunks": [{ "filePath": "CLAUDE.md", "matchType": "substring" }],
+    "rationale": "SMI-4829: replaced project-level skill path with stable CLAUDE.md reference. Eval cron must pass on a clean clone without strategy submodule init.",
     "difficulty": "hard"
   },
   {
@@ -525,11 +520,14 @@
   {
     "id": "q055",
     "category": "skill-discovery",
-    "query": "sparc methodology orchestrator researcher coder reviewer SPARC modes",
+    "query": "release cadence and GH release alignment",
     "expectedChunks": [
-      { "filePath": ".claude/skills/sparc-methodology/SKILL.md", "matchType": "substring" }
+      {
+        "filePath": "docs/internal/adr/114-release-cadence-and-gh-release-alignment.md",
+        "matchType": "substring"
+      }
     ],
-    "rationale": "Project-level sparc-methodology skill for structured planning.",
+    "rationale": "SMI-4829: replaced project-level skill path with stable docs/internal ADR reference. Eval cron must pass on a clean clone without strategy submodule init.",
     "difficulty": "medium"
   }
 ]

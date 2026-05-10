@@ -3,6 +3,13 @@
 # Creates isolated worktree for wave-based file splitting
 set -e
 
+# SMI-4829: strategy-submodule guard — hive-mind YAML lives in .claude/hive-mind
+# which may be uninitialized post-cutover. Exit cleanly for external contributors.
+if [[ ! -f .claude/hive-mind/smi-1686-wave-1.yaml ]]; then
+    echo "Strategy submodule not initialized — skipping SMI-1686 worktree starter"
+    exit 0
+fi
+
 WORKTREE_NAME="smi-1686-file-reduction"
 BRANCH_NAME="refactor/smi-1686-file-reduction"
 WORKTREE_PATH="../worktrees/$WORKTREE_NAME"

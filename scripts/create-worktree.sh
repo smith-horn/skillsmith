@@ -126,6 +126,31 @@ verify_skill_readability() {
         return 0
     fi
 
+    # SMI-4829 gate #3: if .claude/skills is a registered submodule mount-point
+    # AND the directory contains no SKILL.md files, the strategy submodule is
+    # simply not initialized for this contributor (external devs without access,
+    # or pre-cutover state). Log an info line and skip — never hard-error here.
+    local skills_is_submodule=false
+    if [[ -f "$REPO_ROOT/.gitmodules" ]]; then
+        local sub_path
+        while IFS= read -r sub_path; do
+            if [[ "$sub_path" == ".claude/skills" ]]; then
+                skills_is_submodule=true
+                break
+            fi
+        done < <(enumerate_submodules "$REPO_ROOT")
+    fi
+    if [[ "$skills_is_submodule" == true ]]; then
+        local has_skill_md=false
+        if find "$skills_dir" -name 'SKILL.md' -maxdepth 5 2>/dev/null | grep -q .; then
+            has_skill_md=true
+        fi
+        if [[ "$has_skill_md" == false ]]; then
+            info "  Strategy submodule not initialized — skipping skill readability check"
+            return 0
+        fi
+    fi
+
     # Skip silently if xxd unavailable
     if ! command -v xxd >/dev/null 2>&1; then
         info "  xxd not available — skill readability check skipped"
@@ -361,6 +386,12 @@ create_worktree() {
         (cd "$worktree_path" && git submodule update --init 2>/dev/null) && \
             success "  Submodules initialized" || \
             warn "Submodule init failed (requires org access for private submodule)"
+
+        # SMI-4829 cutover (shape b′): strategy submodules use per-branch refs
+        # (`branch = skills/plans/hive-mind` in .gitmodules), so plain
+        # `git submodule update --init` is sufficient. No sparse-checkout
+        # machinery needed — cone mode cannot strip upstream path prefixes,
+        # which made the prior shape (b) approach structurally wrong.
     fi
 
     # Step 4c: Verify project-level skill readability

@@ -3,11 +3,11 @@
 # Only encrypt proprietary code and business logic
 # WARNING: Do NOT add a broad docs/** pattern -- docs/internal/ is a private submodule
 
-# .claude/ -- encrypt skills and plans (proprietary IP)
-# .claude/development/ and .claude/templates/ are intentionally unencrypted (public dev docs)
-.claude/skills/** filter=git-crypt diff=git-crypt
-.claude/plans/** filter=git-crypt diff=git-crypt
-.claude/hive-mind/** filter=git-crypt diff=git-crypt
+# .claude/ strategic IP (.claude/skills, .claude/plans, .claude/hive-mind) moved
+# to private submodule smith-horn/skillsmith-strategy in SMI-4829 cutover.
+# Encryption directives no longer needed in this repo (each strategy mount-point
+# has its own private branch; access is gated by repo membership). Public dev docs
+# remain in .claude/development/ and .claude/templates/ (always readable).
 
 # supabase/ -- encrypt edge functions and migrations (business logic)
 supabase/functions/** filter=git-crypt diff=git-crypt

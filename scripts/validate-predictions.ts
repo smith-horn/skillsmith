@@ -530,7 +530,12 @@ async function main(): Promise<void> {
     }
   } else if (options.all) {
     // Discover all skills
-    const projectSkills = await discoverSkills(join(PROJECT_ROOT, '.claude/skills'))
+    // SMI-4829: project-relative path may be uninitialized strategy-submodule
+    // mount-point — existsSync guard prevents errors; discoverSkills also guards.
+    const projectClaudeSkills = join(PROJECT_ROOT, '.claude/skills')
+    const projectSkills = existsSync(projectClaudeSkills)
+      ? await discoverSkills(projectClaudeSkills)
+      : []
     const homeSkills = await discoverSkills(join(process.env.HOME || '', '.claude/skills'))
     skillPaths = [...projectSkills, ...homeSkills]
   }

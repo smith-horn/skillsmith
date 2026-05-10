@@ -75,7 +75,7 @@ For worktree branches, use the rebase script which handles all steps automatical
 ./scripts/rebase-worktree.sh --allow-submodule-ahead <worktree-path>
 ```
 
-The script handles: submodule cross-fetching, git-crypt filter disable/restore, stash management, submodule conflict auto-resolution, and branch verification. See `./scripts/rebase-worktree.sh --help` for full details.
+The script handles: submodule cross-fetching, git-crypt filter disable/restore, stash management, submodule conflict auto-resolution, and branch verification. Post-SMI-4829 the script processes all submodules in `.gitmodules` (`docs/internal` + up to 3 strategy mounts: `.claude/skills`, `.claude/plans`, `.claude/hive-mind`). Use `--allow-submodule-ahead=<path>` for per-submodule advance permission when one submodule pointer is a strict descendant of target's (unscoped `--allow-submodule-ahead` applies globally). See `./scripts/rebase-worktree.sh --help` for full details.
 
 **Exit codes**: 0 (success), 1 (validation failure), 2 (rebase conflict -- manual resolution needed), 3 (rebase succeeded but stash pop had conflicts).
 
@@ -176,6 +176,8 @@ The script handles:
 **If step 6 warns "jq unavailable"**: install jq (`brew install jq`) and re-run `create-worktree.sh`, or manually set the `skillsmith` entry in `.mcp.json` to `{"command": "npx", "args": ["-y", "@skillsmith/mcp-server"]}`.
 
 **Existing worktrees**: Step 6 only runs during creation. If you have an existing worktree with a broken skillsmith MCP, apply the manual fix above. For the Step 4d / Step 7 `node_modules` symlink (SMI-4377), run `./scripts/repair-worktrees.sh` — idempotent, safe to re-run.
+
+**Strategy submodule init in worktrees (SMI-4829)**: `create-worktree.sh` calls `init-strategy-submodules.sh` after `git submodule update --init`. This wires sparse-checkout cones for the three strategy mount-points (`.claude/skills`, `.claude/plans`, `.claude/hive-mind`). External contributors without access to `smith-horn/skillsmith-strategy` see empty mount-points but no hard error (gate #3). To re-run manually in an existing worktree: `./scripts/init-strategy-submodules.sh` from the worktree root. Team members who skipped initial setup: `git submodule update --init .claude/skills .claude/plans .claude/hive-mind` then run the init script.
 
 **Supported worktree layouts (SMI-4654)**: Both `<repo-root>/.worktrees/<name>/` (the convention used by `create-worktree.sh`) AND nested `<repo-root>/<name>/` (worktree created directly under the repo root) are supported. `scripts/_lib.sh` computes the `node_modules` symlink depth dynamically, so either layout produces working symlinks. The `.worktrees/` convention is preferred — it keeps the repo root tidy and groups parallel work — but if you've already nested a worktree directly in the repo, you don't need to migrate it. Run `./scripts/repair-worktrees.sh` to refresh symlinks; `./scripts/verify-worktree-symlinks.sh` audits them and exits non-zero on any dangling link.
 

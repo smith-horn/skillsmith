@@ -14,6 +14,10 @@ scripts/linear-api.mjs
 # Git-crypt encrypted directories - cannot be parsed when locked (CI, fresh clones)
 # Must match encrypted paths in .gitattributes
 docs/
+# .claude/skills, .claude/plans, .claude/hive-mind are now private submodules
+# (smith-horn/skillsmith-strategy, per-branch refs). Prettier walks the
+# filesystem, so submodule mount-points are NOT auto-skipped despite the
+# git boundary; explicit entries required (SMI-4829 Wave 5 push-time fix).
 .claude/skills/
 .claude/plans/
 .claude/hive-mind/
