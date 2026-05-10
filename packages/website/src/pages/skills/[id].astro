@@ -655,10 +655,14 @@ const categoryJsonLd =
 
     // Show error state
     function showError(message) {
-      loadingState.classList.add('hidden')
-      skillContent.classList.add('hidden')
-      errorState.classList.remove('hidden')
-      errorMessage.textContent = message
+      // Defensive: refs are normally captured at lines 630-634 against markup
+      // that always renders for !isCategory pages. Guard anyway — a failure here
+      // (e.g. async fetchSkill catch firing after a ClientRouter detach) should
+      // not throw a confusing null-deref over the underlying error message.
+      if (loadingState) loadingState.classList.add('hidden')
+      if (skillContent) skillContent.classList.add('hidden')
+      if (errorState) errorState.classList.remove('hidden')
+      if (errorMessage) errorMessage.textContent = message
     }
 
     // Render skill details
