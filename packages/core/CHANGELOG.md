@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/core` are documented here.
 
+## v0.6.1
+
+- **Refactor**: SMI-4813 split SkillParser.ts under 500-line gate + plan (#1036)
+
 ## [Unreleased]
 
 ## v0.6.0

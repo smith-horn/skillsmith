@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/cli` are documented here.
 
+## v0.6.1
+
+- **Chore**: SMI-4818 npm audit fix — clear 5 advisories (1 high, 4 moderate) (#1037)
+
 ## [Unreleased]
 
 ## v0.6.0

@@ -2,6 +2,10 @@
 
 All notable changes to `@skillsmith/mcp-server` are documented here.
 
+## v0.5.2
+
+- **Feature**: SMI-4829 strategic-IP submodule extraction (shape b′) (#1058)
+
 ## [Unreleased]
 
 ## v0.5.1
