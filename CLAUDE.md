@@ -88,7 +88,7 @@ git submodule update --init                           # Init internal docs (auth
 
 **Worktrees**: Unlock main repo first, then `./scripts/create-worktree.sh`. Remove with `./scripts/remove-worktree.sh --prune`. Hooks-in-worktrees, Docker bind-mounts (SMI-4689/4738), pre-push (SMI-4767), host native bindings (SMI-4549), and SMI-4698 native-rebuild caveat: see [git-crypt-guide.md § Worktree Setup](.claude/development/git-crypt-guide.md#worktree-setup).
 
-**Strategy submodule init**: `create-worktree.sh` calls `init-strategy-submodules.sh` after `git submodule update --init` to wire sparse-checkout cones for the three strategy mount-points (`.claude/skills`, `.claude/plans`, `.claude/hive-mind`). External contributors without strategy-submodule access see empty mount-points but no hard error (gate #3, SMI-4829).
+**Strategy submodule init**: each of `.claude/skills`, `.claude/plans`, `.claude/hive-mind` is a submodule of `smith-horn/skillsmith-strategy` pinned to its own branch (`branch = skills/plans/hive-mind` in `.gitmodules`). Plain `git submodule update --init` materializes the right content at each mount-point — no sparse-checkout machinery needed (SMI-4829 cutover, shape b′; the prior shape b sparse-checkout approach was abandoned because cone mode cannot strip upstream path prefixes). External contributors without strategy-submodule access see empty mount-points but no hard error (gate #3, SMI-4829).
 
 **Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Handles all submodules in `.gitmodules` (post-SMI-4829: `docs/internal` + 3 strategy mounts). Use `--dry-run` to preview. Pass `--allow-submodule-ahead=<path>` for per-submodule advance permission (or unscoped `--allow-submodule-ahead` for global). Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
 
@@ -251,7 +251,7 @@ Project skills load from the `.claude/skills/` mount-point of the `skillsmith-st
 | Orphaned agents | `./scripts/cleanup-orphans.sh` (`--dry-run` to preview) |
 | Symlink outside skills root (SMI-4287) | Set `allowSymlinksOutsideRoot: true` in `LocalFilesystemConfig` to opt in |
 | Session-start audit unexpected stderr (SMI-4590) | `export SKILLSMITH_SESSION_AUDIT_DISABLE=1`. Logs: `~/.skillsmith/logs/session-audit-<date>.log` |
-| Strategy submodule uninitialized | Empty `.claude/{skills,plans,hive-mind}/` mount-points are expected for external contributors. Skillsmith team members: `git submodule update --init .claude/skills .claude/plans .claude/hive-mind` then `./scripts/init-strategy-submodules.sh` to wire sparse-checkout cones. |
+| Strategy submodule uninitialized | Empty `.claude/{skills,plans,hive-mind}/` mount-points are expected for external contributors. Skillsmith team members: `git submodule update --init .claude/skills .claude/plans .claude/hive-mind` (each pinned to its own branch in `smith-horn/skillsmith-strategy` per shape b′; no extra setup script). |
 
 **Detailed diagnostics**: [docker-guide.md](.claude/development/docker-guide.md#troubleshooting).
 

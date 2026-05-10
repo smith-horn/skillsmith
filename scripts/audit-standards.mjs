@@ -1636,7 +1636,7 @@ console.log(`\n${BOLD}22. Workflow Inline require() Paths (SMI-3336)${RESET}`)
 // shallow-clone guard works inside git worktrees (where `.git` is a file
 // containing `gitdir: <main>/.git/worktrees/<name>`, not a directory).
 // Also: downgrade git-failure from `warn(... fatal: ...)` to a clean
-// `pass('Skipped — ...')`. Matches Check 22's skip-as-pass pattern. Noise
+// `pass('Skipped — ...')`. Matches Check 21's skip-as-pass pattern. Noise
 // suppression by design — see commit message for rationale.
 console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RESET}`)
 {
@@ -1755,7 +1755,7 @@ console.log(`\n${BOLD}23. Implementation Completeness Spot Check (SMI-3543)${RES
         }
       } catch {
         // SMI-3986: downgrade from warn-with-fatal-string to clean skip-as-pass.
-        // Matches Check 22's pattern for missing infrastructure. Noise
+        // Matches Check 21's pattern for missing infrastructure. Noise
         // suppression by design — a genuinely corrupt git state will fail
         // many other checks (pre-push hooks, git log in calling tools, etc.).
         pass('Skipped — could not inspect git history (hook context or detached state)')
@@ -3074,12 +3074,15 @@ try {
   warn('Could not check @modelcontextprotocol/sdk override drift: ' + e.message)
 }
 
-// Check 21: Strategy submodule pointer-on-tip
+// Check 21: Strategy submodule pointer-on-tip-of-declared-branch
 // Pre-cutover: .gitmodules has no strategy submodule entries → no-op (pass).
-// Post-cutover: verify each strategy submodule's commit pointer matches the
-// tip of upstream main. Severity: warn for first 30 days post-cutover, then
-// promote to fail (Open Q#3 decision, SMI-4829 implementation plan).
+// Post-cutover (shape b′): three strategy submodule entries, each pinned to
+// its own branch (`skills`, `plans`, `hive-mind`) within smith-horn/skillsmith-strategy.
+// Verify each pointer matches the tip of the declared branch (not main).
+// Severity: warn for first 30 days post-cutover, then promote to fail
+// (Open Q#3 decision, SMI-4829 implementation plan).
 // "strategy" submodule = any submodule URL containing "skillsmith-strategy".
+// Each [submodule] block must include `branch = <name>` (per shape b′ topology).
 console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
 {
   let gitmodules = ''
@@ -3090,57 +3093,72 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
     gitmodules = null
   }
   if (gitmodules !== null) {
-    // Parse all [submodule] blocks to find strategy entries
-    const strategyPaths = []
-    let currentPath = null
-    let currentUrl = null
+    // Parse all [submodule] blocks to find strategy entries (path, url, branch)
+    const strategyEntries = []
+    let curPath = null
+    let curUrl = null
+    let curBranch = null
+    const flush = () => {
+      if (curPath && curUrl && curUrl.includes('skillsmith-strategy')) {
+        strategyEntries.push({ path: curPath, url: curUrl, branch: curBranch })
+      }
+      curPath = null
+      curUrl = null
+      curBranch = null
+    }
     for (const line of gitmodules.split('\n')) {
+      if (line.match(/^\[submodule/)) {
+        flush()
+        continue
+      }
       const pathMatch = line.match(/^\s*path\s*=\s*(.+)/)
       const urlMatch = line.match(/^\s*url\s*=\s*(.+)/)
-      if (line.match(/^\[submodule/)) {
-        currentPath = null
-        currentUrl = null
-      }
-      if (pathMatch) currentPath = pathMatch[1].trim()
-      if (urlMatch) currentUrl = urlMatch[1].trim()
-      if (currentPath && currentUrl && currentUrl.includes('skillsmith-strategy')) {
-        strategyPaths.push(currentPath)
-        currentPath = null
-        currentUrl = null
-      }
+      const branchMatch = line.match(/^\s*branch\s*=\s*(.+)/)
+      if (pathMatch) curPath = pathMatch[1].trim()
+      if (urlMatch) curUrl = urlMatch[1].trim()
+      if (branchMatch) curBranch = branchMatch[1].trim()
     }
-    if (strategyPaths.length === 0) {
+    flush()
+
+    if (strategyEntries.length === 0) {
       pass('Check 21: No strategy submodules in .gitmodules — no-op (pre-cutover)')
     } else {
-      for (const subPath of strategyPaths) {
+      for (const { path: subPath, branch } of strategyEntries) {
+        if (!branch) {
+          warn(
+            `Check 21: Strategy submodule '${subPath}' missing 'branch = ' declaration in .gitmodules (shape b′ requires per-branch pinning)`,
+            'Add `branch = <skills|plans|hive-mind>` to the [submodule "' + subPath + '"] block'
+          )
+          continue
+        }
         try {
-          // Get the local pointer SHA
+          // Local pointer SHA from the parent repo's index
           const localSha = execSync(`git ls-files -s "${subPath}"`, { encoding: 'utf8' })
             .trim()
             .split(/\s+/)[1]
-          // Get the remote tip of main
+          // Remote tip of the DECLARED branch (not main)
           const remoteSha = execSync(
-            `git ls-remote "$(git config --file .gitmodules "submodule.${subPath}.url")" main`,
+            `git ls-remote "$(git config --file .gitmodules "submodule.${subPath}.url")" "${branch}"`,
             { encoding: 'utf8' }
           )
             .trim()
             .split(/\s+/)[0]
           if (!localSha || !remoteSha) {
             warn(
-              `Check 21: Could not resolve SHAs for strategy submodule '${subPath}' — skipping`,
-              'Ensure the submodule is initialized and the remote is reachable'
+              `Check 21: Could not resolve SHAs for strategy submodule '${subPath}' (branch=${branch}) — skipping`,
+              'Ensure the submodule is initialized and the remote branch exists'
             )
           } else if (localSha !== remoteSha) {
             warn(
-              `Check 21: Strategy submodule '${subPath}' pointer (${localSha.slice(0, 8)}) is behind remote main (${remoteSha.slice(0, 8)})`,
-              `Run: git submodule update --remote ${subPath} && git add ${subPath} && git commit -m 'chore: bump strategy submodule to tip'`
+              `Check 21: Strategy submodule '${subPath}' pointer (${localSha.slice(0, 8)}) is behind remote ${branch} tip (${remoteSha.slice(0, 8)})`,
+              `Run: git submodule update --remote ${subPath} && git add ${subPath} && git commit -m 'chore: bump strategy submodule ${subPath} to ${branch} tip'`
             )
           } else {
-            pass(`Check 21: Strategy submodule '${subPath}' pointer is at remote main tip`)
+            pass(`Check 21: Strategy submodule '${subPath}' pointer is at remote ${branch} tip`)
           }
         } catch (e) {
           warn(
-            `Check 21: Could not check strategy submodule '${subPath}' tip: ${e.message}`,
+            `Check 21: Could not check strategy submodule '${subPath}' (branch=${branch}) tip: ${e.message}`,
             'Ensure remote is reachable and submodule is initialized'
           )
         }
@@ -3149,67 +3167,10 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
   }
 }
 
-// Check 22: Sparse-checkout cone canonical per strategy mount-point
-// Pre-cutover: no strategy submodules → no-op (pass).
-// Post-cutover: verify <gitdir>/modules/<path>/info/sparse-checkout contains
-// the canonical cone for each mount. Severity: warn first 30 days, then fail.
-// Mount-point → expected cone: .claude/skills → /skills/, .claude/plans → /plans/,
-// .claude/hive-mind → /hive-mind/.
-console.log(`\n${BOLD}Check 22: Sparse-checkout cone canonical${RESET}`)
-{
-  const expectedCones = {
-    '.claude/skills': '/skills/',
-    '.claude/plans': '/plans/',
-    '.claude/hive-mind': '/hive-mind/',
-  }
-  let gitmodules = ''
-  try {
-    gitmodules = readFileSync('.gitmodules', 'utf8')
-  } catch {
-    pass('Check 22: .gitmodules not found — skipped (pre-cutover)')
-    gitmodules = null
-  }
-  if (gitmodules !== null) {
-    const strategyPaths = Object.keys(expectedCones).filter((p) =>
-      gitmodules.includes(`path = ${p}`)
-    )
-    if (strategyPaths.length === 0) {
-      pass('Check 22: No strategy mount-points in .gitmodules — no-op (pre-cutover)')
-    } else {
-      // Resolve the gitdir for each submodule: .git/modules/<path>
-      let repoGitDir = '.git'
-      try {
-        const gitDirContent = readFileSync('.git', 'utf8').trim()
-        if (gitDirContent.startsWith('gitdir:')) {
-          repoGitDir = gitDirContent.replace('gitdir:', '').trim()
-        }
-      } catch {
-        // .git is a directory, not a file — that's fine
-      }
-      for (const mountPath of strategyPaths) {
-        const modulesGitDir = `${repoGitDir}/modules/${mountPath}`
-        const sparseFile = `${modulesGitDir}/info/sparse-checkout`
-        const expectedCone = expectedCones[mountPath]
-        if (!existsSync(sparseFile)) {
-          warn(
-            `Check 22: Sparse-checkout file missing for '${mountPath}': ${sparseFile}`,
-            'Re-run ./scripts/init-strategy-submodules.sh to wire sparse-checkout cones'
-          )
-        } else {
-          const content = readFileSync(sparseFile, 'utf8')
-          if (!content.includes(expectedCone)) {
-            warn(
-              `Check 22: Sparse-checkout cone for '${mountPath}' does not contain '${expectedCone}'`,
-              'Re-run ./scripts/init-strategy-submodules.sh to restore canonical cone'
-            )
-          } else {
-            pass(`Check 22: Sparse-checkout cone for '${mountPath}' is canonical (${expectedCone})`)
-          }
-        }
-      }
-    }
-  }
-}
+// (Check 22 removed in SMI-4829 cutover — sparse-checkout cone mode cannot
+// strip upstream path prefixes, so the prior shape (b) approach was abandoned
+// in favor of shape (b′): one branch per mount-point with content at root.
+// Replaced with per-branch pointer verification in Check 21.)
 
 // Check 23: `git config --file <path>` subshell-out-of-cwd discipline
 // From a worktree path inside a Linux Docker container, `git config --file <abs-path>`

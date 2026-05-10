@@ -143,9 +143,10 @@ paths = [
   '''docs/.*\.yaml$''',
   # Research data contains session IDs and experiment UUIDs (not secrets)
   '''docs/research/.*\.json$''',
-  '''\.claude/skills/.*\.md$''',
-  # Hive-mind configs contain Linear project IDs (not secrets)
-  '''\.claude/hive-mind/.*\.yaml$''',
+  # .claude/skills, .claude/hive-mind moved to private submodule
+  # smith-horn/skillsmith-strategy in SMI-4829 cutover; gitleaks doesn't
+  # scan submodule content from the parent repo, so no allowlist entries
+  # are needed here.
   # Lock files contain integrity hashes, not secrets
   '''deno\.lock$''',
   '''package-lock\.json$''',

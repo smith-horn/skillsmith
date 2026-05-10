@@ -1,4 +1,0 @@
-#!/bin/sh
-# SMI-4829: keep strategy-submodule sparse-checkout cones canonical on every checkout.
-# Idempotent fast-exit when cones already match. Failure is non-blocking.
-./scripts/init-strategy-submodules.sh 2>&1 | grep -v '^$' || true

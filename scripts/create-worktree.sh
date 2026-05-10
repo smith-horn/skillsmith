@@ -387,10 +387,11 @@ create_worktree() {
             success "  Submodules initialized" || \
             warn "Submodule init failed (requires org access for private submodule)"
 
-        # SMI-4829 Wave 3.1b: wire sparse-checkout cones after submodule init
-        # so fresh worktrees have correct cones from the start. Idempotent fast-exit
-        # when cones already match canonical. Suppressed stdout; stderr passes through.
-        "$SCRIPT_DIR/init-strategy-submodules.sh" 2>&1 | grep -v '^$' || true
+        # SMI-4829 cutover (shape b′): strategy submodules use per-branch refs
+        # (`branch = skills/plans/hive-mind` in .gitmodules), so plain
+        # `git submodule update --init` is sufficient. No sparse-checkout
+        # machinery needed — cone mode cannot strip upstream path prefixes,
+        # which made the prior shape (b) approach structurally wrong.
     fi
 
     # Step 4c: Verify project-level skill readability
