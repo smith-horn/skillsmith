@@ -2,3 +2,18 @@
 	path = docs/internal
 	url = https://github.com/smith-horn/skillsmith-docs.git
 	branch = main
+
+[submodule ".claude/skills"]
+	path = .claude/skills
+	url = https://github.com/smith-horn/skillsmith-strategy.git
+	branch = main
+
+[submodule ".claude/plans"]
+	path = .claude/plans
+	url = https://github.com/smith-horn/skillsmith-strategy.git
+	branch = main
+
+[submodule ".claude/hive-mind"]
+	path = .claude/hive-mind
+	url = https://github.com/smith-horn/skillsmith-strategy.git
+	branch = main
