@@ -3074,6 +3074,206 @@ try {
   warn('Could not check @modelcontextprotocol/sdk override drift: ' + e.message)
 }
 
+// Check 21: Strategy submodule pointer-on-tip
+// Pre-cutover: .gitmodules has no strategy submodule entries → no-op (pass).
+// Post-cutover: verify each strategy submodule's commit pointer matches the
+// tip of upstream main. Severity: warn for first 30 days post-cutover, then
+// promote to fail (Open Q#3 decision, SMI-4829 implementation plan).
+// "strategy" submodule = any submodule URL containing "skillsmith-strategy".
+console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
+{
+  let gitmodules = ''
+  try {
+    gitmodules = readFileSync('.gitmodules', 'utf8')
+  } catch {
+    pass('Check 21: .gitmodules not found — skipped (pre-cutover)')
+    gitmodules = null
+  }
+  if (gitmodules !== null) {
+    // Parse all [submodule] blocks to find strategy entries
+    const strategyPaths = []
+    let currentPath = null
+    let currentUrl = null
+    for (const line of gitmodules.split('\n')) {
+      const pathMatch = line.match(/^\s*path\s*=\s*(.+)/)
+      const urlMatch = line.match(/^\s*url\s*=\s*(.+)/)
+      if (line.match(/^\[submodule/)) {
+        currentPath = null
+        currentUrl = null
+      }
+      if (pathMatch) currentPath = pathMatch[1].trim()
+      if (urlMatch) currentUrl = urlMatch[1].trim()
+      if (currentPath && currentUrl && currentUrl.includes('skillsmith-strategy')) {
+        strategyPaths.push(currentPath)
+        currentPath = null
+        currentUrl = null
+      }
+    }
+    if (strategyPaths.length === 0) {
+      pass('Check 21: No strategy submodules in .gitmodules — no-op (pre-cutover)')
+    } else {
+      for (const subPath of strategyPaths) {
+        try {
+          // Get the local pointer SHA
+          const localSha = execSync(`git ls-files -s "${subPath}"`, { encoding: 'utf8' })
+            .trim()
+            .split(/\s+/)[1]
+          // Get the remote tip of main
+          const remoteSha = execSync(
+            `git ls-remote "$(git config --file .gitmodules "submodule.${subPath}.url")" main`,
+            { encoding: 'utf8' }
+          )
+            .trim()
+            .split(/\s+/)[0]
+          if (!localSha || !remoteSha) {
+            warn(
+              `Check 21: Could not resolve SHAs for strategy submodule '${subPath}' — skipping`,
+              'Ensure the submodule is initialized and the remote is reachable'
+            )
+          } else if (localSha !== remoteSha) {
+            warn(
+              `Check 21: Strategy submodule '${subPath}' pointer (${localSha.slice(0, 8)}) is behind remote main (${remoteSha.slice(0, 8)})`,
+              `Run: git submodule update --remote ${subPath} && git add ${subPath} && git commit -m 'chore: bump strategy submodule to tip'`
+            )
+          } else {
+            pass(`Check 21: Strategy submodule '${subPath}' pointer is at remote main tip`)
+          }
+        } catch (e) {
+          warn(
+            `Check 21: Could not check strategy submodule '${subPath}' tip: ${e.message}`,
+            'Ensure remote is reachable and submodule is initialized'
+          )
+        }
+      }
+    }
+  }
+}
+
+// Check 22: Sparse-checkout cone canonical per strategy mount-point
+// Pre-cutover: no strategy submodules → no-op (pass).
+// Post-cutover: verify <gitdir>/modules/<path>/info/sparse-checkout contains
+// the canonical cone for each mount. Severity: warn first 30 days, then fail.
+// Mount-point → expected cone: .claude/skills → /skills/, .claude/plans → /plans/,
+// .claude/hive-mind → /hive-mind/.
+console.log(`\n${BOLD}Check 22: Sparse-checkout cone canonical${RESET}`)
+{
+  const expectedCones = {
+    '.claude/skills': '/skills/',
+    '.claude/plans': '/plans/',
+    '.claude/hive-mind': '/hive-mind/',
+  }
+  let gitmodules = ''
+  try {
+    gitmodules = readFileSync('.gitmodules', 'utf8')
+  } catch {
+    pass('Check 22: .gitmodules not found — skipped (pre-cutover)')
+    gitmodules = null
+  }
+  if (gitmodules !== null) {
+    const strategyPaths = Object.keys(expectedCones).filter((p) =>
+      gitmodules.includes(`path = ${p}`)
+    )
+    if (strategyPaths.length === 0) {
+      pass('Check 22: No strategy mount-points in .gitmodules — no-op (pre-cutover)')
+    } else {
+      // Resolve the gitdir for each submodule: .git/modules/<path>
+      let repoGitDir = '.git'
+      try {
+        const gitDirContent = readFileSync('.git', 'utf8').trim()
+        if (gitDirContent.startsWith('gitdir:')) {
+          repoGitDir = gitDirContent.replace('gitdir:', '').trim()
+        }
+      } catch {
+        // .git is a directory, not a file — that's fine
+      }
+      for (const mountPath of strategyPaths) {
+        const modulesGitDir = `${repoGitDir}/modules/${mountPath}`
+        const sparseFile = `${modulesGitDir}/info/sparse-checkout`
+        const expectedCone = expectedCones[mountPath]
+        if (!existsSync(sparseFile)) {
+          warn(
+            `Check 22: Sparse-checkout file missing for '${mountPath}': ${sparseFile}`,
+            'Re-run ./scripts/init-strategy-submodules.sh to wire sparse-checkout cones'
+          )
+        } else {
+          const content = readFileSync(sparseFile, 'utf8')
+          if (!content.includes(expectedCone)) {
+            warn(
+              `Check 22: Sparse-checkout cone for '${mountPath}' does not contain '${expectedCone}'`,
+              'Re-run ./scripts/init-strategy-submodules.sh to restore canonical cone'
+            )
+          } else {
+            pass(`Check 22: Sparse-checkout cone for '${mountPath}' is canonical (${expectedCone})`)
+          }
+        }
+      }
+    }
+  }
+}
+
+// Check 23: `git config --file <path>` subshell-out-of-cwd discipline
+// From a worktree path inside a Linux Docker container, `git config --file <abs-path>`
+// STILL walks cwd to evaluate `[includeIf "gitdir:..."]` directives. A stale .git
+// file (e.g. worktree imported from another host with an invalid gitdir pointer)
+// makes git exit 128 silently — turning the result into "no submodules" with no
+// error output. The fix is to subshell into / before calling git config --file.
+// Same RCA class as SMI-4699 + SMI-4693. Surfaced in Wave 2A commit c61d06e6.
+//
+// Exempt marker: add `# audit-standards-check-23-exempt: <reason>` in the same line
+// or the 3 lines above the `git config --file` call.
+// Severity: fail (this is a real bug in any affected call-site today, not a future concern).
+console.log(`\n${BOLD}Check 23: git config --file subshell discipline${RESET}`)
+{
+  const dirsToScan = ['scripts', '.husky']
+  // Shell comment prefixes: lines starting with # (after trimming) are documentation,
+  // not executable invocations. Also exclude the audit script itself (it contains
+  // the pattern in strings and comments for reporting purposes).
+  const SELF = 'scripts/audit-standards.mjs'
+  const violations = []
+  for (const dir of dirsToScan) {
+    if (!existsSync(dir)) continue
+    const files = getFilesRecursive(dir, ['.sh', '.bash', '.zsh', '.mjs', '.js', ''])
+    for (const file of files) {
+      // Skip self — this file contains the pattern in string literals and comments
+      if (file === SELF || file.endsWith('/audit-standards.mjs')) continue
+      let content
+      try {
+        content = readFileSync(file, 'utf8')
+      } catch {
+        continue
+      }
+      const lines = content.split('\n')
+      for (let i = 0; i < lines.length; i++) {
+        const trimmed = lines[i].trim()
+        // Skip pure comment lines (shell: starts with #; JS/TS: starts with //)
+        if (trimmed.startsWith('#') || trimmed.startsWith('//')) continue
+        if (!trimmed.includes('git config --file')) continue
+        const lineNum = i + 1
+        // Check for subshell pattern on the same line: (cd / && git config --file ...)
+        const hasSubshell = lines[i].includes('(cd /')
+        // Check for exempt marker in the current line or up to 3 lines above
+        const windowLines = lines.slice(Math.max(0, i - 3), i + 1).join('\n')
+        const hasExempt = windowLines.includes('# audit-standards-check-23-exempt:')
+        if (!hasSubshell && !hasExempt) {
+          violations.push(`${file}:${lineNum}: ${trimmed}`)
+        }
+      }
+    }
+  }
+  if (violations.length === 0) {
+    pass(
+      'Check 23: All `git config --file` calls in scripts/ and .husky/ use subshell-out-of-cwd or have exempt marker'
+    )
+  } else {
+    for (const v of violations) {
+      fail(
+        `Check 23: Bare \`git config --file\` without subshell: ${v}`,
+        'Wrap as: (cd / && git config --file ...) — see scripts/_lib.sh enumerate_submodules() for the canonical pattern. Or add `# audit-standards-check-23-exempt: <reason>` if subshelling is genuinely impossible.'
+      )
+    }
+  }
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)
