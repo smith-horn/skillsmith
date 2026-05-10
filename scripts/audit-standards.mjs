@@ -3123,6 +3123,10 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
     if (strategyEntries.length === 0) {
       pass('Check 21: No strategy submodules in .gitmodules — no-op (pre-cutover)')
     } else {
+      // Validate path/branch chars before shell interpolation (SMI-4829 governance retro P1).
+      // .gitmodules is version-controlled but a contributor with write access could otherwise
+      // smuggle shell metacharacters via subPath/branch into the execSync calls below.
+      const SAFE_TOKEN = /^[A-Za-z0-9._\-/]+$/
       for (const { path: subPath, branch } of strategyEntries) {
         if (!branch) {
           warn(
@@ -3131,12 +3135,21 @@ console.log(`\n${BOLD}Check 21: Strategy submodule pointer-on-tip${RESET}`)
           )
           continue
         }
+        if (!SAFE_TOKEN.test(subPath) || !SAFE_TOKEN.test(branch)) {
+          warn(
+            `Check 21: Strategy submodule '${subPath}' has unsafe characters in path or branch '${branch}' — refusing to shell out`,
+            'Verify .gitmodules manually; only [A-Za-z0-9._-/] permitted in path/branch tokens'
+          )
+          continue
+        }
         try {
           // Local pointer SHA from the parent repo's index
           const localSha = execSync(`git ls-files -s "${subPath}"`, { encoding: 'utf8' })
             .trim()
             .split(/\s+/)[1]
-          // Remote tip of the DECLARED branch (not main)
+          // Remote tip of the DECLARED branch (not main).
+          // subPath/branch validated above; .gitmodules subshell expansion is safe because
+          // the submodule URL lookup uses git's own parser, not shell metacharacters.
           const remoteSha = execSync(
             `git ls-remote "$(git config --file .gitmodules "submodule.${subPath}.url")" "${branch}"`,
             { encoding: 'utf8' }
