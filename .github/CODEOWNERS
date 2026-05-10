@@ -17,3 +17,14 @@ scripts/lib/reserved-ranges.mjs        @wrsmith108
 scripts/check-publish-collision.mjs    @wrsmith108
 scripts/prepare-release.ts             @wrsmith108
 .github/workflows/publish.yml          @wrsmith108
+
+# Strategy submodule mount-points (SMI-4829, gate #5) — pointer bumps and
+# submodule wiring touch repo-wide trust surface. Adds review requirement on
+# the gitlink commits and the .gitmodules / .gitattributes files that govern
+# them. Removable post-stabilization (≥2 weeks clean cutover); see
+# docs/internal/runbooks/smi-4829-strategy-rollback.md for sunset criteria.
+.claude/skills              @wrsmith108
+.claude/plans               @wrsmith108
+.claude/hive-mind           @wrsmith108
+.gitmodules                 @wrsmith108
+.gitattributes              @wrsmith108
