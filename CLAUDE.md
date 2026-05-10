@@ -76,7 +76,7 @@ Skillsmith is an MCP server for Claude Code skill discovery, installation, and m
 
 ## Git-Crypt (Narrowed Scope)
 
-**Only `.claude/skills/`, `.claude/plans/`, `.claude/hive-mind/`, `supabase/functions/`, and `supabase/migrations/` are encrypted.** Internal docs are in a private submodule at `docs/internal/`.
+**Only `supabase/functions/` and `supabase/migrations/` are encrypted via git-crypt.** Strategic IP (`.claude/skills/`, `.claude/plans/`, `.claude/hive-mind/`) lives in the private `smith-horn/skillsmith-strategy` submodule (PAT-based access, parallel to `docs/internal/`). Internal docs are in a private submodule at `docs/internal/`.
 
 ```bash
 git-crypt status | head -10                           # Check encryption scope
@@ -88,7 +88,9 @@ git submodule update --init                           # Init internal docs (auth
 
 **Worktrees**: Unlock main repo first, then `./scripts/create-worktree.sh`. Remove with `./scripts/remove-worktree.sh --prune`. Hooks-in-worktrees, Docker bind-mounts (SMI-4689/4738), pre-push (SMI-4767), host native bindings (SMI-4549), and SMI-4698 native-rebuild caveat: see [git-crypt-guide.md § Worktree Setup](.claude/development/git-crypt-guide.md#worktree-setup).
 
-**Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Use `--dry-run` to preview. Pass `--allow-submodule-ahead` (SMI-4773) when the worktree's `docs/internal` pointer is a strict descendant of target's. Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
+**Strategy submodule init**: `create-worktree.sh` calls `init-strategy-submodules.sh` after `git submodule update --init` to wire sparse-checkout cones for the three strategy mount-points (`.claude/skills`, `.claude/plans`, `.claude/hive-mind`). External contributors without strategy-submodule access see empty mount-points but no hard error (gate #3, SMI-4829).
+
+**Rebasing**: `./scripts/rebase-worktree.sh <worktree-path> [target-branch]` handles git-crypt filter management, submodule cross-fetching, and branch verification. Handles all submodules in `.gitmodules` (post-SMI-4829: `docs/internal` + 3 strategy mounts). Use `--dry-run` to preview. Pass `--allow-submodule-ahead=<path>` for per-submodule advance permission (or unscoped `--allow-submodule-ahead` for global). Manual fallback: [git-crypt-guide.md](.claude/development/git-crypt-guide.md#rebasing-with-git-crypt).
 
 ---
 
@@ -223,7 +225,7 @@ Published as `skillsmith-vscode` on [Marketplace](https://marketplace.visualstud
 
 ## Skills & Embedding
 
-Project skills (`.claude/skills/`): [governance](.claude/skills/governance/SKILL.md), [worktree-manager](.claude/skills/worktree-manager/SKILL.md). Embedding: real ONNX (~50ms) or mock (`SKILLSMITH_USE_MOCK_EMBEDDINGS=true`); see [ADR-009](docs/internal/adr/009-embedding-service-fallback.md). Disable auto-update: `SKILLSMITH_AUTO_UPDATE_CHECK=false`.
+Project skills load from the `.claude/skills/` mount-point of the `skillsmith-strategy` submodule. `LocalIndexer.index()` returns `[]` (not throws) when the directory is absent OR present-but-empty (gate #2, SMI-4829). Embedding: real ONNX (~50ms) or mock (`SKILLSMITH_USE_MOCK_EMBEDDINGS=true`); see [ADR-009](docs/internal/adr/009-embedding-service-fallback.md). Disable auto-update: `SKILLSMITH_AUTO_UPDATE_CHECK=false`.
 
 ---
 
@@ -249,6 +251,7 @@ Project skills (`.claude/skills/`): [governance](.claude/skills/governance/SKILL
 | Orphaned agents | `./scripts/cleanup-orphans.sh` (`--dry-run` to preview) |
 | Symlink outside skills root (SMI-4287) | Set `allowSymlinksOutsideRoot: true` in `LocalFilesystemConfig` to opt in |
 | Session-start audit unexpected stderr (SMI-4590) | `export SKILLSMITH_SESSION_AUDIT_DISABLE=1`. Logs: `~/.skillsmith/logs/session-audit-<date>.log` |
+| Strategy submodule uninitialized | Empty `.claude/{skills,plans,hive-mind}/` mount-points are expected for external contributors. Skillsmith team members: `git submodule update --init .claude/skills .claude/plans .claude/hive-mind` then `./scripts/init-strategy-submodules.sh` to wire sparse-checkout cones. |
 
 **Detailed diagnostics**: [docker-guide.md](.claude/development/docker-guide.md#troubleshooting).
 
