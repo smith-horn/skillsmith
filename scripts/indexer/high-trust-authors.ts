@@ -297,14 +297,14 @@ export const HIGH_TRUST_AUTHORS: HighTrustAuthor[] = [
     skillsPaths: ['skills'],
     description: 'Beautifully-designed accessible components and code distribution platform',
   },
-  // licenseChecked: 2026-05-11 (non-standard `plugins` layout)
+  // licenseChecked: 2026-05-11 (SMI-4860: SKILL.md at plugins/expo/skills/<name>/SKILL.md — 13 skills)
   {
     owner: 'expo',
     repo: 'skills',
     license: 'MIT',
     baseQualityScore: 0.92,
     trustTier: 'verified',
-    skillsPaths: ['plugins'],
+    skillsPaths: ['plugins/expo/skills'],
     description: 'A collection of AI agent skills for Expo and Expo Application Services',
   },
   // licenseChecked: 2026-05-11 (candidate `sentry/dev` resolves to `getsentry/skills`)
@@ -407,14 +407,14 @@ export const HIGH_TRUST_AUTHORS: HighTrustAuthor[] = [
     skillsPaths: ['skills'],
     description: 'An agentic skills framework & software development methodology',
   },
-  // licenseChecked: 2026-05-11 (non-standard `plugins` layout; 80 skills)
+  // licenseChecked: 2026-05-11 (SMI-4860: SKILL.md at plugins/<plugin>/skills/<name>/SKILL.md — 153 skills across 80 plugins)
   {
     owner: 'wshobson',
     repo: 'agents',
     license: 'MIT',
     baseQualityScore: 0.88,
     trustTier: 'curated',
-    skillsPaths: ['plugins'],
+    skillsPaths: ['plugins/*/skills'],
     description: 'Intelligent automation and multi-agent orchestration for Claude Code',
   },
   // licenseChecked: 2026-05-11
