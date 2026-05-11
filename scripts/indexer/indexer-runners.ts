@@ -62,9 +62,11 @@ export async function runCategorization(
   let categoryAssignments = 0
   const errors: string[] = []
 
+  // SMI-4852: same hoist as below (line 233) — keeps eslint-disable prettier-stable.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const supabaseAny: any = supabase
   const skillsToCheck = await batchedIn<{ id: string; tags: string[]; description: string }>(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SMI-4852: PostgrestFilterBuilder strict-mode types fail TS2589; structural cast needed
-    () => (supabase as any).from('skills').select('id, tags, description'),
+    () => supabaseAny.from('skills').select('id, tags, description'),
     'repo_url',
     repoUrls
   )
@@ -223,6 +225,10 @@ export async function runUpsertPhase(
   // batchedIn chunks the IN clause to handle large repo sets safely.
   // SMI-3540: Also select id and last_seen_at for hash-matched touch + grace period.
   // SMI-4846: Also select repo_updated_at for the skip-gate prefetch.
+  // SMI-4852: PostgrestFilterBuilder strict-mode types fail TS2589 (excessively deep);
+  // hoist `any` to a local so eslint-disable-next-line is prettier-stable.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const supabaseAny: any = supabase
   const existingSkills = await batchedIn<{
     id: string
     repo_url: string
@@ -230,9 +236,8 @@ export async function runUpsertPhase(
     last_seen_at: string | null
     repo_updated_at: string | null
   }>(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SMI-4852: PostgrestFilterBuilder strict-mode types fail TS2589; structural cast needed
     () =>
-      (supabase as any)
+      supabaseAny
         .from('skills')
         .select('id, repo_url, content_hash, last_seen_at, repo_updated_at'),
     'repo_url',
