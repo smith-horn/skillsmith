@@ -23,16 +23,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Missing path parameter' })
   }
 
-  // Validate path to prevent path traversal attacks
-  // Only allow known Supabase API prefixes
-  const allowedPrefixes = ['functions/v1/', 'rest/v1/']
-  const isValidPath = allowedPrefixes.some((prefix) => path.startsWith(prefix))
-
-  if (!isValidPath || path.includes('..')) {
+  // SMI-4862 / CodeQL #97: SSRF hardening.
+  //
+  // The proxy joins user-supplied `path` to a fixed Supabase origin. String
+  // concatenation cannot defeat URL semantics, so we resolve via the URL
+  // constructor and assert (a) origin equality, (b) allow-listed pathname
+  // prefix, (c) no traversal segments. CRLF and other control characters
+  // can otherwise be smuggled into the pathname (they're not rejected by
+  // origin/prefix checks once normalised), so reject them before parsing.
+  // Leading `/` and any `:` are likewise rejected pre-parse to prevent the
+  // input from being treated as protocol-relative or absolute.
+  // eslint-disable-next-line no-control-regex -- intentional: reject control chars (CRLF, NUL, etc.)
+  if (path.startsWith('/') || path.includes(':') || /[\x00-\x1f]/.test(path)) {
     return res.status(400).json({ error: 'Invalid path' })
   }
 
-  const targetUrl = `${supabaseUrl}/${path}`
+  let resolved: URL
+  let baseOrigin: string
+  try {
+    resolved = new URL(path, supabaseUrl.replace(/\/$/, '') + '/')
+    baseOrigin = new URL(supabaseUrl).origin
+  } catch {
+    return res.status(400).json({ error: 'Invalid path' })
+  }
+
+  const pathOk =
+    resolved.pathname.startsWith('/functions/v1/') || resolved.pathname.startsWith('/rest/v1/')
+
+  if (resolved.origin !== baseOrigin || !pathOk || resolved.pathname.includes('/../')) {
+    return res.status(400).json({ error: 'Invalid path' })
+  }
+
+  const targetUrl = resolved.toString()
 
   try {
     // Forward the request to Supabase
