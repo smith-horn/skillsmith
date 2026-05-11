@@ -14,7 +14,7 @@ import {
   withRateLimitTracking,
   withBackoff,
   RateLimitError,
-} from '../_shared/rate-limit.ts'
+} from '../../indexer/_shared/rate-limit.ts'
 
 describe('withRateLimitTracking', () => {
   let fetchMock: ReturnType<typeof vi.fn>

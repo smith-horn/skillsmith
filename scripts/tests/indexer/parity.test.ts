@@ -99,6 +99,7 @@ function normalizeWs(s: string): string {
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
+// scripts/tests/indexer/parity.test.ts → repo root is 3 levels up.
 const REPO_ROOT = resolve(__dirname, '..', '..', '..')
 const DENO_HELPERS = resolve(REPO_ROOT, 'supabase/functions/indexer/skill-processor.helpers.ts')
 const NODE_HELPERS = resolve(REPO_ROOT, 'scripts/indexer/skill-processor.helpers.ts')

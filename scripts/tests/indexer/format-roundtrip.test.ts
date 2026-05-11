@@ -9,15 +9,24 @@
  *
  * The invariant: any value written to skills.repo_updated_at must satisfy
  *   new Date(s).toISOString() === s
- * GitHub's REST API already emits ISO strings in this shape; any code path
- * that type-casts through `::timestamptz` breaks the round-trip and silently
- * disables the skip-gate.
+ * for values written via the JS-side path (which always emits millisecond
+ * precision). The actual prod skip-gate uses byte-string equality between
+ * the stored value and the new GitHub `updated_at` — JS Date round-trip is
+ * a strong subset of that guarantee. Any code path that type-casts through
+ * `::timestamptz` produces postgres text form which fails round-trip and
+ * silently disables the skip-gate.
+ *
+ * GitHub's REST API emits the no-millisecond form `YYYY-MM-DDTHH:MM:SSZ`,
+ * which Date.toISOString() will normalize to `.000Z`. For prod data that
+ * comes straight from GitHub, the runbook
+ * (scripts/runbooks/verify-repo-updated-at-format.mjs) handles both shapes
+ * via a tolerant comparator; this test pins the JS-emitted form.
  */
 
 import { describe, it, expect } from 'vitest'
 
 const PASSING_FIXTURES = [
-  '2026-05-01T12:34:56Z',
+  '2026-05-01T12:34:56.000Z',
   '2026-01-01T00:00:00.000Z',
   '2026-12-31T23:59:59.123Z',
 ]

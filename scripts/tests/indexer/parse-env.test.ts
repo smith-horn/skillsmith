@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { parseEnv } from '../parse-env.ts'
+import { parseEnv } from '../../indexer/parse-env.ts'
 
 const baseEnv = (): NodeJS.ProcessEnv => ({
   SUPABASE_URL: 'https://example.supabase.co',

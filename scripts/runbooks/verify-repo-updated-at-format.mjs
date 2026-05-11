@@ -65,6 +65,21 @@ let passed = 0
 let failed = 0
 const failures = []
 
+/**
+ * Tolerant round-trip: GitHub emits `YYYY-MM-DDTHH:MM:SSZ` (no ms), but
+ * JS Date.toISOString() emits `YYYY-MM-DDTHH:MM:SS.000Z` (with ms). Both
+ * shapes are valid prod-storage forms — what we want to detect is the
+ * postgres `timestamptz` cast form (`YYYY-MM-DD HH:MM:SS+00`) and
+ * tz-shifted forms. Strategy: re-emit BOTH the no-ms and with-ms shapes
+ * from the parsed Date; accept if the stored value matches either.
+ */
+function isExpectedFormat(stored, parsedISO) {
+  const withMs = parsedISO // already `.NNNZ`
+  // Build the no-ms form by stripping the millisecond block.
+  const noMs = parsedISO.replace(/\.\d{3}Z$/, 'Z')
+  return stored === withMs || stored === noMs
+}
+
 for (const stored of rows) {
   const parsed = new Date(stored)
   if (Number.isNaN(parsed.getTime())) {
@@ -72,12 +87,12 @@ for (const stored of rows) {
     failures.push({ stored, reason: 'unparseable' })
     continue
   }
-  const roundTripped = parsed.toISOString()
-  if (roundTripped === stored) {
+  const parsedISO = parsed.toISOString()
+  if (isExpectedFormat(stored, parsedISO)) {
     passed++
   } else {
     failed++
-    failures.push({ stored, roundTripped, reason: 'format-mismatch' })
+    failures.push({ stored, parsedISO, reason: 'format-mismatch' })
   }
 }
 
