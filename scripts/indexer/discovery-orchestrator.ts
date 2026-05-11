@@ -21,6 +21,7 @@ import { type GitHubRepository, countGitHubSkillFiles } from './topic-search.ts'
 import {
   GITHUB_API_DELAY,
   delay,
+  summarizeRateLimitTelemetry,
   type TokenBucket,
   type RateLimitTelemetry,
 } from './_shared/rate-limit.ts'
@@ -90,6 +91,12 @@ export interface RunDiscoveryParams {
    * entrypoint (default 2; 1 if CONCURRENCY_KILL_SWITCH=1).
    */
   concurrency: number
+  /**
+   * SMI-4857: Kill-switch state from `parseEnv()` (`CONCURRENCY_KILL_SWITCH`).
+   * Threaded through purely so the Phase 7 audit log can persist the stdout
+   * `RunSummary.meta.kill_switch_engaged` value into `audit_logs.metadata.meta`.
+   */
+  killSwitchEngaged: boolean
 }
 
 export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerResult> {
@@ -110,6 +117,7 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     existingRepoUpdatedAt,
     telemetry,
     concurrency,
+    killSwitchEngaged,
   } = params
   // codeSearchTokenBucket is reserved for the follow-up Phase 3a parallelization PR.
   // Reference it once so unused-vars doesn't flag the param.
@@ -312,6 +320,11 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     }
 
     // ── Phase 7: Audit log ─────────────────────────────────────────────
+    // SMI-4857: Build the run-scoped meta envelope mirroring the stdout
+    // `RunSummary.meta` shape from `run.ts`. Persisted under
+    // `audit_logs.metadata.meta` so SQL monitors (SMI-4861 API-budget tracking)
+    // can read rate-limit + kill-switch state without re-deriving from views.
+    const rateLimitSummary = summarizeRateLimitTelemetry(telemetry)
     await writeIndexerAuditLog(supabase, result.failed === 0 ? 'success' : 'partial', {
       requestId,
       topics,
@@ -336,6 +349,18 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
       rotation_source: rotationSource,
       discovery_path_counts: upsertResult.discoveryPathCounts,
       high_trust_fallback_hits: upsertResult.high_trust_fallback_hits,
+      meta: {
+        request_id: requestId,
+        run_type: 'discovery',
+        rate_limit_remaining_min: rateLimitSummary.rate_limit_remaining_min,
+        secondary_rate_limit_hits: rateLimitSummary.secondary_rate_limit_hits,
+        retry_after_max_seconds: rateLimitSummary.retry_after_max_seconds,
+        concurrency,
+        kill_switch_engaged: killSwitchEngaged,
+        topics,
+        cron_slot: cronSlot,
+        rotation_source: rotationSource,
+      },
     })
   }
 
