@@ -25,3 +25,19 @@ export function minimalSkillPayload(repo: GitHubRepository): {
     repo_updated_at: repo.updatedAt ?? null,
   }
 }
+
+/**
+ * SMI-4858: Guaranteed-non-empty skill name resolver. `skills.name NOT NULL`
+ * must hold across every discovery path; falls back through `repoName`, the
+ * second segment of `fullName`, and finally a sentinel. `sanitize` is the
+ * call-site's sanitizer (kept injection-style to avoid an import cycle
+ * between this helper module and skill-processor.ts).
+ */
+export function resolveSkillName(
+  candidate: string | undefined,
+  repo: GitHubRepository,
+  sanitize: (name: string) => string
+): string {
+  const fb = repo.repoName || repo.fullName?.split('/')[1] || 'unnamed-skill'
+  return sanitize(candidate || repo.name || fb) || sanitize(fb) || 'unnamed-skill'
+}
