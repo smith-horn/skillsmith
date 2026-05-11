@@ -126,6 +126,15 @@ regexes = [
   '''HierarchicalNSWConstruct''',
   '''resetCachedHnswCtorForTe''',
 
+  # False positive (SMI-4856): the literal string `pr-123-validation` appears
+  # in `.claude/skills/github-workflow-automation/integration.md:138` (now
+  # migrated to the smith-horn/skillsmith-strategy submodule per SMI-4829,
+  # but historical commits 8506a0e5 + 62e2093405 still contain the path and
+  # gitleaks-action scans commit history). It is a workflow-name example
+  # identifier, not an API key — entropy 3.7 matches the broad
+  # generic-api-key regex by coincidence.
+  '''pr-123-validation''',
+
 ]
 
 # Allow specific files that contain examples or tests

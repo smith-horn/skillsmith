@@ -55,6 +55,7 @@ AUTHENTICATED_FUNCTIONS=(
 # Service role functions (scheduled jobs, internal)
 SERVICE_ROLE_FUNCTIONS=(
   "indexer"
+  "indexer-dispatch"
   "skills-refresh-metadata"
   "ops-report"
   "alert-notify"
