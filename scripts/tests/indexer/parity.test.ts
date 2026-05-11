@@ -104,16 +104,40 @@ const REPO_ROOT = resolve(__dirname, '..', '..', '..')
 const DENO_HELPERS = resolve(REPO_ROOT, 'supabase/functions/indexer/skill-processor.helpers.ts')
 const NODE_HELPERS = resolve(REPO_ROOT, 'scripts/indexer/skill-processor.helpers.ts')
 
-describe('Deno <-> Node helper parity', () => {
-  it('repoUpdatedAtKey body is byte-identical (normalized whitespace)', () => {
-    const deno = normalizeWs(extractBody(DENO_HELPERS, 'repoUpdatedAtKey'))
-    const node = normalizeWs(extractBody(NODE_HELPERS, 'repoUpdatedAtKey'))
-    expect(node).toBe(deno)
-  })
+/**
+ * SMI-4852: Skip the parity assertions when the Deno helpers are git-crypt-
+ * encrypted (e.g. post-merge-verify.yml runs without unlocking the key).
+ * The encrypted file begins with the literal magic `\x00GITCRYPT\x00`. When
+ * we observe that, the test exits clean — the parity invariant is enforced
+ * in unlocked contexts (PR matrix, local Docker) where every diff lands.
+ */
+function isGitCryptEncrypted(filePath: string): boolean {
+  try {
+    const head = readFileSync(filePath).subarray(0, 10)
+    return head[0] === 0 && head.toString('utf-8', 1, 9) === 'GITCRYPT\x00'.slice(0, 8)
+  } catch {
+    return false
+  }
+}
 
-  it('minimalSkillPayload body is byte-identical (normalized whitespace)', () => {
-    const deno = normalizeWs(extractBody(DENO_HELPERS, 'minimalSkillPayload'))
-    const node = normalizeWs(extractBody(NODE_HELPERS, 'minimalSkillPayload'))
-    expect(node).toBe(deno)
-  })
+describe('Deno <-> Node helper parity', () => {
+  const denoEncrypted = isGitCryptEncrypted(DENO_HELPERS)
+
+  it.skipIf(denoEncrypted)(
+    'repoUpdatedAtKey body is byte-identical (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractBody(DENO_HELPERS, 'repoUpdatedAtKey'))
+      const node = normalizeWs(extractBody(NODE_HELPERS, 'repoUpdatedAtKey'))
+      expect(node).toBe(deno)
+    }
+  )
+
+  it.skipIf(denoEncrypted)(
+    'minimalSkillPayload body is byte-identical (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractBody(DENO_HELPERS, 'minimalSkillPayload'))
+      const node = normalizeWs(extractBody(NODE_HELPERS, 'minimalSkillPayload'))
+      expect(node).toBe(deno)
+    }
+  )
 })
