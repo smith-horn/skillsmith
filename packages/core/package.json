@@ -92,7 +92,7 @@
     "@opentelemetry/instrumentation-runtime-node": "0.27.0",
     "@opentelemetry/instrumentation-undici": "0.24.0",
     "@opentelemetry/resources": "2.6.1",
-    "@opentelemetry/sdk-node": "0.214.0",
+    "@opentelemetry/sdk-node": "0.217.0",
     "@opentelemetry/sdk-trace-base": "2.7.0",
     "@opentelemetry/semantic-conventions": "1.40.0",
     "fts5-sql-bundle": "1.0.2",
