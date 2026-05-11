@@ -110,6 +110,7 @@ VERIFY_JWT_FUNCTIONS=(
   auth-device-preview
   expire-complimentary
   indexer
+  indexer-dispatch
   ops-report
   process-pending-subscription
   skills-outreach
@@ -152,8 +153,8 @@ if [[ -n "$FILTER_FUNCTIONS" ]]; then
   TOTAL=$((${#NO_VERIFY_JWT_FUNCTIONS[@]} + ${#VERIFY_JWT_FUNCTIONS[@]}))
   echo "Deploying $TOTAL edge function(s) to project: $PROJECT_REF"
 else
-  TOTAL=32
-  echo "Deploying all 32 edge functions to project: $PROJECT_REF"
+  TOTAL=33
+  echo "Deploying all 33 edge functions to project: $PROJECT_REF"
 fi
 
 echo "=================================================="
