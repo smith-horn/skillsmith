@@ -494,5 +494,12 @@ export function repositoryToSkill(
     // Migration 055's CHECK constraint allows empty string; new rows never land as NULL.
     // Legacy NULLs remain as-is (cohort marker for SMI-4385 before/after yield measurement).
     skill_path: repo.skillPath ?? '',
+    // SMI-4861 Wave 1: per-skill tree-hash TTL cache columns (migration
+    // 20260512000001). tree_hash = git blob SHA of SKILL.md from the Trees
+    // API; absent for plain Contents API + root SKILL.md paths until
+    // SKILLSMITH_TREE_HASH_PLAIN_PATH=true opts the repo in. last_check
+    // stamped only when tree_hash is known so the 24h TTL is unambiguous.
+    tree_hash: repo.treeHash ?? null,
+    last_tree_hash_check: repo.treeHash ? new Date().toISOString() : null,
   }
 }

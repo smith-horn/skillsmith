@@ -58,26 +58,38 @@ interface TreesApiResponse {
 }
 
 /**
- * Fetch all blob paths from a repository's git tree using the recursive Trees API,
- * filtered to SKILL.md files. Returns the parent directory path for each SKILL.md.
+ * A SKILL.md entry resolved from the Trees API, carrying the parent directory
+ * path AND the git blob SHA. SMI-4861 Wave 1 introduces the SHA so per-skill
+ * tree-hash TTL cache lookups can decide whether to skip the raw.* fetch.
+ */
+export interface TreeSkillEntry {
+  path: string
+  blobSha: string
+}
+
+/**
+ * Fetch all SKILL.md entries from a repository's git tree using the recursive
+ * Trees API. Returns the parent directory path AND blob SHA for each match.
  *
  * SMI-4852: Threads `telemetry` and wraps each fetch in
  * `withRateLimitTracking(_throwOnRateLimit: false)` to record telemetry
  * without disrupting the existing retry-count contract.
  *
+ * SMI-4861 Wave 1: Return shape changed from `{paths: string[], ...}` to
+ * `{entries: TreeSkillEntry[], ...}` to thread the blob SHA through to the
+ * tree-hash cache gate. Callers that only need paths read `entry.path`.
+ *
  * @param owner - GitHub repository owner (org or user)
  * @param repo - Repository name
  * @param treeRef - Branch name or commit SHA (e.g. 'main').
  * @param telemetry - Shared rate-limit telemetry collector.
- * @param _token - Reserved for future direct-token injection in tests;
- *   current implementation uses buildGitHubHeaders() which reads from environment.
  */
 export async function fetchSkillPathsFromTree(
   owner: string,
   repo: string,
   treeRef: string,
   telemetry: RateLimitTelemetry
-): Promise<{ paths: string[]; truncated: boolean; errors: string[] }> {
+): Promise<{ entries: TreeSkillEntry[]; truncated: boolean; errors: string[] }> {
   const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${treeRef}?recursive=1`
   const fetchErrors: string[] = []
 
@@ -91,15 +103,15 @@ export async function fetchSkillPathsFromTree(
       if (response.ok) {
         const data = (await response.json()) as TreesApiResponse
 
-        // Collect parent directories of all SKILL.md blob entries
-        const skillDirPaths: string[] = []
+        // Collect parent directories + blob SHAs of all SKILL.md blob entries
+        const skillEntries: TreeSkillEntry[] = []
         for (const entry of data.tree) {
           if (entry.type !== 'blob') continue
           // Match SKILL.md case-insensitively at any depth
           if (!entry.path.endsWith('/SKILL.md') && entry.path.toUpperCase() !== 'SKILL.MD') continue
           const slashIdx = entry.path.lastIndexOf('/')
           if (slashIdx < 0) continue // root SKILL.md — no parent dir to extract
-          skillDirPaths.push(entry.path.slice(0, slashIdx))
+          skillEntries.push({ path: entry.path.slice(0, slashIdx), blobSha: entry.sha })
         }
 
         if (data.truncated) {
@@ -108,7 +120,7 @@ export async function fetchSkillPathsFromTree(
           fetchErrors.push(truncMsg)
         }
 
-        return { paths: skillDirPaths, truncated: data.truncated, errors: fetchErrors }
+        return { entries: skillEntries, truncated: data.truncated, errors: fetchErrors }
       }
 
       // Rate limit — retry with backoff
@@ -124,7 +136,7 @@ export async function fetchSkillPathsFromTree(
         const remaining = response.headers.get('X-RateLimit-Remaining')
         console.log(`[Trees] Rate limit exhausted for ${owner}/${repo}. Remaining: ${remaining}`)
         return {
-          paths: [],
+          entries: [],
           truncated: false,
           errors: [`Rate limit exhausted fetching tree for ${owner}/${repo}`],
         }
@@ -133,7 +145,7 @@ export async function fetchSkillPathsFromTree(
       // Non-retryable HTTP error (404, 5xx, etc.)
       console.log(`[Trees] HTTP ${response.status} for ${owner}/${repo}`)
       return {
-        paths: [],
+        entries: [],
         truncated: false,
         errors: [`HTTP ${response.status} fetching tree for ${owner}/${repo}`],
       }
@@ -150,7 +162,7 @@ export async function fetchSkillPathsFromTree(
         `[Trees] Network error exhausted retries for ${owner}/${repo}: ${err instanceof Error ? err.message : 'Unknown'}`
       )
       return {
-        paths: [],
+        entries: [],
         truncated: false,
         errors: [`Network error fetching tree for ${owner}/${repo}`],
       }
@@ -158,7 +170,7 @@ export async function fetchSkillPathsFromTree(
   }
 
   return {
-    paths: [],
+    entries: [],
     truncated: false,
     errors: [`Failed to fetch tree for ${owner}/${repo} after all retries`],
   }
@@ -206,10 +218,16 @@ export function globToSkillMdRegex(glob: string): RegExp {
 
 /**
  * Result of expandGlobSkillsPaths
+ *
+ * SMI-4861 Wave 1: `resolved` entries now carry `blobSha` so the per-skill
+ * tree-hash TTL cache can match against the stored `tree_hash` column. Plain
+ * (non-wildcard) paths remain bare strings because their blob SHAs are only
+ * known when `SKILLSMITH_TREE_HASH_PLAIN_PATH=true` opts the repo into an
+ * opportunistic Trees fetch — see fetchPlainPathTreeMap below.
  */
 export interface ExpandGlobResult {
-  /** Resolved skill directory paths (parent dirs of matched SKILL.md files) */
-  resolved: string[]
+  /** Resolved skill entries (parent dirs + blob SHAs of matched SKILL.md files) */
+  resolved: TreeSkillEntry[]
   /** Plain (non-wildcard) paths returned separately for Contents API scanning */
   plainPaths: string[]
   /** True if any Trees API fetch failed (partial or total) */
@@ -250,7 +268,7 @@ export async function expandGlobSkillsPaths(
   const wildcardPaths = skillsPaths.filter((p) => p.includes('*'))
   const plainPaths = skillsPaths.filter((p) => !p.includes('*'))
 
-  const resolved: string[] = []
+  const resolved: TreeSkillEntry[] = []
   let fetchFailed = false
   let wildcardExpansionCount = 0
   let treesApiCallCount = 0
@@ -271,12 +289,12 @@ export async function expandGlobSkillsPaths(
   // Fetch the full tree once for all wildcard patterns
   treesApiCallCount = 1
   const {
-    paths: treePaths,
+    entries: treeEntries,
     truncated,
     errors: treeErrors,
   } = await fetchSkillPathsFromTree(owner, repo, treeRef, telemetry)
 
-  if (treeErrors.length > 0 && treePaths.length === 0) {
+  if (treeErrors.length > 0 && treeEntries.length === 0) {
     // Fetch failed entirely (not just truncated)
     fetchFailed = true
     return {
@@ -302,13 +320,13 @@ export async function expandGlobSkillsPaths(
     const regex = globToSkillMdRegex(wildcardPattern)
     let patternCount = 0
 
-    for (const skillDirPath of treePaths) {
-      // treePaths contains parent directories of SKILL.md (e.g. 'plugins/deploy/skills/deploy')
+    for (const entry of treeEntries) {
+      // entry.path is the parent dir of SKILL.md (e.g. 'plugins/deploy/skills/deploy')
       // Append /SKILL.md to test against the regex (which expects the full path)
-      if (regex.test(`${skillDirPath}/SKILL.md`)) {
-        if (!seen.has(skillDirPath)) {
-          seen.add(skillDirPath)
-          resolved.push(skillDirPath)
+      if (regex.test(`${entry.path}/SKILL.md`)) {
+        if (!seen.has(entry.path)) {
+          seen.add(entry.path)
+          resolved.push({ path: entry.path, blobSha: entry.blobSha })
           patternCount++
         }
       }
@@ -328,4 +346,36 @@ export async function expandGlobSkillsPaths(
     treesApiCallCount,
     truncatedResponseCount,
   }
+}
+
+/**
+ * SMI-4861 Wave 1: Opportunistic Trees fetch for plain-path repos to populate
+ * a `(skillPath → blobSha)` map. Gated by the caller via
+ * `SKILLSMITH_TREE_HASH_PLAIN_PATH=true`. Costs +1 Trees API call per cold
+ * plain-path repo; saves 1 raw.* fetch per cached skill on warm-cache runs.
+ *
+ * Default disabled (caller checks env var) — this is the staged-rollout
+ * flag from plan §1.1. Returns an empty map (and `treesApiCallCount: 0`) when
+ * the fetch fails so callers fall back to behavior-unchanged plain-path scan.
+ */
+export async function fetchPlainPathTreeMap(
+  owner: string,
+  repo: string,
+  treeRef: string,
+  telemetry: RateLimitTelemetry
+): Promise<{ blobShas: Map<string, string>; treesApiCallCount: number; fetchFailed: boolean }> {
+  const { entries, errors, truncated } = await fetchSkillPathsFromTree(
+    owner,
+    repo,
+    treeRef,
+    telemetry
+  )
+  const blobShas = new Map<string, string>()
+  if (errors.length > 0 && entries.length === 0) {
+    return { blobShas, treesApiCallCount: 1, fetchFailed: true }
+  }
+  for (const entry of entries) {
+    blobShas.set(entry.path, entry.blobSha)
+  }
+  return { blobShas, treesApiCallCount: 1, fetchFailed: truncated }
 }

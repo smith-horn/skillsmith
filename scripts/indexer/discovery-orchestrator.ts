@@ -39,6 +39,7 @@ import type { RotationSource } from './topic-rotation.ts'
 import type { IndexerRequest, IndexerResult } from './indexer-types.ts'
 import { runHighTrustPhase } from './phases/high-trust.ts'
 import { runTopicSearchPhase } from './phases/topic-search.ts'
+import type { TreeHashCache, TreeHashCacheCounters } from './high-trust-indexer.ts'
 
 /**
  * Parameters for `runDiscovery`.
@@ -80,6 +81,13 @@ export interface RunDiscoveryParams {
    */
   existingRepoUpdatedAt: Map<string, string | null>
   /**
+   * SMI-4861 Wave 1: per-skill tree-hash TTL cache, prefetched at run start
+   * from the new `skills.tree_hash` + `last_tree_hash_check` columns. Maps
+   * `${repo_url}:${skill_path}` to its prior tree_hash + last check timestamp.
+   * Empty Map on cold cache (first cron after merge); populates naturally.
+   */
+  treeHashCache: TreeHashCache
+  /**
    * SMI-4852: Run-scoped rate-limit telemetry. The entrypoint creates one
    * instance per run, threads it through every GitHub fetch via
    * `withRateLimitTracking`, and flushes the summary into
@@ -115,10 +123,16 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     validationCache,
     searchApiTokenBucket,
     existingRepoUpdatedAt,
+    treeHashCache,
     telemetry,
     concurrency,
     killSwitchEngaged,
   } = params
+
+  // SMI-4861 Wave 1: per-skill tree-hash cache counters. Accumulated by
+  // Phase 1 (high-trust) where blob SHAs are available from the Trees API.
+  // Phase 2 + Phase 3a do not benefit in Wave 1 (no blob SHAs threaded).
+  const cacheCounters: TreeHashCacheCounters = { hits: 0, misses: 0 }
   // codeSearchTokenBucket is reserved for the follow-up Phase 3a parallelization PR.
   // Reference it once so unused-vars doesn't flag the param.
   void params.codeSearchTokenBucket
@@ -153,6 +167,8 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     validationOptions,
     telemetry,
     concurrency,
+    treeHashCache,
+    cacheCounters,
   })
   for (const skill of phase1.repos) {
     if (!seenUrls.has(skill.url)) {
@@ -200,28 +216,40 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   )
 
   // ── Phase 3a: Code search for root-level SKILL.md ────────────────────
-  try {
-    const {
-      repos: codeRepos,
-      repos_found,
-      retries,
-      error,
-      skipGateHits,
-    } = await runCodeSearch(
-      seenUrls,
-      freshnessDate,
-      validationCache,
-      validationOptions,
-      codeSearchMaxPages,
-      telemetry,
-      existingRepoUpdatedAt
-    )
-    for (const repo of codeRepos) repositories.push(repo)
-    result.code_search = { repos_found, retries, error }
-    console.log(`[Phase3a] skip-gate hits: ${skipGateHits ?? 0} of ${repos_found} repos`)
-  } catch (err) {
-    console.warn(`[CodeSearch] Phase 3a failed: ${err instanceof Error ? err.message : 'Unknown'}`)
-    result.code_search = { repos_found: 0, retries: 0, error: 'phase_failed' }
+  // SMI-4861 Wave 1 / SMI-4859: env-gated default OFF. Phase 3a has produced
+  // 0 new repos for 25+ consecutive days (RCA confirms Phase 1/2 dedup
+  // already covers every candidate). Re-enable via
+  // SKILLSMITH_ENABLE_CODE_SEARCH=true. Pattern mirrors Phase 3b at :230 —
+  // direct process.env read, NOT threaded through IndexerEnv (would be a
+  // separate refactor of parse-env.ts covering both phases).
+  if (process.env.SKILLSMITH_ENABLE_CODE_SEARCH === 'true') {
+    try {
+      const {
+        repos: codeRepos,
+        repos_found,
+        retries,
+        error,
+        skipGateHits,
+      } = await runCodeSearch(
+        seenUrls,
+        freshnessDate,
+        validationCache,
+        validationOptions,
+        codeSearchMaxPages,
+        telemetry,
+        existingRepoUpdatedAt
+      )
+      for (const repo of codeRepos) repositories.push(repo)
+      result.code_search = { repos_found, retries, error }
+      console.log(`[Phase3a] skip-gate hits: ${skipGateHits ?? 0} of ${repos_found} repos`)
+    } catch (err) {
+      console.warn(`[CodeSearch] Phase 3a failed: ${err instanceof Error ? err.message : 'Unknown'}`)
+      result.code_search = { repos_found: 0, retries: 0, error: 'phase_failed' }
+    }
+  } else {
+    // Phase 3a disabled — surface as a zero-counter so audit telemetry is
+    // unambiguous (vs. older crons where the phase ran but found 0).
+    result.code_search = { repos_found: 0, retries: 0, error: 'disabled_by_env' }
   }
 
   // ── Phase 3b: Subdirectory code search (SMI-2660) ────────────────────
@@ -360,6 +388,10 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
         topics,
         cron_slot: cronSlot,
         rotation_source: rotationSource,
+        // SMI-4861 Wave 1: tree-hash cache observability. Phase 1 sole
+        // contributor in this wave; Wave 4 may extend to Phase 2 / 3a.
+        tree_hash_cache_hits: cacheCounters.hits,
+        tree_hash_cache_misses: cacheCounters.misses,
       },
     })
   }

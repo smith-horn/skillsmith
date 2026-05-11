@@ -28,7 +28,11 @@ import {
   withBackoff,
   type RateLimitTelemetry,
 } from '../_shared/rate-limit.ts'
-import { indexHighTrustRepository } from '../high-trust-indexer.ts'
+import {
+  indexHighTrustRepository,
+  type TreeHashCache,
+  type TreeHashCacheCounters,
+} from '../high-trust-indexer.ts'
 import type { GitHubRepository } from '../topic-search.ts'
 import type { SkillMdValidation } from '../skill-processor.ts'
 
@@ -56,6 +60,14 @@ export interface HighTrustPhaseParams {
    * `parseEnv()` in the entrypoint (default 2; 1 if CONCURRENCY_KILL_SWITCH=1).
    */
   concurrency: number
+  /**
+   * SMI-4861 Wave 1: per-skill tree-hash TTL cache prefetched by run.ts.
+   * Keyed by `${repo_url}:${skill_path}`. Optional — when omitted, Phase 1
+   * behaves as today (no cache check, full per-skill raw.* fetch).
+   */
+  treeHashCache?: TreeHashCache
+  /** SMI-4861 Wave 1: cache hit/miss counters surfaced into audit-log meta. */
+  cacheCounters?: TreeHashCacheCounters
 }
 
 /**
@@ -67,7 +79,8 @@ export interface HighTrustPhaseParams {
 export async function runHighTrustPhase(
   params: HighTrustPhaseParams
 ): Promise<HighTrustPhaseResult> {
-  const { validationCache, validationOptions, telemetry, concurrency } = params
+  const { validationCache, validationOptions, telemetry, concurrency, treeHashCache, cacheCounters } =
+    params
 
   console.log(`Indexing ${HIGH_TRUST_AUTHORS.length} high-trust authors...`)
 
@@ -77,7 +90,15 @@ export async function runHighTrustPhase(
     HIGH_TRUST_AUTHORS,
     async (author) => {
       return withBackoff(
-        () => indexHighTrustRepository(author, validationCache, validationOptions, telemetry),
+        () =>
+          indexHighTrustRepository(
+            author,
+            validationCache,
+            validationOptions,
+            telemetry,
+            treeHashCache,
+            cacheCounters
+          ),
         { baseMs: 1000, maxMs: 60000, maxRetries: 5 }
       )
     },

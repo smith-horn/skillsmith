@@ -41,6 +41,8 @@ function makeMeta(overrides: Partial<AuditLogMeta> = {}): AuditLogMeta {
     topics: ['claude-code-skill', 'claude-code'],
     cron_slot: 18,
     rotation_source: 'cron_slot',
+    tree_hash_cache_hits: 0,
+    tree_hash_cache_misses: 0,
     ...overrides,
   }
 }
@@ -211,5 +213,54 @@ describe('writeIndexerAuditLog — meta envelope persistence (SMI-4857)', () => 
     expect(metadata.indexed).toBe(180)
     // meta is undefined (or absent)
     expect(metadata.meta).toBeUndefined()
+  })
+
+  // SMI-4861 Wave 1: tree-hash cache counter persistence
+  it('persists tree_hash_cache_hits + misses through meta envelope (SMI-4861 Wave 1)', async () => {
+    const captured: CapturedInsert[] = []
+    const supabase = makeCapturingSupabase(captured)
+
+    // Cron-2-shaped sample: ~80% cache-hit ratio after warm-up
+    await writeIndexerAuditLog(
+      supabase,
+      'success',
+      makeParams({
+        meta: makeMeta({
+          tree_hash_cache_hits: 350,
+          tree_hash_cache_misses: 75,
+        }),
+      })
+    )
+
+    const metadata = captured[0].payload.metadata as Record<string, unknown>
+    const meta = metadata.meta as AuditLogMeta
+    expect(meta.tree_hash_cache_hits).toBe(350)
+    expect(meta.tree_hash_cache_misses).toBe(75)
+    // Ratio check the acceptance SQL will use:
+    //   SELECT (meta->>'tree_hash_cache_hits')::int /
+    //          ((meta->>'tree_hash_cache_hits')::int + (meta->>'tree_hash_cache_misses')::int)
+    expect(meta.tree_hash_cache_hits / (meta.tree_hash_cache_hits + meta.tree_hash_cache_misses)).toBeGreaterThanOrEqual(0.8)
+  })
+
+  it('persists zero tree_hash counters on cold-cache cron 1 (SMI-4861 Wave 1)', async () => {
+    const captured: CapturedInsert[] = []
+    const supabase = makeCapturingSupabase(captured)
+
+    // Cron-1 (cold): all paths cache-miss, counts equal total_paths_expanded
+    await writeIndexerAuditLog(
+      supabase,
+      'success',
+      makeParams({
+        meta: makeMeta({
+          tree_hash_cache_hits: 0,
+          tree_hash_cache_misses: 421,
+        }),
+      })
+    )
+
+    const metadata = captured[0].payload.metadata as Record<string, unknown>
+    const meta = metadata.meta as AuditLogMeta
+    expect(meta.tree_hash_cache_hits).toBe(0)
+    expect(meta.tree_hash_cache_misses).toBe(421)
   })
 })

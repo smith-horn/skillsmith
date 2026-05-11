@@ -39,6 +39,11 @@ export interface AuditLogMeta {
   topics: string[]
   cron_slot: number | null
   rotation_source: string
+  // SMI-4861 Wave 1: per-skill tree-hash TTL cache counters. Hits = blob SHA
+  // matched stored tree_hash AND last_tree_hash_check < 24h → skipped the
+  // raw.githubusercontent.com fetch. Misses = fell through to validateSkillMd.
+  tree_hash_cache_hits: number
+  tree_hash_cache_misses: number
 }
 
 /**

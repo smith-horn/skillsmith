@@ -258,6 +258,10 @@ export async function runMaintenanceReconciliation(params: {
       topics: [],
       cron_slot: null,
       rotation_source: 'fallback',
+      // SMI-4861 Wave 1: maintenance makes no Trees/raw.* calls; zero
+      // counters so the field is always present in audit_logs.metadata.meta.
+      tree_hash_cache_hits: 0,
+      tree_hash_cache_misses: 0,
     },
   })
 
