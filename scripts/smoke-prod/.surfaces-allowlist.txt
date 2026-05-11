@@ -28,6 +28,12 @@ supabase/functions/update-seat-count/**
 supabase/functions/webhook-dlq/**
 supabase/functions/quota-monitor/**
 
+# SMI-4852: indexer-dispatch is invoked by repository_dispatch via the
+# indexer.yml workflow + manual ops; service-role-only, fires GitHub
+# repository_dispatch back to the Tier 2 GHA indexer. No user-facing HTTP
+# surface — observability lives in audit_logs (event=indexer_dispatch_*).
+supabase/functions/indexer-dispatch/**
+
 # Stripe webhook endpoints (require signed payload to exercise; covered by
 # stripe-webhook-monitor.yml independently).
 supabase/functions/stripe-webhook/**

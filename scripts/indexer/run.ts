@@ -10,23 +10,32 @@
  * dispatches to discovery or maintenance, writes a single audit_logs row
  * with rate-limit telemetry, releases the lock.
  *
- * **STATUS (Wave 1 PR)**: The shared modules, env parsing, and orchestration
- * scaffolding land here. The discovery + maintenance entry points
- * (`runDiscoveryNode`, `runMaintenanceReconciliationNode`) are imported from
- * `./discovery-orchestrator-node.ts` and `./maintenance-helpers-node.ts` —
- * those mechanical ports of the 18 Deno indexer files are tracked as the
- * Wave 1.5 follow-up (see PR description). The entrypoint is wired against
- * those signatures today so the surface around the lock + telemetry is
- * frozen and reviewable in isolation.
+ * Hard rules carried forward from retro 2026-05-10:
+ *  - Every GitHub fetch wrapped in `withRateLimitTracking` (verified by grep
+ *    against `scripts/indexer/_shared/rate-limit.ts:withRateLimitTracking`).
+ *  - Phase 1 concurrency comes from `parseEnv().concurrency` (default 2;
+ *    `CONCURRENCY_KILL_SWITCH=1` forces 1). Repo-var
+ *    `INDEXER_CONCURRENCY_KILL_SWITCH` feeds the workflow's env block.
+ *  - `request_id` terminology everywhere except the literal RPC parameter
+ *    name `run_id` for `try_indexer_lock(run_id text)`.
+ *  - Error-before-data ordering on every Supabase RPC result.
  */
 
 import { createSupabaseAdminClient, getRequestId } from './_shared/supabase.ts'
 import {
+  createTokenBucket,
   newRateLimitTelemetry,
   summarizeRateLimitTelemetry,
   type RateLimitTelemetry,
 } from './_shared/rate-limit.ts'
 import { parseEnv, type IndexerEnv } from './parse-env.ts'
+import { DEFAULT_TOPICS } from './topic-search.ts'
+import { DEFAULT_MIN_CONTENT_LENGTH } from './skill-processor.ts'
+import { selectTopics, type RotationSource } from './topic-rotation.ts'
+import { runDiscovery } from './discovery-orchestrator.ts'
+import { runMaintenanceReconciliation } from './maintenance-helpers.ts'
+import type { IndexerRequest, IndexerResult } from './indexer-types.ts'
+import type { SkillMdValidation } from './skill-processor.ts'
 
 interface RunSummary {
   data: unknown
@@ -38,53 +47,106 @@ interface RunSummary {
     retry_after_max_seconds: number
     concurrency: number
     kill_switch_engaged: boolean
+    topics: string[]
+    cron_slot: number | null
+    rotation_source: RotationSource | 'maintenance'
   }
 }
 
-/**
- * Phase wrapper called from `main` once the lock is held. Splits into the
- * discovery / maintenance branches; both branches must return an
- * audit-log-shape object the entrypoint can flush.
- *
- * The actual discovery/maintenance implementations are imported from the
- * ported Deno modules (Wave 1.5 follow-up — see file header).
- */
-async function runWithLock(
+async function runDiscoveryBranch(
   env: IndexerEnv,
   requestId: string,
   telemetry: RateLimitTelemetry
-): Promise<unknown> {
-  // Phase B (mechanical port follow-up):
-  //   import { runDiscoveryNode } from './discovery-orchestrator-node.ts'
-  //   import { runMaintenanceReconciliationNode } from './maintenance-helpers-node.ts'
-  //   const supabase = createSupabaseAdminClient()
-  //   return env.RUN_TYPE === 'maintenance'
-  //     ? await runMaintenanceReconciliationNode({ supabase, requestId, env, telemetry })
-  //     : await runDiscoveryNode({ supabase, requestId, env, telemetry })
+): Promise<{ result: IndexerResult; topics: string[]; rotationSource: RotationSource }> {
+  const supabase = createSupabaseAdminClient()
+  const envRaw = process.env.SKILLSMITH_INDEX_TOPICS
+  const envTopics = envRaw
+    ? envRaw
+        .split(',')
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0)
+    : undefined
 
-  // Until the ports land, refuse to run rather than silently no-op against prod.
-  // The workflow validates this surface via `dry_run=true` before the first
-  // real run (see Wave 1 Step 11 staging gate).
-  if (!env.DRY_RUN) {
-    throw new Error(
-      'scripts/indexer/run.ts: discovery/maintenance modules not yet ported (Wave 1.5 follow-up). ' +
-        'Set DRY_RUN=true to exercise the scaffolding without writes.'
+  const { topics, source: rotationSource } = selectTopics({
+    bodyTopics: undefined,
+    envTopics,
+    cronSlot: env.CRON_SLOT,
+    defaultTopics: DEFAULT_TOPICS as unknown as string[],
+  })
+
+  const body: IndexerRequest = {
+    maxPages: env.MAX_PAGES,
+    maxRepos: env.MAX_REPOS,
+    codeSearchMaxPages: env.CODE_SEARCH_MAX_PAGES,
+    dryRun: env.DRY_RUN,
+    runType: 'discovery',
+    cronSlot: env.CRON_SLOT ?? undefined,
+  }
+
+  // SMI-4846: Singleton token buckets pacing parallel callers against
+  // GitHub upstream quotas. Search API = 30 rpm (0.5 tps); Code Search = 10 rpm.
+  const searchApiTokenBucket = createTokenBucket(0.5, 1)
+  const codeSearchTokenBucket = createTokenBucket(1 / 6, 1)
+
+  // SMI-4854: Prefetch repo_updated_at skip-gate map.
+  const existingRepoUpdatedAt = new Map<string, string | null>()
+  const { data: existingRows, error: prefetchError } = await supabase
+    .from('skills')
+    .select('repo_url, repo_updated_at')
+    .not('repo_url', 'is', null)
+  if (prefetchError) {
+    console.error(
+      JSON.stringify({
+        event: 'repo_updated_at_prefetch_failed',
+        error: prefetchError.message,
+        request_id: requestId,
+      })
     )
+    // Non-fatal — empty map means no skip-gate hits this run; correctness preserved.
+  } else {
+    for (const row of (existingRows ?? []) as Array<{
+      repo_url: string
+      repo_updated_at: string | null
+    }>) {
+      if (row.repo_url) existingRepoUpdatedAt.set(row.repo_url, row.repo_updated_at ?? null)
+    }
   }
 
-  // Touch telemetry so its shape is verifiable in dry-run mode.
-  telemetry.rate_limit_remaining_min = Math.min(telemetry.rate_limit_remaining_min, 5000)
-  void requestId
+  const result = await runDiscovery({
+    supabase,
+    requestId,
+    body,
+    topics,
+    rotationSource,
+    cronSlot: env.CRON_SLOT,
+    maxPages: env.MAX_PAGES,
+    maxTopicRepos: env.MAX_REPOS,
+    codeSearchMaxPages: env.CODE_SEARCH_MAX_PAGES,
+    dryRun: env.DRY_RUN,
+    validationOptions: { strictValidation: true, minContentLength: DEFAULT_MIN_CONTENT_LENGTH },
+    validationCache: new Map<string, SkillMdValidation>(),
+    searchApiTokenBucket,
+    codeSearchTokenBucket,
+    existingRepoUpdatedAt,
+    telemetry,
+    concurrency: env.concurrency,
+  })
 
-  return {
-    dry_run: true,
-    found: 0,
-    indexed: 0,
-    updated: 0,
-    failed: 0,
-    stale: 0,
-    note: 'scaffolding-only — full port pending in Wave 1.5',
-  }
+  return { result, topics, rotationSource }
+}
+
+async function runMaintenanceBranch(env: IndexerEnv, requestId: string): Promise<unknown> {
+  const supabase = createSupabaseAdminClient()
+  return await runMaintenanceReconciliation({
+    supabase,
+    requestId,
+    body: {
+      runType: 'maintenance',
+      dryRun: env.DRY_RUN,
+      staleThresholdDays: env.STALE_DAYS,
+    },
+    dryRun: env.DRY_RUN,
+  })
 }
 
 async function main(): Promise<void> {
@@ -122,10 +184,19 @@ async function main(): Promise<void> {
   }
 
   let result: unknown = null
+  let topics: string[] = []
+  let rotationSource: RotationSource | 'maintenance' = 'maintenance'
   let runError: unknown = null
 
   try {
-    result = await runWithLock(env, requestId, telemetry)
+    if (env.RUN_TYPE === 'maintenance') {
+      result = await runMaintenanceBranch(env, requestId)
+    } else {
+      const discovery = await runDiscoveryBranch(env, requestId, telemetry)
+      result = discovery.result
+      topics = discovery.topics
+      rotationSource = discovery.rotationSource
+    }
   } catch (err) {
     runError = err
   } finally {
@@ -148,6 +219,9 @@ async function main(): Promise<void> {
       run_type: env.RUN_TYPE,
       concurrency: env.concurrency,
       kill_switch_engaged: env.kill_switch_engaged,
+      topics,
+      cron_slot: env.CRON_SLOT,
+      rotation_source: rotationSource,
       ...summarizeRateLimitTelemetry(telemetry),
     },
   }
