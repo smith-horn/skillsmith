@@ -31,9 +31,8 @@ import { parseFrontmatter } from './frontmatter-parser.ts'
 import type { HighTrustAuthor } from './high-trust-authors.ts'
 import type { GitHubRepository } from './topic-search.ts'
 
-// SMI-4846: skip-gate helpers extracted to skill-processor.helpers.ts so this
-// file stays ≤ 500 lines (audit:standards gate). Re-exported here for existing
-// import sites — call sites in indexer-runners.ts import from .helpers directly.
+// SMI-4846 + SMI-4858: helpers in skill-processor.helpers.ts (keeps this file ≤500 lines).
+import { resolveSkillName } from './skill-processor.helpers.ts'
 export * from './skill-processor.helpers.ts'
 
 /**
@@ -423,8 +422,8 @@ export function repositoryToSkill(
     }
   }
 
-  const rawName = validationMetadata?.name || repo.name
-  const name = sanitizeSkillName(rawName)
+  // SMI-4858: name fallback chain (see resolveSkillName).
+  const name = resolveSkillName(validationMetadata?.name, repo, sanitizeSkillName)
   const description =
     validationMetadata?.description || repo.description || `${name} — a Claude Code skill`
 
