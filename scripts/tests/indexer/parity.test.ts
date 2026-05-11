@@ -97,12 +97,70 @@ function normalizeWs(s: string): string {
   return s.replace(/\s+/g, ' ').trim()
 }
 
+/**
+ * SMI-4843 Phase 5: Extract the body of an array literal `export const NAME ... = [ ... ]`
+ * declaration. Returns the substring between the matching `[` and `]` brackets.
+ * Skips bracket characters inside string literals so commented-out brackets or
+ * brackets-in-strings don't confuse depth tracking.
+ */
+function extractArrayBody(filePath: string, constName: string): string {
+  const source = readFileSync(filePath, 'utf-8')
+  const declIdx = source.indexOf(`export const ${constName}`)
+  if (declIdx < 0) throw new Error(`const ${constName} not found in ${filePath}`)
+
+  const openIdx = source.indexOf('[', declIdx)
+  if (openIdx < 0) throw new Error(`opening [ for ${constName} not found in ${filePath}`)
+
+  let depth = 1
+  let i = openIdx + 1
+  let inString: string | null = null
+  let inLineComment = false
+  let inBlockComment = false
+  while (i < source.length) {
+    const c = source[i]
+    const next = source[i + 1]
+    if (inLineComment) {
+      if (c === '\n') inLineComment = false
+    } else if (inBlockComment) {
+      if (c === '*' && next === '/') {
+        inBlockComment = false
+        i++
+      }
+    } else if (inString) {
+      if (c === '\\') {
+        i++ // skip escaped char
+      } else if (c === inString) {
+        inString = null
+      }
+    } else {
+      if (c === '/' && next === '/') {
+        inLineComment = true
+        i++
+      } else if (c === '/' && next === '*') {
+        inBlockComment = true
+        i++
+      } else if (c === "'" || c === '"' || c === '`') {
+        inString = c
+      } else if (c === '[') {
+        depth++
+      } else if (c === ']') {
+        depth--
+        if (depth === 0) return source.slice(openIdx + 1, i)
+      }
+    }
+    i++
+  }
+  throw new Error(`array body for ${constName} not closed in ${filePath}`)
+}
+
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 // scripts/tests/indexer/parity.test.ts → repo root is 3 levels up.
 const REPO_ROOT = resolve(__dirname, '..', '..', '..')
 const DENO_HELPERS = resolve(REPO_ROOT, 'supabase/functions/indexer/skill-processor.helpers.ts')
 const NODE_HELPERS = resolve(REPO_ROOT, 'scripts/indexer/skill-processor.helpers.ts')
+const DENO_AUTHORS = resolve(REPO_ROOT, 'supabase/functions/indexer/high-trust-authors.ts')
+const NODE_AUTHORS = resolve(REPO_ROOT, 'scripts/indexer/high-trust-authors.ts')
 
 /**
  * SMI-4852: Skip the parity assertions when the Deno helpers are git-crypt-
@@ -137,6 +195,19 @@ describe('Deno <-> Node helper parity', () => {
     () => {
       const deno = normalizeWs(extractBody(DENO_HELPERS, 'minimalSkillPayload'))
       const node = normalizeWs(extractBody(NODE_HELPERS, 'minimalSkillPayload'))
+      expect(node).toBe(deno)
+    }
+  )
+})
+
+describe('Deno <-> Node HIGH_TRUST_AUTHORS parity (SMI-4843 Phase 5)', () => {
+  const denoEncrypted = isGitCryptEncrypted(DENO_AUTHORS)
+
+  it.skipIf(denoEncrypted)(
+    'HIGH_TRUST_AUTHORS array body is byte-identical (normalized whitespace)',
+    () => {
+      const deno = normalizeWs(extractArrayBody(DENO_AUTHORS, 'HIGH_TRUST_AUTHORS'))
+      const node = normalizeWs(extractArrayBody(NODE_AUTHORS, 'HIGH_TRUST_AUTHORS'))
       expect(node).toBe(deno)
     }
   )

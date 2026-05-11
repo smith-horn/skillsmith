@@ -41,6 +41,17 @@
  * writes — Phase 1 budget too tight given per-entry Trees API + per-skill
  * validation cost. Hard-rolled back to the 16-entry baseline above. Re-add
  * deferred to SMI-4846 (parallel Phase 1 / content-hash skip optimization).
+ *
+ * SMI-4843 Phase 5 (2026-05-11): After SMI-4852 (NULL-name regression) and
+ * SMI-4858 fixes restored indexer health, 18 verified leaderboard publishers
+ * were added in a single batch. Licenses checked 2026-05-11 against the
+ * skills.sh top-275 list (research log:
+ * docs/internal/research/skills-sh-leaderboard.md). Verification log:
+ * `/tmp/smi-4843-phase5-candidates.md`. All entries verified for permissive
+ * license + SKILL.md presence. Per-entry `licenseChecked: 2026-05-11`
+ * comments inline below. Kill switch (INDEXER_CONCURRENCY_KILL_SWITCH=1)
+ * remains engaged for the first post-merge run; disengagement gated on
+ * Phase 5 soak (SMI-4854/4855).
  */
 
 export interface HighTrustAuthor {
@@ -251,6 +262,190 @@ export const HIGH_TRUST_AUTHORS: HighTrustAuthor[] = [
     skillsPaths: ['skills'],
     description:
       'Charlie 947 social-media skills — 17 skills for content marketing: post writing/scoring/formatting, hook generation, Gemini-powered carousels and infographics, YouTube thumbnails, profile optimization, and analytics',
+  },
+  // SMI-4843 Phase 5 (2026-05-11): 18 verified leaderboard publishers from
+  // skills.sh top-275. Ordered: trustTier=verified (baseQualityScore 0.92)
+  // first, then trustTier=curated (0.88), then curated (0.85). All licenses
+  // checked 2026-05-11; see docs/internal/research/skills-sh-leaderboard.md.
+  // licenseChecked: 2026-05-11
+  {
+    owner: 'firebase',
+    repo: 'agent-skills',
+    license: 'Apache-2.0',
+    baseQualityScore: 0.92,
+    trustTier: 'verified',
+    skillsPaths: ['skills'],
+    description: 'Agent Skills for Firebase',
+  },
+  // licenseChecked: 2026-05-11
+  {
+    owner: 'supabase',
+    repo: 'agent-skills',
+    license: 'MIT',
+    baseQualityScore: 0.92,
+    trustTier: 'verified',
+    skillsPaths: ['skills'],
+    description: 'Agent Skills to help developers using AI agents with Supabase',
+  },
+  // licenseChecked: 2026-05-11 (org is `shadcn-ui`, not `shadcn`)
+  {
+    owner: 'shadcn-ui',
+    repo: 'ui',
+    license: 'MIT',
+    baseQualityScore: 0.92,
+    trustTier: 'verified',
+    skillsPaths: ['skills'],
+    description: 'Beautifully-designed accessible components and code distribution platform',
+  },
+  // licenseChecked: 2026-05-11 (non-standard `plugins` layout)
+  {
+    owner: 'expo',
+    repo: 'skills',
+    license: 'MIT',
+    baseQualityScore: 0.92,
+    trustTier: 'verified',
+    skillsPaths: ['plugins'],
+    description: 'A collection of AI agent skills for Expo and Expo Application Services',
+  },
+  // licenseChecked: 2026-05-11 (candidate `sentry/dev` resolves to `getsentry/skills`)
+  {
+    owner: 'getsentry',
+    repo: 'skills',
+    license: 'Apache-2.0',
+    baseQualityScore: 0.92,
+    trustTier: 'verified',
+    skillsPaths: ['skills'],
+    description: 'Agent Skills used by the Sentry team for development',
+  },
+  // licenseChecked: 2026-05-11
+  {
+    owner: 'neondatabase',
+    repo: 'agent-skills',
+    license: 'Apache-2.0',
+    baseQualityScore: 0.92,
+    trustTier: 'verified',
+    skillsPaths: ['skills'],
+    description: 'Agent Skills for Neon Serverless Postgres',
+  },
+  // licenseChecked: 2026-05-11
+  {
+    owner: 'browser-use',
+    repo: 'browser-use',
+    license: 'MIT',
+    baseQualityScore: 0.92,
+    trustTier: 'verified',
+    skillsPaths: ['skills'],
+    description: 'Make websites accessible for AI agents — automate tasks online',
+  },
+  // licenseChecked: 2026-05-11
+  {
+    owner: 'microsoft',
+    repo: 'azure-skills',
+    license: 'MIT',
+    baseQualityScore: 0.92,
+    trustTier: 'verified',
+    skillsPaths: ['skills'],
+    description: 'Official agent plugin — skills and MCP server configs for Azure scenarios',
+  },
+  // licenseChecked: 2026-05-11
+  {
+    owner: 'larksuite',
+    repo: 'cli',
+    license: 'MIT',
+    baseQualityScore: 0.92,
+    trustTier: 'verified',
+    skillsPaths: ['skills'],
+    description: 'Official Lark/Feishu CLI — 200+ commands, 20+ AI Agent Skills',
+  },
+  // licenseChecked: 2026-05-11
+  {
+    owner: 'microsoft',
+    repo: 'playwright-cli',
+    license: 'Apache-2.0',
+    baseQualityScore: 0.92,
+    trustTier: 'verified',
+    skillsPaths: ['skills'],
+    description: 'CLI for Playwright actions — record, inspect selectors, screenshots',
+  },
+  // licenseChecked: 2026-05-11
+  {
+    owner: 'google-labs-code',
+    repo: 'stitch-skills',
+    license: 'Apache-2.0',
+    baseQualityScore: 0.92,
+    trustTier: 'verified',
+    skillsPaths: ['skills'],
+    description: 'Agent Skills for Stitch MCP server; open standard, multi-agent compatible',
+  },
+  // licenseChecked: 2026-05-11
+  {
+    owner: 'vercel-labs',
+    repo: 'agent-browser',
+    license: 'Apache-2.0',
+    baseQualityScore: 0.92,
+    trustTier: 'verified',
+    skillsPaths: ['skills'],
+    description: 'Browser automation CLI for AI agents',
+  },
+  // licenseChecked: 2026-05-11
+  {
+    owner: 'heygen-com',
+    repo: 'hyperframes',
+    license: 'Apache-2.0',
+    baseQualityScore: 0.92,
+    trustTier: 'verified',
+    skillsPaths: ['skills'],
+    description: 'Write HTML, render video — built for agents',
+  },
+  // licenseChecked: 2026-05-11 (individual publisher; curated tier)
+  {
+    owner: 'obra',
+    repo: 'superpowers',
+    license: 'MIT',
+    baseQualityScore: 0.88,
+    trustTier: 'curated',
+    skillsPaths: ['skills'],
+    description: 'An agentic skills framework & software development methodology',
+  },
+  // licenseChecked: 2026-05-11 (non-standard `plugins` layout; 80 skills)
+  {
+    owner: 'wshobson',
+    repo: 'agents',
+    license: 'MIT',
+    baseQualityScore: 0.88,
+    trustTier: 'curated',
+    skillsPaths: ['plugins'],
+    description: 'Intelligent automation and multi-agent orchestration for Claude Code',
+  },
+  // licenseChecked: 2026-05-11
+  {
+    owner: 'coreyhaines31',
+    repo: 'marketingskills',
+    license: 'MIT',
+    baseQualityScore: 0.88,
+    trustTier: 'curated',
+    skillsPaths: ['skills'],
+    description: 'Marketing skills for AI agents — CRO, copywriting, SEO, analytics, growth',
+  },
+  // licenseChecked: 2026-05-11 (non-standard `.claude/skills` layout)
+  {
+    owner: 'pbakaus',
+    repo: 'impeccable',
+    license: 'Apache-2.0',
+    baseQualityScore: 0.88,
+    trustTier: 'curated',
+    skillsPaths: ['.claude/skills'],
+    description: 'Design language that makes AI harnesses better at design',
+  },
+  // licenseChecked: 2026-05-11 (51 stars; install-count signal overrides star threshold)
+  {
+    owner: 'xixu-me',
+    repo: 'skills',
+    license: 'MIT',
+    baseQualityScore: 0.85,
+    trustTier: 'curated',
+    skillsPaths: ['skills'],
+    description: 'Agent Skills for practical engineering work',
   },
 ]
 
