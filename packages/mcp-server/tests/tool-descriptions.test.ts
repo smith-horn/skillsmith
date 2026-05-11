@@ -41,7 +41,7 @@ describe('SMI-4790: MCP tool descriptions', () => {
       ({ tool, stage }) => {
         const expectedPrefix = `[Skillsmith — ${stage} stage]`
         expect(tool.description).toMatch(
-          new RegExp(`^${expectedPrefix.replace(/[—[\]]/g, '\\$&')}`)
+          new RegExp(`^${expectedPrefix.replace(/[\\[\]—]/g, '\\$&')}`)
         )
       }
     )
