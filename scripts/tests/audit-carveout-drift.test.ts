@@ -282,3 +282,50 @@ describe('checkCarveOutInvariants — real ci.yml smoke', () => {
     expect(dockerBound.length).toBeGreaterThanOrEqual(1)
   })
 })
+
+describe('SMI-4866: checkCarveOutInvariants is not catastrophically backtracking', () => {
+  it('returns in <500ms on pathological line-continuation input (CodeQL #90/#91)', () => {
+    // Pre-SMI-4866 the nested-quantifier regex `(?:.*\\\s*\n\s*)*` would
+    // exhibit exponential backtracking on a body shaped like
+    // `docker run a \\\n a \\\n ... b` with no `skillsmith-ci:` anchor.
+    const evilBody =
+      `needs: docker-build\n    steps:\n      - run: |\n          docker run ` +
+      'a \\\n          '.repeat(40) +
+      'b'
+    const jobs = [{ name: 'evil', line: 1, body: evilBody }]
+    const start = performance.now()
+    checkCarveOutInvariants(jobs, [])
+    const elapsedMs = performance.now() - start
+    expect(elapsedMs).toBeLessThan(500)
+  })
+
+  it('still detects a valid `docker run skillsmith-ci:` line under collapse', () => {
+    const jobs = [
+      {
+        name: 'good',
+        line: 1,
+        body: `needs: docker-build\n    steps:\n      - run: |\n          docker run --rm \\\n            skillsmith-ci:abc node x.js`,
+      },
+    ]
+    const { violationsA } = checkCarveOutInvariants(jobs, [])
+    expect(violationsA).toEqual([])
+  })
+
+  it('handles the canonical --init variant used in ci.yml', () => {
+    // Mirrors the actual shape of docker-run jobs in .github/workflows/ci.yml:
+    // `docker run --rm --init \\\n  -v ... \\\n  -w /app \\\n  skillsmith-ci:${SHA}`
+    const jobs = [
+      {
+        name: 'ci-shaped',
+        line: 1,
+        body:
+          `needs: docker-build\n    steps:\n      - run: |\n          docker run --rm --init \\\n` +
+          `            -v \${{ github.workspace }}:/app \\\n` +
+          `            -w /app \\\n` +
+          `            skillsmith-ci:\${{ github.sha }} npm test`,
+      },
+    ]
+    const { violationsA } = checkCarveOutInvariants(jobs, [])
+    expect(violationsA).toEqual([])
+  })
+})
