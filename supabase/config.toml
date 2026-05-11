@@ -459,6 +459,14 @@ verify_jwt = true
 [functions.quota-monitor]
 verify_jwt = false
 
+# SMI-4852: indexer-dispatch — service-role-only shim that triggers the GHA
+# `indexer.yml` workflow via repository_dispatch. JWT verification ON (the
+# function explicit-checks the bearer is the service-role key); do NOT add
+# to NO_VERIFY_JWT_FUNCTIONS in scripts/audit-standards.mjs. Deploy WITHOUT
+# --no-verify-jwt.
+[functions.indexer-dispatch]
+verify_jwt = true
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

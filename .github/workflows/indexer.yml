@@ -1,23 +1,23 @@
-# SMI-1248: GitHub Actions workflow for scheduled skill indexing
-# Alternative to pg_cron for triggering the indexer
+# SMI-4852: Tier 2 GHA runner migration. Replaces the curl-against-Edge-Function
+# trigger with a Node entrypoint at scripts/indexer/run.ts so wall-clock budget
+# is bounded by GHA's 30-min timeout, not the Edge Function's 150s IDLE_TIMEOUT.
 #
-# Performance Notes (SMI-1413):
-# - Edge Function has 150-second timeout
-# - max_pages=5 indexes ~400 skills reliably (~1 min)
-# - max_pages=7+ causes timeout (502 Bad Gateway)
-# - Uses GitHub App auth for 5000 req/hour rate limit
+# Original (SMI-1248) curl-based workflow is preserved up to the "Trigger Indexer"
+# step boundary — only the body of that step changes shape. Cron-slot derivation,
+# secret validation, result parsing, and failure alerts all carry forward verbatim.
 #
-# Phase 1b: 4x daily runs with advisory lock
+# Schedule (Phase 1b):
 # - 00:00 UTC = maintenance (stale cleanup, stale_days=7 per SMI-4203)
 # - 06:00, 12:00, 18:00 UTC = discovery (new skills, stale_days=30)
+#
+# Manual triggers:
+# - workflow_dispatch (UI / gh workflow run): inputs below
+# - repository_dispatch (event_type: indexer-run): from indexer-dispatch edge function
 
 name: Skill Indexer
 
 on:
   schedule:
-    # Phase 1b: Run 4x daily — split into separate entries so
-    # github.event.schedule can distinguish which cron triggered the run.
-    # (SMI-3351: combined cron + date check broke due to GitHub Actions delay)
     - cron: '0 0 * * *' # maintenance (stale cleanup, stale_days=7 per SMI-4203)
     - cron: '0 6 * * *' # discovery
     - cron: '0 12 * * *' # discovery
@@ -30,7 +30,7 @@ on:
         default: 'false'
         type: boolean
       max_pages:
-        description: 'Max pages per topic (5 recommended, 7+ causes timeout)'
+        description: 'Max pages per topic (5 recommended)'
         required: false
         default: '5'
         type: string
@@ -47,10 +47,29 @@ on:
         required: false
         default: ''
         type: string
+      concurrency_kill_switch:
+        description: 'Force concurrency=1 (kill-switch); supersedes repo variable INDEXER_CONCURRENCY_KILL_SWITCH'
+        required: false
+        default: false
+        type: boolean
+      concurrency:
+        description: 'Phase 1 concurrency (default 2; kill-switch forces 1)'
+        required: false
+        default: '2'
+        type: string
+      supabase_env:
+        description: 'Target Supabase environment'
+        required: false
+        default: 'prod'
+        type: choice
+        options:
+          - prod
+          - staging
+  repository_dispatch:
+    types: [indexer-run]
 
 env:
-  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+  NODE_VERSION: '22'
 
 jobs:
   index:
@@ -62,25 +81,53 @@ jobs:
       group: skill-indexer
       cancel-in-progress: false
 
+    env:
+      # Issue #8: repo-level vars.INDEXER_CONCURRENCY_KILL_SWITCH acts as the
+      # default kill-switch source so an operator can engage it remotely without
+      # dispatching a new workflow. workflow_dispatch input supersedes the repo
+      # variable when explicitly set to true.
+      CONCURRENCY_KILL_SWITCH: ${{ (vars.INDEXER_CONCURRENCY_KILL_SWITCH == '1' || github.event.inputs.concurrency_kill_switch == 'true') && '1' || '0' }}
+
     steps:
       - name: Validate Secrets
+        env:
+          # Issue #17: select prod vs staging secret pair based on supabase_env input.
+          # Schedule + repository_dispatch always use prod.
+          SUPABASE_ENV: ${{ github.event.inputs.supabase_env || 'prod' }}
+          SUPABASE_URL_PROD: ${{ secrets.SUPABASE_URL_PROD }}
+          SUPABASE_URL_STAGING: ${{ secrets.SUPABASE_URL_STAGING }}
+          SUPABASE_SERVICE_ROLE_KEY_PROD: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}
+          SUPABASE_SERVICE_ROLE_KEY_STAGING: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
+          # Back-compat: existing single-secret form. Used when *_PROD/_STAGING aren't yet provisioned.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          # SMI-1313: Fail fast with clear error if secrets not configured
-          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
-            echo "::error::Required secrets not configured. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to repository secrets."
-            echo "See: https://github.com/wrsmith108/skillsmith/settings/secrets/actions"
+          # SMI-1313: Fail fast with clear error if secrets not configured.
+          if [ "$SUPABASE_ENV" = "staging" ]; then
+            URL_VAL="$SUPABASE_URL_STAGING"
+            KEY_VAL="$SUPABASE_SERVICE_ROLE_KEY_STAGING"
+          else
+            URL_VAL="${SUPABASE_URL_PROD:-$SUPABASE_URL}"
+            KEY_VAL="${SUPABASE_SERVICE_ROLE_KEY_PROD:-$SUPABASE_SERVICE_ROLE_KEY}"
+          fi
+          if [ -z "$URL_VAL" ] || [ -z "$KEY_VAL" ]; then
+            echo "::error::Required secrets not configured for env=$SUPABASE_ENV."
             exit 1
           fi
-          echo "Secrets validated"
+          # Export selected values for later steps.
+          echo "SELECTED_SUPABASE_URL=$URL_VAL" >> "$GITHUB_ENV"
+          # Mask the key in subsequent step env via a workflow secret reference.
+          # We can't echo it raw; use ::add-mask:: then forward via env.
+          echo "::add-mask::$KEY_VAL"
+          echo "SELECTED_SUPABASE_SERVICE_ROLE_KEY=$KEY_VAL" >> "$GITHUB_ENV"
+          echo "Secrets validated for env=$SUPABASE_ENV"
 
       - name: Determine Run Type
         id: config
         run: |
-          # For scheduled runs, determine run type from github.event.schedule
-          # (deterministic — matches the cron expression, not the wall clock).
-          # SMI-4374: CRON_SLOT (6/12/18) feeds the discovery topic-rotation
-          # selector. Empty string on workflow_dispatch and on maintenance —
-          # the indexer treats absent cronSlot as "full DEFAULT_TOPICS".
+          # For scheduled runs, determine run type from github.event.schedule.
+          # SMI-4374: CRON_SLOT (6/12/18) feeds the discovery topic-rotation selector.
+          # Empty string on workflow_dispatch and on maintenance.
           CRON_SLOT=""
           if [ "${{ github.event_name }}" = "schedule" ]; then
             case "${{ github.event.schedule }}" in
@@ -108,9 +155,12 @@ jobs:
                 STALE_DAYS="30"
                 ;;
             esac
+          elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            # indexer-dispatch edge function forwards inputs via client_payload.
+            RUN_TYPE="${{ github.event.client_payload.run_type || 'discovery' }}"
+            STALE_DAYS="${{ github.event.client_payload.stale_days || '30' }}"
+            CRON_SLOT="${{ github.event.client_payload.cron_slot || '' }}"
           else
-            # Manual dispatch uses inputs; CRON_SLOT stays empty so the
-            # indexer uses full DEFAULT_TOPICS (backward-compat for ad-hoc reruns).
             RUN_TYPE="${{ github.event.inputs.run_type || 'discovery' }}"
             STALE_DAYS="${{ github.event.inputs.stale_days }}"
             if [ -z "$STALE_DAYS" ]; then
@@ -121,86 +171,80 @@ jobs:
               fi
             fi
           fi
-          echo "run_type=$RUN_TYPE" >> $GITHUB_OUTPUT
-          echo "stale_days=$STALE_DAYS" >> $GITHUB_OUTPUT
-          echo "cron_slot=$CRON_SLOT" >> $GITHUB_OUTPUT
+          echo "run_type=$RUN_TYPE" >> "$GITHUB_OUTPUT"
+          echo "stale_days=$STALE_DAYS" >> "$GITHUB_OUTPUT"
+          echo "cron_slot=$CRON_SLOT" >> "$GITHUB_OUTPUT"
           echo "Run type: $RUN_TYPE, Stale days: $STALE_DAYS, Cron slot: ${CRON_SLOT:-<none>}"
 
-      - name: Trigger Indexer
+      - name: Checkout
+        # SHA-pinned per audit-workflow-sha-pin (Check 42 / SMI-4758). Tag = v6.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          submodules: false
+
+      - name: Setup Node
+        # SHA-pinned per audit-workflow-sha-pin (Check 42 / SMI-4758). Tag = v6.
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci --omit=dev
+
+      - name: Run indexer
         id: indexer
+        env:
+          SUPABASE_URL: ${{ env.SELECTED_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.SELECTED_SUPABASE_SERVICE_ROLE_KEY }}
+          GITHUB_APP_ID: ${{ secrets.SKILLSMITH_GITHUB_APP_ID }}
+          GITHUB_APP_INSTALLATION_ID: ${{ secrets.SKILLSMITH_GITHUB_APP_INSTALLATION_ID }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.SKILLSMITH_GITHUB_APP_PRIVATE_KEY }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || github.event.client_payload.dry_run || 'false' }}
+          MAX_PAGES: ${{ github.event.inputs.max_pages || github.event.client_payload.max_pages || '5' }}
+          MAX_REPOS: ${{ github.event.client_payload.max_repos || '100' }}
+          CODE_SEARCH_MAX_PAGES: ${{ github.event.client_payload.code_search_max_pages || '1' }}
+          RUN_TYPE: ${{ steps.config.outputs.run_type }}
+          STALE_DAYS: ${{ steps.config.outputs.stale_days }}
+          CRON_SLOT: ${{ steps.config.outputs.cron_slot }}
+          CONCURRENCY: ${{ github.event.inputs.concurrency || '2' }}
+          # CONCURRENCY_KILL_SWITCH inherited from the job-level env (kill-switch sources).
         run: |
-          # Build request body. SMI-4241 requires numeric JSON for staleThresholdDays
-          # (edge function rejects strings). SMI-4374 adds cronSlot (numeric) on
-          # scheduled runs; omitted entirely on workflow_dispatch so the indexer
-          # falls back to full DEFAULT_TOPICS for ad-hoc operator reruns.
-          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
-          MAX_PAGES="${{ github.event.inputs.max_pages || '5' }}"
-          RUN_TYPE="${{ steps.config.outputs.run_type }}"
-          STALE_DAYS="${{ steps.config.outputs.stale_days }}"
-          CRON_SLOT="${{ steps.config.outputs.cron_slot }}"
-
-          BODY=$(jq -c -n \
-            --argjson max_pages "$MAX_PAGES" \
-            --argjson dry_run "$DRY_RUN" \
-            --arg run_type "$RUN_TYPE" \
-            --argjson stale_days "$STALE_DAYS" \
-            --arg cron_slot "$CRON_SLOT" \
-            '{
-              maxPages: $max_pages,
-              dryRun: $dry_run,
-              runType: $run_type,
-              staleThresholdDays: $stale_days
-            }
-            | if $cron_slot == "" then . else . + { cronSlot: ($cron_slot | tonumber) } end')
-
-          echo "Triggering indexer with: $BODY"
-
-          # Call the Edge Function
-          RESPONSE=$(curl -s -w "\n%{http_code}" \
-            -X POST \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Content-Type: application/json" \
-            -d "$BODY" \
-            "$SUPABASE_URL/functions/v1/indexer")
-
-          # Extract status code and body
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
-
-          echo "Response code: $HTTP_CODE"
-          echo "Response body: $BODY"
-
-          # Set outputs
-          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
-          echo "response=$BODY" >> $GITHUB_OUTPUT
-
-          # Check for success (200 = normal, skipped runs from advisory lock are OK)
-          if [ "$HTTP_CODE" -ne 200 ]; then
-            echo "::error::Indexer failed with status $HTTP_CODE"
-            exit 1
+          # Issue #1: npx tsx (not node --experimental-strip-types).
+          # The entrypoint emits one JSON line on success; capture for downstream steps.
+          set -e
+          OUTPUT_FILE="$(mktemp)"
+          if npx tsx scripts/indexer/run.ts | tee "$OUTPUT_FILE"; then
+            HTTP_CODE=200
+          else
+            HTTP_CODE=500
           fi
-
-          # Check if run was skipped due to concurrent execution
-          SKIPPED=$(echo "$BODY" | jq -r '.data.skipped // false')
-          if [ "$SKIPPED" = "true" ]; then
-            echo "::notice::Run skipped - concurrent indexer already in progress"
+          RESPONSE=$(tail -n1 "$OUTPUT_FILE" || echo '{}')
+          echo "http_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
+          # GH_OUTPUT requires single-line; pass JSON as-is (no newlines from JSON.stringify).
+          echo "response=$RESPONSE" >> "$GITHUB_OUTPUT"
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            exit 1
           fi
 
       - name: Parse Results
         if: success()
         env:
-          # SMI-4241: pass via env so bash never sees the response body as
-          # inline source. jq is the only consumer of $RESPONSE below.
           RESPONSE: ${{ steps.indexer.outputs.response }}
           RUN_TYPE: ${{ steps.config.outputs.run_type }}
         run: |
+          # Node entrypoint emits { data: {...}, meta: {...} } where data is the
+          # IndexerResult shape (or null on early-skip).
           FOUND=$(printf '%s' "$RESPONSE" | jq -r '.data.found // 0')
           INDEXED=$(printf '%s' "$RESPONSE" | jq -r '.data.indexed // 0')
           FAILED=$(printf '%s' "$RESPONSE" | jq -r '.data.failed // 0')
           STALE=$(printf '%s' "$RESPONSE" | jq -r '.data.stale // 0')
           UNCHANGED=$(printf '%s' "$RESPONSE" | jq -r '.data.unchanged // 0')
           CODE_SEARCH=$(printf '%s' "$RESPONSE" | jq -r '.data.code_search.repos_found // 0')
-          DRY_RUN=$(printf '%s' "$RESPONSE" | jq -r '.data.dryRun // false')
+          DRY_RUN=$(printf '%s' "$RESPONSE" | jq -r '.data.dry_run // .data.dryRun // false')
+          RRL=$(printf '%s' "$RESPONSE" | jq -r '.meta.rate_limit_remaining_min // 0')
+          SEC=$(printf '%s' "$RESPONSE" | jq -r '.meta.secondary_rate_limit_hits // 0')
+          CONC=$(printf '%s' "$RESPONSE" | jq -r '.meta.concurrency // 0')
+          KILL=$(printf '%s' "$RESPONSE" | jq -r '.meta.kill_switch_engaged // false')
 
           {
             echo "### Indexer Results ($RUN_TYPE)"
@@ -214,22 +258,19 @@ jobs:
             echo "| Code Search Repos | $CODE_SEARCH |"
             echo "| Failed | $FAILED |"
             echo "| Dry Run | $DRY_RUN |"
+            echo "| Rate-limit remaining (min) | $RRL |"
+            echo "| Secondary rate-limit hits | $SEC |"
+            echo "| Concurrency | $CONC |"
+            echo "| Kill switch engaged | $KILL |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report Failure
         if: failure()
         env:
-          # SMI-4241: response body via env so parens/quotes/backticks in
-          # the payload can never crash bash. Truncate at 4 KB so the step
-          # summary stays readable; full body is still in the workflow log.
           HTTP_CODE: ${{ steps.indexer.outputs.http_code }}
           RESPONSE: ${{ steps.indexer.outputs.response }}
         run: |
           TRUNCATED=$(printf '%s' "$RESPONSE" | head -c 4096)
-          SUFFIX=""
-          if [ "${#RESPONSE}" -gt 4096 ]; then
-            SUFFIX=$'\n… (truncated, see workflow logs for full body)'
-          fi
           {
             echo "### Indexer Failed"
             echo ""
@@ -238,7 +279,6 @@ jobs:
             echo "Response:"
             echo '```'
             printf '%s' "$TRUNCATED"
-            printf '%s' "$SUFFIX"
             echo ""
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
@@ -246,10 +286,11 @@ jobs:
       - name: Send Alert on Failure
         if: failure()
         env:
-          # SMI-4241: env + jq -n prevents future injection via run metadata.
           HTTP_CODE: ${{ steps.indexer.outputs.http_code }}
           RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SUPABASE_URL: ${{ env.SELECTED_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ env.SELECTED_SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           BODY=$(jq -n \
             --arg msg "The skill indexer workflow failed. HTTP Code: $HTTP_CODE" \

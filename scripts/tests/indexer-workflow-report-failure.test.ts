@@ -236,42 +236,32 @@ describe('SMI-4241: indexer.yml — Send Alert on Failure step', () => {
   })
 })
 
-describe('SMI-4241 + SMI-4374: indexer.yml — Trigger Indexer keeps staleThresholdDays numeric', () => {
+describe('SMI-4852: indexer.yml — Node entrypoint passes STALE_DAYS via env', () => {
   const workflow = readFileSync(WORKFLOW_PATH, 'utf8')
 
-  it('staleThresholdDays renders as numeric JSON, never as a quoted string', () => {
-    // Edge function at supabase/functions/indexer/index.ts requires
-    // typeof staleThresholdDays === 'number' on the discovery branch and
-    // defaults to 7 on the maintenance branch. A future change that quotes
-    // $STALE_DAYS would silently degrade observability — this assertion
-    // locks the numeric form in regardless of whether the body is built via
-    // a heredoc (SMI-4241 original) or jq (SMI-4374 — uses --argjson which
-    // treats the arg as typed JSON).
-    const heredocPattern = /"staleThresholdDays":\s*\$STALE_DAYS/
-    const jqPattern = /--argjson\s+stale_days\s+"\$STALE_DAYS"/
-    expect(
-      heredocPattern.test(workflow) || jqPattern.test(workflow),
-      'expected heredoc "staleThresholdDays": $STALE_DAYS OR jq --argjson stale_days "$STALE_DAYS"'
-    ).toBe(true)
-    // Either path must NOT quote the value as a JSON string.
-    expect(workflow).not.toMatch(/"staleThresholdDays":\s*"\$STALE_DAYS"/)
-    // And the jq path must use --argjson (typed) for stale_days, never --arg (string).
-    expect(workflow).not.toMatch(/--arg\s+stale_days\s+/)
+  // The SMI-4374 / SMI-4241 numeric-JSON-body tests no longer apply: the
+  // workflow no longer constructs a JSON body for curl. The Node entrypoint
+  // (`scripts/indexer/run.ts`) reads `STALE_DAYS` directly from the env, and
+  // `scripts/indexer/parse-env.ts` enforces numeric parsing with a typed
+  // error on non-numeric input. The relevant invariant is now: the workflow
+  // exports STALE_DAYS as a step env var, and the Configure Run step emits
+  // STALE_DAYS=7 for maintenance / STALE_DAYS=30 for discovery.
+
+  it('Run indexer step exports STALE_DAYS as an env var to the Node entrypoint', () => {
+    const step = extractStep(workflow, 'Run indexer')
+    expect(Object.keys(step.envBlock)).toContain('STALE_DAYS')
   })
 
-  it('has an explanatory comment about the numeric-JSON invariant', () => {
-    // If a contributor strips the comment, the numeric-JSON invariant
-    // becomes implicit and easier to break. Keep the documentation in code.
-    // Accept either SMI-4241 (original heredoc comment) or SMI-4241 reference
-    // in the SMI-4374 jq block.
-    expect(workflow).toMatch(/SMI-4241.*(unquoted|numeric)/i)
-  })
-
-  it('Configure Run step emits STALE_DAYS=7 for the 00:00 maintenance cron', () => {
+  it('Configure Run step (Determine Run Type) emits STALE_DAYS=7 for the 00:00 maintenance cron', () => {
     expect(workflow).toMatch(/RUN_TYPE="maintenance"\s*\n\s+STALE_DAYS="7"/)
   })
 
-  it('Configure Run step emits STALE_DAYS=30 for the discovery crons', () => {
+  it('Configure Run step (Determine Run Type) emits STALE_DAYS=30 for the discovery crons', () => {
     expect(workflow).toMatch(/RUN_TYPE="discovery"\s*\n\s+STALE_DAYS="30"/)
+  })
+
+  it('Run indexer step invokes the Node entrypoint via npx tsx', () => {
+    const step = extractStep(workflow, 'Run indexer')
+    expect(step.runScript).toMatch(/npx tsx scripts\/indexer\/run\.ts/)
   })
 })

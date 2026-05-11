@@ -330,6 +330,7 @@ Authoritative auth/JWT-verification table for every edge function. CLAUDE.md kee
 | `auth-device-token` | Anonymous (RFC 8628 token poll) | Yes |
 | `auth-device-approve` | Authenticated (User JWT, gateway-verified) | No |
 | `auth-device-preview` | Authenticated (User JWT, gateway-verified) | No |
+| `indexer-dispatch` | Service Role (explicit bearer check + `verify_jwt=true`); invoked from cron/manual operator curl. Mints GitHub App installation token and POSTs `repository_dispatch` to GHA `indexer.yml`. (SMI-4852) | No |
 
 **Adding anonymous functions** (CI validates): Add to `supabase/config.toml` with `verify_jwt = false`, add to `NO_VERIFY_JWT_FUNCTIONS` in `scripts/audit-standards.mjs`, and add deploy command to `CLAUDE.md` (the deploy block is CI-pinned via `audit-standards.mjs:472` + `validate-anonymous-functions.ts`).
 
