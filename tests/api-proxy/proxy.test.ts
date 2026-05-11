@@ -129,6 +129,18 @@ describe('SMI-4862: api-proxy SSRF hardening', () => {
       ['leading slash', '/functions/v1/foo'],
       ['scheme injection', 'javascript:alert(1)'],
       ['disallowed prefix', 'admin/secret'],
+      // Semicolon-dot-dot path confusion: URL constructor does NOT normalise
+      // `..;` segments, so this survives to `/functions/v1/..;/etc/passwd`
+      // as a literal pathname. Some upstream servers treat `..;/` as a
+      // traversal hop (nginx, Java servlet containers). Rejected pre-parse.
+      ['semicolon traversal (..;/)', 'functions/v1/..;/etc/passwd'],
+      // Percent-encoded NUL: %00 is not a literal 0x00 byte so it bypasses
+      // the control-char regex; the URL constructor preserves it as %00 in
+      // the pathname. Rejected via explicit pct-encoded check.
+      ['percent-encoded NUL (%00)', 'functions/v1/foo%00bar'],
+      // Percent-encoded CR and LF: same bypass route as %00.
+      ['percent-encoded CR (%0d)', 'functions/v1/foo%0dHost: evil.com'],
+      ['percent-encoded LF (%0a)', 'functions/v1/foo%0aHost: evil.com'],
     ])('rejects %s', async (_label, vector) => {
       const fetchSpy = vi.spyOn(globalThis, 'fetch')
 
