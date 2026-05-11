@@ -20,6 +20,28 @@ import { QUARANTINE_THRESHOLD } from './_shared/security-scanner-edge.ts'
 import type { ScoreDistribution } from './indexer-runners.ts'
 
 /**
+ * SMI-4857: Run-scoped meta envelope persisted alongside the flat metadata
+ * keys. Matches the stdout `RunSummary.meta` shape from `run.ts` so SQL
+ * monitors can query `audit_logs.metadata->'meta'->>'rate_limit_remaining_min'`
+ * etc. without re-deriving from downstream views. Flat keys
+ * (found/indexed/failed/run_type/etc.) remain on `metadata.*` for the
+ * existing `v_indexer_health` / ops-report views — see
+ * `scripts/tests/indexer/audit-log-persistence.test.ts` for the shape contract.
+ */
+export interface AuditLogMeta {
+  request_id: string
+  run_type: 'discovery' | 'maintenance'
+  rate_limit_remaining_min: number
+  secondary_rate_limit_hits: number
+  retry_after_max_seconds: number
+  concurrency: number
+  kill_switch_engaged: boolean
+  topics: string[]
+  cron_slot: number | null
+  rotation_source: string
+}
+
+/**
  * Phase 7 audit log parameters
  */
 export interface AuditLogParams {
@@ -52,6 +74,14 @@ export interface AuditLogParams {
   subdirectory_search?: Record<string, unknown>
   /** SMI-4386: Count of high-trust repos resolved via registry fallback when the Phase-1 highTrustSkillMap missed. 0 on maintenance. Non-zero on discovery when Phase-2/3 surfaced a high-trust repo. */
   high_trust_fallback_hits: number
+  /**
+   * SMI-4857: Run-scoped meta envelope mirroring the stdout `RunSummary.meta`
+   * shape from `run.ts`. Persisted under `metadata.meta` so SQL monitors can
+   * query `metadata->'meta'->>'rate_limit_remaining_min'` and friends without
+   * re-deriving. Flat keys remain at the top level for backward compat with
+   * `v_indexer_health` (migration 051) and ops-report views.
+   */
+  meta?: AuditLogMeta
 }
 
 /**
@@ -111,6 +141,13 @@ export async function writeIndexerAuditLog(
         // Non-zero = Phase-2/3 high-trust registry fallback fired; sustained
         // zero = Phase-1 emission covers everything OR discovery paused.
         high_trust_fallback_hits: params.high_trust_fallback_hits,
+        // SMI-4857: Run-scoped meta envelope (rate-limit telemetry,
+        // kill-switch state, concurrency, topics, rotation source) mirroring
+        // the stdout RunSummary.meta shape. Flat keys above stay for
+        // backward-compat with v_indexer_health / ops-report; queries reading
+        // `metadata->'meta'->>'rate_limit_remaining_min'` use this nested
+        // envelope. Undefined when called from pre-SMI-4857 callers.
+        meta: params.meta,
       },
     })
     if (auditError) {

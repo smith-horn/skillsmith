@@ -17,6 +17,11 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { reconcileStaleSkills } from './stale-reconciliation.ts'
 import { notifyBulkQuarantine } from './_shared/notification.ts'
 import { writeIndexerAuditLog } from './indexer-audit-log.ts'
+import {
+  newRateLimitTelemetry,
+  summarizeRateLimitTelemetry,
+  type RateLimitTelemetry,
+} from './_shared/rate-limit.ts'
 import type { IndexerRequest } from './indexer-types.ts'
 
 export interface StaleResult {
@@ -169,8 +174,27 @@ export async function runMaintenanceReconciliation(params: {
   requestId: string
   body: IndexerRequest
   dryRun: boolean
+  /**
+   * SMI-4857: Optional run-scoped rate-limit telemetry. Maintenance makes no
+   * GitHub calls today so the summary is all zeros, but threading the
+   * telemetry through keeps the audit-log meta envelope shape identical
+   * across discovery and maintenance rows.
+   */
+  telemetry?: RateLimitTelemetry
+  /** SMI-4857: Concurrency for the meta envelope (maintenance is single-runner). */
+  concurrency?: number
+  /** SMI-4857: Kill-switch state for the meta envelope. */
+  killSwitchEngaged?: boolean
 }): Promise<MaintenanceResponseData> {
-  const { supabase, requestId, body, dryRun } = params
+  const {
+    supabase,
+    requestId,
+    body,
+    dryRun,
+    telemetry = newRateLimitTelemetry(),
+    concurrency = 1,
+    killSwitchEngaged = false,
+  } = params
 
   const staleThresholdDays = resolveMaintenanceStaleThreshold(body)
 
@@ -222,6 +246,19 @@ export async function runMaintenanceReconciliation(params: {
     // SMI-4386: maintenance never runs runUpsertPhase — hardcode zero so the
     // field is present in every audit_logs row and dashboards don't need COALESCE.
     high_trust_fallback_hits: 0,
+    // SMI-4857: Meta envelope mirrors the stdout RunSummary.meta shape from
+    // run.ts. Maintenance has no GitHub calls so rate-limit fields are zero;
+    // topics/cron_slot are null/empty to match the discovery contract.
+    meta: {
+      request_id: requestId,
+      run_type: 'maintenance',
+      ...summarizeRateLimitTelemetry(telemetry),
+      concurrency,
+      kill_switch_engaged: killSwitchEngaged,
+      topics: [],
+      cron_slot: null,
+      rotation_source: 'fallback',
+    },
   })
 
   return buildMaintenanceResponseData(staleResult, dryRun)

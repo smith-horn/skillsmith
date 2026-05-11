@@ -130,12 +130,17 @@ async function runDiscoveryBranch(
     existingRepoUpdatedAt,
     telemetry,
     concurrency: env.concurrency,
+    killSwitchEngaged: env.kill_switch_engaged,
   })
 
   return { result, topics, rotationSource }
 }
 
-async function runMaintenanceBranch(env: IndexerEnv, requestId: string): Promise<unknown> {
+async function runMaintenanceBranch(
+  env: IndexerEnv,
+  requestId: string,
+  telemetry: RateLimitTelemetry
+): Promise<unknown> {
   const supabase = createSupabaseAdminClient()
   return await runMaintenanceReconciliation({
     supabase,
@@ -146,6 +151,13 @@ async function runMaintenanceBranch(env: IndexerEnv, requestId: string): Promise
       staleThresholdDays: env.STALE_DAYS,
     },
     dryRun: env.DRY_RUN,
+    // SMI-4857: thread telemetry + concurrency + kill-switch through so the
+    // maintenance audit_logs row carries the same meta envelope shape as
+    // discovery (zeroed rate-limit fields since maintenance makes no GitHub
+    // calls).
+    telemetry,
+    concurrency: env.concurrency,
+    killSwitchEngaged: env.kill_switch_engaged,
   })
 }
 
@@ -190,7 +202,7 @@ async function main(): Promise<void> {
 
   try {
     if (env.RUN_TYPE === 'maintenance') {
-      result = await runMaintenanceBranch(env, requestId)
+      result = await runMaintenanceBranch(env, requestId, telemetry)
     } else {
       const discovery = await runDiscoveryBranch(env, requestId, telemetry)
       result = discovery.result
