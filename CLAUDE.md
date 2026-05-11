@@ -195,7 +195,7 @@ npx supabase functions deploy auth-device-token --no-verify-jwt
 npx supabase functions deploy quota-monitor --no-verify-jwt
 ```
 
-**Gateway-verified auth** (SMI-4291; deploy without `--no-verify-jwt`): `webhook-dlq`, `auth-device-approve`, `auth-device-preview`. **CORS, auto-deploy & monitoring**: [deployment-guide.md](.claude/development/deployment-guide.md), [edge-function-patterns.md § Auto-deploy](.claude/development/edge-function-patterns.md#auto-deploy).
+**Gateway-verified auth** (SMI-4291; deploy without `--no-verify-jwt`): `webhook-dlq`, `auth-device-approve`, `auth-device-preview`, `indexer-dispatch` (SMI-4852). **CORS, auto-deploy & monitoring**: [deployment-guide.md](.claude/development/deployment-guide.md), [edge-function-patterns.md § Auto-deploy](.claude/development/edge-function-patterns.md#auto-deploy).
 
 ---
 
