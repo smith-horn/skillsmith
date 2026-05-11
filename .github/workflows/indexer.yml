@@ -211,7 +211,8 @@ jobs:
         run: |
           # Issue #1: npx tsx (not node --experimental-strip-types).
           # The entrypoint emits one JSON line on success; capture for downstream steps.
-          set -e
+          # SMI-4852 follow-up: pipefail so tsx failure propagates through `| tee`.
+          set -eo pipefail
           OUTPUT_FILE="$(mktemp)"
           if npx tsx scripts/indexer/run.ts | tee "$OUTPUT_FILE"; then
             HTTP_CODE=200
