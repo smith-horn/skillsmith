@@ -1,15 +1,17 @@
 # SMI-1617: GitHub Actions workflow for scheduled skill metadata refresh
 # Refreshes metadata (stars, quality_score) for existing skills in the database
 #
-# Runs hourly to keep ~14k skills fresh (200/run, ~15 effective runs/day due to GH cron gaps = full refresh every ~5 days)
-# The indexer adds new skills; this job keeps existing skills up-to-date
+# Runs every 4h to keep ~14k skills fresh (200/run, ~6 effective runs/day = full refresh every ~12 days)
+# Cadence reduced from hourly to 4-hourly via SMI-4121 (Wave 3 D close-out of SMI-4118)
+# to cut ~540 metadata-refresh invocations/mo against the Supabase Pro Fair Use budget.
+# The indexer adds new skills; this job keeps existing skills up-to-date.
 
 name: Skill Metadata Refresh
 
 on:
   schedule:
-    # Run hourly at minute 30 (offset from indexer which runs at :00)
-    - cron: '30 * * * *'
+    # Run every 4h at minute 30 (offset from indexer which runs at :00)
+    - cron: '30 */4 * * *'
   workflow_dispatch:
     inputs:
       batch_size:
