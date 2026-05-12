@@ -27,6 +27,9 @@ on:
       - 'scripts/diagnostics/wasm-env-snapshot.mjs'
       - '.github/workflows/wasm-env-snapshot.yml'
 
+permissions:
+  contents: read
+
 jobs:
   wasm-env-snapshot:
     name: Capture WASM env snapshot
