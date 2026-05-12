@@ -199,8 +199,12 @@ jobs:
           restore-keys: |
             vercel-cache-${{ runner.os }}-
 
-      - name: Install Vercel CLI
-        run: npm install -g vercel@latest
+      - name: Install Vercel CLI (pinned to root devDep)
+        run: |
+          PINNED=$(node -p "require('./package.json').devDependencies.vercel")
+          echo "Installing vercel@$PINNED (pinned from root package.json)"
+          npm i -g "vercel@$PINNED"
+          vercel --version
 
       - name: Vercel pull + build website
         working-directory: packages/website
