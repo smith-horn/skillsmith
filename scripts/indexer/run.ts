@@ -36,6 +36,11 @@ import { runDiscovery } from './discovery-orchestrator.ts'
 import { runMaintenanceReconciliation } from './maintenance-helpers.ts'
 import type { IndexerRequest, IndexerResult } from './indexer-types.ts'
 import type { SkillMdValidation } from './skill-processor.ts'
+import {
+  treeHashCacheKey,
+  type TreeHashCache,
+  type TreeHashCacheEntry,
+} from './high-trust-indexer.ts'
 
 interface RunSummary {
   data: unknown
@@ -88,11 +93,15 @@ async function runDiscoveryBranch(
   const searchApiTokenBucket = createTokenBucket(0.5, 1)
   const codeSearchTokenBucket = createTokenBucket(1 / 6, 1)
 
-  // SMI-4854: Prefetch repo_updated_at skip-gate map.
+  // SMI-4854 + SMI-4861 Wave 1: Prefetch repo_updated_at + tree_hash maps in
+  // a single query. tree_hash + last_tree_hash_check are read into a separate
+  // `(repo_url, skill_path) → {tree_hash, last_tree_hash_check}` map so Phase 1
+  // can short-circuit the per-skill raw.* fetch when blob SHA + freshness match.
   const existingRepoUpdatedAt = new Map<string, string | null>()
+  const treeHashCache: TreeHashCache = new Map<string, TreeHashCacheEntry>()
   const { data: existingRows, error: prefetchError } = await supabase
     .from('skills')
-    .select('repo_url, repo_updated_at')
+    .select('repo_url, repo_updated_at, skill_path, tree_hash, last_tree_hash_check')
     .not('repo_url', 'is', null)
   if (prefetchError) {
     console.error(
@@ -102,13 +111,27 @@ async function runDiscoveryBranch(
         request_id: requestId,
       })
     )
-    // Non-fatal — empty map means no skip-gate hits this run; correctness preserved.
+    // Non-fatal — empty maps mean no skip-gate hits this run; correctness preserved.
   } else {
     for (const row of (existingRows ?? []) as Array<{
       repo_url: string
       repo_updated_at: string | null
+      skill_path: string | null
+      tree_hash: string | null
+      last_tree_hash_check: string | null
     }>) {
-      if (row.repo_url) existingRepoUpdatedAt.set(row.repo_url, row.repo_updated_at ?? null)
+      if (!row.repo_url) continue
+      existingRepoUpdatedAt.set(row.repo_url, row.repo_updated_at ?? null)
+      if (row.tree_hash) {
+        // skills.repo_url stores the per-skill URL `…/tree/<branch>/<skillPath>` for
+        // multi-skill repos (skill-processor.ts:473). Phase 1 lookups key on the bare
+        // repo URL + skill_path tuple, so strip the suffix here for round-trip parity.
+        const bareRepoUrl = row.repo_url.split('/tree/')[0]
+        treeHashCache.set(treeHashCacheKey(bareRepoUrl, row.skill_path ?? ''), {
+          tree_hash: row.tree_hash,
+          last_tree_hash_check: row.last_tree_hash_check,
+        })
+      }
     }
   }
 
@@ -128,6 +151,7 @@ async function runDiscoveryBranch(
     searchApiTokenBucket,
     codeSearchTokenBucket,
     existingRepoUpdatedAt,
+    treeHashCache,
     telemetry,
     concurrency: env.concurrency,
     killSwitchEngaged: env.kill_switch_engaged,

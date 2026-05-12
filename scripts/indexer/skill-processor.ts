@@ -484,8 +484,7 @@ export function repositoryToSkill(
     quarantined,
     quarantine_reason: quarantineReason || null,
     last_seen_at: new Date().toISOString(),
-    // SMI-4846: Skip-gate column populated on every full-fetch upsert. Future
-    // runs with matching repo.updatedAt bypass validateSkillMd entirely.
+    // SMI-4846: Skip-gate; future runs with matching repo.updatedAt bypass validateSkillMd.
     repo_updated_at: repo.updatedAt ?? null,
     // SMI-2663: Cross-ecosystem discovery columns (migration 055)
     source_format: 'skill-md', // Phase 1: always skill-md; Phase 2 will detect format
@@ -494,5 +493,7 @@ export function repositoryToSkill(
     // Migration 055's CHECK constraint allows empty string; new rows never land as NULL.
     // Legacy NULLs remain as-is (cohort marker for SMI-4385 before/after yield measurement).
     skill_path: repo.skillPath ?? '',
+    tree_hash: repo.treeHash ?? null, // SMI-4861 Wave 1 — migration 20260512000001
+    last_tree_hash_check: repo.treeHash ? new Date().toISOString() : null,
   }
 }

@@ -52,6 +52,12 @@ export interface GitHubRepository {
   // discovery site (topic-search / code-search / high-trust) and consumed in
   // indexer-runners.ts runUpsertPhase after successful upsert.
   discoveryPath?: string
+  // SMI-4861 Wave 1: git blob SHA of this skill's SKILL.md, when known.
+  // Populated by Phase 1 wildcard expansion (Trees API) and by plain-path
+  // repos when SKILLSMITH_TREE_HASH_PLAIN_PATH=true triggers an opportunistic
+  // Trees fetch. Persisted into skills.tree_hash on UPSERT so the next cron
+  // can skip the raw.* fetch when SHA + last_tree_hash_check < 24h match.
+  treeHash?: string
 }
 
 /**

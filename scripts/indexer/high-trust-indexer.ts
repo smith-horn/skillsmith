@@ -24,7 +24,6 @@
  * path unchanged. See trees-search.ts for the wildcard implementation.
  */
 
-import { buildGitHubHeaders } from './_shared/github-auth.ts'
 import {
   validateGitHubParams,
   validateGitHubPath,
@@ -33,6 +32,7 @@ import {
   sanitizeForLog,
 } from './_shared/validation.ts'
 import { withRateLimitTracking, type RateLimitTelemetry } from './_shared/rate-limit.ts'
+import { buildGitHubHeaders } from './_shared/github-auth.ts'
 
 import { type HighTrustAuthor, shouldExcludeSkill } from './high-trust-authors.ts'
 
@@ -44,180 +44,18 @@ import {
   sanitizeSkillName,
 } from './skill-processor.ts'
 import { delay } from './topic-search.ts'
-import { expandGlobSkillsPaths } from './trees-search.ts'
+import { expandGlobSkillsPaths, fetchPlainPathTreeMap } from './trees-search.ts'
+import {
+  treeHashCacheHit,
+  treeHashCacheKey,
+  type TreeHashCache,
+  type TreeHashCacheCounters,
+} from './tree-hash-cache.ts'
+import { indexSkillsFromContents, type RepoData } from './index-skills-from-contents.ts'
 
-/**
- * Shared repo metadata shape fetched from GitHub API
- */
-interface RepoData {
-  default_branch: string
-  stargazers_count: number
-  forks_count: number
-  description: string | null
-  topics: string[]
-}
-
-/**
- * Index skills from a base directory using the GitHub Contents API.
- * Handles one level of subdirectory scanning below basePath.
- *
- * Used for plain skillsPaths entries (no wildcard). Extracted as a named helper
- * so both the plain-path branch and the wildcard branch in indexHighTrustRepository()
- * are structurally symmetric and independently testable.
- *
- * SMI-2672: Extracted from indexHighTrustRepository() to enable symmetrical
- * wildcard branch in the same function.
- *
- * @param author - High-trust author config
- * @param basePath - Base directory path to scan (e.g. '', 'skills', '.github/skills')
- * @param repoData - Pre-fetched repository metadata
- * @param validationCache - Request-scoped SKILL.md validation cache
- * @param validationOptions - Strict validation and minimum content length options
- * @param telemetry - SMI-4852: Run-scoped rate-limit telemetry for the GitHub fetch wrapper.
- */
-async function indexSkillsFromContents(
-  author: HighTrustAuthor,
-  basePath: string,
-  repoData: RepoData,
-  validationCache: Map<string, SkillMdValidation>,
-  validationOptions: { strictValidation?: boolean; minContentLength?: number },
-  telemetry: RateLimitTelemetry
-): Promise<{ skills: GitHubRepository[]; errors: string[] }> {
-  const skills: GitHubRepository[] = []
-  const errors: string[] = []
-
-  const contentsUrl = basePath
-    ? `https://api.github.com/repos/${author.owner}/${author.repo}/contents/${basePath}`
-    : `https://api.github.com/repos/${author.owner}/${author.repo}/contents`
-
-  // SMI-4852 Hard Rule 1: wrap GitHub fetch in withRateLimitTracking. Pass
-  // `_throwOnRateLimit: false` to preserve the Deno parent's behavior of
-  // letting 403/429 fall through to the `!ok` branch below (so the original
-  // 404 / 403 error handling reads identically). Telemetry side-effect still
-  // records header counts + 403/429 incidents.
-  const contentsResponse = await withRateLimitTracking(telemetry, contentsUrl, {
-    headers: await buildGitHubHeaders(),
-    _throwOnRateLimit: false,
-  })
-
-  if (!contentsResponse.ok) {
-    // skills/ subdirectory might not exist, that's OK
-    if (basePath && contentsResponse.status === 404) {
-      return { skills, errors }
-    }
-    errors.push(
-      `Failed to fetch contents for ${author.owner}/${author.repo}/${basePath}: ${contentsResponse.status}`
-    )
-    return { skills, errors }
-  }
-
-  const contents = (await contentsResponse.json()) as Array<{
-    name: string
-    type: string
-    path: string
-  }>
-
-  // SMI-2415: Defensive check — Contents API should return an array
-  if (!Array.isArray(contents)) {
-    errors.push(
-      `Unexpected response format for ${author.owner}/${author.repo}/${basePath || '(root)'}: expected array`
-    )
-    return { skills, errors }
-  }
-
-  // SMI-2415: Warn if directory listing may be truncated
-  if (contents.length >= 1000) {
-    console.warn(
-      `[HighTrust] WARNING: ${author.owner}/${author.repo}/${basePath || '(root)'} returned ${contents.length} items — response may be truncated. Some skills may be missed.`
-    )
-    errors.push(
-      `Directory listing may be truncated for ${author.owner}/${author.repo}/${basePath || '(root)'} (${contents.length} items)`
-    )
-  }
-
-  // Check each directory for SKILL.md
-  for (const item of contents) {
-    if (item.type !== 'dir') continue
-
-    // SMI-2282: Validate item.name from GitHub contents API
-    if (!isValidGitHubIdentifier(item.name)) {
-      console.warn(`Skipping directory with invalid name: ${sanitizeForLog(item.name)}`)
-      continue
-    }
-    // Skip common non-skill directories
-    if (
-      [
-        '.github',
-        '.claude-plugin',
-        'scripts',
-        'assets',
-        'agents',
-        'apps',
-        'packages',
-        'spec',
-        'template',
-      ].includes(item.name)
-    ) {
-      continue
-    }
-
-    // Check if this skill should be excluded
-    if (shouldExcludeSkill(author, item.name)) {
-      console.log(`Skipping excluded skill: ${author.owner}/${author.repo}/${item.name}`)
-      continue
-    }
-
-    // Build the path to check for SKILL.md
-    const skillPath = basePath ? `${basePath}/${item.name}` : item.name
-
-    // Check if SKILL.md exists and is valid in this directory
-    const hasSkill = await checkSkillMdExists(
-      author.owner,
-      author.repo,
-      repoData.default_branch,
-      validationCache,
-      telemetry,
-      skillPath,
-      validationOptions
-    )
-
-    if (hasSkill) {
-      const validation = getCachedValidation(
-        author.owner,
-        author.repo,
-        repoData.default_branch,
-        validationCache,
-        skillPath
-      )
-      const metadata = validation?.metadata
-      const skillName = sanitizeSkillName(metadata?.name || item.name)
-
-      skills.push({
-        owner: author.owner,
-        name: skillName,
-        fullName: `${author.owner}/${skillName}`,
-        description:
-          metadata?.description ||
-          `${item.name} — a Claude Code skill by ${author.owner}/${author.repo}`,
-        url: `https://github.com/${author.owner}/${author.repo}/tree/${repoData.default_branch}/${skillPath}`,
-        stars: repoData.stargazers_count,
-        forks: repoData.forks_count,
-        topics: repoData.topics || [],
-        updatedAt: new Date().toISOString(),
-        defaultBranch: repoData.default_branch,
-        installable: author.installable ?? true,
-        repoName: author.repo,
-        skillPath,
-        // SMI-4387: plain Contents API path — not wildcard
-        discoveryPath: `high_trust:${author.owner}`,
-      })
-    }
-
-    await delay(50) // Rate limiting
-  }
-
-  return { skills, errors }
-}
+// Re-export for callers still importing from this module (run.ts, phases/high-trust.ts).
+export { treeHashCacheHit, treeHashCacheKey, TREE_HASH_CACHE_TTL_MS } from './tree-hash-cache.ts'
+export type { TreeHashCache, TreeHashCacheCounters, TreeHashCacheEntry } from './tree-hash-cache.ts'
 
 /**
  * Fetch skills from a high-trust author's repository
@@ -230,7 +68,10 @@ export async function indexHighTrustRepository(
   author: HighTrustAuthor,
   validationCache: Map<string, SkillMdValidation>,
   validationOptions: { strictValidation?: boolean; minContentLength?: number } = {},
-  telemetry: RateLimitTelemetry
+  telemetry: RateLimitTelemetry,
+  // SMI-4861 Wave 1: cross-run tree-hash cache. Omitted = behavior unchanged.
+  treeHashCache?: TreeHashCache,
+  cacheCounters?: TreeHashCacheCounters
 ): Promise<{
   skills: GitHubRepository[]
   errors: string[]
@@ -254,9 +95,9 @@ export async function indexHighTrustRepository(
     }
 
     // Get repository info
-    const repoUrl = `https://api.github.com/repos/${author.owner}/${author.repo}`
+    const repoApiUrl = `https://api.github.com/repos/${author.owner}/${author.repo}`
     // SMI-4852 Hard Rule 1: wrap GitHub fetch.
-    const repoResponse = await withRateLimitTracking(telemetry, repoUrl, {
+    const repoResponse = await withRateLimitTracking(telemetry, repoApiUrl, {
       headers: await buildGitHubHeaders(),
       _throwOnRateLimit: false,
     })
@@ -278,6 +119,11 @@ export async function indexHighTrustRepository(
 
     const allSkillsPaths = author.skillsPaths ?? ['', 'skills']
     const hasWildcard = allSkillsPaths.some((p) => p.includes('*'))
+    // SMI-4861 Wave 1: opt-in plain-path Trees prefetch. Adds +1 Trees call
+    // per cold repo; breaks even after first warm cron. Default false.
+    const plainPathTreeHashEnabled =
+      process.env.SKILLSMITH_TREE_HASH_PLAIN_PATH === 'true' && !!treeHashCache
+    const repoUrlForCache = `https://github.com/${author.owner}/${author.repo}`
 
     // ── Wildcard branch: GitHub Trees API ────────────────────────────────
     // SMI-2672: If any skillsPath contains '*', use the Trees API to resolve
@@ -303,6 +149,11 @@ export async function indexHighTrustRepository(
         `[HighTrust/Trees] ${author.owner}/${author.repo}: ${expanded.wildcardExpansionCount} path(s) expanded via wildcard, fetchFailed=${expanded.fetchFailed}`
       )
 
+      // SMI-4861 Wave 1: seed plain-path branch from the wildcard Trees fetch
+      // for mixed skillsPaths arrays (e.g. Salesforce) — no extra API call.
+      const blobShaMap = new Map<string, string>()
+      for (const entry of expanded.resolved) blobShaMap.set(entry.path, entry.blobSha)
+
       // Handle plain paths via Contents API directory scan (same as non-wildcard branch).
       // This supports mixed wildcard+plain skillsPaths arrays (e.g. Salesforce:
       // ['.claude/skills', 'skills/*/skills']). Plain paths are parent directories
@@ -314,14 +165,18 @@ export async function indexHighTrustRepository(
           repoData,
           validationCache,
           validationOptions,
-          telemetry
+          telemetry,
+          treeHashCache,
+          cacheCounters,
+          blobShaMap
         )
         skills.push(...pathSkills)
         errors.push(...pathErrors)
       }
 
       // Index each wildcard-resolved skill path using Contents API validation
-      for (const resolvedPath of expanded.resolved) {
+      for (const entry of expanded.resolved) {
+        const resolvedPath = entry.path
         // Validate paths from external GitHub API before URL construction (Path Column DB Standards)
         if (!validateGitHubPath(resolvedPath)) {
           console.warn(
@@ -344,6 +199,20 @@ export async function indexHighTrustRepository(
           )
           continue
         }
+
+        // SMI-4861 Wave 1: wildcard branch always has blob SHA from Trees.
+        if (
+          treeHashCacheHit(
+            treeHashCache,
+            treeHashCacheKey(repoUrlForCache, resolvedPath),
+            entry.blobSha
+          )
+        ) {
+          if (cacheCounters) cacheCounters.hits++
+          await delay(50)
+          continue
+        }
+        if (treeHashCache && cacheCounters) cacheCounters.misses++
 
         const hasSkill = await checkSkillMdExists(
           author.owner,
@@ -386,6 +255,8 @@ export async function indexHighTrustRepository(
             skillPath: resolvedPath,
             // SMI-4387: Trees API wildcard-expansion path
             discoveryPath: `wildcard:${author.owner}`,
+            // SMI-4861 Wave 1: persisted to skills.tree_hash for future crons.
+            treeHash: entry.blobSha,
           })
         }
 
@@ -393,7 +264,18 @@ export async function indexHighTrustRepository(
       }
     } else {
       // ── Plain branch: Contents API (existing logic) ───────────────────────
-      // No wildcards — use the existing one-level directory scan per basePath.
+      // SMI-4861 Wave 1: opt-in Trees prefetch seeds path→blobSha for caching.
+      let blobShaMap: Map<string, string> | undefined
+      if (plainPathTreeHashEnabled) {
+        const treeMap = await fetchPlainPathTreeMap(
+          author.owner,
+          author.repo,
+          repoData.default_branch,
+          telemetry
+        )
+        treesApiCallCount += treeMap.treesApiCallCount
+        if (!treeMap.fetchFailed) blobShaMap = treeMap.blobShas
+      }
       for (const basePath of allSkillsPaths) {
         const { skills: pathSkills, errors: pathErrors } = await indexSkillsFromContents(
           author,
@@ -401,7 +283,10 @@ export async function indexHighTrustRepository(
           repoData,
           validationCache,
           validationOptions,
-          telemetry
+          telemetry,
+          treeHashCache,
+          cacheCounters,
+          blobShaMap
         )
         skills.push(...pathSkills)
         errors.push(...pathErrors)
@@ -448,6 +333,8 @@ export async function indexHighTrustRepository(
         // SMI-4387: root-level single-skill high-trust repo; skillPath: '' marks root
         skillPath: '',
         discoveryPath: `high_trust:${author.owner}`,
+        // SMI-4861 Wave 2 scope: root-skill blob-SHA lookup will populate
+        // tree_hash here (deferred — requires a separate Contents API call).
       })
     }
   } catch (error) {
