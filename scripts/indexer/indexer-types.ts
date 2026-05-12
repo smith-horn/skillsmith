@@ -71,6 +71,11 @@ export interface IndexerResult {
     trees_api_calls: number
     truncated_responses: number
   }
+  /** SMI-4861 Wave 1: tree-hash TTL cache hit/miss counters. Surfaces in stdout RunSummary so cron logs show ratio without DB query. */
+  tree_hash_cache?: {
+    hits: number
+    misses: number
+  }
   errors: string[]
   dryRun: boolean
   /** SMI-4376: Populated by `runDiscovery`; equals `repositories.length` at end of Phase 3. */
