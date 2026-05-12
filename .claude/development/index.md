@@ -29,6 +29,7 @@ Developer guides for local development, testing, and debugging.
 | [e2e-staging-runbook.md](e2e-staging-runbook.md) | Device-login round-trip e2e (SMI-4460) — secret rotation, Docker carve-out |
 | [eval-cron-setup.md](eval-cron-setup.md) | Canonical-dev retrieval-eval cron (SMI-4764 W2) — launchd/systemd, heartbeat, replacement protocol |
 | [branch-management.md](branch-management.md) | Pre-commit auto-restore, post-commit fallback recovery, direct-to-main SQL rule (SMI-2598) |
+| [edge-function-attribution-queries.md](edge-function-attribution-queries.md) | Canonical pooler queries for edge function attribution monitoring (SMI-4370 / Wave 4d) |
 
 ## Quick Links
 
