@@ -48,9 +48,15 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --workspace=packages/vscode-extension --include-workspace-root
+        env:
+          npm_config_engine_strict: false
+
       - name: Marketplace pre-flight (version collision check)
         id: preflight
         run: |
+          npm ls @vscode/vsce --workspace=packages/vscode-extension
           VERSION=$(node -e "console.log(require('./packages/vscode-extension/package.json').version)")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           PUBLISHED=$(npx @vscode/vsce show skillsmith.skillsmith-vscode --json 2>/dev/null | node -e "
@@ -68,11 +74,6 @@ jobs:
             exit 1
           fi
           echo "- **Next version target**: $VERSION (current published: $PUBLISHED)" >> $GITHUB_STEP_SUMMARY
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts --workspace=packages/vscode-extension --include-workspace-root
-        env:
-          npm_config_engine_strict: false
 
       - name: Build
         run: npm run build -w packages/vscode-extension
