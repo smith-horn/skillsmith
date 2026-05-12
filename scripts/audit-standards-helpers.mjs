@@ -588,8 +588,13 @@ export const checkCarveOutInvariants = (jobs, denyList) => {
   for (const job of jobs) {
     const needsDockerBuild = /^\s+needs:.*\bdocker-build\b/m.test(job.body)
     const hasCarveOutMarker = /#\s*audit:carveout-pure-js\b/.test(job.body)
-    const usesDockerRun = /docker run\s+(?:--rm\s+)?(?:.*\\\s*\n\s*)*[^\\\n]*skillsmith-ci:/m.test(
-      job.body
+    // SMI-4866: collapse shell-continuation backslashes to spaces so a single
+    // flat regex can match a multi-line `docker run ... skillsmith-ci:` block.
+    // The previous nested-quantifier regex `(?:.*\\\s*\n\s*)*` is catastrophically
+    // backtrackable on malformed inputs (CodeQL js/redos #90, #91).
+    const bodyCollapsed = job.body.replace(/\\\n\s*/g, ' ')
+    const usesDockerRun = /docker run(?:\s+--rm)?(?:\s+--init)?\s+[^\n]*skillsmith-ci:/.test(
+      bodyCollapsed
     )
     if (needsDockerBuild && !usesDockerRun && !hasCarveOutMarker) {
       violationsA.push({
