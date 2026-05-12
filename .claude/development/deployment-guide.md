@@ -381,7 +381,7 @@ Authoritative table (extracted from CLAUDE.md per SMI-4828; the inline CLAUDE.md
 | Job | Schedule | Function |
 |-----|----------|----------|
 | Skill Indexer | 4× daily (00 UTC maintenance + 06/12/18 UTC discovery) | `indexer` |
-| Metadata Refresh | Hourly :30 | `skills-refresh-metadata` |
+| Metadata Refresh | Every 4h :30 (SMI-4121) | `skills-refresh-metadata` |
 | Ops Report | Monday 9 AM UTC | `ops-report` |
 | Quality Outreach | Manual (beta) | `skills-outreach` |
 | Expire Complimentary | Daily 3 AM UTC | GitHub Actions (`expire-complimentary.yml`) |
