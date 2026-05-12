@@ -24,7 +24,6 @@
  * path unchanged. See trees-search.ts for the wildcard implementation.
  */
 
-import { buildGitHubHeaders } from './_shared/github-auth.ts'
 import {
   validateGitHubParams,
   validateGitHubPath,
@@ -33,6 +32,7 @@ import {
   sanitizeForLog,
 } from './_shared/validation.ts'
 import { withRateLimitTracking, type RateLimitTelemetry } from './_shared/rate-limit.ts'
+import { buildGitHubHeaders } from './_shared/github-auth.ts'
 
 import { type HighTrustAuthor, shouldExcludeSkill } from './high-trust-authors.ts'
 
@@ -45,245 +45,17 @@ import {
 } from './skill-processor.ts'
 import { delay } from './topic-search.ts'
 import { expandGlobSkillsPaths, fetchPlainPathTreeMap } from './trees-search.ts'
+import {
+  treeHashCacheHit,
+  treeHashCacheKey,
+  type TreeHashCache,
+  type TreeHashCacheCounters,
+} from './tree-hash-cache.ts'
+import { indexSkillsFromContents, type RepoData } from './index-skills-from-contents.ts'
 
-/**
- * SMI-4861 Wave 1: tree-hash TTL cache shape. Maps `${repo_url}:${skill_path}`
- * to its prior `tree_hash` + `last_tree_hash_check`. When non-empty, callers
- * skip the raw.* SKILL.md fetch on matching blob SHA AND fresh check (<24h).
- */
-export type TreeHashCacheEntry = { tree_hash: string; last_tree_hash_check: string | null }
-export type TreeHashCache = Map<string, TreeHashCacheEntry>
-
-/** SMI-4861 Wave 1: hit/miss counters threaded through Phase 1 callers. */
-export interface TreeHashCacheCounters {
-  hits: number
-  misses: number
-}
-
-/** TTL for tree-hash cache (24h). Future TTL A/B test tracked in SMI-4872. */
-export const TREE_HASH_CACHE_TTL_MS = 24 * 60 * 60 * 1000
-
-/** Cache key used by Phase 1 callers (mirrors skill-processor.ts:496 fallback). */
-export function treeHashCacheKey(repoUrl: string, skillPath: string | undefined): string {
-  return `${repoUrl}:${skillPath ?? ''}`
-}
-
-/**
- * SMI-4861 Wave 1: cache check helper. Returns true when the cache holds
- * a non-stale entry whose blob SHA matches `currentBlobSha`. Callers
- * increment `counters` accordingly (hits on match, misses on fall-through).
- */
-export function treeHashCacheHit(
-  cache: TreeHashCache | undefined,
-  cacheKey: string,
-  currentBlobSha: string | undefined,
-  now: number = Date.now()
-): boolean {
-  if (!cache || !currentBlobSha) return false
-  const entry = cache.get(cacheKey)
-  if (!entry || entry.tree_hash !== currentBlobSha || !entry.last_tree_hash_check) return false
-  const lastMs = Date.parse(entry.last_tree_hash_check)
-  if (!Number.isFinite(lastMs)) return false
-  return now - lastMs < TREE_HASH_CACHE_TTL_MS
-}
-
-/**
- * Shared repo metadata shape fetched from GitHub API
- */
-interface RepoData {
-  default_branch: string
-  stargazers_count: number
-  forks_count: number
-  description: string | null
-  topics: string[]
-}
-
-/**
- * Index skills from a base directory using the GitHub Contents API.
- * Handles one level of subdirectory scanning below basePath.
- *
- * Used for plain skillsPaths entries (no wildcard). Extracted as a named helper
- * so both the plain-path branch and the wildcard branch in indexHighTrustRepository()
- * are structurally symmetric and independently testable.
- *
- * SMI-2672: Extracted from indexHighTrustRepository() to enable symmetrical
- * wildcard branch in the same function.
- *
- * @param author - High-trust author config
- * @param basePath - Base directory path to scan (e.g. '', 'skills', '.github/skills')
- * @param repoData - Pre-fetched repository metadata
- * @param validationCache - Request-scoped SKILL.md validation cache
- * @param validationOptions - Strict validation and minimum content length options
- * @param telemetry - SMI-4852: Run-scoped rate-limit telemetry for the GitHub fetch wrapper.
- */
-async function indexSkillsFromContents(
-  author: HighTrustAuthor,
-  basePath: string,
-  repoData: RepoData,
-  validationCache: Map<string, SkillMdValidation>,
-  validationOptions: { strictValidation?: boolean; minContentLength?: number },
-  telemetry: RateLimitTelemetry,
-  // SMI-4861 Wave 1: optional tree-hash cache plumbing. When the caller passes
-  // a populated `plainPathBlobShas` map (via SKILLSMITH_TREE_HASH_PLAIN_PATH
-  // opt-in or the Trees API fallback inside indexHighTrustRepository), each
-  // subdirectory's blob SHA is checked against the cache; matches skip the
-  // raw.* fetch entirely. Default `undefined` = no-op (behavior unchanged).
-  treeHashCache?: TreeHashCache,
-  cacheCounters?: TreeHashCacheCounters,
-  plainPathBlobShas?: Map<string, string>
-): Promise<{ skills: GitHubRepository[]; errors: string[] }> {
-  const skills: GitHubRepository[] = []
-  const errors: string[] = []
-
-  const contentsUrl = basePath
-    ? `https://api.github.com/repos/${author.owner}/${author.repo}/contents/${basePath}`
-    : `https://api.github.com/repos/${author.owner}/${author.repo}/contents`
-
-  // SMI-4852 Hard Rule 1: wrap GitHub fetch in withRateLimitTracking. Pass
-  // `_throwOnRateLimit: false` to preserve the Deno parent's behavior of
-  // letting 403/429 fall through to the `!ok` branch below (so the original
-  // 404 / 403 error handling reads identically). Telemetry side-effect still
-  // records header counts + 403/429 incidents.
-  const contentsResponse = await withRateLimitTracking(telemetry, contentsUrl, {
-    headers: await buildGitHubHeaders(),
-    _throwOnRateLimit: false,
-  })
-
-  if (!contentsResponse.ok) {
-    // skills/ subdirectory might not exist, that's OK
-    if (basePath && contentsResponse.status === 404) {
-      return { skills, errors }
-    }
-    errors.push(
-      `Failed to fetch contents for ${author.owner}/${author.repo}/${basePath}: ${contentsResponse.status}`
-    )
-    return { skills, errors }
-  }
-
-  const contents = (await contentsResponse.json()) as Array<{
-    name: string
-    type: string
-    path: string
-  }>
-
-  // SMI-2415: Defensive check — Contents API should return an array
-  if (!Array.isArray(contents)) {
-    errors.push(
-      `Unexpected response format for ${author.owner}/${author.repo}/${basePath || '(root)'}: expected array`
-    )
-    return { skills, errors }
-  }
-
-  // SMI-2415: Warn if directory listing may be truncated
-  if (contents.length >= 1000) {
-    console.warn(
-      `[HighTrust] WARNING: ${author.owner}/${author.repo}/${basePath || '(root)'} returned ${contents.length} items — response may be truncated. Some skills may be missed.`
-    )
-    errors.push(
-      `Directory listing may be truncated for ${author.owner}/${author.repo}/${basePath || '(root)'} (${contents.length} items)`
-    )
-  }
-
-  // Check each directory for SKILL.md
-  for (const item of contents) {
-    if (item.type !== 'dir') continue
-
-    // SMI-2282: Validate item.name from GitHub contents API
-    if (!isValidGitHubIdentifier(item.name)) {
-      console.warn(`Skipping directory with invalid name: ${sanitizeForLog(item.name)}`)
-      continue
-    }
-    // Skip common non-skill directories
-    if (
-      [
-        '.github',
-        '.claude-plugin',
-        'scripts',
-        'assets',
-        'agents',
-        'apps',
-        'packages',
-        'spec',
-        'template',
-      ].includes(item.name)
-    ) {
-      continue
-    }
-
-    // Check if this skill should be excluded
-    if (shouldExcludeSkill(author, item.name)) {
-      console.log(`Skipping excluded skill: ${author.owner}/${author.repo}/${item.name}`)
-      continue
-    }
-
-    // Build the path to check for SKILL.md
-    const skillPath = basePath ? `${basePath}/${item.name}` : item.name
-
-    // SMI-4861 Wave 1: tree-hash TTL cache gate. When the caller threaded a
-    // plain-path blob-SHA map (opt-in via SKILLSMITH_TREE_HASH_PLAIN_PATH) and
-    // the cache holds a fresh matching tree_hash, skip the raw.* fetch. The
-    // existing DB row is left untouched; counters surface in audit meta.
-    const repoUrl = `https://github.com/${author.owner}/${author.repo}`
-    const blobSha = plainPathBlobShas?.get(skillPath)
-    if (treeHashCacheHit(treeHashCache, treeHashCacheKey(repoUrl, skillPath), blobSha)) {
-      if (cacheCounters) cacheCounters.hits++
-      continue
-    }
-    if (treeHashCache && blobSha) {
-      // We have a blob SHA but no cache hit — record the miss for telemetry.
-      if (cacheCounters) cacheCounters.misses++
-    }
-
-    // Check if SKILL.md exists and is valid in this directory
-    const hasSkill = await checkSkillMdExists(
-      author.owner,
-      author.repo,
-      repoData.default_branch,
-      validationCache,
-      telemetry,
-      skillPath,
-      validationOptions
-    )
-
-    if (hasSkill) {
-      const validation = getCachedValidation(
-        author.owner,
-        author.repo,
-        repoData.default_branch,
-        validationCache,
-        skillPath
-      )
-      const metadata = validation?.metadata
-      const skillName = sanitizeSkillName(metadata?.name || item.name)
-
-      skills.push({
-        owner: author.owner,
-        name: skillName,
-        fullName: `${author.owner}/${skillName}`,
-        description:
-          metadata?.description ||
-          `${item.name} — a Claude Code skill by ${author.owner}/${author.repo}`,
-        url: `https://github.com/${author.owner}/${author.repo}/tree/${repoData.default_branch}/${skillPath}`,
-        stars: repoData.stargazers_count,
-        forks: repoData.forks_count,
-        topics: repoData.topics || [],
-        updatedAt: new Date().toISOString(),
-        defaultBranch: repoData.default_branch,
-        installable: author.installable ?? true,
-        repoName: author.repo,
-        skillPath,
-        // SMI-4387: plain Contents API path — not wildcard
-        discoveryPath: `high_trust:${author.owner}`,
-        // SMI-4861 Wave 1: persist blob SHA so the next cron can cache-hit.
-        treeHash: blobSha,
-      })
-    }
-
-    await delay(50) // Rate limiting
-  }
-
-  return { skills, errors }
-}
+// Re-export for callers still importing from this module (run.ts, phases/high-trust.ts).
+export { treeHashCacheHit, treeHashCacheKey, TREE_HASH_CACHE_TTL_MS } from './tree-hash-cache.ts'
+export type { TreeHashCache, TreeHashCacheCounters, TreeHashCacheEntry } from './tree-hash-cache.ts'
 
 /**
  * Fetch skills from a high-trust author's repository
@@ -297,9 +69,7 @@ export async function indexHighTrustRepository(
   validationCache: Map<string, SkillMdValidation>,
   validationOptions: { strictValidation?: boolean; minContentLength?: number } = {},
   telemetry: RateLimitTelemetry,
-  // SMI-4861 Wave 1: optional cross-run tree-hash cache + counters. When
-  // omitted, all callers behave as today (no cache check, no opportunistic
-  // Trees fetch on plain-path repos).
+  // SMI-4861 Wave 1: cross-run tree-hash cache. Omitted = behavior unchanged.
   treeHashCache?: TreeHashCache,
   cacheCounters?: TreeHashCacheCounters
 ): Promise<{
@@ -349,11 +119,8 @@ export async function indexHighTrustRepository(
 
     const allSkillsPaths = author.skillsPaths ?? ['', 'skills']
     const hasWildcard = allSkillsPaths.some((p) => p.includes('*'))
-    // SMI-4861 Wave 1: opt-in opportunistic Trees fetch for plain-path repos.
-    // Default false — staged rollout. When true and the repo has no wildcards,
-    // we still fetch the Trees API once to map parent dir → blob SHA so plain
-    // Contents API scans can cache-hit. Adds +1 Trees call per cold repo;
-    // breaks even after first warm cron.
+    // SMI-4861 Wave 1: opt-in plain-path Trees prefetch. Adds +1 Trees call
+    // per cold repo; breaks even after first warm cron. Default false.
     const plainPathTreeHashEnabled =
       process.env.SKILLSMITH_TREE_HASH_PLAIN_PATH === 'true' && !!treeHashCache
     const repoUrlForCache = `https://github.com/${author.owner}/${author.repo}`
@@ -382,11 +149,8 @@ export async function indexHighTrustRepository(
         `[HighTrust/Trees] ${author.owner}/${author.repo}: ${expanded.wildcardExpansionCount} path(s) expanded via wildcard, fetchFailed=${expanded.fetchFailed}`
       )
 
-      // SMI-4861 Wave 1: the wildcard Trees fetch above already carries blob
-      // SHAs for every SKILL.md in the repo. Build a path → blobSha map from
-      // those entries to seed the plain-path branch below as well, so mixed
-      // wildcard+plain skillsPaths arrays (e.g. Salesforce) get the same
-      // cache treatment without an extra API call.
+      // SMI-4861 Wave 1: seed plain-path branch from the wildcard Trees fetch
+      // for mixed skillsPaths arrays (e.g. Salesforce) — no extra API call.
       const blobShaMap = new Map<string, string>()
       for (const entry of expanded.resolved) blobShaMap.set(entry.path, entry.blobSha)
 
@@ -436,8 +200,7 @@ export async function indexHighTrustRepository(
           continue
         }
 
-        // SMI-4861 Wave 1: tree-hash cache gate. Wildcard branch always has
-        // blob SHA from the Trees response.
+        // SMI-4861 Wave 1: wildcard branch always has blob SHA from Trees.
         if (
           treeHashCacheHit(
             treeHashCache,
@@ -449,9 +212,7 @@ export async function indexHighTrustRepository(
           await delay(50)
           continue
         }
-        if (treeHashCache) {
-          if (cacheCounters) cacheCounters.misses++
-        }
+        if (treeHashCache && cacheCounters) cacheCounters.misses++
 
         const hasSkill = await checkSkillMdExists(
           author.owner,
@@ -494,8 +255,7 @@ export async function indexHighTrustRepository(
             skillPath: resolvedPath,
             // SMI-4387: Trees API wildcard-expansion path
             discoveryPath: `wildcard:${author.owner}`,
-            // SMI-4861 Wave 1: blob SHA from Trees response; persisted into
-            // skills.tree_hash on UPSERT so future crons can cache-hit.
+            // SMI-4861 Wave 1: persisted to skills.tree_hash for future crons.
             treeHash: entry.blobSha,
           })
         }
@@ -504,9 +264,7 @@ export async function indexHighTrustRepository(
       }
     } else {
       // ── Plain branch: Contents API (existing logic) ───────────────────────
-      // No wildcards — use the existing one-level directory scan per basePath.
-      // SMI-4861 Wave 1: if SKILLSMITH_TREE_HASH_PLAIN_PATH=true and cache
-      // present, fetch the Trees API once to seed a path→blobSha map.
+      // SMI-4861 Wave 1: opt-in Trees prefetch seeds path→blobSha for caching.
       let blobShaMap: Map<string, string> | undefined
       if (plainPathTreeHashEnabled) {
         const treeMap = await fetchPlainPathTreeMap(

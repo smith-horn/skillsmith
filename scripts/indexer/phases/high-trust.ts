@@ -79,8 +79,14 @@ export interface HighTrustPhaseParams {
 export async function runHighTrustPhase(
   params: HighTrustPhaseParams
 ): Promise<HighTrustPhaseResult> {
-  const { validationCache, validationOptions, telemetry, concurrency, treeHashCache, cacheCounters } =
-    params
+  const {
+    validationCache,
+    validationOptions,
+    telemetry,
+    concurrency,
+    treeHashCache,
+    cacheCounters,
+  } = params
 
   console.log(`Indexing ${HIGH_TRUST_AUTHORS.length} high-trust authors...`)
 

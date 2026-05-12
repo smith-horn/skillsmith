@@ -243,7 +243,9 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
       result.code_search = { repos_found, retries, error }
       console.log(`[Phase3a] skip-gate hits: ${skipGateHits ?? 0} of ${repos_found} repos`)
     } catch (err) {
-      console.warn(`[CodeSearch] Phase 3a failed: ${err instanceof Error ? err.message : 'Unknown'}`)
+      console.warn(
+        `[CodeSearch] Phase 3a failed: ${err instanceof Error ? err.message : 'Unknown'}`
+      )
       result.code_search = { repos_found: 0, retries: 0, error: 'phase_failed' }
     }
   } else {

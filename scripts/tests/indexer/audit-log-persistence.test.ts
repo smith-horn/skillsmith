@@ -239,7 +239,9 @@ describe('writeIndexerAuditLog — meta envelope persistence (SMI-4857)', () => 
     // Ratio check the acceptance SQL will use:
     //   SELECT (meta->>'tree_hash_cache_hits')::int /
     //          ((meta->>'tree_hash_cache_hits')::int + (meta->>'tree_hash_cache_misses')::int)
-    expect(meta.tree_hash_cache_hits / (meta.tree_hash_cache_hits + meta.tree_hash_cache_misses)).toBeGreaterThanOrEqual(0.8)
+    expect(
+      meta.tree_hash_cache_hits / (meta.tree_hash_cache_hits + meta.tree_hash_cache_misses)
+    ).toBeGreaterThanOrEqual(0.8)
   })
 
   it('persists zero tree_hash counters on cold-cache cron 1 (SMI-4861 Wave 1)', async () => {
