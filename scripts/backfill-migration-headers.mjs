@@ -29,12 +29,17 @@
  * Run from the repo root.
  */
 
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 const MIGRATIONS_DIR = 'supabase/migrations'
 const MIN_MIGRATION_NUMBER = 30
+// SMI-4867: canonical migration filename — `NNN_*.sql` (3+ digit numeric or
+// 14-digit ISO timestamp prefix, lowercase ASCII body). The regex filter
+// in main() rejects anything else, defending against shell metacharacters
+// in filenames that might slip through downstream string concat.
+const MIGRATION_FILE_RE = /^\d{3,}_[a-z0-9_]+\.sql$/
 const DRY_RUN = process.argv.includes('--dry-run')
 
 function isGitCrypted(buf) {
@@ -43,10 +48,18 @@ function isGitCrypted(buf) {
 
 function deriveSmiAndDate(file) {
   const path = `${MIGRATIONS_DIR}/${file}`
-  const out = execSync(
-    `git log --reverse --diff-filter=A --format='%ad|%s' --date=short -- ${path} | head -1`,
+  // SMI-4867: use execFileSync (array form) to bypass the shell — `file` is
+  // read off disk and could theoretically contain metacharacters. The
+  // --format value below is `%ad|%s` with NO surrounding single quotes; in
+  // the shell form the quotes protected the `|` from /bin/sh, but in the
+  // array form each element is passed verbatim to git, so quotes would
+  // become literal `'` characters in the output. Do NOT re-add quotes.
+  const stdout = execFileSync(
+    'git',
+    ['log', '--reverse', '--diff-filter=A', '--format=%ad|%s', '--date=short', '--', path],
     { encoding: 'utf8' }
-  ).trim()
+  )
+  const out = stdout.split('\n', 1)[0].trim()
   if (!out) return { smi: null, date: null, prNumber: null, subject: null }
   const sep = out.indexOf('|')
   const date = out.slice(0, sep)
@@ -99,6 +112,15 @@ function hasHeaderInFirst10Lines(content) {
 
 function main() {
   const files = readdirSync(MIGRATIONS_DIR)
+    .filter((f) => {
+      // SMI-4867: reject non-canonical filenames before they reach
+      // execFileSync. Defense-in-depth — the array form already blocks shell
+      // injection, but this prevents weird filenames from breaking other
+      // downstream filesystem operations too.
+      if (MIGRATION_FILE_RE.test(f)) return true
+      console.warn(`[backfill-migration-headers] skipping non-canonical filename: ${f}`)
+      return false
+    })
     .filter((f) => f.endsWith('.sql'))
     .filter((f) => {
       const num = parseInt(f.substring(0, 3), 10)
