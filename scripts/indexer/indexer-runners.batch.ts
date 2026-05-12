@@ -120,6 +120,16 @@ export async function flushUpsertAccumulator(
       last_seen_at: skillData.last_seen_at,
       repo_updated_at: skillData.repo_updated_at,
     }
+    // SMI-4861 Wave 1 (SMI-4887 follow-up): when minimalSkillPayload carried a
+    // fresh tree_hash from the wildcard Trees fetch, propagate it. Without this,
+    // the cache never warms for skip-gate skills (verified prod 2026-05-12 cron
+    // 25758038618: 2 of 8344 rows had tree_hash after 3 crons).
+    const treeHash = (skillData as { tree_hash?: string }).tree_hash
+    const treeHashCheck = (skillData as { last_tree_hash_check?: string }).last_tree_hash_check
+    if (treeHash && treeHashCheck) {
+      update.tree_hash = treeHash
+      update.last_tree_hash_check = treeHashCheck
+    }
     const { error: skinnyError } = await supabase.from('skills').update(update).eq('repo_url', url)
     if (skinnyError) {
       // Don't count toward `failed` — the caller already booked these as
