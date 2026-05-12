@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Supply-chain pin drift guard (SMI-3985).
+ * Supply-chain pin drift guard (SMI-3985, SMI-4874).
  *
- * Enforces exact pinning for the three Wave 1 hardening surfaces that are NOT
+ * Enforces exact pinning for the four hardening surfaces that are NOT
  * covered by `Standards Compliance` (audit-standards Check 12, which only
  * covers packages/*\/package.json) or `Security Audit` (npm audit):
  *
@@ -13,15 +13,32 @@
  *      do NOT fail the check.
  *   3. `.github/workflows/**\/*.yml` — third-party actions (owner not in the
  *      first-party allowlist) must be pinned to a 40-char SHA.
+ *   4. `.github/workflows/**\/*.yml` — `npm i -g <pkg>` and `npx <pkg>` in
+ *      `run:` blocks must be pinned to an exact `@<semver>` unless allow-listed
+ *      (self-test of our own published packages) OR running after `npm ci` /
+ *      `npm install` in the same job (resolves from lockfile-tracked devDeps).
+ *      Added in SMI-4874 Wave D after the `vercel@latest` regression
+ *      (closed by Waves A + B).
  *
  * Deterministic: no network, no LLM, zero dependencies. Runs in < 500ms.
  *
  * @see docs/internal/implementation/supply-chain-hardening.md (Wave 1.5)
+ * @see docs/internal/implementation/smi-4874-ci-pin-audit.md (Wave D)
  * @see .github/workflows/ci.yml (`dependency-guard` job)
  */
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
 import { join, dirname, relative } from 'path'
 import { fileURLToPath } from 'url'
+import {
+  parsePkgSpec,
+  extractRunBlocks,
+  scanRunBlockForInstalls,
+  NPM_CI_REGEX,
+} from './check-supply-chain-pins.helpers.mjs'
+
+// Re-export helpers so tests can import them through the main module surface.
+export { parsePkgSpec, extractRunBlocks, scanRunBlockForInstalls, NPM_CI_REGEX }
+export { WORKFLOW_INSTALL_ALLOWLIST } from './check-supply-chain-pins.helpers.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..', '..')
@@ -293,6 +310,97 @@ export function checkWorkflows(rootDir) {
 }
 
 // ---------------------------------------------------------------------------
+// Check 4 (SMI-4874): `npm i -g <pkg>` / `npx <pkg>` in workflow run blocks
+// must be pinned to an exact @<semver>. Detection helpers live in the
+// sibling `check-supply-chain-pins.helpers.mjs` to keep this file under the
+// 500-line audit:standards ceiling.
+// ---------------------------------------------------------------------------
+
+/**
+ * Audit `npm i -g` and `npx` invocations across every workflow run block.
+ * Walks each job's steps in document order; flips `npmCiSeen` to true once a
+ * `run:` body contains `npm ci` / `npm install`, and from that step onward
+ * `npx` invocations are accepted (workspace-resolved).
+ *
+ * @returns {{ findings: Array, scannedFiles: number }}
+ */
+export function auditWorkflowInstalls(rootDir) {
+  const localFindings = []
+  let scannedFiles = 0
+  const wfRoot = join(rootDir, '.github', 'workflows')
+  if (!existsSync(wfRoot)) return { findings: localFindings, scannedFiles }
+
+  const ymlFiles = walk(wfRoot, (p) => p.endsWith('.yml') || p.endsWith('.yaml'))
+  for (const abs of ymlFiles) {
+    let source
+    try {
+      source = readFileSync(abs, 'utf-8')
+    } catch {
+      continue
+    }
+    scannedFiles++
+    // Strip full-line YAML comments before scanning to suppress commented-out
+    // examples (matches checkWorkflows behaviour).
+    const cleaned = source
+      .split('\n')
+      .map((l) => (l.trimStart().startsWith('#') ? '' : l))
+      .join('\n')
+    const blocks = extractRunBlocks(cleaned)
+    // npmCiSeen resets at each new top-level job. We approximate "job boundary"
+    // by re-parsing the file's `^  <name>:` job headers and binning each
+    // block's line into the right job.
+    const jobBoundaries = []
+    const allLines = cleaned.split('\n')
+    let inJobs = false
+    for (let i = 0; i < allLines.length; i++) {
+      if (/^jobs:\s*$/.test(allLines[i])) {
+        inJobs = true
+        continue
+      }
+      if (!inJobs) continue
+      // New top-level key at column 0 ends the jobs block.
+      if (/^[a-zA-Z_][a-zA-Z0-9_-]*:/.test(allLines[i])) {
+        inJobs = false
+        continue
+      }
+      if (/^  [a-z][a-z0-9-]*:\s*$/.test(allLines[i])) {
+        jobBoundaries.push(i + 1)
+      }
+    }
+    const jobOf = (line) => {
+      let last = 0
+      for (const b of jobBoundaries) {
+        if (b <= line) last = b
+        else break
+      }
+      return last
+    }
+    // Walk blocks in order, tracking npmCiSeen per job.
+    const npmCiByJob = new Map()
+    for (const block of blocks) {
+      const jobKey = jobOf(block.line)
+      const npmCiSeen = npmCiByJob.get(jobKey) === true
+      const violations = scanRunBlockForInstalls(block.body, npmCiSeen)
+      for (const v of violations) {
+        localFindings.push({
+          file: relative(rootDir, abs),
+          rule: 'workflow-install-pin',
+          message: `${v.command} \`${v.pkg}\` at line ${block.line}: ${v.reason}`,
+          remediation:
+            v.command === 'npm i -g'
+              ? `Pin to exact semver: \`npm i -g "${parsePkgSpec(v.pkg)?.name || v.pkg}@<x.y.z>"\`, ideally reading the version from root package.json via \`node -p "require('./package.json').devDependencies.<pkg>"\`.`
+              : `Either pin to exact semver (\`npx ${parsePkgSpec(v.pkg)?.name || v.pkg}@<x.y.z>\`), add to the allow-list in check-supply-chain-pins.mjs if this is a workspace devDep or self-test, or move the step after an \`npm ci\` step in the same job.`,
+        })
+      }
+      if (NPM_CI_REGEX.test(block.body)) {
+        npmCiByJob.set(jobKey, true)
+      }
+    }
+  }
+  return { findings: localFindings, scannedFiles }
+}
+
+// ---------------------------------------------------------------------------
 // Report assembly
 // ---------------------------------------------------------------------------
 export function formatFindingsMarkdown(all, esmStats) {
@@ -334,7 +442,8 @@ export async function main(rootDir = ROOT) {
   const mcpFindings = checkMcpJson(join(rootDir, '.mcp.json'))
   const esmResult = checkSupabaseFunctions(rootDir)
   const wfFindings = checkWorkflows(rootDir)
-  const all = [...mcpFindings, ...esmResult.findings, ...wfFindings]
+  const wfInstallResult = auditWorkflowInstalls(rootDir)
+  const all = [...mcpFindings, ...esmResult.findings, ...wfFindings, ...wfInstallResult.findings]
 
   const summary = formatFindingsMarkdown(all, {
     encryptedCount: esmResult.encryptedCount,
@@ -350,7 +459,7 @@ export async function main(rootDir = ROOT) {
 
   if (all.length === 0) {
     console.log(
-      `[supply-chain] OK — scanned ${esmResult.scannedCount} edge function .ts files, .mcp.json, and all workflow YAMLs.`
+      `[supply-chain] OK — scanned ${esmResult.scannedCount} edge function .ts files, .mcp.json, ${wfInstallResult.scannedFiles} workflow YAMLs (uses: pins + run-block npm/npx installs).`
     )
     return 0
   }
