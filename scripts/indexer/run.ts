@@ -55,6 +55,9 @@ interface RunSummary {
     topics: string[]
     cron_slot: number | null
     rotation_source: RotationSource | 'maintenance'
+    // SMI-4861 Wave 1 post-merge retro: surface cache counters in cron log line.
+    tree_hash_cache_hits: number
+    tree_hash_cache_misses: number
   }
 }
 
@@ -258,6 +261,8 @@ async function main(): Promise<void> {
       topics,
       cron_slot: env.CRON_SLOT,
       rotation_source: rotationSource,
+      tree_hash_cache_hits: result.tree_hash_cache?.hits ?? 0,
+      tree_hash_cache_misses: result.tree_hash_cache?.misses ?? 0,
       ...summarizeRateLimitTelemetry(telemetry),
     },
   }

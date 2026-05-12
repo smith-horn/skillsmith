@@ -400,5 +400,8 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   }
 
   result.repositories_found = repositories.length
+  // SMI-4861 Wave 1 post-merge retro: also surface cache counters in stdout
+  // RunSummary so cron logs show the hit ratio without a DB query.
+  result.tree_hash_cache = { hits: cacheCounters.hits, misses: cacheCounters.misses }
   return result
 }
