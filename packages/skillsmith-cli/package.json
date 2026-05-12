@@ -10,7 +10,7 @@
     "test": "echo 'No tests — thin wrapper package'"
   },
   "dependencies": {
-    "@skillsmith/cli": "^0.5.1"
+    "@skillsmith/cli": "^0.6.0"
   },
   "files": [
     "bin.js"

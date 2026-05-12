@@ -22,7 +22,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@ruvector/core": "0.1.30",
-    "@skillsmith/core": "^0.5.4",
+    "@skillsmith/core": "^0.6.0",
     "better-sqlite3": "11.10.0",
     "glob": "11.1.0",
     "minimatch": "10.2.5",
