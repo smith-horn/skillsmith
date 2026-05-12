@@ -185,6 +185,92 @@ describe('repositoryToSkill — name fallback (SMI-4858)', () => {
     expect(result.errors).toEqual([])
   })
 
+  it('skinny UPDATE propagates tree_hash + last_tree_hash_check when present (SMI-4887 follow-up)', async () => {
+    // Regression guard for the 2026-05-12 18:00 UTC cron: minimalSkillPayload
+    // was extended to include tree_hash but the skinny UPDATE in
+    // flushUpsertAccumulator only picked out last_seen_at/repo_updated_at,
+    // dropping the cache columns. Cache never warmed (2 of 8344 rows had
+    // tree_hash after 3 post-Wave-1 crons). Fix: thread tree_hash through.
+    const updateCalls: Array<{ url: string; patch: Record<string, unknown> }> = []
+
+    const fakeSupabase = {
+      from: () => ({
+        update: (patch: Record<string, unknown>) => ({
+          eq: (_col: string, url: string) => {
+            void _col
+            updateCalls.push({ url, patch })
+            return Promise.resolve({ data: null, error: null })
+          },
+        }),
+        upsert: () => ({
+          select: () => Promise.resolve({ data: [], error: null }),
+        }),
+      }),
+    } as unknown as SupabaseClient
+
+    const wildcardRepo = baseRepo({
+      name: 'web-search',
+      repoName: 'skills',
+      url: 'https://github.com/anthropics/skills/tree/main/skills/web-search',
+      treeHash: 'a1b2c3d4e5f6',
+    })
+
+    const payload = minimalSkillPayload(wildcardRepo)
+    expect(payload.tree_hash).toBe('a1b2c3d4e5f6')
+    expect(payload.last_tree_hash_check).toBeDefined()
+
+    const accumulator: UpsertAccumulatorItem[] = [
+      { repo: wildcardRepo, skillData: payload, unchangedSkip: true },
+    ]
+
+    await flushUpsertAccumulator(fakeSupabase, accumulator, new Set([wildcardRepo.url]))
+
+    expect(updateCalls).toHaveLength(1)
+    expect(updateCalls[0].patch.tree_hash).toBe('a1b2c3d4e5f6')
+    expect(updateCalls[0].patch.last_tree_hash_check).toBeDefined()
+    expect(updateCalls[0].patch.last_seen_at).toBeDefined()
+    expect(updateCalls[0].patch.repo_updated_at).toBeDefined()
+  })
+
+  it('skinny UPDATE OMITS tree_hash when repo has no blob SHA (no overwrite of prior cache)', async () => {
+    // When SKILLSMITH_TREE_HASH_PLAIN_PATH=false (default) and the repo isn't
+    // wildcard-resolved, repo.treeHash is undefined. The skinny UPDATE must
+    // NOT send tree_hash: null — that would clobber a prior cron's cached SHA.
+    const updateCalls: Array<{ url: string; patch: Record<string, unknown> }> = []
+
+    const fakeSupabase = {
+      from: () => ({
+        update: (patch: Record<string, unknown>) => ({
+          eq: (_col: string, url: string) => {
+            void _col
+            updateCalls.push({ url, patch })
+            return Promise.resolve({ data: null, error: null })
+          },
+        }),
+        upsert: () => ({
+          select: () => Promise.resolve({ data: [], error: null }),
+        }),
+      }),
+    } as unknown as SupabaseClient
+
+    const plainRepo = baseRepo({
+      name: 'plain',
+      repoName: 'plain',
+      url: 'https://github.com/x/plain',
+      // no treeHash
+    })
+
+    const accumulator: UpsertAccumulatorItem[] = [
+      { repo: plainRepo, skillData: minimalSkillPayload(plainRepo), unchangedSkip: true },
+    ]
+
+    await flushUpsertAccumulator(fakeSupabase, accumulator, new Set([plainRepo.url]))
+
+    expect(updateCalls).toHaveLength(1)
+    expect(updateCalls[0].patch).not.toHaveProperty('tree_hash')
+    expect(updateCalls[0].patch).not.toHaveProperty('last_tree_hash_check')
+  })
+
   it('never returns null or undefined for name across all branches', () => {
     const shapes: GitHubRepository[] = [
       baseRepo(),
