@@ -65,8 +65,12 @@ jobs:
         working-directory: packages/website
         run: npm run build
 
-      - name: Install Vercel CLI
-        run: npm i -g vercel@latest
+      - name: Install Vercel CLI (pinned to root devDep)
+        run: |
+          PINNED=$(node -p "require('./package.json').devDependencies.vercel")
+          echo "Installing vercel@$PINNED (pinned from root package.json)"
+          npm i -g "vercel@$PINNED"
+          vercel --version
 
       - name: Deploy to Vercel (Staging)
         id: deploy
@@ -278,8 +282,12 @@ jobs:
         working-directory: packages/website
         run: npm run build
 
-      - name: Install Vercel CLI
-        run: npm i -g vercel@latest
+      - name: Install Vercel CLI (pinned to root devDep)
+        run: |
+          PINNED=$(node -p "require('./package.json').devDependencies.vercel")
+          echo "Installing vercel@$PINNED (pinned from root package.json)"
+          npm i -g "vercel@$PINNED"
+          vercel --version
 
       - name: Deploy to Vercel (Production)
         id: deploy
