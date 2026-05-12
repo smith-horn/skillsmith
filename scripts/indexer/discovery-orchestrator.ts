@@ -130,8 +130,9 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
   } = params
 
   // SMI-4861 Wave 1: per-skill tree-hash cache counters. Accumulated by
-  // Phase 1 (high-trust) where blob SHAs are available from the Trees API.
-  // Phase 2 + Phase 3a do not benefit in Wave 1 (no blob SHAs threaded).
+  // Phase 1 only (blob SHAs require Trees API). Safe under pMapBounded
+  // concurrency: `++` is synchronous and non-yielding, so JS's single-thread
+  // event loop guarantees atomicity even across parallel author workers.
   const cacheCounters: TreeHashCacheCounters = { hits: 0, misses: 0 }
   // codeSearchTokenBucket is reserved for the follow-up Phase 3a parallelization PR.
   // Reference it once so unused-vars doesn't flag the param.

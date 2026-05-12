@@ -132,3 +132,46 @@ describe('TREE_HASH_CACHE_TTL_MS — 24h default (SMI-4872 will A/B 7d)', () => 
     expect(TREE_HASH_CACHE_TTL_MS).toBe(24 * 60 * 60 * 1000)
   })
 })
+
+describe('prefetch round-trip — bare repo URL ↔ lookup key parity (SMI-4861 Wave 1)', () => {
+  // Regression guard against governance finding 2026-05-12: skills.repo_url for
+  // multi-skill repos stores the per-skill URL `…/tree/<branch>/<skillPath>`
+  // (skill-processor.ts:473), but Phase 1 lookups build their key from the
+  // BARE repo URL + skill_path. run.ts must strip the `/tree/...` suffix on
+  // prefetch so a warm cache entry matches the lookup key byte-for-byte.
+
+  /** Mirrors the normalization applied in run.ts:126. */
+  function normalizeStoredRepoUrl(repoUrl: string): string {
+    return repoUrl.split('/tree/')[0]
+  }
+
+  it('multi-skill repo: bare-URL normalization yields a matching lookup key', () => {
+    const storedRepoUrl = 'https://github.com/anthropics/skills/tree/main/skills/foo'
+    const skillPath = 'skills/foo'
+    const bareUrl = 'https://github.com/anthropics/skills'
+    expect(normalizeStoredRepoUrl(storedRepoUrl)).toBe(bareUrl)
+    expect(treeHashCacheKey(normalizeStoredRepoUrl(storedRepoUrl), skillPath)).toBe(
+      treeHashCacheKey(bareUrl, skillPath)
+    )
+  })
+
+  it('root-level single-skill repo: bare URL passes through unchanged', () => {
+    const storedRepoUrl = 'https://github.com/anthropics/single-skill-repo'
+    expect(normalizeStoredRepoUrl(storedRepoUrl)).toBe(storedRepoUrl)
+  })
+
+  it('wildcard-resolved skill: round-trip cache hit on warm cron', () => {
+    const cache = freshCache()
+    const storedRepoUrl = 'https://github.com/anthropics/skills/tree/main/skills/web-search'
+    const skillPath = 'skills/web-search'
+    const blob = 'deadbeef1234'
+    // Cron 1 prefetch normalizes + populates:
+    cache.set(treeHashCacheKey(normalizeStoredRepoUrl(storedRepoUrl), skillPath), {
+      tree_hash: blob,
+      last_tree_hash_check: new Date(NOW - 60 * 60 * 1000).toISOString(),
+    })
+    // Cron 2 lookup with bare URL + skillPath:
+    const bareUrl = 'https://github.com/anthropics/skills'
+    expect(treeHashCacheHit(cache, treeHashCacheKey(bareUrl, skillPath), blob, NOW)).toBe(true)
+  })
+})

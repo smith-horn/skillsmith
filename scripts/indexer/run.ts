@@ -123,7 +123,11 @@ async function runDiscoveryBranch(
       if (!row.repo_url) continue
       existingRepoUpdatedAt.set(row.repo_url, row.repo_updated_at ?? null)
       if (row.tree_hash) {
-        treeHashCache.set(treeHashCacheKey(row.repo_url, row.skill_path ?? ''), {
+        // skills.repo_url stores the per-skill URL `…/tree/<branch>/<skillPath>` for
+        // multi-skill repos (skill-processor.ts:473). Phase 1 lookups key on the bare
+        // repo URL + skill_path tuple, so strip the suffix here for round-trip parity.
+        const bareRepoUrl = row.repo_url.split('/tree/')[0]
+        treeHashCache.set(treeHashCacheKey(bareRepoUrl, row.skill_path ?? ''), {
           tree_hash: row.tree_hash,
           last_tree_hash_check: row.last_tree_hash_check,
         })

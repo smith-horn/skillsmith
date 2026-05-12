@@ -333,6 +333,8 @@ export async function indexHighTrustRepository(
         // SMI-4387: root-level single-skill high-trust repo; skillPath: '' marks root
         skillPath: '',
         discoveryPath: `high_trust:${author.owner}`,
+        // SMI-4861 Wave 2 scope: root-skill blob-SHA lookup will populate
+        // tree_hash here (deferred — requires a separate Contents API call).
       })
     }
   } catch (error) {
