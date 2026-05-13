@@ -42,7 +42,7 @@
     "globals": "17.4.0",
     "loupe": "3.2.1",
     "picomatch": "^4.0.4",
-    "prettier": "3.8.1",
+    "prettier": "3.8.3",
     "prettier-plugin-astro": "0.14.1",
     "strip-ansi": "6.0.1",
     "strip-literal": "3.1.0",
