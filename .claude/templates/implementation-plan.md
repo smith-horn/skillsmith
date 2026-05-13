@@ -107,6 +107,27 @@ Distinguish:
 
 If a SMOKE test cannot fire automatically post-deploy, name the human runner and the cadence. SMI-4459 (`scripts/smoke-prod.sh`) is the planned CI-side automation; for now, the plan owner is responsible for triggering smoke after a feature-PR merges.
 
+## Shared-State / Coordination Audit (P-5)
+
+_Required when the plan touches any of: browser/Node globals (window.\*, module singletons); event listeners on shared targets (`document`, `window`, broadcast channels, postMessage, signals); caches keyed by computed values (in-memory Map, Redis, KV, file-system caches); row-shape extensions (new column, new field on an interface with multiple persisters); new async producers feeding existing async consumers (or vice versa)._
+
+For each piece of shared mutable state introduced or extended:
+
+| State | Producers (file:line) | Consumers (file:line) | Coordination invariant | Test |
+|-------|------------------------|------------------------|------------------------|------|
+| Example: `window.__SUPABASE_CLIENT__` | `BaseLayout.astro:136` (eager init) + `supabase-client.ts:24` (lazy fallback) | `LoginButton.astro:247`, `callback.astro:*`, `device.astro:*` | Every consumer reads via `getSupabaseClient()`, not the raw global; lazy-init guarantees a client exists for the consumer's tick. | `LoginButton.test.ts` covers cold-load case |
+
+**Producers** are every write site, found via `grep -rn` against the codebase — not from memory. **Consumers** are every read site. The **coordination invariant** is one sentence stating the rule that must hold. The **test** is a specific case (file:test-name), not "tests pass".
+
+**Convention check before novelty**:
+
+```bash
+grep -rn "<shared-state-name>" packages/
+# Confirm every existing access uses the canonical pattern (lazy helper, idempotency guard, key-derivation fn, etc.)
+```
+
+If the audit surfaces a producer/consumer pair without an explicit invariant, **stop and fix the invariant before writing more of the plan.** This is the same rule the cache roundtrip (SMI-4861) and upsert-paths (SMI-4887) retros codified — make it visible at plan time, not retro time. The `concurrency-auditor` skill (`/concurrency-audit`) automates this matrix.
+
 ## Verification
 
 - [ ] `docker exec skillsmith-dev-1 npm run preflight`
@@ -115,6 +136,7 @@ If a SMOKE test cannot fire automatically post-deploy, name the human runner and
 - [ ] Surface grounding (P-1, P-2): every cross-surface reference has a canonical source + verification command
 - [ ] PL/pgSQL name-collision audit (P-3) completed _if_ plan touches a `RETURNS TABLE` function
 - [ ] Smoke path (P-4) specified and run post-deploy (or `scripts/smoke-prod.sh` invoked once it exists)
+- [ ] Shared-state audit (P-5) completed _if_ plan touches browser/Node globals, event listeners on shared targets, computed-key caches, row-shape extensions, or new async producer/consumer pairs
 - [ ] **If this change targets a non-Docker CI workflow** (e.g. `post-merge-verify.yml`,
       any workflow running on `ubuntu-latest` without the Docker dev container):
       verify in a clean-install environment — `npm ci` in a fresh clone or after
