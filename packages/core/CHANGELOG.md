@@ -4,6 +4,8 @@ All notable changes to `@skillsmith/core` are documented here.
 
 ## [Unreleased]
 
+- **Security**: SMI-4888 bump `@opentelemetry/sdk-node` 0.217 → 0.218 (resolves protobufjs transitive chain — `otlp-transformer@0.218.0` removes protobufjs entirely, PR #6629 upstream). Companion bumps: `instrumentation-http` 0.217 → 0.218, `instrumentation-runtime-node` 0.27 → 0.31, `instrumentation-undici` 0.24 → 0.28 (aligned to OTel 0.218 release wave). Closes 1 high + 6 moderate GHSAs (GHSA-q6x5-8v7m-xcrf + chain). (#1102)
+
 ## v0.6.0
 
 - **Feature**: SMI-4587 Wave 1 PR #4 — add `indexLocalSkill` (extracted from `executeIndexLocal` in mcp-server). New subpath export `@skillsmith/core/skills/index-local` plus a top-level barrel re-export. Pure-ish helper that returns deterministic per-skill metadata for a given SKILL.md absolute path (or its containing directory). Used by both the MCP `index_local` tool (via `LocalIndexer.indexSkillDir`) and the consumer-namespace-audit `bootstrapUnmanagedSkills` default callback (replacing the PR #3 no-op stub). Frozen-fixture regression test under `packages/core/tests/fixtures/index-local/` locks the deterministic output shape so Wave 2/3/4 callers and the mcp-server LocalIndexer continue to receive identical results after extraction.
