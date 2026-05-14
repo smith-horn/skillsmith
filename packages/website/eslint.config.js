@@ -94,21 +94,46 @@ export default [
     },
   },
   // Virtual JS files from <script is:inline> blocks
+  // SMI-4904: include skillsmith-local plugin so no-raw-window-global fires
+  // on virtual *.astro/*.js files (is:inline scripts are parsed as JS blocks,
+  // not as *.astro directly; without explicit plugin registration the rule is
+  // silently absent for this virtual-file namespace).
   {
     files: ['**/*.astro/*.js'],
+    plugins: {
+      'skillsmith-local': skillsmithLocal,
+    },
     rules: {
       'prefer-rest-params': 'off',
       'no-unused-vars': 'off',
       'no-empty': 'off',
+      'skillsmith-local/no-raw-window-global': 'error',
     },
   },
   // Virtual TS files from <script> blocks
+  // SMI-4904: same plugin registration required — virtual *.astro/*.ts files
+  // are a separate flat-config namespace from *.astro and *.ts.
+  // SMI-4902 retro: override parserOptions.project = null. Virtual files live
+  // outside tsconfig.json's include, so the TS parser bails with "file not in
+  // project" and the rule never runs. The rule is syntax-only (AST visitor on
+  // MemberExpression) and does not need TS type info — disabling project
+  // lookups lets the parser succeed and the rule fire.
   {
     files: ['**/*.astro/*.ts'],
+    plugins: {
+      'skillsmith-local': skillsmithLocal,
+    },
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: {
+        project: null,
+      },
+    },
     rules: {
       '@typescript-eslint/no-unused-vars': 'off',
       'no-unused-vars': 'off',
       'no-empty': 'off',
+      'skillsmith-local/no-raw-window-global': 'error',
     },
   },
 ]
