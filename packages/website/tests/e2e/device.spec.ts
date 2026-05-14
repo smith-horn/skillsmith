@@ -18,6 +18,8 @@
 
 import { test, expect } from '@playwright/test'
 import { buildSessionToken, injectSupabaseStub, mockSupabase } from './complete-profile.helpers'
+// SMI-4902 W2.S2a: shared astro:page-load helpers (assertions used by D-6).
+import { assertStateStableAcrossRefire } from './astro-helpers'
 
 const DEVICE_URL = '/device?user_code=BCDFGHJK'
 
@@ -194,15 +196,14 @@ test.describe('D-6 — approved state is stable, no countdown, no auto-close pro
     await page.goto(DEVICE_URL)
 
     await page.locator('#btn-approve').click()
-    await expect(page.locator('#state-approved')).toBeVisible()
 
-    // Simulate a ClientRouter view transition re-firing astro:page-load on the same page.
-    // Without the idempotency guard, init() re-runs the auto-preview block and clobbers
-    // the approved state back to 'preview'.
-    await page.evaluate(() => document.dispatchEvent(new Event('astro:page-load')))
+    // SMI-4902 W2.S2a: refactored from inline `document.dispatchEvent(...)`
+    // + paired `expect(...).toBeVisible()` to the shared helper. The helper
+    // asserts visibility pre- and post-refire; the negative ("preview is
+    // hidden") is kept as a separate assertion below, since the helper is
+    // intentionally page-agnostic about mutually-exclusive state machines.
+    await assertStateStableAcrossRefire(page, '#state-approved')
 
-    // State must remain 'approved' across the re-fire.
-    await expect(page.locator('#state-approved')).toBeVisible()
     await expect(page.locator('#state-preview')).toBeHidden()
   })
 })

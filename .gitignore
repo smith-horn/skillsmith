@@ -40,6 +40,8 @@ packages/**/*.d.ts.map
 !packages/core/src/db/drivers/fts5-sql-bundle.d.ts
 !packages/**/eslint.config.js
 !packages/**/astro.config.mjs
+# SMI-4904: custom ESLint rules (hand-written, not build artifacts)
+!packages/**/eslint-rules/**/*.js
 vitest.config.js
 vitest.config.js.map
 vitest.config.d.ts

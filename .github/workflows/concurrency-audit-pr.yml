@@ -1,0 +1,331 @@
+name: Concurrency Audit
+
+# Runs the concurrency-auditor skill (scan-diff + scan-plan --strict) against
+# pull-request changes. Posts a sticky PR comment with hit count + file:line
+# list and fails the check if either tool exits non-zero.
+#
+# SHADOW MODE (first 7 days from 2026-05-14): the final exit step uses
+# `continue-on-error: true` so the check warns but does not block merge.
+# After 7 days of clean runs, flip to hard-fail (tracked under SMI-4904
+# follow-up). See docs/internal/implementation/concurrency-tooling-operationalization.md §5.
+#
+# Opt-out: include `[concurrency-audit-ack]` (boolean marker, matches the
+# `[skip-impl-check]` / `[skip-smoke]` shape) anywhere in the PR body. The
+# acknowledgement reason is required as a prose paragraph immediately following
+# the marker; the workflow logs the surrounding paragraph to its run output for
+# audit trail.
+#
+# # audit:carveout-pure-js — pure-shell workflow, no Node/npm install needed
+# at the workflow level (only `gh`, `bash`, `git`, `grep`, `awk`). The scanner
+# scripts themselves are bash + grep. SMI-4647 carveout applies.
+#
+# Plan: docs/internal/implementation/concurrency-tooling-operationalization.md §5
+#       (EDIT 3 + inline-edits #3, #8, #14, #16)
+# Parent: SMI-4902. Wave: W2.S3 (SMI-4904).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    paths:
+      - 'packages/website/src/pages/**/*.astro'
+      - 'packages/website/src/components/**/*.astro'
+      - 'packages/website/src/layouts/**/*.astro'
+      - 'packages/website/src/**/*.ts'
+      - 'packages/website/src/**/*.tsx'
+      - 'docs/internal/implementation/**/*.md'
+      # Submodule pointer changes for docs/internal also trigger this workflow;
+      # we explicitly diff the submodule below to surface .md changes inside.
+      - '.gitmodules'
+
+permissions:
+  contents: read
+  pull-requests: write # sticky comment
+
+concurrency:
+  group: concurrency-audit-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  STICKY_MARKER: '<!-- concurrency-audit-pr -->'
+  ACK_MARKER: '[concurrency-audit-ack]'
+
+jobs:
+  audit:
+    name: Concurrency Audit
+    # audit:carveout-pure-js — shell-only; bash + grep + gh
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout PR (full history + submodules)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          submodules: recursive
+          # The strategy submodule (.claude/skills) requires a PAT to clone.
+          # If unavailable, the checkout silently skips the submodule and the
+          # script-not-found branch below will short-circuit the audit.
+          token: ${{ secrets.STRATEGY_SUBMODULE_PAT || github.token }}
+
+      - name: Unlock git-crypt
+        # Required so that any encrypted plan content (none today, but future-
+        # proofing) and the strategy submodule's full content are readable.
+        # External contributors may lack the key. The subsequent "Verify
+        # scanner scripts present" step gates on actual script availability;
+        # if unlock failed AND the submodule is absent, the audit no-ops
+        # gracefully via that step's `present=false` path.
+        id: unlock_git_crypt
+        uses: ./.github/actions/unlock-git-crypt
+        with:
+          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
+        # audit:allow-continue-on-error — external contributors may lack the key
+        continue-on-error: true
+
+      - name: Detect [concurrency-audit-ack] opt-out
+        id: ack
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          if printf '%s' "$PR_BODY" | grep -qF "${ACK_MARKER}"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::[concurrency-audit-ack] marker found in PR body — workflow will report findings but not fail."
+            # Log the paragraph following the marker for audit trail.
+            paragraph=$(printf '%s' "$PR_BODY" | awk -v marker="$ACK_MARKER" '
+              index($0, marker) { found = 1; print; next }
+              found && /^$/ { exit }
+              found { print }
+            ')
+            printf '%s\n' "::group::Acknowledgement reason"
+            printf '%s\n' "$paragraph"
+            printf '%s\n' "::endgroup::"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify scanner scripts present
+        id: scripts
+        run: |
+          set -euo pipefail
+          SCAN_DIFF=.claude/skills/concurrency-auditor/scripts/scan-diff.sh
+          SCAN_PLAN=.claude/skills/concurrency-auditor/scripts/scan-plan.sh
+          if [[ ! -f "$SCAN_DIFF" || ! -f "$SCAN_PLAN" ]]; then
+            echo "::warning::concurrency-auditor scripts not found. The strategy submodule may not be checked out (external contributors lack PAT access). Skipping audit."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve PR base + diff
+        id: diff
+        if: steps.scripts.outputs.present == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # Code-surface diff: real .ts/.tsx/.astro files in packages/website/src.
+          # Plan-surface diff: docs/internal/ is a submodule, so bare
+          # `git diff --name-only` shows only the submodule-pointer change.
+          # We use `--submodule=diff` to descend into the submodule and surface
+          # the actual .md path changes (plan EDIT 3 + inline-edit #14).
+          echo "=== Code-surface changed files ==="
+          CODE_FILES=$(git diff "$BASE_SHA"..."$HEAD_SHA" --name-only --diff-filter=ACMR -- \
+            'packages/website/src/pages/**/*.astro' \
+            'packages/website/src/components/**/*.astro' \
+            'packages/website/src/layouts/**/*.astro' \
+            'packages/website/src/**/*.ts' \
+            'packages/website/src/**/*.tsx' \
+            2>/dev/null || true)
+          printf '%s\n' "$CODE_FILES"
+          {
+            echo "code_files<<EOF"
+            printf '%s\n' "$CODE_FILES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo ""
+          echo "=== Plan-surface changes (inside docs/internal submodule) ==="
+          # `--submodule=diff` emits per-file diffs from inside the submodule;
+          # we grep for filenames ending in .md under implementation/.
+          PLAN_FILES=$(git diff "$BASE_SHA"..."$HEAD_SHA" --submodule=diff -- 'docs/internal' \
+            | grep -oE 'docs/internal/implementation/[A-Za-z0-9_./-]+\.md' \
+            | sort -u || true)
+          printf '%s\n' "$PLAN_FILES"
+          {
+            echo "plan_files<<EOF"
+            printf '%s\n' "$PLAN_FILES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run scan-diff against code-surface changes
+        id: scan_diff
+        if: steps.scripts.outputs.present == 'true'
+        env:
+          CODE_FILES: ${{ steps.diff.outputs.code_files }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CODE_FILES// /}" ]]; then
+            echo "No code-surface files changed. Skipping scan-diff."
+            {
+              echo "exit_code=0"
+              echo "output<<EOF"
+              echo "_No code-surface files changed in this PR._"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Collect files into a bash array, then call scan-diff.
+          mapfile -t FILES <<< "$CODE_FILES"
+          OUTPUT=$(bash .claude/skills/concurrency-auditor/scripts/scan-diff.sh "${FILES[@]}" 2>&1) || EXIT=$?
+          EXIT=${EXIT:-0}
+          echo "$OUTPUT"
+          echo "exit_code=$EXIT" >> "$GITHUB_OUTPUT"
+          {
+            echo "output<<EOF"
+            echo "$OUTPUT"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run scan-plan --strict against modified plans
+        id: scan_plan
+        if: steps.scripts.outputs.present == 'true'
+        env:
+          PLAN_FILES: ${{ steps.diff.outputs.plan_files }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${PLAN_FILES// /}" ]]; then
+            echo "No plan files changed. Skipping scan-plan."
+            {
+              echo "exit_code=0"
+              echo "output<<EOF"
+              echo "_No plan files changed in this PR._"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          AGG=""
+          ANY_FAIL=0
+          while IFS= read -r plan; do
+            [[ -z "$plan" || ! -f "$plan" ]] && continue
+            echo "=== --strict $plan ==="
+            OUT=$(bash .claude/skills/concurrency-auditor/scripts/scan-plan.sh --strict "$plan" 2>&1) || EXIT=$?
+            EXIT=${EXIT:-0}
+            echo "$OUT"
+            echo "(exit: $EXIT)"
+            AGG=$(printf '%s\n\n---\n\n### scan-plan --strict %s (exit %s)\n\n%s' "$AGG" "$plan" "$EXIT" "$OUT")
+            if [[ "$EXIT" -ne 0 ]]; then
+              ANY_FAIL=1
+            fi
+          done <<< "$PLAN_FILES"
+          echo "exit_code=$ANY_FAIL" >> "$GITHUB_OUTPUT"
+          {
+            echo "output<<EOF"
+            echo "$AGG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build sticky comment body
+        if: steps.scripts.outputs.present == 'true'
+        id: body
+        env:
+          SCAN_DIFF_OUT: ${{ steps.scan_diff.outputs.output }}
+          SCAN_PLAN_OUT: ${{ steps.scan_plan.outputs.output }}
+          SCAN_DIFF_EXIT: ${{ steps.scan_diff.outputs.exit_code }}
+          SCAN_PLAN_EXIT: ${{ steps.scan_plan.outputs.exit_code }}
+          ACK: ${{ steps.ack.outputs.skip }}
+        run: |
+          set -euo pipefail
+          if [[ "$SCAN_DIFF_EXIT" == "0" && "$SCAN_PLAN_EXIT" == "0" ]]; then
+            HEADER="## Concurrency Audit ✅"
+            VERDICT="All checks passed."
+          else
+            HEADER="## Concurrency Audit ⚠️"
+            VERDICT="One or more checks reported findings. Review the details below."
+          fi
+          {
+            echo "$STICKY_MARKER"
+            echo "$HEADER"
+            echo ""
+            echo "$VERDICT"
+            if [[ "$ACK" == "true" ]]; then
+              echo ""
+              echo "_\`${ACK_MARKER}\` marker found in PR body — workflow will not block merge regardless of findings._"
+            fi
+            echo ""
+            echo "<details><summary>scan-diff against code-surface changes (exit $SCAN_DIFF_EXIT)</summary>"
+            echo ""
+            printf '%s\n' "$SCAN_DIFF_OUT"
+            echo ""
+            echo "</details>"
+            echo ""
+            echo "<details><summary>scan-plan --strict against modified plans (exit $SCAN_PLAN_EXIT)</summary>"
+            echo ""
+            printf '%s\n' "$SCAN_PLAN_OUT"
+            echo ""
+            echo "</details>"
+            echo ""
+            echo "_Workflow runs in **shadow mode** through 2026-05-21 (7 days from W2 merge). Findings are advisory; the check does not block merge. After shadow window, the check becomes mandatory. See [SMI-4904](https://linear.app/smith-horn-group/issue/SMI-4904) for follow-up._"
+          } > /tmp/comment-body.md
+          cat /tmp/comment-body.md
+          echo "path=/tmp/comment-body.md" >> "$GITHUB_OUTPUT"
+
+      - name: Post or update sticky PR comment
+        if: steps.scripts.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          BODY_PATH: ${{ steps.body.outputs.path }}
+        run: |
+          set -euo pipefail
+          # Locate prior comment via the hidden marker (smoke-prod / lighthouse
+          # convention). Edit if found, else post fresh — exactly one sticky
+          # per PR, no append.
+          #
+          # IMPORTANT: we use the REST API directly (`gh api /repos/.../issues/
+          # {pr}/comments`) which returns numeric database IDs. The GraphQL
+          # surface (`gh pr view --json comments`) returns node-IDs like
+          # `IC_kwDO…` which the REST PATCH endpoint rejects with 404 —
+          # silently falling through to "post fresh" and producing N comments
+          # after N runs (violates the P-5 invariant: one sticky per PR).
+          # Surfaced in the SMI-4902 W2 governance retro.
+          REPO="${GITHUB_REPOSITORY}"
+          EXISTING=$(gh api --paginate \
+            "/repos/${REPO}/issues/${PR_NUM}/comments" \
+            --jq ".[] | select(.body | contains(\"$STICKY_MARKER\")) | .id" \
+            | head -1 || true)
+          if [[ -n "$EXISTING" ]]; then
+            echo "Editing existing sticky comment ($EXISTING)…"
+            gh api -X PATCH \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${REPO}/issues/comments/${EXISTING}" \
+              -F "body=@${BODY_PATH}" >/dev/null
+          else
+            echo "Posting fresh sticky comment…"
+            gh pr comment "$PR_NUM" --body-file "$BODY_PATH"
+          fi
+
+      - name: Final status
+        if: steps.scripts.outputs.present == 'true'
+        id: final_status
+        # SHADOW MODE: failures warn but do not block merge until 2026-05-21
+        # (7 days post-merge). Then remove `continue-on-error` to harden into a
+        # required check. See plan §5 (EDIT 3) — smoke-prod shadow pattern.
+        # SMI-4904 W2.S3-followup tracks the flip-to-mandatory date.
+        # audit:allow-continue-on-error — intentional 7-day shadow window
+        continue-on-error: true
+        env:
+          SCAN_DIFF_EXIT: ${{ steps.scan_diff.outputs.exit_code }}
+          SCAN_PLAN_EXIT: ${{ steps.scan_plan.outputs.exit_code }}
+          ACK: ${{ steps.ack.outputs.skip }}
+        run: |
+          set -euo pipefail
+          if [[ "$ACK" == "true" ]]; then
+            echo "::notice::[concurrency-audit-ack] opt-out — exit 0 regardless of findings."
+            exit 0
+          fi
+          if [[ "$SCAN_DIFF_EXIT" != "0" || "$SCAN_PLAN_EXIT" != "0" ]]; then
+            echo "::error::Concurrency audit reported findings. scan-diff exit=$SCAN_DIFF_EXIT, scan-plan exit=$SCAN_PLAN_EXIT."
+            exit 1
+          fi
+          echo "All checks passed."
