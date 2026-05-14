@@ -421,7 +421,12 @@ const isCrawler = isCrawlerUserAgent(userAgent)
 
       async function initAuth() {
         try {
-          // Use shared singleton from window.__SUPABASE_CLIENT__ (SMI-3595)
+          // Use shared singleton from window.__SUPABASE_CLIENT__ (SMI-3595).
+          // is:inline + define:vars prevents ES import of getSupabaseClient(),
+          // so this consumer cannot use the canonical lazy helper. The null-check
+          // below degrades gracefully if BaseLayout hasn't populated the global
+          // yet. SMI-4907 tracks migrating this script to a bundled <script>.
+          // eslint-disable-next-line skillsmith-local/no-raw-window-global
           const supabase = window.__SUPABASE_CLIENT__
           if (!supabase) {
             console.debug('[Skills] No Supabase client, using anon key')
