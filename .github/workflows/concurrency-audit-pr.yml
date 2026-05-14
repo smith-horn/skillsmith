@@ -56,16 +56,37 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout PR (full history + submodules)
+      - name: Checkout PR (no submodules yet)
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-          submodules: recursive
-          # The strategy submodule (.claude/skills) requires a PAT to clone.
-          # If unavailable, the checkout silently skips the submodule and the
-          # script-not-found branch below will short-circuit the audit.
-          token: ${{ secrets.STRATEGY_SUBMODULE_PAT || github.token }}
+          # SMI-4902 retro: submodules: false here. The strategy submodule
+          # (.claude/skills) and docs/internal are private repos requiring a
+          # PAT. actions/checkout treats submodule-fetch failure as fatal —
+          # external contributors and PRs without STRATEGY_SUBMODULE_PAT secret
+          # would hard-fail at this step instead of degrading to the "scripts
+          # not found, skip" branch below. We fetch the submodules in a
+          # separate continue-on-error step so the audit no-ops gracefully
+          # when the PAT is absent.
+
+      - name: Fetch submodules (best-effort)
+        # SMI-4902 retro: keep going on submodule-clone failure so the
+        # "Verify scanner scripts present" step can short-circuit cleanly.
+        # External-contributor PRs lacking STRATEGY_SUBMODULE_PAT land here.
+        # audit:allow-continue-on-error — see step comment.
+        continue-on-error: true
+        env:
+          STRATEGY_SUBMODULE_PAT: ${{ secrets.STRATEGY_SUBMODULE_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -n "${STRATEGY_SUBMODULE_PAT:-}" ]; then
+            # Use the PAT to clone the private submodules. Rewrite the github.com URL
+            # for the duration of this step only.
+            git config --global url."https://x-access-token:${STRATEGY_SUBMODULE_PAT}@github.com/".insteadOf "https://github.com/"
+          fi
+          git submodule update --init --recursive .claude/skills docs/internal || \
+            echo "::warning::submodule fetch failed; subsequent audit will short-circuit"
 
       - name: Unlock git-crypt
         # Required so that any encrypted plan content (none today, but future-
