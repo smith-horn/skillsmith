@@ -9,6 +9,7 @@
  *   D-3: preview endpoint returns 404 → page lands on expired state, no preview flash
  *   D-4: preview endpoint network failure → graceful degrade to preview with em-dashes
  *   D-5: XSS smoke — hostname with HTML tags renders as literal text (textContent, not innerHTML)
+ *   D-6: post-approve state is stable across astro:page-load re-fire (SMI-4896/4897)
  *
  * Mocks Supabase via the shared complete-profile.helpers.ts infrastructure so no
  * staging / prod network calls are made. Tests run against the Astro preview
@@ -146,5 +147,62 @@ test.describe('D-5 — XSS smoke (textContent, not innerHTML)', () => {
     await expect(hostEl).toHaveText('<img src=x onerror=alert(1)>')
     // And no child <img> was materialised.
     await expect(hostEl.locator('img')).toHaveCount(0)
+  })
+})
+
+test.describe('D-6 — approved state is stable, no countdown, no auto-close promise (SMI-4896/4897)', () => {
+  test.beforeEach(async ({ page }) => {
+    await injectSupabaseStub(page, { session: buildSessionToken({ provider: 'email' }) })
+  })
+
+  test('post-approve copy is the honest static form; no countdown/keep-open elements', async ({
+    page,
+  }) => {
+    await mockSupabase(page, {
+      functionsResponses: {
+        'auth-device-preview': { status: 200, body: POPULATED_META },
+        'auth-device-approve': { status: 200, body: {} },
+      },
+    })
+    await page.goto(DEVICE_URL)
+
+    await expect(page.locator('#state-preview')).toBeVisible()
+    await page.locator('#btn-approve').click()
+
+    // (a) approved state visible
+    await expect(page.locator('#state-approved')).toBeVisible()
+
+    // (b)+(c) the obsolete countdown machinery is gone from the DOM
+    await expect(page.locator('#countdown-text')).toHaveCount(0)
+    await expect(page.locator('#btn-keep-open')).toHaveCount(0)
+
+    // (d) honest copy — no auto-close promise
+    const approved = page.locator('#state-approved')
+    await expect(approved).toContainText('Your terminal should resume within a few seconds')
+    await expect(approved).toContainText('You can close this tab')
+  })
+
+  test('astro:page-load re-fire post-approve does not roll state back to preview', async ({
+    page,
+  }) => {
+    await mockSupabase(page, {
+      functionsResponses: {
+        'auth-device-preview': { status: 200, body: POPULATED_META },
+        'auth-device-approve': { status: 200, body: {} },
+      },
+    })
+    await page.goto(DEVICE_URL)
+
+    await page.locator('#btn-approve').click()
+    await expect(page.locator('#state-approved')).toBeVisible()
+
+    // Simulate a ClientRouter view transition re-firing astro:page-load on the same page.
+    // Without the idempotency guard, init() re-runs the auto-preview block and clobbers
+    // the approved state back to 'preview'.
+    await page.evaluate(() => document.dispatchEvent(new Event('astro:page-load')))
+
+    // State must remain 'approved' across the re-fire.
+    await expect(page.locator('#state-approved')).toBeVisible()
+    await expect(page.locator('#state-preview')).toBeHidden()
   })
 })
