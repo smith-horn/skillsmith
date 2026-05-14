@@ -84,7 +84,7 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
       </div>
     </div>
 
-    <!-- State: approved (auto-close countdown) -->
+    <!-- State: approved (SMI-4897: static copy — window.close() is blocked when tab wasn't script-opened) -->
     <div
       id="state-approved"
       class="device-card"
@@ -94,11 +94,8 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
     >
       <div class="status-icon status-success" aria-hidden="true">✓</div>
       <h1 class="device-heading">Approved!</h1>
-      <p class="device-sub" aria-live="polite" id="approved-sub">
-        Return to your terminal — it will continue automatically.
-      </p>
-      <p id="countdown-text" class="countdown-text" aria-live="polite"></p>
-      <button id="btn-keep-open" type="button" class="btn-secondary btn-sm">Keep tab open</button>
+      <p class="device-sub" aria-live="polite">Your terminal should resume within a few seconds.</p>
+      <p class="device-sub-dim">You can close this tab.</p>
     </div>
 
     <!-- State: expired -->
@@ -136,20 +133,24 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
 <script>
   // SMI-4402: device approval state machine.
   // Calls api.skillsmith.app edge functions (gateway-verified JWT).
-  // All supabase-js calls use the global window.__SUPABASE_CLIENT__ injected by BaseLayout.
-  // Type declaration lives in src/env.d.ts.
+  //
+  // SMI-4895 fix: use the getSupabaseClient() lazy helper rather than reading
+  // window.__SUPABASE_CLIENT__ directly. BaseLayout's eager init handler races
+  // with device.astro's init() on the same astro:page-load tick; the lazy
+  // helper short-circuits the race by creating the client synchronously when
+  // the global is absent. Same idiom used by LoginButton.astro and callback.astro.
   //
   // SMI-4454 fix: URLs were relative ('/functions/v1/...') and resolved to the
   // website origin, returning Astro's 404. The Supabase edge functions live on
-  // api.skillsmith.app (or the project supabase.co URL). Matches how every
-  // other page calls edge functions (contact, signup, skills, etc.).
+  // api.skillsmith.app (or the project supabase.co URL).
+
+  import { getSupabaseClient } from '../lib/supabase-client'
 
   const API_BASE = import.meta.env.PUBLIC_API_BASE_URL || 'https://api.skillsmith.app'
   const APPROVE_URL = `${API_BASE}/functions/v1/auth-device-approve`
   const PREVIEW_URL = `${API_BASE}/functions/v1/auth-device-preview`
   const COMPLETE_PROFILE_URL = '/complete-profile'
   const LOGIN_URL = '/login'
-  const COUNTDOWN_START = 10
 
   type State = 'input' | 'preview' | 'approved' | 'expired' | 'denied'
 
@@ -187,6 +188,9 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
   }
 
   function setState(s: State) {
+    // SMI-4896: track state on window (not module scope) so it survives hard navigations
+    // (e.g., return from /login). The auto-preview guard in init() reads this.
+    window.__deviceState = s
     show(`state-${s}`)
   }
 
@@ -196,7 +200,7 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
   }
 
   async function getAccessToken(): Promise<string | null> {
-    const client = window.__SUPABASE_CLIENT__
+    const client = getSupabaseClient()
     if (!client) return null
     const { data } = await client.auth.getSession()
     return data.session?.access_token ?? null
@@ -282,45 +286,6 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
     if (hostEl) hostEl.textContent = host
   }
 
-  function startCountdown() {
-    const countdownEl = document.getElementById('countdown-text')
-    const keepOpenBtn = document.getElementById('btn-keep-open')
-    let seconds = COUNTDOWN_START
-    let cancelled = false
-
-    const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-
-    keepOpenBtn?.addEventListener(
-      'click',
-      () => {
-        cancelled = true
-        if (countdownEl) countdownEl.textContent = ''
-        keepOpenBtn.style.display = 'none'
-      },
-      { once: true }
-    )
-
-    if (prefersReduced) {
-      if (countdownEl) countdownEl.textContent = 'This tab will close shortly.'
-      setTimeout(() => {
-        if (!cancelled) window.close()
-      }, COUNTDOWN_START * 1000)
-      return
-    }
-
-    function tick() {
-      if (cancelled) return
-      if (countdownEl) countdownEl.textContent = `This tab will close in ${seconds}s.`
-      if (seconds <= 0) {
-        window.close()
-        return
-      }
-      seconds--
-      setTimeout(tick, 1000)
-    }
-    tick()
-  }
-
   function init() {
     const codeInput = document.getElementById('user-code-input') as HTMLInputElement | null
     const submitBtn = document.getElementById('btn-submit') as HTMLButtonElement | null
@@ -331,84 +296,94 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
 
     let pendingCode = ''
 
-    // Auto-format XXXX-XXXX on every keystroke
-    codeInput?.addEventListener('input', () => {
-      const raw = (codeInput.value || '')
-        .replace(/[^A-Za-z0-9]/g, '')
-        .toUpperCase()
-        .slice(0, 8)
-      const formatted = raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw
-      const pos = codeInput.selectionStart ?? formatted.length
-      codeInput.value = formatted
-      // Preserve cursor position across dash insertion
-      try {
-        codeInput.setSelectionRange(pos, pos)
-      } catch {
-        /* readonly in some envs */
-      }
-      if (codeError) codeError.textContent = ''
-      codeInput.setAttribute('aria-invalid', 'false')
-    })
+    // SMI-4896: bind listeners once. astro:page-load re-fires on every ClientRouter
+    // view transition; without this guard, handlers accumulate and double-fire on Approve.
+    if (!window.__deviceInited) {
+      window.__deviceInited = true
 
-    codeInput?.addEventListener('paste', (e: ClipboardEvent) => {
-      e.preventDefault()
-      const pasted = (e.clipboardData?.getData('text') ?? '').replace(/[\s\-]/g, '')
-      if (codeInput) {
-        codeInput.value = ''
-        codeInput.value = formatCode(pasted)
-        codeInput.dispatchEvent(new Event('input'))
-      }
-    })
+      // Auto-format XXXX-XXXX on every keystroke
+      codeInput?.addEventListener('input', () => {
+        const raw = (codeInput.value || '')
+          .replace(/[^A-Za-z0-9]/g, '')
+          .toUpperCase()
+          .slice(0, 8)
+        const formatted = raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw
+        const pos = codeInput.selectionStart ?? formatted.length
+        codeInput.value = formatted
+        // Preserve cursor position across dash insertion
+        try {
+          codeInput.setSelectionRange(pos, pos)
+        } catch {
+          /* readonly in some envs */
+        }
+        if (codeError) codeError.textContent = ''
+        codeInput.setAttribute('aria-invalid', 'false')
+      })
 
-    submitBtn?.addEventListener('click', async () => {
-      const raw = (codeInput?.value ?? '').replace(/[^A-Z0-9]/g, '')
-      if (raw.length !== 8) {
-        if (codeError) codeError.textContent = 'Please enter the full 8-character code.'
-        codeInput?.setAttribute('aria-invalid', 'true')
-        codeInput?.focus()
-        return
-      }
-      populateMeta(null) // reset to em-dashes while fetching
-      const result = await fetchPreview(raw)
-      if (result.kind === 'terminal') return
-      populateMeta(result.kind === 'ok' ? result.meta : null)
-      pendingCode = formatCode(raw)
-      if (previewCodeEl) previewCodeEl.textContent = pendingCode
-      setState('preview')
-    })
+      codeInput?.addEventListener('paste', (e: ClipboardEvent) => {
+        e.preventDefault()
+        const pasted = (e.clipboardData?.getData('text') ?? '').replace(/[\s\-]/g, '')
+        if (codeInput) {
+          codeInput.value = ''
+          codeInput.value = formatCode(pasted)
+          codeInput.dispatchEvent(new Event('input'))
+        }
+      })
 
-    approveBtn?.addEventListener('click', async () => {
-      approveBtn.setAttribute('aria-busy', 'true')
-      approveBtn.disabled = true
-      denyBtn && (denyBtn.disabled = true)
+      submitBtn?.addEventListener('click', async () => {
+        const raw = (codeInput?.value ?? '').replace(/[^A-Z0-9]/g, '')
+        if (raw.length !== 8) {
+          if (codeError) codeError.textContent = 'Please enter the full 8-character code.'
+          codeInput?.setAttribute('aria-invalid', 'true')
+          codeInput?.focus()
+          return
+        }
+        populateMeta(null) // reset to em-dashes while fetching
+        const result = await fetchPreview(raw)
+        if (result.kind === 'terminal') return
+        populateMeta(result.kind === 'ok' ? result.meta : null)
+        pendingCode = formatCode(raw)
+        if (previewCodeEl) previewCodeEl.textContent = pendingCode
+        setState('preview')
+      })
 
-      try {
-        const result = await callApprove(pendingCode)
-        if (!result.ok) {
-          const errCode = result.errorCode ?? ''
+      approveBtn?.addEventListener('click', async () => {
+        approveBtn.setAttribute('aria-busy', 'true')
+        approveBtn.disabled = true
+        denyBtn && (denyBtn.disabled = true)
+
+        try {
+          const result = await callApprove(pendingCode)
+          if (!result.ok) {
+            const errCode = result.errorCode ?? ''
+            approveBtn.setAttribute('aria-busy', 'false')
+            approveBtn.disabled = false
+            denyBtn && (denyBtn.disabled = false)
+            if (errCode === 'expired_token' || errCode === 'authorization_expired') {
+              setState('expired')
+            } else {
+              setState('denied')
+            }
+            return
+          }
+          setState('approved')
+        } catch {
           approveBtn.setAttribute('aria-busy', 'false')
           approveBtn.disabled = false
           denyBtn && (denyBtn.disabled = false)
-          if (errCode === 'expired_token' || errCode === 'authorization_expired') {
-            setState('expired')
-          } else {
-            setState('denied')
-          }
-          return
+          setState('denied')
         }
-        setState('approved')
-        startCountdown()
-      } catch {
-        approveBtn.setAttribute('aria-busy', 'false')
-        approveBtn.disabled = false
-        denyBtn && (denyBtn.disabled = false)
-        setState('denied')
-      }
-    })
+      })
 
-    denyBtn?.addEventListener('click', () => {
-      setState('denied')
-    })
+      denyBtn?.addEventListener('click', () => {
+        setState('denied')
+      })
+    }
+
+    // SMI-4896: gate auto-preview on window.__deviceState. If the page already advanced
+    // past 'input' (preview / approved / expired / denied), do not roll back. Module-scope
+    // state would not survive hard navigations — only window-scope does.
+    if (window.__deviceState && window.__deviceState !== 'input') return
 
     // If user_code was pre-filled from URL, fetch preview meta then jump to preview.
     const prefilledRaw = (codeInput?.value ?? '').replace(/[^A-Z0-9]/g, '')
@@ -641,10 +616,11 @@ const rawCode = Astro.url.searchParams.get('user_code')?.trim().toUpperCase() ??
     color: #ef4444;
   }
 
-  .countdown-text {
+  .device-sub-dim {
     font-size: 0.875rem;
     color: #71717a;
-    margin: 0.75rem 0 1.25rem;
+    margin: 0.75rem 0 0;
+    line-height: 1.5;
   }
 
   .inline-code {
