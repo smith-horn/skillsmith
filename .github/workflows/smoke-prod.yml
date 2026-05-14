@@ -75,6 +75,14 @@ jobs:
           ref: ${{ steps.sha.outputs.sha }}
           fetch-depth: 2
 
+      # SMI-4898: pin Node 22.22.0 so `npx @skillsmith/cli@latest` doesn't
+      # trip the published CLI's engines.node guard. Matches root
+      # `package.json` engines field and the canonical setup-node usage in
+      # detect-release-drift.yml / device-login-roundtrip.yml.
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '22.22.0'
+
       - name: Detect [skip-smoke] marker
         id: skip
         env:
