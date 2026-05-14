@@ -193,6 +193,9 @@ test.describe('D-6 — approved state is stable, no countdown, no auto-close pro
     })
     await page.goto(DEVICE_URL)
 
+    // Wait for the auto-preview block to complete (DEVICE_URL includes user_code so init()
+    // auto-advances to preview state; clicking Approve before that resolves is a race).
+    await expect(page.locator('#state-preview')).toBeVisible()
     await page.locator('#btn-approve').click()
     await expect(page.locator('#state-approved')).toBeVisible()
 
