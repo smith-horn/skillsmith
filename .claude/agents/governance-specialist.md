@@ -23,7 +23,12 @@ When reviewing code:
 2. Read changed files and check against standards
 3. Identify ALL issues (critical, major, minor)
 4. **FIX every issue immediately** - create commits for each fix
-5. Write code review report to `docs/code_review/YYYY-MM-DD-<slug>.md`
+5. **Run the P-5-aware review pass** (SMI-4905, in agent-prompt.md):
+   window-global reads outside the producer, `astro:page-load`/`DOMContentLoaded` listener
+   binds without idempotency guards, and missing re-fire tests for either pattern. Each is
+   Critical. Use `bash .claude/skills/concurrency-auditor/scripts/scan-diff.sh --branch`
+   as a forcing function on PR-branch diffs.
+6. Write code review report to `docs/code_review/YYYY-MM-DD-<slug>.md`
 
 ### Pre-Commit Check
 When verifying before commit:
