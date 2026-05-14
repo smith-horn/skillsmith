@@ -25,6 +25,7 @@ Detailed guides extracted via progressive disclosure. CLAUDE.md contains essenti
 | [e2e-staging-runbook.md](.claude/development/e2e-staging-runbook.md) | `device-login-roundtrip.yml` (SMI-4460) — secret rotation, Docker carve-out, prod-ref grep gate |
 | [eval-cron-setup.md](.claude/development/eval-cron-setup.md) | Canonical-dev retrieval-eval cron (SMI-4764 W2) — launchd/systemd, heartbeat, replacement protocol |
 | [edge-function-attribution-queries.md](.claude/development/edge-function-attribution-queries.md) | Canonical pooler queries for edge function attribution monitoring (SMI-4370 / Wave 4d) |
+| [concurrency-patterns.md](.claude/development/concurrency-patterns.md) | Pattern-to-incident-to-canonical-fix index for the five `concurrency-auditor` patterns (SMI-4895/4896/4861/4887) |
 
 **Implementation plan template**: [.claude/templates/implementation-plan.md](.claude/templates/implementation-plan.md) — use this structure for all plans in `docs/internal/implementation/`.
 
@@ -55,6 +56,8 @@ docker exec skillsmith-dev-1 npm run preflight         # All checks before push
 Zero ESLint warnings/errors. TypeScript strict (no unjustified `any`). All files Prettier-formatted. 100% test pass. No high-severity vulns. **<500 lines/file** (`audit:standards` enforces; split into `foo.helpers.ts`/`foo.types.ts` if approaching). >80% coverage. Source-file changes must include related test updates.
 
 **When CI fails**: don't merge. Run `docker exec skillsmith-dev-1 npm run preflight` locally. Linear issue if non-trivial.
+
+**Concurrency prevention (SMI-4891/4892/4902)**: shared-state / race-condition gating via the `concurrency-auditor` skill (Mode A plan-audit, Mode B diff-audit) and the `concurrency-audit-pr.yml` PR workflow (shadow mode for first 7 days). Lazy-helper convention for browser globals (`window.__SUPABASE_CLIENT__` reads only via `getSupabaseClient()`) enforced by the `no-raw-window-global` ESLint rule. Pattern reference + canonical-fix PRs: [concurrency-patterns.md](.claude/development/concurrency-patterns.md). Opt-out marker: `[concurrency-audit-ack]` in PR body (boolean shape, reason as prose paragraph).
 
 **Post-deploy smoke (SMI-4459)**: `smoke-prod.yml` runs `scripts/smoke-prod.sh` against prod after each merge. Failure → Linear + email. Skip: `[skip-smoke]` in PR body. [smoke-prod-guide.md](.claude/development/smoke-prod-guide.md).
 
