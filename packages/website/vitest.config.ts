@@ -15,8 +15,10 @@ import { sharedTestConfig } from '../../vitest.preset'
 export default defineConfig({
   test: {
     ...sharedTestConfig,
-    include: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
-    exclude: ['**/node_modules/**', '**/dist/**'],
+    // SMI-4904: include tests/ subdir for eslint-rule + helper unit tests
+    // that don't fit under src/. E2E specs under tests/e2e/ are excluded.
+    include: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'tests/**/*.test.ts', 'tests/**/*.spec.ts'],
+    exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**', 'tests/a11y/**'],
     // Skip files that import Astro virtual modules
     alias: {
       // Prevent vitest from trying to resolve Astro virtual modules

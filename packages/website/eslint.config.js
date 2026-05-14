@@ -2,9 +2,18 @@ import eslint from '@eslint/js'
 import tseslint from 'typescript-eslint'
 import eslintPluginAstro from 'eslint-plugin-astro'
 import globals from 'globals'
+// SMI-4904: custom rule banning raw window.<global> reads outside producer.
+import noRawWindowGlobal from './eslint-rules/no-raw-window-global.js'
 
 // Get Astro flat config
 const astroFlatConfig = eslintPluginAstro.configs['flat/recommended']
+
+// SMI-4904: local plugin namespace for project-specific rules.
+const skillsmithLocal = {
+  rules: {
+    'no-raw-window-global': noRawWindowGlobal,
+  },
+}
 
 export default [
   // Global ignores - must be separate config object with ONLY ignores property
@@ -41,6 +50,7 @@ export default [
     },
     plugins: {
       '@typescript-eslint': tseslint.plugin,
+      'skillsmith-local': skillsmithLocal,
     },
     rules: {
       ...eslint.configs.recommended.rules,
@@ -52,12 +62,17 @@ export default [
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-explicit-any': 'warn',
+      // SMI-4904: ban raw window.<banned-global> reads outside producer.
+      'skillsmith-local/no-raw-window-global': 'error',
     },
   },
   // Astro files - disable problematic rules for templates
   // MUST come after astroFlatConfig to override its rules
   {
     files: ['**/*.astro'],
+    plugins: {
+      'skillsmith-local': skillsmithLocal,
+    },
     languageOptions: {
       globals: {
         ...globals.browser,
@@ -74,6 +89,8 @@ export default [
       'no-empty': 'off',
       // Disable escape warnings - false positives in template strings
       'no-useless-escape': 'off',
+      // SMI-4904: apply the no-raw-window-global rule to .astro <script> blocks.
+      'skillsmith-local/no-raw-window-global': 'error',
     },
   },
   // Virtual JS files from <script is:inline> blocks
