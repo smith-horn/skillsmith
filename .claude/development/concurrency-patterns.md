@@ -18,7 +18,7 @@ Each row links to the **real PR that fixed the motivating incident** — grep th
 | 4 | New SQL column on multi-write table | SMI-4887 (skip-gate path missed) | [#1100](https://github.com/smith-horn/skillsmith/pull/1100) |
 | 5 | New async producer / consumer | _Advisory; no captured Skillsmith incident as of plan date._ Drop this row if no incident lands within 60 days (per `NEVER say "consider for future"` rule). | — |
 
-The detector signatures, mitigation playbooks, and false-positive marker conventions live in `.claude/skills/concurrency-auditor/patterns/README.md`. This doc points at the *incidents and PRs*, not the rules.
+The detector signatures, mitigation playbooks, and false-positive marker conventions live in `.claude/skills/concurrency-auditor/patterns/README.md`. This doc points at the _incidents and PRs_, not the rules.
 
 ## Pattern 1 — Browser global read outside producer
 
@@ -38,7 +38,7 @@ import { getSupabaseClient } from '@lib/supabase-client'
 const client = getSupabaseClient()
 ```
 
-**Why it shipped to production**: lazy-helper-vs-raw-global was a *convention*, not a *gate*. `LoginButton.astro` and `callback.astro` both used the helper; `device.astro` was the outlier and only got caught at QA. Wave 2 of SMI-4902 lands the ESLint rule `no-raw-window-global` that catches this at lint time.
+**Why it shipped to production**: lazy-helper-vs-raw-global was a _convention_, not a _gate_. `LoginButton.astro` and `callback.astro` both used the helper; `device.astro` was the outlier and only got caught at QA. Wave 2 of SMI-4902 lands the ESLint rule `no-raw-window-global` that catches this at lint time.
 
 **Where the single producer lives**: `packages/website/src/lib/supabase-client.ts:18-25`. This is the **only** file authorized to read or write `window.__SUPABASE_CLIENT__`. The ESLint rule's `BANNED_GLOBALS.__SUPABASE_CLIENT__.allowedFiles` list contains exactly `['supabase-client.ts']` — adding `BaseLayout.astro` (or any other consumer) to that list re-introduces the multi-writer smell this rule exists to prevent. BaseLayout calls `getSupabaseClient()`; it does NOT read or write the raw global directly.
 
