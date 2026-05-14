@@ -281,16 +281,21 @@ jobs:
           # Locate prior comment via the hidden marker (smoke-prod / lighthouse
           # convention). Edit if found, else post fresh — exactly one sticky
           # per PR, no append.
-          EXISTING=$(gh pr view "$PR_NUM" --json comments \
-            --jq ".comments[] | select(.body | contains(\"$STICKY_MARKER\")) | .id" \
+          #
+          # IMPORTANT: we use the REST API directly (`gh api /repos/.../issues/
+          # {pr}/comments`) which returns numeric database IDs. The GraphQL
+          # surface (`gh pr view --json comments`) returns node-IDs like
+          # `IC_kwDO…` which the REST PATCH endpoint rejects with 404 —
+          # silently falling through to "post fresh" and producing N comments
+          # after N runs (violates the P-5 invariant: one sticky per PR).
+          # Surfaced in the SMI-4902 W2 governance retro.
+          REPO="${GITHUB_REPOSITORY}"
+          EXISTING=$(gh api --paginate \
+            "/repos/${REPO}/issues/${PR_NUM}/comments" \
+            --jq ".[] | select(.body | contains(\"$STICKY_MARKER\")) | .id" \
             | head -1 || true)
           if [[ -n "$EXISTING" ]]; then
             echo "Editing existing sticky comment ($EXISTING)…"
-            # gh doesn't expose comment edit by ID directly across versions;
-            # fall back to the REST API.
-            REPO="${GITHUB_REPOSITORY}"
-            # gh json returns numeric IDs unprefixed; the REST API expects
-            # the numeric comment ID. The `.id` field above is already numeric.
             gh api -X PATCH \
               -H "Accept: application/vnd.github+json" \
               "/repos/${REPO}/issues/comments/${EXISTING}" \

@@ -148,6 +148,20 @@ tester.run('no-raw-window-global', rule, {
       `,
       errors: [{ messageId: 'useHelper' }],
     },
+    // === Path-separator boundary: substring-bypass must NOT silently allow ===
+    // Regression for the bare-endsWith() bug surfaced in the W2 governance
+    // retro: a file ending in `-supabase-client.ts` anywhere in the tree
+    // would have bypassed the rule. The path-separator boundary in
+    // isAllowed() prevents this. The fixture asserts the rule STILL FIRES
+    // on a near-miss filename that shares the suffix as a substring.
+    {
+      name: 'substring-bypass attempt (evil-supabase-client.ts) is still reported',
+      filename: '/abs/path/to/packages/website/src/lib/evil-supabase-client.ts',
+      code: `
+        const c = window.__SUPABASE_CLIENT__
+      `,
+      errors: [{ messageId: 'useHelper' }],
+    },
   ],
 })
 

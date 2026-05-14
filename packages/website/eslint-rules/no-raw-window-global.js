@@ -47,10 +47,14 @@
  * 2. Every entry must have a matching fixture pair (allowed-file passes,
  *    banned-file fails) in the test suite. Adding a new entry without the
  *    test fails the rule's own test run.
- * 3. `allowedFiles[]` entries are matched via `endsWith()` against the
- *    linted file's path — typically a basename (`'supabase-client.ts'`) or
- *    a sub-path (`'src/lib/supabase-client.ts'`). Use the shortest unambiguous
- *    suffix; an ambiguous match is a config bug.
+ * 3. `allowedFiles[]` entries are matched against the linted file's path
+ *    with a **path-separator boundary** — i.e. `path === suffix` or
+ *    `path.endsWith('/' + suffix)`. A bare `endsWith(suffix)` match would
+ *    let `evil-supabase-client.ts` pass anywhere in the tree and defeat the
+ *    single-producer guarantee. Typical entry shapes:
+ *      - basename: `'supabase-client.ts'`
+ *      - sub-path: `'src/lib/supabase-client.ts'`
+ *    Use the shortest unambiguous suffix; an ambiguous match is a config bug.
  *
  * Per plan EDIT 1 (Critical): `__SUPABASE_CLIENT__.allowedFiles` is exactly
  * `['supabase-client.ts']` — BaseLayout.astro does NOT read the raw global
@@ -91,8 +95,19 @@ function matchBannedKey(node) {
   return null
 }
 
+/**
+ * Path-separator-boundary match: a file at `…/lib/supabase-client.ts` matches
+ * suffix `supabase-client.ts`, but `…/lib/evil-supabase-client.ts` does NOT.
+ * Without this boundary, an attacker (or accidental file) named with the
+ * banned-suffix as a substring would silently bypass the rule.
+ *
+ * Accepts forward-slash paths (POSIX) and back-slash paths (Windows tooling).
+ */
 function isAllowed(filename, key) {
-  return BANNED_GLOBALS[key].allowedFiles.some((suffix) => filename.endsWith(suffix))
+  return BANNED_GLOBALS[key].allowedFiles.some((suffix) => {
+    if (filename === suffix) return true
+    return filename.endsWith('/' + suffix) || filename.endsWith('\\' + suffix)
+  })
 }
 
 /** @type {import('eslint').Rule.RuleModule} */
