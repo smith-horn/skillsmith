@@ -3270,6 +3270,19 @@ console.log(
   `\n${BOLD}Check 24: No internal references in rendered website content (SMI-4916)${RESET}`
 )
 
+// Apply a stripping regex repeatedly until the text stabilizes. A single
+// .replace() pass can leave a partial delimiter behind when matches overlap
+// (e.g. `<!--<!---->`), which CodeQL flags as incomplete multi-character
+// sanitization (js/incomplete-multi-character-sanitization).
+function stripUntilStable(text, regex) {
+  let prev
+  do {
+    prev = text
+    text = text.replace(regex, '')
+  } while (text !== prev)
+  return text
+}
+
 function stripAstroNonRendered(content) {
   const rawLines = content.split('\n')
   const out = []
@@ -3369,7 +3382,7 @@ function stripAstroNonRendered(content) {
     }
     // Multi-line <style>/<script> body continuation.
     if (inStyleOrScript) {
-      const end = line.search(/<\/(style|script)>/i)
+      const end = line.search(/<\/(style|script)\s*>/i)
       if (end === -1) {
         out.push('')
         continue
@@ -3379,7 +3392,7 @@ function stripAstroNonRendered(content) {
     }
 
     // Strip single-line HTML comments, then detect an unterminated one.
-    line = line.replace(/<!--[\s\S]*?-->/g, '')
+    line = stripUntilStable(line, /<!--[\s\S]*?-->/g)
     const openHtml = line.indexOf('<!--')
     if (openHtml !== -1) {
       line = line.slice(0, openHtml)
@@ -3393,7 +3406,7 @@ function stripAstroNonRendered(content) {
       inJsxComment = true
     }
     // Strip single-line <style>/<script> blocks, then detect an open one.
-    line = line.replace(/<(style|script)\b[^>]*>[\s\S]*?<\/(style|script)>/gi, '')
+    line = stripUntilStable(line, /<(style|script)\b[^>]*>[\s\S]*?<\/(style|script)\s*>/gi)
     const styleScriptOpen = line.search(/<(style|script)\b/i)
     if (styleScriptOpen !== -1) {
       const gt = line.indexOf('>', styleScriptOpen)
@@ -3430,7 +3443,7 @@ function stripMdNonRendered(content) {
       line = line.slice(end + 3)
       inHtmlComment = false
     }
-    line = line.replace(/<!--[\s\S]*?-->/g, '')
+    line = stripUntilStable(line, /<!--[\s\S]*?-->/g)
     const openHtml = line.indexOf('<!--')
     if (openHtml !== -1) {
       line = line.slice(0, openHtml)
