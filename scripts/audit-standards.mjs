@@ -3248,6 +3248,252 @@ console.log(`\n${BOLD}Check 23: git config --file subshell discipline${RESET}`)
   }
 }
 
+// Check 24: No internal references in rendered published website content (SMI-4916)
+//
+// Internal Linear issue IDs (SMI-NNN), ADR numbers (ADR-NNN), and private doc
+// paths (docs/internal/) are engineering jargon and must never reach end users.
+// This check scans rendered website content — .astro pages and blog markdown —
+// and fails the build if such a reference appears in user-visible text.
+//
+// Non-rendered regions are stripped before matching so legitimate internal refs
+// in frontmatter, comments, and <style>/<script> blocks stay legal:
+//   - .astro: frontmatter fence (--- … ---), <!-- … -->, {/* … */} JSX comments,
+//     and entire <style>…</style> / <script>…</script> blocks. Inside the
+//     frontmatter fence ONLY, // line comments and /* … */ block comments are
+//     also stripped. In the template body, // and /* */ are literal rendered
+//     text and are NOT stripped.
+//   - .md/.mdx: <!-- … --> only. Fenced code blocks are rendered and kept.
+// A line carrying the marker `audit:internal-ref-ok` (matched on the raw line
+// before stripping) is skipped, for the rare case a page must legitimately name
+// a reference.
+console.log(
+  `\n${BOLD}Check 24: No internal references in rendered website content (SMI-4916)${RESET}`
+)
+
+function stripAstroNonRendered(content) {
+  const rawLines = content.split('\n')
+  const out = []
+  let inFrontmatter = false
+  let frontmatterDone = false
+  let inStyleOrScript = false
+  let inOpeningTag = false // <style/<script seen, > not yet found
+  let inHtmlComment = false
+  let inJsxComment = false
+  let jsxBracePending = false // a line ended with a bare `{` — a `/*` next opens a JSX comment
+  let inBlockComment = false // /* */ inside frontmatter only
+
+  for (let i = 0; i < rawLines.length; i++) {
+    let line = rawLines[i]
+
+    // Frontmatter fence: a leading `---` on the first non-empty line opens it.
+    if (!frontmatterDone && !inFrontmatter && line.trim() === '---') {
+      inFrontmatter = true
+      out.push('')
+      continue
+    }
+    if (inFrontmatter) {
+      if (line.trim() === '---') {
+        inFrontmatter = false
+        frontmatterDone = true
+        out.push('')
+        continue
+      }
+      // Inside frontmatter: strip // line comments and /* */ block comments.
+      if (inBlockComment) {
+        const end = line.indexOf('*/')
+        if (end === -1) {
+          out.push('')
+          continue
+        }
+        line = line.slice(end + 2)
+        inBlockComment = false
+      }
+      line = line.replace(/\/\*[\s\S]*?\*\//g, '')
+      const openBlock = line.indexOf('/*')
+      if (openBlock !== -1) {
+        line = line.slice(0, openBlock)
+        inBlockComment = true
+      }
+      line = line.replace(/\/\/.*$/, '')
+      out.push(line)
+      continue
+    }
+
+    frontmatterDone = true
+
+    // Multi-line HTML comment continuation.
+    if (inHtmlComment) {
+      const end = line.indexOf('-->')
+      if (end === -1) {
+        out.push('')
+        continue
+      }
+      line = line.slice(end + 3)
+      inHtmlComment = false
+    }
+    // Multi-line JSX comment continuation.
+    if (inJsxComment) {
+      const end = line.indexOf('*/}')
+      if (end === -1) {
+        out.push('')
+        continue
+      }
+      line = line.slice(end + 3)
+      inJsxComment = false
+    }
+    // A prior line ended with a bare `{`; if this line opens with `/*` (after
+    // optional whitespace) it is a JSX comment whose opener was split.
+    if (jsxBracePending) {
+      jsxBracePending = false
+      const m = line.match(/^\s*\/\*/)
+      if (m) {
+        const end = line.indexOf('*/}')
+        if (end === -1) {
+          inJsxComment = true
+          out.push('')
+          continue
+        }
+        line = line.slice(end + 3)
+      }
+    }
+    // Multi-line opening tag continuation: <style/<script seen, > not yet found.
+    if (inOpeningTag) {
+      const gt = line.indexOf('>')
+      if (gt === -1) {
+        out.push('')
+        continue
+      }
+      line = line.slice(gt + 1)
+      inOpeningTag = false
+      inStyleOrScript = true
+    }
+    // Multi-line <style>/<script> body continuation.
+    if (inStyleOrScript) {
+      const end = line.search(/<\/(style|script)>/i)
+      if (end === -1) {
+        out.push('')
+        continue
+      }
+      line = line.slice(line.indexOf('>', end) + 1)
+      inStyleOrScript = false
+    }
+
+    // Strip single-line HTML comments, then detect an unterminated one.
+    line = line.replace(/<!--[\s\S]*?-->/g, '')
+    const openHtml = line.indexOf('<!--')
+    if (openHtml !== -1) {
+      line = line.slice(0, openHtml)
+      inHtmlComment = true
+    }
+    // Strip single-line JSX comments, then detect an unterminated one.
+    line = line.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    const openJsx = line.indexOf('{/*')
+    if (openJsx !== -1) {
+      line = line.slice(0, openJsx)
+      inJsxComment = true
+    }
+    // Strip single-line <style>/<script> blocks, then detect an open one.
+    line = line.replace(/<(style|script)\b[^>]*>[\s\S]*?<\/(style|script)>/gi, '')
+    const styleScriptOpen = line.search(/<(style|script)\b/i)
+    if (styleScriptOpen !== -1) {
+      const gt = line.indexOf('>', styleScriptOpen)
+      line = line.slice(0, styleScriptOpen)
+      if (gt === -1) {
+        inOpeningTag = true // `>` is on a later line
+      } else {
+        inStyleOrScript = true
+      }
+    }
+
+    // A line whose remaining content ends with a bare `{` may open a JSX
+    // comment on the next line (Astro allows whitespace between `{` and `/*`).
+    if (/\{\s*$/.test(line)) {
+      jsxBracePending = true
+    }
+
+    out.push(line)
+  }
+  return out
+}
+
+function stripMdNonRendered(content) {
+  const rawLines = content.split('\n')
+  const out = []
+  let inHtmlComment = false
+  for (let line of rawLines) {
+    if (inHtmlComment) {
+      const end = line.indexOf('-->')
+      if (end === -1) {
+        out.push('')
+        continue
+      }
+      line = line.slice(end + 3)
+      inHtmlComment = false
+    }
+    line = line.replace(/<!--[\s\S]*?-->/g, '')
+    const openHtml = line.indexOf('<!--')
+    if (openHtml !== -1) {
+      line = line.slice(0, openHtml)
+      inHtmlComment = true
+    }
+    out.push(line)
+  }
+  return out
+}
+
+const INTERNAL_REF_PATTERN = /\bSMI-\d+\b|\bADR-\d+\b|docs\/internal\//
+const internalRefPagesDir = 'packages/website/src/pages'
+const internalRefBlogDir = 'packages/website/src/content/blog'
+
+if (!existsSync(internalRefPagesDir) && !existsSync(internalRefBlogDir)) {
+  warn('Check 24: Website pages/blog directories not found - skipping internal-ref check')
+} else {
+  const internalRefHits = []
+  const astroFilesForRefCheck = existsSync(internalRefPagesDir)
+    ? getFilesRecursive(internalRefPagesDir, ['.astro'])
+    : []
+  const mdFilesForRefCheck = existsSync(internalRefBlogDir)
+    ? getFilesRecursive(internalRefBlogDir, ['.md', '.mdx'])
+    : []
+
+  for (const file of astroFilesForRefCheck) {
+    const content = readFileSync(file, 'utf8')
+    const rawLines = content.split('\n')
+    const strippedLines = stripAstroNonRendered(content)
+    for (let i = 0; i < strippedLines.length; i++) {
+      if (rawLines[i] && rawLines[i].includes('audit:internal-ref-ok')) continue
+      const match = strippedLines[i].match(INTERNAL_REF_PATTERN)
+      if (match) {
+        internalRefHits.push({ file: relative('.', file), line: i + 1, match: match[0] })
+      }
+    }
+  }
+  for (const file of mdFilesForRefCheck) {
+    const content = readFileSync(file, 'utf8')
+    const rawLines = content.split('\n')
+    const strippedLines = stripMdNonRendered(content)
+    for (let i = 0; i < strippedLines.length; i++) {
+      if (rawLines[i] && rawLines[i].includes('audit:internal-ref-ok')) continue
+      const match = strippedLines[i].match(INTERNAL_REF_PATTERN)
+      if (match) {
+        internalRefHits.push({ file: relative('.', file), line: i + 1, match: match[0] })
+      }
+    }
+  }
+
+  if (internalRefHits.length === 0) {
+    pass('Check 24: No internal references (SMI-/ADR-/docs/internal/) in rendered website content')
+  } else {
+    fail(
+      `Check 24: ${internalRefHits.length} internal reference(s) found in rendered website content`,
+      'Reword to drop the internal ref (Linear ID, ADR number, or docs/internal/ path). For a legitimate exception, add an `audit:internal-ref-ok` marker on that line.'
+    )
+    internalRefHits.forEach(({ file, line, match }) =>
+      console.log(`    ${file}:${line} — ${match}`)
+    )
+  }
+}
+
 // Summary
 console.log('\n' + '━'.repeat(50))
 console.log(`\n${BOLD}📊 Summary${RESET}\n`)

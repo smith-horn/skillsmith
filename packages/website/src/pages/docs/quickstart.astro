@@ -258,9 +258,8 @@ curl -fsSL https://claude.ai/install.sh | sh`}</code></pre>
   <h3 id="step-a2">Step 2: Add Skillsmith MCP Server</h3>
 
   <p>
-    Pick the snippet for your MCP client. SMI-4580: snippets are sourced from
-    <code>@skillsmith/cli/templates/mcp-server.template.snippets.ts</code> so this
-    page can't drift from the scaffolded README or root README.
+    Pick the snippet for your MCP client. Every snippet uses the same shape —
+    only the config-file path (and, for Codex, the format) differs.
   </p>
 
   <details open>

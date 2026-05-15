@@ -122,7 +122,7 @@ const JAILBREAK_PATTERNS = [
 
 #### 2. AI Defence Patterns (CVE-Hardened)
 
-Our newest scanner category (SMI-1532) detects sophisticated injection techniques that bypass simple pattern matching:
+Our newest scanner category detects sophisticated injection techniques that bypass simple pattern matching:
 
 ```typescript
 // 15 CVE-hardened patterns including:
