@@ -37,6 +37,9 @@ import { runMaintenanceReconciliation } from './maintenance-helpers.ts'
 import type { IndexerRequest, IndexerResult } from './indexer-types.ts'
 import type { SkillMdValidation } from './skill-processor.ts'
 import { prefetchExistingSkills } from './prefetch-existing-skills.ts'
+// SMI-4870: lock-skip observability — write an audit row even when the lock is
+// already held so partial-cycle gaps are detectable in SQL.
+import { writeIndexerAuditLog } from './indexer-audit-log.ts'
 
 interface RunSummary {
   data: unknown
@@ -125,6 +128,8 @@ async function runDiscoveryBranch(
     telemetry,
     concurrency: env.concurrency,
     killSwitchEngaged: env.kill_switch_engaged,
+    // SMI-4870: thread per-phase sub-slot identifier from env into orchestrator.
+    discoveryPhase: env.DISCOVERY_PHASE,
   })
 
   return { result, topics, rotationSource }
@@ -186,6 +191,57 @@ async function main(): Promise<void> {
         request_id: requestId,
       })
     )
+    // SMI-4870 issue #1: write a minimal audit_logs row so per-phase sub-slot
+    // skips are observable via SQL (GROUP BY discovery_phase, status).
+    // The meta shape mirrors the Phase 7 row written by writeDiscoveryAuditLog
+    // — only fields available without running any phase are populated.
+    // Assign to a typed intermediate so the extra `status` and `discovery_phase`
+    // keys survive the excess-property check (same pattern as writeDiscoveryAuditLog
+    // uses for its `auditMeta` local).
+    const skipMeta = {
+      request_id: requestId,
+      run_type: env.RUN_TYPE,
+      rate_limit_remaining_min: 0,
+      secondary_rate_limit_hits: 0,
+      retry_after_max_seconds: 0,
+      concurrency: env.concurrency,
+      kill_switch_engaged: env.kill_switch_engaged,
+      topics: [],
+      cron_slot: env.CRON_SLOT,
+      rotation_source: 'fallback' as const,
+      tree_hash_cache_hits: 0,
+      tree_hash_cache_misses: 0,
+      // SMI-4870: observability keys — status marks the skip; discovery_phase
+      // identifies which per-phase sub-slot was blocked.
+      status: 'skipped_lock' as const,
+      discovery_phase: env.DISCOVERY_PHASE ?? null,
+    }
+    await writeIndexerAuditLog(supabase, 'partial', {
+      requestId,
+      topics: [],
+      runType: env.RUN_TYPE,
+      dryRun: env.DRY_RUN,
+      found: 0,
+      indexed: 0,
+      updated: 0,
+      failed: 0,
+      stale: 0,
+      quality_gate_filtered: 0,
+      unchanged: 0,
+      quarantined: 0,
+      github_skill_count: 0,
+      code_search: undefined,
+      scoreDistribution: { highTrust: 0, community: 0 },
+      categorizedCount: 0,
+      categoryAssignments: 0,
+      wildcard_expansion_count: 0,
+      cron_slot: env.CRON_SLOT,
+      rotation_source: 'fallback',
+      discovery_path_counts: {},
+      subdirectory_search: undefined,
+      high_trust_fallback_hits: 0,
+      meta: skipMeta,
+    })
     process.exit(0)
   }
 
