@@ -1,47 +1,100 @@
-# Skillsmith Enterprise License
+Elastic License 2.0
 
-Copyright (c) 2024-2025 Smith Horn Group Ltd. All rights reserved.
+URL: https://www.elastic.co/licensing/elastic-license
 
-## Terms and Conditions
+## Acceptance
 
-This software is proprietary and confidential. Unauthorized copying, distribution,
-modification, or use of this software, via any medium, is strictly prohibited.
+By using the software, you agree to all of the terms and conditions below.
 
-### License Grant
+## Copyright License
 
-Subject to the terms of a valid Skillsmith Enterprise subscription agreement:
+The licensor grants you a non-exclusive, royalty-free, worldwide,
+non-sublicensable, non-transferable license to use, copy, distribute, make
+available, and prepare derivative works of the software, in each case subject to
+the limitations and conditions below.
 
-1. **Permitted Use**: You may use this software only in accordance with your
-   subscription tier (Team or Enterprise) and the number of licensed seats.
+## Limitations
 
-2. **Restrictions**: You may NOT:
-   - Redistribute, sublicense, or resell this software
-   - Reverse engineer, decompile, or disassemble this software
-   - Remove or alter any proprietary notices or labels
-   - Use this software after your subscription has expired
+You may not provide the software to third parties as a hosted or managed
+service, where the service provides users with access to any substantial set of
+the features or functionality of the software.
 
-3. **Subscription Tiers**:
-   - **Team** ($25/user/month): Workspaces, private skills, analytics
-   - **Enterprise** ($55/user/month): SSO, RBAC, audit logging, SIEM, compliance
+You may not move, change, disable, or circumvent the license key functionality
+in the software, and you may not remove or obscure any functionality in the
+software that is protected by the license key.
 
-### Warranty Disclaimer
+You may not alter, remove, or obscure any licensing, copyright, or other notices
+of the licensor in the software. Any use of the licensor's trademarks is subject
+to applicable law.
 
-THIS SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
+## Patents
 
-### Limitation of Liability
+The licensor grants you a license, under any patent claims the licensor can
+license, or becomes able to license, to make, have made, use, sell, offer for
+sale, import and have imported the software, in each case subject to the
+limitations and conditions in this license. This license does not cover any
+patent claims that you cause to be infringed by modifications or additions to
+the software. If you or your company make any written claim that the software
+infringes or contributes to infringement of any patent, your patent license for
+the software granted under these terms ends immediately. If your company makes
+such a claim, your patent license ends immediately for work on behalf of your
+company.
 
-IN NO EVENT SHALL SMITH HORN GROUP LTD BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES.
+## Notices
 
-### Contact
+You must ensure that anyone who gets a copy of any part of the software from you
+also gets a copy of these terms.
 
-For licensing inquiries: enterprise@skillsmith.dev
+If you modify the software, you must include in any modified copies of the
+software prominent notices stating that you have modified the software.
+
+## No Other Rights
+
+These terms do not imply any licenses other than those expressly granted in
+these terms.
+
+## Termination
+
+If you use the software in violation of these terms, such use is not licensed,
+and your licenses will automatically terminate. If the licensor provides you
+with a notice of your violation, and you cease all violation of this license no
+later than 30 days after you receive that notice, your licenses will be
+reinstated retroactively. However, if you violate these terms after such
+reinstatement, any additional violation of these terms will cause your licenses
+to terminate automatically and permanently.
+
+## No Liability
+
+*As far as the law allows, the software comes as is, without any warranty or
+condition, and the licensor will not be liable to you for any damages arising
+out of these terms or the use or nature of the software, under any kind of
+legal claim.*
+
+## Definitions
+
+The **licensor** is the entity offering these terms, and the **software** is the
+software the licensor makes available under these terms, including any portion
+of it.
+
+**you** refers to the individual or entity agreeing to these terms.
+
+**your company** is any legal entity, sole proprietorship, or other kind of
+organization that you work for, plus all organizations that have control over,
+are under the control of, or are under common control with that
+organization. **control** means ownership of substantially all the assets of an
+entity, or the power to direct its management and policies by vote, contract, or
+otherwise. Control can be direct or indirect.
+
+**your licenses** are all the licenses granted to you for the software under
+these terms.
+
+**use** means anything you do with the software requiring one of your licenses.
+
+**trademark** means trademarks, service marks, and similar rights.
 
 ---
 
-For the Community tier, see the Elastic License 2.0 packages:
-- @skillsmith/core
-- @skillsmith/mcp-server
-- @skillsmith/cli
+Copyright 2026 Smith Horn Group Ltd
 
-All packages are source-available under Elastic License 2.0. See https://www.elastic.co/licensing/elastic-license
+Licensed under the Elastic License 2.0; you may not use this software except in
+compliance with the Elastic License 2.0.
