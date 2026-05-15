@@ -55,8 +55,11 @@ docker exec skillsmith-dev-1 npm test
 `.npmrc` sets `ignore-scripts=true`, which skips lifecycle scripts (`preinstall`, `install`, `postinstall`, `prepare`) on every `npm install` — host or container. The Docker `Dockerfile` explicitly rebuilds native modules and the entrypoint validates them at startup, so the container path is fully covered. The host path needs three follow-ups after a fresh `npm install`:
 
 ```bash
-# Compile better-sqlite3 binding for the host-side retrieval-logs writer (SMI-4549).
-# Idempotent — sub-second [skip] on subsequent runs.
+# Repair host-side native packages (better-sqlite3 + rollup/esbuild prebuilts).
+# Compiles the better-sqlite3 binding for the retrieval-logs writer (SMI-4549)
+# and installs the host-platform rollup/esbuild prebuilt packages the pre-push
+# host-fallback vitest run needs (SMI-4912). Idempotent — sub-second [skip] on
+# subsequent runs.
 ./scripts/repair-host-native-deps.sh
 
 # If you edit `packages/enterprise/` source locally without committing, refresh

@@ -176,6 +176,27 @@ if [ "$IS_WORKTREE" = "1" ] && [ "$(uname)" = "Darwin" ]; then
             printf "${HOOK_DETECT_YELLOW}   Bypass: git push --no-verify${HOOK_DETECT_NC}\n"
             exit 1
         fi
+
+        # SMI-4912: host-platform native-package self-heal. The host
+        # node_modules can carry Linux-only rollup/esbuild prebuilts (when
+        # node_modules was populated in a Linux context), so the host vitest
+        # run dies with "Cannot find module @rollup/rollup-darwin-arm64".
+        # Probe and auto-repair before the caller runs vitest on the host.
+        # The rollup probe loads its native binding at require-time; esbuild
+        # resolves its binary lazily, so transformSync('') is needed to force
+        # the platform-binary spawn (a bare require is a false-negative).
+        if ! node -e "require('rollup')" >/dev/null 2>&1 ||
+           ! node -e "require('esbuild').transformSync('')" >/dev/null 2>&1; then
+            printf "${HOOK_DETECT_YELLOW}🔧 Host platform native packages missing (rollup/esbuild).${HOOK_DETECT_NC}\n"
+            printf "${HOOK_DETECT_YELLOW}   Auto-repairing via scripts/repair-host-native-deps.sh …${HOOK_DETECT_NC}\n"
+            _HOOK_REPAIR_TOP=$(git rev-parse --show-toplevel 2>/dev/null)
+            if [ -n "$_HOOK_REPAIR_TOP" ] && [ -x "$_HOOK_REPAIR_TOP/scripts/repair-host-native-deps.sh" ]; then
+                "$_HOOK_REPAIR_TOP/scripts/repair-host-native-deps.sh" \
+                    || printf "${HOOK_DETECT_YELLOW}   Repair did not complete — host run may fail; bypass: git push --no-verify${HOOK_DETECT_NC}\n"
+            else
+                printf "${HOOK_DETECT_YELLOW}   Repair script not found — skipping; host run may fail.${HOOK_DETECT_NC}\n"
+            fi
+        fi
     fi
 fi
 
