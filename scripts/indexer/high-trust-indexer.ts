@@ -52,6 +52,7 @@ import {
   type TreeHashCacheCounters,
 } from './tree-hash-cache.ts'
 import { indexSkillsFromContents, type RepoData } from './index-skills-from-contents.ts'
+import type { TreeHashTouchEntry } from './tree-hash-touch.ts'
 
 // Re-export for callers still importing from this module (run.ts, phases/high-trust.ts).
 export { treeHashCacheHit, treeHashCacheKey, TREE_HASH_CACHE_TTL_MS } from './tree-hash-cache.ts'
@@ -71,7 +72,10 @@ export async function indexHighTrustRepository(
   telemetry: RateLimitTelemetry,
   // SMI-4861 Wave 1: cross-run tree-hash cache. Omitted = behavior unchanged.
   treeHashCache?: TreeHashCache,
-  cacheCounters?: TreeHashCacheCounters
+  cacheCounters?: TreeHashCacheCounters,
+  // SMI-4861 cache-refresh-on-hit: list to collect rows whose cache hit should
+  // bump last_tree_hash_check post-Phase-1.
+  treeHashTouches?: TreeHashTouchEntry[]
 ): Promise<{
   skills: GitHubRepository[]
   errors: string[]
@@ -168,7 +172,8 @@ export async function indexHighTrustRepository(
           telemetry,
           treeHashCache,
           cacheCounters,
-          blobShaMap
+          blobShaMap,
+          treeHashTouches
         )
         skills.push(...pathSkills)
         errors.push(...pathErrors)
@@ -209,6 +214,15 @@ export async function indexHighTrustRepository(
           )
         ) {
           if (cacheCounters) cacheCounters.hits++
+          // SMI-4861 cache-refresh-on-hit: record touch so post-Phase-1 batch
+          // refreshes last_tree_hash_check. Without this, hits don't refresh
+          // and rows age past TTL, capping steady-state hit ratio at ~50%.
+          if (treeHashTouches) {
+            treeHashTouches.push({
+              repo_url: `https://github.com/${author.owner}/${author.repo}/tree/${repoData.default_branch}/${resolvedPath}`,
+              skill_path: resolvedPath,
+            })
+          }
           await delay(50)
           continue
         }
@@ -286,7 +300,8 @@ export async function indexHighTrustRepository(
           telemetry,
           treeHashCache,
           cacheCounters,
-          blobShaMap
+          blobShaMap,
+          treeHashTouches
         )
         skills.push(...pathSkills)
         errors.push(...pathErrors)
