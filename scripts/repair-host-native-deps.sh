@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # audit:host-npm-required — see SMI-4814 (by-design host-side native binding rebuild per SMI-4549; cannot run in Docker)
 #
-# repair-host-native-deps.sh - Idempotent host-side native binding repair (SMI-4549)
+# repair-host-native-deps.sh - Idempotent host-side native dep repair (SMI-4549, SMI-4912)
 #
 # The SMI-4381 worktree workflow uses `npm install --ignore-scripts` on the
 # host, which skips node-gyp postinstall and leaves host-only consumers
@@ -15,6 +15,14 @@
 # host: the first step is a require() probe that exits in <1s with [skip]
 # when the binding already loads. Only on probe failure does it call
 # `npm rebuild`.
+#
+# SMI-4912: it also repairs host-platform *prebuilt* native packages for the
+# vitest stack — rollup and esbuild ship per-platform packages
+# (@rollup/rollup-<os>-<arch>, @esbuild/<os>-<arch>). A host node_modules
+# populated in a Linux context lacks the macOS variants, so the SMI-4681
+# host-fallback pre-push vitest run dies with "Cannot find module
+# @rollup/rollup-darwin-arm64". That phase runs first and is independent of
+# the better-sqlite3 rebuild below.
 #
 # Host-only. Inside the Docker dev container (IS_DOCKER=true) the writer
 # itself no-ops, and Docker's own postinstall handles its bindings — this
@@ -49,6 +57,108 @@ if [[ "${IS_DOCKER:-}" == "true" ]] || [[ -f /.dockerenv ]]; then
 fi
 
 cd "$REPO_ROOT"
+
+# ---------------------------------------------------------------------------
+# Phase 1 (SMI-4912): host-platform prebuilt native packages.
+#
+# rollup and esbuild ship native code as platform-specific *prebuilt* npm
+# packages (@rollup/rollup-<os>-<arch>, @esbuild/<os>-<arch>), selected by
+# npm via os/cpu fields. A host node_modules populated in a Linux context
+# lacks the macOS variants, so the SMI-4681 macOS+worktree host-fallback
+# vitest run dies with "Cannot find module @rollup/rollup-darwin-arm64".
+#
+# This phase NEVER calls exit — on [ok]/[skip]/warn it falls through to the
+# better-sqlite3 repair below, so a doubly-broken host gets both repairs.
+# ---------------------------------------------------------------------------
+repair_platform_native_packages() {
+  local platform arch timeout_cmd
+  platform="$(node -p 'process.platform' 2>/dev/null || echo '')"
+  arch="$(node -p 'process.arch' 2>/dev/null || echo '')"
+
+  # macOS-only: the SMI-4681 host-fallback that needs this is macOS-only, and
+  # Linux rollup naming carries a gnu/musl split that is out of scope here.
+  if [[ "$platform" != "darwin" ]]; then
+    printf '[skip] platform packages — host is %s, not darwin (rollup/esbuild repair is macOS-only)\n' "${platform:-unknown}"
+    return 0
+  fi
+
+  # Bound a git-hook-triggered fetch so it cannot hang offline. macOS BSD
+  # ships no `timeout`; Homebrew coreutils provides `gtimeout`. When neither
+  # exists the fetch runs unbounded (npm's own retry/timeout still applies).
+  timeout_cmd=""
+  if command -v timeout >/dev/null 2>&1; then
+    timeout_cmd="timeout 120"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    timeout_cmd="gtimeout 120"
+  fi
+
+  # Materialize a zero-dependency prebuilt platform package into node_modules
+  # via `npm pack` + extract. `npm install <pkg>` — even with --no-package-lock
+  # — re-resolves the entire workspace dependency tree and aborts on any
+  # pre-existing unsatisfiable transitive range (this repo currently has one).
+  # `npm pack <spec>` fetches ONLY the named package and never touches the
+  # project tree; these packages are binary leaves with no dependencies, so
+  # pack+extract is complete, correct, and lockfile-neutral.
+  # _install_platform_pkg <pkg> <version> <dest-dir>
+  _install_platform_pkg() {
+    local pkg="$1" version="$2" dest="$3" tmp tgz
+    local tgz_glob
+    tmp="$(mktemp -d)" || return 1
+    if ! $timeout_cmd npm pack "$pkg@$version" --pack-destination "$tmp" --silent >/dev/null 2>&1; then
+      rm -rf "$tmp"; return 1
+    fi
+    # `npm pack` writes exactly one tarball into the fresh temp dir; resolve
+    # it via glob (no `ls` parsing). Non-match leaves the literal pattern,
+    # which `[[ -f ]]` rejects.
+    tgz_glob=( "$tmp"/*.tgz )
+    tgz="${tgz_glob[0]}"
+    if [[ ! -f "$tgz" ]] || ! tar -xzf "$tgz" -C "$tmp" 2>/dev/null; then
+      rm -rf "$tmp"; return 1
+    fi
+    rm -rf "$dest"
+    mkdir -p "$(dirname "$dest")"
+    if ! mv "$tmp/package" "$dest" 2>/dev/null; then
+      rm -rf "$tmp"; return 1
+    fi
+    rm -rf "$tmp"
+    return 0
+  }
+
+  # _repair_one <label> <require-probe> <parent-pkg> <platform-pkg>
+  _repair_one_platform_pkg() {
+    local label="$1" probe="$2" parent="$3" pkg="$4" version dest
+    if node -e "$probe" >/dev/null 2>&1; then
+      printf '[skip] %s host-platform package already loads\n' "$label"
+      return 0
+    fi
+    version="$(node -p "require('$REPO_ROOT/node_modules/$parent/package.json').version" 2>/dev/null || echo '')"
+    if [[ -z "$version" ]]; then
+      warn "$label: probe failed but $parent is not installed at node_modules/$parent — skipping platform-package repair"
+      return 0
+    fi
+    dest="$REPO_ROOT/node_modules/$pkg"
+    info "$label host-platform package missing; fetching $pkg@$version ..."
+    if _install_platform_pkg "$pkg" "$version" "$dest"; then
+      if node -e "$probe" >/dev/null 2>&1; then
+        printf '[ok] %s host-platform package installed (%s@%s)\n' "$label" "$pkg" "$version"
+      else
+        warn "$label: fetched $pkg@$version but the probe still fails — host pre-push may fail; manual recovery: npm pack $pkg@$version"
+      fi
+    else
+      warn "$label: fetching $pkg@$version failed or timed out (offline?) — host pre-push may fail; retry online, or bypass with: git push --no-verify"
+    fi
+  }
+
+  _repair_one_platform_pkg "rollup" \
+    "require('rollup')" \
+    "rollup" "@rollup/rollup-${platform}-${arch}"
+
+  _repair_one_platform_pkg "esbuild" \
+    "require('esbuild').transformSync('')" \
+    "esbuild" "@esbuild/${platform}-${arch}"
+}
+
+repair_platform_native_packages
 
 probe_binding() {
   # Returns 0 if better-sqlite3 loads AND can open a database, non-zero otherwise.
