@@ -33,9 +33,11 @@ export type DiscoveryPhase = 1 | 2 | 3
  *
  * In a phase-3 sub-slot the in-memory `repositories[]` holds only Phase 3's
  * repos (empty today — Phase 3 is env-gated off), so iterating it would
- * silently categorize nothing. Instead we query for rows that this cycle
- * could have touched: `last_seen_at` within the cycle window, OR rows with
- * no category assignment at all (`skill_categories` has no matching row).
+ * silently categorize nothing. Instead we query the `skills` table for rows
+ * this cycle could have touched: `last_seen_at` within the cycle window.
+ * Phase 4's upsert refreshes `last_seen_at` for every sighting (new and
+ * unchanged), so this set covers every repo discovered in phases 1/2/3 of
+ * the current cycle.
  *
  * The returned `repo_url`s are fed straight into the existing
  * `runCategorization(supabase, repoUrls)` — no change to its body.
@@ -63,23 +65,6 @@ export async function selectCategorizationRepoUrls(
     errors.push(`[Phase5] recent-rows query failed: ${recentError.message}`)
   } else {
     for (const row of (recentRows ?? []) as Array<{ repo_url: string | null }>) {
-      if (row.repo_url) urls.add(row.repo_url)
-    }
-  }
-
-  // Rows that have never been categorized — catches skills upserted in a
-  // prior cycle whose categorization sub-slot failed. `skill_categories` is
-  // the join table cleared + repopulated by `runCategorization`.
-  const { data: uncategorized, error: uncatError } = await supabase
-    .from('skills')
-    .select('repo_url, skill_categories(skill_id)')
-    .is('skill_categories', null)
-  if (uncatError) {
-    // Non-fatal: the embedded-resource `.is(null)` filter is best-effort; the
-    // recent-rows query already covers the common case.
-    errors.push(`[Phase5] uncategorized-rows query failed: ${uncatError.message}`)
-  } else {
-    for (const row of (uncategorized ?? []) as Array<{ repo_url: string | null }>) {
       if (row.repo_url) urls.add(row.repo_url)
     }
   }
