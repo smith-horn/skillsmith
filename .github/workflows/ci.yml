@@ -394,7 +394,7 @@ jobs:
           fi
           echo "gold-set.json: $COUNT entries"
       # Note: TypeScript type-check of eval/ is already performed by the
-      # `Type Check` job (pure-JS carve-out runs root `npm run typecheck` which
+      # `Quality Checks` job (pure-JS carve-out runs root `npm run typecheck` which
       # builds workspace deps via Turborepo). Re-running tsc here without
       # building @skillsmith/core would fail on unrelated src/ imports.
       - name: Run eval unit tests (metrics, ablation, drift check)
@@ -462,7 +462,7 @@ jobs:
             }
 
   # SMI-3985: Supply-chain pin drift guard for the three Wave 1 hardening
-  # surfaces that are NOT covered by `Standards Compliance` (audit-standards
+  # surfaces that are NOT covered by `Quality Checks` (audit-standards
   # Check 12, packages/*/package.json only) or `Security Audit` (npm audit):
   #   A. GitHub-native license + OpenSSF scorecard review (pull_request only)
   #   B. Deterministic drift guard: .mcp.json @latest, esm.sh semver pins,
@@ -518,10 +518,11 @@ jobs:
           comment-summary-in-pr: on-failure
 
       # B. Drift guard for the three Wave 1 hardened surfaces NOT covered by
-      #    `Standards Compliance` / `Security Audit`: esm.sh CDN imports,
+      #    `Quality Checks` / `Security Audit`: esm.sh CDN imports,
       #    .mcp.json @latest tags, third-party GH Actions SHA pins.
-      #    audit-standards.mjs Check 12 already runs in the `Standards
-      #    Compliance` job (ci.yml:1276) — do NOT call it again here.
+      #    audit-standards.mjs Check 12 already runs in the `Quality Checks`
+      #    job (the bundled lint+typecheck+audit:standards step) — do NOT
+      #    call it again here.
       - name: Supply-chain drift guard
         run: node scripts/ci/check-supply-chain-pins.mjs
 
@@ -983,21 +984,35 @@ jobs:
       # for future runs, not uploaded as artifact. The cache provides cross-run benefits
       # without the per-run upload overhead (~30-60s).
 
-  # Parallel quality checks using Docker container
-  # SMI-708: All jobs now use pre-extracted node_modules instead of npm ci
-  lint:
-    name: Lint
+  # SMI-4908: Bundle pure-JS quality trio (lint + typecheck + compliance) into a
+  # single host job. Saves ~3 min of duplicated setup (checkout + git-crypt
+  # unlock + setup-node + npm ci) per PR. Plan:
+  # docs/internal/implementation/ci-bundle-pure-js-quality-trio.md
+  #
+  # `if:` is the broader of the three pre-bundle conditions
+  # (code == 'true' only, dropping the lint/typecheck `skip_tests != 'true'`
+  # extra gate). Trade-off: Dependabot batch + release-cadence PRs now run all
+  # four steps where they previously skipped lint/typecheck. ~135s/PR added on
+  # that low-frequency path; accepted as a consistency win — full lint+typecheck
+  # on dep bumps is arguably correct anyway.
+  quality-checks:
+    name: Quality Checks
     # audit:carveout-pure-js — see docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [classify, detect-changes]
-    if: |
-      needs.detect-changes.outputs.code == 'true' &&
-      needs.classify.outputs.skip_tests != 'true'
+    if: needs.detect-changes.outputs.code == 'true'
 
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # SMI-4764 Wave 4 finding 2: audit:standards check 45 needs full
+          # history to compute origin/${baseRef}...HEAD diff. Default depth=1
+          # caused the diff to throw, the catch handler returned empty
+          # changedFiles, and check 45 silently no-op'd in every PR --
+          # zero protection as deployed. fetch-depth: 0 unblocks the diff.
+          fetch-depth: 0
 
       # SMI-2159: Decrypt git-crypt encrypted files
       # SMI-4770: composite action implements install-first-then-update for git-crypt.
@@ -1024,41 +1039,11 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
-  typecheck:
-    name: Type Check
-    # audit:carveout-pure-js — see docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [classify, detect-changes]
-    if: |
-      needs.detect-changes.outputs.code == 'true' &&
-      needs.classify.outputs.skip_tests != 'true'
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      # SMI-2159: Decrypt git-crypt encrypted files
-      # SMI-4770: composite action implements install-first-then-update for git-crypt.
-      - name: Unlock git-crypt
-        if: ${{ env.GIT_CRYPT_KEY != '' }}
-        env:
-          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        uses: ./.github/actions/unlock-git-crypt
-        with:
-          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
       - name: Run TypeScript type check
         run: npm run typecheck
+
+      - name: Run standards audit
+        run: npm run audit:standards
 
   # SMI-2192: Matrix-based test execution for affected packages
   # Runs tests in parallel per package, only for packages affected by changes
@@ -1507,46 +1492,8 @@ jobs:
       # SMI-1250: Removed coverage step - global thresholds don't apply to subset tests
       # Security tests run above without coverage; full coverage in main test job
 
-  compliance:
-    name: Standards Compliance
-    # audit:carveout-pure-js — see docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.code == 'true'
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          # SMI-4764 Wave 4 finding 2: audit:standards check 45 needs full
-          # history to compute origin/${baseRef}...HEAD diff. Default depth=1
-          # caused the diff to throw, the catch handler returned empty
-          # changedFiles, and check 45 silently no-op'd in every PR --
-          # zero protection as deployed. fetch-depth: 0 unblocks the diff.
-          fetch-depth: 0
-
-      # SMI-2159: Decrypt git-crypt encrypted files
-      # SMI-4770: composite action implements install-first-then-update for git-crypt.
-      - name: Unlock git-crypt
-        if: ${{ env.GIT_CRYPT_KEY != '' }}
-        env:
-          GIT_CRYPT_KEY: ${{ secrets.GIT_CRYPT_KEY }}
-        uses: ./.github/actions/unlock-git-crypt
-        with:
-          git-crypt-key: ${{ secrets.GIT_CRYPT_KEY }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Run standards audit
-        run: npm run audit:standards
+  # SMI-4908: `compliance` job folded into `quality-checks` above (lint +
+  # typecheck + audit:standards bundled to share one setup pass).
 
   # SMI-2116: Website Build Verification
   # Ensures website builds successfully when website files change
@@ -1683,7 +1630,7 @@ jobs:
     # audit:carveout-pure-js — see docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [lint, test, classify]
+    needs: [quality-checks, test, classify]
     # audit:allow-continue-on-error — non-blocking initially while we stabilize
     continue-on-error: true
     # Only run for code changes - skip for docs/config
@@ -1741,7 +1688,7 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lint, typecheck, test, security, compliance, detect-changes]
+    needs: [quality-checks, test, security, detect-changes]
     # SMI-3999: Explicit detect-changes gate. The lint/typecheck/security/compliance
     # chain-skip already covers this, but explicit gate makes the required-check
     # contract unambiguous to future readers. The `(test.result == 'skipped')` clause
@@ -1755,11 +1702,9 @@ jobs:
     if: |
       !cancelled() &&
       needs.detect-changes.outputs.code == 'true' &&
-      needs.lint.result == 'success' &&
-      needs.typecheck.result == 'success' &&
+      needs.quality-checks.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped') &&
-      needs.security.result == 'success' &&
-      needs.compliance.result == 'success'
+      needs.security.result == 'success'
 
     steps:
       - name: Checkout
