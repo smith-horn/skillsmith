@@ -14,14 +14,16 @@ services:
       # doc-retrieval-mcp memory-topic-files adapter. Source path uses
       # ${HOME} (resolved host-side at compose-parse time) +
       # ${SKILLSMITH_PROJECT_DIR_ENCODED} (per-contributor; see .env.schema).
+      # The `:-` empty-default is intentional (SMI-4910): contributors without
+      # a .env get a silent (warning-free) blank rather than a Compose WARN.
       # Bind always succeeds; if the source dir doesn't exist, Docker creates
       # an empty mount and the adapter's existsSync guard skips it gracefully.
       # Test profile and orchestrator omit this bind by design (CI runners
       # have no host memory dir; orchestrator does not index).
-      - ${HOME}/.claude/projects/${SKILLSMITH_PROJECT_DIR_ENCODED}/memory:/skillsmith-memory:ro
+      - ${HOME}/.claude/projects/${SKILLSMITH_PROJECT_DIR_ENCODED:-}/memory:/skillsmith-memory:ro
     environment:
       - NODE_ENV=development
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       # SMI-4677: tells doc-retrieval-mcp memory-topic-files adapter to
       # bypass its homedir()-derived path resolution and read from the
       # bind-mounted dir above instead.
@@ -71,7 +73,7 @@ services:
       - node_modules:/app/node_modules
     environment:
       - NODE_ENV=development
-      - LINEAR_API_KEY=${LINEAR_API_KEY}
+      - LINEAR_API_KEY=${LINEAR_API_KEY:-}
       - SKILLSMITH_PATH=/app
     working_dir: /app
     entrypoint: ['/app/docker-entrypoint.sh']

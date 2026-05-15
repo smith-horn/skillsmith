@@ -40,15 +40,30 @@ Not sure if your contribution fits? Open a [GitHub Discussion](https://github.co
 git clone https://github.com/smith-horn/skillsmith.git
 cd skillsmith
 
-# 2. Start Docker container
+# 2. Create your local environment file
+cp .env.example .env
+
+# 3. Start Docker container
 docker compose --profile dev up -d
 
-# 3. Install dependencies
+# 4. Install dependencies
 docker exec skillsmith-dev-1 npm install
 
-# 4. Run tests to verify setup
+# 5. Run tests to verify setup
 docker exec skillsmith-dev-1 npm test
 ```
+
+`.env.example` is the docker-compose onboarding minimum — it defines just the three variables
+`docker-compose.yml` interpolates, so step 2 alone keeps `docker compose up` warning-free. It is
+not a complete environment; the authoritative, full variable set (types, `@required`,
+`@sensitive`) lives in `.env.schema`. `.env` is gitignored — never commit it.
+
+### Maintainer setup (Smith Horn org members)
+
+Smith Horn team members should additionally populate `SKILLSMITH_PROJECT_DIR_ENCODED` in `.env` so
+the doc-retrieval memory bind (SMI-4677) resolves to the real host path. The generation one-liner
+is documented in `.env.schema` next to the variable definition. External contributors can leave
+the placeholder untouched — the dev container starts either way.
 
 ### Host-side install (SMI-4672)
 

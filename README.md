@@ -280,13 +280,16 @@ Skillsmith uses **Docker-first development**. All commands run inside Docker to 
 git clone https://github.com/smith-horn/skillsmith.git
 cd skillsmith
 
-# 2. Start the development container
+# 2. Create your local environment file
+cp .env.example .env
+
+# 3. Start the development container
 docker compose --profile dev up -d
 
-# 3. Install dependencies (first time only)
+# 4. Install dependencies (first time only)
 docker exec skillsmith-dev-1 npm install
 
-# 4. Build and test
+# 5. Build and test
 docker exec skillsmith-dev-1 npm run build
 docker exec skillsmith-dev-1 npm test
 ```
