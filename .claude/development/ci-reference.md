@@ -81,10 +81,8 @@ The `main` branch is protected. Config: `.github/branch-protection.json`.
 | Package Validation | ci.yml | Verify package.json scope |
 | Edge Function Validation | ci.yml | Validate Supabase function structure |
 | Build Docker Image | ci.yml | Build development container |
-| Lint | ci.yml | ESLint and Prettier |
-| Type Check | ci.yml | TypeScript type checking |
+| Quality Checks | ci.yml | ESLint, Prettier, TypeScript type check, governance standards audit (bundled — SMI-4908) |
 | Security Audit | ci.yml | npm audit and security tests |
-| Standards Compliance | ci.yml | Governance standards audit |
 | Build | ci.yml | Build all packages via Turborepo |
 | Markdown Lint | docs-only.yml | Documentation quality |
 | Verify Implementation Completeness | ci.yml | Verify PRs with SMI refs contain source changes |
@@ -92,7 +90,7 @@ The `main` branch is protected. Config: `.github/branch-protection.json`.
 
 ### How It Works
 
-- **Code PRs**: All 13 checks must pass
+- **Code PRs**: All 10 required checks must pass (the `required_status_checks.contexts` set in `.github/branch-protection.json`)
 - **Docs-only PRs**: Only Secret Scan + Markdown Lint (from `docs-only.yml`)
 - **Mixed PRs**: Full CI runs
 
@@ -127,21 +125,23 @@ gh api repos/Smith-Horn/skillsmith/branches/main/protection -X PUT --input .gith
 
 ## Pure-JS Carve-Out (SMI-4647)
 
-Four CI jobs run on the host runner instead of inside the Docker image: `lint`, `typecheck` (Type Check), `compliance` (Standards Compliance), and `code-review` (Code Review). They are exempt from the project-wide Docker-first directive because their import closures contain zero native bindings.
+Two CI jobs run on the host runner instead of inside the Docker image: `quality-checks` (Quality Checks — bundles ESLint, Prettier, `tsc`, and `audit:standards` since SMI-4908) and `code-review` (Code Review). They are exempt from the project-wide Docker-first directive because their import closures contain zero native bindings.
 
 ### Why
 
-`Build Docker Image` adds ~5 min to first-feedback wall-clock. Pre-carve-out, these four jobs all gated on `needs: docker-build` despite never loading `better-sqlite3` / `onnxruntime-node`. Dropping the gate lets them start at T+0 alongside `secret-scan` and `package-validation`.
+`Build Docker Image` adds ~5 min to first-feedback wall-clock. Pre-carve-out, these jobs all gated on `needs: docker-build` despite never loading `better-sqlite3` / `onnxruntime-node`. Dropping the gate lets them start at T+0 alongside `secret-scan` and `package-validation`.
 
 ### Pattern (must match exactly)
 
 ```yaml
-lint:                                        # also typecheck, compliance, code-review
-  name: Lint
+quality-checks:                              # also code-review
+  name: Quality Checks
   # audit:carveout-pure-js — see docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md
   needs: [classify, detect-changes]          # NO docker-build
   steps:
     - uses: actions/checkout@<sha>
+      with:
+        fetch-depth: 0                        # SMI-4764: audit:standards check 45 diff
     - name: Unlock git-crypt
       ...
     - uses: actions/setup-node@<sha>
@@ -149,7 +149,7 @@ lint:                                        # also typecheck, compliance, code-
         node-version: ${{ env.NODE_VERSION }}
         cache: 'npm'
     - run: npm ci --ignore-scripts            # skips native postinstall
-    - run: npm run lint                       # or typecheck / audit:standards
+    - run: npm run lint                       # then format:check / typecheck / audit:standards
 ```
 
 Convention precedent: `release-cadence.yml:84` and the `package-validation` job in `ci.yml`. New carve-out jobs MUST match the same `setup-node` SHA, `cache: 'npm'`, and `--ignore-scripts` flag.
@@ -166,9 +166,7 @@ graph LR
   secret-scan --> docker-build
   package-validation --> docker-build
 
-  classify -.no docker.-> lint
-  classify -.no docker.-> typecheck
-  classify -.no docker.-> compliance
+  classify -.no docker.-> quality-checks
 
   docker-build --> test
   docker-build --> test-root
@@ -177,7 +175,7 @@ graph LR
   docker-build --> build
   docker-build --> fresh-install-test
 
-  lint --> code-review
+  quality-checks --> code-review
   test --> code-review
 ```
 
@@ -194,7 +192,7 @@ Both invariants block CI on violation. The deny-list updates in lockstep when a 
 
 ### Branch protection compatibility
 
-Job `name:` fields are unchanged (`Lint`, `Type Check`, `Standards Compliance`, `Code Review`). `.github/branch-protection.json` requires no edit.
+SMI-4908 folded the three former carve-out jobs (`Lint`, `Type Check`, `Standards Compliance`) into one `Quality Checks` status check. `.github/branch-protection.json` lists `Quality Checks` in `required_status_checks.contexts` (replacing the three old names). When renaming or re-bundling a required job, update `branch-protection.json` and re-apply via `gh api ... -X PUT` — there is a brief window where merges need admin bypass until the new context name is applied.
 
 ## `continue-on-error` Audit (SMI-3217)
 
@@ -408,4 +406,4 @@ Extracted from CLAUDE.md (SMI-4828). Authoritative guidance on transitive vulner
 
 ## Docker-First CI Carve-out (SMI-4647)
 
-Four pure-JS jobs run on the host runner via `actions/setup-node@v6` + `npm ci --ignore-scripts` + direct execution: `lint`, `typecheck` (Type Check), `compliance` (Standards Compliance), and `code-review` (Code Review). They are exempt because their import closures contain zero native bindings (verified: ESLint, Prettier, `tsc`, `audit-standards.mjs`, `ci-code-review.sh`). The carve-out lets these jobs start at T+0 instead of waiting ~5 min on `Build Docker Image`. All other jobs (`test`, `test-root`, `security`, `build`, `website-build`, `fresh-install-test`) remain Docker-bound. New jobs default to Docker; opting into the carve-out requires a `# audit:carveout-pure-js` marker comment, which `audit:standards` Check 38 enforces. Plan: [smi-4647-pure-js-carveout-and-drift-check.md](../../docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md).
+Two pure-JS jobs run on the host runner via `actions/setup-node@v6` + `npm ci --ignore-scripts` + direct execution: `quality-checks` (Quality Checks — bundles ESLint, Prettier, `tsc`, `audit-standards.mjs` since SMI-4908) and `code-review` (Code Review, `ci-code-review.sh`). They are exempt because their import closures contain zero native bindings. The carve-out lets these jobs start at T+0 instead of waiting ~5 min on `Build Docker Image`. All other jobs (`test`, `test-root`, `security`, `build`, `website-build`, `fresh-install-test`) remain Docker-bound. New jobs default to Docker; opting into the carve-out requires a `# audit:carveout-pure-js` marker comment, which `audit:standards` Check 38 enforces. Plan: [smi-4647-pure-js-carveout-and-drift-check.md](../../docs/internal/implementation/smi-4647-pure-js-carveout-and-drift-check.md).
