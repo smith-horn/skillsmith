@@ -7,7 +7,7 @@ updated: 2026-05-15
 category: "Engineering"
 tags: ["architecture", "enterprise", "supabase", "rbac", "sso", "private-registry", "mcp", "reference-architecture", "elastic-license"]
 featured: true
-draft: true
+draft: false
 ogImage: "https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200,h_630,c_fill/blog/enterprise-reference-architecture/01-system-overview"
 ---
 
