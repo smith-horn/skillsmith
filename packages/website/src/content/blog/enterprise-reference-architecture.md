@@ -87,22 +87,31 @@ data plane — and it is yours.
 
 ## Indexer & registry data flow
 
-![Left-to-right data flow diagram: the server-side indexer edge function crawls GitHub repositories and writes skills into the Supabase Postgres registry; the client-side skillsmith sync command then pulls that curated registry into each developer's local SQLite database.](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/enterprise-reference-architecture/03-indexer-data-flow)
+![Data flow diagram: external sources (GitHub) and internal sources (developer laptops, shared drives, private repos) both feed the Supabase Postgres registry — GitHub via the server-side indexer edge function, internal skills via publish_private — and the client-side skillsmith sync command then pulls that registry into each developer's local SQLite database.](https://res.cloudinary.com/diqcbcmaq/image/upload/f_auto,q_auto,w_1200/blog/enterprise-reference-architecture/03-indexer-data-flow)
 
-Two distinct mechanisms keep skills flowing, and it is worth being precise about
-which does what:
+Skills reach the registry from two kinds of source — external and internal — and
+three mechanisms move them:
 
 1. **The indexer** is a server-side edge function. On a schedule (four times a
-   day in our hosted deployment) it crawls GitHub via the Search and Code Search
-   APIs, under rate-limit budgets, and writes discovered skills into the Supabase
-   Postgres registry.
-2. **`skillsmith sync`** is a client-side command. It pulls the curated registry
-   from the hosted API into each developer's local SQLite database — fast,
-   offline-capable search without re-crawling anything.
+   day in our hosted deployment) it crawls **GitHub** via the Search and Code
+   Search APIs, under rate-limit budgets, and writes discovered skills into the
+   Supabase Postgres registry.
+2. **Internal authored skills** are your own organization's source. In most
+   companies these start scattered — a `SKILL.md` on one developer's laptop, a
+   prompt on a shared drive, a snippet in a private repo, none of it discoverable
+   by anyone else. `publish_private` and `private_registry_publish` move them
+   into your internal registry, where they become **shared** (the whole team can
+   find them), **indexed** (searchable like any other skill), and
+   **version-controlled** (tracked, diffable, updatable) instead of stranded on
+   one machine.
+3. **`skillsmith sync`** is a client-side command. It pulls the registry into
+   each developer's local SQLite database — fast, offline-capable search without
+   re-crawling anything.
 
-A partner deployment can do either or both: run the indexer against GitHub to
-build its own registry, and/or seed from the public Skillsmith registry so
-developers start with a curated set instead of an empty index.
+A partner deployment composes these: seed from the public Skillsmith registry
+and/or run the indexer against GitHub for breadth, then layer your own internal
+skills on top — one searchable, governed catalog instead of tribal knowledge
+scattered across drives and laptops.
 
 ## Provisioning and access control
 
@@ -139,5 +148,5 @@ auditor as finished.
   registry; add SSO and RBAC as that layer matures — without re-platforming.
 
 If you are evaluating Skillsmith for an enterprise deployment, this is the shape
-of what you would be running. [Get in touch](https://skillsmith.app) and we can
-walk through it against your environment.
+of what you would be running. [Get in touch](/contact) and we can walk through it
+against your environment.
