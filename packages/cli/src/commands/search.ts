@@ -9,8 +9,6 @@ import { input, checkbox, number, select } from '@inquirer/prompts'
 import chalk from 'chalk'
 import ora from 'ora'
 import {
-  createDatabaseAsync,
-  initializeSchema,
   SearchService,
   SkillRepository,
   SkillDependencyRepository,
@@ -20,6 +18,8 @@ import {
   type RegistryLookup,
   type RegistrySkillInfo,
 } from '@skillsmith/core'
+import { openCliDatabase } from '../utils/open-database.js'
+import { autoSyncIfEmpty } from './search.helpers.js'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 import { type InteractiveSearchState, type SearchPhase, PAGE_SIZE } from './search-types.js'
@@ -42,7 +42,9 @@ export {
  * Uses iterative while loop instead of recursion for new searches.
  */
 async function runInteractiveSearch(dbPath: string): Promise<void> {
-  const db = await createDatabaseAsync(dbPath)
+  const db = await openCliDatabase(dbPath)
+  // SMI-4917 Bug 3: bootstrap the local registry on a first-time search.
+  await autoSyncIfEmpty(db)
   const searchService = new SearchService(db)
 
   console.log(chalk.bold.blue('\n=== Skillsmith Interactive Search ===\n'))
@@ -67,9 +69,11 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
           message: 'Filter by trust tier (select with space, enter to continue):',
           choices: [
             { name: chalk.green('Verified'), value: 'verified' },
+            { name: chalk.blue('Curated'), value: 'curated' },
             { name: chalk.yellow('Community'), value: 'community' },
             { name: chalk.red('Experimental'), value: 'experimental' },
             { name: chalk.gray('Unknown'), value: 'unknown' },
+            { name: chalk.cyan('Local'), value: 'local' },
           ],
         })
 
@@ -203,7 +207,6 @@ async function runInteractiveSearch(dbPath: string): Promise<void> {
             if (nextAction === 'install') {
               const installSpinner = ora('Installing skill...').start()
               try {
-                initializeSchema(db)
                 const skillRepo = new SkillRepository(db)
                 const skillDependencyRepo = new SkillDependencyRepository(db)
                 const registryLookup: RegistryLookup = {
@@ -275,7 +278,9 @@ async function runSearch(
     maxRisk?: number
   }
 ): Promise<void> {
-  const db = await createDatabaseAsync(options.db)
+  const db = await openCliDatabase(options.db)
+  // SMI-4917 Bug 3: bootstrap the local registry on a first-time search.
+  await autoSyncIfEmpty(db)
   const searchService = new SearchService(db)
 
   try {
@@ -341,7 +346,7 @@ Quality Score Formula:
     .option('-l, --limit <number>', 'Maximum results to show', '20')
     .option(
       '-t, --tier <tier>',
-      'Filter by trust tier (verified, community, experimental, unknown)'
+      'Filter by trust tier (verified, curated, community, experimental, unknown, local)'
     )
     .option(
       '-c, --category <category>',

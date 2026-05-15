@@ -6,6 +6,7 @@ import { hostname } from 'node:os'
 import { Command } from 'commander'
 import { password } from '@inquirer/prompts'
 import chalk from 'chalk'
+import ora from 'ora'
 import {
   getApiKey,
   getApiBaseUrl,
@@ -16,6 +17,9 @@ import {
   type TokenCredentials,
 } from '@skillsmith/core'
 import { VERSION as CLI_VERSION } from '../version.js'
+import { DEFAULT_DB_PATH } from '../config.js'
+import { openCliDatabase } from '../utils/open-database.js'
+import { runRegistrySync } from './run-registry-sync.js'
 
 const DEVICE_PAGE_URL = 'https://skillsmith.app/device'
 const DEVICE_CODE_TIMEOUT_MS = 15 * 60 * 1000
@@ -146,6 +150,32 @@ async function pollDeviceToken(deviceCode: string): Promise<PollResult> {
   }
 }
 
+/**
+ * SMI-4917 Bug 3: bootstrap the local skill registry immediately after a
+ * successful login so the very next `skillsmith search` returns results.
+ *
+ * Non-fatal: credentials are already persisted by `storeCredentials` /
+ * `storeApiKey` before this runs. A sync failure (offline, API error) downgrades
+ * to a warning and never changes the login exit code. `ora` no-ops on a non-TTY
+ * stream, so headless logins are unaffected.
+ *
+ * Shared by both the device-code flow and the paste-legacy flow (M1).
+ */
+async function postLoginSync(): Promise<void> {
+  const syncSpinner = ora('Syncing skills from the registry…').start()
+  try {
+    const db = await openCliDatabase(DEFAULT_DB_PATH)
+    try {
+      const result = await runRegistrySync(db)
+      syncSpinner.succeed(chalk.green(`Synced ${result.totalProcessed} skills.`))
+    } finally {
+      db.close()
+    }
+  } catch {
+    syncSpinner.warn(chalk.yellow('Skills sync skipped — run `skillsmith sync` later.'))
+  }
+}
+
 async function runDeviceCodeFlow(noBrowser: boolean): Promise<void> {
   let dc: DeviceCodeBody
   try {
@@ -234,6 +264,8 @@ async function runDeviceCodeFlow(noBrowser: boolean): Promise<void> {
 
     await storeCredentials({ ...result.creds, version: 2 })
     console.log(chalk.green('\nLogged in successfully.'))
+    // SMI-4917 Bug 3: auto-sync the registry so the first search returns results.
+    await postLoginSync()
     // SMI-4447: close the "did it work?" gap post-login. A single concrete command the
     // user can run in-terminal beats a URL (phishing-safe, no browser context switch).
     console.log(chalk.dim('  Try it: skillsmith search mcp'))
@@ -282,6 +314,10 @@ async function runPasteLegacyFlow(): Promise<void> {
       }
       console.log(chalk.green('\nLogged in successfully.'))
       console.log(chalk.dim('  Clear your clipboard when done.'))
+      // SMI-4917 Bug 3: auto-sync the registry so the first search returns results.
+      await postLoginSync()
+      // SMI-4447 parity: give the paste path the same concrete next-step hint.
+      console.log(chalk.dim('  Try it: skillsmith search mcp'))
       process.exit(EXIT.success)
     }
   } catch (err) {

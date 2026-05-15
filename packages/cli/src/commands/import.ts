@@ -14,7 +14,8 @@
  */
 
 import { Command } from 'commander'
-import { createDatabaseAsync, SkillRepository, type SkillCreateInput } from '@skillsmith/core'
+import { SkillRepository, type SkillCreateInput } from '@skillsmith/core'
+import { openCliDatabase } from '../utils/open-database.js'
 import { DEFAULT_DB_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
 
@@ -272,7 +273,7 @@ export async function importSkills(options: ImportOptions = {}): Promise<ImportR
   }
 
   // Initialize database
-  const db = await createDatabaseAsync(dbPath)
+  const db = await openCliDatabase(dbPath)
   const skillRepo = new SkillRepository(db)
 
   console.log(`Searching for repositories with topic: ${topic}...`)

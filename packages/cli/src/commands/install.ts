@@ -9,8 +9,6 @@ import { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
 import {
-  createDatabaseAsync,
-  initializeSchema,
   SkillRepository,
   SkillDependencyRepository,
   SkillInstallationService,
@@ -20,6 +18,7 @@ import {
   type RegistryLookup,
   type RegistrySkillInfo,
 } from '@skillsmith/core'
+import { openCliDatabase } from '../utils/open-database.js'
 import { addLink, assertClientId, getInstallPath, type ClientId } from '@skillsmith/core/install'
 import { DEFAULT_DB_PATH, DEFAULT_MANIFEST_PATH } from '../config.js'
 import { sanitizeError } from '../utils/sanitize.js'
@@ -244,8 +243,7 @@ export function createInstallCommand(): Command {
           }
 
           const dbPath = opts.db ?? DEFAULT_DB_PATH
-          const db = await createDatabaseAsync(dbPath)
-          initializeSchema(db)
+          const db = await openCliDatabase(dbPath)
 
           const spinner = jsonOutput ? null : ora('Installing skill...').start()
 
