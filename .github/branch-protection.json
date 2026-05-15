@@ -9,10 +9,8 @@
       "Package Validation",
       "Edge Function Validation",
       "Build Docker Image",
-      "Lint",
-      "Type Check",
+      "Quality Checks",
       "Security Audit",
-      "Standards Compliance",
       "Build",
       "Markdown Lint",
       "Verify Implementation Completeness"
