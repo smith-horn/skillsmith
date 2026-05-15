@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS skills (
   author TEXT,
   repo_url TEXT UNIQUE,
   quality_score REAL CHECK(quality_score IS NULL OR (quality_score >= 0 AND quality_score <= 1)),
-  trust_tier TEXT CHECK(trust_tier IN ('verified', 'community', 'experimental', 'unknown', 'local')) DEFAULT 'unknown', -- SMI-4665: added 'local' for filesystem-imported skills
+  trust_tier TEXT CHECK(trust_tier IN ('verified', 'curated', 'community', 'experimental', 'unknown', 'local')) DEFAULT 'unknown', -- SMI-4665: added 'local'; SMI-4917: added 'curated'
   tags TEXT DEFAULT '[]', -- JSON array of tags
   risk_score INTEGER CHECK(risk_score IS NULL OR (risk_score >= 0 AND risk_score <= 100)), -- SMI-825
   security_findings_count INTEGER DEFAULT 0,
