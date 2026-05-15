@@ -67,7 +67,7 @@ Zero ESLint warnings/errors. TypeScript strict (no unjustified `any`). All files
 
 ## Project Overview
 
-Skillsmith is an MCP server for Claude Code skill discovery, installation, and management. Packages: `@skillsmith/core` (DB, repositories, services), `@skillsmith/mcp-server` (MCP tools), `@skillsmith/cli`. License: [Elastic 2.0](https://www.elastic.co/licensing/elastic-license) ([ADR-013](docs/internal/adr/013-open-core-licensing.md)). Quick Start: [README](README.md).
+Skillsmith is an MCP server for Claude Code skill discovery, installation, and management. Packages: `@skillsmith/core` (DB, repositories, services), `@skillsmith/mcp-server` (MCP tools), `@skillsmith/cli`. License: [Elastic License 2.0](https://www.elastic.co/licensing/elastic-license) — all packages, source-available ([ADR-119](docs/internal/adr/119-unified-elastic-license.md)). Quick Start: [README](README.md).
 
 | Tier | Price | API Calls/Month |
 |------|-------|-----------------|
