@@ -33,6 +33,7 @@ import {
   type TreeHashCache,
   type TreeHashCacheCounters,
 } from '../high-trust-indexer.ts'
+import type { TreeHashTouchEntry } from '../tree-hash-touch.ts'
 import type { GitHubRepository } from '../topic-search.ts'
 import type { SkillMdValidation } from '../skill-processor.ts'
 
@@ -68,6 +69,11 @@ export interface HighTrustPhaseParams {
   treeHashCache?: TreeHashCache
   /** SMI-4861 Wave 1: cache hit/miss counters surfaced into audit-log meta. */
   cacheCounters?: TreeHashCacheCounters
+  /**
+   * SMI-4861 cache-refresh-on-hit: per-hit touch list. Phase 1 appends one
+   * entry per cache hit; the orchestrator batch-refreshes them after Phase 1.
+   */
+  treeHashTouches?: TreeHashTouchEntry[]
 }
 
 /**
@@ -86,6 +92,7 @@ export async function runHighTrustPhase(
     concurrency,
     treeHashCache,
     cacheCounters,
+    treeHashTouches,
   } = params
 
   console.log(`Indexing ${HIGH_TRUST_AUTHORS.length} high-trust authors...`)
@@ -103,7 +110,8 @@ export async function runHighTrustPhase(
             validationOptions,
             telemetry,
             treeHashCache,
-            cacheCounters
+            cacheCounters,
+            treeHashTouches
           ),
         { baseMs: 1000, maxMs: 60000, maxRetries: 5 }
       )

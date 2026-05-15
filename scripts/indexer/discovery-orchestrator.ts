@@ -35,6 +35,7 @@ import {
   runUpsertPhase,
   writeIndexerAuditLog,
 } from './indexer-runners.ts'
+import { applyTreeHashTouches, type TreeHashTouchEntry } from './tree-hash-touch.ts'
 import type { RotationSource } from './topic-rotation.ts'
 import type { IndexerRequest, IndexerResult } from './indexer-types.ts'
 import { runHighTrustPhase } from './phases/high-trust.ts'
@@ -163,6 +164,9 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
 
   // ── Phase 1: High-trust authors ──────────────────────────────────────
   // Plan issue #14: extracted to phases/high-trust.ts to keep this file < 350 LOC.
+  // SMI-4861 cache-refresh-on-hit: collect per-hit touches; batch-refresh
+  // last_tree_hash_check after Phase 1 so cached rows stay fresh.
+  const treeHashTouches: TreeHashTouchEntry[] = []
   const phase1 = await runHighTrustPhase({
     validationCache,
     validationOptions,
@@ -170,7 +174,17 @@ export async function runDiscovery(params: RunDiscoveryParams): Promise<IndexerR
     concurrency,
     treeHashCache,
     cacheCounters,
+    treeHashTouches,
   })
+  if (treeHashTouches.length > 0) {
+    const touchResult = await applyTreeHashTouches(supabase, treeHashTouches)
+    if (touchResult.errors.length > 0) {
+      console.warn(
+        `[Phase1] tree_hash touch errors (${touchResult.errors.length}/${treeHashTouches.length}): ${touchResult.errors.slice(0, 3).join('; ')}`
+      )
+    }
+    console.log(`[Phase1] tree_hash touches: ${touchResult.ok}/${treeHashTouches.length} refreshed`)
+  }
   for (const skill of phase1.repos) {
     if (!seenUrls.has(skill.url)) {
       seenUrls.add(skill.url)

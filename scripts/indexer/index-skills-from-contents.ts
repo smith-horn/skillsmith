@@ -29,6 +29,7 @@ import {
   type TreeHashCache,
   type TreeHashCacheCounters,
 } from './tree-hash-cache.ts'
+import type { TreeHashTouchEntry } from './tree-hash-touch.ts'
 
 /** Shared repo metadata shape fetched from GitHub API. */
 export interface RepoData {
@@ -53,7 +54,9 @@ export async function indexSkillsFromContents(
   // SMI-4861 Wave 1: tree-hash cache plumbing. Defaults `undefined` = no-op.
   treeHashCache?: TreeHashCache,
   cacheCounters?: TreeHashCacheCounters,
-  plainPathBlobShas?: Map<string, string>
+  plainPathBlobShas?: Map<string, string>,
+  // SMI-4861 cache-refresh-on-hit: per-hit touch list (Phase-1 batch refresh).
+  treeHashTouches?: TreeHashTouchEntry[]
 ): Promise<{ skills: GitHubRepository[]; errors: string[] }> {
   const skills: GitHubRepository[] = []
   const errors: string[] = []
@@ -141,6 +144,13 @@ export async function indexSkillsFromContents(
     const blobSha = plainPathBlobShas?.get(skillPath)
     if (treeHashCacheHit(treeHashCache, treeHashCacheKey(repoUrl, skillPath), blobSha)) {
       if (cacheCounters) cacheCounters.hits++
+      // SMI-4861 cache-refresh-on-hit: record for post-Phase-1 batch refresh.
+      if (treeHashTouches) {
+        treeHashTouches.push({
+          repo_url: `https://github.com/${author.owner}/${author.repo}/tree/${repoData.default_branch}/${skillPath}`,
+          skill_path: skillPath,
+        })
+      }
       continue
     }
     if (treeHashCache && blobSha && cacheCounters) cacheCounters.misses++
