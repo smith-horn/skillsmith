@@ -36,6 +36,11 @@ SHA="$1"
 command -v gh >/dev/null || { echo "missing: gh CLI" >&2; exit 2; }
 command -v jq >/dev/null || { echo "missing: jq" >&2; exit 2; }
 
+# Process-scoped scratch dir — avoids predictable /tmp paths (symlink attack
+# surface) and collisions between concurrent runs.
+SCRATCH=$(mktemp -d)
+trap 'rm -rf "$SCRATCH"' EXIT
+
 # Fetch the merge commit's date as the pivot point.
 PIVOT_ISO=$(gh api "repos/$REPO/commits/$SHA" --jq .commit.committer.date) || {
   echo "could not resolve commit $SHA in $REPO" >&2
@@ -93,14 +98,14 @@ sum_minutes() {
   echo "$label: $valid valid samples, total ${total_ms} ms ($(awk "BEGIN{printf \"%.1f\", $total_ms/60000}") min)"
   echo ""
   # Stash for delta calculation.
-  echo "$valid:$total_ms" > "/tmp/ci-minutes-$label.txt"
+  echo "$valid:$total_ms" > "$SCRATCH/$label.txt"
 }
 
 sum_minutes "before" "${before[@]}"
 sum_minutes "after"  "${after[@]}"
 
-before_data=$(cat /tmp/ci-minutes-before.txt)
-after_data=$(cat /tmp/ci-minutes-after.txt)
+before_data=$(cat "$SCRATCH/before.txt")
+after_data=$(cat "$SCRATCH/after.txt")
 before_valid="${before_data%%:*}"
 before_ms="${before_data##*:}"
 after_valid="${after_data%%:*}"
