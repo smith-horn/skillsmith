@@ -6,12 +6,8 @@
  * @see SMI-4665
  */
 import { Command } from 'commander'
-import {
-  createDatabaseAsync,
-  initializeSchema,
-  SkillRepository,
-  type SkillCreateInput,
-} from '@skillsmith/core'
+import { SkillRepository, type SkillCreateInput } from '@skillsmith/core'
+import { openCliDatabase } from '../utils/open-database.js'
 import {
   getCanonicalInstallPath,
   getInstallPath,
@@ -97,8 +93,7 @@ export async function runImportLocal(opts: ImportLocalOptions): Promise<ImportLo
 
   if (opts.dryRun) {
     // Tally without writing.
-    const db = await createDatabaseAsync(dbPath)
-    initializeSchema(db)
+    const db = await openCliDatabase(dbPath)
     try {
       const repo = new SkillRepository(db)
       for (const record of records) {
@@ -121,8 +116,7 @@ export async function runImportLocal(opts: ImportLocalOptions): Promise<ImportLo
   }
 
   // Real import.
-  const db = await createDatabaseAsync(dbPath)
-  initializeSchema(db)
+  const db = await openCliDatabase(dbPath)
   try {
     const repo = new SkillRepository(db)
     for (const record of records) {
