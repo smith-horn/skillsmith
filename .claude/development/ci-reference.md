@@ -79,13 +79,13 @@ The `main` branch is protected. Config: `.github/branch-protection.json`.
 | Secret Scan | ci.yml, docs-only.yml | Detect committed credentials |
 | Classify Changes | ci.yml | Categorize change type |
 | Package Validation | ci.yml | Verify package.json scope |
-| Edge Function Validation | ci.yml | Validate Supabase function structure |
 | Build Docker Image | ci.yml | Build development container |
 | Quality Checks | ci.yml | ESLint, Prettier, TypeScript type check, governance standards audit (bundled — SMI-4908) |
 | Security Audit | ci.yml | npm audit and security tests |
 | Build | ci.yml | Build all packages via Turborepo |
 | Markdown Lint | docs-only.yml | Documentation quality |
-| Verify Implementation Completeness | ci.yml | Verify PRs with SMI refs contain source changes |
+| PR Validation (Node) | ci.yml | Verify PRs with SMI refs contain source changes + doc-drift (bundled — SMI-4924) |
+| PR Validation (Shell) | ci.yml | Edge function structure + smoke-prod pre-ship validation + migration SQL lint (bundled — SMI-4924) |
 | Dependency Guard | ci.yml | Block known-vulnerable dep upgrades (SMI-3985, promoted 2026-04-21) |
 
 ### How It Works

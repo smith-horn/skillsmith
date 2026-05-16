@@ -5,7 +5,7 @@ name: CI
 # job with `needs: [detect-changes]` + `if: needs.detect-changes.outputs.code == 'true'`
 # so that pure doc-only commits emit `skipped -> success` for all 9 ci.yml-defined
 # required contexts. This mirrors SMI-3997's fix for docs-only.yml (PR #493) and
-# the SMI-3546 `verify-implementation` precedent at ci.yml:122-139.
+# the SMI-3546 precedent now carried by the `pr-validation-node` job (SMI-4924).
 #
 # Previously, workflow-level `paths-ignore` suppressed ci.yml entirely on pure
 # doc-only PRs, leaving the 9 contexts *missing* (not skipped) on the commit,
@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     # SMI-2267 + SMI-3997 Finding #5: Scope pull-requests:read to ONLY the job that
-    # needs it (matches ci.yml:128-129 verify-implementation pattern). Workflow-level
+    # needs it (matches the `pr-validation-node` job pattern, SMI-4924). Workflow-level
     # stays contents:read per SMI-2267 hardening.
     permissions:
       contents: read
@@ -189,53 +189,38 @@ jobs:
           # Detect affected packages (outputs written to GITHUB_OUTPUT by script)
           echo "$CHANGED_FILES" | npx tsx scripts/ci/detect-affected.ts > /dev/null
 
-  # SMI-3541: Verify PRs referencing Linear issues contain source code changes
-  # Required check since 2026-04-05 (SMI-3546)
-  verify-implementation:
-    name: Verify Implementation Completeness
-    # SMI-3999: Explicitly gate on detect-changes. On pure-doc PRs, classify skips,
-    # its outputs.tier is empty, and `tier != 'docs'` would still evaluate true,
-    # which would mean this job runs its Node-based verifier on a commit with no
-    # code — currently harmless but wasteful. Add explicit detect-changes guard.
+  # SMI-4924: PR Validation (Node) — bundles verify-implementation (SMI-3541/3546,
+  # required check since 2026-04-05) and doc-drift (SMI-3882). The job-level if is
+  # verify-implementation's gate; verify-implementation's old `tier != 'docs'`
+  # guard is subsumed (a doc-only PR has code == 'false', so the job skips).
+  # doc-drift's narrower gate (classify.tier == 'code') moves to its step, and the
+  # Doc drift check step keeps step-level continue-on-error: true so a drift
+  # failure does not fail this required job (doc-drift is non-blocking, SMI-3882).
+  pr-validation-node:
+    name: PR Validation (Node)
     needs: [classify, detect-changes]
-    if: |
-      github.event_name == 'pull_request' &&
-      needs.detect-changes.outputs.code == 'true' &&
-      needs.classify.outputs.tier != 'docs'
+    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
     permissions:
       pull-requests: read
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - run: npx tsx scripts/ci/verify-implementation.ts --pr-number ${{ github.event.pull_request.number }}
+      - name: Verify implementation
+        run: npx tsx scripts/ci/verify-implementation.ts --pr-number ${{ github.event.pull_request.number }}
         env:
           GH_TOKEN: ${{ github.token }}
-
-  # SMI-3882: Detect code changes that lack corresponding documentation updates
-  # Non-blocking during 2-week stabilization (continue-on-error: true)
-  doc-drift:
-    name: Documentation Drift Check
-    needs: [classify]
-    if: github.event_name == 'pull_request' && needs.classify.outputs.tier == 'code'
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    continue-on-error: true # audit:allow-continue-on-error — stabilization period, not a required check
-    permissions:
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - run: npx tsx scripts/ci/check-doc-drift.ts --pr-number ${{ github.event.pull_request.number }}
+      - name: Doc drift check
+        if: needs.classify.outputs.tier == 'code'
+        continue-on-error: true # audit:allow-continue-on-error — SMI-3882 stabilization, not a required check
+        run: npx tsx scripts/ci/check-doc-drift.ts --pr-number ${{ github.event.pull_request.number }}
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -526,24 +511,29 @@ jobs:
       - name: Supply-chain drift guard
         run: node scripts/ci/check-supply-chain-pins.mjs
 
-  # SMI-1903: Validate Edge Function structure and configuration
-  # Ensures all functions have proper structure and are categorized
-  edge-function-validation:
-    name: Edge Function Validation
-    # SMI-3999: Gate on detect-changes.
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.code == 'true'
+  # SMI-4924: PR Validation (Shell) — bundles edge-function-validation (SMI-1903),
+  # smoke-prod-validation (SMI-4459), and migration-lint (SMI-2595) into one host
+  # job. Single checkout (fetch-depth: 0, required by the migration base-ref diff).
+  # `!cancelled()` is load-bearing: edge/smoke depend only on detect-changes, so
+  # the job must not skip when `classify` fails (matches migration-lint's own if).
+  pr-validation-shell:
+    name: PR Validation (Shell)
+    needs: [classify, detect-changes]
+    if: ${{ !cancelled() && needs.detect-changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
 
-      - name: Validate Edge Functions
+      # --- Edge Function Validation (SMI-1903) ---
+      - name: Validate edge functions
         run: ./scripts/validate-edge-functions.sh
 
-      - name: Generate validation report
+      - name: Edge function report
         if: always()
         run: |
           echo "## Edge Function Validation" >> $GITHUB_STEP_SUMMARY
@@ -564,30 +554,15 @@ jobs:
             fi
           done
 
-  # SMI-4459: Pre-ship validation for the post-deploy smoke harness.
-  # Runs on every code PR. Asserts:
-  #   - bash -n on smoke-prod.sh + per-surface scripts (syntax)
-  #   - shellcheck (lint; same -S warning level as validate-hooks.yml)
-  #   - --dry-run resolves surfaces from a synthetic changed-file set
-  #   - --surface=health canary against real prod (~1s; proves wiring end-to-end)
-  # The harness itself runs post-deploy via .github/workflows/smoke-prod.yml.
-  smoke-prod-validation:
-    name: Smoke Prod Validation
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - name: bash -n syntax check
+      # --- Smoke Prod Validation (SMI-4459): pre-ship validation for the
+      # post-deploy smoke harness. The harness itself runs post-deploy via
+      # .github/workflows/smoke-prod.yml. ---
+      - name: Smoke - bash -n syntax check
         run: |
           bash -n scripts/smoke-prod.sh
           for f in scripts/smoke-prod/*.sh; do bash -n "$f"; done
 
-      - name: shellcheck
+      - name: Smoke - shellcheck
         run: |
           # -S warning matches validate-hooks.yml convention; SC1091 (can't
           # follow source) is unavoidable for sourced lib.sh.
@@ -599,18 +574,18 @@ jobs:
             scripts/smoke-prod/mcp-server.sh \
             scripts/smoke-prod/alert.sh
 
-      - name: surfaces.json valid JSON
+      - name: Smoke - surfaces.json valid JSON
         run: |
           jq empty scripts/smoke-prod/surfaces.json
           jq -e '.surfaces | length > 0' scripts/smoke-prod/surfaces.json
 
-      - name: --dry-run resolves canary
+      - name: Smoke - --dry-run resolves canary
         run: |
           set -euo pipefail
           OUT=$(SMOKE_CHANGED_FILES="docs/foo.md" ./scripts/smoke-prod.sh --dry-run --json)
           echo "$OUT" | jq -e '.matched_surfaces | index("health")' >/dev/null
 
-      - name: --surface=health canary against prod
+      - name: Smoke - --surface=health canary against prod
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         run: |
@@ -623,27 +598,12 @@ jobs:
           fi
           ./scripts/smoke-prod.sh --surface=health --json
 
-  # SMI-2595: Validate migration SQL for common issues
-  # Catches type mismatches, missing search_path, pg_safeupdate violations
-  # Only runs when migration files are changed
-  migration-lint:
-    name: Migration Lint
-    needs: [classify]
-    if: |
-      !cancelled() &&
-      needs.classify.result == 'success' &&
-      needs.classify.outputs.tier == 'code'
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          fetch-depth: 0
-
-      - name: Check for migration changes
+      # --- Migration Lint (SMI-2595): only lints when migration files change.
+      # Both steps gated on classify.tier == 'code' to preserve the original
+      # migration-lint trigger (the job-level gate is the wider detect-changes.code).
+      - name: Migration - check for changes
         id: check
+        if: needs.classify.outputs.tier == 'code'
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- 'supabase/migrations/*.sql')
@@ -660,8 +620,8 @@ jobs:
             echo "$CHANGED"
           fi
 
-      - name: Lint migration SQL
-        if: steps.check.outputs.skip != 'true'
+      - name: Migration - lint SQL
+        if: needs.classify.outputs.tier == 'code' && steps.check.outputs.skip != 'true'
         run: |
           ERRORS=0
 
