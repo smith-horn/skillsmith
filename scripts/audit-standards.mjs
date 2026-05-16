@@ -3382,7 +3382,7 @@ function stripAstroNonRendered(content) {
     }
     // Multi-line <style>/<script> body continuation.
     if (inStyleOrScript) {
-      const end = line.search(/<\/(style|script)\s*>/i)
+      const end = line.search(/<\/(style|script)\b[^>]*>/i)
       if (end === -1) {
         out.push('')
         continue
@@ -3406,7 +3406,7 @@ function stripAstroNonRendered(content) {
       inJsxComment = true
     }
     // Strip single-line <style>/<script> blocks, then detect an open one.
-    line = stripUntilStable(line, /<(style|script)\b[^>]*>[\s\S]*?<\/(style|script)\s*>/gi)
+    line = stripUntilStable(line, /<(style|script)\b[^>]*>[\s\S]*?<\/(style|script)\b[^>]*>/gi)
     const styleScriptOpen = line.search(/<(style|script)\b/i)
     if (styleScriptOpen !== -1) {
       const gt = line.indexOf('>', styleScriptOpen)
