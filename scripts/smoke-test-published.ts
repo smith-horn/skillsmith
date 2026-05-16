@@ -45,6 +45,16 @@ function formatError(e: unknown): string {
   return parts.join('\n')
 }
 
+/**
+ * Build the npx command for a CLI bin smoke test.
+ * Uses `-p <pkg>@<version> <bin>` so npx resolves a specific package and
+ * invokes an explicit bin — the correct form for multi-bin packages where
+ * the bin name does not match the package-name segment.
+ */
+export function buildCliSmokeCommand(pkg: string, version: string, bin: string): string {
+  return `npx -y -p ${pkg}@${version} ${bin} --help`
+}
+
 async function runTest(name: string, fn: () => void | Promise<void>): Promise<TestResult> {
   const start = Date.now()
   try {
@@ -221,10 +231,20 @@ export async function smokeTestPackage(
     }
 
     if (packageName === '@skillsmith/cli') {
-      // Test 2: CLI --help works
+      // Test 2: skillsmith bin --help works (SMI-4923: use -p + explicit bin for multi-bin packages)
       tests.push(
-        await runTest('cli-help', () => {
-          execSync(`npx -y ${packageName}@${version} --help`, {
+        await runTest('cli-help-skillsmith', () => {
+          execSync(buildCliSmokeCommand(packageName, version, 'skillsmith'), {
+            stdio: 'pipe',
+            timeout: 30000,
+          })
+        })
+      )
+
+      // Test 3: sklx alias bin --help works
+      tests.push(
+        await runTest('cli-help-sklx', () => {
+          execSync(buildCliSmokeCommand(packageName, version, 'sklx'), {
             stdio: 'pipe',
             timeout: 30000,
           })
